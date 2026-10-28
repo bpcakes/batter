@@ -339,6 +339,8 @@ startup, and refuses a foreign index under a declared name. Dropping an
 `INVALID` leftover retries a refused immediate table lock for up to five
 seconds, then fails startup with native `55P03`; on a table that is never idle,
 run `DROP INDEX CONCURRENTLY` on that index and restart so the runner rebuilds it.
+A build waiting for a long writer has no library-owned time bound; bound a
+native call with the caller's own deadline.
 `ensure_schema_compatible_after_idempotency_cutover` reports a missing,
 `INVALID` or differently defined declared index. Tooling that applies the
 canonical SQL itself calls `prepare_online_indexes_for_external_migrator`

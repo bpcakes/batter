@@ -660,6 +660,8 @@ async fn prepare_adoptable_indexes(
 /// delays the build instead of cancelling it and leaving an `INVALID` index
 /// that a rerun must drop and replace. The saved values are restored after
 /// each build, so later statements on that session keep the profile's bounds.
+/// While a build waits, the call has no library-owned time bound; bound it
+/// with the caller's own deadline or cancellation.
 /// The build also enables client disconnect checks with an interval no longer
 /// than one second, restoring the original value afterward. Socket closure
 /// can then interrupt a blocked build; this is not a backend-death guarantee

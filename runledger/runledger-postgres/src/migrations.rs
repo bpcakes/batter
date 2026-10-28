@@ -222,7 +222,12 @@ impl fmt::Display for WorkflowJobLinkTriggerDiagnostic {
 /// [`SchemaCompatibilityError::MigrationCleanup`] retains the original error
 /// and the unlock cause together. During concurrent builds the three
 /// profile timeouts are lifted and client disconnect checks run at least once
-/// per second; all settings are restored afterward. Closing a session on
+/// per second; all settings are restored afterward. A build waiting for a
+/// writer or older snapshot therefore has no library-owned time bound: the
+/// caller's own deadline or cancellation is its only finite bound. Batter's
+/// protected startup is the canonical bounded path, running schema
+/// initialization under its startup allowance; a native caller should bound
+/// this call itself. Closing a session on
 /// cancellation enables server disconnect detection, but does not prove
 /// backend termination, including across network failure or runtime death.
 /// Definition matching is strict: explicit storage options, even a default

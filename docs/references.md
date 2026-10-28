@@ -5230,12 +5230,17 @@ migration lock after the interrupted builder exits and confirms there are no
 CREATE progress rows. Verification reports `BuildInProgress` while the lock is
 held and `Invalid` after release, without changing catalog identity or history.
 This isolates the advisory-lock fallback from progress correlation. It covers
-the classification needed during repair's
+the classification needed while a migration-lock holder has no CREATE progress,
+such as a protected runner that holds the lock while it inspects and
+transactionally removes an INVALID index before the replacement build, or a
+cooperating manual
 [`DROP INDEX CONCURRENTLY`](https://www.postgresql.org/docs/18/sql-dropindex.html)
-wait for conflicting transactions; the
+waiting for conflicting transactions; the
 [CREATE progress view](https://www.postgresql.org/docs/18/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING)
-reports CREATE/REINDEX, not DROP. The regression isolates the fallback state;
-it does not execute that DROP wait. Execution evidence belongs to `batter-fnj8.6`.
+reports CREATE/REINDEX, not DROP. Protected repair itself removes the INVALID
+index with an ordinary transactional `DROP INDEX` under its table lock. The
+regression isolates the fallback state; it executes neither window.
+Execution evidence belongs to `batter-fnj8.6`.
 
 PostgreSQL's [`pg_get_indexdef_worker`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/ruleutils.c)
 uses syscache and can return NULL after an index disappears even when direct
@@ -5249,7 +5254,8 @@ commits. The shared classifier treats an expected-table index with a vanished
 definition as transient while the migration lock is held and missing otherwise,
 while retaining non-index and foreign-table refusal. `online_snapshot.rs` drives
 the public verifier across that actual DROP commit, using ephemeral event-trigger
-and row-security gates, and covers both protected repair and lock-free settlement.
+and row-security gates, and covers both a cooperating manual drop that holds the
+migration lock and lock-free settlement.
 Both tests failed with `DefinitionMismatch` before the classifier correction;
 executed validation belongs to `batter-fnj8.7`.
 

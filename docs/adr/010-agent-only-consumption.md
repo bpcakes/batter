@@ -105,7 +105,15 @@ creation. These opaque observations confer no replay authority or proof of remot
 termination. External tooling remains outside library execution: preparation
 refuses occupied non-adoptable names, but cannot prove later arbitrary DDL or
 approve staged rollout policy. New diagnostics are additive to non-exhaustive
-enums; old public call shapes remain. Public-API failure regressions cover the
+enums; old public call shapes remain. `OnlineIndexRollback` and
+`OnlineIndexRepairCommitUnconfirmed` are public `SchemaCompatibilityError`
+variants that the library produces only as the cause inside
+`OnlineIndexExecution`, never at top level. This representable-but-unproduced
+top-level state is an accepted trade-off: the execution cause is itself a
+`SchemaCompatibilityError`, so a separate cause enum would duplicate every
+other variant it must also carry, and their rustdoc names the nesting.
+Non-exhaustive matching already requires a wildcard arm, so callers handle no
+extra state. A dedicated execution-cause type remains a possible follow-up. Public-API failure regressions cover the
 swap and lifecycle boundaries; fresh-agent usability tasks remain unexecuted.
 
 ### Managed application SQL assessment (`batter-aouh`)

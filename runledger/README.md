@@ -1636,7 +1636,13 @@ pool profile's statement, lock and transaction timeouts lifted, because a
 concurrent build waits for in-flight writers and older snapshots; a long
 transaction delays the build rather than cancelling it. The profile's values
 are restored after each build, so the cutover validation that follows keeps
-its bounds. The build also sets `client_connection_check_interval` to one
+its bounds. While a build waits for writers or older snapshots, neither
+`migrate_after_idempotency_cutover` nor
+`prepare_online_indexes_for_external_migrator` has a library-owned time bound:
+the caller's deadline or cancellation is the only finite bound. Batter's
+protected startup is the canonical bounded path, running schema initialization
+under its startup allowance; a native caller should wrap the call in its own
+deadline. The build also sets `client_connection_check_interval` to one
 second, preserving a tighter positive value and restoring the original setting
 afterward. Dropping the runner closes its session; PostgreSQL can detect that
 closed socket while blocked on a writer. A dropped future is not proof of

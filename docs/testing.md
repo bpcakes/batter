@@ -1555,7 +1555,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
-| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online_failures.rs](../runledger/runledger-postgres/tests/online_failures.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs) |
+| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself, repair identity and bounded busy-table retry, transport loss, quoted identifiers, hidden or cloned-database progress, and retained unlock failures | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online_failures.rs](../runledger/runledger-postgres/tests/online_failures.rs), [online_repair.rs](../runledger/runledger-postgres/tests/online_repair.rs), [online_transport_failures.rs](../runledger/runledger-postgres/tests/online_transport_failures.rs), [online_compatibility.rs](../runledger/runledger-postgres/tests/online_compatibility.rs), [online_identity.rs](../runledger/runledger-postgres/tests/online_identity.rs), [online_hidden_progress.rs](../runledger/runledger-postgres/tests/online_hidden_progress.rs), [online_cleanup.rs](../runledger/runledger-postgres/tests/online_cleanup.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs), [online/repair.rs](../runledger/runledger-postgres/src/migrations/online/repair.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -3139,6 +3139,13 @@ The online-index suite covers the protected migration runner on PostgreSQL
 | Public verifier across a concurrent DROP commit | `cargo test -p runledger-postgres --locked --test online_snapshot` |
 | Concurrent reindex after progress changes to its replacement OID | `cargo test -p runledger-postgres --locked --test online_reindex` |
 | External-preparation history, repair and failed-build context | `cargo test -p runledger-postgres --locked --test online_preparation` |
+| Repair identity under swapped names, busy-table retry, commit uncertainty, rollback failure and cancellation | `cargo test -p runledger-postgres --locked --test online_repair` |
+| Retry admission never starting an attempt after the five-second budget | `cargo test -p runledger-postgres --locked --lib migrations::online::repair` |
+| Typed local lock-poll expiry and connection loss during timeout restoration | `cargo test -p runledger-postgres --locked --test online_transport_failures` |
+| Prepared-index adoption, quoted schemas and inherited fully quoted identifiers | `cargo test -p runledger-postgres --locked --test online_compatibility` |
+| Foreign predicate refusal, cloned-database reindex isolation and progress detection without the migration lock | `cargo test -p runledger-postgres --locked --test online_identity` |
+| Hidden-progress builders under a restricted owner, same-table deferral and unrelated-table repair | `cargo test -p runledger-postgres --locked --test online_hidden_progress` |
+| Original error retained beside a denied advisory unlock | `cargo test -p runledger-postgres --locked --test online_cleanup` |
 
 A fresh protected run records the same
 `_sqlx_migrations` rows and leaves the same `pg_get_indexdef` catalog as the
@@ -3230,7 +3237,12 @@ public entrypoints. The baseline deletes that index; repaired behavior preserves
 its OID, definition, uniqueness and migration history. A second swap moves the
 inspected INVALID index aside and leaves another canonical INVALID build under
 the declared name; both entrypoints must refuse it as `ChangedDuringRepair` and
-keep both OIDs and history. Controls cover a completed
+keep both OIDs and history. The foreign-swap and changed-identity refusals must
+return within four seconds of release, so neither is retried as a lock refusal
+through the five-second budget. Unit tests in `online/repair.rs` drive retry
+admission on a paused clock: a timely wake admits another attempt, every
+admitted attempt starts before the deadline, and a backoff resumed after it
+returns the last refusal. Controls cover a completed
 manual reindex winning that race, refusal after a writer outlasts the
 five-second retry budget followed by recovery, a relay-observed refused attempt
 that the same call retries and completes once the writer releases,

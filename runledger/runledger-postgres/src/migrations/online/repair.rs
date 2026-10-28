@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use sqlx::{AssertSqlSafe, Connection, PgConnection};
+use tokio::time::Instant;
 
 use super::{IndexState, OnlineIndex, OnlineIndexProblem, check_valid, index_state, problem};
 use crate::{OnlineIndexRollbackError, RunledgerDatabase, SchemaCompatibilityError};
@@ -25,18 +26,45 @@ pub(super) async fn remove_invalid(
     index: &OnlineIndex,
     expected_oid: i64,
 ) -> Result<bool, SchemaCompatibilityError> {
-    let deadline = tokio::time::Instant::now() + LOCK_RETRY_BUDGET;
-    let mut delay = FIRST_RETRY_DELAY;
+    let mut budget = RetryBudget::start();
     loop {
-        match attempt(conn, database, index, expected_oid).await {
-            Err(error)
-                if lock_refused(&error) && tokio::time::Instant::now() + delay < deadline =>
-            {
-                tokio::time::sleep(delay).await;
-                delay = (delay * 2).min(MAX_RETRY_DELAY);
-            }
-            result => return result,
+        let result = attempt(conn, database, index, expected_oid).await;
+        if let Err(error) = &result
+            && lock_refused(error)
+            && budget.backoff().await
+        {
+            continue;
         }
+        return result;
+    }
+}
+
+/// Admission of further attempts after refused ones, against one absolute
+/// deadline taken before the first attempt.
+struct RetryBudget {
+    deadline: Instant,
+    delay: Duration,
+}
+
+impl RetryBudget {
+    fn start() -> Self {
+        Self {
+            deadline: Instant::now() + LOCK_RETRY_BUDGET,
+            delay: FIRST_RETRY_DELAY,
+        }
+    }
+
+    /// Waits out the next backoff and returns whether another attempt may
+    /// start. Both the planned wake and the actual one are checked: a task
+    /// resumed late, after the deadline, returns false so the caller reports
+    /// its last refusal instead of starting a transaction outside the budget.
+    async fn backoff(&mut self) -> bool {
+        if Instant::now() + self.delay >= self.deadline {
+            return false;
+        }
+        tokio::time::sleep(self.delay).await;
+        self.delay = (self.delay * 2).min(MAX_RETRY_DELAY);
+        Instant::now() < self.deadline
     }
 }
 
@@ -151,4 +179,59 @@ async fn remove_locked(
     .execute(&mut *conn)
     .await?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::poll_fn;
+    use std::pin::pin;
+    use std::task::Poll;
+
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timely_wake_admits_another_attempt_with_a_longer_delay() {
+        let started = Instant::now();
+        let mut budget = RetryBudget::start();
+        assert!(budget.backoff().await);
+        let waited = started.elapsed();
+        assert!(
+            waited >= FIRST_RETRY_DELAY && waited < FIRST_RETRY_DELAY * 2,
+            "{waited:?}"
+        );
+        assert_eq!(budget.delay, FIRST_RETRY_DELAY * 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_wake_after_the_deadline_admits_no_attempt() {
+        let mut budget = RetryBudget::start();
+        let deadline = budget.deadline;
+        let mut backoff = pin!(budget.backoff());
+        let sleeping = poll_fn(|cx| Poll::Ready(backoff.as_mut().poll(cx).is_pending())).await;
+        assert!(
+            sleeping,
+            "the first backoff is planned well before the deadline"
+        );
+        // Resume the sleeping backoff only once the whole budget has elapsed.
+        tokio::time::advance(LOCK_RETRY_BUDGET).await;
+        assert!(!backoff.await, "a late wake must return the last refusal");
+        assert!(Instant::now() >= deadline);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn admitted_attempts_all_start_before_the_deadline() {
+        let mut budget = RetryBudget::start();
+        let deadline = budget.deadline;
+        let mut admitted = 0;
+        while budget.backoff().await {
+            assert!(Instant::now() < deadline);
+            admitted += 1;
+        }
+        assert!(admitted > 1, "the budget allows several retries");
+        assert!(
+            Instant::now() < deadline,
+            "the final refusal does not sleep past it"
+        );
+        assert_eq!(budget.delay, MAX_RETRY_DELAY);
+    }
 }

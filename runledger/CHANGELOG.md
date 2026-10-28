@@ -33,7 +33,9 @@ All notable changes to this workspace are documented here.
   statement, lock and transaction timeouts lifted and restored afterwards, so
   a long in-flight transaction delays the build instead of cancelling it after
   the migration was recorded while the following cutover validation keeps the
-  profile's bounds.
+  profile's bounds. A waiting build therefore has no library-owned time bound;
+  the caller's deadline or cancellation is its only finite bound, as under
+  Batter's protected startup allowance.
 - `prepare_online_indexes_for_external_migrator` prebuilds, under the SQLx
   migration lock, the pending indexes whose canonical
   `CREATE INDEX IF NOT EXISTS` statement adopts them, so external tooling that
@@ -119,7 +121,8 @@ All notable changes to this workspace are documented here.
   after inspection. Each removal attempt requires an immediately available
   exclusive table lock and never queues for it; a refused attempt rolls back
   and the whole transaction, identity checks included, is retried with backoff
-  for up to five seconds before native `55P03` is returned. Rollback failure,
+  for up to five seconds before native `55P03` is returned; no attempt starts
+  once that budget has elapsed, even after a late backoff wake. Rollback failure,
   commit uncertainty and identity refusals are not retried. Per attempt, index
   lock waits are capped at 100 ms and metadata statement/transaction/idle
   timeouts at one second. Long builds
@@ -285,6 +288,29 @@ All notable changes to this workspace are documented here.
   is logged as such; any other failure is logged and left to reaper recovery.
   Jobs spawned before the worker observed the stop still run to completion
   during drain.
+
+### Upgrade notes
+
+- `ensure_schema_compatible_after_idempotency_cutover` now refuses an applied
+  database whose declared online index of `202605220001`, `202607280004` or
+  `202609050001` is missing, `INVALID` or defined differently, including
+  explicit storage options such as a default `fillfactor = 90`; earlier
+  releases did not inspect these indexes. Run that read-only check against the
+  database before deploying. Reset an extra option with
+  `ALTER INDEX index_name RESET (fillfactor)`. Let
+  `migrate_after_idempotency_cutover` rebuild a missing or `INVALID` index; on a
+  table that never becomes idle, run `DROP INDEX CONCURRENTLY` on the `INVALID`
+  index and restart. A foreign index under a declared name needs operator
+  removal or renaming; Runledger never drops it.
+- When a migration or preparation fails and releasing the advisory lock also
+  fails, the error is now `SchemaCompatibilityError::MigrationCleanup` instead
+  of `Incompatible`. Read the original through `operation_error()` and the
+  unlock cause through `unlock_error()`. No public item was removed or renamed
+  and `SchemaCompatibilityError` was already non-exhaustive, so no shim is
+  needed.
+- Bound a native call to `migrate_after_idempotency_cutover` or
+  `prepare_online_indexes_for_external_migrator` with the caller's own deadline
+  when a long writer could delay an online build; the library sets none.
 
 ## [0.13.0] - 2026-09-22
 

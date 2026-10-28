@@ -52,4 +52,4 @@ toml = { version = "1.1.6", default-features = false, features = ["std", "parse"
 tempfile = "3"
 static_assertions = "1.1.0"
 runledger-test-support = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time", "io-util", "net"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time", "io-util", "net", "test-util"] }

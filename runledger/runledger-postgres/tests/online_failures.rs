@@ -255,8 +255,10 @@ async fn verification_uses_the_migration_lock_for_invalid_indexes_without_build_
         .await
         .expect("interrupted index identity");
     // No visible or hidden CREATE progress can satisfy the classifier here.
-    // This isolates the advisory fallback used, for example, during repair's
-    // DROP INDEX CONCURRENTLY phase before the replacement build starts.
+    // This isolates the advisory fallback used, for example, while protected
+    // repair inspects and transactionally drops the INVALID index before its
+    // replacement build, or during a cooperating manual DROP INDEX CONCURRENTLY
+    // under the migration lock.
     assert!(
         sqlx::query_scalar::<_, bool>(
             "SELECT NOT EXISTS (

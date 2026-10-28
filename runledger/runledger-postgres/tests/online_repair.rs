@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use runledger_postgres::{
     OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
@@ -116,10 +116,12 @@ async fn preserves_replacement(prepare: bool) {
     relay.reached().await;
     sqlx::raw_sql(AssertSqlSafe(format!("BEGIN; ALTER INDEX {index} RENAME TO retained_original; ALTER INDEX foreign_unique RENAME TO {index}; COMMIT"))).execute(&harness.pool).await.expect("swap after completed inspection");
     relay.release_response().await;
+    let released = Instant::now();
     let result = tokio::time::timeout(Duration::from_secs(10), task)
         .await
         .expect("bounded repair")
         .expect("repair task");
+    let refused_after = released.elapsed();
     let preserved: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_class WHERE oid=$1::bigint::oid)")
             .bind(foreign)
@@ -139,7 +141,17 @@ async fn preserves_replacement(prepare: bool) {
     relay.finish().await;
     harness.teardown().await;
     assert_foreign_refusal(preserved, result, definition, index, duplicate);
+    assert_prompt_refusal(refused_after);
     assert_eq!(after, history);
+}
+
+/// Identity refusals are not lock refusals: retrying one would spend the
+/// five-second lock-retry budget before returning the same refusal.
+fn assert_prompt_refusal(refused_after: Duration) {
+    assert!(
+        refused_after < Duration::from_secs(4),
+        "identity refusal returned only after {refused_after:?}"
+    );
 }
 
 fn assert_foreign_refusal(
@@ -224,16 +236,19 @@ async fn refuses_changed_invalid_identity(prepare: bool) {
     relay.reached().await;
     let replacement = swap_in_invalid_replacement(&harness.pool, index, prepare, original).await;
     relay.release_response().await;
+    let released = Instant::now();
     let result = tokio::time::timeout(Duration::from_secs(10), task)
         .await
         .expect("bounded repair")
         .expect("repair task");
+    let refused_after = released.elapsed();
     let retained = retained_identities(&harness.pool, index, replacement).await;
     let after = sqlx_history(&harness.pool).await;
     database.pool().close().await;
     relay.finish().await;
     harness.teardown().await;
     assert_changed_identity_refusal(&result);
+    assert_prompt_refusal(refused_after);
     assert_eq!(
         retained,
         (replacement, original, false),

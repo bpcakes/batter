@@ -729,7 +729,9 @@ refused attempts are retried for up to five seconds, then startup fails with
 native `55P03` inside `OnlineIndexExecution` and leaves the index in place. If
 traffic or autovacuum never leaves that instant, run `DROP INDEX CONCURRENTLY`
 on the `INVALID` index and restart; the protected runner then builds the
-missing index concurrently. Tooling
+missing index concurrently. A build waiting for a long writer has no
+library-owned time bound; bound a native call with your own deadline, as
+Batter's protected startup does with its startup allowance. Tooling
 that applies the canonical SQL itself calls
 `prepare_online_indexes_for_external_migrator` first and still blocks on the
 three indexes without `IF NOT EXISTS`. Inspect both deferred and blocking
