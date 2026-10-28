@@ -627,7 +627,11 @@ async fn prepare_adoptable_indexes(
 /// a blocking DROP: a refused attempt rolls back and is retried for up to five
 /// seconds, after which a still-busy table returns native `55P03`. Each
 /// metadata transaction sets 100 ms lock and one-second statement, transaction
-/// (where available) and idle-transaction timeouts. The long concurrent build
+/// (where available) and idle-transaction timeouts. Exceeding the transaction
+/// or idle bound ends the session, releasing its table and migration locks;
+/// the termination is returned with the cleanup failures. An `INVALID` index
+/// removed after inspection is refused as
+/// [`OnlineIndexProblem::ChangedDuringRepair`]. The long concurrent build
 /// starts only after its commit. A lost commit acknowledgement returns
 /// [`crate::SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed`]
 /// inside the execution cause; no subsequent build is dispatched. Rollback

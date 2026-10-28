@@ -1685,7 +1685,12 @@ unchanged and the whole transaction, including its identity checks, is retried
 with backoff for up to five seconds; a table that stays busy throughout returns
 that `55P03` without deletion. Index-lock waits are capped at 100 ms per attempt; metadata
 statement, transaction (where supported), and idle-transaction timeouts are one
-second. These server settings are not network/runtime-death guarantees. The
+second. Exceeding the transaction or idle-transaction bound makes PostgreSQL end
+the session rather than cancel a statement: the metadata transaction rolls back,
+and its table lock and the session's migration lock are released. Startup then
+returns the native termination error with the rollback, restoration and unlock
+failures as `MigrationCleanup`, and the next startup retries the repair. These
+server settings are not network/runtime-death guarantees. The
 exclusive table lock covers only metadata removal; the potentially long
 `CREATE INDEX CONCURRENTLY` starts after commit. If that table is never idle
 for an instant, for example under continuous traffic or a long autovacuum,
@@ -1694,8 +1699,10 @@ not block queue writes, then restarting: the next protected startup builds the
 now-missing index concurrently. Commit acknowledgement loss is
 `OnlineIndexRepairCommitUnconfirmed` inside the execution cause and prevents a
 subsequent build; `OnlineIndexRollback` retains an original refusal plus rollback
-failure. Neither is retried. A changed INVALID OID is refused as `ChangedDuringRepair`; a completed
-canonical reindex is kept. Foreign replacements are rolled back unchanged.
+failure. Neither is retried. A changed INVALID OID, or an INVALID index removed or
+renamed away after inspection, is refused at once as `ChangedDuringRepair`; the
+next startup builds a removed one. A completed canonical reindex is kept.
+Foreign replacements are rolled back unchanged.
 A valid prebuilt index with the bundled definition is
 adopted; a differently defined index under a declared name is refused before
 the migration is recorded. Definition matching is strict, including physical

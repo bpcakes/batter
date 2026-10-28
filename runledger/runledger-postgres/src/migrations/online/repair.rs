@@ -120,6 +120,9 @@ async fn remove_locked(
 ) -> Result<bool, SchemaCompatibilityError> {
     // The outer concurrent-build session has lifted its timeouts. Bound this
     // short metadata transaction separately, including time between requests.
+    // The transaction and idle bounds end the whole session, not a statement:
+    // a stalled client must not keep the exclusive table lock, and that also
+    // releases the session's migration lock. The caller retains the failures.
     // SET LOCAL disappears on both acknowledged commit and rollback.
     sqlx::raw_sql(
         "SET LOCAL lock_timeout = '100ms';
@@ -139,7 +142,7 @@ async fn remove_locked(
     // then inspect under that lock. A collision fails and rolls back; nothing
     // is ever committed under the temporary name. Even a swapped-in foreign
     // relation is restored on refusal. No statement here drops an object yet.
-    sqlx::raw_sql(AssertSqlSafe(format!(
+    let renamed = sqlx::raw_sql(AssertSqlSafe(format!(
         "ALTER INDEX {} RENAME TO \"{temporary}\";
          ALTER INDEX {} RENAME TO \"{}\"",
         database.relation(index.name),
@@ -147,7 +150,17 @@ async fn remove_locked(
         index.name,
     )))
     .execute(&mut *conn)
-    .await?;
+    .await;
+    // Only the first RENAME can name an undefined relation: the second names
+    // the temporary one this transaction just created. The inspected index was
+    // removed or renamed away since inspection, so its identity changed; the
+    // aborted transaction rolls back and the next startup sees `Missing`.
+    if let Err(error) = &renamed
+        && error.as_database_error().and_then(|e| e.code()).as_deref() == Some("42P01")
+    {
+        return Err(problem(index, OnlineIndexProblem::ChangedDuringRepair));
+    }
+    renamed?;
     // Never queue ACCESS EXCLUSIVE behind an active reader/writer; the caller
     // retries a refusal. Once held, it also protects table identity through
     // the final inspection and DROP.

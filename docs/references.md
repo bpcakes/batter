@@ -37,8 +37,26 @@ UNIQUE index. The protected repair changes the execution boundary, not the match
   previously inspected OID. `index_drop` uses internal session locks across its
   own concurrent-drop commits; those do not protect a preceding client query.
 
+- [Client connection defaults](https://www.postgresql.org/docs/18/runtime-config-client.html)
+  (rechecked 2026-10-28 for `batter-fnj8.13`): `statement_timeout` aborts a
+  statement, while `transaction_timeout` and `idle_in_transaction_session_timeout`
+  each terminate the session. A session-level advisory lock is held until it is
+  released or the session ends
+  ([advisory locks](https://www.postgresql.org/docs/18/explicit-locking.html#ADVISORY-LOCKS)),
+  so a terminated metadata session also drops the SQLx migration lock. Their
+  SQLSTATEs are `25P04` and `25P03`; `ALTER INDEX` on an absent name raises
+  `42P01` (`undefined_table`), which repair reports as `ChangedDuringRepair`
+  ([error codes](https://www.postgresql.org/docs/18/errcodes-appendix.html)).
+- [Cumulative statistics](https://www.postgresql.org/docs/18/monitoring-stats.html)
+  (rechecked 2026-10-28): `pg_stat_database.sessions_abandoned` counts sessions
+  terminated because the client connection was lost, and `sessions_fatal` those
+  terminated by fatal errors. The metadata-repair cancellation test uses them to
+  tell a closed client connection from the server's idle-bound termination.
+
 The metadata transaction uses local 100 ms lock and one-second statement,
-transaction/idle timeouts; long concurrent creation runs only after commit.
+transaction/idle timeouts; the latter two end the session when exceeded, which
+`online_repair/lifecycle.rs` exercises on PostgreSQL 18.6. Long concurrent
+creation runs only after commit.
 A lost commit acknowledgement is uncertainty, not proof that DROP rolled back.
 Executed outcomes and retained diagnostic probes are recorded in the owning Bead.
 

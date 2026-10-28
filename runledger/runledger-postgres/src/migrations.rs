@@ -201,7 +201,9 @@ impl fmt::Display for WorkflowJobLinkTriggerDiagnostic {
 /// attempt for up to five seconds before returning it; a table that is never
 /// idle needs `DROP INDEX CONCURRENTLY` on the `INVALID` index and a restart.
 /// Each attempt caps index-lock waits at 100 ms and sets one-second metadata
-/// statement/transaction/idle timeouts.
+/// statement/transaction/idle timeouts; exceeding the transaction or idle bound
+/// ends the session, which releases its table and migration locks, and the
+/// termination is returned with the cleanup failures.
 /// The long concurrent build starts after commit; removal commit uncertainty
 /// and rollback failures remain typed execution causes. See
 /// [`prepare_online_indexes_for_external_migrator`] for those diagnostics.

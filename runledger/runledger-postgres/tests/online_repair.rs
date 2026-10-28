@@ -15,7 +15,7 @@ use online_support::{
     Harness, LAST_VERSION_BEFORE_CUTOVER, hold_writer_lock, raw_apply_through, sqlx_history,
 };
 use online_wire::{Fault, Relay};
-use support::migrate_profiled;
+use support::{migrate_profiled, profiled_database};
 
 const CREATED: &str = "idx_job_queue_created_id";
 const SNAPSHOT: &str = "idx_job_queue_missing_enqueue_request_snapshot";
@@ -311,6 +311,72 @@ async fn migration_refuses_a_changed_invalid_identity_after_inspection() {
 #[tokio::test]
 async fn preparation_refuses_a_changed_invalid_identity_after_inspection() {
     refuses_changed_invalid_identity(true).await;
+}
+
+async fn relation_absent(pool: &PgPool, name: &str) -> bool {
+    sqlx::query_scalar("SELECT to_regclass($1) IS NULL")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .expect("relation lookup")
+}
+
+/// The documented operator recovery removes the inspected INVALID index while
+/// a startup is between inspection and repair. Nothing remains to lock, so the
+/// repair refuses the changed identity at once; the next startup builds it.
+async fn refuses_removed_invalid_identity(prepare: bool) {
+    let harness = Harness::fresh("online_repair_removed").await;
+    let index = invalid_index(&harness.pool, prepare).await;
+    let history = sqlx_history(&harness.pool).await;
+    let mut relay = Relay::start(
+        &harness.pool.connect_options(),
+        Fault::HoldIndexInspection(index),
+    )
+    .await;
+    let database = relayed_database(&harness.pool, &relay);
+    let task = tokio::spawn(entry(database.clone(), prepare));
+    relay.reached().await;
+    sqlx::raw_sql(AssertSqlSafe(format!("DROP INDEX CONCURRENTLY {index}")))
+        .execute(&harness.pool)
+        .await
+        .expect("remove the inspected INVALID index");
+    relay.release_response().await;
+    let released = Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("bounded repair")
+        .expect("repair task");
+    let refused_after = released.elapsed();
+    let absent = relation_absent(&harness.pool, index).await;
+    let after = sqlx_history(&harness.pool).await;
+    database.pool().close().await;
+    relay.finish().await;
+    assert_changed_identity_refusal(&result);
+    assert_prompt_refusal(refused_after);
+    assert!(absent, "the refused repair creates nothing under the name");
+    assert_eq!(after, history);
+    assert_next_run_builds(&harness.pool, index, prepare).await;
+    harness.teardown().await;
+}
+
+async fn assert_next_run_builds(pool: &PgPool, index: &str, prepare: bool) {
+    let restarted = profiled_database(pool).await;
+    entry(restarted.clone(), prepare)
+        .await
+        .expect("next run builds the missing index");
+    let rebuilt = relation_oid(pool, index).await;
+    assert!(index_valid(pool, rebuilt).await);
+    restarted.pool().close().await;
+}
+
+#[tokio::test]
+async fn migration_refuses_an_invalid_index_removed_after_inspection() {
+    refuses_removed_invalid_identity(false).await;
+}
+
+#[tokio::test]
+async fn preparation_refuses_an_invalid_index_removed_after_inspection() {
+    refuses_removed_invalid_identity(true).await;
 }
 
 #[path = "online_repair/lifecycle.rs"]

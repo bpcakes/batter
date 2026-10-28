@@ -1,7 +1,6 @@
 use super::*;
 use online_support::{index_catalog, wait_for};
 use runledger_postgres::{OnlineIndexExecutionError, OnlineIndexPhase, SchemaCompatibilityError};
-use support::profiled_database;
 
 fn execution(error: &SchemaCompatibilityError) -> &OnlineIndexExecutionError {
     let error = if let SchemaCompatibilityError::MigrationCleanup(pair) = error {
@@ -169,11 +168,26 @@ async fn failed_rollback_retains_original_lock_refusal_and_native_rollback_failu
     harness.teardown().await;
 }
 
+/// This database's sessions ended by lost client connection and by fatal error.
+async fn session_ends(pool: &PgPool) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT sessions_abandoned, sessions_fatal FROM pg_catalog.pg_stat_database
+         WHERE datname = pg_catalog.current_database()",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("session statistics")
+}
+
+/// Cancellation must end the backend by closing its connection. The metadata
+/// transaction's one-second idle bound would also end it, but as a fatal
+/// error, so the session-end counters tell the two causes apart.
 #[tokio::test]
 async fn cancelled_metadata_repair_leaves_original_name_and_no_backend_lock() {
     let harness = Harness::fresh("online_repair_cancel").await;
     invalid_index(&harness.pool, false).await;
     let before = index_catalog(&harness.pool).await;
+    let ends = session_ends(&harness.pool).await;
     let mut relay = Relay::start(&harness.pool.connect_options(), Fault::HoldRepairTableLock).await;
     let database = relayed_database(&harness.pool, &relay);
     let task_database = database.clone();
@@ -190,6 +204,15 @@ async fn cancelled_metadata_repair_leaves_original_name_and_no_backend_lock() {
             .expect("observe backend exit")
     })
     .await;
+    wait_for("the disconnection is counted", || async {
+        session_ends(&harness.pool).await.0 > ends.0
+    })
+    .await;
+    assert_eq!(
+        session_ends(&harness.pool).await.1,
+        ends.1,
+        "the server's idle bound, not cancellation, ended the session"
+    );
     assert_eq!(index_catalog(&harness.pool).await, before);
     database.pool().close().await;
     relay.finish().await;
@@ -237,4 +260,67 @@ async fn completed_manual_reindex_is_adopted_without_another_drop() {
         relay.finish().await;
         harness.teardown().await;
     }
+}
+
+/// A metadata transaction left idle past its one-second bound, here by a
+/// withheld `LOCK TABLE` request, makes PostgreSQL end the whole session. Its
+/// table and migration locks go with it; every failure stays retained, and the
+/// INVALID index is left for the next startup to repair.
+#[tokio::test]
+async fn idle_metadata_repair_ends_its_session_and_releases_the_migration_lock() {
+    let harness = Harness::fresh("online_repair_idle").await;
+    let index = invalid_index(&harness.pool, false).await;
+    let before = index_catalog(&harness.pool).await;
+    let history = sqlx_history(&harness.pool).await;
+    let mut relay = Relay::start(&harness.pool.connect_options(), Fault::HoldRepairTableLock).await;
+    let database = relayed_database(&harness.pool, &relay);
+    let error = tokio::time::timeout(Duration::from_secs(10), run(&database, false))
+        .await
+        .expect("the server ends the idle session")
+        .expect_err("terminated repair");
+    let SchemaCompatibilityError::MigrationCleanup(cleanup) = &error else {
+        panic!("unlock failure retained: {error}")
+    };
+    assert!(
+        matches!(
+            cleanup.unlock_error(),
+            sqlx::migrate::MigrateError::Execute(sqlx::Error::Io(_))
+        ),
+        "{}",
+        cleanup.unlock_error()
+    );
+    let failure = execution(&error);
+    assert!(failure.restoration_error().is_some());
+    let SchemaCompatibilityError::OnlineIndexRollback(pair) = failure.cause() else {
+        panic!(
+            "termination and rollback failure retained: {}",
+            failure.cause()
+        )
+    };
+    let SchemaCompatibilityError::Query(cause) = pair.operation_error() else {
+        panic!("native termination: {}", pair.operation_error())
+    };
+    let code = cause.as_database_error().and_then(|e| e.code());
+    assert!(
+        matches!(code.as_deref(), Some("25P03" | "25P04")),
+        "idle-transaction or transaction timeout: {code:?}"
+    );
+    database.pool().close().await;
+    relay.finish().await;
+    wait_for("the ended session releases the migration lock", || async {
+        !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()))")
+            .fetch_one(&harness.pool)
+            .await
+            .expect("observe advisory locks")
+    })
+    .await;
+    assert_eq!(index_catalog(&harness.pool).await, before);
+    assert_eq!(sqlx_history(&harness.pool).await, history);
+    let restarted = profiled_database(&harness.pool).await;
+    run(&restarted, false)
+        .await
+        .expect("next startup repairs the INVALID index");
+    assert!(index_catalog(&harness.pool).await[index].1);
+    restarted.pool().close().await;
+    harness.teardown().await;
 }

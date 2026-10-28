@@ -35,7 +35,10 @@ All notable changes to this workspace are documented here.
   the migration was recorded while the following cutover validation keeps the
   profile's bounds. A waiting build therefore has no library-owned time bound;
   the caller's deadline or cancellation is its only finite bound, as under
-  Batter's protected startup allowance.
+  Batter's protected startup allowance. The build session lifts
+  `transaction_timeout` only where the server defines it; the executable suite
+  runs only on PostgreSQL 18, so the branches taken on a server without that
+  setting (PostgreSQL 16 and earlier) are unverified.
 - `prepare_online_indexes_for_external_migrator` prebuilds, under the SQLx
   migration lock, the pending indexes whose canonical
   `CREATE INDEX IF NOT EXISTS` statement adopts them, so external tooling that
@@ -52,6 +55,66 @@ All notable changes to this workspace are documented here.
   `Incompatible(Dirty)` before any build, as the protected runner refuses it.
   Validating `CHECK` constraints and same-transaction `VALIDATE CONSTRAINT`
   statements in bundled migrations keep their ordinary locks.
+- INVALID removal locks and revalidates the actual object through
+  transactional metadata removal, preserving foreign names swapped in after
+  inspection. Each removal attempt requires an immediately available exclusive
+  table lock and never queues for it; a refused attempt rolls back and the
+  whole transaction, identity checks included, is retried with backoff for up
+  to five seconds before native `55P03` is returned; no attempt starts once that
+  budget has elapsed, even after a late backoff wake. Rollback failure, commit
+  uncertainty and identity refusals are not retried. Per attempt, index lock
+  waits are capped at 100 ms and metadata statement/transaction/idle timeouts
+  at one second. Exceeding the transaction or idle bound makes PostgreSQL end
+  the session, which releases its table lock and the migration lock; startup
+  returns that termination with its rollback, restoration and unlock failures
+  as `MigrationCleanup`, and the next startup retries the repair. Long builds
+  remain concurrent after commit. Lost removal commit acknowledgement is
+  retained as `OnlineIndexRepairCommitUnconfirmed`, and rollback failure as
+  `OnlineIndexRollback` with both causes. Cancellation does not prove remote
+  termination. `ChangedDuringRepair` refuses a replaced INVALID identity, or
+  one removed or renamed away after inspection; the next startup builds a
+  removed index.
+- Verification, protected migration and pending-index preparation report
+  `BuildInProgress` instead of repairing an active build. Visible
+  `REINDEX INDEX CONCURRENTLY` progress counts when it names a replacement for
+  the canonical INVALID index, correlated through the builder's granted lock on
+  the original index; this preserves foreign-definition refusal and excludes
+  other indexes on the same table. Hidden progress from a different-role
+  manual builder is correlated through its visible PID/database and table
+  locks, which may defer another index on the same table; unrelated tables and
+  databases remain independent. Progress lookup includes database identity, so
+  an unrelated database's matching index OID cannot suppress local repair. No
+  caller migration lock or new statistics privilege is required. When
+  concurrent removal leaves the verification snapshot's old index row without a
+  live catalog definition, verification reports `BuildInProgress` while another
+  session holds the migration lock and `Missing` otherwise, never a foreign
+  definition.
+- Online index definition matching preserves predicate literals, accepts
+  canonical fully quoted renderings under `quote_all_identifiers=on` without
+  changing that setting, and accepts quoted schema names containing SQL
+  delimiter text. Strict matching includes storage options, even an explicit
+  default fillfactor; the migration guide documents resetting that extra option.
+- External preparation refuses occupied non-adoptable names before building:
+  matching valid/INVALID indexes return `ExternalCannotAdopt`, while foreign and
+  active objects keep their distinct refusals. Only absent names are listed as
+  external blocking builds, and empty preparation lists do not authorize
+  non-index rollout steps. Preparation refuses newer incompatible Runledger
+  history before any build, sharing the protected runner's history checks, and
+  a cancelled preparation build's failure context retains no recorded migration
+  version and leaves migration history unchanged. External-preparation examples
+  stop for deferred indexes and blocking builds.
+- Concurrent index builds enable `client_connection_check_interval` at one
+  second or preserve a tighter positive setting, then restore the original
+  value, so cancelling the runner can interrupt a disconnected build even while
+  profile timeouts are lifted. This does not guarantee backend death across
+  network failure or runtime death. `OnlineIndexExecution` errors retain the
+  index, execution phase, acknowledged migration version and both build and
+  restoration causes behind redacted formatting.
+- These online-index APIs and diagnostics are additive: existing public paths
+  and signatures are unchanged, new variants extend already non-exhaustive
+  enums, and `OnlineIndexPreparation`, `OnlineIndexProblem` and the new error
+  types are exported from the crate root. No public hard cut or deprecated shim
+  is needed.
 - `JobExecution::invocation()` returns an owned, cloneable `JobInvocation` that
   observes one handler invocation's exit. The worker ends it after the handler
   future is destroyed and before the outcome is persisted, whenever the
@@ -116,73 +179,13 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
-- INVALID online-index repair now locks and revalidates the actual object
-  through transactional metadata removal, preserving foreign names swapped in
-  after inspection. Each removal attempt requires an immediately available
-  exclusive table lock and never queues for it; a refused attempt rolls back
-  and the whole transaction, identity checks included, is retried with backoff
-  for up to five seconds before native `55P03` is returned; no attempt starts
-  once that budget has elapsed, even after a late backoff wake. Rollback failure,
-  commit uncertainty and identity refusals are not retried. Per attempt, index
-  lock waits are capped at 100 ms and metadata statement/transaction/idle
-  timeouts at one second. Long builds
-  remain concurrent after commit. Lost removal commit acknowledgement is
-  retained as `OnlineIndexRepairCommitUnconfirmed`, and rollback failure as
-  `OnlineIndexRollback` with both causes. Cancellation does not prove remote
-  termination. `ChangedDuringRepair` refuses a replaced INVALID identity.
-- External preparation now refuses occupied non-adoptable names before building:
-  matching valid/INVALID indexes return `ExternalCannotAdopt`, while foreign and
-  active objects retain their distinct refusals. Only absent names are listed
-  as external blocking builds. Existing public paths/signatures are unchanged;
-  diagnostics add variants to already non-exhaustive enums. No public hard cut
-  or deprecated shim is needed. `OnlineIndexPreparation` and `OnlineIndexProblem`
-  keep their public re-export paths after private source organization.
-
-- Visible `REINDEX INDEX CONCURRENTLY` progress now defers verification,
-  protected migration and pending-index preparation when it names a replacement
-  for the canonical INVALID index. Correlation uses the builder's granted lock
-  on the original index, preserving foreign-definition refusal and excluding
-  other indexes on the same table. No caller migration lock or new statistics
-  privilege is required. Public call shapes are unchanged. A cancelled-build
-  preparation regression also proves that failure context retains no recorded
-  migration version and leaves migration history unchanged.
-- Concurrent index removal during verification no longer misreports a foreign
-  definition when the snapshot retains the old index row but its live catalog
-  definition has disappeared. That state reports `BuildInProgress` while another
-  session holds the migration lock, and `Missing` otherwise. Non-index and
-  foreign-table/definition refusals remain intact. Public call shapes are unchanged.
-- Hidden progress from a different-role manual index builder now prevents
-  interrupted-index repair. Verification, migration and pending-index
-  preparation correlate its visible PID/database with table locks and return
-  `BuildInProgress`, preserving the active index. This may defer another index
-  on the same table; unrelated tables and databases remain independent.
-- Online index definition matching preserves predicate literals instead of
-  removing schema prefixes from catalog text and accepts canonical fully quoted
-  renderings under `quote_all_identifiers=on` without changing that setting.
-  Progress lookup includes database
-  identity, so an unrelated database's matching index OID cannot suppress local
-  repair. Empty preparation lists do not authorize non-index rollout steps.
 - When migration or preparation fails and advisory-lock release also fails,
   `SchemaCompatibilityError::MigrationCleanup(MigrationCleanupError)` retains
   both concrete errors through `operation_error()` and `unlock_error()`.
   Direct Debug/Display redact the causes; trusted accessors and error-source
-  traversal can expose native details. Existing online execution/restoration
-  context remains nested in the operation error. This is an additive outcome
+  traversal can expose native details. Online execution/restoration context
+  stays nested in the operation error. This is an additive outcome
   on the non-exhaustive error enum; existing public call shapes are unchanged.
-- Concurrent index builds enable `client_connection_check_interval` at one
-  second or preserve a tighter positive setting, then restore the original
-  value. Cancelling the runner can interrupt a disconnected build even while
-  profile timeouts are lifted. This does not guarantee backend death across
-  network failure or runtime death. `OnlineIndexExecution` errors retain the
-  index, execution phase, acknowledged migration version and both build and
-  restoration causes behind redacted formatting.
-- External-preparation examples stop for deferred indexes and blocking builds.
-  Preparation also refuses newer incompatible Runledger history before any
-  builds, sharing the protected runner's history checks. Canonical index
-  matching accepts quoted schema names containing SQL delimiter text.
-  Strict definition matching includes storage options, even explicit default
-  fillfactor; the migration guide documents resetting that extra option.
-
 - `migrate_after_idempotency_cutover` and
   `prepare_online_indexes_for_external_migrator` acquire the SQLx migration
   advisory lock by polling `pg_try_advisory_lock` on SQLx's own key instead of
@@ -200,10 +203,6 @@ All notable changes to this workspace are documented here.
   Each outstanding poll has an absolute local deadline. Checks before polling
   and before accepting its result also reject admission after scheduler delay
   or a late successful response; expiry does not prove remote termination.
-  The build
-  session lifts `transaction_timeout` only where the server defines it; the
-  executable suite runs only on PostgreSQL 18, so the branches taken on a
-  server without that setting (PostgreSQL 16 and earlier) are unverified.
 - Failures while reading migration history in the protected runner now surface
   as `SchemaCompatibilityError::Query` rather than
   `Incompatible(MigrateError::Execute(..))`. Direct catalog reads use `Query`;

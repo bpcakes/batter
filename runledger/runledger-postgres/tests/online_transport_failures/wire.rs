@@ -91,7 +91,13 @@ impl Relay {
                     match fault {
                         Fault::HoldRepairTableLock if sql.starts_with(b"LOCK TABLE ONLY ") => {
                             reached.notify_one();
-                            release.notified().await;
+                            // A client that writes or closes while its request
+                            // is withheld ends the relay, so the server sees
+                            // that disconnection instead of an idle client.
+                            tokio::select! {
+                                () = release.notified() => {}
+                                _ = from_client.read_u8() => return Ok::<(), io::Error>(()),
+                            }
                         }
                         Fault::DisconnectOnRepairRollback
                             if repair_started.load(Ordering::SeqCst)
@@ -154,7 +160,7 @@ impl Relay {
                 }
             };
             // EOF or injected disconnection drops both directions, even while
-            // the response gate is held. No backend is retained by the relay.
+            // a response or request is held. No backend is retained by the relay.
             let result = tokio::select! {
                 result = requests => result,
                 result = responses => result,

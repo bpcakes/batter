@@ -1555,7 +1555,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
-| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself, repair identity and bounded busy-table retry, transport loss, quoted identifiers, hidden or cloned-database progress, and retained unlock failures | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online_failures.rs](../runledger/runledger-postgres/tests/online_failures.rs), [online_repair.rs](../runledger/runledger-postgres/tests/online_repair.rs), [online_transport_failures.rs](../runledger/runledger-postgres/tests/online_transport_failures.rs), [online_compatibility.rs](../runledger/runledger-postgres/tests/online_compatibility.rs), [online_identity.rs](../runledger/runledger-postgres/tests/online_identity.rs), [online_hidden_progress.rs](../runledger/runledger-postgres/tests/online_hidden_progress.rs), [online_cleanup.rs](../runledger/runledger-postgres/tests/online_cleanup.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs), [online/repair.rs](../runledger/runledger-postgres/src/migrations/online/repair.rs) |
+| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself, repair identity including an index removed after inspection, bounded busy-table retry, a metadata transaction idle past its bound ending its session, transport loss, quoted identifiers, hidden or cloned-database progress, and retained unlock failures | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online_failures.rs](../runledger/runledger-postgres/tests/online_failures.rs), [online_repair.rs](../runledger/runledger-postgres/tests/online_repair.rs), [online_transport_failures.rs](../runledger/runledger-postgres/tests/online_transport_failures.rs), [online_compatibility.rs](../runledger/runledger-postgres/tests/online_compatibility.rs), [online_identity.rs](../runledger/runledger-postgres/tests/online_identity.rs), [online_hidden_progress.rs](../runledger/runledger-postgres/tests/online_hidden_progress.rs), [online_cleanup.rs](../runledger/runledger-postgres/tests/online_cleanup.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs), [online/repair.rs](../runledger/runledger-postgres/src/migrations/online/repair.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -3139,7 +3139,7 @@ The online-index suite covers the protected migration runner on PostgreSQL
 | Public verifier across a concurrent DROP commit | `cargo test -p runledger-postgres --locked --test online_snapshot` |
 | Concurrent reindex after progress changes to its replacement OID | `cargo test -p runledger-postgres --locked --test online_reindex` |
 | External-preparation history, repair and failed-build context | `cargo test -p runledger-postgres --locked --test online_preparation` |
-| Repair identity under swapped names, busy-table retry, commit uncertainty, rollback failure and cancellation | `cargo test -p runledger-postgres --locked --test online_repair` |
+| Repair identity under swapped or removed names, busy-table retry, session-ending idle metadata bound, commit uncertainty, rollback failure and cancellation | `cargo test -p runledger-postgres --locked --test online_repair` |
 | Retry admission never starting an attempt after the five-second budget | `cargo test -p runledger-postgres --locked --lib migrations::online::repair` |
 | Typed local lock-poll expiry and connection loss during timeout restoration | `cargo test -p runledger-postgres --locked --test online_transport_failures` |
 | Prepared-index adoption, quoted schemas and inherited fully quoted identifiers | `cargo test -p runledger-postgres --locked --test online_compatibility` |
@@ -3237,9 +3237,12 @@ public entrypoints. The baseline deletes that index; repaired behavior preserves
 its OID, definition, uniqueness and migration history. A second swap moves the
 inspected INVALID index aside and leaves another canonical INVALID build under
 the declared name; both entrypoints must refuse it as `ChangedDuringRepair` and
-keep both OIDs and history. The foreign-swap and changed-identity refusals must
-return within four seconds of release, so neither is retried as a lock refusal
-through the five-second budget. Unit tests in `online/repair.rs` drive retry
+keep both OIDs and history. A third case removes the inspected INVALID index
+with `DROP INDEX CONCURRENTLY`; both entrypoints must refuse it as
+`ChangedDuringRepair` rather than surface native `42P01`, create nothing under
+the name and keep history, and the next run builds the index. The foreign-swap,
+changed-identity and removed-identity refusals must return within four seconds
+of release, so none is retried as a lock refusal through the five-second budget. Unit tests in `online/repair.rs` drive retry
 admission on a paused clock: a timely wake admits another attempt, every
 admitted attempt starts before the deadline, and a backoff resumed after it
 returns the last refusal. Controls cover a completed
@@ -3247,12 +3250,22 @@ manual reindex winning that race, refusal after a writer outlasts the
 five-second retry budget followed by recovery, a relay-observed refused attempt
 that the same call retries and completes once the writer releases,
 server-committed removal with its COMMIT acknowledgement withheld, paired repair/
-rollback errors, and cancellation with independent observation of backend exit.
+rollback errors, and cancellation during the metadata transaction. The relay ends
+its connection when the cancelled client closes, even while the `LOCK TABLE`
+request is withheld; the test observes backend exit and requires
+`pg_stat_database` to count the session as abandoned rather than fatal, so the
+one-second idle bound cannot satisfy it in place of cancellation.
+A withheld `LOCK TABLE` request leaves the metadata transaction idle past its
+one-second bound: PostgreSQL ends the session (`25P03` or `25P04`), the runner
+returns `MigrationCleanup` around the build-phase rollback pair with a
+restoration failure, no advisory lock remains, the INVALID index and history
+are unchanged, and the next startup repairs it.
 The relay changes transport only; PostgreSQL executes all statements. Preparation
 also covers occupied non-adoptable valid/INVALID/foreign names and an active build,
 with unchanged history/objects and accurate absent-name reporting. Verification
 outcomes belong to `batter-fnj8.10` and, for the retry and changed-identity
-cases, `batter-fnj8.11`; these do not prove arbitrary remote DDL safety
+cases, `batter-fnj8.11`, and for the removed-identity and idle-session cases,
+`batter-fnj8.13`; these do not prove arbitrary remote DDL safety
 outside the locked removal transaction.
 
 `online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a

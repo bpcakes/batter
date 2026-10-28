@@ -27,8 +27,9 @@ pub enum OnlineIndexProblem {
     /// inspection snapshot follows the same migration-lock rule. Retry after
     /// the build ends.
     BuildInProgress,
-    /// The inspected INVALID index was replaced before repair locked it.
-    /// No replacement is removed; inspect the database before trying again.
+    /// The inspected INVALID index was replaced, removed or renamed away
+    /// before repair locked it. No replacement is removed; inspect the
+    /// database before trying again. A removed index is built by the next run.
     ChangedDuringRepair,
     /// A pending canonical statement lacks `IF NOT EXISTS`, but its matching
     /// index already exists. External tooling would fail, not adopt that index.
