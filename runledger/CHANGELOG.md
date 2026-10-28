@@ -113,8 +113,10 @@ All notable changes to this workspace are documented here.
 - These online-index APIs and diagnostics are additive: existing public paths
   and signatures are unchanged, new variants extend already non-exhaustive
   enums, and `OnlineIndexPreparation`, `OnlineIndexProblem` and the new error
-  types are exported from the crate root. No public hard cut or deprecated shim
-  is needed.
+  types are exported from the crate root. The new `OnlineIndexPhase` and
+  `MigrationTimeoutSetting` enums are themselves non-exhaustive, so a later
+  phase or bounding setting stays additive; match them with a wildcard arm.
+  No public hard cut or deprecated shim is needed.
 - `JobExecution::invocation()` returns an owned, cloneable `JobInvocation` that
   observes one handler invocation's exit. The worker ends it after the handler
   future is destroyed and before the outcome is persisted, whenever the

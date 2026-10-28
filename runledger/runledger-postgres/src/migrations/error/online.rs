@@ -4,6 +4,7 @@ use super::SchemaCompatibilityError;
 
 /// The profile setting that bounded a migration-lock wait.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum MigrationTimeoutSetting {
     /// `statement_timeout`.
     Statement,
@@ -77,6 +78,7 @@ impl std::error::Error for MigrationLockTimeout {}
 
 /// The failed phase of library-owned online index execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum OnlineIndexPhase {
     /// Reading the catalog before deciding whether a build is needed.
     Inspect,
@@ -109,6 +111,7 @@ pub enum OnlineIndexPhase {
 ///         runledger_postgres::OnlineIndexPhase::Configure => {},
 ///         runledger_postgres::OnlineIndexPhase::Build => {},
 ///         runledger_postgres::OnlineIndexPhase::Restore => {},
+///         _ => {},
 ///     }
 ///     // Inspect failure.cause() only in trusted diagnostics.
 /// }
