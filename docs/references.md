@@ -5277,6 +5277,24 @@ migration lock and lock-free settlement.
 Both tests failed with `DefinitionMismatch` before the classifier correction;
 executed validation belongs to `batter-fnj8.7`.
 
+The [`REINDEX` contract](https://www.postgresql.org/docs/18/sql-reindex.html#SQL-REINDEX-CONCURRENTLY)
+exchanges the old and new index names and switches `indisvalid` (step 4) before
+waiting for running queries that might reference the old index (step 5).
+[`WaitForOlderSnapshots`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/indexcmds.c)
+waits only for snapshots listed when that wait starts. A verifier snapshot taken
+after the list, but before the swap commits, therefore retains the original
+index as valid under the declared name while `pg_get_indexdef` already renders
+the renamed original. Isolated PostgreSQL 18 probes on 2026-10-28 showed both
+halves: inside a repeatable-read snapshot a committed rename left `pg_class`
+unchanged while `pg_get_indexdef` returned the `_ccold` header, and a reindex
+held back by a reader stayed in `waiting for readers before marking dead` after
+renaming its original to `_ccold`. `to_regclass` resolved the declared name
+through the current catalog in the same probe, so the shared classifier compares
+that name's current owner with the snapshot's OID and routes a moved name like a
+vanished definition. `online_snapshot.rs` drives a real reindex swap inside the
+public verifier's snapshot; it failed with `DefinitionMismatch` before the
+correction. Executed validation belongs to `batter-fnj8.15`.
+
 PostgreSQL 18.6's
 [`ReindexRelationConcurrently`](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/indexcmds.c)
 changes `PROGRESS_CREATEIDX_INDEX_OID` from the original to its replacement

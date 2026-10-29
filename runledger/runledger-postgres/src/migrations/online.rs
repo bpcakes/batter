@@ -197,6 +197,7 @@ struct DeclaredNameRow {
     valid: Option<bool>,
     building: bool,
     table: Option<String>,
+    named: bool,
     definition: Option<String>,
 }
 
@@ -233,6 +234,8 @@ async fn index_state(
                           ))
                     ) AS building,
                     t.relname::text AS \"table\",
+                    pg_catalog.to_regclass($3) IS NOT DISTINCT FROM c.oid::pg_catalog.regclass
+                        AS named,
                     CASE WHEN i.indexrelid IS NULL THEN NULL
                          ELSE pg_catalog.pg_get_indexdef(i.indexrelid) END AS definition
              FROM pg_catalog.pg_class c
@@ -243,6 +246,7 @@ async fn index_state(
     )
     .bind(database.schema())
     .bind(index.name)
+    .bind(database.relation(index.name))
     .fetch_optional(conn.executor())
     .await?;
     Ok(match row {
@@ -255,18 +259,25 @@ async fn index_state(
             valid: Some(valid),
             building,
             table: Some(table),
+            named,
             definition,
         }) if table == index.table => {
-            // pg_get_indexdef reads current syscache state, while the joined
-            // catalog rows can retain an index already dropped concurrently.
+            // to_regclass and pg_get_indexdef read current syscache state,
+            // while the joined catalog rows can retain an index that was
+            // dropped, renamed away or swapped out by REINDEX CONCURRENTLY
+            // after the snapshot. Its current definition no longer describes
+            // the declared name, so it is never compared as a foreign one; a
+            // visible builder or the migration lock makes it transient.
             // valid: Some and the table guard distinguish it from a foreign
             // non-index relation or an index on another table.
-            let Some(definition) = definition else {
-                return Ok(if MigrationLock::held_by_another_session(conn).await? {
-                    IndexState::Building
-                } else {
-                    IndexState::Missing
-                });
+            let (true, Some(definition)) = (named, definition) else {
+                return Ok(
+                    if building || MigrationLock::held_by_another_session(conn).await? {
+                        IndexState::Building
+                    } else {
+                        IndexState::Missing
+                    },
+                );
             };
             if valid {
                 IndexState::Valid(definition)
@@ -545,7 +556,12 @@ async fn prepare_adoptable_indexes(
         .into_iter()
         .map(|migration| migration.version)
         .collect();
-    let mut report = OnlineIndexPreparation::default();
+    let mut report = OnlineIndexPreparation {
+        built: Vec::new(),
+        already_valid: Vec::new(),
+        deferred: Vec::new(),
+        external_build_blocks: Vec::new(),
+    };
     let mut eligible = Vec::new();
     for index in &ONLINE_INDEXES {
         if applied.contains(&index.migration_version) {

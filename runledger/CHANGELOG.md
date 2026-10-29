@@ -85,10 +85,11 @@ All notable changes to this workspace are documented here.
   databases remain independent. Progress lookup includes database identity, so
   an unrelated database's matching index OID cannot suppress local repair. No
   caller migration lock or new statistics privilege is required. When
-  concurrent removal leaves the verification snapshot's old index row without a
-  live catalog definition, verification reports `BuildInProgress` while another
-  session holds the migration lock and `Missing` otherwise, never a foreign
-  definition.
+  concurrent removal, a rename or the name swap of `REINDEX INDEX CONCURRENTLY`
+  commits inside the verification snapshot, so the declared name no longer
+  resolves to the snapshot's index in the current catalog, verification reports
+  `BuildInProgress` while a builder or another session's migration lock is
+  visible and `Missing` otherwise, never a foreign definition.
 - Online index definition matching preserves predicate literals, accepts
   canonical fully quoted renderings under `quote_all_identifiers=on` without
   changing that setting, and accepts quoted schema names containing SQL

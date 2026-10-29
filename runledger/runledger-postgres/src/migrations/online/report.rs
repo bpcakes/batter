@@ -5,8 +5,9 @@ use std::fmt;
 #[non_exhaustive]
 pub enum OnlineIndexProblem {
     /// The migration is recorded as applied but the index does not exist,
-    /// including when its live definition has disappeared while the inspection
-    /// snapshot retains its old catalog row.
+    /// including when the inspection snapshot retains an index that was
+    /// removed, renamed away or swapped out by `REINDEX CONCURRENTLY` since,
+    /// and no builder or other migration-lock holder is visible.
     Missing,
     /// The index exists but PostgreSQL marks it `INVALID`, typically after a
     /// failed or interrupted concurrent build.
@@ -23,9 +24,10 @@ pub enum OnlineIndexProblem {
     /// index lock, hidden progress is correlated with a build lock on its table,
     /// or another session holds the migration lock while the index is missing
     /// or `INVALID`. Hidden identity conservatively
-    /// defers other indexes on the same table. A definition removed since the
-    /// inspection snapshot follows the same migration-lock rule. Retry after
-    /// the build ends.
+    /// defers other indexes on the same table. An index removed, renamed away
+    /// or swapped out by `REINDEX CONCURRENTLY` since the inspection snapshot
+    /// is reported here while a builder or another session's migration lock is
+    /// visible. Retry after the build ends.
     BuildInProgress,
     /// The inspected INVALID index was replaced, removed or renamed away
     /// before repair locked it. No replacement is removed; inspect the
@@ -66,7 +68,17 @@ impl fmt::Display for OnlineIndexProblem {
 }
 
 /// Outcome of [`crate::prepare_online_indexes_for_external_migrator`].
-#[derive(Debug, Default)]
+///
+/// Only a successful preparation constructs it, so a refused preparation
+/// cannot be turned into an empty report:
+/// ```compile_fail,E0277
+/// # async fn example(db: &runledger_postgres::RunledgerDatabase) {
+/// let report = runledger_postgres::prepare_online_indexes_for_external_migrator(db)
+///     .await
+///     .unwrap_or_default();
+/// # }
+/// ```
+#[derive(Debug)]
 #[must_use = "inspect deferred indexes and external blocking builds before running external tooling"]
 pub struct OnlineIndexPreparation {
     pub(super) built: Vec<&'static str>,

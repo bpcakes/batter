@@ -1,4 +1,5 @@
-//! A concurrent DROP may commit after the verifier takes its catalog snapshot.
+//! A concurrent DROP, or the name swap of a concurrent reindex, may commit
+//! after the verifier takes its catalog snapshot.
 
 use std::{sync::Arc, time::Duration};
 
@@ -26,7 +27,7 @@ struct Fixture {
     verifier: Arc<RunledgerDatabase>,
     role: String,
     gates: PgConnection,
-    invalid_oid: i64,
+    snapshot_oid: i64,
 }
 
 impl Fixture {
@@ -36,8 +37,14 @@ impl Fixture {
             .await
             .expect("canonical schema");
         let invalid_oid = interrupted_index(&harness.pool).await;
+        Self::gated(harness, invalid_oid, false).await
+    }
+
+    /// Pauses the restricted public verifier inside a snapshot that still
+    /// contains the index with `snapshot_oid` and validity `valid`.
+    async fn gated(harness: Harness, snapshot_oid: i64, valid: bool) -> Self {
         let role = format!("snapshot_reader_{}", sqlx::types::Uuid::new_v4().simple());
-        install_gates(&harness.pool, &role, invalid_oid).await;
+        install_gates(&harness.pool, &role, snapshot_oid, valid).await;
         let options = harness.pool.connect_options();
         let profile = PgSessionProfile::new(
             options.get_username(),
@@ -66,7 +73,7 @@ impl Fixture {
             verifier: Arc::new(verifier),
             role,
             gates,
-            invalid_oid,
+            snapshot_oid,
         }
     }
 
@@ -87,7 +94,7 @@ impl Fixture {
                 "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index WHERE indexrelid::bigint = $1)
                         AND pg_catalog.pg_get_indexdef($1::bigint::oid) IS NULL",
             )
-            .bind(self.invalid_oid)
+            .bind(self.snapshot_oid)
             .fetch_one(&self.harness.pool)
             .await
             .expect("independent live catalog observation")
@@ -171,7 +178,7 @@ async fn interrupted_index(pool: &PgPool) -> i64 {
     oid
 }
 
-async fn install_gates(pool: &PgPool, role: &str, invalid_oid: i64) {
+async fn install_gates(pool: &PgPool, role: &str, snapshot_oid: i64, valid: bool) {
     // sql_drop runs after concurrent DROP's waiter phases but before commit.
     // The RLS policy pauses the actual public verifier's history query after
     // its own table locks and snapshot setup; it does not replace that query.
@@ -193,8 +200,8 @@ async fn install_gates(pool: &PgPool, role: &str, invalid_oid: i64) {
              END IF;
              PERFORM pg_catalog.pg_advisory_xact_lock({GATE_CLASS}, {VERIFIER_GATE});
              IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index
-                            WHERE indexrelid = {invalid_oid} AND NOT indisvalid) THEN
-                 RAISE EXCEPTION 'verifier snapshot must retain the interrupted index';
+                            WHERE indexrelid = {snapshot_oid} AND indisvalid = {valid}) THEN
+                 RAISE EXCEPTION 'verifier snapshot must retain the inspected index';
              END IF;
              RETURN true;
          END $$;
@@ -315,4 +322,99 @@ async fn verifier_reports_cooperating_drop_after_it_commits_inside_its_snapshot(
 #[tokio::test]
 async fn verifier_reports_missing_after_manual_drop_commits_inside_its_snapshot() {
     assert_drop_commit_classification(false).await;
+}
+
+async fn reindex_phase(pool: &PgPool, phase: &str) {
+    wait_for("concurrent reindex phase", || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_progress_create_index
+             WHERE datid = (SELECT oid FROM pg_catalog.pg_database
+                            WHERE datname = pg_catalog.current_database())
+               AND command = 'REINDEX CONCURRENTLY' AND phase = $1)",
+        )
+        .bind(phase)
+        .fetch_one(pool)
+        .await
+        .expect("reindex progress")
+    })
+    .await;
+}
+
+async fn named_oid(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT pg_catalog.to_regclass($1)::oid::bigint")
+        .bind(INDEX)
+        .fetch_one(pool)
+        .await
+        .expect("current owner of the declared name")
+}
+
+#[tokio::test]
+async fn verifier_defers_a_reindex_swap_that_commits_inside_its_snapshot() {
+    let harness = Harness::fresh("online_snapshot_swap").await;
+    migrate_profiled(&harness.pool)
+        .await
+        .expect("canonical schema");
+    let original = named_oid(&harness.pool).await;
+    let mut fixture = Fixture::gated(harness, original, true).await;
+    let pool = fixture.harness.pool.clone();
+    let history = sqlx_history(&pool).await;
+    // An older snapshot stops a real reindex before its name swap.
+    let mut older = pool.begin().await.expect("older snapshot");
+    sqlx::raw_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *older)
+        .await
+        .expect("stable older snapshot");
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_queue")
+        .fetch_one(&mut *older)
+        .await
+        .expect("pin a snapshot before reindex validation");
+    let reindex_pool = pool.clone();
+    let reindex = tokio::spawn(async move {
+        sqlx::raw_sql(AssertSqlSafe(format!("REINDEX INDEX CONCURRENTLY {INDEX}")))
+            .execute(&reindex_pool)
+            .await
+    });
+    reindex_phase(&pool, "waiting for old snapshots").await;
+    // The reindex already listed the snapshots it waits for, so the verifier's
+    // later snapshot does not hold back the swap.
+    let database = Arc::clone(&fixture.verifier);
+    let verifier =
+        tokio::spawn(
+            async move { ensure_schema_compatible_after_idempotency_cutover(&database).await },
+        );
+    waiting_at_gate(&pool, VERIFIER_GATE).await;
+    older.rollback().await.expect("release older snapshot");
+    // The verifier's table lock keeps the swapped-out original until it ends.
+    reindex_phase(&pool, "waiting for readers before marking dead").await;
+    assert_ne!(named_oid(&pool).await, original);
+    let renamed: String =
+        sqlx::query_scalar("SELECT relname::text FROM pg_catalog.pg_class WHERE oid::bigint = $1")
+            .bind(original)
+            .fetch_one(&pool)
+            .await
+            .expect("swapped-out original");
+    assert_eq!(renamed, format!("{INDEX}_ccold"));
+    fixture.release(VERIFIER_GATE).await;
+    let result = tokio::time::timeout(Duration::from_secs(20), verifier)
+        .await
+        .expect("verifier completes")
+        .expect("verifier task");
+    tokio::time::timeout(Duration::from_secs(20), reindex)
+        .await
+        .expect("reindex completes after verifier rollback")
+        .expect("reindex task")
+        .expect("reindex succeeds");
+    fixture.remove_gates().await;
+    assert_eq!(sqlx_history(&pool).await, history);
+    verify_profiled(&pool)
+        .await
+        .expect("the replacement verifies once the swap settles");
+    fixture.teardown().await;
+    let SchemaCompatibilityError::OnlineIndex { index, problem } =
+        result.expect_err("the old snapshot cannot certify the swapped index")
+    else {
+        panic!("unexpected verification result")
+    };
+    assert_eq!(index, INDEX);
+    assert_eq!(problem, OnlineIndexProblem::BuildInProgress);
 }
