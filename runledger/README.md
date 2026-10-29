@@ -1553,7 +1553,9 @@ forward migrations:
   snapshots to `job_queue` and `workflow_runs` so keyed enqueue retries compare
   the original request instead of mutable runtime state.
 - `202605220001_enforce_enqueue_request_snapshots` — blocks new keyed rows
-  without snapshots; startup validation rejects pre-cutover legacy rows.
+  without snapshots; startup validation rejects pre-cutover legacy rows. Its
+  two helper indexes on `job_queue` and `workflow_runs` are built online by
+  the protected runner; see [online index builds](#online-index-builds).
 - `202606030001_workflow_results` — adds job/step output storage and workflow
   result handles. Absent result steps are omitted from canonical workflow
   idempotency snapshots so existing no-result snapshots keep matching.
@@ -1583,7 +1585,8 @@ forward migrations:
   selected the committed schedule.
 - `202607280004_job_execution_resources` — adds resource keys to direct jobs
   and workflow steps, durable lease-fenced resource claims, claim-order indexes,
-  and database triggers that enforce and release exact ownership.
+  and database triggers that enforce and release exact ownership. The
+  protected runner builds its `job_queue` claim-order index online.
 - `202607280005_workflow_recoveries` — identifies append mutation records and
   adds immutable workflow-recovery lineage plus request idempotency.
 - `202608180001_job_enqueue_intents` — adds durable, strictly idempotent
@@ -1601,8 +1604,9 @@ forward migrations:
   compatibility fence so pre-contract binaries refuse the destructive schema.
 - `202609050001_job_summary_pagination` — adds scope/creation/ID and creation/ID
   indexes for compact cursor pages. This additive migration is outside the
-  custom compatibility fence. Its ordinary index builds block queue writes
-  until the migration commits; schedule it for an appropriate deployment window.
+  custom compatibility fence. The protected runner builds both indexes
+  online; a raw migrator's ordinary builds block queue writes until the
+  migration commits.
 
 Every forward migration from
 `202607190001_job_replays_and_continuation_metrics` through
@@ -1611,6 +1615,172 @@ Every forward migration from
 `runledger_migration_history` compatibility fence. This lets released filtered
 startup helpers coexist during the documented expand-first windows; it does
 not make a raw migrator from an older crate tolerate unknown SQLx history rows.
+
+### Online index builds
+
+Five bundled indexes are declared online because an ordinary `CREATE INDEX`
+holds a `SHARE` lock on a populated `job_queue` or `workflow_runs` table for
+the whole build and queues every writer behind it:
+`idx_job_queue_missing_enqueue_request_snapshot` and
+`idx_workflow_runs_missing_enqueue_request_snapshot` (`202605220001`),
+`idx_job_queue_execution_resource_claim_order` (`202607280004`), and
+`idx_job_queue_scope_created_id` and `idx_job_queue_created_id`
+(`202609050001`). The migration files are unchanged and keep their SQLx
+checksums.
+
+`migrate_after_idempotency_cutover` records each such migration under its
+canonical checksum, commits the migration's remaining statements first, then
+builds the declared indexes with `CREATE INDEX CONCURRENTLY` outside any
+transaction while the application keeps writing. Each build runs with the
+pool profile's statement, lock and transaction timeouts lifted, because a
+concurrent build waits for in-flight writers and older snapshots; a long
+transaction delays the build rather than cancelling it. The profile's values
+are restored after each build, so the cutover validation that follows keeps
+its bounds. While a build waits for writers or older snapshots, neither
+`migrate_after_idempotency_cutover` nor
+`prepare_online_indexes_for_external_migrator` has a library-owned time bound:
+the caller's deadline or cancellation is the only finite bound. Batter's
+protected startup is the canonical bounded path, running schema initialization
+under its startup allowance; a native caller should wrap the call in its own
+deadline. The build also sets `client_connection_check_interval` to one
+second, preserving a tighter positive value and restoring the original setting
+afterward. Dropping the runner closes its session; PostgreSQL can detect that
+closed socket while blocked on a writer. A dropped future is not proof of
+backend death, and network failure or runtime death can delay detection.
+Build errors retain their index, phase and acknowledged migration version in
+`SchemaCompatibilityError::OnlineIndexExecution`; secondary restoration errors
+remain inspectable. When the operation and advisory-lock release both fail,
+`SchemaCompatibilityError::MigrationCleanup` retains the original error through
+`operation_error()` and the independent unlock cause through `unlock_error()`.
+Direct formatting redacts both; trusted accessors and source-chain reporters
+can expose native details. Connection retirement stays armed, without proving
+remote termination. No error authorizes automatic replay. While another session
+in the same database is still building the index, verification, protected migration
+and pending-index preparation report `OnlineIndexProblem::BuildInProgress`;
+retry once that build ends. Concurrent reindex reports its replacement index's
+OID while the original is still invalid. Runledger recognizes that build through
+the backend's granted lock on the original index, so it does not queue a competing
+drop and rebuild. Visible reindex of another index on the same table does not
+qualify. If statistics privileges hide the index identity,
+Runledger correlates the visible builder PID with its table lock. This can
+conservatively defer another index on that same table, without treating hidden
+builds on unrelated tables or databases as evidence. Manual builders need no
+Runledger advisory lock or extra statistics privileges. Independently, a missing
+or canonical `INVALID` index is reported as `BuildInProgress` while another
+session holds the migration lock, including repair phases with no CREATE
+progress row. This also covers an index removed, renamed away or swapped out
+by `REINDEX CONCURRENTLY` after verification takes its catalog snapshot: it is
+reported as `BuildInProgress` while a builder or another session's migration
+lock is visible and as `Missing` otherwise, never as a foreign definition.
+Once that lock is released, an interrupted
+index with no active build is reported as missing or `Invalid`. A build that fails, or a
+process that dies between the recorded migration and the build, leaves the
+index missing or `INVALID`; the next protected startup repairs it,
+and `ensure_schema_compatible_after_idempotency_cutover` reports it as
+`SchemaCompatibilityError::OnlineIndex` with an `OnlineIndexProblem` instead
+of starting without it. INVALID removal uses a short metadata transaction: it locks the actual index,
+restores its original name within that transaction, locks its table immediately,
+and rechecks OID and definition before ordinary DROP. No temporary rename is
+committed. The table lock uses `NOWAIT`, so it never queues behind readers,
+claimers, writers or autovacuum. A refused attempt (native `55P03`) rolls back
+unchanged and the whole transaction, including its identity checks, is retried
+with backoff for up to five seconds; a table that stays busy throughout returns
+that `55P03` without deletion. Index-lock waits are capped at 100 ms per attempt; metadata
+statement, transaction (where supported), and idle-transaction timeouts are one
+second. They travel in the same message as `BEGIN`, so the server never holds
+the transaction idle without them while the build session's profile timeouts
+are lifted. Exceeding the transaction or idle-transaction bound makes PostgreSQL end
+the session rather than cancel a statement: the metadata transaction rolls back,
+and its table lock and the session's migration lock are released. Startup then
+returns the native termination error with the rollback, restoration and unlock
+failures as `MigrationCleanup`, and the next startup retries the repair. These
+server settings are not network/runtime-death guarantees. The
+exclusive table lock covers only metadata removal; the potentially long
+`CREATE INDEX CONCURRENTLY` starts after commit. If that table is never idle
+for an instant, for example under continuous traffic or a long autovacuum,
+recover by running `DROP INDEX CONCURRENTLY` on the `INVALID` index, which does
+not block queue writes, then restarting: the next protected startup builds the
+now-missing index concurrently. Commit acknowledgement loss is
+`OnlineIndexRepairCommitUnconfirmed` inside the execution cause and prevents a
+subsequent build; `OnlineIndexRollback` retains an original refusal plus rollback
+failure. Neither is retried. A changed INVALID OID, or an INVALID index removed or
+renamed away after inspection, is refused at once as `ChangedDuringRepair`. It is
+never a top-level `OnlineIndex` error: it is the execution cause or, when that
+refusal's rollback also fails, the `operation_error()` of the
+`OnlineIndexRollback` cause, and a failed unlock wraps the execution in
+`MigrationCleanup`. The next startup builds a removed one. A completed canonical reindex is kept.
+Foreign replacements are rolled back unchanged.
+A valid prebuilt index with the bundled definition is
+adopted; a differently defined index under a declared name is refused before
+the migration is recorded. Definition matching is strict, including physical
+storage options. Quoted authoritative schemas, including SQL keywords and
+identifiers containing ` USING `, retain the same canonical match. Even an
+index predicate containing schema-like text in a literal remains distinct;
+the matcher never removes schema prefixes from catalog text. The declared
+ordinary and fully quoted renderings also support `quote_all_identifiers=on`
+without changing the session setting. An
+explicit default `fillfactor = 90` is refused because
+`pg_get_indexdef` renders a `WITH` clause absent from the bundle. For that case,
+`ALTER INDEX idx_job_queue_created_id RESET (fillfactor)` restores the implicit
+default without replacing the index. Review other mismatches against the
+canonical definition; verification never modifies them.
+
+Deployments whose own tooling applies the canonical SQL can call
+`prepare_online_indexes_for_external_migrator` first. Under the SQLx migration
+lock it concurrently builds the pending indexes whose canonical statement uses
+`CREATE INDEX IF NOT EXISTS`, which is only the `202605220001` pair; the
+canonical statements then adopt them. An adoptable index is deferred while
+an earlier bundled migration is still unapplied; on a populated database apply
+the migrations through the preceding version, then prepare again. A recorded
+migration with a foreign checksum or a failed run, or a newer incompatible
+`runledger_migration_history` version, is refused before any build, as the
+protected runner refuses it. Its report also
+names absent pending indexes an external migrator still builds with a blocking
+statement; only the protected runner builds those online. For non-adoptable
+canonical statements, an existing matching valid or INVALID name instead returns
+`ExternalCannotAdopt`: the external statement would fail with a duplicate name.
+Foreign and active names retain `DefinitionMismatch` and `BuildInProgress`.
+These checks precede preparation builds and leave occupied objects unchanged. Run the external
+tooling only after the call returned `Ok` and its report has been inspected.
+`Ok` alone does not mean every index is prepared. On populated tables, stop
+when `deferred()` is nonempty, apply only the prerequisite migration prefix,
+and prepare again before crossing the index migration. When
+`external_build_blocks()` is nonempty, use the protected runner only when every
+pending migration is approved, or an application-approved deployment window.
+Empty lists remove index-preparation blockers; they do not approve a staged
+contract migration before old writers drain. These are caller obligations for
+external tooling, which the library does not execute. A failed or cancelled build can leave an `INVALID` index,
+which a rerun drops and rebuilds while the migration is pending. Once the
+canonical statement has adopted an `INVALID` index and the migration is
+recorded, preparation no longer touches it and startup verification refuses
+to start; drop it with `DROP INDEX CONCURRENTLY` and rebuild it with the
+migration file's statement plus `CONCURRENTLY`. Only where every other
+pending bundled migration may also be applied now, running
+`migrate_after_idempotency_cutover` instead drops and rebuilds the index
+itself, because it applies every pending migration, including a staged
+contract migration.
+
+Both Runledger entry points wait for the SQLx migration lock by polling
+`pg_try_advisory_lock`, so a second Runledger starter holds no snapshot that
+the holder's concurrent build must wait for. The smallest nonzero statement,
+lock or transaction timeout bounds this wait; local expiry returns
+`SchemaCompatibilityError::MigrationLockTimeout` with a `MigrationTimeoutSetting`
+and duration, distinct from a native database or connection failure. The polling
+budget bounds outstanding response I/O locally, and a successful response
+observed after expiry cannot grant admission. Socket retirement does not prove
+remote termination across network failure. All zero
+values leave the wait unbounded. A migrator or older binary that
+waits with blocking `pg_advisory_lock` does hold one, and PostgreSQL aborts
+either that waiter or the build with a deadlock, leaving the index `INVALID`.
+Do not start such tooling while a Runledger process is migrating or preparing,
+and do not run preparation while one is already waiting for the lock.
+
+Other statements keep their ordinary locks: column additions take a brief
+`ACCESS EXCLUSIVE` lock, and the validating `CHECK` constraints in
+`202607280001`, `202607280003` and `202607280004` plus the same-transaction
+`VALIDATE CONSTRAINT` statements in `202606030001` scan their tables under
+`ACCESS EXCLUSIVE`. Size a deployment window for those on populated tables.
+Build durations on populated tables have not been measured.
 
 The workflow-step/job cutover is deliberately staged for rolling deployments:
 

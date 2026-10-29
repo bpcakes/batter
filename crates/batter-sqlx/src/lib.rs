@@ -407,9 +407,64 @@ impl PgLease {
         migrator: &sqlx::migrate::Migrator,
         manifest: &managed::ManagedObjectManifest,
     ) -> Result<managed::AppliedManagedObjects, managed::ManagedApplyError> {
-        let operation: SendFuture<'_, _> =
-            Box::pin(managed::migrate_and_apply(self, migrator, manifest));
+        let operation: SendFuture<'_, _> = Box::pin(managed::migrate_and_apply(
+            self,
+            migrator,
+            manifest,
+            async |_, _| Ok(()),
+            true,
+        ));
         operation.await
+    }
+
+    /// Migrate, apply the complete managed set, then run application SQL before
+    /// the same transaction commits. Use this when an existing restricted caller
+    /// needs ownership or grants on a newly managed private routine.
+    ///
+    /// The callback receives only [`PgScopedSql`]. Its output is provisional;
+    /// errors abort the managed transaction while retaining already committed
+    /// migrations. Transaction escape is detected, not undone: explicit `COMMIT`
+    /// can publish effects and is reported as unconfirmed, never as rollback.
+    /// Managed definitions, ledger contents and the declared PUBLIC execution
+    /// policy are checked after the callback. Ownership and exact grants remain
+    /// application policy. No automatic retry is authorized by any outcome.
+    ///
+    /// Bound the entire future with the same operation context used to acquire
+    /// this lease. Cancellation retires it; it cannot prove remote rollback or
+    /// rule out an in-flight commit. This form retires even after success, since
+    /// arbitrary application SQL may change session state. No await follows an
+    /// acknowledged commit.
+    ///
+    /// ```no_run
+    /// use batter_sqlx::{PgLease, managed::ManagedObjectManifest};
+    /// # async fn setup(pool: &sqlx::PgPool, ctx: &batter_core::operation::OperationContext,
+    /// # migrator: &sqlx::migrate::Migrator, objects: &ManagedObjectManifest)
+    /// # -> Result<(), Box<dyn std::error::Error>> {
+    /// let lease = PgLease::acquire(pool, ctx).await?;
+    /// let applied = ctx.run("schema.apply", |_| lease.migrate_and_apply_with(
+    ///     migrator, objects, async |sql| {
+    ///         sqlx::query("GRANT EXECUTE ON FUNCTION app.private_total() TO report_owner")
+    ///             .execute(sql.executor()).await?;
+    ///         Ok::<_, sqlx::Error>(())
+    ///     },
+    /// )).await?;
+    /// println!("installed {}", applied.digest());
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    /// [`managed::ManagedApplyWithError`] retains application refusals, native
+    /// apply errors and continuity failures separately, with redacted formatting.
+    pub async fn migrate_and_apply_with<E>(
+        self,
+        migrator: &sqlx::migrate::Migrator,
+        manifest: &managed::ManagedObjectManifest,
+        work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<(), E>,
+    ) -> Result<managed::AppliedManagedObjects, managed::ManagedApplyWithError<E>> {
+        Box::pin(managed::application::migrate_and_apply_with(
+            self, migrator, manifest, work,
+        ))
+        .await
     }
 
     /// Native SQLx pool return after acknowledged successful completion.

@@ -22,6 +22,10 @@ server versions with live evidence; other PostgreSQL majors remain unverified.
 Batter's own SQLx fixture provisioning remains external and separate.
 
 `migrations/` is the canonical native schema source. Never rewrite applied SQL.
+A migration that builds an index on an existing, possibly populated table
+must declare it in `runledger-postgres/src/migrations/online.rs` so the
+protected runner builds it with `CREATE INDEX CONCURRENTLY`; spell the
+statement with `IF NOT EXISTS` so external tooling can adopt a prebuilt index.
 Keep `runledger-postgres/migrations/` and `runledger-test-support/migrations/`
 identical. Keep canonical `.sqlx/` synchronized with each checked-query package's
 copy. Do not delete tests or bypass container lifecycle checks to make migration

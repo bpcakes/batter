@@ -616,6 +616,16 @@ their conservative potential SET authority remains separate from positive proof.
 
 ### SQLx: managed routines and triggers
 
+When private dependencies need application grants at publication, choose
+`PgLease::migrate_and_apply_with` and put the existing application owner policy in
+its `PgScopedSql` callback. Do not split apply and grants across transactions.
+The callback returns `Result<(), E>`; only acknowledged commit returns a manifest
+receipt. `ManagedApplyWithError` distinguishes native apply, application refusal,
+unconfirmed continuity (retaining any refusal), and managed-state mutation.
+Definitions/ledger/PUBLIC policy are rechecked after deferred callback work.
+No raw resource, application grant inventory or apply-only entrypoint is exposed.
+
+
 Keep routine, trigger and constraint trigger bodies as source files the
 application edits in place, not as copies restated in migrations. Declare them
 in one `batter_sqlx::managed::ManagedObjectManifest`: each `ManagedObject` is

@@ -27,6 +27,16 @@ contracts, capability facts and validation history.
   message, beside `PersistedProgress` and the contained exit-hook panics. No
   retry, continuation, dead-letter or lease behaviour is simulated. The
   adapter's `test-support` feature now also selects `serde_json` and `uuid`.
+
+- Add `PgLease::migrate_and_apply_with` (`batter-aouh`) for scoped application SQL
+  after managed definitions and before the same transaction commits. Ownership
+  and grants can publish with changed callers; managed definitions, ledger
+  evidence, transaction continuity and revoked PUBLIC execution are rechecked.
+  Refusals roll back the uncommitted apply and grants; already committed
+  migrations and unconfirmed disposition remain distinct. The existing
+  `migrate_and_apply` API and its no-application path are unchanged. See
+  [ADR-013](docs/adr/013-managed-database-objects.md).
+
 - Breaking: browser cookies are presented only where the route group's
   browser policy accepts ambient credentials (`batter-52s3`,
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#browser-credential-gate-assessment-batter-52s3)).

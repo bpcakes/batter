@@ -101,3 +101,32 @@ impl ScopeSavepoint {
         Ok(())
     }
 }
+
+/// Revalidate the same transaction after arbitrary scoped SQL.
+pub(crate) async fn validate_transaction(
+    connection: &mut PgConnection,
+    expected_xid: &str,
+    profile: Option<&crate::PgSessionProfile>,
+) -> Result<(), PgTransactionError> {
+    let (xid, isolation, read_only) = if let Some(profile) = profile {
+        profile.verify_transaction(connection).await?
+    } else {
+        sqlx::query_as::<_, (Option<String>, String, String)>(
+            "SELECT pg_catalog.pg_current_xact_id_if_assigned()::text, \
+             pg_catalog.current_setting('transaction_isolation'), \
+             pg_catalog.current_setting('transaction_read_only')",
+        )
+        .fetch_one(connection)
+        .await?
+    };
+    if xid.as_deref() != Some(expected_xid) {
+        return Err(PgTransactionError::TransactionBoundaryLost);
+    }
+    if isolation != "read committed" {
+        return Err(PgTransactionError::TransactionIsolationChanged);
+    }
+    if read_only != "off" {
+        return Err(PgTransactionError::TransactionAccessChanged);
+    }
+    Ok(())
+}

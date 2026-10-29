@@ -225,28 +225,11 @@ impl PgAtomicTransaction {
     }
 
     async fn validate(&mut self) -> Result<(), PgTransactionError> {
-        let (xid, isolation, read_only) = if let Some(profile) = &self.profile {
-            profile
-                .verify_transaction(self.lease.connection_mut())
-                .await?
-        } else {
-            sqlx::query_as::<_, (Option<String>, String, String)>(
-                "SELECT pg_catalog.pg_current_xact_id_if_assigned()::text, \
-             pg_catalog.current_setting('transaction_isolation'), \
-             pg_catalog.current_setting('transaction_read_only')",
-            )
-            .fetch_one(self.lease.connection_mut())
-            .await?
-        };
-        if xid.as_deref() != Some(self.xid.as_str()) {
-            return Err(PgTransactionError::TransactionBoundaryLost);
-        }
-        if isolation != "read committed" {
-            return Err(PgTransactionError::TransactionIsolationChanged);
-        }
-        if read_only != "off" {
-            return Err(PgTransactionError::TransactionAccessChanged);
-        }
-        Ok(())
+        scope::validate_transaction(
+            self.lease.connection_mut(),
+            &self.xid,
+            self.profile.as_ref(),
+        )
+        .await
     }
 }
