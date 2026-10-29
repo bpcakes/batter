@@ -1310,7 +1310,10 @@ all read one instant set when the future is first polled, dispatches through
 handler is never asked to run without services and typed and legacy handlers
 run unchanged, contains a handler panic at the poll boundary, including one a
 hand-written dispatch raises before returning its future, because the dispatch
-call runs inside that boundary as it does in the worker, destroys the
+call runs inside that boundary as it does in the worker, releases every caught
+payload as `JobInvocationHookPanics` releases notification payloads, retaining
+an opaque `panic_any` payload instead of running a destructor that could itself
+panic, destroys the
 handler future and only then ends the owner, returning its hook-panic report
 instead of dropping it. Its locals are declared in the worker's order, so
 destroying the facility's own future, the test's equivalent of a task abort,
@@ -1364,12 +1367,16 @@ invocation ends on both of those exits, a budget that starts at the first poll
 after delays following declaration and construction, with `remaining_budget()`
 reading the same deadline, acceptance at and one nanosecond before the
 deadline for results and at it for panics, contained panics including one a
-hand-written dispatch raises before returning its future, retained hook
+hand-written dispatch raises before returning its future, opaque payloads with
+panicking destructors retained before and at the deadline, retained hook
 panics, progress merge and rejection, declared checkpoints, budget validation
 and typed, legacy and type-erased dispatch; the `with_checkpoint` doctest shows
 a declared checkpoint retained when nothing is committed; a compile-fail
 rustdoc rejects reaching the declaration's fields;
 `scripts/check_facade_features.py` proves facade reachability and identity.
+The exit is not total in one recorded case: a destructor that panics while the
+drive destroys the handler future is not contained, as it is not in the worker,
+whose unwind boundary also covers polling only; a should-panic test pins this.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
 ## Recurring example review defects

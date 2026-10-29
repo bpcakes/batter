@@ -270,7 +270,12 @@ impl HandlerInvocation {
     /// preempts a handler that never yields: the drive completes only once the
     /// handler next returns or yields. The dispatch call itself runs inside the
     /// unwind boundary, as in the worker, so a handler that panics while
-    /// constructing its future is [`HandlerExit::Panicked`] too.
+    /// constructing its future is [`HandlerExit::Panicked`] too. Every caught
+    /// payload, including a late one, is released as [`JobInvocationHookPanics`]
+    /// releases notification payloads, so an opaque payload's destructor never
+    /// runs inside the drive. As in the worker, whose unwind boundary also covers
+    /// polling only, a destructor that panics while the drive destroys the
+    /// handler future is not contained: that panic reaches the caller.
     /// Destroying the returned future before it completes ends the invocation
     /// exactly as a worker task abort does: the handler future is dropped
     /// first, so work awaited inside it stops without observing cancellation,
@@ -300,8 +305,17 @@ impl HandlerInvocation {
                 // timeout polled first.
                 Ok(observed) if Instant::now() < services.deadline => match observed {
                     Ok(returned) => HandlerExit::Returned(returned),
-                    Err(payload) => HandlerExit::Panicked(panic_message(&*payload)),
+                    Err(payload) => {
+                        let message = panic_message(&*payload);
+                        release_panic_payload(payload);
+                        HandlerExit::Panicked(message)
+                    }
                 },
+                // A late panic is a timeout; its payload is released the same way.
+                Ok(Err(payload)) => {
+                    release_panic_payload(payload);
+                    HandlerExit::TimedOut
+                }
                 _ => HandlerExit::TimedOut,
             }
         };
@@ -344,7 +358,10 @@ pub enum HandlerExit {
     /// future was destroyed; the worker records `job.timeout_exceeded`.
     TimedOut,
     /// The handler panicked before the deadline, with this message. The worker
-    /// records `job.handler_panic`.
+    /// records `job.handler_panic`. A payload other than a string is reported
+    /// as `non-string panic payload`, and its allocation is retained rather
+    /// than dropped, as [`JobInvocationHookPanics`] retains opaque payloads:
+    /// its destructor could itself panic.
     Panicked(String),
 }
 
@@ -442,4 +459,14 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
         return (*message).to_owned();
     }
     "non-string panic payload".to_owned()
+}
+
+/// Release a caught handler panic as [`JobInvocationHookPanics`] releases
+/// notification panics: drop a string payload and retain any other allocation,
+/// because an opaque `panic_any` payload's destructor can itself panic and must
+/// not run inside the drive.
+fn release_panic_payload(payload: Box<dyn Any + Send>) {
+    if !payload.is::<String>() && !payload.is::<&'static str>() {
+        std::mem::forget(payload);
+    }
 }

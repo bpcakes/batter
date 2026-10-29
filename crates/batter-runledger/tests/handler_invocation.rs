@@ -555,3 +555,97 @@ async fn a_panic_while_dispatching_is_contained_as_the_worker_contains_it() {
     );
     assert!(run.exit_hook_panics.is_empty());
 }
+
+/// A `panic_any` payload whose destructor panics again; the drive must never run it.
+struct PanicsWhenDropped;
+
+impl Drop for PanicsWhenDropped {
+    fn drop(&mut self) {
+        panic!("probe payload destructor ran");
+    }
+}
+
+/// Panics with an opaque payload, at once or at the native deadline.
+struct OpaquePanic {
+    at_deadline: bool,
+}
+
+#[async_trait]
+impl JobExecutionHandler for OpaquePanic {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new("probe.opaque_panic")
+    }
+
+    async fn execute(
+        &self,
+        execution: JobExecution<'_>,
+        _: Value,
+    ) -> Result<JobCompletion, JobFailure> {
+        if self.at_deadline {
+            sleep_until(Instant::from_std(execution.deadline())).await;
+        }
+        std::panic::panic_any(PanicsWhenDropped)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn opaque_panic_payloads_are_retained_instead_of_dropped() {
+    let early = HandlerInvocation::new(BUDGET)
+        .expect("budget")
+        .execute(
+            &OpaquePanic { at_deadline: false }.into_job_handler(),
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        early.exit,
+        HandlerExit::Panicked("non-string panic payload".to_owned())
+    );
+    assert!(early.exit_hook_panics.is_empty());
+    let late = HandlerInvocation::new(BUDGET)
+        .expect("budget")
+        .execute(
+            &OpaquePanic { at_deadline: true }.into_job_handler(),
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        late.exit,
+        HandlerExit::TimedOut,
+        "a late opaque panic is a timeout, and its payload is retained too"
+    );
+}
+
+/// Panics in its destructor, run when the parked handler future is destroyed.
+struct PanicsWhenDestroyed;
+
+impl Drop for PanicsWhenDestroyed {
+    fn drop(&mut self) {
+        panic!("probe handler destructor panicked");
+    }
+}
+
+struct ParksHoldingAPanickingGuard;
+
+#[async_trait]
+impl JobExecutionHandler for ParksHoldingAPanickingGuard {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new("probe.destructor_panic")
+    }
+
+    async fn execute(&self, _: JobExecution<'_>, _: Value) -> Result<JobCompletion, JobFailure> {
+        let _guard = PanicsWhenDestroyed;
+        std::future::pending().await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "probe handler destructor panicked")]
+async fn a_destructor_panic_while_destroying_the_handler_is_not_contained() {
+    // As in the worker, whose unwind boundary also covers polling only, the
+    // destructors the drive runs when the budget elapses are not contained.
+    let _ = HandlerInvocation::new(BUDGET)
+        .expect("budget")
+        .execute(&ParksHoldingAPanickingGuard.into_job_handler(), json!({}))
+        .await;
+}

@@ -24,7 +24,10 @@ contracts, capability facts and validation history.
   invocation ends, on every exit and when the future itself is destroyed. The
   run's exhaustive `HandlerExit` is the handler's own result when observed
   strictly before the deadline, `TimedOut` otherwise, or `Panicked` with the
-  message, beside `PersistedProgress` and the contained exit-hook panics. No
+  message, beside `PersistedProgress` and the contained exit-hook panics. Panics
+  are caught around dispatch as well as polling, and an opaque `panic_any`
+  payload is retained rather than dropped; as in the worker, a destructor that
+  panics while the drive destroys the handler future is not contained. No
   retry, continuation, dead-letter or lease behaviour is simulated. The
   adapter's `test-support` feature now also selects `serde_json` and `uuid`.
 
