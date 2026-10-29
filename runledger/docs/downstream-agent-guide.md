@@ -729,8 +729,13 @@ refused attempts are retried for up to five seconds, then startup fails with
 native `55P03` inside `OnlineIndexExecution` and leaves the index in place. If
 traffic or autovacuum never leaves that instant, run `DROP INDEX CONCURRENTLY`
 on the `INVALID` index and restart; the protected runner then builds the
-missing index concurrently. A build waiting for a long writer has no
-library-owned time bound; bound a native call with your own deadline, as
+missing index concurrently. The runner records each migration before its
+build, so an interrupted build leaves a recorded migration with a missing or
+`INVALID` index that earlier releases and a raw `MIGRATOR.run` neither repair
+nor report. Before rolling back below the first release with online builds,
+confirm that `ensure_schema_compatible_after_idempotency_cutover` passes, or
+let a protected startup of the current release repair the index first. A build
+waiting for a long writer has no library-owned time bound; bound a native call with your own deadline, as
 Batter's protected startup does with its startup allowance. Tooling
 that applies the canonical SQL itself calls
 `prepare_online_indexes_for_external_migrator` first and still blocks on the

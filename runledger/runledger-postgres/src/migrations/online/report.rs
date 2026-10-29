@@ -32,6 +32,42 @@ pub enum OnlineIndexProblem {
     /// The inspected INVALID index was replaced, removed or renamed away
     /// before repair locked it. No replacement is removed; inspect the
     /// database before trying again. A removed index is built by the next run.
+    ///
+    /// Repair runs inside an online build, so this problem is never returned at
+    /// top level. It is the
+    /// [`OnlineIndexExecutionError::cause`](crate::OnlineIndexExecutionError::cause)
+    /// of [`SchemaCompatibilityError::OnlineIndexExecution`](crate::SchemaCompatibilityError::OnlineIndexExecution)
+    /// or, when rolling back the refused repair also fails, the
+    /// [`OnlineIndexRollbackError::operation_error`](crate::OnlineIndexRollbackError::operation_error)
+    /// of that cause. When releasing the migration lock also fails, the
+    /// execution error is itself the
+    /// [`MigrationCleanupError::operation_error`](crate::MigrationCleanupError::operation_error)
+    /// of [`SchemaCompatibilityError::MigrationCleanup`](crate::SchemaCompatibilityError::MigrationCleanup).
+    ///
+    /// ```rust
+    /// use runledger_postgres::{OnlineIndexProblem, SchemaCompatibilityError};
+    /// fn changed_during_repair(error: &SchemaCompatibilityError) -> Option<&'static str> {
+    ///     let error = match error {
+    ///         SchemaCompatibilityError::MigrationCleanup(cleanup) => cleanup.operation_error(),
+    ///         error => error,
+    ///     };
+    ///     let SchemaCompatibilityError::OnlineIndexExecution(execution) = error else {
+    ///         return None;
+    ///     };
+    ///     let cause = match execution.cause() {
+    ///         SchemaCompatibilityError::OnlineIndexRollback(pair) => pair.operation_error(),
+    ///         cause => cause,
+    ///     };
+    ///     match cause {
+    ///         SchemaCompatibilityError::OnlineIndex {
+    ///             index,
+    ///             problem: OnlineIndexProblem::ChangedDuringRepair,
+    ///         } => Some(*index),
+    ///         _ => None,
+    ///     }
+    /// }
+    /// # let _ = changed_during_repair;
+    /// ```
     ChangedDuringRepair,
     /// A pending canonical statement lacks `IF NOT EXISTS`, but its matching
     /// index already exists. External tooling would fail, not adopt that index.

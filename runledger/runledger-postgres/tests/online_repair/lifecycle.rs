@@ -262,49 +262,32 @@ async fn completed_manual_reindex_is_adopted_without_another_drop() {
     }
 }
 
-/// A metadata transaction left idle past its one-second bound, here by a
-/// withheld `LOCK TABLE` request, makes PostgreSQL end the whole session. Its
-/// table and migration locks go with it; every failure stays retained, and the
-/// INVALID index is left for the next startup to repair.
+/// A metadata transaction left idle past its one-second bound makes PostgreSQL
+/// end the whole session. Its table and migration locks go with it; every
+/// failure stays retained, and the INVALID index is left for the next startup
+/// to repair. The withheld `LOCK TABLE` request stalls a transaction that
+/// holds the actual index lock. The request withheld right after BEGIN stalls
+/// it before any later statement could install a bound, while the build
+/// session's profile timeouts are lifted.
 #[tokio::test]
 async fn idle_metadata_repair_ends_its_session_and_releases_the_migration_lock() {
+    for fault in [Fault::HoldRepairTableLock, Fault::HoldAfterRepairBegin] {
+        idle_metadata_repair_ends_its_session(fault).await;
+    }
+}
+
+async fn idle_metadata_repair_ends_its_session(fault: Fault) {
     let harness = Harness::fresh("online_repair_idle").await;
     let index = invalid_index(&harness.pool, false).await;
     let before = index_catalog(&harness.pool).await;
     let history = sqlx_history(&harness.pool).await;
-    let mut relay = Relay::start(&harness.pool.connect_options(), Fault::HoldRepairTableLock).await;
+    let mut relay = Relay::start(&harness.pool.connect_options(), fault).await;
     let database = relayed_database(&harness.pool, &relay);
     let error = tokio::time::timeout(Duration::from_secs(10), run(&database, false))
         .await
         .expect("the server ends the idle session")
         .expect_err("terminated repair");
-    let SchemaCompatibilityError::MigrationCleanup(cleanup) = &error else {
-        panic!("unlock failure retained: {error}")
-    };
-    assert!(
-        matches!(
-            cleanup.unlock_error(),
-            sqlx::migrate::MigrateError::Execute(sqlx::Error::Io(_))
-        ),
-        "{}",
-        cleanup.unlock_error()
-    );
-    let failure = execution(&error);
-    assert!(failure.restoration_error().is_some());
-    let SchemaCompatibilityError::OnlineIndexRollback(pair) = failure.cause() else {
-        panic!(
-            "termination and rollback failure retained: {}",
-            failure.cause()
-        )
-    };
-    let SchemaCompatibilityError::Query(cause) = pair.operation_error() else {
-        panic!("native termination: {}", pair.operation_error())
-    };
-    let code = cause.as_database_error().and_then(|e| e.code());
-    assert!(
-        matches!(code.as_deref(), Some("25P03" | "25P04")),
-        "idle-transaction or transaction timeout: {code:?}"
-    );
+    assert_server_ended_session(&error);
     database.pool().close().await;
     relay.finish().await;
     wait_for("the ended session releases the migration lock", || async {
@@ -323,4 +306,36 @@ async fn idle_metadata_repair_ends_its_session_and_releases_the_migration_lock()
     assert!(index_catalog(&harness.pool).await[index].1);
     restarted.pool().close().await;
     harness.teardown().await;
+}
+
+/// The server's idle or transaction bound, not the client, ended the session,
+/// and the termination, rollback, restoration and unlock failures are retained.
+fn assert_server_ended_session(error: &SchemaCompatibilityError) {
+    let SchemaCompatibilityError::MigrationCleanup(cleanup) = error else {
+        panic!("unlock failure retained: {error}")
+    };
+    assert!(
+        matches!(
+            cleanup.unlock_error(),
+            sqlx::migrate::MigrateError::Execute(sqlx::Error::Io(_))
+        ),
+        "{}",
+        cleanup.unlock_error()
+    );
+    let failure = execution(error);
+    assert!(failure.restoration_error().is_some());
+    let SchemaCompatibilityError::OnlineIndexRollback(pair) = failure.cause() else {
+        panic!(
+            "termination and rollback failure retained: {}",
+            failure.cause()
+        )
+    };
+    let SchemaCompatibilityError::Query(cause) = pair.operation_error() else {
+        panic!("native termination: {}", pair.operation_error())
+    };
+    let code = cause.as_database_error().and_then(|e| e.code());
+    assert!(
+        matches!(code.as_deref(), Some("25P03" | "25P04")),
+        "idle-transaction or transaction timeout: {code:?}"
+    );
 }

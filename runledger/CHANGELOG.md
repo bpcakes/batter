@@ -64,24 +64,30 @@ All notable changes to this workspace are documented here.
   budget has elapsed, even after a late backoff wake. Rollback failure, commit
   uncertainty and identity refusals are not retried. Per attempt, index lock
   waits are capped at 100 ms and metadata statement/transaction/idle timeouts
-  at one second. Exceeding the transaction or idle bound makes PostgreSQL end
-  the session, which releases its table lock and the migration lock; startup
+  at one second, sent in the same message as `BEGIN` so the server never holds
+  the transaction idle without them. Exceeding the transaction or idle bound
+  makes PostgreSQL end the session, which releases its table lock and the
+  migration lock; startup
   returns that termination with its rollback, restoration and unlock failures
   as `MigrationCleanup`, and the next startup retries the repair. Long builds
   remain concurrent after commit. Lost removal commit acknowledgement is
   retained as `OnlineIndexRepairCommitUnconfirmed`, and rollback failure as
   `OnlineIndexRollback` with both causes. Cancellation does not prove remote
   termination. `ChangedDuringRepair` refuses a replaced INVALID identity, or
-  one removed or renamed away after inspection; the next startup builds a
-  removed index.
+  one removed or renamed away after inspection; like the other repair
+  failures it is never a top-level `OnlineIndex` error but the cause of
+  `OnlineIndexExecution`, or that cause's `OnlineIndexRollback` operation error
+  when rollback also fails, and a failed unlock wraps the execution in
+  `MigrationCleanup`. The next startup builds a removed index.
 - Verification, protected migration and pending-index preparation report
   `BuildInProgress` instead of repairing an active build. Visible
   `REINDEX INDEX CONCURRENTLY` progress counts when it names a replacement for
   the canonical INVALID index, correlated through the builder's granted lock on
   the original index; this preserves foreign-definition refusal and excludes
   other indexes on the same table. Hidden progress from a different-role
-  manual builder is correlated through its visible PID/database and table
-  locks, which may defer another index on the same table; unrelated tables and
+  manual builder is correlated through its visible PID/database and granted
+  table lock (`ShareUpdateExclusiveLock` for a concurrent build, `ShareLock`
+  for an ordinary one), which may defer another index on the same table; unrelated tables and
   databases remain independent. Progress lookup includes database identity, so
   an unrelated database's matching index OID cannot suppress local repair. No
   caller migration lock or new statistics privilege is required. When
@@ -310,6 +316,15 @@ All notable changes to this workspace are documented here.
   unlock cause through `unlock_error()`. No public item was removed or renamed
   and `SchemaCompatibilityError` was already non-exhaustive, so no shim is
   needed.
+- The protected runner records each declared migration before its concurrent
+  build, so a build interrupted by a crash or cancellation leaves the migration
+  recorded with its index missing or `INVALID`. This release repairs it on the
+  next protected startup; earlier releases and a raw `MIGRATOR.run` neither
+  repair nor report it. Before rolling back below this release, confirm that
+  `ensure_schema_compatible_after_idempotency_cutover` passes. Otherwise let
+  this release's protected startup repair the index first, or run
+  `DROP INDEX CONCURRENTLY` on an `INVALID` leftover and rebuild the index with
+  its migration's statement plus `CONCURRENTLY`.
 - Bound a native call to `migrate_after_idempotency_cutover` or
   `prepare_online_indexes_for_external_migrator` with the caller's own deadline
   when a long writer could delay an online build; the library sets none.

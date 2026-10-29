@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use sqlx::{AssertSqlSafe, Connection, PgConnection};
+use sqlx::{AssertSqlSafe, Connection, PgConnection, Postgres, Transaction};
 use tokio::time::Instant;
 
 use super::{IndexState, OnlineIndex, OnlineIndexProblem, check_valid, index_state, problem};
@@ -15,6 +15,20 @@ use crate::{OnlineIndexRollbackError, RunledgerDatabase, SchemaCompatibilityErro
 const LOCK_RETRY_BUDGET: Duration = Duration::from_secs(5);
 const FIRST_RETRY_DELAY: Duration = Duration::from_millis(10);
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// Opens the metadata transaction with its bounds in the same simple query.
+/// The outer concurrent-build session has lifted its timeouts, so a separate
+/// SET exchange would leave the server idle in this transaction without any
+/// bound until it arrived. The transaction and idle bounds end the whole
+/// session, not a statement: a stalled client must not keep the exclusive
+/// table lock, and that also releases the session's migration lock. The
+/// caller retains the failures. SET LOCAL disappears on both acknowledged
+/// commit and rollback.
+const BOUNDED_BEGIN: &str = "BEGIN; SET LOCAL lock_timeout = '100ms';
+     SET LOCAL statement_timeout = '1s';
+     SET LOCAL idle_in_transaction_session_timeout = '1s';
+     SELECT CASE WHEN pg_catalog.current_setting('transaction_timeout', true) IS NOT NULL
+                 THEN pg_catalog.set_config('transaction_timeout', '1s', true) END";
 
 /// Returns false when the locked object has become a valid canonical index.
 /// The connection is already marked close-on-drop by the owning entrypoint.
@@ -83,19 +97,29 @@ async fn attempt(
     index: &OnlineIndex,
     expected_oid: i64,
 ) -> Result<bool, SchemaCompatibilityError> {
-    let mut tx = conn.begin().await?;
+    let cause = match conn.begin_with(BOUNDED_BEGIN).await {
+        Ok(tx) => return settle(tx, database, index, expected_oid).await,
+        Err(cause) => cause,
+    };
+    Err(end_failed_begin(conn, cause).await)
+}
+
+async fn settle(
+    mut tx: Transaction<'_, Postgres>,
+    database: &RunledgerDatabase,
+    index: &OnlineIndex,
+    expected_oid: i64,
+) -> Result<bool, SchemaCompatibilityError> {
     let result = remove_locked(&mut tx, database, index, expected_oid).await;
     match result {
         Ok(true) => {
             tx.commit().await.map_err(|cause| {
-                // Retain the same native unconfirmed-commit classification as
-                // other owned Runledger transactions; no SQLSTATE grants replay.
-                let crate::Error::CommitUnconfirmed(failure) =
-                    crate::Error::commit_unconfirmed("remove interrupted online index", cause)
-                else {
-                    unreachable!("commit_unconfirmed constructs its named variant")
-                };
-                SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed(failure)
+                // The native unconfirmed-commit classification that
+                // Error::commit_unconfirmed wraps for crate::Error results;
+                // no SQLSTATE grants replay.
+                SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed(
+                    crate::CommitUnconfirmed::new("remove interrupted online index", cause),
+                )
             })?;
             Ok(true)
         }
@@ -112,27 +136,24 @@ async fn attempt(
     }
 }
 
+/// A server error in a bound statement aborts the block its BEGIN opened, but
+/// SQLx returns before recording a transaction. End that block explicitly so
+/// the session can restore its profile; ROLLBACK outside a block only warns.
+async fn end_failed_begin(conn: &mut PgConnection, cause: sqlx::Error) -> SchemaCompatibilityError {
+    match sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await {
+        Ok(_) => cause.into(),
+        Err(rollback) => SchemaCompatibilityError::OnlineIndexRollback(
+            OnlineIndexRollbackError::new(cause.into(), rollback),
+        ),
+    }
+}
+
 async fn remove_locked(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
     index: &OnlineIndex,
     expected_oid: i64,
 ) -> Result<bool, SchemaCompatibilityError> {
-    // The outer concurrent-build session has lifted its timeouts. Bound this
-    // short metadata transaction separately, including time between requests.
-    // The transaction and idle bounds end the whole session, not a statement:
-    // a stalled client must not keep the exclusive table lock, and that also
-    // releases the session's migration lock. The caller retains the failures.
-    // SET LOCAL disappears on both acknowledged commit and rollback.
-    sqlx::raw_sql(
-        "SET LOCAL lock_timeout = '100ms';
-         SET LOCAL statement_timeout = '1s';
-         SET LOCAL idle_in_transaction_session_timeout = '1s';
-         SELECT CASE WHEN pg_catalog.current_setting('transaction_timeout', true) IS NOT NULL
-                     THEN pg_catalog.set_config('transaction_timeout', '1s', true) END",
-    )
-    .execute(&mut *conn)
-    .await?;
     let pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
         .fetch_one(&mut *conn)
         .await?;

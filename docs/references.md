@@ -57,6 +57,31 @@ The metadata transaction uses local 100 ms lock and one-second statement,
 transaction/idle timeouts; the latter two end the session when exceeded, which
 `online_repair/lifecycle.rs` exercises on PostgreSQL 18.6. Long concurrent
 creation runs only after commit.
+
+- [Multiple statements in a simple Query](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT)
+  (rechecked 2026-10-29 for `batter-fnj8.16`): statements after an explicit
+  `BEGIN` in one Query message run inside that transaction block, and an error
+  aborts the block until `ROLLBACK`. Repair therefore sends its `SET LOCAL`
+  bounds in the `BEGIN` message: the build session has lifted its profile
+  timeouts, so a separate exchange would leave the server idle in the
+  transaction without any bound until it arrived.
+- [SQLx 0.9.0 `PgTransactionManager::begin`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/transaction.rs)
+  (rechecked 2026-10-29): `Connection::begin_with` queues the custom statement
+  as one simple query and waits for `ReadyForQuery`, discarding row data. Its
+  [`PgStream::recv`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/connection/stream.rs)
+  returns a server `ErrorResponse` before that `ReadyForQuery`, and the begin
+  guard rolls back only an already counted transaction, so a failed bound
+  statement leaves an aborted block SQLx does not track. Repair sends
+  `ROLLBACK` itself in that case and retains both errors; outside a block it
+  only warns. The next request drains the pending `ReadyForQuery` first.
+  Unverified end to end: every statement in that message is static and
+  instant, so no executable test can make one fail without changing the SQL
+  under test, and this recovery rests on the cited sources only.
+
+Withholding the first request after that `BEGIN`, an extended-protocol
+Parse-through-Sync sequence, leaves the server idle in the transaction; the
+idle or transaction bound then ends the session on PostgreSQL 18.6. A control
+that sent the bounds in a separate request after `BEGIN` timed out instead.
 A lost commit acknowledgement is uncertainty, not proof that DROP rolled back.
 Executed outcomes and retained diagnostic probes are recorded in the owning Bead.
 
@@ -5243,6 +5268,14 @@ migration advisory lock. A hidden builder holding either on the target
 table conservatively defers repair, including another index on that table;
 unrelated tables and databases do not qualify. The combined restricted-owner,
 manual-builder and unrelated-table regressions are tracked in `batter-fnj8.5`.
+The `ShareLock` half is exercised separately (`batter-fnj8.16`): another
+session's uncommitted relation under the builder's index name keeps an
+ordinary `CREATE INDEX` waiting in its catalog insert, after
+[`DefineIndex`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/indexcmds.c)
+has started its progress report, with its `ShareLock` on `job_queue` granted.
+On PostgreSQL 18.6 the restricted owner sees that progress row only with NULL
+details. Removing `ShareLock` from the correlation made the regression report
+`Invalid` instead of `BuildInProgress`.
 The independent INVALID-index regression in `online_failures.rs` holds SQLx's
 migration lock after the interrupted builder exits and confirms there are no
 CREATE progress rows. Verification reports `BuildInProgress` while the lock is

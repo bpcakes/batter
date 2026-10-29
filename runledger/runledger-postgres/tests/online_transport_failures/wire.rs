@@ -25,9 +25,23 @@ pub enum Fault {
     DisconnectOnRestore,
     HoldIndexInspection(&'static str),
     HoldRepairTableLock,
+    HoldAfterRepairBegin,
     LoseRepairCommitResponse,
     DisconnectOnRepairRollback,
     ObserveRepairRollback,
+}
+
+impl Fault {
+    /// Whether this request is withheld from the server.
+    fn withholds(self, sql: &[u8], repair_open: bool, request_held: bool) -> bool {
+        match self {
+            Self::HoldRepairTableLock => sql.starts_with(b"LOCK TABLE ONLY "),
+            // The first request after BEGIN leaves the server idle inside the
+            // metadata transaction.
+            Self::HoldAfterRepairBegin => repair_open && !request_held,
+            _ => false,
+        }
+    }
 }
 
 pub struct Relay {
@@ -62,6 +76,7 @@ impl Relay {
             let repair_commit = AtomicBool::new(false);
             let (reached, release, delivered) = events;
             let requests = async {
+                let mut request_held = false;
                 loop {
                     let tag = from_client.read_u8().await?;
                     let bytes = body(&mut from_client).await?;
@@ -82,14 +97,18 @@ impl Relay {
                     {
                         poll_started.store(true, Ordering::SeqCst);
                     }
-                    if sql.starts_with(b"SET LOCAL lock_timeout = '100ms'") {
-                        repair_started.store(true, Ordering::SeqCst);
-                    }
+                    // The metadata transaction's BEGIN carries its bounds;
+                    // the previous value says whether it is already open.
+                    let begin = sql.starts_with(b"BEGIN; SET LOCAL lock_timeout = '100ms'");
+                    let repair_open = repair_started.fetch_or(begin, Ordering::SeqCst);
                     if repair_started.load(Ordering::SeqCst) && sql.starts_with(b"COMMIT") {
                         repair_commit.store(true, Ordering::SeqCst);
                     }
+                    let mut rest = Vec::new();
                     match fault {
-                        Fault::HoldRepairTableLock if sql.starts_with(b"LOCK TABLE ONLY ") => {
+                        _ if fault.withholds(sql, repair_open, request_held) => {
+                            request_held = true;
+                            rest = rest_of_request(&mut from_client, tag).await?;
                             reached.notify_one();
                             // A client that writes or closes while its request
                             // is withheld ends the relay, so the server sees
@@ -127,8 +146,10 @@ impl Relay {
                         }
                         _ => {}
                     }
-                    to_server.write_u8(tag).await?;
-                    write_body(&mut to_server, &bytes).await?;
+                    for (tag, bytes) in std::iter::once((tag, bytes)).chain(rest) {
+                        to_server.write_u8(tag).await?;
+                        write_body(&mut to_server, &bytes).await?;
+                    }
                 }
             };
             let responses = async {
@@ -218,6 +239,21 @@ impl Drop for Relay {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+/// An extended-protocol request continues through Sync. Withhold all of it: a
+/// later frame read while waiting for release would end the relay instead.
+async fn rest_of_request(
+    input: &mut (impl AsyncRead + Unpin),
+    tag: u8,
+) -> io::Result<Vec<(u8, Vec<u8>)>> {
+    let mut rest = Vec::new();
+    let mut last = tag;
+    while !matches!(last, b'Q' | b'S') {
+        last = input.read_u8().await?;
+        rest.push((last, body(input).await?));
+    }
+    Ok(rest)
 }
 
 async fn body(input: &mut (impl AsyncRead + Unpin)) -> io::Result<Vec<u8>> {

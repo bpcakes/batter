@@ -362,6 +362,84 @@ async fn assert_hidden_build_correlation(same_table: bool) {
     fixture.teardown().await;
 }
 
+/// An ordinary build holds `ShareLock`, not `ShareUpdateExclusiveLock`, on its
+/// table. Another session's uncommitted relation under the same name keeps it
+/// waiting in its catalog insert with that lock granted and a progress row the
+/// restricted owner cannot read, so it must defer repair like a concurrent one.
+#[tokio::test]
+async fn hidden_ordinary_build_defers_repair_on_its_table() {
+    let fixture = RestrictedOwner::fresh().await;
+    let before = interrupt_target(&fixture).await;
+    let mut name_holder = fixture.harness.pool.begin().await.expect("name holder");
+    sqlx::raw_sql("CREATE TABLE other_work_idx (id int)")
+        .execute(&mut *name_holder)
+        .await
+        .expect("hold the index name uncommitted");
+    let pool = fixture.harness.pool.clone();
+    let builder = tokio::spawn(async move {
+        let mut conn = pool.acquire().await?;
+        conn.close_on_drop();
+        sqlx::raw_sql(
+            "SET statement_timeout = '30s'; CREATE INDEX other_work_idx ON job_queue (id)",
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok::<(), sqlx::Error>(())
+    });
+    wait_for("ordinary builder holds its table lock", || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_progress_create_index p
+             JOIN pg_catalog.pg_locks l ON l.pid = p.pid AND l.database = p.datid
+             WHERE p.datid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())
+               AND p.command = 'CREATE INDEX' AND l.locktype = 'relation'
+               AND l.relation = 'job_queue'::regclass AND l.mode = 'ShareLock' AND l.granted)",
+        )
+        .fetch_one(&fixture.harness.pool)
+        .await
+        .expect("privileged progress")
+    })
+    .await;
+    let hidden: bool = sqlx::query_scalar(
+        "SELECT bool_and(relid IS NULL AND index_relid IS NULL AND phase IS NULL)
+         FROM pg_catalog.pg_stat_progress_create_index
+         WHERE datid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())",
+    )
+    .fetch_one(fixture.database.pool())
+    .await
+    .expect("restricted progress view");
+    assert!(
+        hidden,
+        "the restricted owner cannot read the builder's progress"
+    );
+    assert_problem(
+        ensure_schema_compatible_after_idempotency_cutover(&fixture.database)
+            .await
+            .expect_err("target remains interrupted"),
+        CREATED_INDEX,
+        OnlineIndexProblem::BuildInProgress,
+    );
+    let migration = tokio::time::timeout(
+        Duration::from_secs(5),
+        migrate_after_idempotency_cutover(&fixture.database),
+    )
+    .await
+    .expect("classify without waiting for the ordinary builder");
+    assert_problem(
+        migration.expect_err("defer same-table ordinary build"),
+        CREATED_INDEX,
+        OnlineIndexProblem::BuildInProgress,
+    );
+    assert_eq!(identity(&fixture.harness.pool, CREATED_INDEX).await, before);
+    assert!(!builder.is_finished());
+    name_holder
+        .rollback()
+        .await
+        .expect("release the index name");
+    finish(builder).await;
+    assert_target_repair_after_other_build(&fixture, true, before).await;
+    fixture.teardown().await;
+}
+
 async fn assert_target_repair_after_other_build(
     fixture: &RestrictedOwner,
     same_table: bool,

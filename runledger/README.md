@@ -1687,7 +1687,9 @@ unchanged and the whole transaction, including its identity checks, is retried
 with backoff for up to five seconds; a table that stays busy throughout returns
 that `55P03` without deletion. Index-lock waits are capped at 100 ms per attempt; metadata
 statement, transaction (where supported), and idle-transaction timeouts are one
-second. Exceeding the transaction or idle-transaction bound makes PostgreSQL end
+second. They travel in the same message as `BEGIN`, so the server never holds
+the transaction idle without them while the build session's profile timeouts
+are lifted. Exceeding the transaction or idle-transaction bound makes PostgreSQL end
 the session rather than cancel a statement: the metadata transaction rolls back,
 and its table lock and the session's migration lock are released. Startup then
 returns the native termination error with the rollback, restoration and unlock
@@ -1702,8 +1704,11 @@ now-missing index concurrently. Commit acknowledgement loss is
 `OnlineIndexRepairCommitUnconfirmed` inside the execution cause and prevents a
 subsequent build; `OnlineIndexRollback` retains an original refusal plus rollback
 failure. Neither is retried. A changed INVALID OID, or an INVALID index removed or
-renamed away after inspection, is refused at once as `ChangedDuringRepair`; the
-next startup builds a removed one. A completed canonical reindex is kept.
+renamed away after inspection, is refused at once as `ChangedDuringRepair`. It is
+never a top-level `OnlineIndex` error: it is the execution cause or, when that
+refusal's rollback also fails, the `operation_error()` of the
+`OnlineIndexRollback` cause, and a failed unlock wraps the execution in
+`MigrationCleanup`. The next startup builds a removed one. A completed canonical reindex is kept.
 Foreign replacements are rolled back unchanged.
 A valid prebuilt index with the bundled definition is
 adopted; a differently defined index under a declared name is refused before
