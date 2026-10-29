@@ -78,18 +78,23 @@ and adapted and typed handler forwarding. `tests/handler_invocation.rs` and
 (`cargo test -p batter-runledger --features test-support --locked`) drive
 handlers through `test_support::HandlerInvocation` under paused time: the
 native deadline is the budget after execution starts and the work deadline the
-reserve earlier; retryable and terminal failures keep the handler's
+reserve earlier, and `remaining_budget()` reads the same deadline; time spent
+after declaration and after constructing the unpolled future consumes no
+budget, so a parked handler times out one whole budget after the first poll;
+retryable and terminal failures keep the handler's
 classification; a budget inside the reserve reaches the handler as
 `JobPhasesRejection::Exhausted` and invokes no work factory; an unpolled
 execution runs no handler and a destroyed one cancels a derived context a
 spawned observer holds, before work; an elapsed budget destroys a parked
 handler and reports `TimedOut`; on both of those exits a guard the parked
 handler holds observes that the invocation has not yet ended when its future is
-destroyed; a result at the deadline is `TimedOut` while one
+destroyed; a result or panic at the deadline is `TimedOut` while a result
 a nanosecond earlier is returned; a handler panic is `Panicked` and ends the
-invocation; an exit-hook panic is retained beside the returned result; progress
+invocation, including a hand-written dispatch that panics before returning its
+future; an exit-hook panic is retained beside the returned result; progress
 writes merge like the queue row, reject an invalid effective pair and
-`DeadlineElapsed` at the deadline, and start from the declared checkpoint; zero
+`DeadlineElapsed` at the deadline, and start from the declared checkpoint, which
+the `with_checkpoint` doctest shows retained when nothing is committed; zero
 and over-long budgets are rejected at declaration; and typed, legacy and
 type-erased handlers run through the worker's dispatch with a `Send` future.
 Runledger's worker tests cover each
@@ -1612,7 +1617,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
-| Worker-free handler drive: budget-derived deadline, strict-before-deadline acceptance, destruction before end, contained panics, retained hook panics, dispatch of typed and legacy handlers; queue-row progress merge, deadline refusal, declared checkpoint and budget acceptance | [handler_invocation.rs](../crates/batter-runledger/tests/handler_invocation.rs), [handler_progress.rs](../crates/batter-runledger/tests/handler_progress.rs) |
+| Worker-free handler drive: budget-derived deadline starting at the first poll, shared by `remaining_budget()`, strict-before-deadline acceptance of results and panics, destruction before end, contained panics including during dispatch, retained hook panics, dispatch of typed and legacy handlers; queue-row progress merge, deadline refusal, declared checkpoint retained without a write, and budget acceptance | [handler_invocation.rs](../crates/batter-runledger/tests/handler_invocation.rs), [handler_progress.rs](../crates/batter-runledger/tests/handler_progress.rs), [test_support.rs](../crates/batter-runledger/src/test_support.rs) doctests |
 | Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself, repair identity including an index removed after inspection, bounded busy-table retry, a metadata transaction idle past its bound ending its session, including before its first statement, transport loss, quoted identifiers, hidden concurrent or ordinary builds, cloned-database progress, concurrent reindex progress naming its replacement, the public verifier across a concurrent DROP or reindex name-swap commit, and retained unlock failures | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online_failures.rs](../runledger/runledger-postgres/tests/online_failures.rs), [online_repair.rs](../runledger/runledger-postgres/tests/online_repair.rs), [online_transport_failures.rs](../runledger/runledger-postgres/tests/online_transport_failures.rs), [online_compatibility.rs](../runledger/runledger-postgres/tests/online_compatibility.rs), [online_identity.rs](../runledger/runledger-postgres/tests/online_identity.rs), [online_hidden_progress.rs](../runledger/runledger-postgres/tests/online_hidden_progress.rs), [online_reindex.rs](../runledger/runledger-postgres/tests/online_reindex.rs), [online_snapshot.rs](../runledger/runledger-postgres/tests/online_snapshot.rs), [online_cleanup.rs](../runledger/runledger-postgres/tests/online_cleanup.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs), [online/repair.rs](../runledger/runledger-postgres/src/migrations/online/repair.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |

@@ -1308,7 +1308,9 @@ whole drive: it creates one `JobInvocationOwner`, builds services whose
 all read one instant set when the future is first polled, dispatches through
 `JobHandler::execute_with_services` exactly as the worker does, so an adapted
 handler is never asked to run without services and typed and legacy handlers
-run unchanged, contains a handler panic at the poll boundary, destroys the
+run unchanged, contains a handler panic at the poll boundary, including one a
+hand-written dispatch raises before returning its future, because the dispatch
+call runs inside that boundary as it does in the worker, destroys the
 handler future and only then ends the owner, returning its hook-panic report
 instead of dropping it. Its locals are declared in the worker's order, so
 destroying the facility's own future, the test's equivalent of a task abort,
@@ -1358,10 +1360,15 @@ worker's and the facade-only consumer's own services recipes are unchanged in
 this task. Paused-time tests cover success, retryable and terminal failures,
 phase rejection without a work factory, destruction before work with a spawned
 observer, an elapsed budget, a parked handler future destroyed before the
-invocation ends on both of those exits, acceptance at and one nanosecond
-before the deadline, contained panics, retained hook panics, progress merge
-and rejection, declared checkpoints, budget validation and typed, legacy and
-type-erased dispatch; a compile-fail rustdoc rejects reaching the declaration's fields;
+invocation ends on both of those exits, a budget that starts at the first poll
+after delays following declaration and construction, with `remaining_budget()`
+reading the same deadline, acceptance at and one nanosecond before the
+deadline for results and at it for panics, contained panics including one a
+hand-written dispatch raises before returning its future, retained hook
+panics, progress merge and rejection, declared checkpoints, budget validation
+and typed, legacy and type-erased dispatch; the `with_checkpoint` doctest shows
+a declared checkpoint retained when nothing is committed; a compile-fail
+rustdoc rejects reaching the declaration's fields;
 `scripts/check_facade_features.py` proves facade reachability and identity.
 Fresh-agent usability evaluation is proposed and unexecuted.
 

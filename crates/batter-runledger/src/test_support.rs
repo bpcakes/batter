@@ -27,7 +27,7 @@ use std::{
     any::Any,
     future::Future,
     panic::{AssertUnwindSafe, catch_unwind},
-    pin::Pin,
+    pin::{Pin, pin},
     sync::{Mutex, PoisonError},
     task::{Context, Poll},
     time::Duration,
@@ -188,7 +188,67 @@ impl HandlerInvocation {
     /// Resume from a durable checkpoint, as a later run or attempt would.
     ///
     /// The handler reads it through [`JobExecution::checkpoint`], and it stays
-    /// the persisted checkpoint until the handler commits another.
+    /// the persisted checkpoint until the handler commits another:
+    ///
+    /// ```
+    /// use batter_runledger::test_support::{HandlerExit, HandlerInvocation, PersistedProgress};
+    /// use runledger_core::jobs::{
+    ///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
+    /// };
+    /// use runledger_core::prelude::async_trait;
+    /// use serde_json::{Value, json};
+    /// use std::time::Duration;
+    ///
+    /// // Reports where it would resume and commits nothing.
+    /// struct Resume;
+    ///
+    /// #[async_trait]
+    /// impl JobExecutionHandler for Resume {
+    ///     fn job_type(&self) -> JobType<'static> {
+    ///         JobType::new("example.resume")
+    ///     }
+    ///
+    ///     async fn execute(
+    ///         &self,
+    ///         execution: JobExecution<'_>,
+    ///         _payload: Value,
+    ///     ) -> Result<JobCompletion, JobFailure> {
+    ///         let resume: Option<Value> = execution.checkpoint().map_err(|_| {
+    ///             JobFailure::terminal("example.bad_checkpoint", "Unreadable checkpoint.")
+    ///         })?;
+    ///         Ok(JobCompletion::with_output(json!({ "resumed_from": resume })))
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build()?.block_on(async {
+    /// let invocation = HandlerInvocation::new(Duration::from_secs(5))?
+    ///     .with_checkpoint(json!({ "cursor": 7 }));
+    /// let context = invocation.context();
+    /// assert_eq!(context.checkpoint, Some(json!({ "cursor": 7 })));
+    /// assert_eq!((context.run_number, context.attempt), (1, 1));
+    ///
+    /// let run = invocation.execute(&Resume.into_job_handler(), json!({})).await;
+    /// let HandlerExit::Returned(Ok(completion)) = run.exit else {
+    ///     panic!("resumed: {:?}", run.exit);
+    /// };
+    /// assert_eq!(
+    ///     completion.output(),
+    ///     Some(&json!({ "resumed_from": { "cursor": 7 } }))
+    /// );
+    /// // Nothing was committed, so the declared checkpoint is still the durable one.
+    /// assert_eq!(
+    ///     run.persisted,
+    ///     PersistedProgress {
+    ///         progress_done: None,
+    ///         progress_total: None,
+    ///         checkpoint: Some(json!({ "cursor": 7 })),
+    ///     }
+    /// );
+    /// assert!(run.exit_hook_panics.is_empty());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_checkpoint(mut self, checkpoint: Value) -> Self {
         self.context.checkpoint = Some(checkpoint);
         self
@@ -208,7 +268,9 @@ impl HandlerInvocation {
     /// observed at or after it is [`HandlerExit::TimedOut`], even when the
     /// handler crossed the deadline without yielding. As in the worker, nothing
     /// preempts a handler that never yields: the drive completes only once the
-    /// handler next returns or yields.
+    /// handler next returns or yields. The dispatch call itself runs inside the
+    /// unwind boundary, as in the worker, so a handler that panics while
+    /// constructing its future is [`HandlerExit::Panicked`] too.
     /// Destroying the returned future before it completes ends the invocation
     /// exactly as a worker task abort does: the handler future is dropped
     /// first, so work awaited inside it stops without observing cancellation,
@@ -229,8 +291,11 @@ impl HandlerInvocation {
         };
         let exit = {
             let execution = JobExecution::new(&context, &services);
-            let handler = CatchUnwind(handler.execute_with_services(execution, payload));
-            match tokio::time::timeout_at(services.deadline, handler).await {
+            // Dispatch inside the unwind boundary, as the worker's async dispatch
+            // does: a handler can panic while constructing its future.
+            let dispatch =
+                pin!(async move { handler.execute_with_services(execution, payload).await });
+            match tokio::time::timeout_at(services.deadline, CatchUnwind(dispatch)).await {
                 // Deadline precedence does not depend on which future the
                 // timeout polled first.
                 Ok(observed) if Instant::now() < services.deadline => match observed {

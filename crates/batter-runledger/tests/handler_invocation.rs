@@ -13,6 +13,7 @@ use runledger_core::jobs::{
 use runledger_core::prelude::async_trait;
 use serde_json::{Value, json};
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
@@ -36,7 +37,11 @@ fn rejection(rejection: JobPhasesRejection) -> JobFailure {
 
 /// What a probe reports to its test from inside the handler.
 enum Report {
-    Deadline(std::time::Instant),
+    /// The native deadline and the remaining budget, read together at the first poll.
+    Deadline {
+        deadline: std::time::Instant,
+        remaining: Duration,
+    },
     Work(OperationContext),
     /// Whether the invocation had ended when the parked handler future was destroyed.
     Destroyed {
@@ -92,7 +97,10 @@ impl JobExecutionHandler for Probe {
         execution: JobExecution<'_>,
         payload: Value,
     ) -> Result<JobCompletion, JobFailure> {
-        self.send(Report::Deadline(execution.deadline()));
+        self.send(Report::Deadline {
+            deadline: execution.deadline(),
+            remaining: execution.remaining_budget(),
+        });
         let phases = job_phases(execution, RESERVE).map_err(rejection)?;
         self.send(Report::Work(phases.work().clone()));
         match payload["mode"].as_str().unwrap_or("success") {
@@ -109,6 +117,10 @@ impl JobExecutionHandler for Probe {
                 .expect("owned exit claim")
                 .on_end(|| panic!("probe hook panicked")),
             "at_deadline" => sleep_until(Instant::from_std(execution.deadline())).await,
+            "panic_at_deadline" => {
+                sleep_until(Instant::from_std(execution.deadline())).await;
+                panic!("probe panicked at the deadline");
+            }
             // Timers round up to a millisecond tick; the paused clock moves exactly.
             "before_deadline" => {
                 advance(
@@ -151,9 +163,12 @@ impl JobExecutionHandler for Probe {
     }
 }
 
-fn observed_deadline(reports: &mut mpsc::UnboundedReceiver<Report>) -> Instant {
+fn observed_deadline(reports: &mut mpsc::UnboundedReceiver<Report>) -> (Instant, Duration) {
     match reports.try_recv() {
-        Ok(Report::Deadline(deadline)) => Instant::from_std(deadline),
+        Ok(Report::Deadline {
+            deadline,
+            remaining,
+        }) => (Instant::from_std(deadline), remaining),
         _ => panic!("the handler reports its deadline first"),
     }
 }
@@ -187,8 +202,9 @@ async fn success_runs_work_and_finalization_under_the_declared_budget() {
     assert_eq!(completion.output(), Some(&json!({ "done": true })));
     assert_eq!(
         observed_deadline(&mut reports),
-        start + BUDGET,
-        "the native deadline is the budget after execution started"
+        (start + BUDGET, BUDGET),
+        "the native deadline is the budget after execution started, and the \
+         remaining budget reads the same instant"
     );
     let work = observed_work(&mut reports);
     assert_eq!(work.deadline(), start + BUDGET - RESERVE);
@@ -206,6 +222,30 @@ async fn success_runs_work_and_finalization_under_the_declared_budget() {
         }
     );
     assert!(run.exit_hook_panics.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_budget_starts_when_execution_is_first_polled() {
+    let (probe, mut reports) = probe();
+    let handler = probe.into_job_handler();
+    // Neither declaring the invocation nor constructing its future starts the clock.
+    let invocation = HandlerInvocation::new(BUDGET).expect("budget");
+    advance(BUDGET / 4).await;
+    let execution = invocation.execute(&handler, json!({ "mode": "park" }));
+    advance(BUDGET / 4).await;
+    let first_poll = Instant::now();
+    let run = execution.await;
+    assert_eq!(run.exit, HandlerExit::TimedOut);
+    assert_eq!(
+        Instant::now(),
+        first_poll + BUDGET,
+        "a parked handler times out one whole budget after the first poll"
+    );
+    assert_eq!(
+        observed_deadline(&mut reports),
+        (first_poll + BUDGET, BUDGET),
+        "the handler starts with the whole budget"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -324,7 +364,7 @@ async fn the_budget_elapsing_destroys_the_handler_and_times_the_invocation_out()
 }
 
 #[tokio::test(start_paused = true)]
-async fn results_are_accepted_only_strictly_before_the_deadline() {
+async fn results_and_panics_count_only_strictly_before_the_deadline() {
     let (probe, _reports) = probe();
     let handler = probe.into_job_handler();
     let late = HandlerInvocation::new(BUDGET)
@@ -335,6 +375,15 @@ async fn results_are_accepted_only_strictly_before_the_deadline() {
         late.exit,
         HandlerExit::TimedOut,
         "a result at the deadline is late, whichever future the timeout polled first"
+    );
+    let late_panic = HandlerInvocation::new(BUDGET)
+        .expect("budget")
+        .execute(&handler, json!({ "mode": "panic_at_deadline" }))
+        .await;
+    assert_eq!(
+        late_panic.exit,
+        HandlerExit::TimedOut,
+        "a panic observed at the deadline is late too, as the worker classifies it"
     );
     let accepted = HandlerInvocation::new(BUDGET)
         .expect("budget")
@@ -464,4 +513,45 @@ async fn typed_and_legacy_handlers_run_through_the_worker_dispatch() {
         .execute(&*erased, json!({}))
         .await;
     assert!(matches!(run.exit, HandlerExit::Returned(Ok(_))));
+}
+
+/// A hand-written dispatch, which the expanded async-trait signature permits,
+/// that panics before it returns a future.
+struct PanicsWhileDispatching;
+
+#[async_trait]
+impl JobHandler for PanicsWhileDispatching {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new("probe.dispatch_panic")
+    }
+    async fn execute(&self, _: JobContext, _: Value) -> Result<JobCompletion, JobFailure> {
+        Ok(JobCompletion::success())
+    }
+    fn execute_with_services<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        _: JobExecution<'life1>,
+        _: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<JobCompletion, JobFailure>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        panic!("probe panicked while dispatching")
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_panic_while_dispatching_is_contained_as_the_worker_contains_it() {
+    // The worker calls the dispatch inside its unwind boundary, so a panic
+    // before the handler's future exists is still a contained handler panic.
+    let run = HandlerInvocation::new(BUDGET)
+        .expect("budget")
+        .execute(&PanicsWhileDispatching, json!({}))
+        .await;
+    assert_eq!(
+        run.exit,
+        HandlerExit::Panicked("probe panicked while dispatching".to_owned())
+    );
+    assert!(run.exit_hook_panics.is_empty());
 }
