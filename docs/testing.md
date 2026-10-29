@@ -1555,6 +1555,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
+| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself, repair identity including an index removed after inspection, bounded busy-table retry, a metadata transaction idle past its bound ending its session, including before its first statement, transport loss, quoted identifiers, hidden concurrent or ordinary builds, cloned-database progress, concurrent reindex progress naming its replacement, the public verifier across a concurrent DROP or reindex name-swap commit, and retained unlock failures | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online_failures.rs](../runledger/runledger-postgres/tests/online_failures.rs), [online_repair.rs](../runledger/runledger-postgres/tests/online_repair.rs), [online_transport_failures.rs](../runledger/runledger-postgres/tests/online_transport_failures.rs), [online_compatibility.rs](../runledger/runledger-postgres/tests/online_compatibility.rs), [online_identity.rs](../runledger/runledger-postgres/tests/online_identity.rs), [online_hidden_progress.rs](../runledger/runledger-postgres/tests/online_hidden_progress.rs), [online_reindex.rs](../runledger/runledger-postgres/tests/online_reindex.rs), [online_snapshot.rs](../runledger/runledger-postgres/tests/online_snapshot.rs), [online_cleanup.rs](../runledger/runledger-postgres/tests/online_cleanup.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs), [online/repair.rs](../runledger/runledger-postgres/src/migrations/online/repair.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -3126,6 +3127,255 @@ not invoke SQL or replace that cause; caught cancellation remains explicitly
 API and wrapping known rejections as uncertainty or terminal storage failures.
 
 ## Native Runledger workspace verification
+
+The online-index suite covers the protected migration runner on PostgreSQL
+18.6 (2026-10-23, `batter-fnj8`). Use the target that owns each check:
+
+| Coverage | Command |
+| --- | --- |
+| Canonical history, adoption, repair, foreign-name refusal and writer concurrency | `cargo test -p runledger-postgres --locked --test online_indexes` |
+| Typed lock-wait expiry, cancellation and isolated advisory fallback | `cargo test -p runledger-postgres --locked --test online_failures` |
+| Profile timeout restoration unit test | `cargo test -p runledger-postgres --locked --lib migrations::online::tests::lifted_profile_timeouts_are_restored_on_the_session -- --exact` |
+| Public verifier across a concurrent DROP or reindex name-swap commit | `cargo test -p runledger-postgres --locked --test online_snapshot` |
+| Concurrent reindex after progress changes to its replacement OID | `cargo test -p runledger-postgres --locked --test online_reindex` |
+| External-preparation history, repair and failed-build context | `cargo test -p runledger-postgres --locked --test online_preparation` |
+| Repair identity under swapped or removed names, busy-table retry, session-ending idle metadata bound including the first request after `BEGIN`, commit uncertainty, rollback failure and cancellation | `cargo test -p runledger-postgres --locked --test online_repair` |
+| Retry admission never starting an attempt after the five-second budget | `cargo test -p runledger-postgres --locked --lib migrations::online::repair` |
+| Typed local lock-poll expiry and connection loss during timeout restoration | `cargo test -p runledger-postgres --locked --test online_transport_failures` |
+| Prepared-index adoption, quoted schemas and inherited fully quoted identifiers | `cargo test -p runledger-postgres --locked --test online_compatibility` |
+| Foreign predicate refusal, cloned-database reindex isolation and progress detection without the migration lock | `cargo test -p runledger-postgres --locked --test online_identity` |
+| Hidden-progress builders under a restricted owner, concurrent and ordinary same-table deferral and unrelated-table repair | `cargo test -p runledger-postgres --locked --test online_hidden_progress` |
+| Original error retained beside a denied advisory unlock | `cargo test -p runledger-postgres --locked --test online_cleanup` |
+
+A fresh protected run records the same
+`_sqlx_migrations` rows and leaves the same `pg_get_indexdef` catalog as the
+raw canonical migrator. External preparation prebuilds only the two
+`IF NOT EXISTS` cutover indexes, reports the three others as blocking under
+external tooling, defers the adoptable pair while still reporting the other
+three as blocking on a database applied only through `202604100001` whose
+tables lack the snapshot columns, and the canonical SQL
+adopts the prebuilt pair unchanged. A
+dropped index and a concurrent build cancelled by `statement_timeout` while a
+writer transaction is open are reported by read-only verification as
+`Missing` and `Invalid`, then rebuilt by the next protected startup. A foreign
+`idx_job_queue_created_id` is refused with `DefinitionMismatch` before the
+migration is recorded, as is a same-named index on `job_attempts`, which the
+table-filtered lookup previously read as missing, a table under that name,
+which an index-only lookup would read as free, and an `INVALID` leftover of
+a different definition, which is refused rather than dropped. The
+concurrent-startup case holds a writer lock so the first build waits, starts
+the second starter during that wait and asserts no ungranted advisory lock
+exists before releasing. With a writer transaction
+holding `ROW EXCLUSIVE` on
+`job_queue`, the protected build waits in `pg_stat_progress_create_index` as
+`CREATE INDEX CONCURRENTLY` while a second writer still acquires its lock,
+whereas the raw canonical build queues an ungranted `ShareLock` and the second
+writer fails with `55P03` under a 1.5-second `lock_timeout`. Two protected
+startups run concurrently against the pending pagination migration and both
+succeed with the migration recorded once; before the polling lock the second
+starter's blocking `pg_advisory_lock` wait held a snapshot and PostgreSQL
+aborted one side with `40P01`. With SQLx's own `Migrate::lock` held on another
+connection, external preparation waits without any ungranted advisory lock or
+snapshot-holding lock waiter in the catalog and completes after release, so
+Runledger's derived key matches SQLx's, and under a 250 ms `lock_timeout`
+profile, a 500 ms `statement_timeout` with `lock_timeout` 0, or a 500 ms
+`transaction_timeout` with both of those zero, the same held SQLx lock makes
+the protected runner fail with typed `MigrationLockTimeout` retaining that setting and bound within a few
+seconds instead of waiting forever; before the polling lock, the transaction
+timeout had terminated the blocking waiter's connection. Under a profile with a 250 ms lock
+timeout and a 2 s statement timeout, the concurrent build waits more than three
+seconds for an open writer and then completes, whereas before the build session
+lifted those timeouts the runner was cancelled early. While the protected
+runner's build waits for a writer, read-only verification from another session
+reports `BuildInProgress` instead of `Invalid` and passes after the build ends;
+a missing index verifies as `BuildInProgress` while another session holds
+SQLx's migration lock and as `Missing` after release. A database-backed
+unit test on a profile session with a 2 s statement, 250 ms lock and 4 s
+transaction timeout shows all three read `0` while lifted and return to the
+profile's exact values after the build restores them, so the cutover
+validation that follows keeps its bounds; a
+conflicting lock queued behind the build cannot show this end to end because
+any waiting session holds a snapshot the build waits for. The suite runs only
+on PostgreSQL 18, so the branches taken when the server lacks
+`transaction_timeout` (PostgreSQL 16 and earlier) are unverified by
+executable tests. Build durations on
+populated tables were not measured.
+
+`online_snapshot.rs` creates a real canonical INVALID index through an
+interrupted concurrent build. A `sql_drop` event-trigger gate pauses concurrent
+DROP after its waiter phases, and a row-security policy pauses the public
+verifier's history query after its own table locks and snapshot setup. DROP
+then commits before verification proceeds: the snapshot retains the old
+INVALID row while its live definition is absent. The cooperating manual-DROP case
+requires `BuildInProgress` with its SQLx migration lock still held; the completed
+uncoordinated manual-DROP case requires `Missing` without that lock. Protected
+INVALID removal now uses a metadata transaction whose table lock prevents this
+older-snapshot interleaving; its contention/cancellation cases are tested separately. Both preserve migration
+history and pass fresh verification after repair. The gates are confined to
+the ephemeral database; no production hooks replace the verifier's boundary.
+Executed regression and baseline-failure evidence belongs to `batter-fnj8.7`.
+A third case holds an older snapshot so a real `REINDEX INDEX CONCURRENTLY`
+waits before its swap, pauses the verifier after its own snapshot, then releases
+the older one. The swap commits inside the verifier's snapshot, and the reindex
+stays in `waiting for readers before marking dead` with its original renamed to
+`_ccold`. Verification must return `BuildInProgress`, never
+`DefinitionMismatch`, keep history unchanged, and pass once the swap settles;
+it failed with `DefinitionMismatch` before the classifier correction
+(`batter-fnj8.15`).
+
+`online_reindex.rs` holds an older read-only snapshot while a real
+`REINDEX INDEX CONCURRENTLY` builds and validates its replacement. It waits for
+the `waiting for old snapshots` phase, observes the replacement OID and the
+builder's granted lock on the original index, and confirms no advisory lock is
+held by that builder. Verification, protected migration and pending-index
+preparation must return `BuildInProgress` before the snapshot is released,
+preserve index identity and history, then accept the replacement without another
+build. Controls reindex another index on the same table and a foreign definition
+under a declared name, retaining `Invalid` and `DefinitionMismatch` respectively.
+The public-verifier regression fails the old classifier with `Invalid`.
+`online_preparation.rs` cancels an actual pending preparation build on the server
+while its writer remains held. It checks `OnlineIndexPhase::Build`, no recorded
+migration version, retained SQLSTATE `57014`, redacted formatting and unchanged
+history, then successfully prepares again. Executed evidence for both targets
+belongs to `batter-fnj8.8`.
+
+`online_repair.rs` and `online_repair/lifecycle.rs` hold the actual inspection
+response, swap a foreign UNIQUE index into the declared name, then resume both
+public entrypoints. The baseline deletes that index; repaired behavior preserves
+its OID, definition, uniqueness and migration history. A second swap moves the
+inspected INVALID index aside and leaves another canonical INVALID build under
+the declared name; both entrypoints must refuse it as `ChangedDuringRepair` and
+keep both OIDs and history. A third case removes the inspected INVALID index
+with `DROP INDEX CONCURRENTLY`; both entrypoints must refuse it as
+`ChangedDuringRepair` rather than surface native `42P01`, create nothing under
+the name and keep history, and the next run builds the index. The foreign-swap,
+changed-identity and removed-identity refusals must return within four seconds
+of release, so none is retried as a lock refusal through the five-second budget. Unit tests in `online/repair.rs` drive retry
+admission on a paused clock: a timely wake admits another attempt, every
+admitted attempt starts before the deadline, and a backoff resumed after it
+returns the last refusal. Controls cover a completed
+manual reindex winning that race, refusal after a writer outlasts the
+five-second retry budget followed by recovery, a relay-observed refused attempt
+that the same call retries and completes once the writer releases,
+server-committed removal with its COMMIT acknowledgement withheld, paired repair/
+rollback errors, and cancellation during the metadata transaction. The relay ends
+its connection when the cancelled client closes, even while the `LOCK TABLE`
+request is withheld; the test observes backend exit and requires
+`pg_stat_database` to count the session as abandoned rather than fatal, so the
+one-second idle bound cannot satisfy it in place of cancellation.
+A withheld `LOCK TABLE` request leaves the metadata transaction idle past its
+one-second bound: PostgreSQL ends the session (`25P03` or `25P04`), the runner
+returns `MigrationCleanup` around the build-phase rollback pair with a
+restoration failure, no advisory lock remains, the INVALID index and history
+are unchanged, and the next startup repairs it. The same outcomes are required
+when the relay withholds the whole first request after `BEGIN`, through its
+Sync, while the build session's profile timeouts are lifted; the bounds travel
+in the `BEGIN` message, and a control that sent them in a separate request
+timed out instead (`batter-fnj8.16`). No test makes a statement inside that
+`BEGIN` message fail, so the explicit `ROLLBACK` that ends such an aborted
+block remains unverified.
+The relay changes transport only; PostgreSQL executes all statements. Preparation
+also covers occupied non-adoptable valid/INVALID/foreign names and an active build,
+with unchanged history/objects and accurate absent-name reporting. Verification
+outcomes belong to `batter-fnj8.10` and, for the retry and changed-identity
+cases, `batter-fnj8.11`, and for the removed-identity and idle-session cases,
+`batter-fnj8.13`; these do not prove arbitrary remote DDL safety
+outside the locked removal transaction.
+
+`online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a
+real successful lock-poll response while the runtime advances, or deliver it
+without polling the runner until after expiry. Both migration entry points
+must return typed local expiry. The relay also closes the connection exactly
+when timeout restoration begins after either a successful build or a server-
+cancelled build, exercising phase selection and retention of both causes.
+Recovery then completes and verifies the schema. The relay changes only
+response delivery or connection lifetime; SQL still executes on PostgreSQL.
+
+`online_compatibility.rs` prepares pending indexes and calls the protected
+runner directly, checking unchanged index OIDs and canonical history. It also
+covers quoted schemas containing ` USING `, embedded quotes and a SQL keyword,
+and preparation refusal of a newer incompatible history fence with and without
+SQLx history. Inherited `quote_all_identifiers=on` covers preparation, adoption,
+verification and interrupted-index repair while preserving the setting. The
+matcher unit cases retain wrong-definition/schema controls.
+
+`online_identity.rs` creates a real foreign enum-label predicate containing
+`public.` and requires both verification and protected migration to refuse and
+preserve its valid and interrupted indexes, including OIDs and history, with
+ordinary and inherited fully quoted rendering. Each begins with fresh protected
+migration. It also
+clones an interrupted-index database, preserving index OIDs, and holds the
+clone's `REINDEX TABLE` at an index lock. Progress is visible from the original
+database throughout its own `Invalid` classification and successful repair.
+No catalog OIDs or validity flags are fabricated.
+The positive control starts a local canonical `CREATE INDEX CONCURRENTLY`
+without a migration lock, independently observes its progress and the absence
+of advisory locks, and requires `BuildInProgress` from verification and protected
+migration. It preserves the builder's OID and verifies after writer release.
+This separates progress detection from the migration-lock fallback; an
+always-false progress-query negative control fails that assertion.
+
+`online_hidden_progress.rs` combines a different-role manual builder with a
+restricted schema owner that has actual index DDL authority. It independently
+observes hidden progress fields, the visible PID/database/table lock and absence
+of advisory locks. Verification, migration and pending-index preparation must
+return `BuildInProgress` while the writer is held, retain the index OID and
+verify or adopt it after completion. A hidden build of another index on the
+same table conservatively defers repair until it completes; afterward the
+interrupted target is repairable. An unrelated-table hidden build stays
+blocked on its own writer while the target's actual interrupted index is
+reported `Invalid` and repaired. Together with the cloned-database control,
+these cases constrain correlation to the relevant database and table. The
+verification/migration case fails on the prior classifier with `Invalid`
+instead of `BuildInProgress`; execution outcomes belong to `batter-fnj8.5`.
+An ordinary `CREATE INDEX` of another index on `job_queue` holds `ShareLock`
+instead: another session's uncommitted relation under its name keeps it
+waiting with that lock granted and a hidden progress row. Verification and
+migration must report `BuildInProgress` without changing the target, and the
+target is repaired after the name is released. Removing `ShareLock` from the
+correlation makes it fail with `Invalid` (`batter-fnj8.16`).
+
+`online_cleanup.rs` denies only the restricted role's advisory unlock in its
+disposable database and combines that failure with a different history refusal.
+Both entry points must retain the original version mismatch and native unlock
+SQLSTATE with redacted default diagnostics. The test independently observes
+session and lock retirement. The transport tests additionally retain failed
+unlock alongside their existing build/restoration evidence, including all
+three causes after a cancelled build, failed restoration and failed unlock.
+These targets are discovered by the workspace test command; execution outcomes
+and the negative controls belong to `batter-fnj8.4`.
+
+`online_failures.rs` adds actual-runner cancellation while a writer remains
+held, requiring independent observation of backend and lock disappearance
+before writer release and successful repair afterward. It covers a returned
+server cancellation with acknowledged migration context and retained SQLSTATE,
+a restricted role whose progress fields are demonstrably NULL and whose
+verification changes from BuildInProgress to Invalid after cancelled-backend
+settlement while the writer remains held. A separate regression leaves a real
+canonical INVALID index after interrupting a build, confirms no CREATE progress
+exists in that database, then holds SQLx's migration lock from another session.
+Verification must report `BuildInProgress` while held and `Invalid` after
+unlock, preserving the index OID, definitions, validity and migration history.
+This isolates the advisory-lock fallback from hidden-progress correlation;
+execution evidence belongs to `batter-fnj8.6`. The suite also covers read-only
+refusal of a VALID wrong definition after migration, and explicit default
+fillfactor refusal followed by `RESET (fillfactor)` recovery. Both entry points
+assert typed local lock-wait expiry. A current-thread runtime stall outlasts
+the bound before an independent holder releases the lock; the resumed runner
+must reject another poll. The separate relay test exercises an already-ready
+successful response after expiry. Session tests cover restoration of disabled,
+tighter and looser disconnect checks along with all three profile timeouts.
+These tests run in the workspace matrix; they do not establish runtime-death or
+network-partition bounds.
+
+`cargo test -p runledger-postgres --locked --test online_preparation` covers
+the external-preparation path on its own: a `202605220001` history row with a
+tampered checksum is refused with `Incompatible(VersionMismatch)` and a failed
+`202605180001` row with `Incompatible(Dirty)`, both before any build; an
+`INVALID` leftover of the adoptable `job_queue` index, left by a concurrent
+build cancelled behind an open writer, is dropped, rebuilt and reported as
+built; and a foreign index under the adoptable `workflow_runs` name is refused
+with `DefinitionMismatch` and kept.
 
 `cargo test -p runledger-postgres --locked --test claim_batch_writes` covers
 mixed direct/workflow batches through all four claim entry points. Statement

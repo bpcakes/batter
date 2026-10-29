@@ -721,6 +721,45 @@ schema boundary:
 | 0.11.0 | `202608240001_expand_workflow_step_job_link` before deploying 0.11; `202608240002_contract_workflow_step_job_link` only after all 0.10 writers and leases drain. | Migrate every removed `requeue_job` call before compiling: exact-scope compare-and-requeue replaces canceled/dead-lettered recovery, while successful replay creates a fresh job for `SUCCEEDED`. Contracting the link is the 0.10 rollback boundary. |
 | 0.12.0 | No migration after 0.11.0. | Update exhaustive `QueryErrorKind` matches for `PostgresLockNotAvailable`. Runtime workers bound and retry contended heartbeats within a lease-aware maintenance budget; complete the 0.11 workflow-link rollout before deploying. |
 
+The protected runner builds the five bundled `job_queue`/`workflow_runs`
+indexes of `202605220001`, `202607280004` and `202609050001` with
+`CREATE INDEX CONCURRENTLY` and repairs or reports an interrupted build.
+Removing an `INVALID` leftover needs an instant with no other lock on its table;
+refused attempts are retried for up to five seconds, then startup fails with
+native `55P03` inside `OnlineIndexExecution` and leaves the index in place. If
+traffic or autovacuum never leaves that instant, run `DROP INDEX CONCURRENTLY`
+on the `INVALID` index and restart; the protected runner then builds the
+missing index concurrently. The runner records each migration before its
+build, so an interrupted build leaves a recorded migration with a missing or
+`INVALID` index that earlier releases and a raw `MIGRATOR.run` neither repair
+nor report. Before rolling back below the first release with online builds,
+confirm that `ensure_schema_compatible_after_idempotency_cutover` passes, or
+let a protected startup of the current release repair the index first. A build
+waiting for a long writer has no library-owned time bound; bound a native call with your own deadline, as
+Batter's protected startup does with its startup allowance. Tooling
+that applies the canonical SQL itself calls
+`prepare_online_indexes_for_external_migrator` first and still blocks on the
+three indexes without `IF NOT EXISTS`. Inspect both deferred and blocking
+outcomes after preparation returns `Ok`; even empty lists do not authorize the
+contract migration before old writers drain. Start external tooling only after
+those independent rollout gates are met, never while a Runledger process is migrating or
+preparing: a waiter blocked in `pg_advisory_lock` deadlocks with the
+concurrent build and leaves an `INVALID` index that startup verification then
+refuses, and preparation repairs a leftover only while its migration is still
+pending; a recorded migration with a foreign checksum or a failed run is
+refused before any build. Once the migration is recorded, recover by dropping that index with
+`DROP INDEX CONCURRENTLY` and rebuilding it with the migration file's
+statement plus `CONCURRENTLY`; run `migrate_after_idempotency_cutover` instead
+only where every other pending bundled migration may be applied now, because
+it applies them all. A failure of both the operation and advisory-lock release
+returns `MigrationCleanup`; inspect its `operation_error()` and `unlock_error()`
+only in trusted diagnostics. The original online build/restoration context
+stays in the operation error. Direct formatting redacts both causes, while
+error-source traversal may expose native details. Validating
+`CHECK` constraints keep their table scans under
+`ACCESS EXCLUSIVE`. See the README's
+[online index builds](../README.md#online-index-builds).
+
 For 0.8 source compatibility, construct the now non-exhaustive
 `WorkflowDagStepValidationInput` through
 `WorkflowDagStepValidationInput::new(...)` and its option setters. Its new
