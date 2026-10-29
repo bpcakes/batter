@@ -83,7 +83,9 @@ classification; a budget inside the reserve reaches the handler as
 `JobPhasesRejection::Exhausted` and invokes no work factory; an unpolled
 execution runs no handler and a destroyed one cancels a derived context a
 spawned observer holds, before work; an elapsed budget destroys a parked
-handler and reports `TimedOut`; a result at the deadline is `TimedOut` while one
+handler and reports `TimedOut`; on both of those exits a guard the parked
+handler holds observes that the invocation has not yet ended when its future is
+destroyed; a result at the deadline is `TimedOut` while one
 a nanosecond earlier is returned; a handler panic is `Panicked` and ends the
 invocation; an exit-hook panic is retained beside the returned result; progress
 writes merge like the queue row, reject an invalid effective pair and
@@ -124,7 +126,9 @@ that merges omitted fields like the queue row. `with_checkpoint` declares the
 resume snapshot; `run.persisted` is the row after the last committed write. The
 budget starts when the returned future is first polled, so paused-time tests
 advance from there. Destroying the future before it completes ends the
-invocation as a worker task abort does: the handler future drops first. The
+invocation as a worker task abort does: the handler future drops first. As in
+the worker, nothing preempts a handler that never yields; the drive completes
+only once the handler next returns or yields. The
 facility applies no durable outcome policy: retries, continuations and dead
 letters are the worker's, lease loss is not representable, and a returned
 `JobFailure::timeout` from the handler is distinct from `HandlerExit::TimedOut`.

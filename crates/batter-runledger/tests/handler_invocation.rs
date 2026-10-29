@@ -8,7 +8,7 @@ use batter_runledger::test_support::{HandlerExit, HandlerInvocation, PersistedPr
 use batter_runledger::{JobPhasesRejection, job_phases};
 use runledger_core::jobs::{
     JobCompletion, JobContext, JobContract, JobExecution, JobExecutionHandler, JobFailure,
-    JobFailureKind, JobHandler, JobSpec, JobType, TypedJobHandler,
+    JobFailureKind, JobHandler, JobInvocation, JobSpec, JobType, TypedJobHandler,
 };
 use runledger_core::prelude::async_trait;
 use serde_json::{Value, json};
@@ -38,6 +38,24 @@ fn rejection(rejection: JobPhasesRejection) -> JobFailure {
 enum Report {
     Deadline(std::time::Instant),
     Work(OperationContext),
+    /// Whether the invocation had ended when the parked handler future was destroyed.
+    Destroyed {
+        invocation_ended: bool,
+    },
+}
+
+/// Held across a park, so it is dropped with the handler future.
+struct DestructionProbe {
+    invocation: JobInvocation,
+    report: mpsc::UnboundedSender<Report>,
+}
+
+impl Drop for DestructionProbe {
+    fn drop(&mut self) {
+        let invocation_ended = self.invocation.has_ended();
+        // A closed receiver fails the test's own read; a destructor must not panic.
+        let _ = self.report.send(Report::Destroyed { invocation_ended });
+    }
 }
 
 fn probe() -> (Probe, mpsc::UnboundedReceiver<Report>) {
@@ -78,7 +96,13 @@ impl JobExecutionHandler for Probe {
         let phases = job_phases(execution, RESERVE).map_err(rejection)?;
         self.send(Report::Work(phases.work().clone()));
         match payload["mode"].as_str().unwrap_or("success") {
-            "park" => std::future::pending::<()>().await,
+            "park" => {
+                let _destruction = DestructionProbe {
+                    invocation: execution.invocation().expect("owned exit claim"),
+                    report: self.report.clone(),
+                };
+                std::future::pending::<()>().await;
+            }
             "panic" => panic!("probe panicked"),
             "hook_panic" => execution
                 .invocation()
@@ -138,6 +162,13 @@ fn observed_work(reports: &mut mpsc::UnboundedReceiver<Report>) -> OperationCont
     match reports.try_recv() {
         Ok(Report::Work(work)) => work,
         _ => panic!("the handler reports its work context second"),
+    }
+}
+
+fn observed_destruction(reports: &mut mpsc::UnboundedReceiver<Report>) -> bool {
+    match reports.try_recv() {
+        Ok(Report::Destroyed { invocation_ended }) => invocation_ended,
+        _ => panic!("a parked handler reports its destruction third"),
     }
 }
 
@@ -256,6 +287,10 @@ async fn destroying_the_execution_before_work_ends_the_invocation() {
     tokio::task::yield_now().await;
     assert!(work.check().is_ok(), "the invocation is still running");
     drop(execution);
+    assert!(
+        !observed_destruction(&mut reports),
+        "the handler future is destroyed before the invocation ends"
+    );
     assert_eq!(work.check(), Err(Interruption::Cancelled));
     cancelled
         .recv()
@@ -277,10 +312,12 @@ async fn the_budget_elapsing_destroys_the_handler_and_times_the_invocation_out()
     assert_eq!(run.exit, HandlerExit::TimedOut);
     assert_eq!(Instant::now(), start + BUDGET);
     observed_deadline(&mut reports);
-    assert_eq!(
-        observed_work(&mut reports).check(),
-        Err(Interruption::Cancelled)
+    let work = observed_work(&mut reports);
+    assert!(
+        !observed_destruction(&mut reports),
+        "the elapsed budget destroys the handler future before the invocation ends"
     );
+    assert_eq!(work.check(), Err(Interruption::Cancelled));
     assert_eq!(invoked.load(Ordering::SeqCst), 0);
     assert_eq!(run.persisted.checkpoint, None);
     assert!(run.exit_hook_panics.is_empty());

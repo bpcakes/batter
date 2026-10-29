@@ -1318,9 +1318,12 @@ and refused at the deadline, as `LeaseExecutionServices` refuses it.
 
 The outcome is an exhaustive `HandlerExit`: `Returned` carries the handler's
 own `Result<JobCompletion, JobFailure>` when it was observed strictly before
-the deadline; `TimedOut` is any later observation, including a handler that
-never yields, applying the acceptance rule `JobExecution::deadline` documents
-rather than Tokio's poll order; `Panicked` carries the message. Returning the
+the deadline; `TimedOut` is any observation at or after it, including a result
+from a handler that crossed the deadline without yielding, applying the
+acceptance rule `JobExecution::deadline` documents rather than Tokio's poll
+order; `Panicked` carries the message. As in the worker, nothing preempts a
+handler that never yields: the drive completes only once the handler next
+returns or yields. Returning the
 worker's `job.timeout_exceeded` and `job.handler_panic` failures instead was
 rejected: it would restate the worker's classification strings in Batter and
 let `is_err()` accept a late or panicking handler as a returned failure. The
@@ -1354,10 +1357,11 @@ that depends on a later attempt still needs custom services. The reference
 worker's and the facade-only consumer's own services recipes are unchanged in
 this task. Paused-time tests cover success, retryable and terminal failures,
 phase rejection without a work factory, destruction before work with a spawned
-observer, an elapsed budget, acceptance at and one nanosecond before the
-deadline, contained panics, retained hook panics, progress merge and rejection,
-declared checkpoints, budget validation and typed, legacy and type-erased
-dispatch; a compile-fail rustdoc rejects reaching the declaration's fields;
+observer, an elapsed budget, a parked handler future destroyed before the
+invocation ends on both of those exits, acceptance at and one nanosecond
+before the deadline, contained panics, retained hook panics, progress merge
+and rejection, declared checkpoints, budget validation and typed, legacy and
+type-erased dispatch; a compile-fail rustdoc rejects reaching the declaration's fields;
 `scripts/check_facade_features.py` proves facade reachability and identity.
 Fresh-agent usability evaluation is proposed and unexecuted.
 

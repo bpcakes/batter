@@ -204,8 +204,11 @@ impl HandlerInvocation {
     /// Drive `handler` once to its exit.
     ///
     /// The exit is classified as the worker classifies it: a result or panic
-    /// observed strictly before the deadline is returned as such, and anything
-    /// later, including a handler that never yields, is [`HandlerExit::TimedOut`].
+    /// observed strictly before the deadline is returned as such, and one
+    /// observed at or after it is [`HandlerExit::TimedOut`], even when the
+    /// handler crossed the deadline without yielding. As in the worker, nothing
+    /// preempts a handler that never yields: the drive completes only once the
+    /// handler next returns or yields.
     /// Destroying the returned future before it completes ends the invocation
     /// exactly as a worker task abort does: the handler future is dropped
     /// first, so work awaited inside it stops without observing cancellation,
