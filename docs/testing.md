@@ -92,8 +92,10 @@ destroyed; a result or panic at the deadline is `TimedOut` while a result
 a nanosecond earlier is returned; a handler panic is `Panicked` and ends the
 invocation, including a hand-written dispatch that panics before returning its
 future; an exit-hook panic is retained beside the returned result; progress
-writes merge like the queue row, reject an invalid effective pair and
-`DeadlineElapsed` at the deadline, and start from the declared checkpoint, which
+writes merge like the queue row, so a successful progress-only write replaces
+`done` and keeps the retained total and committed checkpoint, reject an invalid
+effective pair and `DeadlineElapsed` at the deadline, and start from the
+declared checkpoint, which
 the `with_checkpoint` doctest shows retained when nothing is committed; zero
 and over-long budgets are rejected at declaration; and typed, legacy and
 type-erased handlers run through the worker's dispatch with a `Send` future.

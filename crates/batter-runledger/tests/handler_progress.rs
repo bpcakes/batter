@@ -53,6 +53,8 @@ impl JobExecutionHandler for Writer {
         self.0
             .send(result.map_err(|error| error.to_string()))
             .expect("test receives");
+        // A progress-only write keeps the committed checkpoint and total.
+        self.write(execution, update(Some(4), None)).await;
         // Retained total 10 rejects done 11; the update's own pair rejects -1.
         self.write(execution, update(Some(11), None)).await;
         self.write(execution, update(Some(-1), None)).await;
@@ -90,6 +92,7 @@ async fn progress_writes_merge_like_the_queue_row_and_stop_at_the_deadline() {
         [
             Ok(()),
             Ok(()),
+            Ok(()),
             Err(
                 JobExecutionError::InvalidProgress(JobProgressValidationError::DoneExceedsTotal {
                     done: 11,
@@ -108,10 +111,11 @@ async fn progress_writes_merge_like_the_queue_row_and_stop_at_the_deadline() {
     assert_eq!(
         run.persisted,
         PersistedProgress {
-            progress_done: Some(2),
+            progress_done: Some(4),
             progress_total: Some(10),
             checkpoint: Some(json!({ "cursor": 2 })),
-        }
+        },
+        "the progress-only write replaced done and retained the total and checkpoint"
     );
 
     let expired = HandlerInvocation::new(BUDGET)
@@ -127,7 +131,11 @@ async fn progress_writes_merge_like_the_queue_row_and_stop_at_the_deadline() {
         writes(&mut reports).last(),
         Some(&Err(JobExecutionError::DeadlineElapsed.to_string()))
     );
-    assert_eq!(expired.persisted.progress_done, Some(2));
+    assert_eq!(
+        expired.persisted.progress_done,
+        Some(4),
+        "the write refused at the deadline committed nothing"
+    );
     assert_eq!(
         expired.persisted.checkpoint,
         Some(json!({ "cursor": 2 })),
