@@ -1,3 +1,6 @@
+use crate::verification::authority::privileges::OwnerAllowance;
+use crate::verification::authority::privileges::SuperuserAllowance;
+
 use super::privileges::{
     actual_for_capability_source, inspect_acl_object_collect, routine_matches,
 };
@@ -331,8 +334,8 @@ fn allowed_owner_authority_remains_available_to_follow_on_checks() {
         1,
         &[],
         &[],
-        true,
-        false,
+        OwnerAllowance::Allow,
+        SuperuserAllowance::Deny,
         &super::privileges::PublicPolicy::from_grants(&[]),
         PublicObject::Database,
         &[ObjectPrivilege::Execute],
@@ -421,9 +424,8 @@ fn routine_matching_uses_quoted_structural_identity_and_canonical_types() {
             [RoutineType::new("pg_catalog", "int4").unwrap()],
         )
         .unwrap(),
-        privileges: vec![AllowedPrivilege::new(
+        privileges: vec![AllowedPrivilege::privilege(
             crate::verification::policy::ObjectPrivilege::Execute,
-            false,
         )],
         allow_owner: false,
         allow_security_definer: false,
@@ -461,9 +463,8 @@ fn routine_matching_preserves_catalog_case_and_true_array_identity() {
     };
     let policy = |type_name: RoutineType| RoutinePolicy {
         routine: RoutineSignature::new("quoted.schema", "quoted.function", [type_name]).unwrap(),
-        privileges: vec![AllowedPrivilege::new(
+        privileges: vec![AllowedPrivilege::privilege(
             crate::verification::policy::ObjectPrivilege::Execute,
-            false,
         )],
         allow_owner: false,
         allow_security_definer: false,

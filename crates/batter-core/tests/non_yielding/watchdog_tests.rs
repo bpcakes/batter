@@ -355,12 +355,12 @@ fn event_wait_accepts_final_output_from_an_exited_child() {
 
 #[test]
 fn event_wait_rejects_an_exited_child_without_the_event() {
-    reject_missing_final_event(false);
+    reject_missing_final_event(DeadlineState::Active);
 }
 
 #[test]
 fn exited_child_rejection_precedes_an_expired_startup_deadline() {
-    reject_missing_final_event(true);
+    reject_missing_final_event(DeadlineState::Expired);
 }
 
 #[test]
@@ -382,7 +382,8 @@ fn final_capture_failures_are_not_masked_by_missing_startup() {
     }
 }
 
-fn reject_missing_final_event(expired: bool) {
+fn reject_missing_final_event(expired: DeadlineState) {
+    let expired = expired == DeadlineState::Expired;
     let mut child = FixtureChild::spawn("exit-success").unwrap();
     child.child.wait().unwrap();
     let failure = std::thread::spawn(move || {
@@ -464,4 +465,10 @@ fn optimized_parent_death_probe_rejects_invalid_child_evidence() {
             .unwrap();
         assert!(run.output.text().contains(diagnostic), "{run:?}");
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeadlineState {
+    Expired,
+    Active,
 }

@@ -1,3 +1,5 @@
+use crate::verification::AuthorityAllowance;
+
 use super::*;
 use crate::verification::{
     DiscoveryScope, FragmentObjectPolicy, PublicObject, RoutineSignature, RoutineType,
@@ -129,7 +131,7 @@ fn fragments_never_carry_application_database_discovery_or_role_policy() {
             ..RolePolicy::default()
         })
         .unwrap();
-    narrowed.deny_current_database_ownership(true);
+    narrowed.database_ownership(AuthorityAllowance::Deny);
     narrowed
         .add_database(
             DatabaseGrantSpec::new(
@@ -155,7 +157,9 @@ fn contradictory_fragment_and_application_options_fail_before_any_plan_exists() 
     let owned = manifest()
         .with_fragment(
             GrantFragment::new()
-                .with_relations(required([ObjectPrivilege::Select]).allow_owner(true))
+                .with_relations(
+                    required([ObjectPrivilege::Select]).ownership(AuthorityAllowance::Allow),
+                )
                 .unwrap(),
         )
         .unwrap()
@@ -186,7 +190,7 @@ fn contradictory_fragment_and_application_options_fail_before_any_plan_exists() 
     let row_type = manifest()
         .with_fragment(
             GrantFragment::new()
-                .with_relations(required([]).allow_row_type_public_usage(true))
+                .with_relations(required([]).row_type_public_usage(AuthorityAllowance::Allow))
                 .unwrap(),
         )
         .unwrap()
@@ -295,7 +299,7 @@ fn a_fragment_routine_reaches_the_compiled_policy_and_the_grant_plan() {
                         DeclarationPurpose::RequiredAndProvisioned,
                     )
                     .unwrap()
-                    .allow_security_definer(true),
+                    .security_definer(AuthorityAllowance::Allow),
                 )
                 .unwrap(),
         )
@@ -325,8 +329,16 @@ fn a_fragment_routine_reaches_the_compiled_policy_and_the_grant_plan() {
 fn schema_and_relation_ownership_choices_propagate_independently() {
     let policy = |schema_owner, relation_owner| {
         FragmentObjectPolicy::new(identifier("service"))
-            .allow_schema_owner(schema_owner)
-            .allow_relation_owner(relation_owner)
+            .schema_ownership(if schema_owner {
+                AuthorityAllowance::Allow
+            } else {
+                AuthorityAllowance::Deny
+            })
+            .relation_ownership(if relation_owner {
+                AuthorityAllowance::Allow
+            } else {
+                AuthorityAllowance::Deny
+            })
     };
     let compiled = |schema_owner, relation_owner| {
         let policy = policy(schema_owner, relation_owner);

@@ -215,12 +215,18 @@ fn assert_cancelled_report(
 
 pub async fn abandoned_failure() -> ProbeResult {
     for panic in [false, true] {
-        failed_template(panic).await?;
+        failed_template(if panic {
+            FixtureFailure::Panic
+        } else {
+            FixtureFailure::Returned
+        })
+        .await?;
     }
     Ok(())
 }
 
-async fn failed_template(panic: bool) -> ProbeResult {
+async fn failed_template(panic_choice: FixtureFailure) -> ProbeResult {
+    let panic = panic_choice == FixtureFailure::Panic;
     let harness = harness(8).await?;
     let url = harness.admin_database_url().to_owned();
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
@@ -265,14 +271,15 @@ async fn failed_template(panic: bool) -> ProbeResult {
     );
     reclaimed?;
     assert!(names?.is_empty());
-    assert_template_failure(&report, panic);
+    assert_template_failure(&report, panic_choice);
     Ok(())
 }
 
 fn assert_template_failure(
     report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
-    panic: bool,
+    panic: FixtureFailure,
 ) {
+    let panic = panic == FixtureFailure::Panic;
     assert!(matches!(
         report.body,
         Err(BodyFailure::Returned(FixtureError::ObservationTimeout))
@@ -365,4 +372,10 @@ pub async fn shared_admission() -> ProbeResult {
     assert!(observed.load(Ordering::SeqCst) > 0 && report.is_ok());
     assert_eq!(report.databases.len(), 1);
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FixtureFailure {
+    Panic,
+    Returned,
 }

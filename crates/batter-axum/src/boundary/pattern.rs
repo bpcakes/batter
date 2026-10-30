@@ -161,7 +161,15 @@ fn witness(first: &[Segment], second: &[Segment]) -> Option<Vec<u8>> {
             (Some(a), Some(b)) => {
                 let last = index + 1 == first.len();
                 path.push(b'/');
-                path.extend(segment_witness(a, b, last)?);
+                path.extend(segment_witness(
+                    a,
+                    b,
+                    if last {
+                        SegmentPosition::Last
+                    } else {
+                        SegmentPosition::Interior
+                    },
+                )?);
             }
             (None, Some(_)) | (Some(_), None) => return None,
         }
@@ -173,7 +181,8 @@ fn witness(first: &[Segment], second: &[Segment]) -> Option<Vec<u8>> {
 ///
 /// `last` is exact for any pair that can still succeed: both patterns must
 /// end at the same position when neither reaches a wildcard.
-fn segment_witness(first: &Segment, second: &Segment, last: bool) -> Option<Vec<u8>> {
+fn segment_witness(first: &Segment, second: &Segment, last: SegmentPosition) -> Option<Vec<u8>> {
+    let last = last == SegmentPosition::Last;
     match (first, second) {
         (Segment::Literal(a), Segment::Literal(b)) => (a == b).then(|| a.clone()),
         (Segment::Literal(literal), Segment::Capture(prefix))
@@ -228,4 +237,10 @@ fn longer_compatible<'a>(first: &'a [u8], second: &'a [u8]) -> Option<&'a [u8]> 
     } else {
         None
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SegmentPosition {
+    Last,
+    Interior,
 }

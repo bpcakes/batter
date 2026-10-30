@@ -1,3 +1,5 @@
+use crate::delivery::worker::state::ProviderAcceptance;
+
 use super::*;
 use crate::delivery::{DeliveryService, OwnerId, SubmitDelivery};
 use batter::{BoxError, admission::BulkheadCapacity, settings::SecretString};
@@ -109,7 +111,14 @@ async fn terminal_writers_reject_terminal_sources_before_sql_acquisition() -> Re
         (ProviderEffectState::ReconcileNeeded, "storage"),
     ] {
         let manual = worker
-            .record_manual(execution, &payload, "guard_probe", None, false, source)
+            .record_manual(
+                execution,
+                &payload,
+                "guard_probe",
+                None,
+                ProviderAcceptance::RuledOut,
+                source,
+            )
             .await;
         let denied = worker
             .record_business_denial(execution, &payload, "guard_probe", source)
@@ -191,7 +200,15 @@ async fn probes(pool: &PgPool) -> Result<(), BoxError> {
     .await?;
     let worker = worker(pool)?;
     for effect_lock in [false, true] {
-        lock_only_expiry(&worker, effect_lock).await?;
+        lock_only_expiry(
+            &worker,
+            if effect_lock {
+                LockedRow::Effect
+            } else {
+                LockedRow::Job
+            },
+        )
+        .await?;
     }
     durable_eligibility(&worker).await?;
     stale_terminal_sources(&worker).await?;
@@ -228,7 +245,7 @@ async fn stale_terminal_sources(worker: &DeliveryWorker) -> Result<(), BoxError>
                 &payload,
                 "stale_probe",
                 None,
-                false,
+                ProviderAcceptance::RuledOut,
                 ProviderEffectState::AwaitingAttempt,
             )
             .await;
@@ -363,7 +380,8 @@ async fn claimed(pool: &PgPool) -> Result<(JobContext, DeliveryJobPayload), BoxE
     ))
 }
 
-async fn lock_only_expiry(worker: &DeliveryWorker, effect_lock: bool) -> Result<(), BoxError> {
+async fn lock_only_expiry(worker: &DeliveryWorker, effect_lock: LockedRow) -> Result<(), BoxError> {
+    let effect_lock = effect_lock == LockedRow::Effect;
     let (context, payload) = claimed(&worker.pool).await?;
     let services = Services(Instant::now() + Duration::from_secs(10));
     sqlx::query("UPDATE job_queue SET lease_expires_at = clock_timestamp() + interval '2 seconds' WHERE id = $1")
@@ -505,4 +523,10 @@ async fn dispatch_eligibility_boundaries(
             .unwrap()
     );
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LockedRow {
+    Effect,
+    Job,
 }

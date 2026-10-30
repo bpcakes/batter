@@ -46,7 +46,14 @@ pub(super) async fn declare_history_cursor(
                 .as_database_error()
                 .and_then(|error| error.code())
                 .is_some_and(|code| {
-                    declaration_failure_is_unavailable(code.as_ref(), protected_select)
+                    declaration_failure_is_unavailable(
+                        code.as_ref(),
+                        if protected_select {
+                            DeclarationContext::ProtectedSelect
+                        } else {
+                            DeclarationContext::Other
+                        },
+                    )
                 });
             if let Err(rollback) = guard.rollback().await {
                 return Err(VerificationError::Rollback {
@@ -85,7 +92,8 @@ async fn available_cursor_id(
     Err(VerificationError::CatalogCapacity)
 }
 
-fn declaration_failure_is_unavailable(code: &str, protected_select: bool) -> bool {
+fn declaration_failure_is_unavailable(code: &str, protected_select: DeclarationContext) -> bool {
+    let protected_select = protected_select == DeclarationContext::ProtectedSelect;
     matches!(code, "42P01" | "3F000" | "42703" | "42809" | "42883")
         || code == "42501" && protected_select
 }
@@ -236,12 +244,24 @@ mod tests {
     #[test]
     fn relation_or_shape_declaration_failures_are_unavailable() {
         for code in ["42P01", "3F000", "42703", "42809", "42883"] {
-            assert!(declaration_failure_is_unavailable(code, false));
+            assert!(declaration_failure_is_unavailable(
+                code,
+                DeclarationContext::Other
+            ));
         }
-        assert!(declaration_failure_is_unavailable("42501", true));
-        assert!(!declaration_failure_is_unavailable("42501", false));
+        assert!(declaration_failure_is_unavailable(
+            "42501",
+            DeclarationContext::ProtectedSelect
+        ));
+        assert!(!declaration_failure_is_unavailable(
+            "42501",
+            DeclarationContext::Other
+        ));
         for code in ["42601", "08006", "53200"] {
-            assert!(!declaration_failure_is_unavailable(code, true));
+            assert!(!declaration_failure_is_unavailable(
+                code,
+                DeclarationContext::ProtectedSelect
+            ));
         }
     }
 
@@ -260,4 +280,10 @@ mod tests {
             &allowed
         ));
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeclarationContext {
+    ProtectedSelect,
+    Other,
 }

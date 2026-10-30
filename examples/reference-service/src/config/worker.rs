@@ -25,7 +25,7 @@ impl WorkerSettings {
     /// Parse dedicated worker overrides with explicit required identity and defaults.
     /// This does not read environment variables or spawn workers.
     pub fn from_source(source: &SettingsSource) -> Result<Self, SettingsError> {
-        source.select(NAMES, &[], false)?;
+        source.select_dedicated(NAMES)?;
         Self::from_values(source)
     }
     pub(super) fn from_values(source: &SettingsSource) -> Result<Self, SettingsError> {

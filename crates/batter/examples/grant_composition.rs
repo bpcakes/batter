@@ -48,6 +48,8 @@
 //!   `UPDATE(capacity_shard)`, are ordinary mutation authority usable by
 //!   arbitrary SQL.
 
+use batter::sqlx::verification::AuthorityAllowance;
+
 use batter::runledger::grants::RunledgerOperation;
 use batter::runlimit::grants::RunlimitOperation;
 use batter::sqlx::verification::{
@@ -210,7 +212,7 @@ fn compose(consumer: &ConsumerRole) -> Result<String, Box<dyn std::error::Error 
     // The application owns every policy a fragment cannot carry.
     let mut manifest = ExactRoleManifest::new(primary, DiscoveryScope::Schemas(scope))?;
     manifest.set_role_policy(RolePolicy::default())?;
-    manifest.deny_current_database_ownership(true);
+    manifest.database_ownership(AuthorityAllowance::Deny);
     manifest.set_discovery_defaults(defaults())?;
     manifest.add_database(
         DatabaseGrantSpec::new(
@@ -275,7 +277,7 @@ fn declare_application_objects(
             [],
             DeclarationPurpose::RequiredAndProvisioned,
         )?
-        .allow_row_type_public_usage(true),
+        .row_type_public_usage(AuthorityAllowance::Allow),
     )?;
     manifest.add_columns(
         ColumnGrantGroup::new(
@@ -317,7 +319,7 @@ fn objects(
 ) -> Result<FragmentObjectPolicy, Box<dyn std::error::Error + Send + Sync>> {
     // PostgreSQL's default PUBLIC USAGE on composite row types is retained here
     // rather than reset, because both audited consumer shapes keep it.
-    let policy = FragmentObjectPolicy::new(schema).allow_row_type_public_usage(true);
+    let policy = FragmentObjectPolicy::new(schema).row_type_public_usage(AuthorityAllowance::Allow);
     Ok(match public {
         PublicPolicy::Deny => policy,
         PublicPolicy::PermitSelectedDelivery => {
@@ -330,9 +332,8 @@ fn objects(
 fn defaults() -> DiscoveryDefaults {
     DiscoveryDefaults {
         types: ObjectDefaults {
-            public_privileges: vec![batter::sqlx::verification::AllowedPrivilege::new(
+            public_privileges: vec![batter::sqlx::verification::AllowedPrivilege::privilege(
                 ObjectPrivilege::Usage,
-                false,
             )],
             ..ObjectDefaults::default()
         },

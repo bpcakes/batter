@@ -8,6 +8,47 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Enable the zero-boolean-parameter Clippy rule for workspace lint inheritors
+  (`batter-moe5`). Internal APIs and fixture controls use named choices. Public
+  source-selection and authority-policy methods have explicit replacements;
+  their old signatures remain deprecated for one release because both old
+  choices are valid application policies. No public hard cut is made.
+
+  ```rust,ignore
+  // Settings: before -> after
+  source.select(allowed, reserved, false)?;
+  source.select_dedicated(allowed)?;
+  source.select(allowed, reserved, true)?;
+  source.select_environment(allowed, reserved)?;
+
+  // Authority builders: before -> after; false maps to Deny.
+  spec.allow_grant_option(true);
+  spec.grant_option(AuthorityAllowance::Allow);
+  spec.allow_owner(true);
+  spec.ownership(AuthorityAllowance::Allow);
+  spec.allow_row_type_public_usage(true);
+  spec.row_type_public_usage(AuthorityAllowance::Allow);
+  routine.allow_security_definer(true);
+  routine.security_definer(AuthorityAllowance::Allow);
+  fragment.allow_schema_owner(true);
+  fragment.schema_ownership(AuthorityAllowance::Allow);
+  fragment.allow_relation_owner(true);
+  fragment.relation_ownership(AuthorityAllowance::Allow);
+  // Ownership safeguard: true maps to Deny; false maps to Allow.
+  manifest.deny_current_database_ownership(true);
+  manifest.database_ownership(AuthorityAllowance::Deny);
+
+  AllowedPrivilege::new(privilege, false);
+  AllowedPrivilege::privilege(privilege);
+  AllowedPrivilege::new(privilege, true);
+  AllowedPrivilege::grantable(privilege);
+  ```
+
+  `AuthorityAllowance` lives in `batter_sqlx::verification` and is also available
+  through `batter::sqlx::verification`. The same method replacements apply to
+  every declaration type that offered the old method. The verifier still owns
+  validation and remote privilege inspection; named choices grant no remote proof.
+
 - Add `PgLease::migrate_and_apply_with` (`batter-aouh`) for scoped application SQL
   after managed definitions and before the same transaction commits. Ownership
   and grants can publish with changed callers; managed definitions, ledger

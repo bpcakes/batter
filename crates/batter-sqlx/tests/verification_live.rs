@@ -57,12 +57,17 @@ fn names_policy(
     table: &str,
     role: RolePolicy,
     table_privileges: Vec<AllowedPrivilege>,
-    allow_parameter_set: bool,
-    include_public_table_a: bool,
-    allow_sequence_privileges: bool,
-    allow_table_owner: bool,
-    allow_routine_execute: bool,
+    allow_parameter_set: ParameterAllowance,
+    include_public_table_a: PublicTableAllowance,
+    allow_sequence_privileges: SequenceAllowance,
+    allow_table_owner: TableOwnerAllowance,
+    allow_routine_execute: RoutineAllowance,
 ) -> Result<VerificationPolicy> {
+    let allow_parameter_set = allow_parameter_set == ParameterAllowance::Allow;
+    let include_public_table_a = include_public_table_a == PublicTableAllowance::Include;
+    let allow_sequence_privileges = allow_sequence_privileges == SequenceAllowance::Allow;
+    let allow_table_owner = allow_table_owner == TableOwnerAllowance::Allow;
+    let allow_routine_execute = allow_routine_execute == RoutineAllowance::Allow;
     let schema_name = Identifier::new(schema)?;
     let ledger_name = QualifiedName::new(schema, ledger)?;
     let table_name = QualifiedName::new(schema, table)?;
@@ -80,11 +85,11 @@ fn names_policy(
             // only rows with an explicit attacl value.
             ColumnPolicy {
                 column: Identifier::new("visible")?,
-                privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
+                privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
             },
             ColumnPolicy {
                 column: Identifier::new("secret")?,
-                privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, true)],
+                privileges: vec![AllowedPrivilege::grantable(ObjectPrivilege::Select)],
             },
         ]
     } else {
@@ -93,33 +98,33 @@ fn names_policy(
     let mut public_grants = vec![
         PublicGrant {
             object: PublicObject::Database,
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Connect, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Connect),
         },
         PublicGrant {
             object: PublicObject::Database,
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
         },
         PublicGrant {
             object: PublicObject::Schema(Identifier::new("public")?),
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Usage),
         },
         PublicGrant {
             object: PublicObject::Type(type_name.clone()),
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Usage),
         },
         PublicGrant {
             object: PublicObject::Routine(routine_name.clone()),
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Execute, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Execute),
         },
         PublicGrant {
             object: PublicObject::Relation(QualifiedName::new(&names.schema_b, &names.table_b)?),
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Select),
         },
     ];
     if include_public_table_a {
         public_grants.push(PublicGrant {
             object: PublicObject::Relation(QualifiedName::new(&names.schema_a, &names.table_a)?),
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Select),
         });
     }
     Ok(VerificationPolicy::new(
@@ -137,7 +142,7 @@ fn names_policy(
                 },
                 RelationPolicy {
                     relation: QualifiedName::new(schema, ledger)?,
-                    privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
+                    privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
                     columns: Vec::new(),
                     allow_owner: false,
                     allow_row_type_public_usage: true,
@@ -148,9 +153,9 @@ fn names_policy(
                     sequence: sequence_name,
                     privileges: if allow_sequence_privileges {
                         vec![
-                            AllowedPrivilege::new(ObjectPrivilege::Usage, true),
-                            AllowedPrivilege::new(ObjectPrivilege::Select, true),
-                            AllowedPrivilege::new(ObjectPrivilege::Update, true),
+                            AllowedPrivilege::grantable(ObjectPrivilege::Usage),
+                            AllowedPrivilege::grantable(ObjectPrivilege::Select),
+                            AllowedPrivilege::grantable(ObjectPrivilege::Update),
                         ]
                     } else {
                         Vec::new()
@@ -166,19 +171,19 @@ fn names_policy(
             schemas: vec![
                 SchemaPolicy {
                     schema: schema_name,
-                    privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+                    privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)],
                     allow_owner: false,
                 },
                 SchemaPolicy {
                     schema: Identifier::new("public")?,
-                    privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+                    privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)],
                     allow_owner: false,
                 },
             ],
             routines: vec![RoutinePolicy {
                 routine: routine_name,
                 privileges: if allow_routine_execute {
-                    vec![AllowedPrivilege::new(ObjectPrivilege::Execute, true)]
+                    vec![AllowedPrivilege::grantable(ObjectPrivilege::Execute)]
                 } else {
                     Vec::new()
                 },
@@ -192,7 +197,7 @@ fn names_policy(
                 .into_iter()
                 .map(|type_name| TypePolicy {
                     type_name,
-                    privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+                    privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)],
                     allow_owner: false,
                 })
                 .collect(),
@@ -200,7 +205,7 @@ fn names_policy(
                 ParameterPolicy {
                     parameter: ParameterName::new("work_mem")?,
                     privileges: if allow_parameter_set {
-                        vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)]
+                        vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)]
                     } else {
                         Vec::new()
                     },
@@ -208,7 +213,7 @@ fn names_policy(
                 ParameterPolicy {
                     parameter: ParameterName::new("ignore_system_indexes")?,
                     privileges: if allow_parameter_set {
-                        vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)]
+                        vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)]
                     } else {
                         Vec::new()
                     },
@@ -216,8 +221,8 @@ fn names_policy(
             ],
             database: DatabasePolicy {
                 privileges: vec![
-                    AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-                    AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Connect),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
                 ],
                 allow_owner: false,
             },
@@ -276,4 +281,34 @@ async fn verify_combined(
         .with_authority(&authority)
         .expect("live-test plan selects one authority component");
     batter_sqlx::verification::verify(pool, context, plan).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ParameterAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PublicTableAllowance {
+    Include,
+    Exclude,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SequenceAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TableOwnerAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RoutineAllowance {
+    Allow,
+    Deny,
 }

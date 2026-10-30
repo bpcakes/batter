@@ -7,8 +7,9 @@ use std::time::Duration;
 async fn inspect(
     pool: &sqlx::PgPool,
     policy: &MigrationPolicy,
-    combined: bool,
+    combined: VerificationScope,
 ) -> Result<VerificationReport> {
+    let combined = combined == VerificationScope::MigrationsAndAuthority;
     let context =
         batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
     Ok(if combined {
@@ -50,7 +51,7 @@ async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Re
             // Resolve both relations in this connection before namespace locking.
             let before: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {ledger}")))
                 .fetch_one(&mut mutator).await?;
-            require(before == 0, "ledger was not empty before attachment")?;
+            require!(before == 0, "ledger was not empty before attachment")?;
             let mut barrier = blocker.begin().await?;
             sqlx::query("LOCK TABLE pg_catalog.pg_namespace IN ACCESS EXCLUSIVE MODE")
                 .execute(&mut *barrier).await?;
@@ -58,7 +59,7 @@ async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Re
                 QualifiedName::new(&names.schema_a, &names.ledger_a)?,
                 [MigrationExpectation::new(1, [1])],
             )?;
-            let verification = inspect(&pool, &policy, combined);
+            let verification = inspect(&pool, &policy, if combined { VerificationScope::MigrationsAndAuthority } else { VerificationScope::MigrationsOnly });
             tokio::pin!(verification);
             tokio::select! {
                 _ = &mut verification => return Err(std::io::Error::other("verifier completed before namespace barrier").into()),
@@ -72,31 +73,37 @@ async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Re
             change.commit().await?;
             barrier.rollback().await?;
             let report = verification.await?;
-            require(report.findings().iter().any(|f| f.kind == FindingKind::MissingMigration
+            require!(report.findings().iter().any(|f| f.kind == FindingKind::MissingMigration
                 && f.subject.as_deref() == Some("1")),
                 "late attachment supplied a migration absent from every committed ledger state")?;
             let after: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {ledger}")))
                 .fetch_one(&mut mutator).await?;
-            require(after == 0, "ledger was not empty after attachment")?;
+            require!(after == 0, "ledger was not empty after attachment")?;
             for selected in [&names.ledger_a, "late_records"] {
                 let inherited = MigrationPolicy::new(
                     QualifiedName::new(&names.schema_a, selected)?,
                     policy.required().iter().cloned(),
                 )?;
-                let report = inspect(&pool, &inherited, combined).await?;
-                require(report.status() == VerificationStatus::Incomplete
+                let report = inspect(&pool, &inherited, if combined { VerificationScope::MigrationsAndAuthority } else { VerificationScope::MigrationsOnly }).await?;
+                require!(report.status() == VerificationStatus::Incomplete
                     && report.unsupported() == [UnsupportedSurface::InheritedMigrationLedgers]
                     && report.supported().is_empty() && report.findings().is_empty(),
                     "inherited parent or child was treated as a supported ledger")?;
-                require(report.session_user() == names.login_a && report.current_user() == names.login_a,
+                require!(report.session_user() == names.login_a && report.current_user() == names.login_a,
                     "unsupported ledger report lost serving identity")?;
             }
             let after_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&pool).await?;
-            require(after_pid == pid, "clean unsupported-ledger inspection retired the serving session")?;
+            require!(after_pid == pid, "clean unsupported-ledger inspection retired the serving session")?;
             exec(&mut mutator, format!("ALTER TABLE {child} NO INHERIT {ledger}")).await?;
         }
         mutator.close().await?;
         blocker.close().await?;
         Ok(())
     })).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VerificationScope {
+    MigrationsAndAuthority,
+    MigrationsOnly,
 }

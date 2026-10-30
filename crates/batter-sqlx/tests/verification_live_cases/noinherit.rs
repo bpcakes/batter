@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use crate::support::{Result, require};
 use crate::verify_policy as verify;
 use crate::{AuthorityFixture, Names, finding, names_policy, quote};
@@ -15,7 +21,7 @@ pub(super) async fn check(fixture: &mut AuthorityFixture, names: &Names) -> Resu
     let startup_setting: String = sqlx::query_scalar("SHOW ignore_system_indexes")
         .fetch_one(&login_noinherit)
         .await?;
-    require(
+    require!(
         startup_setting == "off",
         "backend-context startup setting was not applied to the restricted login",
     )?;
@@ -31,7 +37,7 @@ pub(super) async fn check(fixture: &mut AuthorityFixture, names: &Names) -> Resu
     )))
     .execute(&login_noinherit)
     .await;
-    require(
+    require!(
         denied_set.is_err(),
         "the nested INHERIT-only membership unexpectedly allowed SET ROLE",
     )?;
@@ -41,20 +47,20 @@ pub(super) async fn check(fixture: &mut AuthorityFixture, names: &Names) -> Resu
         &names.ledger_a,
         &names.table_a,
         RolePolicy::default(),
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
-        false,
-        true,
-        false,
-        false,
-        false,
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
+        ParameterAllowance::Deny,
+        PublicTableAllowance::Include,
+        SequenceAllowance::Deny,
+        TableOwnerAllowance::Deny,
+        RoutineAllowance::Deny,
     )?;
     let noinherit_report = verify(&login_noinherit, &noinherit_policy).await?;
-    require(
+    require!(
         noinherit_report.session_user() == names.login_noinherit
             && noinherit_report.current_user() == names.login_noinherit,
         "the NOINHERIT restricted login was not the checker session root",
     )?;
-    require(
+    require!(
         noinherit_report.findings().iter().any(|item| {
             item.kind == FindingKind::RoleAttribute
                 && item.object.as_deref() == Some("pg_write_all_data")
@@ -62,7 +68,7 @@ pub(super) async fn check(fixture: &mut AuthorityFixture, names: &Names) -> Resu
         }),
         "nested inherited predefined authority was hidden by the login INHERIT flag",
     )?;
-    require(
+    require!(
         !finding(&noinherit_report, FindingKind::RoleAdminOption),
         "ADMIN authority crossed a membership with neither INHERIT nor SET",
     )?;

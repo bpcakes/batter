@@ -1,6 +1,8 @@
 //! Constraint triggers installed, changed, adopted, repaired and retired in the
 //! transaction that installs the routines they bind.
 
+use crate::verification::LockStatus;
+
 use super::verification::wait_for_lock;
 use super::{Fixture, Role, catalog_state, pid};
 use crate::support::{Result, bounded, require};
@@ -138,28 +140,28 @@ async fn managed_constraint_trigger_bootstraps_with_its_new_function() -> Result
         let migrator = fixture.pool(Role::Migrator).await?;
         // Neither the function nor its constraint trigger exists beforehand.
         let applied = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             applied.created_or_replaced() == 2 && applied.unchanged() == 0,
             "one apply did not install the function and its constraint trigger",
         )?;
         let (_, constraint, enabled, definition) = holder(&migrator, &schema).await?;
-        require(
+        require!(
             constraint && enabled == "O" && definition.contains(DEFERRED),
             "apply did not create an enabled deferred constraint trigger",
         )?;
-        require(
+        require!(
             ledger_row(fixture, &migrator).await?.0 == "constraint_trigger",
             "the ledger did not record the constraint trigger kind",
         )?;
         // A write in a later transaction fires the installed body at commit.
         let mut transaction = migrator.begin().await?;
         insert(&mut *transaction, &schema).await?;
-        require(
+        require!(
             fired(&mut *transaction, &schema).await?.is_empty(),
             "the deferred constraint trigger fired before commit",
         )?;
         transaction.commit().await?;
-        require(
+        require!(
             fired(&migrator, &schema).await? == ["v1"],
             "the constraint trigger did not run the installed body",
         )?;
@@ -167,7 +169,7 @@ async fn managed_constraint_trigger_bootstraps_with_its_new_function() -> Result
         let sqlx = fixture.sqlx_manifest()?;
         let plan =
             VerificationPlan::sqlx_migrations(&sqlx).with_managed_objects(&objects.manifest)?;
-        require(
+        require!(
             fixture.verify(&reader, plan).await?.status()
                 == VerificationStatus::WithinDeclaredPolicy,
             "the bootstrapped set did not verify",
@@ -198,21 +200,21 @@ async fn managed_constraint_trigger_reapply_executes_no_ddl() -> Result {
         let again = fixture
             .apply_beside_writer(&migrator, &objects.manifest, "records")
             .await?;
-        require(
+        require!(
             again.created_or_replaced() == 0 && again.unchanged() == 2 && again.retired() == 0,
             "a repeated apply re-executed an unchanged constraint trigger",
         )?;
         // The trigger's oid and xmin are part of the state.
-        require(
+        require!(
             catalog_state(&migrator, &schema).await? == catalog,
             "a repeated apply dropped and re-created the constraint trigger",
         )?;
-        require(
+        require!(
             fixture.object_rows(&migrator).await? == ledger,
             "a repeated apply rewrote a ledger row or its applied_at",
         )?;
         let reader = fixture.pool(Role::Reader).await?;
-        require(
+        require!(
             verifies(fixture, &reader, &objects.manifest).await?,
             "a repeated apply did not verify",
         )
@@ -247,12 +249,12 @@ async fn managed_constraint_trigger_source_change_recreates_it() -> Result {
         let (oid, ..) = holder(&migrator, &schema).await?;
         let (kind, source, rendered) = ledger_row(fixture, &migrator).await?;
         let applied = fixture.apply(&migrator, &immediate.manifest).await?;
-        require(
+        require!(
             applied.created_or_replaced() == 1 && applied.unchanged() == 1,
             "a changed constraint trigger was not the only re-created entry",
         )?;
         let (changed_oid, constraint, _, definition) = holder(&migrator, &schema).await?;
-        require(
+        require!(
             changed_oid != oid
                 && constraint
                 && definition.contains(IMMEDIATE)
@@ -261,20 +263,20 @@ async fn managed_constraint_trigger_source_change_recreates_it() -> Result {
         )?;
         let (changed_kind, changed_source, changed_rendered) =
             ledger_row(fixture, &migrator).await?;
-        require(
+        require!(
             changed_kind == kind && changed_source != source && changed_rendered != rendered,
             "the ledger did not record the changed source and rendering",
         )?;
         // The re-created trigger checks at the end of each statement.
         let mut transaction = migrator.begin().await?;
         insert(&mut *transaction, &schema).await?;
-        require(
+        require!(
             fired(&mut *transaction, &schema).await? == ["v1"],
             "the re-created constraint trigger still deferred its check",
         )?;
         transaction.rollback().await?;
         let reader = fixture.pool(Role::Reader).await?;
-        require(
+        require!(
             verifies(fixture, &reader, &immediate.manifest).await?,
             "the changed constraint trigger did not verify",
         )
@@ -298,7 +300,7 @@ async fn managed_constraint_trigger_from_a_migration_is_adopted() -> Result {
         let migrator = fixture.pool(Role::Migrator).await?;
         fixture.migrate_only(&migrator).await?;
         let (migrated_oid, constraint, ..) = holder(&migrator, &schema).await?;
-        require(
+        require!(
             constraint,
             "the migration did not create a constraint trigger",
         )?;
@@ -312,26 +314,26 @@ async fn managed_constraint_trigger_from_a_migration_is_adopted() -> Result {
             [],
         )?;
         let applied = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             applied.created_or_replaced() == 2,
             "apply did not adopt both migration-created objects",
         )?;
         let (oid, constraint, enabled, definition) = holder(&migrator, &schema).await?;
-        require(
+        require!(
             oid != migrated_oid && constraint && enabled == "O" && definition.contains(DEFERRED),
             "the adopted constraint trigger was not re-created from its declaration",
         )?;
-        require(
+        require!(
             ledger_row(fixture, &migrator).await?.0 == "constraint_trigger",
             "the adopted constraint trigger was not recorded",
         )?;
         insert(&migrator, &schema).await?;
-        require(
+        require!(
             fired(&migrator, &schema).await? == ["migration", "v1"],
             "the adopted constraint trigger did not run the managed body",
         )?;
         let reader = fixture.pool(Role::Reader).await?;
-        require(
+        require!(
             verifies(fixture, &reader, &objects.manifest).await?,
             "the adopted set did not verify",
         )
@@ -376,7 +378,7 @@ async fn managed_constraint_trigger_drift_is_reported_and_repaired() -> Result {
                     VerificationPlan::managed_objects(&objects.manifest),
                 )
                 .await?;
-            require(
+            require!(
                 report.status() == VerificationStatus::Violations
                     && report.findings().len() == 1
                     && report.findings()[0].kind == FindingKind::ManagedObjectDrift
@@ -384,16 +386,16 @@ async fn managed_constraint_trigger_drift_is_reported_and_repaired() -> Result {
                 "out-of-band constraint trigger drift was not reported",
             )?;
             let repaired = fixture.apply(&migrator, &objects.manifest).await?;
-            require(
+            require!(
                 repaired.created_or_replaced() == 1 && repaired.unchanged() == 1,
                 "apply did not re-create exactly the drifted constraint trigger",
             )?;
             let (_, constraint, enabled, definition) = holder(&migrator, &schema).await?;
-            require(
+            require!(
                 constraint && enabled == "O" && definition.contains(DEFERRED),
                 "apply did not restore the declared constraint trigger",
             )?;
-            require(
+            require!(
                 verifies(fixture, &reader, &objects.manifest).await?,
                 "repaired constraint trigger drift did not verify",
             )?;
@@ -433,20 +435,20 @@ async fn managed_constraint_trigger_retires_before_its_routine() -> Result {
             ],
         )?;
         let applied = fixture.apply(&migrator, &retired.manifest).await?;
-        require(
+        require!(
             applied.retired() == 2,
             "retirement did not drop the constraint trigger and its routine",
         )?;
-        require(
+        require!(
             !fixture.exists(&migrator, "check_record").await?
                 && !fixture.trigger_exists(&migrator, "records_check").await?,
             "retired objects still exist",
         )?;
-        require(
+        require!(
             verifies(fixture, &reader, &retired.manifest).await?,
             "a completed constraint trigger retirement did not verify",
         )?;
-        require(
+        require!(
             fixture.apply(&migrator, &retired.manifest).await?.retired() == 0,
             "an absent retired constraint trigger was dropped again",
         )
@@ -488,11 +490,11 @@ async fn managed_trigger_retirements_leave_the_other_trigger_kind_alone() -> Res
                 [retirement],
             )?;
             let applied = fixture.apply(&migrator, &retiring.manifest).await?;
-            require(
+            require!(
                 applied.retired() == 0 && holder(&migrator, &schema).await?.0 == oid,
                 "a trigger was retired as the other trigger kind",
             )?;
-            require(
+            require!(
                 verifies(fixture, &reader, &retiring.manifest).await?,
                 "the other trigger kind was reported as the retired object",
             )?;
@@ -527,7 +529,7 @@ async fn managed_trigger_kind_changes_converge_in_both_directions() -> Result {
         let migrator = fixture.pool(Role::Migrator).await?;
         let reader = fixture.pool(Role::Reader).await?;
         let _ = fixture.apply(&migrator, &plain.manifest).await?;
-        require(
+        require!(
             !holder(&migrator, &schema).await?.1,
             "the plain trigger was created as a constraint trigger",
         )?;
@@ -536,24 +538,24 @@ async fn managed_trigger_kind_changes_converge_in_both_directions() -> Result {
             (&plain, false, "trigger"),
         ] {
             let applied = fixture.apply(&migrator, &objects.manifest).await?;
-            require(
+            require!(
                 applied.created_or_replaced() == 1 && applied.unchanged() == 1,
                 "a kind change did not re-create exactly the trigger",
             )?;
             let (_, constraint, enabled, _) = holder(&migrator, &schema).await?;
-            require(
+            require!(
                 constraint == is_constraint && enabled == "O",
                 "the trigger holding the name has the wrong kind",
             )?;
-            require(
+            require!(
                 ledger_row(fixture, &migrator).await?.0 == kind,
                 "the ledger did not record the changed kind",
             )?;
-            require(
+            require!(
                 verifies(fixture, &reader, &objects.manifest).await?,
                 "a converged kind change did not verify",
             )?;
-            require(
+            require!(
                 fixture
                     .apply(&migrator, &objects.manifest)
                     .await?
@@ -620,9 +622,9 @@ async fn managed_constraint_trigger_and_its_new_body_commit_together() -> Result
             Ok::<_, batter_core::BoxError>(fixture.apply(&applying, &changed.manifest).await?)
         };
         let race = async {
-            wait_for_lock(&observer, apply_pid, &schema, "gate", "AccessShareLock", false)
+            wait_for_lock(&observer, apply_pid, &schema, "gate", "AccessShareLock", LockStatus::Waiting)
                 .await?;
-            wait_for_lock(&observer, apply_pid, &schema, "records", "AccessExclusiveLock", true)
+            wait_for_lock(&observer, apply_pid, &schema, "records", "AccessExclusiveLock", LockStatus::Granted)
                 .await?;
             // Neither the dropped trigger nor the re-created one is visible
             // before commit, under either body: the write waits on the lock.
@@ -633,21 +635,21 @@ async fn managed_constraint_trigger_and_its_new_body_commit_together() -> Result
                     result?;
                     return Err(std::io::Error::other("a write escaped the apply's table lock").into());
                 }
-                observed = wait_for_lock(&observer, writer_pid, &schema, "records", "RowExclusiveLock", false) => observed?,
+                observed = wait_for_lock(&observer, writer_pid, &schema, "records", "RowExclusiveLock", LockStatus::Waiting) => observed?,
             }
             gate.commit().await?;
             write.await
         };
         let (applied, ()) = tokio::try_join!(apply, race)?;
-        require(
+        require!(
             applied.created_or_replaced() == 3,
             "apply did not install the changed body, its trigger and the gate routine",
         )?;
-        require(
+        require!(
             fired(&observer, &schema).await? == ["v1", "v2"],
             "the blocked write did not run the body committed with its trigger",
         )?;
-        require(
+        require!(
             holder(&observer, &schema).await?.3.contains(IMMEDIATE),
             "the blocked write did not see the re-created trigger",
         )

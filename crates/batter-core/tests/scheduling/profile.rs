@@ -1,3 +1,5 @@
+use crate::admission::AdmissionPhase;
+
 use super::{
     admission, escalation, families,
     launch::Config,
@@ -76,8 +78,14 @@ async fn run(workers: usize, seed: Option<u64>, schedule: &str) {
                     *count += 1;
                 }
             }
-            "capacity-before-drain" => case.bounded(admission::capacity_one(case, false)).await,
-            "capacity-after-drain" => case.bounded(admission::capacity_one(case, true)).await,
+            "capacity-before-drain" => {
+                case.bounded(admission::capacity_one(case, AdmissionPhase::Running))
+                    .await
+            }
+            "capacity-after-drain" => {
+                case.bounded(admission::capacity_one(case, AdmissionPhase::Draining))
+                    .await
+            }
             _ => panic!("unknown schedule"),
         }
     }

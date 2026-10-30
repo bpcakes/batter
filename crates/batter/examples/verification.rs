@@ -1,6 +1,8 @@
 //! Run the generic read-only PostgreSQL verifier against an externally
 //! provisioned database. The migration and grant policy stays application-owned.
 
+use batter::sqlx::verification::AuthorityAllowance;
+
 use batter::operation::{Interruption, OperationError};
 use batter::sqlx::verification::VerificationError;
 use batter::sqlx::verification::{
@@ -102,9 +104,21 @@ async fn main() -> ExitCode {
     let role = match build_role(
         schema,
         ledger,
-        allow_owner,
-        allow_superuser,
-        deliberate_violation,
+        if allow_owner {
+            OwnerAllowance::Allow
+        } else {
+            OwnerAllowance::Deny
+        },
+        if allow_superuser {
+            SuperuserAllowance::Allow
+        } else {
+            SuperuserAllowance::Deny
+        },
+        if deliberate_violation {
+            AuthorityCase::Violation
+        } else {
+            AuthorityCase::Valid
+        },
     ) {
         Ok(policy) => policy,
         Err(_) => {
@@ -176,19 +190,26 @@ fn flag(name: &str) -> bool {
 fn build_role(
     schema: Identifier,
     ledger: QualifiedName,
-    allow_owner: bool,
-    allow_superuser: bool,
-    deliberate_violation: bool,
+    allow_owner_choice: OwnerAllowance,
+    allow_superuser_choice: SuperuserAllowance,
+    deliberate_violation: AuthorityCase,
 ) -> Result<CompiledExactRole, ManifestError> {
+    let allow_owner = allow_owner_choice == OwnerAllowance::Allow;
+    let allow_superuser = allow_superuser_choice == SuperuserAllowance::Allow;
+    let deliberate_violation = deliberate_violation == AuthorityCase::Violation;
     let mut manifest = ExactRoleManifest::new(schema.clone(), DiscoveryScope::Declared)?;
-    manifest.set_role_policy(role_policy(allow_owner, allow_superuser))?;
+    manifest.set_role_policy(role_policy(allow_owner_choice, allow_superuser_choice))?;
     manifest.add_database(
         DatabaseGrantSpec::new(
             [ObjectPrivilege::Connect, ObjectPrivilege::Temporary],
             DeclarationPurpose::AllowedOnly,
         )?
         .public_delivery(PublicDelivery::AllowDeclared)
-        .allow_owner(allow_owner),
+        .ownership(if allow_owner {
+            AuthorityAllowance::Allow
+        } else {
+            AuthorityAllowance::Deny
+        }),
     )?;
     manifest.add_schema(
         SchemaGrantSpec::new(
@@ -197,7 +218,11 @@ fn build_role(
             DeclarationPurpose::AllowedOnly,
         )?
         .public_delivery(PublicDelivery::AllowDeclared)
-        .allow_owner(allow_owner),
+        .ownership(if allow_owner {
+            AuthorityAllowance::Allow
+        } else {
+            AuthorityAllowance::Deny
+        }),
     )?;
     manifest.add_relations(
         RelationGrantGroup::new(
@@ -209,17 +234,27 @@ fn build_role(
             },
             DeclarationPurpose::AllowedOnly,
         )?
-        .allow_owner(allow_owner)
-        .allow_row_type_public_usage(true),
+        .ownership(if allow_owner {
+            AuthorityAllowance::Allow
+        } else {
+            AuthorityAllowance::Deny
+        })
+        .row_type_public_usage(AuthorityAllowance::Allow),
     )?;
     // A superuser can own arbitrary objects through catalog paths whose pinned-role
     // dependencies are not exhaustively visible. Its explicit opt-in therefore
     // disables the narrower current-database ownership conclusion too.
-    manifest.deny_current_database_ownership(!allow_owner && !allow_superuser);
+    manifest.database_ownership(if !allow_owner && !allow_superuser {
+        AuthorityAllowance::Deny
+    } else {
+        AuthorityAllowance::Allow
+    });
     manifest.compile()
 }
 
-fn role_policy(allow_owner: bool, allow_superuser: bool) -> RolePolicy {
+fn role_policy(allow_owner: OwnerAllowance, allow_superuser: SuperuserAllowance) -> RolePolicy {
+    let allow_owner = allow_owner == OwnerAllowance::Allow;
+    let allow_superuser = allow_superuser == SuperuserAllowance::Allow;
     RolePolicy {
         allow_superuser,
         allow_create_database: allow_superuser,
@@ -268,4 +303,22 @@ fn parse_hex(value: &str) -> Option<Vec<u8>> {
         bytes.push((high * 16 + low) as u8);
     }
     Some(bytes)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SuperuserAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AuthorityCase {
+    Violation,
+    Valid,
 }

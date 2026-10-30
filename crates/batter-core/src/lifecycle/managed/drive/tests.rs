@@ -1,3 +1,5 @@
+use crate::lifecycle::state::Supervision;
+
 use super::*;
 use std::{future::pending, sync::Mutex, time::Duration};
 use tokio::time::Instant;
@@ -6,7 +8,7 @@ use tokio::time::Instant;
 async fn settlement_propagates_each_earlier_clock_even_during_a_stop_callback() {
     use std::task::{Context, Waker};
     let mut cx = Context::from_waker(Waker::noop());
-    let shared = Arc::new(crate::lifecycle::state::Shared::new(true));
+    let shared = Arc::new(crate::lifecycle::state::Shared::new(Supervision::Driven));
     let coordinator = crate::lifecycle::LifecycleCoordinator {
         shared: shared.clone(),
     };

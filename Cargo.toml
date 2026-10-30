@@ -29,6 +29,7 @@ homepage = "https://github.com/bpcakes/batter"
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
 too_many_lines = "warn"
+fn_params_excessive_bools = "warn"
 
 [workspace.dependencies]
 batter-otlp = { path = "crates/batter-otlp", version = "0.0.1", default-features = false }

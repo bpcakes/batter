@@ -85,14 +85,14 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
         }
         let result = tokio::time::timeout(Duration::from_secs(7), &mut task).await?;
         match mode {
-            Stop::Cancel => require(
+            Stop::Cancel => require!(
                 matches!(
                     result,
                     Ok(Err(OperationError::Interrupted(Interruption::Cancelled)))
                 ),
                 "cancellation classification lost",
             )?,
-            Stop::Deadline => require(
+            Stop::Deadline => require!(
                 matches!(
                     result,
                     Ok(Err(OperationError::Interrupted(
@@ -101,11 +101,11 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
                 ),
                 "deadline classification lost",
             )?,
-            Stop::Panic => require(
+            Stop::Panic => require!(
                 matches!(result, Err(error) if error.is_panic()),
                 "panic did not propagate",
             )?,
-            Stop::Drop => require(
+            Stop::Drop => require!(
                 matches!(result, Err(error) if error.is_cancelled()),
                 "outer drop did not cancel task",
             )?,
@@ -113,7 +113,7 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
                 let Ok(Err(OperationError::Failed(error))) = result else {
                     return Err(std::io::Error::other("application error lost").into());
                 };
-                require(
+                require!(
                     error
                         .downcast_ref::<std::io::Error>()
                         .is_some_and(|e| e.to_string() == "concrete application failure"),
@@ -123,7 +123,7 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
         }
         // The server still owns this blocked SQL after client task destruction.
         fixture.blocked(pid).await?;
-        require(
+        require!(
             fixture.pool.size() == 0,
             "retirement retained pool capacity",
         )?;
@@ -144,7 +144,7 @@ async fn run_interruption(mode: Stop, repetitions: usize) -> Result {
         for _ in 0..repetitions {
             interrupt(&mut fixture, mode).await?;
         }
-        require(
+        require!(
             fixture
                 .retired
                 .iter()
@@ -199,8 +199,9 @@ async fn raw_transaction_cleanup(
     fixture: &Fixture,
     context: &OperationContext,
     expected_pid: i32,
-    abort_transaction: bool,
+    abort_transaction: TransactionCompletion,
 ) -> Result {
+    let abort_transaction = abort_transaction == TransactionCompletion::Abort;
     let lease = PgLease::acquire(&fixture.pool, context).await?;
     let raw_pid = lease
         .with_connection(async |session| {
@@ -220,7 +221,7 @@ async fn raw_transaction_cleanup(
                 let failed = sqlx::query("SELECT 1 / 0")
                     .execute(session.executor())
                     .await;
-                require(
+                require!(
                     failed.is_err(),
                     "raw transaction did not enter failed state",
                 )?;
@@ -228,7 +229,7 @@ async fn raw_transaction_cleanup(
             Ok::<_, BoxError>(raw_pid)
         })
         .await?;
-    require(
+    require!(
         raw_pid == expected_pid,
         "raw transaction did not use the reusable backend",
     )?;
@@ -239,11 +240,11 @@ async fn raw_transaction_cleanup(
         .fetch_one(&fixture.pool),
     )
     .await??;
-    require(
+    require!(
         reused_pid == expected_pid,
         "raw transaction cleanup retired the reusable backend",
     )?;
-    require(
+    require!(
         object_absent,
         "raw transaction state escaped the pool-return boundary",
     )
@@ -263,12 +264,22 @@ async fn success(fixture: &mut Fixture) -> Result {
     probe(&fixture.pool, &context).await?;
     let actual: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
-    require(
+    require!(
         actual == pid,
         "successful low-level session did not permit reuse",
     )?;
     for abort_transaction in [false, true] {
-        raw_transaction_cleanup(fixture, &context, pid, abort_transaction).await?;
+        raw_transaction_cleanup(
+            fixture,
+            &context,
+            pid,
+            if abort_transaction {
+                TransactionCompletion::Abort
+            } else {
+                TransactionCompletion::Commit
+            },
+        )
+        .await?;
     }
     // Sessions no longer expose typed begin/drop/forget compositions. Their
     // absence is compile-fail tested; atomic_live covers the owned runner and
@@ -379,7 +390,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
             sequences: Vec::new(),
             schemas: vec![SchemaPolicy {
                 schema: batter_sqlx::verification::Identifier::new("public")?,
-                privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+                privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)],
                 allow_owner: true,
             }],
             routines: Vec::new(),
@@ -387,25 +398,25 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
             parameters: Vec::new(),
             database: DatabasePolicy {
                 privileges: vec![
-                    AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-                    AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Connect),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
                 ],
                 allow_owner: true,
             },
             public_grants: vec![
                 PublicGrant {
                     object: PublicObject::Database,
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Connect, false),
+                    privilege: AllowedPrivilege::privilege(ObjectPrivilege::Connect),
                 },
                 PublicGrant {
                     object: PublicObject::Database,
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                    privilege: AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
                 },
                 PublicGrant {
                     object: PublicObject::Schema(batter_sqlx::verification::Identifier::new(
                         "public",
                     )?),
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false),
+                    privilege: AllowedPrivilege::privilege(ObjectPrivilege::Usage),
                 },
             ],
             required_surfaces: Vec::new(),
@@ -418,11 +429,11 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         VerificationPlan::migrations(&migration).with_authority(&authority)?,
     )
     .await?;
-    require(
+    require!(
         report.status() == VerificationStatus::WithinDeclaredPolicy,
         "successful read-only verification did not match its declared policy",
     )?;
-    require(
+    require!(
         report
             .unsupported()
             .contains(&batter_sqlx::verification::UnsupportedSurface::SecurityDefinerBody),
@@ -433,7 +444,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
             .fetch_one(&pool),
     )
     .await??;
-    require(count == 2, "verification changed the migration ledger")?;
+    require!(count == 2, "verification changed the migration ledger")?;
 
     let mut incomplete_draft = authority.to_builder();
     incomplete_draft.required_surfaces =
@@ -445,7 +456,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         VerificationPlan::migrations(&migration).with_authority(&incomplete_authority)?,
     )
     .await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Incomplete,
         "required unsupported coverage did not produce an incomplete result",
     )?;
@@ -460,7 +471,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         VerificationPlan::migrations(&reject_later).with_authority(&authority)?,
     )
     .await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
                 finding.kind == batter_sqlx::verification::FindingKind::UnexpectedMigration
@@ -478,7 +489,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     )
     .await??;
     let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
                 finding.kind == batter_sqlx::verification::FindingKind::MigrationChecksumMismatch
@@ -494,7 +505,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     )
     .await??;
     let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
                 finding.kind == batter_sqlx::verification::FindingKind::UnexpectedMigration
@@ -512,7 +523,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     )
     .await??;
     let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
                 finding.kind == batter_sqlx::verification::FindingKind::UnsuccessfulMigration
@@ -526,7 +537,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     )
     .await??;
     let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
                 finding.kind == batter_sqlx::verification::FindingKind::MissingMigration
@@ -545,7 +556,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     )
     .await??;
     let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
                 finding.kind == batter_sqlx::verification::FindingKind::MigrationLedgerLimit
@@ -587,11 +598,11 @@ async fn native_failure(fixture: &mut Fixture) -> Result {
         .await?;
     fixture.retired.push(pid);
     let error = SqlxFailure::from(error);
-    require(
+    require!(
         error.class() == FailureClass::Database,
         "database classification lost",
     )?;
-    require(
+    require!(
         error
             .native()
             .as_database_error()
@@ -600,13 +611,13 @@ async fn native_failure(fixture: &mut Fixture) -> Result {
             == Some("22012"),
         "SQLSTATE lost",
     )?;
-    require(
+    require!(
         format!("{error:?} {error}") == "PostgreSQL operation failed PostgreSQL operation failed",
         "diagnostics were not fixed",
     )?;
     let next: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
-    require(next != pid, "failed connection was reused")?;
+    require!(next != pid, "failed connection was reused")?;
     Ok(())
 }
 
@@ -639,7 +650,7 @@ async fn commit_failure(fixture: &mut Fixture) -> Result {
     let batter_sqlx::PgTransactionError::Query(error) = error.into_cause() else {
         return Err(std::io::Error::other("expected native commit cause").into());
     };
-    require(
+    require!(
         error
             .native()
             .as_database_error()
@@ -648,13 +659,13 @@ async fn commit_failure(fixture: &mut Fixture) -> Result {
             == Some("23505"),
         "commit SQLSTATE lost",
     )?;
-    require(
+    require!(
         error.class() == FailureClass::Database,
         "commit error was reclassified as interruption",
     )?;
     let next: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
-    require(next != pid, "unsuccessful commit returned its connection")?;
+    require!(next != pid, "unsuccessful commit returned its connection")?;
     Ok(())
 }
 
@@ -688,15 +699,15 @@ async fn ordinary_return(fixture: &mut Fixture) -> Result {
         fixture.blocked(pid).await?;
         let _ = stop_tx.send(());
         bounded(&mut task).await??;
-        require(
+        require!(
             fixture.pool.size() == 1,
             "ordinary return unexpectedly retired accounting",
         )?;
-        require(
+        require!(
             matches!(fixture.pool.acquire().await, Err(sqlx::Error::PoolTimedOut)),
             "ordinary return did not retain blocked slot",
         )?;
-        require(
+        require!(
             tokio::time::timeout(Duration::from_millis(200), fixture.pool.close())
                 .await
                 .is_err(),
@@ -718,4 +729,10 @@ async fn ordinary_return_control_retains_blocked_capacity() -> Result {
     let mut fixture = Fixture::new().await?;
     let body = ordinary_return(&mut fixture).await;
     fixture.finish(body).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TransactionCompletion {
+    Abort,
+    Commit,
 }

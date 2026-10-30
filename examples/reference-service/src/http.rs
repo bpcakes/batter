@@ -562,7 +562,7 @@ async fn get_delivery(
             .deliveries
             .get_by_id(context, owner, delivery_id)
             .await,
-        false,
+        QueryProjection::Status,
         &metadata,
     )
 }
@@ -584,7 +584,7 @@ async fn get_delivery_by_key(
             .deliveries
             .get_by_key(context, owner, &idempotency_key)
             .await,
-        true,
+        QueryProjection::Reconciliation,
         &metadata,
     )
 }
@@ -605,9 +605,10 @@ struct NotObservedResponse<'a> {
 
 fn query_response(
     result: Result<Option<Delivery>, QueryError>,
-    reconciliation: bool,
+    reconciliation: QueryProjection,
     metadata: &TrustedRequestMetadata,
 ) -> Response {
+    let reconciliation = reconciliation == QueryProjection::Reconciliation;
     match result {
         Ok(Some(delivery)) => (
             StatusCode::OK,
@@ -670,3 +671,9 @@ const fn interruption_failure(interruption: Interruption) -> HttpFailure {
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QueryProjection {
+    Reconciliation,
+    Status,
+}

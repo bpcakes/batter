@@ -75,7 +75,7 @@ pub enum RunlimitGrantError {
 /// };
 ///
 /// let schema = Identifier::new("quotas")?;
-/// let policy = FragmentObjectPolicy::new(schema.clone()).allow_row_type_public_usage(true);
+/// let policy = FragmentObjectPolicy::new(schema.clone()).row_type_public_usage(batter_sqlx::verification::AuthorityAllowance::Allow);
 /// let fragment = grant_fragment(&policy, [RunlimitOperation::GcraAdmission])?;
 /// let compiled = ExactRoleManifest::new(schema, DiscoveryScope::Declared)?
 ///     .with_fragment(fragment)?

@@ -48,7 +48,7 @@ mod disabled {
     pub(crate) fn root(_: Readiness) {}
 
     #[inline]
-    pub(crate) fn task(_: bool, _: &'static str, _: TaskOutcome) {}
+    pub(crate) fn task(_: super::TaskCategory, _: &'static str, _: TaskOutcome) {}
 
     #[inline]
     pub(crate) fn process_admitted() {}
@@ -101,6 +101,17 @@ mod disabled {
         pub(crate) fn draining(&mut self, _: ShutdownCause) {}
 
         #[inline]
-        pub(crate) fn finish(&mut self, _: bool, _: impl FnOnce() -> Instant) {}
+        pub(crate) fn finish(
+            &mut self,
+            _: &crate::lifecycle::ShutdownReport,
+            _: impl FnOnce() -> Instant,
+        ) {
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TaskCategory {
+    Process,
+    Component,
 }

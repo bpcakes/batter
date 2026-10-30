@@ -64,7 +64,8 @@ impl Drop for Completing {
     }
 }
 
-async fn completion_boundary(interrupt: Interrupt, during_poll: bool) {
+async fn completion_boundary(interrupt: Interrupt, during_poll: InterruptionPoint) {
+    let during_poll = during_poll == InterruptionPoint::Polling;
     for fail in [false, true] {
         let closed = Arc::new(AtomicBool::new(false));
         let closing = closed.clone();
@@ -113,20 +114,26 @@ async fn completion_boundary(interrupt: Interrupt, during_poll: bool) {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_in_final_poll_is_retained() {
-    completion_boundary(Interrupt::Cancel, true).await;
+    completion_boundary(Interrupt::Cancel, InterruptionPoint::Polling).await;
 }
 
 #[tokio::test(start_paused = true)]
 async fn deadline_in_final_poll_is_retained() {
-    completion_boundary(Interrupt::Expire, true).await;
+    completion_boundary(Interrupt::Expire, InterruptionPoint::Polling).await;
 }
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_in_destruction_does_not_reclassify_completed_work() {
-    completion_boundary(Interrupt::Cancel, false).await;
+    completion_boundary(Interrupt::Cancel, InterruptionPoint::Destruction).await;
 }
 
 #[tokio::test(start_paused = true)]
 async fn deadline_in_destruction_does_not_reclassify_completed_work() {
-    completion_boundary(Interrupt::Expire, false).await;
+    completion_boundary(Interrupt::Expire, InterruptionPoint::Destruction).await;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InterruptionPoint {
+    Polling,
+    Destruction,
 }

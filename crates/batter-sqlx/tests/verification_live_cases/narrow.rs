@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::VerificationPolicy;
 use crate::support::{Result, require};
 use crate::verify_policy as verify;
@@ -25,7 +31,7 @@ pub(super) async fn check(
     )))
     .fetch_one(&login_a)
     .await?;
-    require(
+    require!(
         selected == "secret",
         "direct SELECT and inherited INSERT did not work for the restricted login",
     )?;
@@ -35,7 +41,7 @@ pub(super) async fn check(
     )))
     .execute(&login_a)
     .await;
-    require(
+    require!(
         denied_set.is_err(),
         "a SET FALSE membership was usable as SET ROLE",
     )?;
@@ -74,37 +80,37 @@ pub(super) async fn check(
         &names.ledger_a,
         &names.table_a,
         RolePolicy::default(),
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
-        false,
-        true,
-        false,
-        false,
-        false,
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
+        ParameterAllowance::Deny,
+        PublicTableAllowance::Include,
+        SequenceAllowance::Deny,
+        TableOwnerAllowance::Deny,
+        RoutineAllowance::Deny,
     )?;
     let report = verify(&login_a, &narrow).await?;
-    require(
+    require!(
         report.session_user() == names.login_a,
         "session_user was not rooted at the restricted login",
     )?;
-    require(
+    require!(
         report.current_user() == names.login_a,
         "unexpected initial current_user",
     )?;
-    require(
+    require!(
         report.status() == VerificationStatus::Violations,
         "narrow policy missed reachable authority",
     )?;
     let mut missing = narrow.clone();
     missing.authority.relations.push(RelationPolicy {
         relation: QualifiedName::new(&names.schema_a, "missing_relation")?,
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
+        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
         columns: Vec::new(),
         allow_owner: false,
         allow_row_type_public_usage: false,
     });
     missing.authority.public_grants.push(PublicGrant {
         object: PublicObject::Parameter(ParameterName::new("missing_parameter")?),
-        privilege: AllowedPrivilege::new(ObjectPrivilege::Set, false),
+        privilege: AllowedPrivilege::privilege(ObjectPrivilege::Set),
     });
     // Missing built-in names are knowably absent only under full settings visibility.
     exec(
@@ -128,7 +134,7 @@ pub(super) async fn check(
         quote(&names.schema_a),
         quote(&names.routine_a)
     );
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.kind == FindingKind::MissingObject
                 && item
@@ -138,7 +144,7 @@ pub(super) async fn check(
         }),
         "a requested missing relation was silently accepted",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::MissingObject,
@@ -148,7 +154,7 @@ pub(super) async fn check(
         ),
         "a requested nonexistent built-in parameter was silently accepted",
     )?;
-    require(
+    require!(
         !report.findings().iter().any(|item| {
             item.kind == FindingKind::MissingObject
                 && item
@@ -158,7 +164,7 @@ pub(super) async fn check(
         }),
         "a declared column without an explicit attacl was reported missing",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::Privilege,
@@ -168,7 +174,7 @@ pub(super) async fn check(
         ),
         "the inherited table INSERT oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::Privilege,
@@ -178,7 +184,7 @@ pub(super) async fn check(
         ),
         "the SET-reachable table UPDATE oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::Privilege,
@@ -188,7 +194,7 @@ pub(super) async fn check(
         ),
         "the ADMIN-target table DELETE oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::GrantOption,
@@ -203,12 +209,12 @@ pub(super) async fn check(
     for relation in &mut column_denied.authority.relations {
         for column in &mut relation.columns {
             if column.column.as_str() == "secret" {
-                column.privileges = vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+                column.privileges = vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)];
             }
         }
     }
     let column_report = verify(&login_a, &column_denied).await?;
-    require(
+    require!(
         exact_finding(
             &column_report,
             FindingKind::GrantOption,
@@ -218,7 +224,7 @@ pub(super) async fn check(
         ),
         "the column SELECT grant-option oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::ProtectedParameter,
@@ -228,7 +234,7 @@ pub(super) async fn check(
         ),
         "the context-backed work_mem oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::ProtectedParameter,
@@ -238,7 +244,7 @@ pub(super) async fn check(
         ),
         "the backend startup parameter oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::Privilege,
@@ -248,7 +254,7 @@ pub(super) async fn check(
         ),
         "the routine EXECUTE oracle was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::Privilege,
@@ -258,11 +264,11 @@ pub(super) async fn check(
         ),
         "the inherited sequence USAGE oracle was not observed",
     )?;
-    require(
+    require!(
         finding(&report, FindingKind::RoleAdminOption),
         "ADMIN OPTION was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::RoleAdminOption,
@@ -272,19 +278,19 @@ pub(super) async fn check(
         ),
         "the ADMIN reachability oracle was not observed",
     )?;
-    require(
+    require!(
         finding(&report, FindingKind::Privilege),
         "direct/inherited/SET table authority was not observed",
     )?;
-    require(
+    require!(
         finding(&report, FindingKind::GrantOption),
         "table or column grant option was not observed",
     )?;
-    require(
+    require!(
         finding(&report, FindingKind::ProtectedParameter),
         "protected parameter SET was not observed",
     )?;
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.privilege == Some(ObjectPrivilege::Execute)
@@ -295,7 +301,7 @@ pub(super) async fn check(
         }),
         "routine signature or EXECUTE authority was not observed",
     )?;
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.privilege == Some(ObjectPrivilege::Usage)
@@ -306,7 +312,7 @@ pub(super) async fn check(
         }),
         "sequence mutation authority was not observed",
     )?;
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.kind == FindingKind::GrantOption
                 && item
@@ -325,7 +331,7 @@ pub(super) async fn check(
         )
     });
     let report = verify(&login_a, &public_denied).await?;
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.subject.as_deref() == Some("public")
                 && item
@@ -335,7 +341,7 @@ pub(super) async fn check(
         }),
         "PUBLIC relation authority was not observed",
     )?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::Privilege,

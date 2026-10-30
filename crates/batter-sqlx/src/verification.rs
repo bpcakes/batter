@@ -18,9 +18,9 @@ mod sqlx_migration;
 mod work;
 
 pub use manifest::{
-    ColumnGrantGroup, CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, ExactRoleManifest,
-    FragmentObjectPolicy, GrantFragment, GrantPlan, GrantRenderError, ManifestError,
-    PublicDelivery, RelationGrantGroup, RoutineGrantSpec, SchemaGrantSpec,
+    AuthorityAllowance, ColumnGrantGroup, CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose,
+    ExactRoleManifest, FragmentObjectPolicy, GrantFragment, GrantPlan, GrantRenderError,
+    ManifestError, PublicDelivery, RelationGrantGroup, RoutineGrantSpec, SchemaGrantSpec,
 };
 pub use policy::{
     AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, ColumnPolicy,

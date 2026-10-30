@@ -68,8 +68,8 @@ async fn exact_authority(
     .bind(format!("{schema}.private_total()"))
     .fetch_one(reader)
     .await?;
-    require(actual_owner == owner, "helper ownership not published")?;
-    require(
+    require!(actual_owner == owner, "helper ownership not published")?;
+    require!(
         !fixture
             .public_can_execute(reader, "private_total()")
             .await?,
@@ -85,7 +85,7 @@ async fn exact_authority(
     .bind(format!("{schema}.records"))
     .fetch_one(reader)
     .await?;
-    require(
+    require!(
         grants == (true, true, false),
         "precise owner/consumer grants differ",
     )?;
@@ -95,14 +95,14 @@ async fn exact_authority(
     .bind(owner)
     .fetch_one(reader)
     .await?;
-    require(safe, "helper owner is not restricted")?;
+    require!(safe, "helper owner is not restricted")?;
     let overload: (String, bool) = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {schema}.report_total('public'::text), proacl IS NULL
          FROM pg_proc WHERE oid = '{schema}.report_total(text)'::regprocedure"
     )))
     .fetch_one(reader)
     .await?;
-    require(
+    require!(
         overload == ("public".to_owned(), true),
         "unmanaged overload or its default PUBLIC ACL changed",
     )?;
@@ -167,17 +167,17 @@ async fn unrelated_overload_changes(
             .bind(format!("{schema}.report_total(integer)"))
             .fetch_one(reader)
             .await?;
-        require(exists == present, "unrelated overload change not published")?;
+        require!(exists == present, "unrelated overload change not published")?;
         if present {
             let value: i32 = sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT {schema}.report_total(9::integer)"
             )))
             .fetch_one(reader)
             .await?;
-            require(value == 9, "unmanaged public overload is not callable")?;
+            require!(value == 9, "unmanaged public overload is not callable")?;
         }
     }
-    require(
+    require!(
         !rejected,
         "unrelated overload changes must not reject apply",
     )
@@ -237,8 +237,8 @@ async fn managed_application_sql_publishes_owner_and_grants_atomically() -> Resu
                         .fetch_one(&reader),
                 )
                 .await??;
-                require(total == 1, "new caller escaped before authority commit")?;
-                require(
+                require!(total == 1, "new caller escaped before authority commit")?;
+                require!(
                     !fixture.exists(&observer, "private_total").await?,
                     "new helper visible early",
                 )
@@ -250,7 +250,7 @@ async fn managed_application_sql_publishes_owner_and_grants_atomically() -> Resu
         let (applied, observed) = tokio::join!(applying, observing);
         observed?;
         let applied = applied?;
-        require(
+        require!(
             applied.digest() == changed.manifest.digest(),
             "wrong committed manifest",
         )?;
@@ -258,10 +258,10 @@ async fn managed_application_sql_publishes_owner_and_grants_atomically() -> Resu
             sqlx::query_scalar(AssertSqlSafe(format!("SELECT {schema}.report_total()")))
                 .fetch_one(&reader)
                 .await?;
-        require(total == 7, "restricted caller could not execute new helper")?;
+        require!(total == 7, "restricted caller could not execute new helper")?;
         unrelated_overload_changes(fixture, &migrator, &reader, &changed.manifest).await?;
         exact_authority(fixture, &reader, &schema, &owner, &serving).await?;
-        require(
+        require!(
             pid(&migrator).await? != before_pid,
             "callback session was pooled",
         )?;
@@ -271,7 +271,7 @@ async fn managed_application_sql_publishes_owner_and_grants_atomically() -> Resu
                 VerificationPlan::managed_objects(&changed.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "granted set failed verification",
         )
@@ -298,23 +298,23 @@ async fn managed_application_refusal_rolls_back_objects_ledger_and_grants() -> R
         })
         .await
         .unwrap_err();
-        require(
+        require!(
             matches!(error, ManagedApplyWithError::Application(_)),
             "refusal lost its classification",
         )?;
-        require(
+        require!(
             !format!("{error:?} {error}").contains("private-refusal-marker"),
             "refusal leaked",
         )?;
-        require(
+        require!(
             fixture.relation_exists(&pool, "records").await?,
             "committed migration rolled back",
         )?;
-        require(
+        require!(
             !fixture.relation_exists(&pool, "managed_objects").await?,
             "fresh ledger escaped rollback",
         )?;
-        require(
+        require!(
             !fixture.exists(&pool, "record_total").await?,
             "fresh definition escaped rollback",
         )?;
@@ -323,7 +323,7 @@ async fn managed_application_refusal_rolls_back_objects_ledger_and_grants() -> R
             .bind(format!("{schema}.records"))
             .fetch_one(&pool)
             .await?;
-        require(!granted, "grant escaped rollback")?;
+        require!(!granted, "grant escaped rollback")?;
         let _ = fixture.apply(&pool, &original.manifest).await?;
         let before = catalog_state(&pool, &schema).await?;
         let before_ledger = ledger(&pool, &schema).await?;
@@ -341,15 +341,15 @@ async fn managed_application_refusal_rolls_back_objects_ledger_and_grants() -> R
         let ManagedApplyWithError::Application(error) = error else {
             return Err(std::io::Error::other("native callback refusal became uncertainty").into());
         };
-        require(
+        require!(
             error.as_database_error().and_then(|e| e.code()).as_deref() == Some("22012"),
             "native cause lost",
         )?;
-        require(
+        require!(
             catalog_state(&pool, &schema).await? == before,
             "rejection changed definitions",
         )?;
-        require(
+        require!(
             ledger(&pool, &schema).await? == before_ledger,
             "rejection changed ledger",
         )

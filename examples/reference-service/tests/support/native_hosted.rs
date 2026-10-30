@@ -152,13 +152,14 @@ impl JobHandler for Held {
 }
 
 pub async fn in_flight_drain(pool: PgPool) -> ProbeResult {
-    held(pool, false).await
+    held(pool, OwnerAction::Retain).await
 }
 pub async fn owner_drop(pool: PgPool) -> ProbeResult {
-    held(pool, true).await
+    held(pool, OwnerAction::Drop).await
 }
 
-async fn held(pool: PgPool, drop_owner: bool) -> ProbeResult {
+async fn held(pool: PgPool, drop_owner: OwnerAction) -> ProbeResult {
+    let drop_owner = drop_owner == OwnerAction::Drop;
     crate::support::profiled::initialize_schema(&pool).await?;
     let (entered, mut entering) = mpsc::unbounded_channel();
     let release = Arc::new(Semaphore::new(0));
@@ -266,4 +267,10 @@ pub async fn business_failure(pool: PgPool) -> ProbeResult {
     let shutdown =
         check_shutdown(running.shutdown().await).map_err(|error| Box::new(error) as BoxError);
     finish(body, shutdown)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerAction {
+    Drop,
+    Retain,
 }

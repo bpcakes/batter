@@ -1,3 +1,5 @@
+use crate::verification_fixture::GrantAuthority;
+
 use super::{Names, Result, exec, exec_secret, grant, grant_column, literal, object_kind, quote};
 use sqlx::PgConnection;
 
@@ -360,7 +362,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.ledger_a)),
         "SELECT",
         &names.login_a,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -368,7 +370,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.ledger_a)),
         "SELECT",
         &names.settable,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -376,7 +378,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.ledger_a)),
         "SELECT",
         &names.nested,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -384,7 +386,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.ledger_a)),
         "SELECT",
         &names.unrelated_creator,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -392,7 +394,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.table_a)),
         "SELECT",
         &names.login_a,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -400,7 +402,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.table_a)),
         "INSERT",
         &names.inherited,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -408,7 +410,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.table_a)),
         "UPDATE",
         &names.settable,
-        true,
+        GrantAuthority::Grantable,
     )
     .await?;
     grant(
@@ -416,7 +418,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.table_a)),
         "DELETE",
         &names.admin_target,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant_column(
@@ -426,7 +428,7 @@ pub(super) async fn provision(
         "secret",
         "SELECT",
         &names.login_a,
-        true,
+        GrantAuthority::Grantable,
     )
     .await?;
     grant_column(
@@ -436,7 +438,7 @@ pub(super) async fn provision(
         "secret",
         "UPDATE",
         &names.login_a,
-        true,
+        GrantAuthority::Grantable,
     )
     .await?;
     grant(
@@ -444,7 +446,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.sequence_a)),
         "USAGE",
         &names.inherited,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     exec(
@@ -474,7 +476,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_a), quote(&names.sequence_a)),
         "UPDATE",
         &names.settable,
-        true,
+        GrantAuthority::Grantable,
     )
     .await?;
     grant(
@@ -482,7 +484,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_b), quote(&names.ledger_b)),
         "SELECT",
         &names.login_b,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     grant(
@@ -490,7 +492,7 @@ pub(super) async fn provision(
         &format!("{}.{}", quote(&names.schema_b), quote(&names.table_b)),
         "SELECT",
         &names.login_b,
-        false,
+        GrantAuthority::PrivilegeOnly,
     )
     .await?;
     exec(

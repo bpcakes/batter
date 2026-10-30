@@ -6,6 +6,8 @@
 //! mode. Requesting that lock while holding the set could deadlock, so apply
 //! refuses the work with `IdentityMismatch` and changes nothing.
 
+use crate::verification::LockStatus;
+
 use super::constraint_triggers::{check_function, check_log};
 use super::trigger_drops::{RacePools, wait_for_any_lock_wait, with_sqlstate};
 use super::trigger_lock_order::concurrent_write;
@@ -25,9 +27,10 @@ use tokio::sync::Notify;
 /// plain trigger `alpha_audit` on `alpha`, declared or retired.
 fn coverage_objects(
     fixture: &Fixture,
-    retire_alpha: bool,
+    retire_alpha: AlphaDisposition,
     beta_events: &str,
 ) -> Result<ManagedObjectManifest> {
+    let retire_alpha = retire_alpha == AlphaDisposition::Retire;
     let schema = fixture.schema();
     let plain = |table: &str, name: &str, events: &str| {
         ManagedObject::trigger(
@@ -95,8 +98,8 @@ async fn coverage_race(fixture: &mut Fixture, beta_events: &str) -> Result {
         "CREATE TABLE {schema}.alpha (id bigint NOT NULL);
          CREATE TABLE {schema}.beta (id bigint NOT NULL);"
     ));
-    let install = coverage_objects(fixture, false, "INSERT")?;
-    let change = coverage_objects(fixture, true, beta_events)?;
+    let install = coverage_objects(fixture, AlphaDisposition::Retain, "INSERT")?;
+    let change = coverage_objects(fixture, AlphaDisposition::Retire, beta_events)?;
     let beta = change
         .objects()
         .iter()
@@ -132,7 +135,7 @@ async fn coverage_race(fixture: &mut Fixture, beta_events: &str) -> Result {
             &schema,
             "alpha",
             "AccessExclusiveLock",
-            false,
+            LockStatus::Waiting,
         )
         .await?;
         bounded(
@@ -198,11 +201,11 @@ async fn require_converges(
     schema: &str,
     change: &ManagedObjectManifest,
 ) -> Result {
-    require(
+    require!(
         triggers_named(&pools.observer, schema, "alpha_audit").await? == (1, 0),
         "the refused apply did not leave alpha_audit in place",
     )?;
-    require(
+    require!(
         triggers_named(&pools.observer, schema, "beta_audit").await? == (1, 1),
         "the refused apply did not leave the concurrent constraint trigger in place",
     )?;
@@ -210,11 +213,11 @@ async fn require_converges(
         .apply(&pools.applying, change)
         .await
         .map_err(with_sqlstate)?;
-    require(
+    require!(
         (applied.created_or_replaced(), applied.retired()) == (1, 1),
         "the next apply did not retire alpha_audit and replace beta_audit",
     )?;
-    require(
+    require!(
         triggers_named(&pools.observer, schema, "beta_audit").await? == (1, 0),
         "the next apply did not restore the plain beta_audit",
     )
@@ -236,4 +239,10 @@ async fn managed_trigger_retirement_refuses_new_work_on_an_unlocked_table() -> R
 #[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn managed_trigger_retirement_refuses_new_work_needing_a_stronger_lock() -> Result {
     Fixture::run(async |fixture| coverage_race(fixture, "INSERT OR UPDATE").await).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AlphaDisposition {
+    Retire,
+    Retain,
 }

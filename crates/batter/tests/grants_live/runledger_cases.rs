@@ -79,7 +79,7 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
             })
             .await
             .map_err(PgAtomicFailure::into_error)?;
-            require(
+            require!(
                 first.intent_id() == repeated.intent_id(),
                 "an exact duplicate request produced a second intent",
             )?;
@@ -108,7 +108,7 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
             // error carrying that classified conflict, not as
             // `RequiredIntentError::Conflict`, which is reserved for an
             // already-conflicted outcome the call returned successfully.
-            require(
+            require!(
                 conflict_code(&conflict) == Some(INTENT_CONFLICT_CODE),
                 &format!(
                     "a conflicting request under one key was not rejected as {INTENT_CONFLICT_CODE}: {conflict:?}"
@@ -139,7 +139,7 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
             // failure recording the probe also arrives as `Rejected`, and the
             // absence check below would then pass because nothing was ever
             // inserted, reporting rollback evidence the run never reached.
-            require(
+            require!(
                 matches!(
                     rolled_back,
                     Err(PgAtomicError::Rejected(CaseRejection::Application(_)))
@@ -153,7 +153,7 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
             .bind(&rolled_back_key)
             .fetch_one(&probe)
             .await?;
-            require(!retained, "a rolled-back intent survived its transaction")?;
+            require!(!retained, "a rolled-back intent survived its transaction")?;
         }
 
         // An intent-submission login cannot read the decoded payload, promote,
@@ -201,7 +201,7 @@ async fn the_full_schema_snapshot_is_never_a_prerequisite_of_intent_submission()
 
         let selected = schema::runledger_database(fixture, &snapshot_login, &jobs, 1)?;
         let observed = batter::runledger::verify_schema(&selected).await?;
-        require(
+        require!(
             observed.schema() == jobs,
             "the snapshot reported another schema",
         )?;
@@ -209,7 +209,7 @@ async fn the_full_schema_snapshot_is_never_a_prerequisite_of_intent_submission()
 
         let unselected = schema::runledger_database(fixture, &intent_login, &jobs, 1)?;
         let denied = batter::runledger::verify_schema(&unselected).await;
-        require(
+        require!(
             denied.is_err(),
             "intent submission alone reached the privileged full-schema snapshot",
         )?;

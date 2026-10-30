@@ -43,7 +43,8 @@ fn dependencies() -> [(HealthStatus, DependencyReadiness); 6] {
 }
 
 /// A condition with a fixed answer that counts how often it is asked.
-fn counted(name: &'static str, satisfied: bool, asked: &Arc<AtomicUsize>) -> Condition {
+fn counted(name: &'static str, satisfied: ConditionState, asked: &Arc<AtomicUsize>) -> Condition {
+    let satisfied = satisfied == ConditionState::Satisfied;
     let asked = asked.clone();
     Condition {
         name: ReadinessCondition::new(name).unwrap(),
@@ -130,7 +131,17 @@ fn conditions_only_narrow_a_ready_lifecycle_and_dependency() {
             let conditions: Vec<_> = answers
                 .iter()
                 .zip(["first", "second"])
-                .map(|(&satisfied, name)| counted(name, satisfied, &asked))
+                .map(|(&satisfied, name)| {
+                    counted(
+                        name,
+                        if satisfied {
+                            ConditionState::Satisfied
+                        } else {
+                            ConditionState::Unsatisfied
+                        },
+                        &asked,
+                    )
+                })
                 .collect();
             let observed = observe(dependency, &conditions);
             let expected_asks = match dependency {
@@ -297,4 +308,10 @@ fn lifecycle_only_conditions_narrow_and_lifecycle_is_sampled_last() {
         ReadinessDecision::Unready(ReadinessUnreadyReason::Draining)
     );
     assert_eq!(closed.decision(), draining.decision());
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConditionState {
+    Satisfied,
+    Unsatisfied,
 }

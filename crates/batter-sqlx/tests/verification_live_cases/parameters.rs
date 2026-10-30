@@ -62,7 +62,7 @@ pub(super) async fn check(
             privileges: Vec::new(),
         });
     let hidden_default_report = verify(login_a, &hidden_default_denied).await?;
-    require(
+    require!(
         exact_finding(
             &hidden_default_report,
             FindingKind::ProtectedParameter,
@@ -72,7 +72,7 @@ pub(super) async fn check(
         ),
         "an unrelated ACL concealed implicit custom-parameter SET authority",
     )?;
-    require(
+    require!(
         !hidden_default_report
             .findings()
             .iter()
@@ -119,14 +119,14 @@ pub(super) async fn check(
     )
     .await?;
     let hidden_denied = verify(login_a, broad).await?;
-    require(
+    require!(
         hidden_denied.findings().iter().any(|item| {
             item.kind == FindingKind::ProtectedParameter
                 && item.object.as_deref() == Some(names.hidden_parameter.as_str())
         }),
         "an undeclared hidden parameter ACL was silently accepted",
     )?;
-    require(
+    require!(
         exact_finding(
             &hidden_denied,
             FindingKind::ProtectedParameter,
@@ -136,7 +136,7 @@ pub(super) async fn check(
         ),
         "hidden parameter login ACL was not reported exactly",
     )?;
-    require(
+    require!(
         exact_finding(
             &hidden_denied,
             FindingKind::ProtectedParameter,
@@ -146,7 +146,7 @@ pub(super) async fn check(
         ),
         "hidden parameter PUBLIC ACL was not reported exactly",
     )?;
-    require(
+    require!(
         exact_finding(
             &hidden_denied,
             FindingKind::GrantOption,
@@ -156,7 +156,7 @@ pub(super) async fn check(
         ),
         "hidden parameter grant option was not reported exactly",
     )?;
-    require(
+    require!(
         !hidden_denied.findings().iter().any(|item| {
             item.kind == FindingKind::MissingObject
                 && item.object.as_deref() == Some(names.hidden_parameter.as_str())
@@ -166,18 +166,18 @@ pub(super) async fn check(
     let mut hidden_allowed = broad.clone();
     hidden_allowed.authority.parameters.push(ParameterPolicy {
         parameter: ParameterName::new(&names.hidden_parameter)?,
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, true)],
+        privileges: vec![AllowedPrivilege::grantable(ObjectPrivilege::Set)],
     });
     hidden_allowed.authority.parameters.push(ParameterPolicy {
         parameter: ParameterName::new(long_parameter.clone())?,
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
     });
     hidden_allowed.authority.public_grants.push(PublicGrant {
         object: PublicObject::Parameter(ParameterName::new(&names.hidden_parameter)?),
-        privilege: AllowedPrivilege::new(ObjectPrivilege::Set, false),
+        privilege: AllowedPrivilege::privilege(ObjectPrivilege::Set),
     });
     let hidden_report = verify(login_a, &hidden_allowed).await?;
-    require(
+    require!(
         hidden_report.status() == VerificationStatus::WithinDeclaredPolicy,
         "declared hidden parameter ACL was not accepted",
     )?;
@@ -206,7 +206,7 @@ pub(super) async fn check(
     complete.authority.required_surfaces = vec![RequiredSurface::SecurityDefinerBody];
     complete.authority.routines[0].allow_security_definer = true;
     let report = verify(login_a, &complete).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::Incomplete,
         "a requested unsupported routine surface was reported as complete",
     )?;
@@ -220,14 +220,14 @@ pub(super) async fn check(
     )
     .await?;
     let predefined_denied = verify(login_a, &hidden_allowed).await?;
-    require(
+    require!(
         predefined_denied.findings().iter().any(|item| {
             item.kind == FindingKind::RoleAttribute
                 && item.object.as_deref() == Some("pg_read_all_data")
         }),
         "an inherited predefined role capability was silently accepted",
     )?;
-    require(
+    require!(
         exact_finding(
             &predefined_denied,
             FindingKind::RoleAttribute,
@@ -244,7 +244,7 @@ pub(super) async fn check(
         .allowed_predefined_roles
         .push(Identifier::new("pg_read_all_data")?);
     let predefined_report = verify(login_a, &predefined_allowed).await?;
-    require(
+    require!(
         predefined_report.status() == VerificationStatus::WithinDeclaredPolicy,
         "an explicitly allowed predefined role was rejected",
     )?;

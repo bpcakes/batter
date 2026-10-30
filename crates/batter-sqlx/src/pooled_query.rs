@@ -1,3 +1,5 @@
+use crate::CompletionStatus;
+
 use crate::{
     PgLease, PgNativeQuery, SendFuture, atomic_context::retain_with_fallback,
     native_query::QueryFuture,
@@ -123,7 +125,13 @@ async fn pooled<Q: PgNativeQuery, C: NativeCall<Q>>(
             let outcome = call.call(query, lease.connection_mut()).await;
             let success = outcome.is_ok();
             *observed.lock().expect("private query outcome slot") = Some(outcome);
-            lease.finish_query(success).await;
+            lease
+                .finish_query(if success {
+                    CompletionStatus::Succeeded
+                } else {
+                    CompletionStatus::Failed
+                })
+                .await;
             observed
                 .lock()
                 .expect("private query outcome slot")

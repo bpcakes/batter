@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::support::{Result, require};
 use super::{AuthorityFixture, exec, names_policy, quote};
 use batter_sqlx::verification::{
@@ -27,7 +33,7 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                 .bind(&parameters[..])
                 .fetch_one(&pool)
                 .await?;
-                require(
+                require!(
                     visible == 0,
                     "restricted-role control unexpectedly sees the hidden settings",
                 )?;
@@ -38,16 +44,16 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                     &names.table_a,
                     RolePolicy::default(),
                     Vec::new(),
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
+                    ParameterAllowance::Deny,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Deny,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Deny,
                 )?;
                 for parameter in parameters {
                     policy.authority.parameters.push(ParameterPolicy {
                         parameter: ParameterName::new(parameter)?,
-                        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+                        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
                     });
                     policy
                         .authority
@@ -58,7 +64,7 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                         });
                 }
                 let report = super::verify_policy(&pool, &policy).await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete
                         && report
                             .unsupported()
@@ -66,14 +72,14 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                     "unobservable parameters did not make the report explicitly incomplete",
                 )?;
                 for parameter in parameters {
-                    require(
+                    require!(
                         report.findings().iter().any(|finding| {
                             finding.kind == FindingKind::ParameterUnobservable
                                 && finding.object.as_deref() == Some(parameter)
                         }),
                         "hidden or absent setting was not reported unobservable",
                     )?;
-                    require(
+                    require!(
                         !report.findings().iter().any(|finding| {
                             matches!(
                                 finding.kind,
@@ -97,12 +103,12 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                 .bind(&parameters[..])
                 .fetch_one(&pool)
                 .await?;
-                require(
+                require!(
                     visible == 0,
                     "SET-only settings membership unexpectedly changed current visibility",
                 )?;
                 let report = super::verify_policy(&pool, &policy).await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete,
                     "SET-only settings visibility was mistaken for current-role observation",
                 )?;
@@ -120,19 +126,19 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                 .bind(&parameters[..])
                 .fetch_one(&pool)
                 .await?;
-                require(
+                require!(
                     visible == 2,
                     "inherited pg_read_all_settings did not reveal the two existing parameters",
                 )?;
                 let report = super::verify_policy(&pool, &policy).await?;
-                require(
+                require!(
                     !report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::ParameterUnobservable
                             && finding.object.as_deref() != Some("role")
                     }),
                     "fully visible built-ins remained unobservable",
                 )?;
-                require(
+                require!(
                     report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::MissingObject
                             && finding.object.as_deref() == Some("missing_parameter")
@@ -143,11 +149,11 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                     sqlx::query_scalar("SELECT current_setting('role', true) IS NOT NULL")
                         .fetch_one(&pool)
                         .await?;
-                require(
+                require!(
                     role_exists,
                     "the NO_SHOW_ALL built-in control did not exist",
                 )?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete
                         && report.findings().iter().any(|finding| {
                             finding.kind == FindingKind::ParameterUnobservable
@@ -155,7 +161,7 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                         }),
                     "known NO_SHOW_ALL parameter was mistaken for complete context coverage",
                 )?;
-                require(
+                require!(
                     !report.findings().iter().any(|finding| {
                         matches!(
                             finding.kind,
@@ -165,7 +171,7 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                     "known NO_SHOW_ALL parameter was reported absent",
                 )?;
                 for parameter in &parameters[..2] {
-                    require(
+                    require!(
                         !report.findings().iter().any(|finding| {
                             finding.kind == FindingKind::MissingObject
                                 && finding.object.as_deref() == Some(*parameter)
@@ -179,7 +185,7 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
                 )
                 .await?;
                 let report = super::verify_policy(&pool, &policy).await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete,
                     "revoking visibility did not restore the incomplete verdict",
                 )?;
@@ -206,13 +212,13 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                 let native = sqlx::query("SET plpgsql.missing_parameter = 'x'")
                     .execute(&pool)
                     .await;
-                require(
+                require!(
                     native.is_err(),
                     "native reserved prefix unexpectedly accepted the parameter",
                 )?;
                 let allowances = vec![
-                    AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-                    AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Connect),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
                 ];
                 let mut policy = AuthorityPolicyBuilder {
                     database: DatabasePolicy {
@@ -229,11 +235,11 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                     parameters: vec![
                         ParameterPolicy {
                             parameter: ParameterName::new("work_mem")?,
-                            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+                            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
                         },
                         ParameterPolicy {
                             parameter: ParameterName::new("plpgsql.missing_parameter")?,
-                            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+                            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
                         },
                     ],
                     required_privileges: vec![RequiredPrivilege {
@@ -254,7 +260,7 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                     &compiled,
                 )
                 .await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete
                         && report.findings().iter().any(|finding| {
                             finding.kind == FindingKind::ParameterUnobservable
@@ -284,7 +290,7 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                     &compiled,
                 )
                 .await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete,
                     "placeholder syntax became positive required-authority evidence",
                 )?;
@@ -303,7 +309,7 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                     &compiled,
                 )
                 .await?;
-                require(
+                require!(
                     report.is_within_declared_policy() && report.findings().is_empty(),
                     "observable loaded parameter failed its current-role requirement",
                 )?;

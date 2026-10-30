@@ -613,7 +613,7 @@ mod tests {
         let ledger = QualifiedName::new("service", "ledger").unwrap();
         let generic = MigrationPolicy::new(ledger.clone(), []).unwrap();
         let sqlx = SqlxMigrationManifest::new(ledger.clone(), SqlxLedgerMode::Exact, []).unwrap();
-        let usage = AllowedPrivilege::new(ObjectPrivilege::Usage, false);
+        let usage = AllowedPrivilege::privilege(ObjectPrivilege::Usage);
         let policies = [
             AuthorityPolicyBuilder {
                 sequences: vec![SequencePolicy {

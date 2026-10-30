@@ -122,7 +122,8 @@ impl Drop for DropSignal {
     }
 }
 
-pub async fn caller_owned(case: Case, polled: bool) {
+pub async fn caller_owned(case: Case, polled: DriverProgress) {
+    let polled = polled == DriverProgress::Polled;
     let mut supervisor = Supervisor::new(budget());
     let handle = supervisor.handle();
     let token = handle.signal();
@@ -163,4 +164,10 @@ pub async fn caller_owned(case: Case, polled: bool) {
     assert!(handle.status().is_draining());
     assert!(!cleanup.load(Ordering::SeqCst));
     case.event("caller-owned-drop-not-clean-shutdown");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DriverProgress {
+    Polled,
+    Unpolled,
 }

@@ -228,7 +228,7 @@ fn add_public_overrides(
 ) {
     let privileges = sorted_atoms(declaration)
         .filter(|(_, options)| options.public_delivery == PublicDelivery::AllowDeclared)
-        .map(|(privilege, _)| AllowedPrivilege::new(privilege, false))
+        .map(|(privilege, _)| AllowedPrivilege::privilege(privilege))
         .collect();
     policy.public_overrides.push(PublicAllowance {
         object: public_object(target),
@@ -245,7 +245,7 @@ fn add_public_overrides(
         policy.public_overrides.push(PublicAllowance {
             object: PublicObject::Type(relation.clone()),
             privileges: if allow_row_type_public_usage {
-                vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)]
+                vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)]
             } else {
                 Vec::new()
             },
@@ -360,7 +360,13 @@ fn sort_relation_columns(relations: &mut [RelationPolicy]) {
 
 fn normalized_privileges(declaration: &Declaration) -> Vec<AllowedPrivilege> {
     sorted_atoms(declaration)
-        .map(|(privilege, options)| AllowedPrivilege::new(privilege, options.allow_grant_option))
+        .map(|(privilege, options)| {
+            if options.allow_grant_option {
+                AllowedPrivilege::grantable(privilege)
+            } else {
+                AllowedPrivilege::privilege(privilege)
+            }
+        })
         .collect()
 }
 

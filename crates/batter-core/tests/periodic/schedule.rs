@@ -16,15 +16,16 @@ use tokio::time::{Instant, sleep};
 
 #[tokio::test(start_paused = true)]
 async fn short_intervals_skip_overdue_ticks_even_inside_five_milliseconds() {
-    short_interval_overrun(false).await;
+    short_interval_overrun(RunOutcome::Succeeded).await;
 }
 
 #[tokio::test(start_paused = true)]
 async fn fast_recoverable_failures_do_not_replay_short_interval_ticks() {
-    short_interval_overrun(true).await;
+    short_interval_overrun(RunOutcome::Recoverable).await;
 }
 
-async fn short_interval_overrun(recoverable: bool) {
+async fn short_interval_overrun(recoverable: RunOutcome) {
+    let recoverable = recoverable == RunOutcome::Recoverable;
     for period in [Duration::from_millis(1), Duration::from_micros(250)] {
         let schedule = Schedule::default();
         let recorded = schedule.clone();
@@ -348,4 +349,10 @@ async fn a_destroyed_run_is_recorded_once_as_a_stop_interruption() {
         Interruption::Cancelled.to_string(),
         "operation cancelled; external outcome may be unknown",
     );
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunOutcome {
+    Recoverable,
+    Succeeded,
 }

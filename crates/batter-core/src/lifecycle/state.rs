@@ -75,7 +75,8 @@ impl AdmissionState {
 }
 
 impl Shared {
-    pub(super) fn new(supervised: bool) -> Self {
+    pub(super) fn new(supervised: Supervision) -> Self {
+        let supervised = supervised == Supervision::Driven;
         Self {
             admission: Mutex::new(AdmissionState {
                 readiness: Readiness::Starting,
@@ -269,9 +270,10 @@ impl Shared {
     /// a plain value and its caller invokes the run afterwards.
     pub(super) fn admit_periodic(
         &self,
-        support: bool,
+        support: PeriodicRole,
         graceful: std::time::Duration,
     ) -> PeriodicAdmission {
+        let support = support == PeriodicRole::Support;
         let state = self.lock();
         if state.forced || !state.driver_started {
             return PeriodicAdmission::Stopped;
@@ -351,8 +353,9 @@ impl Admission<'_> {
     pub(super) fn check(
         &self,
         ancestor: Option<&AtomicBool>,
-        queue_closed: bool,
+        queue_closed: QueueState,
     ) -> Result<(), ProcessAdmissionError> {
+        let queue_closed = queue_closed == QueueState::Closed;
         let state = &self.0;
         if state.forced
             || state.failed
@@ -385,4 +388,22 @@ pub(super) enum PeriodicAdmission {
     Admitted { forced_at: Option<Instant> },
     /// The applicable stopping point has already passed.
     Stopped,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Supervision {
+    Driven,
+    Standalone,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PeriodicRole {
+    Support,
+    Ordinary,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QueueState {
+    Closed,
+    Open,
 }

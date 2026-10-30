@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::VerificationPolicy;
 use crate::support::{Result, require};
 use crate::verify_policy as verify;
@@ -20,15 +26,15 @@ pub(super) async fn check(
         .execute(login_a)
         .await?;
     let report = verify(login_a, narrow).await?;
-    require(
+    require!(
         report.session_user() == names.login_a,
         "SET ROLE changed session_user",
     )?;
-    require(
+    require!(
         report.current_user() == names.settable,
         "SET ROLE did not change current_user",
     )?;
-    require(
+    require!(
         finding(&report, FindingKind::RoleAdminOption),
         "session-rooted admin reachability disappeared under SET ROLE",
     )?;
@@ -39,7 +45,7 @@ pub(super) async fn check(
     )
     .await?;
     let report = verify(login_a, narrow).await?;
-    require(
+    require!(
         !report.findings().iter().any(|item| {
             item.kind == FindingKind::RoleAttribute
                 && item.object.as_deref() == Some(names.inherited.as_str())
@@ -56,7 +62,7 @@ pub(super) async fn check(
     )
     .await?;
     let report = verify(login_a, narrow).await?;
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.kind == FindingKind::RoleAttribute
                 && item.object.as_deref() == Some(names.inherited.as_str())
@@ -76,30 +82,30 @@ pub(super) async fn check(
             ..RolePolicy::default()
         },
         vec![
-            AllowedPrivilege::new(ObjectPrivilege::Select, true),
-            AllowedPrivilege::new(ObjectPrivilege::Insert, true),
-            AllowedPrivilege::new(ObjectPrivilege::Update, true),
-            AllowedPrivilege::new(ObjectPrivilege::Delete, true),
+            AllowedPrivilege::grantable(ObjectPrivilege::Select),
+            AllowedPrivilege::grantable(ObjectPrivilege::Insert),
+            AllowedPrivilege::grantable(ObjectPrivilege::Update),
+            AllowedPrivilege::grantable(ObjectPrivilege::Delete),
         ],
-        true,
-        true,
-        true,
-        false,
-        true,
+        ParameterAllowance::Allow,
+        PublicTableAllowance::Include,
+        SequenceAllowance::Allow,
+        TableOwnerAllowance::Deny,
+        RoutineAllowance::Allow,
     )?;
     let report = verify(login_a, &broad).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::WithinDeclaredPolicy,
         "matching policy did not accept declared authority",
     )?;
-    require(
+    require!(
         !report
             .findings()
             .iter()
             .any(|item| item.kind == FindingKind::RoleAttribute),
         "inherited-only role attributes were treated as inherited",
     )?;
-    require(
+    require!(
         !report.findings().iter().any(|finding| {
             finding.object.as_deref() == Some(names.superuser_target.as_str())
                 && (finding.kind == FindingKind::RoleAdminOption
@@ -129,7 +135,7 @@ pub(super) async fn check(
     )))
     .execute(login_a)
     .await;
-    require(
+    require!(
         denied_grant
             .as_ref()
             .err()
@@ -145,7 +151,7 @@ pub(super) async fn check(
     )))
     .execute(login_a)
     .await;
-    require(
+    require!(
         denied_set
             .as_ref()
             .err()
@@ -165,7 +171,7 @@ pub(super) async fn check(
     )
     .await?;
     let report = verify(login_a, &broad).await?;
-    require(
+    require!(
         exact_finding(
             &report,
             FindingKind::RoleAdminOption,
@@ -182,14 +188,14 @@ pub(super) async fn check(
         .allowed_admin_roles
         .push(Identifier::new("pg_read_all_data")?);
     let report = verify(login_a, &predefined_admin_allowed).await?;
-    require(
+    require!(
         !report.findings().iter().any(|finding| {
             finding.kind == FindingKind::RoleAdminOption
                 && finding.object.as_deref() == Some("pg_read_all_data")
         }),
         "an explicitly allowed ADMIN target remained denied",
     )?;
-    require(
+    require!(
         report.findings().iter().any(|finding| {
             finding.kind == FindingKind::RoleAttribute
                 && finding.object.as_deref() == Some("pg_read_all_data")
@@ -214,7 +220,7 @@ pub(super) async fn check(
                 &names.routine_a,
                 [RoutineType::array("pg_catalog", "int4")?],
             )?,
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)],
             allow_owner: false,
             allow_security_definer: false,
         },
@@ -224,7 +230,7 @@ pub(super) async fn check(
                 &names.routine_a,
                 [RoutineType::new("pg_catalog", "name")?],
             )?,
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)],
             allow_owner: false,
             allow_security_definer: false,
         },
@@ -234,7 +240,7 @@ pub(super) async fn check(
                 &names.routine_a,
                 [RoutineType::new("pg_catalog", "oidvector")?],
             )?,
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)],
             allow_owner: false,
             allow_security_definer: false,
         },
@@ -244,13 +250,13 @@ pub(super) async fn check(
                 &names.routine_a,
                 [RoutineType::array("pg_catalog", "oid")?],
             )?,
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)],
             allow_owner: false,
             allow_security_definer: false,
         },
     ]);
     let catalog_type_report = verify(login_a, &catalog_types).await?;
-    require(
+    require!(
         catalog_type_report.status() == VerificationStatus::WithinDeclaredPolicy,
         "true arrays or subscriptable vector types were misidentified",
     )?;
@@ -261,7 +267,7 @@ pub(super) async fn check(
         .parameters
         .retain(|entry| entry.parameter.as_str() != "work_mem");
     let work_mem_report = verify(login_a, &work_mem_undeclared).await?;
-    require(
+    require!(
         !work_mem_report.findings().iter().any(|item| {
             item.kind == FindingKind::ProtectedParameter
                 && item.object.as_deref() == Some("work_mem")

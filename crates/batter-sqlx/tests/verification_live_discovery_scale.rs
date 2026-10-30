@@ -22,8 +22,8 @@ pub(super) async fn inspect(
 
 pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicyBuilder> {
     let privileges = vec![
-        AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-        AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+        AllowedPrivilege::privilege(ObjectPrivilege::Connect),
+        AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
     ];
     let mut policy = AuthorityPolicyBuilder {
         discovery: DiscoveryScope::Schemas(vec![Identifier::new(schema)?]),
@@ -33,7 +33,7 @@ pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicyBuilder> {
         },
         parameters: vec![ParameterPolicy {
             parameter: ParameterName::new("work_mem")?,
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
         }],
         public_grants: privileges
             .into_iter()
@@ -48,17 +48,17 @@ pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicyBuilder> {
         .defaults
         .schemas
         .privileges
-        .push(AllowedPrivilege::new(ObjectPrivilege::Usage, false));
+        .push(AllowedPrivilege::privilege(ObjectPrivilege::Usage));
     policy
         .defaults
         .relations
         .privileges
-        .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
+        .push(AllowedPrivilege::privilege(ObjectPrivilege::Select));
     policy.defaults.allow_row_type_public_usage = true;
     policy.defaults.invoker_routines.privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)];
     policy.defaults.invoker_routines.public_privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)];
     Ok(policy)
 }
 
@@ -84,7 +84,7 @@ async fn verification_discovery_dependent_types_follow_native_acl() -> Result {
         let pool = fixture.login(&names.login_b).await?;
         let policy = clean_policy(&names.schema_b)?;
         let clean = inspect(&pool, &policy).await?;
-        require(clean.is_within_declared_policy() && clean.findings().is_empty(),
+        require!(clean.is_within_declared_policy() && clean.findings().is_empty(),
             "clean discovered schema was rejected because dependent types acquired invented default PUBLIC ACLs")?;
         let aliases: Vec<String> = sqlx::query_scalar(
             "SELECT a.typname::text FROM pg_catalog.pg_type t
@@ -98,40 +98,40 @@ async fn verification_discovery_dependent_types_follow_native_acl() -> Result {
              JOIN pg_catalog.pg_type m ON m.oid IN (r.rngmultitypid, (SELECT typarray FROM pg_catalog.pg_type WHERE oid = r.rngmultitypid))
              WHERE n.nspname = $1 AND t.typname = 'record_range'"
         ).bind(&names.schema_b).fetch_all(&mut fixture.admin).await?;
-        require(aliases.len() == 4, "fixture did not create enum/range arrays and multirange aliases")?;
+        require!(aliases.len() == 4, "fixture did not create enum/range arrays and multirange aliases")?;
         let mut declared = clean_policy(&names.schema_b)?;
         declared.discovery = DiscoveryScope::Declared;
         for alias in &aliases {
             let object = QualifiedName::new(&names.schema_b, alias)?;
             let native: bool = sqlx::query_scalar("SELECT has_type_privilege(current_user, $1, 'USAGE')")
                 .bind(format!("{schema}.{}", quote(alias))).fetch_one(&pool).await?;
-            require(!native, "native dependent type unexpectedly retained PUBLIC usage after source revoke")?;
-            declared.types.push(TypePolicy { type_name: object.clone(), privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)], allow_owner: false });
+            require!(!native, "native dependent type unexpectedly retained PUBLIC usage after source revoke")?;
+            declared.types.push(TypePolicy { type_name: object.clone(), privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)], allow_owner: false });
             declared.required_privileges.push(RequiredPrivilege { object: PublicObject::Type(object), privilege: ObjectPrivilege::Usage });
         }
         let revoked = inspect(&pool, &declared).await?;
-        require(revoked.findings().iter().filter(|finding| finding.kind == FindingKind::MissingPrivilege).count() == aliases.len(),
+        require!(revoked.findings().iter().filter(|finding| finding.kind == FindingKind::MissingPrivilege).count() == aliases.len(),
             "explicit dependent type checks did not consult the source type's revoked ACL")?;
         exec(&mut fixture.admin, format!("GRANT USAGE ON TYPE {schema}.record_kind, {schema}.record_range TO {role}")).await?;
         for alias in &aliases {
             let native: bool = sqlx::query_scalar("SELECT has_type_privilege(current_user, $1, 'USAGE')")
                 .bind(format!("{schema}.{}", quote(alias))).fetch_one(&pool).await?;
-            require(native, "source grant did not authorize native dependent type usage")?;
+            require!(native, "source grant did not authorize native dependent type usage")?;
         }
-        require(inspect(&pool, &declared).await?.is_within_declared_policy(),
+        require!(inspect(&pool, &declared).await?.is_within_declared_policy(),
             "dependent types did not follow the source type's granted ACL")?;
         // Catalog vector identities remain explicitly selectable even though
         // PostgreSQL resolves their effective ACL through their element type.
         for vector in ["oidvector", "int2vector"] {
             let object = QualifiedName::new("pg_catalog", vector)?;
-            declared.types.push(TypePolicy { type_name: object.clone(), privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)], allow_owner: false });
-            declared.public_grants.push(PublicGrant { object: PublicObject::Type(object.clone()), privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false) });
+            declared.types.push(TypePolicy { type_name: object.clone(), privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)], allow_owner: false });
+            declared.public_grants.push(PublicGrant { object: PublicObject::Type(object.clone()), privilege: AllowedPrivilege::privilege(ObjectPrivilege::Usage) });
             declared.required_privileges.push(RequiredPrivilege { object: PublicObject::Type(object), privilege: ObjectPrivilege::Usage });
             let native: bool = sqlx::query_scalar("SELECT has_type_privilege(current_user, $1, 'USAGE')")
                 .bind(format!("pg_catalog.{vector}")).fetch_one(&pool).await?;
-            require(native, "native vector type did not retain its effective USAGE")?;
+            require!(native, "native vector type did not retain its effective USAGE")?;
         }
-        require(inspect(&pool, &declared).await?.is_within_declared_policy(),
+        require!(inspect(&pool, &declared).await?.is_within_declared_policy(),
             "vector types were hidden or treated as automatic array aliases")?;
         Ok(())
     })).await

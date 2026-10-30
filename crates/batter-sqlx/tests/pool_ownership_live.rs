@@ -505,7 +505,8 @@ async fn two_pools_close_after_dependents_in_lifo_order() -> Result {
     Ok(())
 }
 
-async fn held_checkout(release_before_timeout: bool) -> Result {
+async fn held_checkout(release_before_timeout: CheckoutRelease) -> Result {
+    let release_before_timeout = release_before_timeout == CheckoutRelease::BeforeTimeout;
     let budget = if release_before_timeout {
         cleanup_budget()
     } else {
@@ -554,13 +555,13 @@ async fn held_checkout(release_before_timeout: bool) -> Result {
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn held_checkout_delays_successful_close() -> Result {
-    held_checkout(true).await
+    held_checkout(CheckoutRelease::BeforeTimeout).await
 }
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn held_checkout_timeout_is_not_success() -> Result {
-    held_checkout(false).await
+    held_checkout(CheckoutRelease::AfterTimeout).await
 }
 
 #[tokio::test]
@@ -652,4 +653,10 @@ async fn ownership_oracles_reject_missing_and_premature_cleanup() -> Result {
             .is_ok()
     );
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckoutRelease {
+    BeforeTimeout,
+    AfterTimeout,
 }

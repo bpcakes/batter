@@ -1,5 +1,11 @@
 //! Live acceptance scenarios for generic PostgreSQL verification.
 
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use crate::verify_policy as verify;
 
 use super::support::{Result, require};
@@ -32,7 +38,7 @@ async fn verification_uses_the_initial_authenticated_role() -> Result {
                 )
                 .fetch_one(&masked)
                 .await?;
-                require(
+                require!(
                     superuser,
                     "the administrative fixture login is not a superuser",
                 )?;
@@ -48,22 +54,22 @@ async fn verification_uses_the_initial_authenticated_role() -> Result {
                     &names.table_a,
                     RolePolicy::default(),
                     Vec::new(),
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
+                    ParameterAllowance::Deny,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Deny,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Deny,
                 )?;
                 let report = verify(&masked, &policy).await?;
-                require(
+                require!(
                     report.session_user() == authenticated,
                     "changed session authorization concealed the authenticated role",
                 )?;
-                require(
+                require!(
                     report.current_user() == names.login_a,
                     "the report lost the effective identity present at verifier entry",
                 )?;
-                require(
+                require!(
                     report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::RoleAttribute
                             && finding.object.as_deref() == Some(authenticated.as_str())
@@ -75,7 +81,7 @@ async fn verification_uses_the_initial_authenticated_role() -> Result {
                     sqlx::query_as("SELECT session_user::text, current_user::text")
                         .fetch_one(&masked)
                         .await?;
-                require(
+                require!(
                     restored_mask == (names.login_a.clone(), names.login_a.clone()),
                     "verification did not restore the caller's masked session identity",
                 )?;
@@ -120,7 +126,7 @@ async fn check_set_role_identity(
     let connection = fixture.login(&names.login_a).await?;
     exec(&connection, format!("SET ROLE {}", quote(&names.settable))).await?;
     let report = verify(&connection, policy).await?;
-    require(
+    require!(
         report.session_user() == names.login_a && report.current_user() == names.settable,
         "verification did not inspect through the caller's SET ROLE identity",
     )?;
@@ -128,7 +134,7 @@ async fn check_set_role_identity(
         sqlx::query_as("SELECT session_user::text, current_user::text, current_setting('role')")
             .fetch_one(&connection)
             .await?;
-    require(
+    require!(
         restored_role
             == (
                 names.login_a.clone(),
@@ -157,7 +163,7 @@ async fn verification_detects_createrole_admin_across_unusable_memberships() -> 
                 )))
                 .execute(&creator)
                 .await;
-                require(
+                require!(
                     denied_set.is_err(),
                     "the CREATEROLE control unexpectedly crossed a SET FALSE membership",
                 )?;
@@ -180,14 +186,14 @@ async fn verification_detects_createrole_admin_across_unusable_memberships() -> 
                         ..RolePolicy::default()
                     },
                     Vec::new(),
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
+                    ParameterAllowance::Deny,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Deny,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Deny,
                 )?;
                 let report = verify(&creator, &policy).await?;
-                require(
+                require!(
                     finding(&report, FindingKind::RoleAdminOption),
                     "CREATEROLE management authority crossed an unusable membership unnoticed",
                 )?;
@@ -231,7 +237,7 @@ async fn verification_rejects_row_security_on_the_migration_ledger() -> Result {
                 )))
                 .fetch_all(&login)
                 .await?;
-                require(
+                require!(
                     visible_versions == vec![1],
                     "the RLS control did not hide the unexpected migration row",
                 )?;
@@ -242,14 +248,14 @@ async fn verification_rejects_row_security_on_the_migration_ledger() -> Result {
                     &names.table_a,
                     RolePolicy::default(),
                     Vec::new(),
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
+                    ParameterAllowance::Deny,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Deny,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Deny,
                 )?;
                 let report = verify(&login, &policy).await?;
-                require(
+                require!(
                     report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::LedgerRowSecurity
                             && finding.object.as_deref() == Some(ledger.as_str())
@@ -299,7 +305,7 @@ async fn verification_checks_real_login_reachability_and_two_fixture_policies() 
             })
         })
         .await;
-    require(
+    require!(
         panic_result.is_err(),
         "a panicking fixture body was reported as successful",
     )

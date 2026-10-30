@@ -1,5 +1,7 @@
 //! Lifecycle admission answers before trusted metadata, authentication and fallbacks.
 
+use crate::http::tests::RequestHeaders;
+
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -29,14 +31,21 @@ async fn admission_rejects_before_trusted_metadata_or_authentication_runs() {
     // handler. While starting or draining, admission must answer all three first.
     let requests = || {
         [
-            direct_request("GET", COMMAND_PATH, Body::empty(), peer, None, true),
+            direct_request(
+                "GET",
+                COMMAND_PATH,
+                Body::empty(),
+                peer,
+                None,
+                RequestHeaders::Forged,
+            ),
             without_peer(direct_request(
                 "GET",
                 COMMAND_PATH,
                 Body::empty(),
                 peer,
                 None,
-                false,
+                RequestHeaders::Ordinary,
             )),
             direct_request(
                 "GET",
@@ -44,7 +53,7 @@ async fn admission_rejects_before_trusted_metadata_or_authentication_runs() {
                 Body::empty(),
                 peer,
                 Some("Bearer fake-token"),
-                true,
+                RequestHeaders::Forged,
             ),
         ]
     };
@@ -118,7 +127,7 @@ async fn admitted_authenticated_request_succeeds_until_drain() {
             Body::empty(),
             peer,
             Some("Bearer fake-token"),
-            true,
+            RequestHeaders::Forged,
         )
     };
 
@@ -153,7 +162,14 @@ async fn fallbacks_answer_only_after_admission() {
     let requests = || {
         [
             // No route matches, so the guarded 404 fallback answers once admitted.
-            direct_request("GET", "/missing", Body::empty(), peer, None, false),
+            direct_request(
+                "GET",
+                "/missing",
+                Body::empty(),
+                peer,
+                None,
+                RequestHeaders::Ordinary,
+            ),
             // A route matches without this method; its 405 follows authentication.
             direct_request(
                 "DELETE",
@@ -161,7 +177,7 @@ async fn fallbacks_answer_only_after_admission() {
                 Body::empty(),
                 peer,
                 Some("Bearer fake-token"),
-                false,
+                RequestHeaders::Ordinary,
             ),
         ]
     };
@@ -192,7 +208,7 @@ async fn fallbacks_answer_only_after_admission() {
         Body::empty(),
         peer,
         None,
-        false,
+        RequestHeaders::Ordinary,
     );
     let response = app.request(unauthenticated_method).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

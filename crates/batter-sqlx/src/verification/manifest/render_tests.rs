@@ -1,3 +1,5 @@
+use crate::verification::AuthorityAllowance;
+
 use super::*;
 use crate::verification::{AllowedPrivilege, ObjectDefaults, PublicObject, RoutineType};
 
@@ -14,7 +16,7 @@ fn exact_manifest() -> ExactRoleManifest {
 }
 
 fn permissive_public_defaults() -> DiscoveryDefaults {
-    let public = |privilege| vec![AllowedPrivilege::new(privilege, false)];
+    let public = |privilege| vec![AllowedPrivilege::privilege(privilege)];
     DiscoveryDefaults {
         schemas: ObjectDefaults {
             public_privileges: public(ObjectPrivilege::Usage),
@@ -104,7 +106,7 @@ fn renderer_is_deterministic_quoted_and_limited_to_normalized_grants() {
                 DeclarationPurpose::RequiredAndProvisioned,
             )
             .unwrap()
-            .allow_grant_option(true),
+            .grant_option(AuthorityAllowance::Allow),
         )
         .unwrap();
     let compiled = manifest.compile().unwrap();

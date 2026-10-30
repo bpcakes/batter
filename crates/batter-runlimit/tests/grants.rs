@@ -5,6 +5,8 @@
 //! `runlimit-postgres` SQL for this source version. A change to the exported
 //! fragment that is not also a change to the native statements fails here.
 
+use batter_sqlx::verification::AuthorityAllowance;
+
 use batter_runlimit::grants::{RunlimitGrantError, RunlimitOperation, grant_fragment};
 use batter_sqlx::verification::{
     DeclarationPurpose, DiscoveryScope, ExactRoleManifest, FragmentObjectPolicy, Identifier,
@@ -306,7 +308,7 @@ fn application_public_delivery_and_row_type_choices_reach_the_declarations() {
     let strict = rendered(&policy("quotas"), [RunlimitOperation::GcraAdmission]);
     let permissive = rendered(
         &policy("quotas")
-            .allow_row_type_public_usage(true)
+            .row_type_public_usage(AuthorityAllowance::Allow)
             .with_public_delivered_privileges([ObjectPrivilege::Select])
             .unwrap(),
         [RunlimitOperation::GcraAdmission],
@@ -325,7 +327,7 @@ fn application_public_delivery_and_row_type_choices_reach_the_declarations() {
     };
     assert_ne!(
         compiled(&policy("quotas")),
-        compiled(&policy("quotas").allow_row_type_public_usage(true)),
+        compiled(&policy("quotas").row_type_public_usage(AuthorityAllowance::Allow)),
     );
 }
 

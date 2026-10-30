@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::support::{Result, require};
 use super::{AuthorityFixture, RolePolicy, names_policy};
 use std::sync::{Arc, Mutex};
@@ -45,11 +51,11 @@ async fn verification_idle_reset_has_one_expected_native_notice() -> Result {
                     &names.table_a,
                     RolePolicy::default(),
                     Vec::new(),
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
+                    ParameterAllowance::Deny,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Deny,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Deny,
                 )?;
                 let authority = policy.authority.clone().build()?;
                 let notices = Notices(Arc::new(Mutex::new(Vec::new())));
@@ -91,20 +97,20 @@ async fn verification_idle_reset_has_one_expected_native_notice() -> Result {
                         })
                     });
                     let report = operation.await?;
-                    require(
+                    require!(
                         report.supported().contains(
                             &batter_sqlx::verification::SupportedSurface::MigrationLedger,
                         ) == (mode != 2),
                         "verification mode reported the wrong ledger coverage",
                     )?;
                     if mode == 1 {
-                        require(
+                        require!(
                             report.is_within_declared_policy(),
                             "migration-only verification rejected the fixture ledger",
                         )?;
                     }
                     let observed = notices.0.lock().unwrap().clone();
-                    require(
+                    require!(
                         observed.len() == 1
                             && observed[0].contains("there is no transaction in progress"),
                         "idle reset did not retain exactly the expected PostgreSQL warning",

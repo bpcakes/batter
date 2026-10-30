@@ -118,7 +118,7 @@ impl std::fmt::Display for CorrelationId {
 /// Migration: `batter_axum::operational_http` moved to
 /// `batter_axum::low_level::operational_http` with the same caller obligations.
 pub async fn operational_http(request: Request, next: Next) -> Response {
-    operational_http_inner(request, next, false).await
+    operational_http_inner(request, next, QuotaRecording::Disabled).await
 }
 
 /// Opt into one retained quota record alongside the existing HTTP observation.
@@ -142,10 +142,15 @@ pub async fn operational_http(request: Request, next: Next) -> Response {
 /// Migration: `batter_axum::operational_http_with_quota` moved to
 /// `batter_axum::low_level::operational_http_with_quota` with the same caller obligations.
 pub async fn operational_http_with_quota(request: Request, next: Next) -> Response {
-    operational_http_inner(request, next, true).await
+    operational_http_inner(request, next, QuotaRecording::Enabled).await
 }
 
-async fn operational_http_inner(mut request: Request, next: Next, quota: bool) -> Response {
+async fn operational_http_inner(
+    mut request: Request,
+    next: Next,
+    quota: QuotaRecording,
+) -> Response {
+    let quota = quota == QuotaRecording::Enabled;
     with_current_dispatch(async move {
         let observation = request.extensions().get::<ObservationState>().cloned();
         if quota {
@@ -240,4 +245,10 @@ pub fn render_infrastructure_failure(failure: HttpFailure, id: Option<&Correlati
         }),
     )
         .into_response()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QuotaRecording {
+    Enabled,
+    Disabled,
 }

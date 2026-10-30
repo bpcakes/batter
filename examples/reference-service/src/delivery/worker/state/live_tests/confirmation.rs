@@ -1,8 +1,8 @@
 use super::*;
 
 pub(super) async fn ordering(worker: &DeliveryWorker) -> Result<(), BoxError> {
-    replacement_first(worker, false).await?;
-    replacement_first(worker, true).await?;
+    replacement_first(worker, Expiry::Active).await?;
+    replacement_first(worker, Expiry::Expired).await?;
     confirmation_first(worker).await
 }
 
@@ -42,7 +42,8 @@ async fn waiter(pool: &PgPool, blocker: i32) -> Result<i32, BoxError> {
     .await??)
 }
 
-async fn replacement_first(worker: &DeliveryWorker, expire: bool) -> Result<(), BoxError> {
+async fn replacement_first(worker: &DeliveryWorker, expire: Expiry) -> Result<(), BoxError> {
+    let expire = expire == Expiry::Expired;
     let (context, payload) = prepared(worker).await?;
     if expire {
         sqlx::query("UPDATE job_queue SET lease_expires_at = clock_timestamp() + interval '2 seconds' WHERE id = $1")
@@ -177,4 +178,10 @@ async fn confirmation_first(worker: &DeliveryWorker) -> Result<(), BoxError> {
     .await?;
     assert_eq!((state.as_str(), generation), ("CONFIRMED", 2));
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Expiry {
+    Expired,
+    Active,
 }

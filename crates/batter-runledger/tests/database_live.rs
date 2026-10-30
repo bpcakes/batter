@@ -165,7 +165,7 @@ async fn schema_cancellation_retires(
         let mut check = Box::pin(verify_schema(database));
         tokio::select! {
             result = &mut check => { result?; return Err("schema verification did not block".into()); }
-            result = observe_backend(&mut observer, pid, true) => result?,
+            result = observe_backend(&mut observer, pid, BackendState::Blocked) => result?,
         }
         drop(check);
         let replacement: i32 = timeout(Duration::from_secs(2),
@@ -174,12 +174,12 @@ async fn schema_cancellation_retires(
         timeout(Duration::from_secs(2), pool.close()).await?;
         assert!(pool.is_closed());
         // The client has retired, even though PostgreSQL may still be waiting.
-        observe_backend(&mut observer, pid, true).await?;
+        observe_backend(&mut observer, pid, BackendState::Blocked).await?;
         Ok(())
     }.await;
     let unlock = lock.rollback().await;
     let blocker_close = blocker.close().await;
-    let disappeared = observe_backend(&mut observer, pid, false).await;
+    let disappeared = observe_backend(&mut observer, pid, BackendState::Idle).await;
     let observer_close = observer.close().await;
     body?;
     unlock?;
@@ -189,7 +189,12 @@ async fn schema_cancellation_retires(
     Ok(())
 }
 
-async fn observe_backend(observer: &mut sqlx::PgConnection, pid: i32, blocked: bool) -> Result {
+async fn observe_backend(
+    observer: &mut sqlx::PgConnection,
+    pid: i32,
+    blocked: BackendState,
+) -> Result {
+    let blocked = blocked == BackendState::Blocked;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let observed: bool = sqlx::query_scalar(
@@ -207,4 +212,10 @@ async fn observe_backend(observer: &mut sqlx::PgConnection, pid: i32, blocked: b
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BackendState {
+    Blocked,
+    Idle,
 }

@@ -7,7 +7,8 @@ use batter_sqlx::PgProfiledPool;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
-async fn expiration(idle: bool) -> Result {
+async fn expiration(idle: TimeoutKind) -> Result {
+    let idle = idle == TimeoutKind::Idle;
     let mut fixture = fixture().await?;
     let options = fixture.pool.connect_options().as_ref().clone();
     let limit = Duration::from_millis(750);
@@ -35,7 +36,7 @@ async fn expiration(idle: bool) -> Result {
             .bind(key)
             .fetch_one(&mut fixture.observer)
             .await?;
-        require(
+        require!(
             !held,
             "transaction must hold the independently observed lock",
         )?;
@@ -56,7 +57,7 @@ async fn expiration(idle: bool) -> Result {
                     {
                         Ok(_) => completed += 1,
                         Err(error) => {
-                            require(
+                            require!(
                                 completed >= 2,
                                 "must exceed a total budget across short statements",
                             )?;
@@ -76,7 +77,7 @@ async fn expiration(idle: bool) -> Result {
             .bind(key)
             .fetch_one(&mut fixture.observer)
             .await?;
-        require(
+        require!(
             released,
             "server termination must release the transaction lock",
         )?;
@@ -122,11 +123,17 @@ async fn disappeared(observer: &mut sqlx::PgConnection, pid: i32) -> Result {
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn declared_idle_timeout_releases_server_locks_but_not_held_lease() -> Result {
-    expiration(true).await
+    expiration(TimeoutKind::Idle).await
 }
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn declared_transaction_timeout_bounds_multiple_short_statements() -> Result {
-    expiration(false).await
+    expiration(TimeoutKind::Transaction).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TimeoutKind {
+    Idle,
+    Transaction,
 }

@@ -32,7 +32,7 @@ pub(crate) async fn exercise_cleanup_only(
 
         seed_expired_counter(owner, quotas, family, &login).await?;
         let before = super::quota_cases::counter_rows(owner, quotas, family.counters()).await?;
-        require(
+        require!(
             before >= 1,
             &format!(
                 "the owner could not seed an expired {} counter",
@@ -40,14 +40,14 @@ pub(crate) async fn exercise_cleanup_only(
             ),
         )?;
         let deleted = family.cleanup_expired(&pool).await?;
-        require(
+        require!(
             deleted >= 1,
             &format!(
                 "{} cleanup-only deleted {deleted} rows, expected at least 1",
                 family.label()
             ),
         )?;
-        require(
+        require!(
             super::quota_cases::counter_rows(owner, quotas, family.counters()).await? == 0,
             &format!(
                 "an expired {} counter survived a cleanup-only login",

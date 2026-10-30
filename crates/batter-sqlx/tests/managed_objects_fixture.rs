@@ -70,7 +70,7 @@ impl Fixture {
             .fetch_one(&mut admin),
         )
         .await??;
-        support::require(
+        support::require!(
             superuser,
             "BATTER_SQLX_ADMIN_URL must authenticate as a PostgreSQL superuser",
         )?;
