@@ -8,11 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
-- Enable the zero-boolean-parameter Clippy rule for workspace lint inheritors
-  (`batter-moe5`). Internal APIs and fixture controls use named choices. Public
-  source-selection and authority-policy methods have explicit replacements;
-  their old signatures remain deprecated for one release because both old
-  choices are valid application policies. No public hard cut is made.
+- **Breaking:** Remove all 17 public boolean-parameter wrappers introduced as
+  deprecated compatibility paths in PR #67 (`batter-4dmd`). Settings selection,
+  authority-policy builders and privilege construction now require the named
+  methods below. No deprecated shim is retained: the explicit decision for this
+  cut is to enforce the zero-boolean-parameter rule without exemptions, including
+  on public APIs. This supersedes the one-release retention decision in PR #67.
+  Internal APIs and fixture controls continue to use named choices.
 
   ```rust,ignore
   // Settings: before -> after

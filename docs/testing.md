@@ -714,8 +714,9 @@ The existing `-D warnings` verification steps enforce these limits across librar
 examples, and tests. Native Runlimit enables the boolean-parameter lint through
 `pedantic`; native Runledger and standalone `batter-at-rest` keep their own lint tables.
 Named choices replace control parameters, and fallible test assertions use assertion
-macros. Only deprecated public compatibility wrappers retain boolean parameters,
-with individual documented lint allowances for one release (`batter-moe5`).
+macros. Public settings and authority APIs use only named methods; their boolean
+compatibility wrappers have been removed. There are no scoped exemptions to the
+boolean-parameter lint (`batter-4dmd`).
 
 ## Managed routines and triggers
 

@@ -32,21 +32,4 @@ impl AllowedPrivilege {
             grant_option: true,
         }
     }
-
-    /// Compatibility wrapper for explicit privilege constructors.
-    #[deprecated(
-        since = "0.0.2",
-        note = "use AllowedPrivilege::privilege or AllowedPrivilege::grantable"
-    )]
-    #[allow(
-        clippy::fn_params_excessive_bools,
-        reason = "one-release compatibility for an existing public constructor"
-    )]
-    pub const fn new(privilege: ObjectPrivilege, grant_option: bool) -> Self {
-        if grant_option {
-            Self::grantable(privilege)
-        } else {
-            Self::privilege(privilege)
-        }
-    }
 }

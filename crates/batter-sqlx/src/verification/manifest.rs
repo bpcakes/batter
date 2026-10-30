@@ -5,7 +5,6 @@
 //! deterministic [`GrantPlan`]. Neither compilation nor rendering connects to a
 //! database or executes SQL.
 
-mod compatibility;
 mod compile;
 mod fragment;
 mod render;
@@ -224,7 +223,7 @@ impl RelationGrantGroup {
     /// privilege. Later compatible groups may add privileges to that relation.
     /// PostgreSQL ordinarily gives PUBLIC USAGE on table row types, so callers
     /// that retain that default must opt in with
-    /// [`Self::allow_row_type_public_usage`].
+    /// [`Self::row_type_public_usage`].
     pub fn new(
         relations: impl IntoIterator<Item = QualifiedName>,
         privileges: impl IntoIterator<Item = ObjectPrivilege>,
