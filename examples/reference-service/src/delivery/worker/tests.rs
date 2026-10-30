@@ -252,6 +252,32 @@ impl runledger_core::jobs::JobExecutionServices for Legacy {
     }
 }
 
+/// Custom services whose invocation ended before phases were derived. The
+/// worker ends an invocation only after destroying the handler future, and the
+/// facility cannot start an ended one, so neither builds them; the control
+/// below pins the handler's mapping of them to budget exhaustion.
+struct Ended(std::time::Instant, runledger_core::jobs::JobInvocation);
+
+#[async_trait]
+impl runledger_core::jobs::JobExecutionServices for Ended {
+    fn deadline(&self) -> std::time::Instant {
+        self.0
+    }
+    fn remaining_budget(&self) -> Duration {
+        self.0
+            .saturating_duration_since(tokio::time::Instant::now().into_std())
+    }
+    async fn persist_progress(
+        &self,
+        _: runledger_core::jobs::JobExecutionUpdate<'_>,
+    ) -> Result<(), runledger_core::jobs::JobExecutionError> {
+        unreachable!("rejected before any write")
+    }
+    fn invocation(&self) -> Option<runledger_core::jobs::JobInvocation> {
+        Some(self.1.clone())
+    }
+}
+
 type ProbeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 type ProbeBody<T> = Box<dyn for<'a> FnOnce(JobExecution<'a>) -> ProbeFuture<'a, T> + Send>;
 
@@ -365,6 +391,19 @@ async fn rejected_derivation_starts_no_state_or_provider_work() -> Result<(), ba
         .execute(&handler, value.clone())
         .await;
     let failure = returned_failure(run);
+    assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
+    assert_eq!(failure.code, CODE_OPERATION_BUDGET_EXHAUSTED);
+    // An invocation that already ended leaves none either, whatever its deadline.
+    let owner = runledger_core::jobs::JobInvocationOwner::new();
+    let ended = Ended(
+        (tokio::time::Instant::now() + Duration::from_secs(10)).into_std(),
+        owner.invocation(),
+    );
+    assert!(owner.end().is_empty());
+    let failure = worker
+        .execute(JobExecution::new(&context, &ended), value.clone())
+        .await
+        .expect_err("an ended invocation leaves no provider time");
     assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
     assert_eq!(failure.code, CODE_OPERATION_BUDGET_EXHAUSTED);
     let legacy = Legacy((tokio::time::Instant::now() + Duration::from_secs(10)).into_std());

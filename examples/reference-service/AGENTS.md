@@ -40,8 +40,8 @@ Unix-only application is not a reusable database framework.
   `src/delivery/worker/state.rs` owns its lease-fenced SQL state transitions.
   `src/delivery/worker/tests.rs` drives the handler, and through `in_invocation`
   each admission or state probe, with `batter::runledger::test_support`; its
-  only custom services are the negative control for services without an exit
-  claim.
+  only custom services are negative controls for services without an exit
+  claim and for an invocation that already ended.
 - `src/provider.rs` owns the selected HTTP effect protocol. It is application
   code, not a generic provider adapter or an exactly-once claim.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.

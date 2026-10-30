@@ -265,7 +265,8 @@ pub mod runledger {
     /// Enabled by `runledger-test-support` and owned by the Runledger adapter.
     /// `HandlerInvocation::new(budget)` declares the native deadline for a fresh
     /// job and `HandlerInvocation::for_context(budget, context)` for the claimed
-    /// job a handler reads. `execute` builds the real `JobExecution` with an
+    /// job a handler reads; `with_checkpoint` and `with_progress` declare what a
+    /// retried row retains. `execute` builds the real `JobExecution` with an
     /// owned exit signal, dispatches the handler as the worker does, ends the
     /// invocation after destroying the handler future, and returns an exhaustive
     /// `HandlerExit` with the persisted progress and contained exit-hook panics.

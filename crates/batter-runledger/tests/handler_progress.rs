@@ -1,8 +1,9 @@
 //! Progress persistence and declaration contracts of the worker-free handler
 //! drive: the in-memory row merges like the queue row, refuses writes at the
-//! deadline, starts from the declared checkpoint, a budget is accepted like
-//! any root budget, and a claimed context reaches the handler unchanged once
-//! its run and attempt are positive. Exit and dispatch contracts are in
+//! deadline, starts from the declared checkpoint and retained progress, which
+//! bounds a resumed attempt's writes, a budget is accepted like any root
+//! budget, and a claimed context reaches the handler unchanged once its run
+//! and attempt are positive. Exit and dispatch contracts are in
 //! `handler_invocation.rs`.
 
 use batter_core::ConfigurationError;
@@ -267,4 +268,137 @@ fn a_claimed_context_needs_a_positive_run_and_attempt() {
         ..claimed()
     };
     assert!(HandlerInvocation::for_context(BUDGET, first).is_ok());
+}
+
+/// Writes the completed count in its payload without a total, as an attempt
+/// counting on from its checkpoint would, and reports the write's result.
+struct CountOn(mpsc::UnboundedSender<Result<(), String>>);
+
+#[async_trait]
+impl JobExecutionHandler for CountOn {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new("probe.count_on")
+    }
+
+    async fn execute(
+        &self,
+        execution: JobExecution<'_>,
+        payload: Value,
+    ) -> Result<JobCompletion, JobFailure> {
+        let update = JobExecutionUpdate {
+            progress_done: payload["done"].as_i64(),
+            progress_total: None,
+            checkpoint: None,
+        };
+        let result = execution
+            .persist_progress(update)
+            .await
+            .map_err(|error| error.to_string());
+        self.0.send(result).expect("test receives");
+        Ok(JobCompletion::success())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_resumed_attempt_writes_against_the_retained_progress() {
+    let (report, mut reports) = mpsc::unbounded_channel();
+    let handler = CountOn(report).into_job_handler();
+    // An earlier attempt committed 4 of 10 and the claimed cursor; the retry
+    // claimed the row with both.
+    let retry = || {
+        HandlerInvocation::for_context(BUDGET, claimed())
+            .expect("claimed")
+            .with_progress(Some(4), Some(10))
+            .expect("the row's own pair")
+    };
+    let retained = PersistedProgress {
+        progress_done: Some(4),
+        progress_total: Some(10),
+        checkpoint: claimed().checkpoint,
+    };
+
+    let refused = retry().execute(&handler, json!({ "done": 11 })).await;
+    assert!(
+        matches!(refused.exit, HandlerExit::Returned(Ok(_))),
+        "{:?}",
+        refused.exit
+    );
+    assert_eq!(
+        writes(&mut reports),
+        [Err(JobExecutionError::InvalidProgress(
+            JobProgressValidationError::DoneExceedsTotal {
+                done: 11,
+                total: 10,
+            }
+        )
+        .to_string())],
+        "the retained total bounds a write that omits it"
+    );
+    assert_eq!(
+        refused.persisted, retained,
+        "the refused write committed nothing"
+    );
+
+    let counted = retry().execute(&handler, json!({ "done": 5 })).await;
+    assert_eq!(writes(&mut reports), [Ok(())]);
+    assert_eq!(
+        counted.persisted,
+        PersistedProgress {
+            progress_done: Some(5),
+            ..retained.clone()
+        },
+        "the write replaced done and kept the retained total"
+    );
+
+    // Declared after a later checkpoint, the progress replaces only its own
+    // fields.
+    let untouched = HandlerInvocation::for_context(BUDGET, claimed())
+        .expect("claimed")
+        .with_checkpoint(json!({ "cursor": 6 }))
+        .with_progress(Some(4), Some(10))
+        .expect("the row's own pair")
+        .execute(&Identity.into_job_handler(), json!({}))
+        .await;
+    assert!(untouched.exit_hook_panics.is_empty());
+    assert_eq!(
+        untouched.persisted,
+        PersistedProgress {
+            checkpoint: Some(json!({ "cursor": 6 })),
+            ..retained
+        },
+        "without a write the retained row is the durable one"
+    );
+}
+
+#[test]
+fn retained_progress_is_refused_where_the_row_refuses_it() {
+    let declare = |done, total| {
+        HandlerInvocation::new(BUDGET)
+            .expect("budget")
+            .with_progress(done, total)
+            .map(|_| ())
+    };
+    assert_eq!(
+        declare(Some(-1), None),
+        Err(JobProgressValidationError::NegativeDone { actual: -1 })
+    );
+    assert_eq!(
+        declare(None, Some(-1)),
+        Err(JobProgressValidationError::NegativeTotal { actual: -1 })
+    );
+    assert_eq!(
+        declare(Some(11), Some(10)),
+        Err(JobProgressValidationError::DoneExceedsTotal {
+            done: 11,
+            total: 10
+        })
+    );
+    for (done, total) in [
+        (Some(10), Some(10)),
+        (Some(3), None),
+        (None, Some(0)),
+        (None, None),
+    ] {
+        assert_eq!(declare(done, total), Ok(()), "{done:?} of {total:?}");
+    }
 }

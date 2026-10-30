@@ -4,7 +4,8 @@
 //! [`HandlerInvocation`] builds the real [`JobExecution`] a handler receives
 //! from the Runledger worker: services that own the invocation's exit signal,
 //! one monotonic deadline a declared budget after execution starts, and
-//! in-memory progress persistence with the queue row's merge rule. It drives
+//! in-memory progress persistence with the queue row's merge rule, starting
+//! from the checkpoint and progress the declared row retains. It drives
 //! the handler through [`JobHandler::execute_with_services`], the worker's own
 //! dispatch, destroys the handler future, ends the invocation and returns an
 //! exhaustive [`HandlerExit`]. Nothing here schedules retries, continuations
@@ -19,7 +20,7 @@ use batter_core::{ConfigurationError, operation::RootDeadline};
 use runledger_core::jobs::{
     JobCompletion, JobContext, JobExecution, JobExecutionError, JobExecutionServices,
     JobExecutionUpdate, JobFailure, JobHandler, JobInvocation, JobInvocationHookPanics,
-    JobInvocationOwner, validate_job_progress,
+    JobInvocationOwner, JobProgressValidationError, validate_job_progress,
 };
 use runledger_core::prelude::async_trait;
 use serde_json::Value;
@@ -39,7 +40,7 @@ use uuid::Uuid;
 const WORKER_ID: &str = "test-support";
 
 /// One handler invocation declared for a test: a budget, the claimed job's
-/// context and its resume snapshot.
+/// context with its checkpoint, and the progress its row retains.
 ///
 /// [`Self::execute`] is the whole drive. It creates one [`JobInvocationOwner`]
 /// for the invocation, so [`JobExecution::invocation`] is always `Some` and
@@ -161,6 +162,8 @@ const WORKER_ID: &str = "test-support";
 pub struct HandlerInvocation {
     budget: Duration,
     context: JobContext,
+    progress_done: Option<i64>,
+    progress_total: Option<i64>,
 }
 
 impl HandlerInvocation {
@@ -277,13 +280,19 @@ impl HandlerInvocation {
         if context.attempt <= 0 {
             return Err(ConfigurationError::Zero("job attempt"));
         }
-        Ok(Self { budget, context })
+        Ok(Self {
+            budget,
+            context,
+            progress_done: None,
+            progress_total: None,
+        })
     }
 
     /// Resume from a durable checkpoint, as a later run or attempt would.
     ///
     /// The handler reads it through [`JobExecution::checkpoint`], and it stays
-    /// the persisted checkpoint until the handler commits another:
+    /// the persisted checkpoint until the handler commits another. The progress
+    /// the row retained with it is declared by [`Self::with_progress`]:
     ///
     /// ```
     /// use batter_runledger::test_support::{HandlerExit, HandlerInvocation, PersistedProgress};
@@ -349,6 +358,98 @@ impl HandlerInvocation {
         self
     }
 
+    /// Resume with the progress the job row retained from an earlier attempt
+    /// or run.
+    ///
+    /// A retry keeps the row's `progress_done` and `progress_total`, as a
+    /// continuation that preserves its checkpoint does, and the worker merges
+    /// each write with them before validating it: a write that omits the total
+    /// is still bounded by the retained one. The declared pair starts this
+    /// invocation's row the same way, and [`HandlerRun::persisted`] reports it
+    /// when the handler commits nothing. A pair the row itself would reject is
+    /// refused here with the native error. Only the progress is replaced, so
+    /// the order of this call and [`Self::with_checkpoint`] does not matter:
+    ///
+    /// ```
+    /// use batter_runledger::test_support::{HandlerExit, HandlerInvocation};
+    /// use runledger_core::jobs::{
+    ///     JobCompletion, JobExecution, JobExecutionHandler, JobExecutionUpdate, JobFailure,
+    ///     JobProgressValidationError, JobType,
+    /// };
+    /// use runledger_core::prelude::async_trait;
+    /// use serde_json::{Value, json};
+    /// use std::time::Duration;
+    ///
+    /// // Counts on from its checkpoint and reports completed work without a total.
+    /// struct CountOn;
+    ///
+    /// #[async_trait]
+    /// impl JobExecutionHandler for CountOn {
+    ///     fn job_type(&self) -> JobType<'static> {
+    ///         JobType::new("example.count_on")
+    ///     }
+    ///
+    ///     async fn execute(
+    ///         &self,
+    ///         execution: JobExecution<'_>,
+    ///         _payload: Value,
+    ///     ) -> Result<JobCompletion, JobFailure> {
+    ///         let cursor: Option<i64> = execution.checkpoint().map_err(|_| {
+    ///             JobFailure::terminal("example.bad_checkpoint", "Unreadable checkpoint.")
+    ///         })?;
+    ///         let update = JobExecutionUpdate {
+    ///             progress_done: Some(cursor.unwrap_or(0) + 8),
+    ///             progress_total: None,
+    ///             checkpoint: None,
+    ///         };
+    ///         execution
+    ///             .persist_progress(update)
+    ///             .await
+    ///             .map_err(|error| JobFailure::terminal("example.progress", error.to_string()))?;
+    ///         Ok(JobCompletion::success())
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build()?.block_on(async {
+    /// // An earlier attempt committed 4 of 10 at cursor 4, and its retry keeps both.
+    /// let run = HandlerInvocation::new(Duration::from_secs(5))?
+    ///     .with_progress(Some(4), Some(10))?
+    ///     .with_checkpoint(json!(4))
+    ///     .execute(&CountOn.into_job_handler(), json!({}))
+    ///     .await;
+    /// // 12 of 10 is refused, as the worker refuses it against the locked row.
+    /// let HandlerExit::Returned(Err(failure)) = run.exit else {
+    ///     panic!("bounded: {:?}", run.exit);
+    /// };
+    /// assert_eq!(failure.code, "example.progress");
+    /// assert_eq!(
+    ///     (run.persisted.progress_done, run.persisted.progress_total),
+    ///     (Some(4), Some(10))
+    /// );
+    ///
+    /// // A pair the row would reject is refused before any handler runs.
+    /// assert_eq!(
+    ///     HandlerInvocation::new(Duration::from_secs(5))?
+    ///         .with_progress(Some(11), Some(10))
+    ///         .map(|_| ()),
+    ///     Err(JobProgressValidationError::DoneExceedsTotal { done: 11, total: 10 })
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_progress(
+        mut self,
+        progress_done: Option<i64>,
+        progress_total: Option<i64>,
+    ) -> Result<Self, JobProgressValidationError> {
+        // The row's own constraint, as `validate_job_progress` documents it.
+        validate_job_progress(progress_done, progress_total)?;
+        self.progress_done = progress_done;
+        self.progress_total = progress_total;
+        Ok(self)
+    }
+
     /// The context the handler will receive: the one [`Self::for_context`]
     /// declared, or from [`Self::new`] a fresh job identity, run 1, attempt 1,
     /// no organization and worker `test-support`; either with the declared
@@ -378,16 +479,22 @@ impl HandlerInvocation {
     /// first, so work awaited inside it stops without observing cancellation,
     /// while spawned work holding a derived context is cancelled.
     pub async fn execute<H: JobHandler + ?Sized>(self, handler: &H, payload: Value) -> HandlerRun {
-        let Self { budget, context } = self;
+        let Self {
+            budget,
+            context,
+            progress_done,
+            progress_total,
+        } = self;
         // Declared in the worker's order: destroying this future drops the
         // handler future before the owner ends the invocation.
         let owner = JobInvocationOwner::new();
         let services = Services {
             deadline: Instant::now() + budget,
             invocation: owner.invocation(),
+            // The row as the claim left it: what earlier attempts committed.
             persisted: Mutex::new(PersistedProgress {
-                progress_done: None,
-                progress_total: None,
+                progress_done,
+                progress_total,
                 checkpoint: context.checkpoint.clone(),
             }),
         };
@@ -433,7 +540,7 @@ pub struct HandlerRun {
     /// How the invocation ended.
     pub exit: HandlerExit,
     /// The durable progress and checkpoint after the last committed write, or
-    /// the declared checkpoint when the handler committed none.
+    /// the declared progress and checkpoint when the handler committed none.
     pub persisted: PersistedProgress,
     /// Waiter-wake and exit-hook panics contained when the invocation ended.
     /// The worker retains these as callback evidence; a test should assert
@@ -468,9 +575,10 @@ pub enum HandlerExit {
 /// supplied and retained the others, as the queue row does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedProgress {
-    /// Completed work, when a write supplied it.
+    /// Completed work: the latest committed value, starting from the declared
+    /// one.
     pub progress_done: Option<i64>,
-    /// Total work, when a write supplied it.
+    /// Total work: the latest committed value, starting from the declared one.
     pub progress_total: Option<i64>,
     /// The latest committed checkpoint, starting from the declared one.
     pub checkpoint: Option<Value>,

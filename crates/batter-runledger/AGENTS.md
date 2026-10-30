@@ -25,7 +25,8 @@ ownership, durable job outcomes, registry/catalog policy and database provisioni
   observer and isolation contracts through the native invocation owner.
 - `tests/handler_invocation.rs` and `tests/handler_progress.rs`: the drive's
   deadline, acceptance rule, destruction order and dispatch contracts, and its
-  progress merge, deadline refusal and budget acceptance, under paused time.
+  progress merge, declared retained progress, deadline refusal and budget
+  acceptance, under paused time.
 - Reference service: application schema, handler selection and dependency health.
 
 ## Edit here for X
@@ -64,8 +65,9 @@ worker's acceptance rule states. Keep `HandlerExit` exhaustive and keep worker
 classifications (`job.timeout_exceeded`, `job.handler_panic`, retries,
 continuations, dead letters) out of it: the facility reports what the handler
 did, not what the worker would persist. Progress writes merge like the queue
-row and are refused at the deadline; no lease exists, so lease loss stays
-unrepresentable. `for_context` passes the declared context through unchanged
+row, from the declared checkpoint and retained progress, which `with_progress`
+validates as the row does, and are refused at the deadline; no lease exists, so
+lease loss stays unrepresentable. `for_context` passes the declared context through unchanged
 and rejects only what the queue row's own checks reject, a non-positive run
 number or attempt; whether the identity names a leased row stays the handler's
 concern. Do not add a second execution engine or configuration the worker does

@@ -1305,11 +1305,15 @@ handler's own writes. Both accept the budget through the same
 `RootDeadline::after` acceptance as every Batter root budget, so zero and
 over-long budgets are rejected before a handler exists, and `for_context`
 rejects a non-positive run number or attempt, which the queue row's own checks
-exclude for a claimed job. `with_checkpoint` is the one optional input, the
-resume snapshot the worker would supply. Because the context is taken at
-construction, the checkpoint replaces only its own field: a builder that
-replaced the whole context would have let a later call silently discard an
-earlier checkpoint. `execute(&handler, payload)` consumes the declaration and owns the
+exclude for a claimed job. `with_checkpoint` and `with_progress` are the
+optional inputs, the resume state the worker would supply: the checkpoint the
+handler reads, and the `progress_done` and `progress_total` that a retry, or a
+continuation preserving its state, keeps on the row and that the worker merges
+and validates every write against. `with_progress` refuses a pair the row's own
+constraint refuses, with the native `JobProgressValidationError`. Because the
+context is taken at construction, each replaces only its own fields, in either
+order: a builder that replaced the whole context would have let a later call
+silently discard an earlier checkpoint. `execute(&handler, payload)` consumes the declaration and owns the
 whole drive: it creates one `JobInvocationOwner`, builds services whose
 `deadline()`, `remaining_budget()`, progress writes and the enforcing timeout
 all read one instant set when the future is first polled, dispatches through
@@ -1325,8 +1329,9 @@ handler future and only then ends the owner, returning its hook-panic report
 instead of dropping it. Its locals are declared in the worker's order, so
 destroying the facility's own future, the test's equivalent of a task abort,
 drops the handler future before the owner ends. Progress persistence is a row
-in memory with the queue row's `COALESCE` rule, validated on the effective pair
-and refused at the deadline, as `LeaseExecutionServices` refuses it.
+in memory, starting from the declared checkpoint and progress, with the queue
+row's `COALESCE` rule, validated on the effective pair and refused at the
+deadline, as `LeaseExecutionServices` refuses it.
 
 The outcome is an exhaustive `HandlerExit`: `Returned` carries the handler's
 own `Result<JobCompletion, JobFailure>` when it was observed strictly before
@@ -1373,9 +1378,11 @@ copy of the recipe now use the facility. The facade-only consumer's job tests
 drive its registered handler, and run single steps on the invocation's own
 clock through a handler that derives the same phases. The reference worker's
 handler, admission and state probes each run inside an invocation of the
-owner-scoped or leased context they need. One custom-services value remains
-there as a negative control: services without an exit claim, which neither the
-worker nor the facility builds, must still be refused. Paused-time tests cover
+owner-scoped or leased context they need. Two custom-services values remain
+there as negative controls for states neither the worker nor the facility
+builds: services without an exit claim must still be refused, and an invocation
+that ended before derivation maps to the same budget exhaustion as no remaining
+work time. Paused-time tests cover
 success, retryable and terminal failures,
 phase rejection without a work factory, destruction before work with a spawned
 observer, an elapsed budget, a parked handler future destroyed before the
@@ -1385,12 +1392,15 @@ reading the same deadline, acceptance at and one nanosecond before the
 deadline for results and at it for panics, contained panics including one a
 hand-written dispatch raises before returning its future, opaque payloads with
 panicking destructors retained before and at the deadline, retained hook
-panics, progress merge and rejection, declared checkpoints, budget validation,
+panics, progress merge and rejection, declared checkpoints, declared retained
+progress bounding a resumed attempt's writes and refused at declaration where
+the row refuses it, budget validation,
 a claimed context reaching the handler unchanged with a later checkpoint
 replacing only the checkpoint, non-positive run numbers and attempts rejected
 at declaration, and typed, legacy and type-erased dispatch; the
 `with_checkpoint` doctest shows a declared checkpoint retained when nothing is
-committed, and the `for_context` doctest an owner-scoped handler accepting its
+committed, the `with_progress` doctest a retry refusing a write its retained
+total forbids, and the `for_context` doctest an owner-scoped handler accepting its
 claimed context and refusing a fresh one; a compile-fail
 rustdoc rejects reaching the declaration's fields;
 `scripts/check_facade_features.py` proves facade reachability and identity.

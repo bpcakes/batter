@@ -15,8 +15,9 @@ contracts, capability facts and validation history.
   `batter_runledger::test_support::HandlerInvocation`, reachable as
   `batter::runledger::test_support` with the facade's `runledger-test-support`
   feature, declares a budget, a fresh job or a claimed job's context
-  (`for_context`, which rejects a non-positive run number or attempt) and an
-  optional resume checkpoint, and `execute`
+  (`for_context`, which rejects a non-positive run number or attempt), an
+  optional resume checkpoint and the progress a retried row retains
+  (`with_progress`, refused where the row refuses it), and `execute`
   runs the value a catalog registers through the worker's own dispatch with a
   real `JobExecution`: services that own the invocation's exit signal, so
   `job_phases` derives and the end cancels derived contexts; one monotonic
@@ -33,7 +34,9 @@ contracts, capability facts and validation history.
   retry, continuation, dead-letter or lease behaviour is simulated. The
   adapter's `test-support` feature now also selects `serde_json` and `uuid`.
   The facade-only consumer's job tests and the reference worker's tests drive
-  their handlers through it instead of hand-written execution services.
+  their handlers through it instead of hand-written execution services; the
+  reference worker keeps two only as negative controls, for services without an
+  exit claim and for an invocation that already ended.
 
 - Add `PgLease::migrate_and_apply_with` (`batter-aouh`) for scoped application SQL
   after managed definitions and before the same transaction commits. Ownership

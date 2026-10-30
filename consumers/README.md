@@ -16,7 +16,8 @@ exist so the manifests those checks generate stay reviewable source in Git.
   `batter` in `[dev-dependencies]` with `runledger-test-support`, which the
   consumer binary never compiles: success with the exit cancelling the derived
   phases, application failures, a budget inside the reserve, work expiry while
-  the reserve remains, cancellation, and recording after the invocation ended.
+  the reserve remains, recording at the invocation deadline, cancellation, and
+  recording after the invocation ended.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly
   the property it proves.

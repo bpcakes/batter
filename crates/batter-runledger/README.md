@@ -58,7 +58,9 @@ feature in `[dev-dependencies]` and drive the registered value through
 `test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`.
 A handler that reads its job's organization, attempt or lease declares that
 context with `HandlerInvocation::for_context(budget, context)`, which rejects a
-non-positive run number or attempt as the queue row does.
+non-positive run number or attempt as the queue row does. A retried attempt
+declares the progress its row retains with `with_progress`, so its writes are
+validated against it as the worker validates them against the locked row.
 It builds the real `JobExecution`: services that own the invocation's exit, so
 `job_phases` derives, a native deadline `budget` after execution starts, and
 in-memory progress persistence with the queue row's merge rule. It dispatches

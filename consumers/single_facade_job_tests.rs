@@ -116,6 +116,27 @@ async fn expired_work_is_interruption_while_finalization_time_remains() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn recording_at_the_invocation_deadline_is_an_interruption() {
+    let (export, mut exported) = unbounded_channel();
+    let late = step(move |phases| async move {
+        advance(INVOCATION_TIME).await;
+        let (executed, mut recorded) = unbounded_channel();
+        let failure = record_greeting(phases.finalization(), executed, "valid".into())
+            .await
+            .expect_err("finalization expired");
+        // The run itself is late, so the failure leaves through the export.
+        assert!(export.send((failure, recorded.try_recv().is_err())).is_ok());
+        Ok(JobCompletion::success())
+    });
+    let exit = drive(INVOCATION_TIME, late, json!({})).await;
+    assert!(matches!(exit, HandlerExit::TimedOut), "{exit:?}");
+    let (expired, nothing_recorded) = exported.recv().await.expect("exported");
+    assert_eq!(expired.kind, JobFailureKind::Timeout);
+    assert_eq!(expired.code, "facade.consumer.record_interrupted");
+    assert!(nothing_recorded);
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancelled_work_and_recording_after_the_exit_are_interruptions() {
     let (export, mut exported) = unbounded_channel();
     let cancelled = step(move |phases| async move {
