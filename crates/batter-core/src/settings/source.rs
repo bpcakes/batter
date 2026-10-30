@@ -77,25 +77,6 @@ impl SettingsSource {
         }
         Ok(Self(selected))
     }
-    /// Compatibility wrapper for named source-selection methods.
-    #[deprecated(since = "0.0.2", note = "use select_dedicated or select_environment")]
-    #[allow(
-        clippy::fn_params_excessive_bools,
-        reason = "one-release compatibility for an existing public selection method"
-    )]
-    pub fn select(
-        &self,
-        allowed: &[&str],
-        reserved: &[&str],
-        environment: bool,
-    ) -> Result<Self, SettingsError> {
-        if environment {
-            self.select_environment(allowed, reserved)
-        } else {
-            self.select_dedicated(allowed)
-        }
-    }
-
     /// Overlay a higher-precedence, already structurally validated source.
     pub fn overlay(&mut self, higher: Self) {
         self.0.extend(higher.0);

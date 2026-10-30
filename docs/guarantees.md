@@ -2499,7 +2499,7 @@ invalid winners never select defaults. Duplicate pairs fail before merging. `Set
 rejects every unknown name; `select_environment` ignores unrelated names but rejects
 unknown reserved-prefix names. The application selects the source policy; neither
 method reads or infers environment provenance. The former boolean `select` method
-remains a deprecated compatibility wrapper for one release.
+is removed; callers must choose one of the named source policies.
 
 `read_file` opens only its supplied path. `read_literal` reads at most the checked
 byte limit plus one and requires UTF-8. The dialect supports LF/CRLF, blank lines,
