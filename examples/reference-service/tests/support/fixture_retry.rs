@@ -55,7 +55,15 @@ pub async fn pending_completion_recovers() -> ProbeResult {
     let absent = fixture_run::absent(&pool, &name).await;
     pool.close().await;
     absent?;
-    assert_recovered(&report, &failure, retained?);
+    assert_recovered(
+        &report,
+        &failure,
+        if retained? {
+            ErrorRetention::Retained
+        } else {
+            ErrorRetention::Lost
+        },
+    );
     Ok(())
 }
 
@@ -74,8 +82,9 @@ async fn failing_body(
 fn assert_recovered(
     report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     failure: &std::sync::Arc<FixtureError>,
-    retained: bool,
+    retained: ErrorRetention,
 ) {
+    let retained = retained == ErrorRetention::Retained;
     assert!(retained && !report.is_ok());
     assert!(std::sync::Arc::ptr_eq(
         failure,
@@ -125,4 +134,10 @@ pub async fn pending_body_keeps_diagnostics() -> ProbeResult {
     absent?;
     assert!(report.is_ok());
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ErrorRetention {
+    Retained,
+    Lost,
 }

@@ -24,16 +24,16 @@ fn precedence_parses_only_winners_but_validates_each_source() {
     let environment = source(&[("UNRELATED", "ignored"), ("LIMIT", "3")]);
     assert_eq!(
         environment
-            .select(&["LIMIT"], &["APP_"], true)
+            .select_environment(&["LIMIT"], &["APP_"])
             .unwrap()
             .required("LIMIT")
             .unwrap(),
         "3"
     );
-    assert!(environment.select(&["LIMIT"], &["APP_"], false).is_err());
+    assert!(environment.select_dedicated(&["LIMIT"]).is_err());
     assert!(
         source(&[("APP_UNKNOWN", "secret")])
-            .select(&["LIMIT"], &["APP_"], true)
+            .select_environment(&["LIMIT"], &["APP_"])
             .is_err()
     );
     assert!(

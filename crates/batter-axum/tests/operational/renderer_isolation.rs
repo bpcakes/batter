@@ -63,7 +63,8 @@ impl Surface {
 /// Use only public APIs to try to affect the original observation indirectly.
 /// The in-memory service must settle in one poll: no blocking, I/O or spawning
 /// is needed to exercise a synchronous renderer's authority.
-fn redispatch(parts: &Parts, quota: bool) -> Response {
+fn redispatch(parts: &Parts, quota: QuotaRecording) -> Response {
+    let quota = quota == QuotaRecording::Enabled;
     let original_id = parts.extensions.get::<CorrelationId>().unwrap().to_string();
     assert_eq!(parts.headers["x-request-id"], original_id);
     assert_eq!(
@@ -140,7 +141,7 @@ fn redispatch(parts: &Parts, quota: bool) -> Response {
         .into_response()
 }
 
-async fn app(surface: Surface, quota: bool) -> InProcessClient {
+async fn app(surface: Surface, quota: QuotaRecording) -> InProcessClient {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     if matches!(surface, Surface::Interruption | Surface::Browser) {
         approval.approve();
@@ -242,7 +243,17 @@ fn check(surface: Surface) {
                 .body(Body::empty())
                 .unwrap();
             request.extensions_mut().insert(ApplicationMetadata("kept"));
-            let response = app(surface, quota).await.request(request).await;
+            let response = app(
+                surface,
+                if quota {
+                    QuotaRecording::Enabled
+                } else {
+                    QuotaRecording::Disabled
+                },
+            )
+            .await
+            .request(request)
+            .await;
             assert_eq!(response.status(), surface.status());
             let original_id = response.headers()["x-request-id"]
                 .to_str()
@@ -352,7 +363,7 @@ fn an_outer_low_level_quota_wrapper_does_not_lend_its_writer_to_a_renderer() {
             ResponseConstructionBudget::new(SECOND).unwrap(),
         )
         .with_failure_renderer(|failure, parts| {
-            let mut response = redispatch(parts, true);
+            let mut response = redispatch(parts, QuotaRecording::Enabled);
             *response.status_mut() = failure.status();
             response
         });
@@ -409,4 +420,10 @@ fn an_outer_low_level_quota_wrapper_does_not_lend_its_writer_to_a_renderer() {
 
 async fn unexpected_admitted_handler() -> Response {
     panic!("admission rejection must precede its handler");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QuotaRecording {
+    Enabled,
+    Disabled,
 }

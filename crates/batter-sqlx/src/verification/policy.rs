@@ -2,6 +2,7 @@ mod compiler;
 pub(crate) mod coverage;
 mod discovery;
 mod limits;
+mod privilege;
 mod public;
 pub(crate) use compiler::valid_privilege;
 pub use discovery::{
@@ -374,16 +375,6 @@ pub struct AllowedPrivilege {
     pub grant_option: bool,
 }
 
-impl AllowedPrivilege {
-    /// Construct one allowed privilege and its optional grant authority.
-    pub const fn new(privilege: ObjectPrivilege, grant_option: bool) -> Self {
-        Self {
-            privilege,
-            grant_option,
-        }
-    }
-}
-
 /// Column-level allowances nested inside a relation policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ColumnPolicy {
@@ -561,7 +552,7 @@ pub struct PublicGrant {
 ///     ..AuthorityPolicyBuilder::default()
 /// };
 /// policy.defaults.relations.privileges.push(
-///     AllowedPrivilege::new(ObjectPrivilege::Select, false));
+///     AllowedPrivilege::privilege(ObjectPrivilege::Select));
 /// policy.required_privileges.push(RequiredPrivilege {
 ///     object: PublicObject::Relation(QualifiedName::new("service", "records")?),
 ///     privilege: ObjectPrivilege::Select,

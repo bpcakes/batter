@@ -1,3 +1,5 @@
+use crate::limits::ShutdownMode;
+
 use super::{
     limits,
     state::{ControlledBody, Lifetime, State},
@@ -79,7 +81,11 @@ impl Server {
         let budget = if scenario == "http-delayed-report" {
             crate::http_process::delayed_report_budget()
         } else {
-            limits::shutdown_budget(force)
+            limits::shutdown_budget(if force {
+                ShutdownMode::Forced
+            } else {
+                ShutdownMode::Graceful
+            })
         };
         let mut supervisor = Supervisor::new(budget);
         let handle = supervisor.handle();

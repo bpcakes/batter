@@ -28,7 +28,11 @@ pub(super) async fn inspect(
             snapshot,
             parameters,
             &inherited,
-            current.superuser,
+            if current.superuser {
+                RolePower::Superuser
+            } else {
+                RolePower::Ordinary
+            },
             required,
         ) {
             findings.push(Finding::new(
@@ -81,9 +85,10 @@ fn has_privilege(
     snapshot: &CatalogSnapshot,
     parameters: &ParameterIndex<'_>,
     inherited: &HashSet<i64>,
-    superuser: bool,
+    superuser: RolePower,
     required: &RequiredPrivilege,
 ) -> bool {
+    let superuser = superuser == RolePower::Superuser;
     let privilege = required.privilege;
     let granted = |acl: &[AclEntry]| superuser || acl_grants(acl, inherited, privilege);
     let predefined = |name: &str| {
@@ -147,3 +152,9 @@ fn has_privilege(
 
 #[cfg(test)]
 pub(super) mod tests;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RolePower {
+    Superuser,
+    Ordinary,
+}

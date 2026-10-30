@@ -43,7 +43,7 @@ async fn profiles_use_effective_role_function_permissions() -> Result {
              has_function_privilege($2::text, 'pg_catalog.set_config(text,text,boolean)', 'EXECUTE'), \
              pg_has_role($1::text, $2::text, 'USAGE')",
         ).bind(&login).bind(&role).fetch_one(&mut admin).await?;
-        require(rights == (false, true, false), "function grant must belong only to the effective role")?;
+        require!(rights == (false, true, false), "function grant must belong only to the effective role")?;
         let login_options = options.username(&login).password("profile-regression-password");
         check_profiles(login_options, &login, &role, &schema).await
     }.await;
@@ -106,7 +106,7 @@ async fn function_acl_restore_survives_fixture_drop_failure() -> Result {
             &format!("DROP SCHEMA {schema}"),
         )
         .await;
-        require(result.is_err(), "nonempty fixture schema drop must fail")?;
+        require!(result.is_err(), "nonempty fixture schema drop must fail")?;
         let restored: bool = bounded(
             sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p, LATERAL \
@@ -118,7 +118,7 @@ async fn function_acl_restore_survives_fixture_drop_failure() -> Result {
             .fetch_one(&mut admin),
         )
         .await??;
-        require(
+        require!(
             restored,
             "fixture-drop failure must not undo acknowledged ACL restoration",
         )
@@ -183,11 +183,11 @@ async fn check_profiles(
                     let (pid, effective, tenant): (i32, String, String) = sqlx::query_as(
                     "SELECT pg_backend_pid(), current_user::text, current_setting('app.tenant')",
                 ).fetch_one(&mut *connection).await?;
-                    require(
+                    require!(
                         effective == role && tenant == "restricted",
                         "profile policy was not applied",
                     )?;
-                    require(
+                    require!(
                         *original.get_or_insert(pid) == pid,
                         "idle acquisition must reuse the session",
                     )?;

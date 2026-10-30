@@ -21,7 +21,7 @@ use tokio::sync::{Barrier, oneshot};
 
 pub async fn descendant_closure(
     case: Case,
-    failure: bool,
+    failure: ClosureCause,
     delay: u64,
     after_closure: impl Future<Output = ()> + Send + 'static,
 ) -> SharedShutdownReport {
@@ -94,9 +94,9 @@ pub async fn descendant_closure(
                 Err(ProcessTaskError::Terminated) => terminated.push("racing-descendant"),
                 Err(_) => panic!("unexpected descendant task error"),
             }
-            true
+            ChildAdmission::Admitted
         }
-        Err(ProcessAdmissionError::Closed) => false,
+        Err(ProcessAdmissionError::Closed) => ChildAdmission::Rejected,
         Err(_) => panic!("unexpected descendant/closure race outcome"),
     };
     // The deadline can drop the receiver before the test releases it. A
@@ -117,7 +117,11 @@ pub async fn descendant_closure(
         &terminated,
         original_error.as_ref(),
         child_admitted,
-        finalized.load(Ordering::SeqCst),
+        if finalized.load(Ordering::SeqCst) {
+            Finalization::Completed
+        } else {
+            Finalization::Skipped
+        },
     );
     case.event("closure-receipts-report-and-cleanup-reconciled");
     report
@@ -125,12 +129,13 @@ pub async fn descendant_closure(
 
 async fn close_admission(
     case: Case,
-    failure: bool,
+    failure: ClosureCause,
     delay: u64,
     process: ProcessHandle,
     handle: ShutdownHandle,
     closure_barrier: Arc<Barrier>,
 ) -> Option<Arc<std::io::Error>> {
+    let failure = failure == ClosureCause::Failure;
     let (fail_tx, fail_rx) = oneshot::channel();
     let receipt = if failure {
         Some(
@@ -166,9 +171,11 @@ fn assert_closure_report(
     completed: u64,
     terminated: &[&'static str],
     original_error: Option<&Arc<std::io::Error>>,
-    child_admitted: bool,
-    finalized: bool,
+    child_admitted: ChildAdmission,
+    finalized: Finalization,
 ) {
+    let child_admitted = child_admitted == ChildAdmission::Admitted;
+    let finalized = finalized == Finalization::Completed;
     let mut expected: Vec<_> = terminated
         .iter()
         .map(|name| (*name, TaskOutcome::Aborted))
@@ -224,4 +231,22 @@ fn assert_closure_errors(report: &ShutdownReport, original_error: Option<&Arc<st
             ));
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ClosureCause {
+    Failure,
+    Drain,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildAdmission {
+    Admitted,
+    Rejected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Finalization {
+    Completed,
+    Skipped,
 }

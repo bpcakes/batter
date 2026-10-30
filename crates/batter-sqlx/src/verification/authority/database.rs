@@ -1,3 +1,5 @@
+use crate::verification::authority::database::parameters::SettingsVisibility;
+
 mod parameters;
 pub(in crate::verification::authority) use parameters::ParameterCatalog;
 use parameters::{load_parameters, settings_visible};
@@ -49,7 +51,11 @@ impl super::CatalogSnapshot {
         let parameters = load_parameters(
             transaction,
             &selection.parameters,
-            settings_visible(&roles, &memberships, &current_user),
+            if settings_visible(&roles, &memberships, &current_user) {
+                SettingsVisibility::Visible
+            } else {
+                SettingsVisibility::Hidden
+            },
         )
         .await?;
         Ok(Self {

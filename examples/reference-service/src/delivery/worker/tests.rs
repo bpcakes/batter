@@ -1,3 +1,5 @@
+use crate::delivery::AttemptBudget;
+
 use super::*;
 use serde_json::json;
 use uuid::Uuid;
@@ -26,7 +28,14 @@ fn terminal_projection_covers_every_retained_state_and_native_budget_pair() {
             Effect::ReconcileNeeded,
         ] {
             assert_eq!(
-                retained.project(job, attempts_spent),
+                retained.project(
+                    job,
+                    if attempts_spent {
+                        AttemptBudget::Spent
+                    } else {
+                        AttemptBudget::Available
+                    }
+                ),
                 unresolved.unwrap_or(retained),
                 "retained={retained:?}, job={job:?}, attempts_spent={attempts_spent}"
             );
@@ -38,7 +47,14 @@ fn terminal_projection_covers_every_retained_state_and_native_budget_pair() {
             Effect::Exhausted,
         ] {
             assert_eq!(
-                retained.project(job, attempts_spent),
+                retained.project(
+                    job,
+                    if attempts_spent {
+                        AttemptBudget::Spent
+                    } else {
+                        AttemptBudget::Available
+                    }
+                ),
                 retained,
                 "retained={retained:?}, job={job:?}, attempts_spent={attempts_spent}"
             );
@@ -48,9 +64,10 @@ fn terminal_projection_covers_every_retained_state_and_native_budget_pair() {
 
 fn snapshot(
     state: ProviderEffectState,
-    retention_active: bool,
+    retention_active: RetentionWindow,
     current_generation: Option<i64>,
 ) -> EffectSnapshot {
+    let retention_active = retention_active == RetentionWindow::Active;
     let provider_payload = ProviderEffectRequest {
         version: crate::provider::EFFECT_PROTOCOL_VERSION,
         effect_id: Uuid::from_u128(1),
@@ -75,7 +92,7 @@ fn durable_retry_delay_precedes_dispatch_but_not_terminal_or_generation_decision
         ProviderEffectState::AwaitingAttempt,
         ProviderEffectState::RetryableUndispatched,
     ] {
-        let mut retained = snapshot(state, false, Some(4));
+        let mut retained = snapshot(state, RetentionWindow::Expired, Some(4));
         retained.retry_delay = Duration::from_secs(60);
         assert_eq!(retained.plan(4), EffectPlan::Defer(Duration::from_secs(60)));
         retained.current_generation = None;
@@ -165,7 +182,16 @@ fn retained_state_exhaustively_selects_work_before_provider_admission() {
         ),
     ] {
         assert_eq!(
-            snapshot(state, retention_active, current_generation).plan(generation),
+            snapshot(
+                state,
+                if retention_active {
+                    RetentionWindow::Active
+                } else {
+                    RetentionWindow::Expired
+                },
+                current_generation
+            )
+            .plan(generation),
             expected,
             "unexpected plan for {state:?}"
         );
@@ -175,7 +201,11 @@ fn retained_state_exhaustively_selects_work_before_provider_admission() {
 #[test]
 fn future_dispatch_eligibility_never_defers_required_reconciliation() {
     for generation in [Some(4), Some(5), None] {
-        let mut retained = snapshot(ProviderEffectState::ReconcileNeeded, true, generation);
+        let mut retained = snapshot(
+            ProviderEffectState::ReconcileNeeded,
+            RetentionWindow::Active,
+            generation,
+        );
         retained.retry_delay = Duration::from_secs(24 * 60 * 60);
         assert_eq!(retained.plan(4), EffectPlan::Reconcile);
         retained.retention_active = false;
@@ -428,4 +458,10 @@ async fn provider_work_expiry_leaves_the_final_state_reserve() -> Result<(), bat
         .expect_err("offline state");
     assert_eq!(failure.code, CODE_STATE_UNAVAILABLE);
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RetentionWindow {
+    Active,
+    Expired,
 }

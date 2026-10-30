@@ -9,9 +9,11 @@ use tokio::sync::oneshot::error::RecvError;
 pub fn check(
     report: Arc<StartupFailure<SettingsError>>,
     acquired: Result<(), RecvError>,
-    closed_before_lease: bool,
-    no_ready: bool,
+    closed_before_lease: PoolClosure,
+    no_ready: ReadinessObservation,
 ) -> Result<(), TestFailure<StartupError<SettingsError>, SettingsError>> {
+    let closed_before_lease = closed_before_lease == PoolClosure::Closed;
+    let no_ready = no_ready == ReadinessObservation::Unready;
     let observation = acquired
         .map_err(|error| SettingsError::new("pool", "delivery failed").with_cause(error))
         .and_then(|()| {
@@ -36,4 +38,16 @@ pub fn check(
             cleanup,
         }),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PoolClosure {
+    Closed,
+    Open,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReadinessObservation {
+    Unready,
+    Ready,
 }

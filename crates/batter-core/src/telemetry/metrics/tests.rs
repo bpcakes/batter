@@ -1,6 +1,8 @@
 //! Name-table, closed-vocabulary and production timing checks.
 
 // Shares the integration tests' recorder rather than keeping a second fake.
+use crate::telemetry::metrics::vocabulary::ThreadState;
+
 #[path = "../../../tests/metrics/capture.rs"]
 mod capture;
 
@@ -81,11 +83,20 @@ fn closed_domains_are_distinct_and_outside_the_name_vocabulary_placeholders() {
         Outcome::DeadlineExceeded,
         Outcome::Dropped,
     ] {
-        assert_eq!(vocabulary::outcome(outcome, false), outcome.as_str());
-        assert!(OUTCOMES.contains(&vocabulary::outcome(outcome, true)));
+        assert_eq!(
+            vocabulary::outcome(outcome, ThreadState::Running),
+            outcome.as_str()
+        );
+        assert!(OUTCOMES.contains(&vocabulary::outcome(outcome, ThreadState::Unwinding)));
     }
-    assert_eq!(vocabulary::outcome(Outcome::Dropped, true), "panicked");
-    assert_eq!(vocabulary::outcome(Outcome::Failed, true), "failed");
+    assert_eq!(
+        vocabulary::outcome(Outcome::Dropped, ThreadState::Unwinding),
+        "panicked"
+    );
+    assert_eq!(
+        vocabulary::outcome(Outcome::Failed, ThreadState::Unwinding),
+        "failed"
+    );
 }
 
 #[test]

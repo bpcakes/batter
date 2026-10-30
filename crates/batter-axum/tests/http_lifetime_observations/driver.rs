@@ -51,7 +51,16 @@ pub async fn run(case: &str, capture: Arc<Capture>) {
             tokio::spawn(async move {
                 timeout_at(
                     teardown_deadline,
-                    reconcile(&name, &observed, &report, ready),
+                    reconcile(
+                        &name,
+                        &observed,
+                        &report,
+                        if ready {
+                            ExpectedReadiness::Ready
+                        } else {
+                            ExpectedReadiness::Unready
+                        },
+                    ),
                 )
                 .await
             })
@@ -72,7 +81,13 @@ pub async fn run(case: &str, capture: Arc<Capture>) {
     );
 }
 
-async fn reconcile(case: &str, fixture: &Fixture, report: &SharedShutdownReport, ready: bool) {
+async fn reconcile(
+    case: &str,
+    fixture: &Fixture,
+    report: &SharedShutdownReport,
+    ready: ExpectedReadiness,
+) {
+    let ready = ready == ExpectedReadiness::Ready;
     if !ready {
         // No accepted connection exists when startup never acknowledged readiness.
         assert!(report.is_success(), "{report:?}");
@@ -95,4 +110,10 @@ async fn reconcile(case: &str, fixture: &Fixture, report: &SharedShutdownReport,
     if fixture.events.count("body-pending") > 0 {
         fixture.events.wait("body-drop").await;
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExpectedReadiness {
+    Ready,
+    Unready,
 }

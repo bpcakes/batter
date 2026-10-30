@@ -1,6 +1,8 @@
 //! One record-exactly-once guard shared by every boundary whose result is
 //! known only when it finishes or is destroyed.
 
+use crate::telemetry::metrics::vocabulary::ThreadState;
+
 use super::{AdmissionKind, End, vocabulary};
 use crate::telemetry::Outcome;
 use crate::{admission::AdmissionError, lifecycle::ShutdownCause, retry::RetryExecutionError};
@@ -21,7 +23,7 @@ trait Series {
     /// Label for a boundary destroyed before it finished.
     fn abandoned(&self) -> &'static str;
     /// Record `label`; `finished` distinguishes a completed boundary.
-    fn record(&mut self, label: &'static str, finished: bool);
+    fn record(&mut self, label: &'static str, finished: BoundaryCompletion);
 }
 
 /// Records its series exactly once: on `finish`, or with the shared
@@ -41,7 +43,7 @@ impl<S: Series> Terminal<S> {
 
     fn finish(&mut self, label: &'static str) {
         if std::mem::replace(&mut self.armed, false) {
-            self.series.record(label, true);
+            self.series.record(label, BoundaryCompletion::Finished);
         }
     }
 }
@@ -50,7 +52,7 @@ impl<S: Series> Drop for Terminal<S> {
     fn drop(&mut self) {
         if std::mem::replace(&mut self.armed, false) {
             let label = self.series.abandoned();
-            self.series.record(label, false);
+            self.series.record(label, BoundaryCompletion::Abandoned);
         }
     }
 }
@@ -62,7 +64,7 @@ impl Series for Retry {
         vocabulary::retry::<()>(abandoned())
     }
 
-    fn record(&mut self, label: &'static str, _: bool) {
+    fn record(&mut self, label: &'static str, _: BoundaryCompletion) {
         super::retry_execution(self.0, label);
     }
 }
@@ -89,7 +91,7 @@ impl Series for Bulkhead {
         vocabulary::bulkhead(abandoned())
     }
 
-    fn record(&mut self, label: &'static str, _: bool) {
+    fn record(&mut self, label: &'static str, _: BoundaryCompletion) {
         super::admission(AdmissionKind::Bulkhead, label);
     }
 }
@@ -114,12 +116,12 @@ struct Attempt(&'static str);
 impl Series for Attempt {
     fn abandoned(&self) -> &'static str {
         match abandoned::<()>() {
-            End::Panicked => vocabulary::outcome(Outcome::Dropped, true),
-            _ => vocabulary::outcome(Outcome::Dropped, false),
+            End::Panicked => vocabulary::outcome(Outcome::Dropped, ThreadState::Unwinding),
+            _ => vocabulary::outcome(Outcome::Dropped, ThreadState::Running),
         }
     }
 
-    fn record(&mut self, label: &'static str, _: bool) {
+    fn record(&mut self, label: &'static str, _: BoundaryCompletion) {
         super::retry_attempt(self.0, label);
     }
 }
@@ -134,7 +136,8 @@ impl AttemptTerminal {
     }
 
     pub(crate) fn finish(&mut self, outcome: Outcome) {
-        self.0.finish(vocabulary::outcome(outcome, false));
+        self.0
+            .finish(vocabulary::outcome(outcome, ThreadState::Running));
     }
 }
 
@@ -148,7 +151,8 @@ impl Series for Shutdown {
         vocabulary::shutdown_result(abandoned())
     }
 
-    fn record(&mut self, label: &'static str, finished: bool) {
+    fn record(&mut self, label: &'static str, finished: BoundaryCompletion) {
+        let finished = finished == BoundaryCompletion::Finished;
         // Duration is canonical stop instant to final report; abandoned drivers
         // produce no report and therefore no duration sample.
         let elapsed = self
@@ -176,9 +180,20 @@ impl ShutdownTerminal {
     }
 
     /// Record the completed report using the final canonical stop instant.
-    pub(crate) fn finish(&mut self, success: bool, started: impl FnOnce() -> Instant) {
+    pub(crate) fn finish(
+        &mut self,
+        report: &crate::lifecycle::ShutdownReport,
+        started: impl FnOnce() -> Instant,
+    ) {
+        let success = report.is_success();
         self.0.series.drain_started = Some(started());
         self.0
             .finish(vocabulary::shutdown_result(End::Finished(success)));
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BoundaryCompletion {
+    Finished,
+    Abandoned,
 }

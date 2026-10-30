@@ -34,7 +34,14 @@ pub(super) fn validate(
     }
     let tokens = scan(source)?;
     header(kind, identity, &tokens)?;
-    single_statement(&tokens, kind.is_routine())
+    single_statement(
+        &tokens,
+        if kind.is_routine() {
+            StatementKind::Routine
+        } else {
+            StatementKind::Trigger
+        },
+    )
 }
 
 pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
@@ -53,7 +60,7 @@ pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
             }
             b'/' if next == Some(b'*') => index = block_comment(bytes, index)?,
             b'\'' => {
-                index = string(bytes, index, false)?;
+                index = string(bytes, index, StringSyntax::Literal)?;
                 tokens.push(Token::Literal);
             }
             b'"' => {
@@ -87,7 +94,7 @@ pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
                 }
                 let word = &source[start..index];
                 if bytes.get(index) == Some(&b'\'') && word.eq_ignore_ascii_case("e") {
-                    index = string(bytes, index, true)?;
+                    index = string(bytes, index, StringSyntax::Escaped)?;
                     tokens.push(Token::Literal);
                 } else {
                     tokens.push(Token::Word(word));
@@ -143,7 +150,8 @@ fn block_comment(bytes: &[u8], start: usize) -> Result<usize, ManagedObjectError
 }
 
 /// Return the index after the closing quote of a string starting at `start`.
-fn string(bytes: &[u8], start: usize, escapes: bool) -> Result<usize, ManagedObjectError> {
+fn string(bytes: &[u8], start: usize, escapes: StringSyntax) -> Result<usize, ManagedObjectError> {
+    let escapes = escapes == StringSyntax::Escaped;
     let mut index = start + 1;
     while index < bytes.len() {
         match bytes[index] {
@@ -347,7 +355,11 @@ impl<'a> Cursor<'_, 'a> {
 /// `CREATE FUNCTION` or `CREATE PROCEDURE` statement, `psql` treats unquoted
 /// `BEGIN` ... `END` (and `CASE` ... `END` within it) outside parentheses as a
 /// `BEGIN ATOMIC` body whose semicolons do not end the statement.
-fn single_statement(tokens: &[Token<'_>], routine: bool) -> Result<(), ManagedObjectError> {
+fn single_statement(
+    tokens: &[Token<'_>],
+    routine: StatementKind,
+) -> Result<(), ManagedObjectError> {
+    let routine = routine == StatementKind::Routine;
     let mut parentheses = 0usize;
     let mut begin = 0usize;
     let mut terminated = false;
@@ -372,4 +384,16 @@ fn single_statement(tokens: &[Token<'_>], routine: bool) -> Result<(), ManagedOb
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StringSyntax {
+    Escaped,
+    Literal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StatementKind {
+    Routine,
+    Trigger,
 }

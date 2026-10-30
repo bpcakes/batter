@@ -134,7 +134,15 @@ async fn native_transport_timeouts_keep_their_code_and_release_capacity() {
             exchange,
             tokio::time::timeout(
                 Duration::from_secs(4),
-                stalled_response(listener, after_headers, released)
+                stalled_response(
+                    listener,
+                    if after_headers {
+                        StallPoint::Body
+                    } else {
+                        StallPoint::Headers
+                    },
+                    released
+                )
             )
         );
         served.unwrap().unwrap();
@@ -158,9 +166,10 @@ async fn native_transport_timeouts_keep_their_code_and_release_capacity() {
 
 async fn stalled_response(
     listener: tokio::net::TcpListener,
-    after_headers: bool,
+    after_headers: StallPoint,
     released: tokio::sync::oneshot::Receiver<()>,
 ) -> std::io::Result<()> {
+    let after_headers = after_headers == StallPoint::Body;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let (mut stream, _) = listener.accept().await?;
     let mut request = [0; 4096];
@@ -283,4 +292,10 @@ async fn connector_failure_is_known_not_dispatched() {
             retry_not_before: Duration::ZERO,
         }
     );
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StallPoint {
+    Body,
+    Headers,
 }

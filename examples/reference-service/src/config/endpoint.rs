@@ -16,7 +16,8 @@ fn error(reason: &'static str) -> SettingsError {
     SettingsError::new("DATABASE_URL", reason)
 }
 
-fn decode(value: &str, query: bool) -> Result<String, SettingsError> {
+fn decode(value: &str, decoding: PercentDecoding) -> Result<String, SettingsError> {
+    let query = decoding == PercentDecoding::Form;
     let bytes = value.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
@@ -61,14 +62,19 @@ impl Endpoint {
         let host = match url.host() {
             Some(url::Host::Ipv6(ip)) => ip.to_string(),
             Some(url::Host::Ipv4(ip)) => ip.to_string(),
-            Some(url::Host::Domain(host)) if !host.is_empty() => decode(host, false)?,
+            Some(url::Host::Domain(host)) if !host.is_empty() => {
+                decode(host, PercentDecoding::Component)?
+            }
             _ => return Err(error("explicit TCP host required")),
         };
         if host.contains(['/', '\\']) {
             return Err(error("explicit TCP host required"));
         }
-        let username = decode(url.username(), false)?;
-        let database = decode(url.path().strip_prefix('/').unwrap_or(""), false)?;
+        let username = decode(url.username(), PercentDecoding::Component)?;
+        let database = decode(
+            url.path().strip_prefix('/').unwrap_or(""),
+            PercentDecoding::Component,
+        )?;
         if username.is_empty() || database.is_empty() {
             return Err(error("explicit username and database required"));
         }
@@ -84,7 +90,10 @@ impl Endpoint {
             .and_then(|authority| authority.rsplit_once('@'))
             .is_some_and(|(userinfo, _)| userinfo.contains(':'));
         let mut password = if explicit_password {
-            Some(decode(url.password().unwrap_or(""), false)?)
+            Some(decode(
+                url.password().unwrap_or(""),
+                PercentDecoding::Component,
+            )?)
         } else {
             None
         };
@@ -95,8 +104,8 @@ impl Endpoint {
                 let (key, value) = pair
                     .split_once('=')
                     .ok_or_else(|| error("invalid query syntax"))?;
-                let key = decode(key, true)?;
-                let value = decode(value, true)?;
+                let key = decode(key, PercentDecoding::Form)?;
+                let value = decode(value, PercentDecoding::Form)?;
                 match key.as_str() {
                     "password" if password.is_none() => password = Some(value),
                     "sslmode" if ssl.is_none() => {
@@ -177,4 +186,10 @@ impl MaintenanceEndpoint {
     pub(super) fn connect_options_from_process(&self) -> Result<PgConnectOptions, SettingsError> {
         self.0.connect_options_from_process()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PercentDecoding {
+    Form,
+    Component,
 }

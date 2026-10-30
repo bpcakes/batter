@@ -1,4 +1,5 @@
 use super::state::{PendingComponentStart, PeriodicAdmission as Decision, Shared};
+use super::state::{PeriodicRole, Supervision};
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -65,7 +66,7 @@ impl ShutdownHandle {
     /// [`Self::new_with_readiness_approval`] whenever admission may become Ready.
     pub fn new_unapproved() -> Self {
         Self {
-            shared: Arc::new(Shared::new(false)),
+            shared: Arc::new(Shared::new(Supervision::Standalone)),
         }
     }
 
@@ -84,7 +85,7 @@ impl ShutdownHandle {
     /// assert_eq!(control.status().readiness(), Readiness::Ready);
     /// ```
     pub fn new_with_readiness_approval() -> (Self, ReadinessApproval) {
-        let (coordinator, approval) = LifecycleCoordinator::new(false);
+        let (coordinator, approval) = LifecycleCoordinator::new(Supervision::Standalone);
         (coordinator.shutdown_handle(), approval)
     }
 
@@ -323,7 +324,7 @@ pub(super) struct LifecycleCoordinator {
 }
 
 impl LifecycleCoordinator {
-    pub(super) fn new(supervised: bool) -> (Self, ReadinessApproval) {
+    pub(super) fn new(supervised: Supervision) -> (Self, ReadinessApproval) {
         let shared = Arc::new(Shared::new(supervised));
         (
             Self {
@@ -355,7 +356,7 @@ impl LifecycleCoordinator {
     /// Project the narrow capability one periodic runner needs.
     pub(super) fn periodic_admission(
         &self,
-        support: bool,
+        support: PeriodicRole,
         graceful: Duration,
     ) -> PeriodicAdmission {
         PeriodicAdmission {
@@ -381,7 +382,7 @@ pub(crate) struct PeriodicGrant {
 /// coordinator, for a registered periodic component, inside the started driver.
 pub(crate) struct PeriodicAdmission {
     shared: Arc<Shared>,
-    support: bool,
+    support: PeriodicRole,
     graceful: Duration,
 }
 
@@ -397,9 +398,12 @@ impl PeriodicAdmission {
     /// and pending initialization abandons on global drain. Treating it as
     /// support would grant a run after that applicable stopping point and
     /// leave only the cancellation preflight to stop it.
-    pub(crate) fn admit(&self, initializing: bool) -> Option<PeriodicGrant> {
-        let support = self.support && !initializing;
-        match self.shared.admit_periodic(support, self.graceful) {
+    pub(crate) fn admit(&self, phase: StartupPhase) -> Option<PeriodicGrant> {
+        let role = match phase {
+            StartupPhase::Initializing => PeriodicRole::Ordinary,
+            StartupPhase::Running => self.support,
+        };
+        match self.shared.admit_periodic(role, self.graceful) {
             Decision::Admitted { forced_at } => Some(PeriodicGrant { forced_at }),
             Decision::Stopped => None,
         }
@@ -407,7 +411,7 @@ impl PeriodicAdmission {
 
     /// Wait until this component's own stopping point.
     pub(crate) async fn stopping(&self) {
-        if self.support {
+        if self.support == PeriodicRole::Support {
             self.shared.support_stopping().await;
         } else {
             self.shared.draining().await;
@@ -645,4 +649,10 @@ impl ComponentStartup {
     pub(super) fn into_parts(self) -> (ShutdownSignal, PendingComponentStart) {
         (self.shutdown, self.pending)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StartupPhase {
+    Initializing,
+    Running,
 }

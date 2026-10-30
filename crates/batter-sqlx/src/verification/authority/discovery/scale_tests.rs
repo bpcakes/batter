@@ -1,3 +1,5 @@
+use crate::verification::authority::MigrationCoverage;
+
 use super::super::required::tests::snapshot;
 use super::super::{AclEntry, RoutineObject, TypeObject};
 use super::*;
@@ -8,7 +10,7 @@ fn report(snapshot: &CatalogSnapshot, policy: &AuthorityPolicy) -> VerificationR
         snapshot.clone(),
         policy,
         Vec::new(),
-        false,
+        MigrationCoverage::Excluded,
     ))
     .unwrap()
 }
@@ -54,9 +56,9 @@ fn thousands_of_discovered_public_defaults_keep_complete_verdict_and_detect_one_
             ..AuthorityPolicy::default()
         };
         policy.defaults.types.public_privileges =
-            vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)];
+            vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)];
         policy.defaults.invoker_routines.public_privileges =
-            vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)];
+            vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)];
         let clean = report(&snapshot, &policy);
         assert_eq!(clean.status(), VerificationStatus::WithinDeclaredPolicy);
         assert!(clean.findings().is_empty());

@@ -101,7 +101,7 @@ impl AuthorityFixture {
             .fetch_one(&mut admin),
         )
         .await??;
-        support::require(
+        support::require!(
             superuser,
             "BATTER_SQLX_ADMIN_URL must authenticate as a PostgreSQL superuser",
         )?;
@@ -303,8 +303,9 @@ async fn grant(
     object: &str,
     privilege: &str,
     role: &str,
-    grant_option: bool,
+    grant_option: GrantAuthority,
 ) -> Result {
+    let grant_option = grant_option == GrantAuthority::Grantable;
     let option = if grant_option {
         " WITH GRANT OPTION"
     } else {
@@ -324,8 +325,9 @@ async fn grant_column(
     column: &str,
     privilege: &str,
     role: &str,
-    grant_option: bool,
+    grant_option: GrantAuthority,
 ) -> Result {
+    let grant_option = grant_option == GrantAuthority::Grantable;
     let option = if grant_option {
         " WITH GRANT OPTION"
     } else {
@@ -360,4 +362,10 @@ fn object_kind(object: &str) -> &str {
     } else {
         "TABLE"
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GrantAuthority {
+    Grantable,
+    PrivilegeOnly,
 }

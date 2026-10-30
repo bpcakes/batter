@@ -33,29 +33,69 @@ impl SettingsSource {
         }
         Ok(Self(values))
     }
-    /// Validate a dedicated source, or select known environment names.
-    /// Unknown reserved-prefix names always fail; other unknown environment
-    /// names are ignored only when `environment` is true. No input is echoed.
-    pub fn select(
+    /// Select only declared names, rejecting every unknown name in a dedicated source.
+    ///
+    /// Migration: replaces `select(allowed, reserved, false)`; rejecting all unknown
+    /// names also rejects every unknown reserved name.
+    ///
+    /// ```
+    /// use batter_core::settings::SettingsSource;
+    /// let source = SettingsSource::from_pairs([("LIMIT".into(), "4".into())])?;
+    /// assert_eq!(source.select_dedicated(&["LIMIT"])?.required("LIMIT")?, "4");
+    /// # Ok::<(), batter_core::settings::SettingsError>(())
+    /// ```
+    pub fn select_dedicated(&self, allowed: &[&str]) -> Result<Self, SettingsError> {
+        self.select_environment(allowed, &[""])
+    }
+
+    /// Select known environment names and reject unknown reserved-prefix names.
+    /// Other unknown names are ignored. No input is echoed or read implicitly.
+    ///
+    /// Migration: replaces `select(allowed, reserved, true)`.
+    ///
+    /// ```
+    /// use batter_core::settings::SettingsSource;
+    /// let source = SettingsSource::from_pairs([("PATH".into(), "/bin".into())])?;
+    /// assert!(source.select_environment(&["APP_LIMIT"], &["APP_"])?.get("PATH").is_none());
+    /// # Ok::<(), batter_core::settings::SettingsError>(())
+    /// ```
+    pub fn select_environment(
         &self,
         allowed: &[&str],
         reserved: &[&str],
-        environment: bool,
     ) -> Result<Self, SettingsError> {
         let mut selected = BTreeMap::new();
         for (key, value) in &self.0 {
             if allowed.iter().any(|name| key == OsStr::new(name)) {
                 selected.insert(key.clone(), value.clone());
-            } else if !environment
-                || reserved
-                    .iter()
-                    .any(|prefix| key.as_encoded_bytes().starts_with(prefix.as_bytes()))
+            } else if reserved
+                .iter()
+                .any(|prefix| key.as_encoded_bytes().starts_with(prefix.as_bytes()))
             {
                 return Err(SettingsError::new("source", "unknown key"));
             }
         }
         Ok(Self(selected))
     }
+    /// Compatibility wrapper for named source-selection methods.
+    #[deprecated(since = "0.0.2", note = "use select_dedicated or select_environment")]
+    #[allow(
+        clippy::fn_params_excessive_bools,
+        reason = "one-release compatibility for an existing public selection method"
+    )]
+    pub fn select(
+        &self,
+        allowed: &[&str],
+        reserved: &[&str],
+        environment: bool,
+    ) -> Result<Self, SettingsError> {
+        if environment {
+            self.select_environment(allowed, reserved)
+        } else {
+            self.select_dedicated(allowed)
+        }
+    }
+
     /// Overlay a higher-precedence, already structurally validated source.
     pub fn overlay(&mut self, higher: Self) {
         self.0.extend(higher.0);

@@ -171,7 +171,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
                 "the first settlement was reported stale",
             ));
         };
-        require(
+        require!(
             first.consecutive_failures() == 1,
             &format!("failure settlement reported {first:?}"),
         )?;
@@ -190,11 +190,11 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
                 "the retry settlement was reported stale",
             ));
         };
-        require(
+        require!(
             second.consecutive_failures() == 2 && second.retry_after() > first.retry_after(),
             &format!("the retry delay did not increase: {first:?} then {second:?}"),
         )?;
-        require(
+        require!(
             matches!(limiter.admit(subject).await?, AttemptAdmission::Denied(_)),
             "the second failure's backoff did not deny the next attempt",
         )?;
@@ -215,7 +215,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
                 "the settlement after the quiet period was reported stale",
             ));
         };
-        require(
+        require!(
             reset.consecutive_failures() == 1,
             &format!("the quiet period did not clear the failure history: {reset:?}"),
         )?;
@@ -244,7 +244,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             ));
         };
         transaction.commit().await?;
-        require(
+        require!(
             settled.consecutive_failures() == 0,
             &format!("success settlement reported {settled:?}"),
         )?;
@@ -259,7 +259,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             ));
         };
         expire_lease(&owner_pool, &quotas, stale).await?;
-        require(
+        require!(
             matches!(
                 limiter.complete(held, AttemptOutcome::Failure).await?,
                 AttemptCompletionResult::Stale
@@ -285,7 +285,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             ));
         };
         transaction.rollback().await?;
-        require(
+        require!(
             matches!(
                 low_level::finish_in(&pool, claimed, AttemptOutcome::Failure).await?,
                 StagedAttemptCompletion::Stale
@@ -303,7 +303,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         };
         let _ = limiter.complete(held, AttemptOutcome::Success).await?;
         plant_expired_neighbour(&owner_pool, &quotas, neighbour).await?;
-        require(
+        require!(
             planted_rows(&owner_pool, &quotas).await? == 1,
             "the owner could not plant an expired attempt record",
         )?;
@@ -313,7 +313,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             ));
         };
         let _ = limiter.complete(held, AttemptOutcome::Success).await?;
-        require(
+        require!(
             planted_rows(&owner_pool, &quotas).await? == 0,
             "the expired neighbouring attempt record survived the admission's cleanup",
         )?;
@@ -321,7 +321,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         // Success resets the record rather than removing it, so the stored row
         // stays inside its quiet period and the same login readmits the subject
         // through the record it already has.
-        require(
+        require!(
             counter_rows(&pool, &quotas, "runlimit_attempts").await? >= 1,
             "no attempt record was stored",
         )?;
@@ -462,7 +462,7 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPoo
     // elapsed time.
     for expected in [true, true, false] {
         let decision = limiter.check(&Check::new(subject)).await?;
-        require(
+        require!(
             decision.permits_request() == expected,
             &format!("fixed-window admission returned {decision:?}, expected {expected}"),
         )?;
@@ -474,11 +474,11 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPoo
         hasher().hash_for(&policy, format!("{subject_label}-batch-b").as_str()),
     ];
     let batch = limiter.check_all(&batch_subjects.map(Check::new)).await?;
-    require(
+    require!(
         matches!(batch.view(), BatchDecisionView::Allowed { allowances } if allowances.len() == 2),
         &format!("the fixed-window batch admission was not allowed: {batch:?}"),
     )?;
-    require(
+    require!(
         counter_rows(pool, quotas, "runlimit_fixed_windows").await? == before + 3,
         "the fixed-window counter rows were not stored",
     )?;
@@ -496,11 +496,11 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPoo
         )
         .await?;
         let deleted = limiter.cleanup_expired(16).await?;
-        require(
+        require!(
             deleted >= 1,
             &format!("fixed-window cleanup deleted {deleted} rows, expected at least 1"),
         )?;
-        require(
+        require!(
             counter_rows(pool, quotas, "runlimit_fixed_windows").await? == 0,
             "an expired fixed-window counter survived its cleanup",
         )?;
@@ -528,13 +528,13 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> R
     let gcra_subject = hasher().hash_for(&gcra_policy, subject_label.as_str());
     let gcra = PostgresGcraLimiter::new(pool.clone());
     let before = counter_rows(pool, quotas, "runlimit_gcra").await?;
-    require(
+    require!(
         gcra.check(&Check::new(gcra_subject))
             .await?
             .permits_request(),
         "the first GCRA request was denied",
     )?;
-    require(
+    require!(
         gcra.check(&Check::new(gcra_subject))
             .await?
             .permits_request(),
@@ -542,7 +542,7 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> R
     )?;
     // One hour of replenishment is far beyond any connection latency, so the
     // third request is denied by the stored arrival time, not by timing.
-    require(
+    require!(
         !gcra
             .check(&Check::new(gcra_subject))
             .await?
@@ -556,11 +556,11 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> R
         hasher().hash_for(&gcra_policy, format!("{subject_label}-batch-b").as_str()),
     ];
     let batch = gcra.check_all(&batch_subjects.map(Check::new)).await?;
-    require(
+    require!(
         matches!(batch.view(), BatchDecisionView::Allowed { allowances } if allowances.len() == 2),
         &format!("the GCRA batch admission was not allowed: {batch:?}"),
     )?;
-    require(
+    require!(
         counter_rows(pool, quotas, "runlimit_gcra").await? == before + 3,
         "the GCRA counter row was not stored",
     )?;
@@ -576,11 +576,11 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> R
     )
     .await?;
     let removed = gcra.cleanup_expired(16).await?;
-    require(
+    require!(
         removed >= 1,
         &format!("GCRA cleanup deleted {removed} rows, expected at least 1"),
     )?;
-    require(
+    require!(
         counter_rows(pool, quotas, "runlimit_gcra").await? == 0,
         "an expired GCRA counter survived its cleanup",
     )?;

@@ -31,9 +31,9 @@ async fn managed_application_cannot_change_definitions_ledger_or_public_policy()
                 sqlx::raw_sql(AssertSqlSafe(statement)).execute(sql.executor()).await?;
                 Ok(())
             }).await.unwrap_err();
-            require(matches!(error,ManagedApplyWithError::ManagedStateChanged), "managed mutation accepted or misclassified")?;
-            require(catalog_state(&pool,&schema).await? == before, "definition or ACL mutation escaped")?;
-            require(ledger(&pool,&schema).await? == before_ledger, "ledger mutation escaped")?;
+            require!(matches!(error,ManagedApplyWithError::ManagedStateChanged), "managed mutation accepted or misclassified")?;
+            require!(catalog_state(&pool,&schema).await? == before, "definition or ACL mutation escaped")?;
+            require!(ledger(&pool,&schema).await? == before_ledger, "ledger mutation escaped")?;
         }
         // Work deferred by callback SQL must run before the final verification.
         // Otherwise a COMMIT-time trigger could change a certified definition.
@@ -49,8 +49,8 @@ async fn managed_application_cannot_change_definitions_ledger_or_public_policy()
                 .execute(sql.executor()).await?;
             Ok(())
         }).await.unwrap_err();
-        require(matches!(error,ManagedApplyWithError::ManagedStateChanged), "deferred mutation escaped verification")?;
-        require(catalog_state(&pool,&schema).await? == before, "deferred mutation committed")
+        require!(matches!(error,ManagedApplyWithError::ManagedStateChanged), "deferred mutation escaped verification")?;
+        require!(catalog_state(&pool,&schema).await? == before, "deferred mutation committed")
     }).await
 }
 
@@ -80,16 +80,16 @@ async fn managed_application_transaction_escape_is_unconfirmed() -> Result {
                         std::io::Error::other("escaped transaction became known outcome").into(),
                     );
                 };
-                require(
+                require!(
                     application.is_some() == rejected,
                     "escape lost callback refusal",
                 )?;
-                require(
+                require!(
                     pid(&pool).await? != previous,
                     "escaped connection was reused",
                 )?;
                 let published = fixture.exists(&pool, "record_total").await?;
-                require(
+                require!(
                     published == control.starts_with("COMMIT"),
                     "escape evidence contradicts actual publication",
                 )
@@ -139,11 +139,11 @@ async fn managed_application_cancellation_retires_and_preserves_old_state() -> R
         };
         let (outcome, cancelled) = tokio::join!(applying, cancel);
         cancelled?;
-        require(
+        require!(
             matches!(outcome, Err(OperationError::Interrupted(_))),
             "cancellation was not retained",
         )?;
-        require(
+        require!(
             pid(&pool).await? != previous,
             "cancelled lease returned to pool",
         )?;
@@ -163,11 +163,11 @@ async fn managed_application_cancellation_retires_and_preserves_old_state() -> R
             }
         })
         .await??;
-        require(
+        require!(
             catalog_state(&observer, &schema).await? == before,
             "cancelled definitions committed",
         )?;
-        require(
+        require!(
             ledger(&observer, &schema).await? == before_ledger,
             "cancelled ledger committed",
         )?;
@@ -176,7 +176,7 @@ async fn managed_application_cancellation_retires_and_preserves_old_state() -> R
         )))
         .fetch_one(&observer)
         .await?;
-        require(count == 0, "cancelled callback data committed")
+        require!(count == 0, "cancelled callback data committed")
     })
     .await
 }

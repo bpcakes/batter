@@ -76,7 +76,8 @@ mod errors;
 #[path = "tests/live.rs"]
 mod live;
 
-fn supervisor(task_failure: bool) -> Supervisor {
+fn supervisor(task_failure: ComponentResult) -> Supervisor {
+    let task_failure = task_failure == ComponentResult::Failure;
     let mut supervisor = Supervisor::new(support::shutdown_budget());
     let handle = supervisor.handle();
     supervisor
@@ -105,7 +106,7 @@ fn assert_exit(result: Result<(), BoxError>, expected: ExitCode) {
 
 #[tokio::test]
 async fn success_awaits_cleanup_before_returning_exit_success() {
-    let mut supervisor = supervisor(false);
+    let mut supervisor = supervisor(ComponentResult::Success);
     let closed = Arc::new(AtomicBool::new(false));
     let flag = closed.clone();
     supervisor
@@ -121,7 +122,7 @@ async fn success_awaits_cleanup_before_returning_exit_success() {
 
 #[tokio::test]
 async fn startup_failure_retains_cause_and_failed_cleanup_before_exit() {
-    let mut supervisor = supervisor(false);
+    let mut supervisor = supervisor(ComponentResult::Success);
     supervisor
         .on_cleanup("resource", || async {
             Err(std::io::Error::other("cleanup-credential-marker").into())
@@ -155,7 +156,7 @@ async fn startup_failure_retains_cause_and_failed_cleanup_before_exit() {
 
 #[tokio::test]
 async fn task_failure_survives_successful_coordination_and_exits_failure() {
-    let result = complete_startup(supervisor(true), Ok(())).await;
+    let result = complete_startup(supervisor(ComponentResult::Failure), Ok(())).await;
     let report = result
         .as_ref()
         .unwrap_err()
@@ -185,7 +186,9 @@ fn unit_startup_does_not_capture_process_signals() {
             .build()
             .unwrap();
         runtime.block_on(async {
-            complete_startup(supervisor(false), Ok(())).await.unwrap();
+            complete_startup(supervisor(ComponentResult::Success), Ok(()))
+                .await
+                .unwrap();
         });
         println!("{SIGNAL_DISPOSITION_READY}");
         std::io::stdout().flush().unwrap();
@@ -279,7 +282,7 @@ fn assert_default_signal_terminates_child(signal: &str, number: i32) {
 
 #[tokio::test]
 async fn cleanup_failure_survives_successful_tasks_and_exits_failure() {
-    let mut supervisor = supervisor(false);
+    let mut supervisor = supervisor(ComponentResult::Success);
     supervisor
         .on_cleanup("resource", || async {
             Err(std::io::Error::other("cleanup-credential-marker").into())
@@ -337,4 +340,10 @@ fn exit_boundary_never_formats_or_traverses_an_unknown_error() {
         }
     }
     assert_exit(Err(Box::new(PrivateError)), ExitCode::FAILURE);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ComponentResult {
+    Failure,
+    Success,
 }

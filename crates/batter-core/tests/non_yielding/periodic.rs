@@ -45,7 +45,11 @@ pub(super) fn run(scenario: &str) {
     let (entered, entry) = std::sync::mpsc::channel();
     let reader = register(
         &mut supervisor,
-        finite_namesake,
+        if finite_namesake {
+            Namesake::Present
+        } else {
+            Namesake::Absent
+        },
         entered.clone(),
         live.clone(),
     );
@@ -83,7 +87,14 @@ pub(super) fn run(scenario: &str) {
     assert!(live.load(Ordering::SeqCst));
     assert!(!cleanup_called.load(Ordering::SeqCst));
     assert_unjoined_shutdown(&report);
-    assert_periodic_history(&report, finite_namesake);
+    assert_periodic_history(
+        &report,
+        if finite_namesake {
+            Namesake::Present
+        } else {
+            Namesake::Absent
+        },
+    );
     emit("report-unjoined-cleanup-skipped");
     emit("runtime-drop-started");
     drop(runtime);
@@ -92,10 +103,11 @@ pub(super) fn run(scenario: &str) {
 
 fn register(
     supervisor: &mut Supervisor,
-    finite_namesake: bool,
+    finite_namesake: Namesake,
     notify: std::sync::mpsc::Sender<()>,
     active: Arc<AtomicBool>,
 ) -> PeriodicReader {
+    let finite_namesake = finite_namesake == Namesake::Present;
     let mut invocation = 0;
     register_periodic_in(
         supervisor,
@@ -141,7 +153,8 @@ fn assert_unjoined_shutdown(report: &ShutdownReport) {
     assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
 }
 
-fn assert_periodic_history(report: &ShutdownReport, finite_namesake: bool) {
+fn assert_periodic_history(report: &ShutdownReport, finite_namesake: Namesake) {
+    let finite_namesake = finite_namesake == Namesake::Present;
     assert_eq!(report.periodic.len(), 1);
     let summary = &report.periodic[0].summary;
     let failure = summary.first_failure.as_ref().unwrap();
@@ -167,4 +180,10 @@ fn assert_periodic_history(report: &ShutdownReport, finite_namesake: bool) {
         assert_eq!(summary.completion, PeriodicCompletion::Pending);
         emit("periodic-history-pending");
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Namesake {
+    Present,
+    Absent,
 }

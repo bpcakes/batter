@@ -144,7 +144,7 @@ async fn check_revocation(
     let rejected = matches!(&acquired, Err(sqlx::Error::PoolTimedOut));
     eprintln!("idle_policy_revocation kind={revocation:?} acquisition_rejected={rejected}");
     drop(acquired);
-    require(
+    require!(
         rejected,
         "ordinary acquisition handed out a revoked idle session",
     )?;
@@ -184,7 +184,7 @@ async fn check_revocation(
         sqlx::query_as("SELECT pg_backend_pid(), current_user::text")
             .fetch_one(&mut *connection)
             .await?;
-    require(
+    require!(
         new_pid != old_pid && effective == role,
         "restored authority must acquire a new correctly profiled session",
     )?;
@@ -209,7 +209,7 @@ async fn admitted_idle_backend(
             )
             .fetch_one(&mut *connection)
             .await?;
-        require(
+        require!(
             actual_login == login && actual_role == role && !superuser,
             "revocation control requires the restricted login and distinct effective role",
         )?;
@@ -219,7 +219,7 @@ async fn admitted_idle_backend(
             )
             .fetch_one(&mut *connection)
             .await?;
-            require(
+            require!(
                 context == "superuser",
                 "auto_explain must be loaded, not a placeholder",
             )?;
@@ -228,11 +228,11 @@ async fn admitted_idle_backend(
             sqlx::query_scalar("SELECT has_parameter_privilege(current_user, 'app.tenant', 'SET')")
                 .fetch_one(&mut *connection)
                 .await?;
-        require(
+        require!(
             !placeholder_grant,
             "USERSET control must have no explicit parameter grant",
         )?;
-        require(
+        require!(
             *original.get_or_insert(pid) == pid,
             "idle control must reuse the same backend",
         )?;
@@ -272,7 +272,7 @@ async fn check_revoked_authority(
         Revocation::Schema => (true, false, false),
         Revocation::Parameter => (true, true, false),
     };
-    require(
+    require!(
         member && (set_role, usage, parameter) == expected,
         "only the selected authority must be revoked, preserving role membership",
     )

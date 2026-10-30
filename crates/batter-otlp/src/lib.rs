@@ -285,7 +285,14 @@ impl Session {
         self.resources.slot.begin(deadline);
         let exported =
             tokio::time::timeout_at(deadline, self.resources.exporter.export(&self.snapshot)).await;
-        classify(exported.is_err(), self.resources.slot.finish())
+        classify(
+            if exported.is_err() {
+                ExportTiming::TimedOut
+            } else {
+                ExportTiming::Returned
+            },
+            self.resources.slot.finish(),
+        )
     }
 
     /// Drive `service` to completion while exporting periodically, then export
@@ -374,7 +381,8 @@ impl Session {
 
 /// Combine the typed transport evidence with the outer deadline. Upstream
 /// error text is never inspected.
-fn classify(expired: bool, evidence: Evidence) -> ExportOutcome {
+fn classify(expired: ExportTiming, evidence: Evidence) -> ExportOutcome {
+    let expired = expired == ExportTiming::TimedOut;
     match (evidence.outcome, evidence.phase) {
         (Some(Ok(())), _) => ExportOutcome::Acknowledged,
         (Some(Err(failure)), _) => ExportOutcome::Failed(failure),
@@ -423,4 +431,10 @@ impl batter_core::service::Diagnostics for Prepared {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExportTiming {
+    TimedOut,
+    Returned,
 }

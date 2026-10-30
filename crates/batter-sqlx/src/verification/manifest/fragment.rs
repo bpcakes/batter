@@ -6,6 +6,7 @@
 //! object declarations so a library can publish the first without touching the
 //! second.
 
+use super::AuthorityAllowance;
 use super::{
     ColumnGrantGroup, DeclarationPurpose, ExactRoleManifest, Identifier, MAX_MANIFEST_INPUTS,
     ManifestError, ObjectPrivilege, PolicyError, PublicDelivery, QualifiedName, RelationGrantGroup,
@@ -189,7 +190,7 @@ impl ExactRoleManifest {
 /// use batter_sqlx::verification::{FragmentObjectPolicy, Identifier, ObjectPrivilege};
 ///
 /// let policy = FragmentObjectPolicy::new(Identifier::new("Jobs")?)
-///     .allow_row_type_public_usage(true)
+///     .row_type_public_usage(batter_sqlx::verification::AuthorityAllowance::Allow)
 ///     .with_public_delivered_privileges([ObjectPrivilege::Select])?;
 /// assert_eq!(policy.schema().as_str(), "Jobs");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -237,14 +238,20 @@ impl FragmentObjectPolicy {
 
     /// Permit a role reachable from the login to own this schema.
     #[must_use]
-    pub const fn allow_schema_owner(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_schema_owner(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn schema_ownership(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.schema_owner = allow;
         self
     }
 
     /// Permit a role reachable from the login to own the fragment's relations.
     #[must_use]
-    pub const fn allow_relation_owner(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_relation_owner(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn relation_ownership(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.relation_owner = allow;
         self
     }
@@ -275,7 +282,10 @@ impl FragmentObjectPolicy {
 
     /// Retain PostgreSQL's default PUBLIC `USAGE` on the relations' row types.
     #[must_use]
-    pub const fn allow_row_type_public_usage(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_row_type_public_usage(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn row_type_public_usage(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.row_type_public_usage = allow;
         self
     }
@@ -391,7 +401,11 @@ impl FragmentObjectPolicy {
             DeclarationPurpose::RequiredAndProvisioned,
         )?
         .public_delivery(delivery)
-        .allow_owner(self.schema_owner))
+        .ownership(if self.schema_owner {
+            AuthorityAllowance::Allow
+        } else {
+            AuthorityAllowance::Deny
+        }))
     }
 
     fn relation_group(
@@ -406,8 +420,16 @@ impl FragmentObjectPolicy {
             DeclarationPurpose::RequiredAndProvisioned,
         )?
         .public_delivery(delivery)
-        .allow_owner(self.relation_owner)
-        .allow_row_type_public_usage(self.row_type_public_usage))
+        .ownership(if self.relation_owner {
+            AuthorityAllowance::Allow
+        } else {
+            AuthorityAllowance::Deny
+        })
+        .row_type_public_usage(if self.row_type_public_usage {
+            AuthorityAllowance::Allow
+        } else {
+            AuthorityAllowance::Deny
+        }))
     }
 
     fn qualified<'a>(

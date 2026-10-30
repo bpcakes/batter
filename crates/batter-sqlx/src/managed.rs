@@ -75,6 +75,7 @@
 
 pub(crate) mod application;
 mod apply;
+pub(crate) use apply::ConnectionDisposition;
 mod catalog;
 mod error;
 mod source;

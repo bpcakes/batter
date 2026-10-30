@@ -142,7 +142,7 @@ fn authority_policy_rejects_cross_kind_pg_class_identities() {
         AuthorityPolicyBuilder {
             public_grants: vec![PublicGrant {
                 object: PublicObject::Relation(name.clone()),
-                privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+                privilege: AllowedPrivilege::privilege(ObjectPrivilege::Select),
             }],
             public_overrides: vec![PublicAllowance {
                 object: PublicObject::Sequence(name.clone()),
@@ -200,7 +200,7 @@ fn requirements_reject_duplicates_contradictions_and_invalid_object_privileges()
         .defaults
         .relations
         .privileges
-        .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
+        .push(AllowedPrivilege::privilege(ObjectPrivilege::Select));
     assert!(authority.clone().build().is_ok());
     authority.required_privileges.push(required);
     assert_eq!(
@@ -269,7 +269,7 @@ fn every_authority_object_accepts_only_its_postgres_privilege_set() {
             let result = AuthorityPolicyBuilder {
                 public_grants: vec![PublicGrant {
                     object: object.clone(),
-                    privilege: AllowedPrivilege::new(privilege, false),
+                    privilege: AllowedPrivilege::privilege(privilege),
                 }],
                 ..AuthorityPolicyBuilder::default()
             }
@@ -285,7 +285,7 @@ fn every_authority_object_accepts_only_its_postgres_privilege_set() {
 
 #[test]
 fn generic_authority_duplicates_normalize_or_reject_one_meaning() {
-    let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
+    let select = AllowedPrivilege::privilege(ObjectPrivilege::Select);
     let relation = QualifiedName::new("service", "records").unwrap();
     let normalized = AuthorityPolicyBuilder {
         relations: vec![RelationPolicy {
@@ -315,7 +315,7 @@ fn generic_authority_duplicates_normalize_or_reject_one_meaning() {
     let conflicting = AuthorityPolicyBuilder {
         relations: vec![RelationPolicy {
             relation: relation.clone(),
-            privileges: vec![select, AllowedPrivilege::new(ObjectPrivilege::Select, true)],
+            privileges: vec![select, AllowedPrivilege::grantable(ObjectPrivilege::Select)],
             columns: Vec::new(),
             allow_owner: false,
             allow_row_type_public_usage: false,
@@ -335,7 +335,7 @@ fn generic_authority_duplicates_normalize_or_reject_one_meaning() {
             },
             PublicGrant {
                 object: PublicObject::Relation(relation),
-                privilege: AllowedPrivilege::new(ObjectPrivilege::Select, true),
+                privilege: AllowedPrivilege::grantable(ObjectPrivilege::Select),
             },
         ],
         ..AuthorityPolicyBuilder::default()
@@ -408,7 +408,7 @@ fn exact_empty_public_allowance_rejects_a_requirement_allowed_only_by_default_pu
         .defaults
         .relations
         .public_privileges
-        .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
+        .push(AllowedPrivilege::privilege(ObjectPrivilege::Select));
     assert!(authority.clone().build().is_ok());
     authority.public_overrides.push(PublicAllowance {
         object,
@@ -443,12 +443,12 @@ fn required_column_can_use_public_relation_allowance_and_exact_role_override_kee
         .defaults
         .relations
         .public_privileges
-        .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
+        .push(AllowedPrivilege::privilege(ObjectPrivilege::Select));
     assert!(authority.build().is_ok());
 }
 
 fn add_all_kind_group(policy: &mut AuthorityPolicyBuilder, ordinal: usize) {
-    let allowed = |privilege| vec![AllowedPrivilege::new(privilege, false)];
+    let allowed = |privilege| vec![AllowedPrivilege::privilege(privilege)];
     let relation = QualifiedName::new("service", format!("records_{ordinal}")).unwrap();
     let columns = [
         Identifier::new("first").unwrap(),
@@ -551,7 +551,7 @@ fn near_capacity_all_kind_policy() -> AuthorityPolicyBuilder {
             parameter: ParameterName::new(format!("unused_{ordinal}")).unwrap(),
             privileges: Vec::new(),
         }));
-    policy.database.privileges = vec![AllowedPrivilege::new(ObjectPrivilege::Connect, false)];
+    policy.database.privileges = vec![AllowedPrivilege::privilege(ObjectPrivilege::Connect)];
     policy.required_privileges.push(RequiredPrivilege {
         object: PublicObject::Database,
         privilege: ObjectPrivilege::Connect,
@@ -596,7 +596,7 @@ fn near_capacity_validation_indexes_every_declared_object_kind_once() {
 }
 
 fn near_capacity_public_discovery_policy() -> AuthorityPolicyBuilder {
-    let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
+    let select = AllowedPrivilege::privilege(ObjectPrivilege::Select);
     let object = |schema: &str, ordinal| {
         PublicObject::Relation(QualifiedName::new(schema, format!("record_{ordinal}")).unwrap())
     };

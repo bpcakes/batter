@@ -40,7 +40,7 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
         // narrower evidence of which privilege PostgreSQL refused.
         let database = schema::runledger_database(fixture, &login, &jobs, 2)?;
         let payload = serde_json::json!({"control": true});
-        require(
+        require!(
             record_intent(&database, &payload, "control-first").await.is_ok(),
             "the native intent recording was refused under its own selection",
         )?;
@@ -54,7 +54,7 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
         );
         exec(&mut fixture.admin, revoke_insert).await?;
         let refused = record_intent(&database, &payload, "control-revoked").await;
-        require(
+        require!(
             refused.is_err(),
             &format!("the native intent recording survived a revoked column: {refused:?}"),
         )?;
@@ -82,7 +82,7 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
         // SHARE read, which PostgreSQL refuses without UPDATE on some column.
         // An exact duplicate is what reaches that read, so the first recording
         // has to succeed before the revocation.
-        require(
+        require!(
             record_intent(&database, &payload, "control-duplicate")
                 .await
                 .is_ok(),
@@ -98,7 +98,7 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
         )
         .await?;
         let duplicate = record_intent(&database, &payload, "control-duplicate").await;
-        require(
+        require!(
             duplicate.is_err(),
             &format!("native duplicate resolution survived a revoked row lock: {duplicate:?}"),
         )?;
@@ -311,11 +311,11 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
         })
         .await
         .map_err(PgAtomicFailure::into_error)?;
-        require(
+        require!(
             recorded.disposition() == JobEnqueueIntentDisposition::Inserted,
             &format!("shape A did not record a new intent: {recorded:?}"),
         )?;
-        require(
+        require!(
             PostgresLimiter::new(pool_a.clone())
                 .check(&Check::new(
                     KeyHasher::new([23; 32])?.hash_for(&fixed_window_policy()?, "shape-a"),
@@ -327,7 +327,7 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
 
         let inspection = schema::runledger_database(fixture, &inspector, &jobs, 1)?;
         let snapshot = batter::runledger::verify_schema(&inspection).await?;
-        require(
+        require!(
             snapshot.schema() == jobs,
             "the inspector read another schema",
         )?;
@@ -379,7 +379,7 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
             None,
         )
         .await?;
-        require(
+        require!(
             PostgresGcraLimiter::new(pool_b.clone())
                 .check(&Check::new(
                     KeyHasher::new([29; 32])?.hash_for(&gcra_policy()?, "shape-b"),
@@ -442,7 +442,7 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
         ] {
             require_denied(pool, &forbidden).await?;
         }
-        require(
+        require!(
             !shape_a
                 .grant_plan()
                 .render(

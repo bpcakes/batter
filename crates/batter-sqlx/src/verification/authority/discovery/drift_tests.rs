@@ -1,3 +1,5 @@
+use crate::verification::authority::MigrationCoverage;
+
 use super::super::AclEntry;
 use super::super::required::tests::snapshot;
 use super::*;
@@ -11,7 +13,7 @@ fn report(
         snapshot,
         policy,
         Vec::new(),
-        false,
+        MigrationCoverage::Excluded,
     ))
     .unwrap()
 }
@@ -53,7 +55,7 @@ fn catalog_kind_drift_remains_a_finding_and_uses_the_observed_kind_defaults() {
         allow_owner: false,
     });
     sequence_draft.defaults.relations.privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)];
     let table_report = report(table_snapshot, &sequence_draft.build().unwrap());
     assert_kind_drift_is_reported(&table_report, &object, ObjectPrivilege::Select);
 
@@ -73,7 +75,7 @@ fn catalog_kind_drift_remains_a_finding_and_uses_the_observed_kind_defaults() {
         allow_row_type_public_usage: false,
     });
     relation_draft.defaults.sequences.privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)];
     let sequence_report = report(sequence_snapshot, &relation_draft.build().unwrap());
     assert_kind_drift_is_reported(&sequence_report, &object, ObjectPrivilege::Usage);
 }
@@ -90,12 +92,12 @@ fn catalog_kind_drift_reconciles_public_and_required_targets_after_reporting_the
     });
     let mut draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
     draft.defaults.relations.privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)];
     draft.defaults.sequences.privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)];
     draft.public_grants.push(PublicGrant {
         object: PublicObject::Sequence(name.clone()),
-        privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false),
+        privilege: AllowedPrivilege::privilege(ObjectPrivilege::Usage),
     });
     draft.required_privileges.push(RequiredPrivilege {
         object: PublicObject::Sequence(name),
@@ -126,14 +128,14 @@ fn relation_and_column_targets_drift_to_a_sequence_without_expansion_failure() {
     });
     let mut draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
     draft.defaults.sequences.public_privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)];
     draft.public_grants.push(PublicGrant {
         object: PublicObject::Relation(name.clone()),
-        privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+        privilege: AllowedPrivilege::privilege(ObjectPrivilege::Select),
     });
     draft.public_overrides.push(PublicAllowance {
         object: column_object.clone(),
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
+        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
     });
     draft.required_privileges.push(RequiredPrivilege {
         object: column_object,

@@ -1,3 +1,5 @@
+use crate::delivery::worker::state::ProviderAcceptance;
+
 use super::{
     DELIVERY_JOB_TYPE, DELIVERY_PAYLOAD_VERSION, DeliveryJobPayload, ProviderEffectState,
     provider_request,
@@ -165,7 +167,7 @@ impl DeliveryWorker {
                     payload,
                     "provider_retention_expired",
                     None,
-                    true,
+                    ProviderAcceptance::Possible,
                     ProviderEffectState::ReconcileNeeded,
                 )
                 .await
@@ -257,7 +259,7 @@ impl DeliveryWorker {
                     payload,
                     "provider_retention_expired",
                     None,
-                    true,
+                    ProviderAcceptance::Possible,
                     ProviderEffectState::ReconcileNeeded,
                 )
                 .await
@@ -273,7 +275,7 @@ impl DeliveryWorker {
                     payload,
                     "provider_payload_conflict",
                     None,
-                    true,
+                    ProviderAcceptance::Possible,
                     ProviderEffectState::ReconcileNeeded,
                 )
                 .await
@@ -386,7 +388,7 @@ impl DeliveryWorker {
                     payload,
                     "provider_payload_conflict",
                     None,
-                    true,
+                    ProviderAcceptance::Possible,
                     ProviderEffectState::ReconcileNeeded,
                 )
                 .await
@@ -432,7 +434,7 @@ impl DeliveryWorker {
             payload,
             "provider_request_invalid",
             None,
-            false,
+            ProviderAcceptance::RuledOut,
             snapshot.state,
         )
         .await

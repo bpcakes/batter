@@ -707,10 +707,15 @@ at `19c3575`, before the at-rest merge; cache speedups remain unmeasured.
 This public repository's standard hosted runner usage does not establish
 a billed dollar saving. See [primary references](references.md#github-actions-scheduling-and-caching-reviewed-2026-09-22).
 
-The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines`
-at warning level in all workspace packages. Root `clippy.toml` sets their thresholds to
-20 and 100 respectively. The existing `-D warnings` verification step enforces
-both limits across libraries, examples, and tests.
+Packages inheriting the workspace lint table enable `clippy::cognitive_complexity`,
+`clippy::too_many_lines`, and `clippy::fn_params_excessive_bools` at warning level.
+Root `clippy.toml` sets their thresholds to 20, 100, and zero boolean parameters.
+The existing `-D warnings` verification steps enforce these limits across libraries,
+examples, and tests. Native Runlimit enables the boolean-parameter lint through
+`pedantic`; native Runledger and standalone `batter-at-rest` keep their own lint tables.
+Named choices replace control parameters, and fallible test assertions use assertion
+macros. Only deprecated public compatibility wrappers retain boolean parameters,
+with individual documented lint allowances for one release (`batter-moe5`).
 
 ## Managed routines and triggers
 

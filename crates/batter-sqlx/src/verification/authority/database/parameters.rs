@@ -118,8 +118,9 @@ pub(super) fn settings_visible(
 pub(super) async fn load_parameters(
     transaction: &mut PgTransaction<'_>,
     requested: &[String],
-    settings_visible: bool,
+    settings_visible: SettingsVisibility,
 ) -> Result<ParameterCatalog, VerificationError> {
+    let settings_visible = settings_visible == SettingsVisibility::Visible;
     let rows = sqlx::query_as::<_, (Option<String>, i64, String, bool)>(
         "SELECT CASE WHEN octet_length(p.parname) <= 1024 THEN translate(p.parname, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')::text END, acl.grantee::bigint,
                 acl.privilege_type::text, acl.is_grantable
@@ -402,4 +403,10 @@ mod tests {
             .unwrap();
         assert!(!missing.exists && missing.observable && !missing.custom);
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SettingsVisibility {
+    Visible,
+    Hidden,
 }

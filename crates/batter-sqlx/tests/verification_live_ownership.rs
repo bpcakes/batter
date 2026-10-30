@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::support::{Result, require};
 use super::{
     AuthorityFixture, Names, VerificationPolicy, names_policy, quote, verify_combined as verify,
@@ -14,11 +20,11 @@ fn policy(names: &Names) -> Result<VerificationPolicy> {
         &names.table_a,
         RolePolicy::default(),
         Vec::new(),
-        false,
-        true,
-        false,
-        false,
-        false,
+        ParameterAllowance::Deny,
+        PublicTableAllowance::Include,
+        SequenceAllowance::Deny,
+        TableOwnerAllowance::Deny,
+        RoutineAllowance::Deny,
     )
 }
 
@@ -50,7 +56,7 @@ async fn verification_preserves_separate_caller_raw_transactions() -> Result {
                 )))
                 .fetch_one(&pool)
                 .await?;
-                require(
+                require!(
                     retained == 1 && external == 0,
                     "verification changed the separate caller's pending transaction",
                 )?;
@@ -60,7 +66,7 @@ async fn verification_preserves_separate_caller_raw_transactions() -> Result {
                 )))
                 .fetch_one(&pool)
                 .await?;
-                require(
+                require!(
                     committed == 1,
                     "the caller transaction could not commit after verification",
                 )?;
@@ -92,7 +98,7 @@ async fn verification_occupied_pool_acquisition_preserves_caller_transaction() -
                     batter_core::operation::OperationOwner::new(Duration::from_millis(100))?
                         .into_context();
                 let result = verify(&pool, &context, &policy(&names)?).await;
-                require(
+                require!(
                     matches!(
                         result,
                         Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
@@ -104,7 +110,7 @@ async fn verification_occupied_pool_acquisition_preserves_caller_transaction() -
                 )))
                 .fetch_one(&mut *caller)
                 .await?;
-                require(
+                require!(
                     retained == 1,
                     "timed-out verification damaged the checked-out caller transaction",
                 )?;
@@ -144,7 +150,7 @@ async fn verification_normalizes_abandoned_pooled_raw_transactions() -> Result {
                 )))
                 .fetch_one(&pool)
                 .await?;
-                require(
+                require!(
                     count == 0,
                     "verification retained or committed an abandoned raw transaction",
                 )?;
@@ -155,7 +161,7 @@ async fn verification_normalizes_abandoned_pooled_raw_transactions() -> Result {
                     sqlx::query("BEGIN").execute(&mut *abandoned).await?;
                     if aborted {
                         let failure = sqlx::query("SELECT 1 / 0").execute(&mut *abandoned).await;
-                        require(failure.as_ref().err().and_then(sqlx::Error::as_database_error)
+                        require!(failure.as_ref().err().and_then(sqlx::Error::as_database_error)
                             .and_then(|error| error.code()).as_deref() == Some("22012"),
                             "the aborted-transaction control did not fail with division by zero")?;
                     }
@@ -165,7 +171,7 @@ async fn verification_normalizes_abandoned_pooled_raw_transactions() -> Result {
                     let idle: bool = sqlx::query_scalar(
                         "SELECT state = 'idle' AND xact_start IS NULL FROM pg_stat_activity WHERE pid = $1"
                     ).bind(pid).fetch_one(&mut fixture.admin).await?;
-                    require(idle, "verification did not normalize empty or aborted raw transaction state")?;
+                    require!(idle, "verification did not normalize empty or aborted raw transaction state")?;
                 }
                 pool.close().await;
                 Ok(())

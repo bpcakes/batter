@@ -10,7 +10,8 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-pub async fn capacity_one(case: Case, drain: bool) {
+pub async fn capacity_one(case: Case, drain: AdmissionPhase) {
+    let drain = drain == AdmissionPhase::Draining;
     let supervisor = supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
@@ -52,4 +53,10 @@ pub async fn capacity_one(case: Case, drain: bool) {
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success());
     assert_eq!(report.completed_process_tasks, 1);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AdmissionPhase {
+    Draining,
+    Running,
 }

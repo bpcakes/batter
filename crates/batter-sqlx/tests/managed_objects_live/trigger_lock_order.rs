@@ -6,6 +6,8 @@
 //! table, or a partition attached meanwhile therefore cannot make it deadlock
 //! with an apply that drops triggers.
 
+use crate::verification::LockStatus;
+
 use super::constraint_triggers::{DEFERRED, IMMEDIATE, check_function, check_log, check_trigger};
 use super::trigger_drops::{RacePools, wait_for_any_lock_wait, with_sqlstate};
 use super::verification::wait_for_lock;
@@ -130,7 +132,15 @@ async fn lock_order_race(
     let writer = async {
         match mode {
             Some(mode) => {
-                wait_for_lock(&pools.observer, apply_pid, schema, table, mode, false).await?;
+                wait_for_lock(
+                    &pools.observer,
+                    apply_pid,
+                    schema,
+                    table,
+                    mode,
+                    LockStatus::Waiting,
+                )
+                .await?;
             }
             None => wait_for_any_lock_wait(&pools.observer, apply_pid, schema, table).await?,
         }
@@ -141,7 +151,7 @@ async fn lock_order_race(
     };
     let (applied, held) = tokio::try_join!(apply, writer)?;
     require_waited_holding_nothing(table, &held)?;
-    require(
+    require!(
         (applied.created_or_replaced(), applied.retired()) == expected,
         "apply did not execute exactly the changed entries and retirements",
     )
@@ -451,7 +461,7 @@ async fn managed_trigger_lock_set_follows_a_partition_attached_during_its_wait()
                 &schema,
                 "parted_east",
                 "AccessExclusiveLock",
-                false,
+                LockStatus::Waiting,
             )
             .await?;
             bounded(
@@ -477,7 +487,7 @@ async fn managed_trigger_lock_set_follows_a_partition_attached_during_its_wait()
                 &schema,
                 "parted_north",
                 "AccessExclusiveLock",
-                false,
+                LockStatus::Waiting,
             )
             .await?;
             let held = held_table_locks(observer, apply_pid, &schema, ledger).await?;
@@ -487,7 +497,7 @@ async fn managed_trigger_lock_set_follows_a_partition_attached_during_its_wait()
         };
         let (applied, held) = tokio::try_join!(apply, others)?;
         require_waited_holding_nothing("parted_north", &held)?;
-        require(
+        require!(
             (applied.created_or_replaced(), applied.retired()) == (1, 0),
             "apply did not re-create exactly the changed constraint trigger",
         )?;
@@ -502,7 +512,7 @@ async fn managed_trigger_lock_set_follows_a_partition_attached_during_its_wait()
             .fetch_one(&pools.observer),
         )
         .await??;
-        require(
+        require!(
             triggers == 4,
             "the re-created trigger does not cover the partitioned table and all three partitions",
         )
@@ -583,12 +593,12 @@ async fn managed_trigger_lock_wait_honours_the_session_lock_timeout() -> Result 
         )
         .await?;
         reader.rollback().await?;
-        require(
+        require!(
             matches!(&outcome, Err(error @ ManagedApplyError::Statement(_))
                 if sqlstate(error).as_deref() == Some("55P03")),
             "the lock wait did not end at the session lock_timeout",
         )?;
-        require(
+        require!(
             catalog_state(&observer, &schema).await? == catalog,
             "an apply that timed out changed the catalog",
         )?;
@@ -596,7 +606,7 @@ async fn managed_trigger_lock_wait_honours_the_session_lock_timeout() -> Result 
             .apply(&applying, &change.manifest)
             .await
             .map_err(with_sqlstate)?;
-        require(
+        require!(
             applied.created_or_replaced() == 1,
             "apply did not re-create the constraint trigger once the table was free",
         )

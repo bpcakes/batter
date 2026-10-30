@@ -131,7 +131,8 @@ pub(super) struct LockSet(HashMap<String, bool>);
 impl LockSet {
     /// Whether the set holds `relation`, in `ACCESS EXCLUSIVE` mode when
     /// `exclusive`.
-    fn holds(&self, relation: &str, exclusive: bool) -> bool {
+    fn holds(&self, relation: &str, exclusive: LockStrength) -> bool {
+        let exclusive = exclusive == LockStrength::Exclusive;
         self.0
             .get(relation)
             .is_some_and(|held_exclusive| *held_exclusive || !exclusive)
@@ -155,9 +156,16 @@ fn first_uncovered<'m>(
         .iter()
         .find(|(_, tree, exclusive)| {
             !trees.get(*tree).is_none_or(|members| {
-                members
-                    .iter()
-                    .all(|relation| locks.holds(relation, *exclusive))
+                members.iter().all(|relation| {
+                    locks.holds(
+                        relation,
+                        if *exclusive {
+                            LockStrength::Exclusive
+                        } else {
+                            LockStrength::Shared
+                        },
+                    )
+                })
             })
         })
         .map(|(identity, ..)| *identity)
@@ -561,4 +569,10 @@ pub(super) async fn drop_holder(
         }
         _ => Ok(()),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LockStrength {
+    Exclusive,
+    Shared,
 }

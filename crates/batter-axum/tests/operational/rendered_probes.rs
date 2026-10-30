@@ -62,7 +62,8 @@ impl Leases {
         })
     }
 
-    fn set(&self, valid: bool) {
+    fn set(&self, valid: Validation) {
+        let valid = valid == Validation::Valid;
         self.valid.store(valid, Ordering::SeqCst);
     }
 
@@ -176,10 +177,14 @@ async fn assert_unready_either_way(
     expected: ReadinessDecision,
 ) {
     for valid in [true, false] {
-        leases.set(valid);
+        leases.set(if valid {
+            Validation::Valid
+        } else {
+            Validation::Invalid
+        });
         assert_rendered(app, policy, rendered, expected).await;
     }
-    leases.set(true);
+    leases.set(Validation::Valid);
 }
 
 /// The HTTP completion events in a capture, in emission order.
@@ -287,10 +292,10 @@ async fn renderer_receives_every_decision_without_choosing_status_decision_or_se
         sample(&mut run).await;
         assert_rendered(&app, &policy, &rendered, ReadinessDecision::Ready).await;
         // The application condition turns the ready decision unready, then back.
-        leases.set(false);
+        leases.set(Validation::Invalid);
         let narrowed = unready(ReadinessUnreadyReason::Condition(Leases::condition()));
         assert_rendered(&app, &policy, &rendered, narrowed).await;
-        leases.set(true);
+        leases.set(Validation::Valid);
         assert_rendered(&app, &policy, &rendered, ReadinessDecision::Ready).await;
         assert!(leases.asked() > 0);
 
@@ -499,4 +504,10 @@ fn rendered_probe_renderers_cannot_claim_a_quota_writer() {
     assert_eq!(events.len(), 2, "{text}");
     let unrecorded = |event: &&str| !event.contains("quota_outcome=");
     assert!(events.iter().all(unrecorded), "{text}");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Validation {
+    Valid,
+    Invalid,
 }

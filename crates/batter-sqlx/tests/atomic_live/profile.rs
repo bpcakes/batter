@@ -53,7 +53,7 @@ async fn profile_setup_errors_redact_setting_and_role_values() -> Result {
                 .reset_and_apply(&mut fixture.observer)
                 .await
                 .unwrap_err();
-            require(
+            require!(
                 !format!("{error} {error:?}").contains(marker),
                 "profile setup formatting disclosed marker",
             )?;
@@ -67,15 +67,15 @@ async fn profile_setup_errors_redact_setting_and_role_values() -> Result {
                 .native()
                 .as_database_error()
                 .ok_or("native database error lost")?;
-            require(
+            require!(
                 native.code().as_deref() == Some(code),
                 "native SQLSTATE changed",
             )?;
-            require(
+            require!(
                 native.message().contains(marker),
                 "explicit native inspection lost marker",
             )?;
-            require(
+            require!(
                 std::error::Error::source(retained).is_some(),
                 "native error source lost",
             )?;
@@ -127,13 +127,14 @@ async fn mixed_case_profile_settings_preserve_values() -> Result {
         let values: (String, String, String) = sqlx::query_as(
             "SELECT current_setting('app.tenant'), current_setting('timezone'), current_setting('application_name')"
         ).fetch_one(&mut fixture.observer).await?;
-        require(values == ("Tenant-Mixed-Case".into(), "UTC".into(), "Mixed-Case-Service".into()), "profile altered setting values")?;
+        require!(values == ("Tenant-Mixed-Case".into(), "UTC".into(), "Mixed-Case-Service".into()), "profile altered setting values")?;
         Ok(())
     }.await;
     fixture.finish(body).await
 }
 
-async fn hook_logging(before_acquire: bool) -> Result {
+async fn hook_logging(before_acquire: HookTiming) -> Result {
+    let before_acquire = before_acquire == HookTiming::BeforeAcquire;
     let fixture = fixture().await?;
     let body = async {
         let options = fixture.pool.connect_options();
@@ -185,7 +186,7 @@ async fn hook_logging(before_acquire: bool) -> Result {
         };
         drop(outcome);
         bounded(pool.close()).await?;
-        require(
+        require!(
             expected_outcome,
             "SQLx hook rejection/replacement behavior changed",
         )?;
@@ -204,11 +205,17 @@ async fn hook_logging(before_acquire: bool) -> Result {
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn profile_after_connect_logging_redacts_setting_values() -> Result {
-    hook_logging(false).await
+    hook_logging(HookTiming::AfterConnect).await
 }
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn profile_before_acquire_logging_redacts_setting_values() -> Result {
-    hook_logging(true).await
+    hook_logging(HookTiming::BeforeAcquire).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HookTiming {
+    BeforeAcquire,
+    AfterConnect,
 }

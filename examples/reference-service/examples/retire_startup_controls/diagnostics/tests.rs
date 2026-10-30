@@ -6,8 +6,9 @@ use std::time::Duration;
 
 async fn execute(
     work: Result<RetirementReport, RetirementError>,
-    cleanup_fails: bool,
+    cleanup_fails: CleanupResult,
 ) -> (Value, bool) {
+    let cleanup_fails = cleanup_fails == CleanupResult::Failure;
     let second = Duration::from_secs(1);
     let command = Command::new(
         batter::operation::OperationOwner::new(second * 10)
@@ -43,7 +44,7 @@ async fn cancellation_readback_key_survives_session_wrapping_and_failed_cleanup(
             },
         )))),
     };
-    let (facts, success) = execute(Err(error), true).await;
+    let (facts, success) = execute(Err(error), CleanupResult::Failure).await;
     assert!(!success);
     assert_eq!(facts["status"], "incomplete");
     assert_eq!(facts["stage"], "retirement.cancel");
@@ -64,7 +65,7 @@ async fn identity_and_quiescence_refusals_expose_structured_facts() {
         Err(RetirementError::WrongDatabase {
             actual: DatabaseIdentity::new(-42, 17).unwrap(),
         }),
-        false,
+        CleanupResult::Success,
     )
     .await;
     assert!(!success);
@@ -78,7 +79,7 @@ async fn identity_and_quiescence_refusals_expose_structured_facts() {
             prepared_transactions: 1,
             cancelled: 5,
         }),
-        false,
+        CleanupResult::Success,
     )
     .await;
     assert!(!success);
@@ -96,7 +97,11 @@ async fn completed_work_still_exposes_failed_cleanup() {
                 definition: DefinitionState::Absent,
                 cancelled: 7,
             }),
-            cleanup_fails,
+            if cleanup_fails {
+                CleanupResult::Failure
+            } else {
+                CleanupResult::Success
+            },
         )
         .await;
         assert_eq!(success, !cleanup_fails);
@@ -131,7 +136,7 @@ async fn real_begin_failure_preserves_transaction_classification() {
                 native,
             },
         ))),
-        false,
+        CleanupResult::Success,
     )
     .await;
     assert!(!success);
@@ -142,4 +147,10 @@ async fn real_begin_failure_preserves_transaction_classification() {
     assert_eq!(facts["work"]["native"]["category"], "internal");
     assert_eq!(facts["work"]["job_id"], job.to_string());
     assert_eq!(facts["work"]["readback_attempted"], false);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupResult {
+    Failure,
+    Success,
 }

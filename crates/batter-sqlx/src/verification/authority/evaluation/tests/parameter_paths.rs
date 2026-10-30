@@ -1,3 +1,5 @@
+use crate::verification::authority::MigrationCoverage;
+
 use super::run;
 use crate::verification::authority::database::ParameterCatalog;
 use crate::verification::authority::parameter_index::ParameterWork;
@@ -56,7 +58,13 @@ fn evaluate(
     snapshot.parameters = ParameterCatalog::try_from_objects(objects)
         .unwrap()
         .with_work(ParameterWork::counted(Arc::clone(&operations)));
-    let report = run(evaluate_snapshot(snapshot, policy, Vec::new(), false)).unwrap();
+    let report = run(evaluate_snapshot(
+        snapshot,
+        policy,
+        Vec::new(),
+        MigrationCoverage::Excluded,
+    ))
+    .unwrap();
     (report, operations.load(Ordering::Relaxed))
 }
 
@@ -83,7 +91,7 @@ fn required_fixture() -> (Vec<ParameterObject>, AuthorityPolicy) {
         object.acl = set_acl(if ordinal % 2 == 0 { 2 } else { 3 });
         policy.parameters.push(ParameterPolicy {
             parameter: ParameterName::new(&object.name).unwrap(),
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
         });
         policy.required_privileges.push(RequiredPrivilege {
             object: parameter_target(&object.name),
@@ -153,7 +161,7 @@ fn public_fixture() -> (Vec<ParameterObject>, AuthorityPolicy) {
     for (ordinal, object) in objects.iter_mut().enumerate().take(7_000) {
         object.acl = set_acl(0);
         let target = parameter_target(&object.name);
-        let set = AllowedPrivilege::new(ObjectPrivilege::Set, false);
+        let set = AllowedPrivilege::privilege(ObjectPrivilege::Set);
         if ordinal < 4_000 {
             policy.public_grants.push(PublicGrant {
                 object: target,

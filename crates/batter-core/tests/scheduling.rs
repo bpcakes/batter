@@ -1,5 +1,7 @@
 //! Bounded process-contained exploration; seeds do not control Tokio scheduling.
 
+use crate::closure_races::ClosureCause;
+
 #[path = "scheduling/admission.rs"]
 mod admission;
 #[path = "scheduling/closure_races.rs"]
@@ -186,7 +188,11 @@ async fn descendant_closure_before_deadline_requires_completion() {
         let report = case
             .bounded(closure_races::descendant_closure(
                 case,
-                failure,
+                if failure {
+                    ClosureCause::Failure
+                } else {
+                    ClosureCause::Drain
+                },
                 0,
                 std::future::ready(()),
             ))
@@ -207,9 +213,18 @@ async fn descendant_closure_after_deadline_reconciles_termination() {
             family: "controlled-closure",
         };
         let report = case
-            .bounded(closure_races::descendant_closure(case, failure, 0, async {
-                tokio::time::sleep(std::time::Duration::from_millis(1250)).await;
-            }))
+            .bounded(closure_races::descendant_closure(
+                case,
+                if failure {
+                    ClosureCause::Failure
+                } else {
+                    ClosureCause::Drain
+                },
+                0,
+                async {
+                    tokio::time::sleep(std::time::Duration::from_millis(1250)).await;
+                },
+            ))
             .await;
         assert!(!report.is_success());
         assert!(report.forced_cancellation);

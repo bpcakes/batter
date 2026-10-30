@@ -1,3 +1,5 @@
+use crate::verification::AuthorityAllowance;
+
 use super::*;
 use crate::verification::{
     AllowedPrivilege, ColumnPolicy, ObjectDefaults, PublicAllowance, PublicObject,
@@ -17,7 +19,7 @@ fn exact_manifest() -> ExactRoleManifest {
 }
 
 fn permissive_public_defaults() -> DiscoveryDefaults {
-    let public = |privilege| vec![AllowedPrivilege::new(privilege, false)];
+    let public = |privilege| vec![AllowedPrivilege::privilege(privilege)];
     DiscoveryDefaults {
         schemas: ObjectDefaults {
             public_privileges: public(ObjectPrivilege::Usage),
@@ -98,8 +100,8 @@ fn mixed_purpose_on_one_target_provisions_only_required_privileges() {
     assert_eq!(
         compiled.authority_policy().relations[0].privileges,
         vec![
-            AllowedPrivilege::new(ObjectPrivilege::Select, false),
-            AllowedPrivilege::new(ObjectPrivilege::Update, false),
+            AllowedPrivilege::privilege(ObjectPrivilege::Select),
+            AllowedPrivilege::privilege(ObjectPrivilege::Update),
         ]
     );
     assert_eq!(
@@ -140,14 +142,14 @@ fn contradictory_atom_and_object_options_are_rejected() {
             DeclarationPurpose::AllowedOnly,
         )
         .unwrap()
-        .allow_grant_option(true),
+        .grant_option(AuthorityAllowance::Allow),
         RelationGrantGroup::new(
             [name("records")],
             [ObjectPrivilege::Update],
             DeclarationPurpose::AllowedOnly,
         )
         .unwrap()
-        .allow_owner(true),
+        .ownership(AuthorityAllowance::Allow),
     ];
     for conflicting in cases {
         let mut manifest = exact_manifest();
@@ -194,8 +196,8 @@ fn compiled_policy_preserves_required_allowed_public_and_object_options() {
                 DeclarationPurpose::RequiredAndProvisioned,
             )
             .unwrap()
-            .allow_grant_option(true)
-            .allow_owner(true),
+            .grant_option(AuthorityAllowance::Allow)
+            .ownership(AuthorityAllowance::Allow),
         )
         .unwrap();
     manifest
@@ -206,7 +208,7 @@ fn compiled_policy_preserves_required_allowed_public_and_object_options() {
                 DeclarationPurpose::RequiredAndProvisioned,
             )
             .unwrap()
-            .allow_row_type_public_usage(true),
+            .row_type_public_usage(AuthorityAllowance::Allow),
         )
         .unwrap();
     manifest
@@ -228,7 +230,7 @@ fn compiled_policy_preserves_required_allowed_public_and_object_options() {
                 DeclarationPurpose::AllowedOnly,
             )
             .unwrap()
-            .allow_security_definer(true),
+            .security_definer(AuthorityAllowance::Allow),
         )
         .unwrap();
 
@@ -249,11 +251,11 @@ fn compiled_policy_preserves_required_allowed_public_and_object_options() {
     );
     assert_eq!(
         policy.database.privileges,
-        vec![AllowedPrivilege::new(ObjectPrivilege::Connect, false)]
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Connect)]
     );
     assert_eq!(
         policy.schemas[0].privileges,
-        vec![AllowedPrivilege::new(ObjectPrivilege::Usage, true)]
+        vec![AllowedPrivilege::grantable(ObjectPrivilege::Usage)]
     );
     assert!(policy.schemas[0].allow_owner);
     assert!(policy.relations[0].allow_row_type_public_usage);
@@ -261,14 +263,14 @@ fn compiled_policy_preserves_required_allowed_public_and_object_options() {
         policy.relations[0].columns,
         vec![ColumnPolicy {
             column: identifier("state"),
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Update, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Update)],
         }]
     );
     assert!(policy.routines[0].allow_security_definer);
     assert_eq!(policy.routines[0].routine, routine);
     assert!(policy.public_overrides.iter().any(|entry| {
         entry.object == PublicObject::Database
-            && entry.privileges == vec![AllowedPrivilege::new(ObjectPrivilege::Connect, false)]
+            && entry.privileges == vec![AllowedPrivilege::privilege(ObjectPrivilege::Connect)]
     }));
     assert_eq!(compiled.grant_plan().len(), 2);
 }
@@ -347,7 +349,7 @@ fn public_denies_override_defaults_without_conflating_each_privilege() {
         .unwrap();
     assert_eq!(
         relation.privileges,
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)]
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)]
     );
     assert!(
         policy
@@ -401,8 +403,8 @@ fn allowed_only_and_verification_ceilings_never_render_sql() {
         .add_database(
             DatabaseGrantSpec::new([ObjectPrivilege::Connect], DeclarationPurpose::AllowedOnly)
                 .unwrap()
-                .allow_grant_option(true)
-                .allow_owner(true),
+                .grant_option(AuthorityAllowance::Allow)
+                .ownership(AuthorityAllowance::Allow),
         )
         .unwrap();
     manifest
@@ -413,7 +415,7 @@ fn allowed_only_and_verification_ceilings_never_render_sql() {
                 DeclarationPurpose::AllowedOnly,
             )
             .unwrap()
-            .allow_owner(true),
+            .ownership(AuthorityAllowance::Allow),
         )
         .unwrap();
     let compiled = manifest.compile().unwrap();
@@ -444,7 +446,7 @@ fn allowed_only_invalid_privileges_and_invalid_defaults_fail() {
     );
 
     let mut defaults = DiscoveryDefaults::default();
-    defaults.columns.privileges = vec![AllowedPrivilege::new(ObjectPrivilege::Delete, false)];
+    defaults.columns.privileges = vec![AllowedPrivilege::privilege(ObjectPrivilege::Delete)];
     let mut manifest = exact_manifest();
     manifest.set_discovery_defaults(defaults).unwrap();
     assert_eq!(
@@ -607,7 +609,7 @@ fn empty_group_targets_and_overlong_identifiers_fail_before_compilation() {
 
 #[test]
 fn duplicate_default_privileges_are_idempotent_but_grant_option_conflicts_fail() {
-    let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
+    let select = AllowedPrivilege::privilege(ObjectPrivilege::Select);
     let mut defaults = DiscoveryDefaults::default();
     defaults.relations.privileges = vec![select, select];
     let mut manifest = exact_manifest();
@@ -625,7 +627,7 @@ fn duplicate_default_privileges_are_idempotent_but_grant_option_conflicts_fail()
 
     let mut defaults = DiscoveryDefaults::default();
     defaults.relations.privileges =
-        vec![select, AllowedPrivilege::new(ObjectPrivilege::Select, true)];
+        vec![select, AllowedPrivilege::grantable(ObjectPrivilege::Select)];
     let mut manifest = exact_manifest();
     manifest.set_discovery_defaults(defaults).unwrap();
     assert_eq!(
@@ -657,8 +659,8 @@ fn normalized_public_overrides_include_one_exact_row_type_target() {
             PublicAllowance {
                 object: PublicObject::Relation(name("records")),
                 privileges: vec![
-                    AllowedPrivilege::new(ObjectPrivilege::Select, false),
-                    AllowedPrivilege::new(ObjectPrivilege::Update, false),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Select),
+                    AllowedPrivilege::privilege(ObjectPrivilege::Update),
                 ],
             },
             PublicAllowance {
@@ -672,7 +674,7 @@ fn normalized_public_overrides_include_one_exact_row_type_target() {
 #[test]
 fn ownership_safeguard_is_retained_outside_the_low_level_policy() {
     let mut manifest = exact_manifest();
-    manifest.deny_current_database_ownership(true);
+    manifest.database_ownership(AuthorityAllowance::Deny);
     let compiled = manifest.compile().unwrap();
     assert!(compiled.denies_current_database_ownership());
     assert!(!compiled.authority_policy().database.allow_owner);

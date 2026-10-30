@@ -1,5 +1,7 @@
 //! Library-ordered migrate-then-apply on one leased connection.
 
+use crate::CompletionStatus;
+
 mod drops;
 
 #[cfg(test)]
@@ -196,8 +198,9 @@ pub(crate) async fn migrate_and_apply<E: From<ManagedApplyError>>(
     migrator: &sqlx::migrate::Migrator,
     manifest: &ManagedObjectManifest,
     application: impl AsyncFnOnce(&mut PgConnection, &ManagedObjectManifest) -> Result<(), E>,
-    return_to_pool: bool,
+    return_to_pool: ConnectionDisposition,
 ) -> Result<AppliedManagedObjects, E> {
+    let return_to_pool = return_to_pool == ConnectionDisposition::ReturnToPool;
     // One session lock spans both phases, so a concurrent apply of the same
     // ledger cannot land between this connection's migrations and objects.
     // Every error below returns while it is held; dropping the lease retires
@@ -235,7 +238,13 @@ pub(crate) async fn migrate_and_apply<E: From<ManagedApplyError>>(
         .bind(key)
         .fetch_one(lease.connection_mut())
         .await;
-    lease.finish_query(matches!(unlocked, Ok(true))).await;
+    lease
+        .finish_query(if matches!(unlocked, Ok(true)) {
+            CompletionStatus::Succeeded
+        } else {
+            CompletionStatus::Failed
+        })
+        .await;
     Ok(applied)
 }
 
@@ -597,4 +606,10 @@ async fn record(
     .await
     .map(|_| ())
     .map_err(statement)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectionDisposition {
+    ReturnToPool,
+    Close,
 }

@@ -27,7 +27,7 @@ pub(crate) async fn check_public_relation_columns(
     )
     .await?;
     let report = verify(login_a, policy).await?;
-    require(
+    require!(
         report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.subject.as_deref() == Some(names.login_a.as_str())
@@ -68,7 +68,7 @@ pub(crate) async fn check_row_type_grants(
         }
     }
     let row_type_report = verify(login_a, &row_type_denied).await?;
-    require(
+    require!(
         row_type_report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.subject.as_deref() == Some("public")
@@ -92,7 +92,7 @@ pub(crate) async fn check_row_type_grants(
     )
     .await?;
     let direct_row_type_report = verify(login_a, broad).await?;
-    require(
+    require!(
         direct_row_type_report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.subject.as_deref() == Some(names.login_a.as_str())
@@ -107,11 +107,11 @@ pub(crate) async fn check_row_type_grants(
     let mut explicit_row_type = broad.clone();
     explicit_row_type.authority.types.push(TypePolicy {
         type_name: QualifiedName::new(&names.schema_a, &names.table_a)?,
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)],
         allow_owner: false,
     });
     let explicit_row_type_report = verify(login_a, &explicit_row_type).await?;
-    require(
+    require!(
         explicit_row_type_report.status() == VerificationStatus::WithinDeclaredPolicy,
         "an explicit row-type policy did not compose with the relation PUBLIC allowance",
     )?;
@@ -164,7 +164,7 @@ pub(crate) async fn check_public_routine(
         policy
     };
     let public_report = verify(login_a, &public_denied).await?;
-    require(
+    require!(
         public_report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.subject.as_deref() == Some("public")
@@ -177,7 +177,7 @@ pub(crate) async fn check_public_routine(
         "PUBLIC-only routine EXECUTE was not observed",
     )?;
     let public_allowed_report = verify(login_a, broad).await?;
-    require(
+    require!(
         public_allowed_report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.privilege == Some(ObjectPrivilege::Execute)
@@ -208,7 +208,7 @@ pub(crate) async fn check_public_routine(
     )
     .await?;
     let owner_only_report = verify(login_a, broad).await?;
-    require(
+    require!(
         owner_only_report.findings().iter().any(|item| {
             item.kind == FindingKind::Privilege
                 && item.subject.is_none()

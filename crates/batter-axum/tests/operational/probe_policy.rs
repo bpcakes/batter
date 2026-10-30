@@ -41,8 +41,9 @@ fn request_policy(handle: &ShutdownHandle) -> RequestPolicy {
 async fn private_boundary(
     handle: &ShutdownHandle,
     probe_policy: Option<PrivateResponsePolicy>,
-    rendered: bool,
+    rendered: ProbeRendering,
 ) -> InProcessClient {
+    let rendered = rendered == ProbeRendering::Custom;
     let private = PrivateResponsePolicy::NoReferrer;
     let group = GroupPolicy::browser(
         request_policy(handle),
@@ -139,7 +140,8 @@ async fn body_text(response: Response) -> String {
 
 /// Drive every method against both probes in one phase, returning the
 /// completion-event count so exactly one observation per request is provable.
-fn exercise(rendered: bool, phase: Phase) -> usize {
+fn exercise(rendered_choice: ProbeRendering, phase: Phase) -> usize {
+    let rendered = rendered_choice == ProbeRendering::Custom;
     let capture = Capture::new();
     let requests = capture.block_on(async move {
         let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
@@ -149,8 +151,12 @@ fn exercise(rendered: bool, phase: Phase) -> usize {
         if matches!(phase, Phase::Draining) {
             handle.request();
         }
-        let client =
-            private_boundary(&handle, Some(PrivateResponsePolicy::NoReferrer), rendered).await;
+        let client = private_boundary(
+            &handle,
+            Some(PrivateResponsePolicy::NoReferrer),
+            rendered_choice,
+        )
+        .await;
         let mut count = 0;
         for path in ["/live", "/ready"] {
             for method in &PROBE_METHODS {
@@ -188,7 +194,17 @@ fn exercise(rendered: bool, phase: Phase) -> usize {
 fn selected_policy_covers_every_probe_method_in_every_phase() {
     for rendered in [false, true] {
         for phase in [Phase::Starting, Phase::Ready, Phase::Draining] {
-            assert_eq!(exercise(rendered, phase), 8);
+            assert_eq!(
+                exercise(
+                    if rendered {
+                        ProbeRendering::Custom
+                    } else {
+                        ProbeRendering::Default
+                    },
+                    phase
+                ),
+                8
+            );
         }
     }
 }
@@ -196,7 +212,12 @@ fn selected_policy_covers_every_probe_method_in_every_phase() {
 #[tokio::test]
 async fn probes_stay_outside_admission_while_guarded_work_is_rejected() {
     let handle = ShutdownHandle::new_unapproved();
-    let client = private_boundary(&handle, Some(PrivateResponsePolicy::NoReferrer), false).await;
+    let client = private_boundary(
+        &handle,
+        Some(PrivateResponsePolicy::NoReferrer),
+        ProbeRendering::Default,
+    )
+    .await;
 
     // The probe answers its own 503 with an empty body, not the admission
     // envelope that a guarded route receives while unapproved.
@@ -215,7 +236,7 @@ async fn probes_stay_outside_admission_while_guarded_work_is_rejected() {
 async fn an_unselected_policy_leaves_probe_responses_exactly_as_before() {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
-    let client = private_boundary(&handle, None, false).await;
+    let client = private_boundary(&handle, None, ProbeRendering::Default).await;
     for method in &PROBE_METHODS {
         let response = client.request(probe(method, "/live")).await;
         assert_eq!(
@@ -268,4 +289,10 @@ async fn the_last_selected_policy_wins() {
     let response = client.request(probe(&Method::OPTIONS, "/live")).await;
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     assert_private(response.headers(), "same-origin");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProbeRendering {
+    Custom,
+    Default,
 }

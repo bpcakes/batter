@@ -29,12 +29,17 @@ pub async fn phase<T, E>(
 
 pub async fn detached_sessions() -> ProbeResult {
     for native in [true, false] {
-        detached_case(native).await?;
+        detached_case(if native {
+            SessionKind::Native
+        } else {
+            SessionKind::Scoped
+        })
+        .await?;
     }
     Ok(())
 }
 
-async fn detached_case(native: bool) -> ProbeResult {
+async fn detached_case(native: SessionKind) -> ProbeResult {
     let harness = super::harness().await?;
     let admin = PgPoolOptions::new()
         .max_connections(1)
@@ -113,7 +118,14 @@ async fn observe_detached(
     let report = batter::test_support::finish(report, observations)
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
     assert!(joined.is_err_and(|error| error.is_cancelled()));
-    assert_session_retention(pending, retained?, &sessions, [pid, blocker_pid]);
+    assert_session_retention(
+        SessionEvidence {
+            pending,
+            retained: retained?,
+        },
+        &sessions,
+        [pid, blocker_pid],
+    );
     assert_detached_report(&report, &name);
     Ok(())
 }
@@ -210,9 +222,10 @@ type DetachedResources = (
 
 async fn detached_body(
     scope: &mut batter::sqlx::test_support::FixtureScope,
-    native: bool,
+    native: SessionKind,
     send: oneshot::Sender<DetachedResources>,
 ) -> Result<(), FixtureError> {
+    let native = native == SessionKind::Native;
     // Two separately accounted application connections. The independent admin
     // observer has its own one-slot suite budget, outside the closing pools.
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1); 2], 0)?;
@@ -335,9 +348,14 @@ async fn close_pair(pools: &[PgPool]) -> ProbeResult {
     Ok(())
 }
 
-fn assert_session_retention(pending: bool, retained: bool, sessions: &[i32], pids: [i32; 2]) {
-    assert!(pending);
-    assert!(retained);
+struct SessionEvidence {
+    pending: bool,
+    retained: bool,
+}
+
+fn assert_session_retention(evidence: SessionEvidence, sessions: &[i32], pids: [i32; 2]) {
+    assert!(evidence.pending);
+    assert!(evidence.retained);
     for pid in pids {
         assert!(sessions.contains(&pid));
     }
@@ -370,4 +388,10 @@ fn combine_observations(results: [ProbeResult; 6]) -> Result<(), fixture_run::Pr
                 .map_err(|error| fixture_run::ProbeError::new(Box::new(error)));
     }
     combined
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionKind {
+    Native,
+    Scoped,
 }

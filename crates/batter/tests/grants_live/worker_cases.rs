@@ -180,7 +180,7 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             },
         )
         .await?;
-        require(
+        require!(
             outcome.next_run_number == claim.run_number + 1,
             &format!("continuation did not advance the run: {outcome:?}"),
         )?;
@@ -228,7 +228,7 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             ),
         )
         .await?;
-        require(dead_lettered == 1, "no dead-letter row was written")?;
+        require!(dead_lettered == 1, "no dead-letter row was written")?;
 
         // Releasing an unstarted claim deletes its attempt row.
         let released_id = jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload))
@@ -252,7 +252,7 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             ),
         )
         .await?;
-        require(attempts == 0, "the unstarted claim's attempt row survived")?;
+        require!(attempts == 0, "the unstarted claim's attempt row survived")?;
 
         // Execution resource claims are acquired and released by the trigger.
         let resource_id = jobs::enqueue_job_with_execution_resource(
@@ -272,7 +272,7 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             ),
         )
         .await?;
-        require(held == 1, "no execution resource claim was recorded")?;
+        require!(held == 1, "no execution resource claim was recorded")?;
         jobs::complete_job_success(
             worker,
             claim.id,
@@ -290,7 +290,7 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             ),
         )
         .await?;
-        require(
+        require!(
             released == 0,
             "the installed release trigger could not delete the resource claim",
         )?;
@@ -304,15 +304,15 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         // Reaping always runs its bounded coordination cleanup, whose failures are
         // diagnostics rather than errors, so assert on the detailed result.
         let reaped = jobs::reap_expired_leases_with_diagnostics(worker, 10, 1).await?;
-        require(
+        require!(
             reaped.summary.processed >= 1,
             "the reaper processed no expired lease",
         )?;
-        require(
+        require!(
             reaped.cleanup_errors.is_empty(),
             &format!("the reaper retained cleanup errors: {:?}", reaped.cleanup_errors),
         )?;
-        require(
+        require!(
             reaped.deferred_row_errors.is_empty(),
             &format!("the reaper deferred rows: {:?}", reaped.deferred_row_errors),
         )?;
@@ -356,7 +356,7 @@ async fn require_status(
         ),
     )
     .await?;
-    require(
+    require!(
         observed == expected,
         &format!("job {job} is {observed}, expected {expected}"),
     )
@@ -423,7 +423,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         )
         .await?;
         transaction.commit().await?;
-        require(
+        require!(
             report.disabled_absent_job_types.len() == 1,
             &format!("exact catalog disable did not report one job type: {report:?}"),
         )?;
@@ -435,7 +435,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
             ),
         )
         .await?;
-        require(!enabled, "the absent definition was not disabled")?;
+        require!(!enabled, "the absent definition was not disabled")?;
 
         // The single-definition catalog upsert is the same selection's work, so
         // its conflict-update path runs under the restricted login too.
@@ -452,7 +452,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
             ),
         )
         .await?;
-        require(
+        require!(
             version == 2,
             &format!("the definition version is {version}"),
         )?;
@@ -472,7 +472,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
             10,
         )
         .await?;
-        require(
+        require!(
             promotion.total_promoted == 1,
             &format!("promotion did not enqueue the intent: {promotion:?}"),
         )?;
@@ -514,11 +514,11 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         )
         .await?;
         transaction.commit().await?;
-        require(
+        require!(
             synced.synced_schedule_names == [SCHEDULE.to_owned()],
             &format!("schedule sync reported {synced:?}"),
         )?;
-        require(
+        require!(
             deactivated == [RETIRED_SCHEDULE.to_owned()],
             &format!("exact schedule deactivation reported {deactivated:?}"),
         )?;
@@ -528,7 +528,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         )))
         .fetch_all(&probe)
         .await?;
-        require(
+        require!(
             active
                 == [
                     (RETIRED_SCHEDULE.to_owned(), false),
@@ -541,7 +541,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         // materializes its job and records the fire.
         let mut transaction = dispatch_database.pool().begin().await?;
         let due = jobs::claim_due_schedules_tx(&mut transaction, now, 10).await?;
-        require(
+        require!(
             due.iter().any(|record| record.id == schedule.id),
             "the due schedule was not claimable",
         )?;
@@ -554,7 +554,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         )
         .await?;
         transaction.commit().await?;
-        require(marked, "the fired schedule was not recorded")?;
+        require!(marked, "the fired schedule was not recorded")?;
 
         // Each selection is refused the others' authority, so the three logins
         // are genuinely narrower than their union.

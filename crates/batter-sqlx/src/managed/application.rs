@@ -1,5 +1,7 @@
 //! Scoped application work inside the existing managed transaction.
 
+use crate::managed::ConnectionDisposition;
+
 use super::{
     AppliedManagedObjects, ManagedApplyError, ManagedObjectManifest, PublicExecute, apply, catalog,
 };
@@ -79,7 +81,7 @@ pub(crate) async fn migrate_and_apply_with<E>(
         migrator,
         manifest,
         async |connection, manifest| protected_work(connection, manifest, work).await,
-        false,
+        ConnectionDisposition::Close,
     )
     .await
 }

@@ -1,3 +1,6 @@
+use crate::verification::authority::privileges::SuperuserAllowance;
+use crate::verification::authority::required::RolePower;
+
 use super::super::database::ParameterCatalog;
 use super::super::{DatabaseObject, Membership, RelationObject, RoleInfo};
 use super::*;
@@ -90,14 +93,26 @@ fn required_privilege_uses_effective_current_role_inheritance_without_set_or_adm
             grant_option: false,
         }];
         assert_eq!(
-            has_privilege(&snapshot, &parameters, &inherited, false, &required),
+            has_privilege(
+                &snapshot,
+                &parameters,
+                &inherited,
+                RolePower::Ordinary,
+                &required
+            ),
             [0, 2, 3].contains(&grantee),
             "grantee {grantee}"
         );
     }
     snapshot.relations[0].acl.clear();
     assert!(
-        !has_privilege(&snapshot, &parameters, &inherited, false, &required),
+        !has_privilege(
+            &snapshot,
+            &parameters,
+            &inherited,
+            RolePower::Ordinary,
+            &required
+        ),
         "ownership must not restore a revoked ordinary privilege"
     );
     let policy = AuthorityPolicy {
@@ -128,7 +143,7 @@ fn unknown_custom_context_cannot_prove_required_authority_even_with_an_acl() {
     let policy = AuthorityPolicy {
         parameters: vec![ParameterPolicy {
             parameter: parameter.clone(),
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
         }],
         required_privileges: vec![RequiredPrivilege {
             object: PublicObject::Parameter(parameter),
@@ -168,7 +183,7 @@ fn unknown_custom_context_cannot_prove_required_authority_even_with_an_acl() {
             &parameters,
             &graph,
             &policy,
-            false,
+            SuperuserAllowance::Deny,
             &mut findings,
         ))
         .unwrap();

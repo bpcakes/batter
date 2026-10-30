@@ -1,3 +1,5 @@
+use crate::verification::authority::MigrationCoverage;
+
 use super::*;
 use crate::verification::authority::{AclEntry, Membership, TypeObject, evaluate_snapshot};
 use crate::verification::{
@@ -65,7 +67,7 @@ fn large_snapshot() -> (
         .defaults
         .types
         .privileges
-        .push(AllowedPrivilege::new(ObjectPrivilege::Usage, false));
+        .push(AllowedPrivilege::privilege(ObjectPrivilege::Usage));
     (snapshot, policy)
 }
 
@@ -75,7 +77,7 @@ async fn loaded_evaluation_yields_and_cancellation_wins_before_a_report() {
     let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(30)).unwrap();
     let context = owner.context().clone();
     let operation = context.run("test.evaluation", |_| {
-        evaluate_snapshot(snapshot, &policy, Vec::new(), false)
+        evaluate_snapshot(snapshot, &policy, Vec::new(), MigrationCoverage::Excluded)
     });
     tokio::pin!(operation);
     // The first poll enters the real post-load evaluator and must yield before
@@ -95,7 +97,7 @@ async fn loaded_evaluation_observes_deadline_after_its_first_poll() {
         .unwrap()
         .into_context();
     let operation = context.run("test.evaluation", |_| {
-        evaluate_snapshot(snapshot, &policy, Vec::new(), false)
+        evaluate_snapshot(snapshot, &policy, Vec::new(), MigrationCoverage::Excluded)
     });
     tokio::pin!(operation);
     assert!(futures_util::poll!(&mut operation).is_pending());
@@ -118,7 +120,13 @@ fn many_roles_and_objects_finish_and_retain_a_late_grant_option() {
         grant_option: true,
     }]
     .into();
-    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    let report = run(evaluate_snapshot(
+        snapshot,
+        &policy,
+        Vec::new(),
+        MigrationCoverage::Excluded,
+    ))
+    .unwrap();
     assert_eq!(report.findings().len(), 1);
     let finding = &report.findings()[0];
     assert_eq!(finding.kind, FindingKind::GrantOption);
@@ -146,7 +154,7 @@ fn near_capacity_parameter_inventory_indexes_missing_checks_linearly() {
         };
         let mut privileges = Vec::new();
         if ordinal == 1 {
-            privileges.push(AllowedPrivilege::new(ObjectPrivilege::Set, false));
+            privileges.push(AllowedPrivilege::privilege(ObjectPrivilege::Set));
         }
         policy.parameters.push(ParameterPolicy {
             parameter: ParameterName::new(name.clone()).unwrap(),
@@ -182,7 +190,13 @@ fn near_capacity_parameter_inventory_indexes_missing_checks_linearly() {
     let policy = policy.build().unwrap();
 
     let captured_count = snapshot.parameters.len();
-    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    let report = run(evaluate_snapshot(
+        snapshot,
+        &policy,
+        Vec::new(),
+        MigrationCoverage::Excluded,
+    ))
+    .unwrap();
 
     // The full evaluator visits captured objects once to index and once to
     // inspect, probes each declaration and checks the one custom requirement.
@@ -285,7 +299,13 @@ fn findings_preserve_distinct_dotted_and_quoted_catalog_identities() {
         discovery: DiscoveryScope::UserSchemas,
         ..AuthorityPolicy::default()
     };
-    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    let report = run(evaluate_snapshot(
+        snapshot,
+        &policy,
+        Vec::new(),
+        MigrationCoverage::Excluded,
+    ))
+    .unwrap();
     let names: std::collections::HashSet<_> = report
         .findings()
         .iter()
@@ -334,7 +354,13 @@ fn relation_ownership_is_reported_once_without_column_amplification() {
         ..AuthorityPolicy::default()
     };
 
-    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    let report = run(evaluate_snapshot(
+        snapshot,
+        &policy,
+        Vec::new(),
+        MigrationCoverage::Excluded,
+    ))
+    .unwrap();
     assert_eq!(
         report
             .findings()
@@ -384,7 +410,13 @@ fn allowed_relation_owner_may_hold_an_explicit_column_grant() {
         ..AuthorityPolicy::default()
     };
 
-    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    let report = run(evaluate_snapshot(
+        snapshot,
+        &policy,
+        Vec::new(),
+        MigrationCoverage::Excluded,
+    ))
+    .unwrap();
     assert!(!report.findings().iter().any(|finding| {
         finding.object.as_deref() == Some("\"service\".\"records\".\"status\"")
     }));
@@ -415,13 +447,13 @@ async fn excessive_real_evaluation_returns_an_error_instead_of_a_partial_report(
         });
         policy.parameters.push(ParameterPolicy {
             parameter: ParameterName::new(name).unwrap(),
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
+            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Set)],
         });
     }
     snapshot.parameters = ParameterCatalog::try_from_objects(captured_parameters).unwrap();
     policy.validate().unwrap();
     assert!(matches!(
-        evaluate_snapshot(snapshot, &policy, Vec::new(), false).await,
+        evaluate_snapshot(snapshot, &policy, Vec::new(), MigrationCoverage::Excluded).await,
         Err(VerificationError::EvaluationCapacity)
     ));
 }
@@ -430,7 +462,7 @@ async fn excessive_real_evaluation_returns_an_error_instead_of_a_partial_report(
 fn policy_limits_bound_nested_input_and_repeated_default_expansion() {
     let mut repeated_defaults = AuthorityPolicyBuilder::default();
     repeated_defaults.defaults.types.privileges =
-        vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false); 33];
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage); 33];
     assert!(matches!(
         repeated_defaults.build(),
         Err(crate::verification::PolicyError::AuthorityCapacity)

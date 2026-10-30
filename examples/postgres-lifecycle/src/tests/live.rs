@@ -1,6 +1,8 @@
 //! Explicit live checks: external provisioning and no test bypass. Only the
 //! schema-stage case applies the example's own migration and managed objects.
 //! Each pool is created inside protected startup through the example's owner.
+use crate::tests::ComponentResult;
+
 use super::*;
 use batter::sqlx::verification::FindingKind;
 use tokio::sync::oneshot;
@@ -53,7 +55,7 @@ fn assert_division_error(error: &BoxError) {
 async fn success_closes_the_live_pool_before_exit() {
     let connection = connection();
     let (publish, published) = oneshot::channel();
-    let result = owned_startup(supervisor(false), move |scope| {
+    let result = owned_startup(supervisor(ComponentResult::Success), move |scope| {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 let pool = database_pool(scope, connection)?;
@@ -82,7 +84,7 @@ async fn success_closes_the_live_pool_before_exit() {
 async fn startup_database_error_retains_failed_cleanup_and_closes_the_pool() {
     let connection = connection();
     let (publish, published) = oneshot::channel();
-    let result = owned_startup(supervisor(false), move |scope| {
+    let result = owned_startup(supervisor(ComponentResult::Success), move |scope| {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 let pool = database_pool(scope, connection)?;
@@ -204,7 +206,7 @@ async fn note_checked_at_commit(pool: &sqlx::PgPool) -> Result<(), BoxError> {
 async fn schema_stage_applies_managed_objects_and_gates_readiness() {
     let connection = connection();
     let (publish, published) = oneshot::channel();
-    let result = owned_startup(supervisor(false), move |scope| {
+    let result = owned_startup(supervisor(ComponentResult::Success), move |scope| {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 let pool = database_pool(scope, connection)?;

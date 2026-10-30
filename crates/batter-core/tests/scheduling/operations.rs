@@ -51,7 +51,9 @@ pub async fn hierarchy_and_drop(case: Case) {
     case.event("downward-cancellation-and-drop-checked");
 }
 
-pub async fn branch_priority(case: Case, cancel: bool, expire: bool) {
+pub async fn branch_priority(case: Case, cancel: CancellationState, expire: Expiry) {
+    let cancel = cancel == CancellationState::Cancelled;
+    let expire = expire == Expiry::Expired;
     let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
         .unwrap()
         .into_context();
@@ -176,4 +178,16 @@ pub async fn bulkhead_preflight(case: Case, delay: u64) {
     assert!(bulkhead.enter(&fresh, Admission::Reject).await.is_ok());
     assert!(fresh.check().is_ok());
     case.event("bulkhead-race-no-leak");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CancellationState {
+    Cancelled,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Expiry {
+    Expired,
+    Active,
 }
