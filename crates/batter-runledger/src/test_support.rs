@@ -38,7 +38,8 @@ use uuid::Uuid;
 /// Lease owner recorded in the context of every invocation driven here.
 const WORKER_ID: &str = "test-support";
 
-/// One handler invocation declared for a test: a budget and a resume snapshot.
+/// One handler invocation declared for a test: a budget, the claimed job's
+/// context and its resume snapshot.
 ///
 /// [`Self::execute`] is the whole drive. It creates one [`JobInvocationOwner`]
 /// for the invocation, so [`JobExecution::invocation`] is always `Some` and
@@ -169,12 +170,9 @@ impl HandlerInvocation {
     /// The budget is accepted as any operation budget is: zero and durations
     /// longer than one year are rejected here, before any handler runs.
     pub fn new(budget: Duration) -> Result<Self, ConfigurationError> {
-        // The same acceptance as every Batter root budget. The instant is not
-        // kept: execution, not declaration, starts the clock.
-        RootDeadline::after(budget)?;
-        Ok(Self {
+        Self::for_context(
             budget,
-            context: JobContext {
+            JobContext {
                 job_id: Uuid::now_v7(),
                 run_number: 1,
                 attempt: 1,
@@ -182,7 +180,104 @@ impl HandlerInvocation {
                 worker_id: WORKER_ID.to_owned(),
                 checkpoint: None,
             },
-        })
+        )
+    }
+
+    /// Declare one invocation of a job the worker claimed with `context`,
+    /// whose native deadline is `budget` after [`Self::execute`] is first
+    /// polled.
+    ///
+    /// Use it for a handler that reads the job's identity: its organization, a
+    /// later run or attempt, or the lease (job, run, attempt and worker) that
+    /// fences the handler's own durable writes. The handler receives `context`
+    /// unchanged, including its checkpoint, which [`Self::with_checkpoint`]
+    /// then replaces alone. A claimed job's run number and attempt are always
+    /// positive, so a context with either at or below zero is rejected here,
+    /// as is a budget [`Self::new`] rejects. Whether the identity names a
+    /// durable row stays the handler's concern: there is no lease here.
+    ///
+    /// ```
+    /// use batter_runledger::test_support::{HandlerExit, HandlerInvocation};
+    /// use runledger_core::jobs::{
+    ///     JobCompletion, JobContext, JobExecution, JobExecutionHandler, JobFailure, JobType,
+    /// };
+    /// use runledger_core::prelude::async_trait;
+    /// use serde_json::{Value, json};
+    /// use std::time::Duration;
+    /// use uuid::Uuid;
+    ///
+    /// // Works only for the organization that owns the job, and reports the attempt.
+    /// struct Owned;
+    ///
+    /// #[async_trait]
+    /// impl JobExecutionHandler for Owned {
+    ///     fn job_type(&self) -> JobType<'static> {
+    ///         JobType::new("example.owned")
+    ///     }
+    ///
+    ///     async fn execute(
+    ///         &self,
+    ///         execution: JobExecution<'_>,
+    ///         payload: Value,
+    ///     ) -> Result<JobCompletion, JobFailure> {
+    ///         let context = execution.context();
+    ///         let owner = context.organization_id.map(|owner| owner.to_string());
+    ///         if owner.as_deref() != payload.get("owner").and_then(Value::as_str) {
+    ///             return Err(JobFailure::terminal("example.foreign", "Not this owner's job."));
+    ///         }
+    ///         Ok(JobCompletion::with_output(json!({ "attempt": context.attempt })))
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build()?.block_on(async {
+    /// let owner = Uuid::from_u128(7);
+    /// let claimed = JobContext {
+    ///     job_id: Uuid::from_u128(1),
+    ///     run_number: 1,
+    ///     attempt: 2,
+    ///     organization_id: Some(owner),
+    ///     worker_id: "worker-a".to_owned(),
+    ///     checkpoint: None,
+    /// };
+    /// let handler = Owned.into_job_handler();
+    /// let payload = json!({ "owner": owner.to_string() });
+    /// let run = HandlerInvocation::for_context(Duration::from_secs(5), claimed.clone())?
+    ///     .execute(&handler, payload.clone())
+    ///     .await;
+    /// let HandlerExit::Returned(Ok(completion)) = run.exit else {
+    ///     panic!("owned: {:?}", run.exit);
+    /// };
+    /// assert_eq!(completion.output(), Some(&json!({ "attempt": 2 })));
+    ///
+    /// // A declaration from `new` belongs to no organization.
+    /// let run = HandlerInvocation::new(Duration::from_secs(5))?
+    ///     .execute(&handler, payload)
+    ///     .await;
+    /// assert!(matches!(
+    ///     run.exit,
+    ///     HandlerExit::Returned(Err(failure)) if failure.code == "example.foreign"
+    /// ));
+    ///
+    /// // A claimed job's attempts start at 1.
+    /// let unclaimed = JobContext { attempt: 0, ..claimed };
+    /// assert!(HandlerInvocation::for_context(Duration::from_secs(5), unclaimed).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn for_context(budget: Duration, context: JobContext) -> Result<Self, ConfigurationError> {
+        // The same acceptance as every Batter root budget. The instant is not
+        // kept: execution, not declaration, starts the clock.
+        RootDeadline::after(budget)?;
+        // The queue row's own checks: `run_number > 0`, and `attempt > 0` once
+        // claimed.
+        if context.run_number <= 0 {
+            return Err(ConfigurationError::Zero("job run number"));
+        }
+        if context.attempt <= 0 {
+            return Err(ConfigurationError::Zero("job attempt"));
+        }
+        Ok(Self { budget, context })
     }
 
     /// Resume from a durable checkpoint, as a later run or attempt would.
@@ -254,8 +349,10 @@ impl HandlerInvocation {
         self
     }
 
-    /// The context the handler will receive: a fresh job identity, run 1,
-    /// attempt 1, no organization and the declared checkpoint.
+    /// The context the handler will receive: the one [`Self::for_context`]
+    /// declared, or from [`Self::new`] a fresh job identity, run 1, attempt 1,
+    /// no organization and worker `test-support`; either with the declared
+    /// checkpoint.
     #[must_use]
     pub fn context(&self) -> &JobContext {
         &self.context

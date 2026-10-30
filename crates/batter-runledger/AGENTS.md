@@ -18,7 +18,8 @@ ownership, durable job outcomes, registry/catalog policy and database provisioni
   Batter `OperationPhases`, and its typed `JobPhasesRejection`.
 - `src/test_support.rs` (feature `test-support`): `HandlerInvocation`, the
   worker-free drive of one handler to an exhaustive `HandlerExit`, with its
-  in-memory `PersistedProgress`.
+  in-memory `PersistedProgress`, for a fresh job (`new`) or a claimed job's
+  context (`for_context`).
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
 - `tests/job_phases.rs`: paused-time bridge arithmetic, rejection, phase,
   observer and isolation contracts through the native invocation owner.
@@ -64,8 +65,11 @@ classifications (`job.timeout_exceeded`, `job.handler_panic`, retries,
 continuations, dead letters) out of it: the facility reports what the handler
 did, not what the worker would persist. Progress writes merge like the queue
 row and are refused at the deadline; no lease exists, so lease loss stays
-unrepresentable. Do not add a second execution engine or configuration the
-worker does not have.
+unrepresentable. `for_context` passes the declared context through unchanged
+and rejects only what the queue row's own checks reject, a non-positive run
+number or attempt; whether the identity names a leased row stays the handler's
+concern. Do not add a second execution engine or configuration the worker does
+not have.
 The `native` module reexports the native packages themselves, never wrappers or
 copies, so facade and direct paths keep one type identity. Reachability is not
 ownership: keep `register_in` the protected path, keep the module documentation's

@@ -1,5 +1,10 @@
 use super::*;
+use batter::runledger::test_support::{HandlerExit, HandlerInvocation, HandlerRun};
+use runledger_core::jobs::JobContext;
 use serde_json::json;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[test]
@@ -225,50 +230,9 @@ fn admission_failures_preserve_distinct_native_causes() {
     }
 }
 
-/// Execution services that own the invocation's exit, as the native worker does.
-pub(super) struct Invocation {
-    deadline: std::time::Instant,
-    observation: runledger_core::jobs::JobInvocation,
-    owner: std::sync::Mutex<Option<runledger_core::jobs::JobInvocationOwner>>,
-}
-
-impl Invocation {
-    pub(super) fn new(budget: Duration) -> Self {
-        let owner = runledger_core::jobs::JobInvocationOwner::new();
-        Self {
-            deadline: (tokio::time::Instant::now() + budget).into_std(),
-            observation: owner.invocation(),
-            owner: std::sync::Mutex::new(Some(owner)),
-        }
-    }
-
-    /// Only the runtime ends an invocation; nothing derived from it can.
-    pub(super) fn end(&self) {
-        drop(self.owner.lock().expect("invocation owner").take());
-    }
-}
-
-#[async_trait]
-impl runledger_core::jobs::JobExecutionServices for Invocation {
-    fn deadline(&self) -> std::time::Instant {
-        self.deadline
-    }
-    fn remaining_budget(&self) -> Duration {
-        self.deadline
-            .saturating_duration_since(tokio::time::Instant::now().into_std())
-    }
-    async fn persist_progress(
-        &self,
-        _: runledger_core::jobs::JobExecutionUpdate<'_>,
-    ) -> Result<(), runledger_core::jobs::JobExecutionError> {
-        unreachable!("delivery probes write application state, not native progress")
-    }
-    fn invocation(&self) -> Option<runledger_core::jobs::JobInvocation> {
-        Some(self.observation.clone())
-    }
-}
-
 /// Custom services that predate the exit signal and keep the trait default.
+/// Neither the worker nor the handler test facility builds them; the control
+/// below pins the handler's refusal of them.
 struct Legacy(std::time::Instant);
 
 #[async_trait]
@@ -288,6 +252,74 @@ impl runledger_core::jobs::JobExecutionServices for Legacy {
     }
 }
 
+type ProbeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+type ProbeBody<T> = Box<dyn for<'a> FnOnce(JobExecution<'a>) -> ProbeFuture<'a, T> + Send>;
+
+/// A handler that runs one probe body and keeps its output for the test.
+struct Probe<T> {
+    body: Mutex<Option<ProbeBody<T>>>,
+    output: Arc<Mutex<Option<T>>>,
+}
+
+#[async_trait]
+impl<T: Send + 'static> JobExecutionHandler for Probe<T> {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new(DELIVERY_JOB_TYPE)
+    }
+
+    async fn execute(
+        &self,
+        execution: JobExecution<'_>,
+        _: Value,
+    ) -> Result<JobCompletion, JobFailure> {
+        let body = self
+            .body
+            .lock()
+            .expect("probe")
+            .take()
+            .expect("one invocation");
+        let output = body(execution).await;
+        *self.output.lock().expect("probe") = Some(output);
+        Ok(JobCompletion::success())
+    }
+}
+
+/// Runs `body` with the execution of one invocation of `context`, driven by
+/// the handler test facility as the worker drives a handler, and returns its
+/// output once that invocation has ended.
+pub(super) async fn in_invocation<T: Send + 'static>(
+    budget: Duration,
+    context: JobContext,
+    body: impl for<'a> FnOnce(JobExecution<'a>) -> ProbeFuture<'a, T> + Send + 'static,
+) -> T {
+    let output = Arc::new(Mutex::new(None));
+    let probe = Probe {
+        body: Mutex::new(Some(Box::new(body))),
+        output: Arc::clone(&output),
+    };
+    let run = HandlerInvocation::for_context(budget, context)
+        .expect("claimed context")
+        .execute(&probe.into_job_handler(), Value::Null)
+        .await;
+    assert!(
+        matches!(run.exit, HandlerExit::Returned(Ok(_))),
+        "probe exit: {:?}",
+        run.exit
+    );
+    assert!(run.exit_hook_panics.is_empty());
+    let output = output.lock().expect("probe").take();
+    output.expect("probe output")
+}
+
+/// The handler's own failure, observed before the deadline without hook panics.
+pub(super) fn returned_failure(run: HandlerRun) -> JobFailure {
+    assert!(run.exit_hook_panics.is_empty());
+    match run.exit {
+        HandlerExit::Returned(Err(failure)) => failure,
+        exit => panic!("expected the handler's own failure: {exit:?}"),
+    }
+}
+
 async fn offline_worker() -> Result<DeliveryWorker, batter::BoxError> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
@@ -302,7 +334,7 @@ async fn offline_worker() -> Result<DeliveryWorker, batter::BoxError> {
     ))
 }
 
-fn owned_payload() -> (runledger_core::jobs::JobContext, DeliveryJobPayload) {
+fn owned_payload() -> (JobContext, DeliveryJobPayload) {
     let payload = DeliveryJobPayload {
         version: DELIVERY_PAYLOAD_VERSION,
         delivery_id: Uuid::from_u128(2),
@@ -311,7 +343,7 @@ fn owned_payload() -> (runledger_core::jobs::JobContext, DeliveryJobPayload) {
         record_generation: 1,
         payload: json!({}),
     };
-    let context = runledger_core::jobs::JobContext {
+    let context = JobContext {
         job_id: Uuid::from_u128(1),
         run_number: 1,
         attempt: 1,
@@ -325,20 +357,16 @@ fn owned_payload() -> (runledger_core::jobs::JobContext, DeliveryJobPayload) {
 #[tokio::test(start_paused = true)]
 async fn rejected_derivation_starts_no_state_or_provider_work() -> Result<(), batter::BoxError> {
     let worker = offline_worker().await?;
+    let handler = worker.clone().into_job_handler();
     let (context, payload) = owned_payload();
     let value = serde_json::to_value(&payload)?;
-    // Exactly the reserve leaves no provider time; an ended invocation has none.
-    let exhausted = Invocation::new(FINAL_STATE_RESERVE);
-    let ended = Invocation::new(Duration::from_secs(10));
-    ended.end();
-    for services in [&exhausted, &ended] {
-        let failure = worker
-            .execute(JobExecution::new(&context, services), value.clone())
-            .await
-            .expect_err("no provider budget");
-        assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
-        assert_eq!(failure.code, CODE_OPERATION_BUDGET_EXHAUSTED);
-    }
+    // Exactly the reserve leaves no provider time.
+    let run = HandlerInvocation::for_context(FINAL_STATE_RESERVE, context.clone())?
+        .execute(&handler, value.clone())
+        .await;
+    let failure = returned_failure(run);
+    assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
+    assert_eq!(failure.code, CODE_OPERATION_BUDGET_EXHAUSTED);
     let legacy = Legacy((tokio::time::Instant::now() + Duration::from_secs(10)).into_std());
     let failure = worker
         .execute(JobExecution::new(&context, &legacy), value.clone())
@@ -347,12 +375,10 @@ async fn rejected_derivation_starts_no_state_or_provider_work() -> Result<(), ba
     assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Terminal);
     assert_eq!(failure.code, CODE_OPERATION_PHASES_UNAVAILABLE);
     // A derivable invocation reaches retained state, unreachable offline.
-    let live = Invocation::new(Duration::from_secs(10));
-    let failure = worker
-        .execute(JobExecution::new(&context, &live), value)
-        .await
-        .expect_err("offline state");
-    assert_eq!(failure.code, CODE_STATE_UNAVAILABLE);
+    let run = HandlerInvocation::for_context(Duration::from_secs(10), context)?
+        .execute(&handler, value)
+        .await;
+    assert_eq!(returned_failure(run).code, CODE_STATE_UNAVAILABLE);
     Ok(())
 }
 
@@ -365,17 +391,28 @@ async fn invocation_exit_reaches_provider_admission_and_calls() -> Result<(), ba
         .enter(independent.context(), Admission::Wait)
         .await?;
     let (context, payload) = owned_payload();
-    let services = Invocation::new(Duration::from_secs(60));
-    let phases = provider_phases(JobExecution::new(&context, &services)).expect("phases");
-    let mut waiting = std::pin::pin!(worker.admission.enter(phases.work(), Admission::Wait));
-    let first = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
-    assert!(
-        first.is_pending(),
-        "provider admission waits for the held slot"
-    );
-    services.end();
+    let admission = worker.admission.clone();
+    let (phases, waiting) = in_invocation(Duration::from_secs(60), context, move |execution| {
+        Box::pin(async move {
+            let phases = provider_phases(execution).expect("phases");
+            // Provider work that outlives the handler waits in its own task.
+            let work = phases.work().clone();
+            let waiting =
+                tokio::spawn(
+                    async move { admission.enter(&work, Admission::Wait).await.map(drop) },
+                );
+            tokio::task::yield_now().await;
+            assert!(
+                !waiting.is_finished(),
+                "provider admission waits for the held slot"
+            );
+            (phases, waiting)
+        })
+    })
+    .await;
+    // The invocation's exit, not the test, interrupts the waiting admission.
     assert!(matches!(
-        waiting.await,
+        waiting.await?,
         Err(AdmissionError::Interrupted(
             batter::operation::Interruption::Cancelled
         ))
@@ -401,31 +438,35 @@ async fn invocation_exit_reaches_provider_admission_and_calls() -> Result<(), ba
 async fn provider_work_expiry_leaves_the_final_state_reserve() -> Result<(), batter::BoxError> {
     let worker = offline_worker().await?;
     let (context, payload) = owned_payload();
-    let services = Invocation::new(Duration::from_secs(10));
-    let execution = JobExecution::new(&context, &services);
-    let phases = provider_phases(execution).expect("phases");
-    tokio::time::advance(Duration::from_secs(10) - FINAL_STATE_RESERVE).await;
-    let expired = worker
-        .admission
-        .enter(phases.work(), Admission::Wait)
-        .await
-        .expect_err("provider work expired");
-    assert!(matches!(
-        expired,
-        AdmissionError::Interrupted(batter::operation::Interruption::DeadlineExceeded)
-    ));
-    assert!(phases.finalization().check().is_ok());
-    assert_eq!(phases.finalization().remaining(), FINAL_STATE_RESERVE);
-    // The handler still records the retained state; offline storage refuses it.
-    let failure = worker
-        .admission_failure(
-            execution,
-            &payload,
-            ProviderEffectState::AwaitingAttempt,
-            expired,
-        )
-        .await
-        .expect_err("offline state");
+    let budget = Duration::from_secs(10);
+    let failure = in_invocation(budget, context, move |execution| {
+        Box::pin(async move {
+            let phases = provider_phases(execution).expect("phases");
+            tokio::time::advance(budget - FINAL_STATE_RESERVE).await;
+            let expired = worker
+                .admission
+                .enter(phases.work(), Admission::Wait)
+                .await
+                .expect_err("provider work expired");
+            assert!(matches!(
+                expired,
+                AdmissionError::Interrupted(batter::operation::Interruption::DeadlineExceeded)
+            ));
+            assert!(phases.finalization().check().is_ok());
+            assert_eq!(phases.finalization().remaining(), FINAL_STATE_RESERVE);
+            // The handler still records the retained state; offline storage refuses it.
+            worker
+                .admission_failure(
+                    execution,
+                    &payload,
+                    ProviderEffectState::AwaitingAttempt,
+                    expired,
+                )
+                .await
+                .expect_err("offline state")
+        })
+    })
+    .await;
     assert_eq!(failure.code, CODE_STATE_UNAVAILABLE);
     Ok(())
 }

@@ -1,19 +1,22 @@
 //! Progress persistence and declaration contracts of the worker-free handler
 //! drive: the in-memory row merges like the queue row, refuses writes at the
-//! deadline, starts from the declared checkpoint, and a budget is accepted
-//! like any root budget. Exit and dispatch contracts are in `handler_invocation.rs`.
+//! deadline, starts from the declared checkpoint, a budget is accepted like
+//! any root budget, and a claimed context reaches the handler unchanged once
+//! its run and attempt are positive. Exit and dispatch contracts are in
+//! `handler_invocation.rs`.
 
 use batter_core::ConfigurationError;
 use batter_runledger::test_support::{HandlerExit, HandlerInvocation, PersistedProgress};
 use runledger_core::jobs::{
-    JobCompletion, JobExecution, JobExecutionError, JobExecutionHandler, JobExecutionUpdate,
-    JobFailure, JobProgressValidationError, JobType,
+    JobCompletion, JobContext, JobExecution, JobExecutionError, JobExecutionHandler,
+    JobExecutionUpdate, JobFailure, JobProgressValidationError, JobType,
 };
 use runledger_core::prelude::async_trait;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::advance;
+use uuid::Uuid;
 
 const BUDGET: Duration = Duration::from_secs(10);
 
@@ -169,4 +172,99 @@ fn the_budget_is_accepted_like_any_operation_budget() {
         first.with_checkpoint(json!(1)).context().checkpoint,
         Some(json!(1))
     );
+}
+
+/// Reports the context it received.
+struct Identity;
+
+#[async_trait]
+impl JobExecutionHandler for Identity {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new("probe.identity")
+    }
+
+    async fn execute(
+        &self,
+        execution: JobExecution<'_>,
+        _payload: Value,
+    ) -> Result<JobCompletion, JobFailure> {
+        let context = serde_json::to_value(execution.context()).expect("context is JSON");
+        Ok(JobCompletion::with_output(context))
+    }
+}
+
+fn claimed() -> JobContext {
+    JobContext {
+        job_id: Uuid::from_u128(1),
+        run_number: 2,
+        attempt: 3,
+        organization_id: Some(Uuid::from_u128(4)),
+        worker_id: "probe-worker".to_owned(),
+        checkpoint: Some(json!({ "cursor": 5 })),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_claimed_context_reaches_the_handler_unchanged() {
+    let invocation = HandlerInvocation::for_context(BUDGET, claimed()).expect("claimed");
+    assert_eq!(invocation.context(), &claimed());
+    let run = invocation
+        .execute(&Identity.into_job_handler(), json!({}))
+        .await;
+    let HandlerExit::Returned(Ok(completion)) = run.exit else {
+        panic!("identity: {:?}", run.exit);
+    };
+    assert_eq!(
+        completion.output(),
+        Some(&serde_json::to_value(claimed()).expect("context is JSON"))
+    );
+    assert_eq!(
+        run.persisted.checkpoint,
+        claimed().checkpoint,
+        "the claimed checkpoint is the durable one until a commit"
+    );
+    assert!(run.exit_hook_panics.is_empty());
+
+    let resumed = HandlerInvocation::for_context(BUDGET, claimed())
+        .expect("claimed")
+        .with_checkpoint(json!({ "cursor": 6 }));
+    assert_eq!(
+        resumed.context(),
+        &JobContext {
+            checkpoint: Some(json!({ "cursor": 6 })),
+            ..claimed()
+        },
+        "a later checkpoint replaces only the checkpoint"
+    );
+}
+
+#[test]
+fn a_claimed_context_needs_a_positive_run_and_attempt() {
+    for (run_number, attempt, field) in [
+        (0, 1, "job run number"),
+        (-1, 1, "job run number"),
+        (1, 0, "job attempt"),
+        (1, -1, "job attempt"),
+    ] {
+        let context = JobContext {
+            run_number,
+            attempt,
+            ..claimed()
+        };
+        assert_eq!(
+            HandlerInvocation::for_context(BUDGET, context).map(|_| ()),
+            Err(ConfigurationError::Zero(field)),
+            "run {run_number}, attempt {attempt}"
+        );
+    }
+    assert!(matches!(
+        HandlerInvocation::for_context(Duration::ZERO, claimed()),
+        Err(ConfigurationError::Zero(_))
+    ));
+    let first = JobContext {
+        run_number: 1,
+        attempt: 1,
+        ..claimed()
+    };
+    assert!(HandlerInvocation::for_context(BUDGET, first).is_ok());
 }

@@ -1298,11 +1298,18 @@ execution could stand (questions 3 and 4).
 The canonical path is `batter_runledger::test_support::HandlerInvocation`,
 reachable as `batter::runledger::test_support` with the facade's
 `runledger-test-support` feature, so a consumer's development graph declares
-only `batter`. `new(budget)` is the one declaration; the budget is accepted
-through the same `RootDeadline::after` acceptance as every Batter root budget,
-so zero and over-long budgets are rejected before a handler exists, and
-`with_checkpoint` is the one optional input, the resume snapshot the worker
-would supply. `execute(&handler, payload)` consumes the declaration and owns the
+only `batter`. `new(budget)` declares a fresh job, and
+`for_context(budget, context)` the claimed job a handler reads: its
+organization, a later run or attempt, or the lease identity that fences the
+handler's own writes. Both accept the budget through the same
+`RootDeadline::after` acceptance as every Batter root budget, so zero and
+over-long budgets are rejected before a handler exists, and `for_context`
+rejects a non-positive run number or attempt, which the queue row's own checks
+exclude for a claimed job. `with_checkpoint` is the one optional input, the
+resume snapshot the worker would supply. Because the context is taken at
+construction, the checkpoint replaces only its own field: a builder that
+replaced the whole context would have let a later call silently discard an
+earlier checkpoint. `execute(&handler, payload)` consumes the declaration and owns the
 whole drive: it creates one `JobInvocationOwner`, builds services whose
 `deadline()`, `remaining_budget()`, progress writes and the enforcing timeout
 all read one instant set when the future is first polled, dispatches through
@@ -1337,9 +1344,11 @@ persisted row and the hook-panic report beside the exit. Nothing a handler or
 test reaches can end the invocation, because the owner is never exposed, and a
 declaration drives exactly one invocation, because `execute` consumes it.
 
-Against the review questions: the only validated input is rejected at
-declaration, and the payload and checkpoint are JSON the worker also accepts
-unvalidated; no ordering, paired end, deadline relationship or panic-report
+Against the review questions: the validated inputs are rejected at
+declaration, and the payload, the checkpoint and the rest of a declared context
+are values the worker also passes through from the row unvalidated; whether a
+declared identity names a leased row is the handler's own lease fencing, as it
+is under the worker; no ordering, paired end, deadline relationship or panic-report
 handling remains with the test, and exhaustive matching replaces a `Result`
 whose error could stand for three different exits; authority is a consumed
 declaration and an unreachable owner; library-owned execution is the only
@@ -1357,10 +1366,17 @@ authorizes no native runtime change. It sits behind the adapter's existing
 `test-support` feature, which already carries the native PostgreSQL test
 graph; that cost is recorded, not removed.
 
-Residuals. `JobContext::attempt` and `run_number` are fixed at 1, so behaviour
-that depends on a later attempt still needs custom services. The reference
-worker's and the facade-only consumer's own services recipes are unchanged in
-this task. Paused-time tests cover success, retryable and terminal failures,
+The two residuals recorded at first delivery are closed. A later run or
+attempt, an organization and a leased identity are declared through
+`for_context` instead of custom services, and both consumers that carried a
+copy of the recipe now use the facility. The facade-only consumer's job tests
+drive its registered handler, and run single steps on the invocation's own
+clock through a handler that derives the same phases. The reference worker's
+handler, admission and state probes each run inside an invocation of the
+owner-scoped or leased context they need. One custom-services value remains
+there as a negative control: services without an exit claim, which neither the
+worker nor the facility builds, must still be refused. Paused-time tests cover
+success, retryable and terminal failures,
 phase rejection without a work factory, destruction before work with a spawned
 observer, an elapsed budget, a parked handler future destroyed before the
 invocation ends on both of those exits, a budget that starts at the first poll
@@ -1369,9 +1385,13 @@ reading the same deadline, acceptance at and one nanosecond before the
 deadline for results and at it for panics, contained panics including one a
 hand-written dispatch raises before returning its future, opaque payloads with
 panicking destructors retained before and at the deadline, retained hook
-panics, progress merge and rejection, declared checkpoints, budget validation
-and typed, legacy and type-erased dispatch; the `with_checkpoint` doctest shows
-a declared checkpoint retained when nothing is committed; a compile-fail
+panics, progress merge and rejection, declared checkpoints, budget validation,
+a claimed context reaching the handler unchanged with a later checkpoint
+replacing only the checkpoint, non-positive run numbers and attempts rejected
+at declaration, and typed, legacy and type-erased dispatch; the
+`with_checkpoint` doctest shows a declared checkpoint retained when nothing is
+committed, and the `for_context` doctest an owner-scoped handler accepting its
+claimed context and refusing a fresh one; a compile-fail
 rustdoc rejects reaching the declaration's fields;
 `scripts/check_facade_features.py` proves facade reachability and identity.
 The exit is not total in one recorded case: a destructor that panics while the

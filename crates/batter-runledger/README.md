@@ -56,6 +56,9 @@ which stays an explicit application mapping.
 To test a handler without a worker, queue or database, select the `test-support`
 feature in `[dev-dependencies]` and drive the registered value through
 `test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`.
+A handler that reads its job's organization, attempt or lease declares that
+context with `HandlerInvocation::for_context(budget, context)`, which rejects a
+non-positive run number or attempt as the queue row does.
 It builds the real `JobExecution`: services that own the invocation's exit, so
 `job_phases` derives, a native deadline `budget` after execution starts, and
 in-memory progress persistence with the queue row's merge rule. It dispatches

@@ -38,6 +38,10 @@ Unix-only application is not a reusable database framework.
 - `src/delivery/worker.rs` owns provider admission, durable dispatch uncertainty,
   lookup-before-replay, generation fencing and terminal outcome projection;
   `src/delivery/worker/state.rs` owns its lease-fenced SQL state transitions.
+  `src/delivery/worker/tests.rs` drives the handler, and through `in_invocation`
+  each admission or state probe, with `batter::runledger::test_support`; its
+  only custom services are the negative control for services without an exit
+  claim.
 - `src/provider.rs` owns the selected HTTP effect protocol. It is application
   code, not a generic provider adapter or an exactly-once claim.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.

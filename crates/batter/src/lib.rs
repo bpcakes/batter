@@ -33,7 +33,7 @@
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
-//! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)` in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
+//! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
 //!
 //! An interruption selected before the Runledger runner returns local commit
 //! acknowledgement proves neither rollback nor permission to replay. When the
@@ -263,12 +263,13 @@ pub mod runledger {
     /// Drive one job handler in a test without a worker, queue or database.
     ///
     /// Enabled by `runledger-test-support` and owned by the Runledger adapter.
-    /// `HandlerInvocation::new(budget)` declares the native deadline, and
-    /// `execute` builds the real `JobExecution` with an owned exit signal,
-    /// dispatches the handler as the worker does, ends the invocation after
-    /// destroying the handler future, and returns an exhaustive `HandlerExit`
-    /// with the persisted progress and contained exit-hook panics. Durable
-    /// outcome policy stays in the worker. Select the feature only in
+    /// `HandlerInvocation::new(budget)` declares the native deadline for a fresh
+    /// job and `HandlerInvocation::for_context(budget, context)` for the claimed
+    /// job a handler reads. `execute` builds the real `JobExecution` with an
+    /// owned exit signal, dispatches the handler as the worker does, ends the
+    /// invocation after destroying the handler future, and returns an exhaustive
+    /// `HandlerExit` with the persisted progress and contained exit-hook panics.
+    /// Durable outcome policy stays in the worker. Select the feature only in
     /// `[dev-dependencies]`; see `native::test_support` for the resolver rule.
     ///
     /// ```

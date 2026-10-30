@@ -181,6 +181,10 @@ The driver orders or conservatively skips dependency cleanup; combined
 work and shutdown failures retain both causes without formatting their contents.
 The source-copy runner also executes completion failure controls and forces
 SQLx offline metadata for every temporary build, even with an ambient database URL.
+Its job tests select `runledger-test-support` only through the same `batter` in
+`[dev-dependencies]`, as the recipe above does, and drive the registered handler
+through `batter::runledger::test_support`; the runner fails if the consumer
+binary compiles native test support.
 `consumers/single_facade_harness.rs` owns the disposable database through
 `batter::runledger::native::test_support` and declares only `batter` as well;
 it selects the facade's `test-support` feature to combine child execution and
