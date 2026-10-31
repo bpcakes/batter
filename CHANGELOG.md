@@ -8,6 +8,31 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Run bounded blocking work through `Bulkhead::run_blocking` (`batter-0772`;
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#bounded-blocking-work-assessment-batter-0772)).
+  `run_blocking(context, admission, work)` admits under the caller's context
+  and `Admission` policy exactly as `enter` does, checks the context again
+  after a permit is granted, records one bulkhead decision, and moves the
+  permit into the closure handed to Tokio's blocking pool in the same poll.
+  The closure holds that capacity until it returns or unwinds, even when the
+  caller is cancelled, reaches its deadline or is dropped, and releases it
+  before the result is delivered; Batter never aborts it. The new exhaustive
+  `admission::BlockingError` has no `From` conversions and separates four
+  outcomes: `NotAdmitted` (refused before handoff; the closure was destroyed
+  uncalled), `NotStarted` (Tokio destroyed the admitted closure unstarted while
+  its runtime shut down, which Tokio does not guarantee to do), `Abandoned`
+  (the wait ended; the closure may still be running and keeps its permit) and
+  `Panicked` (the original payload, retained behind redacted formatting). The
+  closure's value is returned unconverted, so a fallible closure keeps its
+  concrete error inside `Ok(Err(error))`, and the closure runs under the
+  caller's tracing dispatcher in a `batter.blocking_work` span. Abandoned
+  closures are not process-owned: drain, dependent cleanup and shutdown reports
+  neither wait for nor report them. `Bulkhead::enter` keeps its signature and
+  behaviour; its rustdoc now directs synchronous CPU work and blocking I/O to
+  `run_blocking` and states that a permit moved into `spawn_blocking` by hand
+  leaves the context check and join handling to the caller. Additive API only:
+  no `Breaking:`, `Migration:` or shim applies.
+
 - Drive one job handler in a test without a worker, queue or database
   (`batter-3upk`, closing gap 7 of the
   [whole-application baseline](docs/evidence/whole-app-baseline-2026-10-09/README.md);

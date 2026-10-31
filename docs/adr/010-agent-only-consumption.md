@@ -1466,6 +1466,157 @@ drive destroys the handler future is not contained, as it is not in the worker,
 whose unwind boundary also covers polling only; a should-panic test pins this.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
+### Bounded blocking work assessment (`batter-0772`)
+
+[ADR-014](014-reuse-after-two-consumers.md#accepted-bounded-blocking-work)
+found the same hand-written helper in all three surveyed consumers: acquire a
+permit, move it into a `spawn_blocking` closure so capacity stays held until the
+closure returns, then await the join. The canonical path offered only
+`Bulkhead::enter`, whose rustdoc asked callers to hold the native permit "for
+the work's full lifetime" and enforced nothing. Holding it in the awaiting
+future compiles and is wrong: when the caller is cancelled or dropped while the
+closure runs, the permit is released and later callers oversubscribe the
+blocking pool. The negative control
+`awaiter_held_permit_is_released_while_its_blocking_work_runs` reproduces that
+release while the closure is still parked. Each copy also had to classify
+`JoinError` itself and, to honour its deadline, check its context after
+admission: `Wait` admission can return a permit after the deadline when its
+timer has not fired yet, as the control
+`enter_alone_can_grant_a_permit_after_an_unfired_deadline` shows. Under the
+review questions this is caller memory of an ownership transfer, a paired join, a deadline relationship and exhaustive outcome
+handling (question 2), where one library-owned execution can replace the helper
+(questions 3 and 4).
+
+The canonical path is `Bulkhead::run_blocking(context, admission, work)`,
+reachable as `batter::admission`. It admits with `enter`'s policy and preflight,
+checks the context again after a grant, records the one bulkhead decision after
+that check and then, in the same poll with no await in between, moves the permit
+into the closure it hands to Tokio's blocking pool. Neither the permit nor the
+`JoinHandle` is exposed, and Batter never aborts the task: Tokio documents that
+abort only "may" prevent an unstarted blocking task from starting, so an abort
+would make the abandoned outcome ambiguous. The permit is a field of a private
+closure owner, released only after the closure returns or unwinds and its
+captures are destroyed, or after Tokio destroys an unstarted closure, and always
+before the result is published, so `Ok` and `Panicked` arrive with capacity
+already free. The context bounds only the wait, with `run`'s precedence. The
+closure's value is returned unconverted, so a fallible closure's domain error
+stays concrete inside `Ok(Err(error))`. Failures are the exhaustive
+`BlockingError`: `NotAdmitted` (never handed to Tokio, no capacity used),
+`NotStarted` (destroyed unstarted by a shutting-down runtime), `Abandoned` (the
+wait ended; the closure may be queued, running or finished and keeps its permit)
+and `Panicked` (payload retained, formatting redacted). It has no `From`
+conversions, so `?` cannot turn an `Interruption` or `AdmissionError` into one of
+these outcomes; two compile-fail rustdoc examples pin that. The four Display
+texts are distinct, so a log line cannot conflate work that is still running with
+work that never ran. The closure runs, and an unstarted closure is destroyed,
+under the dispatcher captured at first poll, in a `batter.blocking_work` span
+whose parent is the caller's span at handoff.
+
+Against the review questions: nothing is constructed that execution later
+rejects, and `BulkheadCapacity` remains the validated capacity witness
+(question 1). No ownership transfer, join, recheck or outcome classification
+remains with the caller (question 2). The permit is consumed into the closure
+owner and outcomes are an exhaustive enum rather than a `JoinError` whose
+cancellation and panic cases each copy interpreted (question 3). Library-owned
+execution is the ordinary path; `enter` keeps its signature and behaviour, and
+its rustdoc now points blocking work to `run_blocking` (question 4). What
+remains is kept explicit (question 5):
+
+- Upstream behaviour: Tokio cannot abort a started blocking closure. The
+  blocking pool is shared with `tokio::fs`, DNS resolution and other
+  `spawn_blocking` callers, defaults to 512 threads and queues beyond that
+  without bound, so bulkhead capacity counts admitted closures, not reserved
+  threads. A busy blocking thread still runs queued closures during runtime
+  shutdown, so `NotStarted` is not guaranteed. When the operating system refuses
+  to create a blocking thread, other than a temporary refusal while threads
+  exist, Tokio panics in the caller after queueing the closure, with the permit
+  inside; that path is source-inspected and untested.
+- Application policy: sizing the bulkhead against the pool; whether to replay
+  after `Abandoned`, whose effects are unknown and which a retry would run beside
+  the first copy within capacity; cooperative `OperationContext::check` calls in
+  long closures, which receive no context; the lifetimes of resources an
+  abandoned closure still uses; and settlement of outstanding closures before
+  dependent cleanup, which stays on ADR-014's
+  [watch list](014-reuse-after-two-consumers.md#watch-list) until a second
+  consumer of this path needs it.
+- Unverifiable remote effect: what an abandoned or panicked closure did outside
+  the process.
+- Low-level escape hatch: `enter` plus a hand-written `spawn_blocking` still
+  compiles, as does a permit held by the awaiting future. Forbidding it would
+  need a hard cut of the native `OwnedSemaphorePermit` that `enter` returns for
+  async work and process-task transfer. The `enter` rustdoc and the facade's
+  canonical-path table point blocking work to `run_blocking` and list the
+  hand-written form as not equivalent. An or-pattern that merges `NotAdmitted`
+  with `Abandoned` also compiles and erases the still-running fact; the enum's
+  rustdoc and runnable example match each variant in its own arm. A closure
+  that returns unfinished work, such as a future from `|| async move { .. }`
+  or a spawned task's or thread's `JoinHandle`, also compiles, because stable
+  Rust cannot exclude futures from `T`. That work is not bounded by the
+  bulkhead: a returned future runs only after the permit is released, and a
+  spawned task or thread may run beside the closure and keep running after the
+  release. The `run_blocking` rustdoc says so and points async work to `enter`.
+
+The handoff ordering has one maintenance hazard that no test can detect: an
+await inserted between the decision and the handoff would record `admitted` for
+work that might never be handed to Tokio. Review guards it.
+
+The integration tests are
+[`blocking_ownership.rs`](../../crates/batter-core/tests/admission/blocking_ownership.rs)
+(`cancelled_caller_keeps_capacity_until_the_closure_returns`,
+`dropped_caller_keeps_capacity_until_the_closure_returns`,
+`deadline_during_wait_abandons_the_result_not_the_work`,
+`queued_admitted_work_holds_capacity_and_runs_after_its_caller_is_gone`,
+`abandoned_closure_panic_releases_capacity_only_after_unwinding`,
+`awaiter_held_permit_is_released_while_its_blocking_work_runs`,
+`closed_bulkhead_admits_nothing_new_while_running_work_keeps_its_permit`),
+[`blocking_refusal.rs`](../../crates/batter-core/tests/admission/blocking_refusal.rs)
+(`reject_overload_destroys_work_uncalled`,
+`precancelled_context_is_not_admitted_with_free_capacity`,
+`wait_deadline_interrupts_admission_before_work_starts`,
+`wait_cancellation_interrupts_admission_before_work_starts`,
+`unpolled_call_and_dropped_admission_wait_do_no_work`,
+`admission_granted_after_an_unfired_deadline_never_starts_work`,
+`enter_alone_can_grant_a_permit_after_an_unfired_deadline`,
+`polling_outside_a_runtime_panics_before_admission`,
+`polling_on_a_runtime_without_timers_panics_before_admission`),
+[`blocking_dispatch.rs`](../../crates/batter-core/tests/admission/blocking_dispatch.rs)
+(`blocking_work_runs_under_the_dispatcher_captured_at_first_poll`,
+`a_call_destroyed_while_waiting_for_admission_destroys_work_under_its_first_dispatcher`,
+`a_wait_call_finished_elsewhere_keeps_the_runtime_checked_at_first_poll`) and
+[`blocking_outcomes.rs`](../../crates/batter-core/tests/admission/blocking_outcomes.rs)
+(`closure_panic_is_reported_with_its_original_payload`,
+`opaque_panic_payload_is_retained`,
+`returns_a_value_from_a_blocking_thread_and_frees_capacity_first`,
+`fallible_closure_keeps_its_concrete_domain_error`,
+`blocking_work_runs_under_the_callers_dispatcher_and_span`,
+`run_blocking_future_is_send`). The
+[unit tests](../../crates/batter-core/src/admission/blocking/tests.rs)
+(`cancelled_blocking_join_maps_to_not_started`,
+`panicked_blocking_join_maps_to_its_retained_payload`,
+`permit_outlives_work_and_its_captures`,
+`work_and_unrun_work_use_the_captured_dispatcher_and_span`,
+`recheck_refuses_a_cancelled_or_expired_context_and_releases_the_permit`,
+`span_destruction_releases_the_callers_span_under_the_captured_dispatcher`,
+`close_keeps_a_running_closures_permit_until_it_returns`) cover the join
+mapping, release order, unrun destruction, span closing on a thread with
+another default dispatcher and the permit a closed bulkhead leaves with running
+work. The
+[metrics tests](../../crates/batter-core/tests/metrics/blocking.rs)
+(`handed_off_calls_record_one_admitted_decision`,
+`refused_calls_record_their_refusal_once`,
+`deadline_refusals_record_deadline_exceeded_not_admitted`,
+`run_blocking_destroyed_while_unwinding_records_panicked`,
+`run_blocking_outside_a_runtime_records_nothing`) pin one decision per call
+polled inside a timer-enabled runtime, and
+[`report_redaction.rs`](../../crates/batter-core/tests/report_redaction.rs)
+(`blocking_error_formatting_never_discloses_panic_payloads`) pins redacted,
+distinct formatting. The runnable `run_blocking` rustdoc example replaces the
+hand-written helper, and two compile-fail rustdoc examples on `BlockingError`
+reject `?` conversions. `NotStarted` is covered at the mapping level only,
+because a caller on the same current-thread runtime is destroyed before the
+blocking pool shuts down. Fresh-agent usability evaluation is proposed and
+unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

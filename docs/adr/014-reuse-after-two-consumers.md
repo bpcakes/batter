@@ -153,6 +153,11 @@ nothing on the canonical path performs that hold for blocking work.
 unrepresentable. It must not claim to cancel blocking work: an abandoned caller
 discards the result while the closure runs to completion.
 
+Delivered under `batter-0772` as `Bulkhead::run_blocking`, returning
+`Result<T, BlockingError>`; see its
+[ADR-010 assessment](010-agent-only-consumption.md#bounded-blocking-work-assessment-batter-0772).
+Shutdown settlement stays on the watch list below with its trigger unchanged.
+
 ### Watch list
 
 Each item below lacks a second consumer that needs it through Batter. A later

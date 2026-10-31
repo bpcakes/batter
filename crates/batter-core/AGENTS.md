@@ -33,6 +33,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
+- `src/admission/blocking.rs` owns `Bulkhead::run_blocking` and `BlockingError`:
+  admission, a context recheck, one bulkhead decision and a same-poll handoff
+  of the permit into the blocking closure.
 - `src/health.rs` and `src/health/` own dependency sampling, read-only observations,
   and the exhaustive observation-to-dependency-readiness projection.
 - `src/readiness.rs` owns sampling order and the pure lifecycle, dependency and
@@ -122,6 +125,13 @@ destruction and nested spans. Task instrumentation retains the available parent
 when its own span is filtered; create spans and look up fallback parents outside
 the admission mutex. The foundation cannot depend on its adapters;
 generic test support remains a leaf dependency used by tests.
+Keep no await between the blocking-run decision and `spawn_blocking`. Never
+expose the blocking permit or `JoinHandle`, abort the blocking task, or add
+`From` conversions to `BlockingError`. Release the permit after the closure
+and its captures, before the result is published. Close the blocking span and
+destroy unrun work under the captured dispatcher; look up the runtime and its
+time driver before admission, and poll the result wait inside that runtime. Shutdown settlement of
+abandoned closures stays on the ADR-014 watch list.
 
 ## Common commands
 

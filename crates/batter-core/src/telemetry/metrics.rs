@@ -45,7 +45,11 @@
 //! once the boundary invokes its factory, so an interruption that wins the
 //! race first is not an attempt; neither counts as an operation.
 //! Foundation-owned waits (bulkhead waiting, retry backoff) are recorded only
-//! by their owning decision. Adapter boundaries are ordinary
+//! by their owning decision. The `run_blocking` result wait is tracing-only: a
+//! `run_blocking` call polled inside a timer-enabled Tokio runtime records
+//! exactly one bulkhead decision, before handoff, and no operation completion,
+//! so a handed-off closure that panics or is abandoned still counts only as
+//! `admitted`. Adapter boundaries are ordinary
 //! operations, for example `http.response_construction` for each admitted
 //! Axum request, and their names share the operation table. A polled
 //! supervisor drive records one shutdown: its report's result after it
