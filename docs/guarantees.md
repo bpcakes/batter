@@ -136,9 +136,12 @@ inside a local recorder scope. Rejected recorders receive no catalog description
 and are returned to the caller. Polled but dropped
 operations, retry attempts and executions, admission waits and supervisor
 drives record `dropped`, or `panicked` when destroyed during unwinding, through
-one shared guard. Retry execution recording follows destruction of discarded
-errors and owned callbacks, including jitter samplers. A panic during that
-destruction propagates and records `panicked`; values and errors transferred to
+one shared guard. `Bulkhead::run_blocking` records one bulkhead decision after
+its post-admission context check, immediately before handing the closure to
+Tokio; its result wait is an internal boundary with tracing only, and an
+abandoned wait adds no decision. Retry execution recording follows destruction
+of discarded errors and owned callbacks, including jitter samplers. A panic
+during that destruction propagates and records `panicked`; values and errors transferred to
 the caller are outside the completed execution. A cleanup hook taken by a destroyed close driver records
 `abandoned`; hooks of an unclosed stack record `dropped`. Skipped hooks leave
 the stack before being counted, so a capture destructor panic cannot count them
@@ -276,10 +279,53 @@ deadline. The returned permit is Tokio's OwnedSemaphorePermit; retain it until
 the bounded work actually finishes. Closing admission wakes waiters but does not
 revoke acquired permits.
 
+`Bulkhead::run_blocking(context, admission, work)` is the canonical path for
+synchronous CPU work or blocking I/O under a bulkhead. It admits exactly as
+`enter` does, checks the context again after a permit is granted, and records
+one bulkhead decision after that check. A refusal returns
+`BlockingError::NotAdmitted` and destroys `work` uncalled; the closure is never
+handed to Tokio. Otherwise the permit moves, in the same poll and with no
+intervening await, into the closure handed to Tokio's blocking pool. It is
+released only after the closure returns or unwinds and its captures are
+destroyed, or when Tokio destroys the closure unstarted, and always before the
+result is published. The context bounds only the result wait, with
+`OperationContext::run`'s precedence, so a result that becomes ready in the
+same poll as an interruption is discarded. Cancellation or the deadline returns
+`Abandoned`, and dropping the caller's future abandons the result in the same
+way: the closure may be queued, running or finished, and it keeps its permit
+until it returns or unwinds. Batter never aborts it, and Tokio cannot stop a
+started closure. `Panicked` retains the original payload behind redacted
+`Debug` and `Display`; the process panic hook still runs on the blocking
+thread. `NotStarted` means Tokio destroyed the admitted closure unstarted while
+its runtime was shutting down. Tokio does not guarantee that outcome: a busy
+blocking thread keeps running queued closures after shutdown begins. Closing
+the bulkhead refuses new runs and wakes waiting ones; running closures keep
+their permits and deliver their results. Capacity counts queued and running
+closures, not threads, and Tokio's blocking pool is shared with `tokio::fs`,
+DNS resolution and other `spawn_blocking` callers. `work` runs, and an unstarted
+closure is destroyed, under the dispatcher captured at first poll and inside a
+`batter.blocking_work` span whose parent is the caller's span at handoff; that
+span is also closed under the captured dispatcher, which releases the caller's
+span there. The runtime and its time driver are checked at first poll: a first
+poll outside a Tokio runtime, or on one without its time driver, panics before
+admission, and later polls build and poll the result wait's timer in the
+runtime checked then, so a call finished from another context cannot panic for
+lack of a timer after handoff. Both deadline timers therefore belong to the
+first-poll runtime, as any Tokio timer belongs to the runtime it was built in:
+the deadline fires only while that runtime's time driver runs (a current-thread
+runtime drives it only inside `block_on`), while cancellation is unaffected. A
+poll after that runtime has shut down panics in its deadline timer, whether
+the call waits for admission or for the result; after handoff the closure still
+keeps its permit until it returns. When an abandoned closure finishes after the
+wait ended, Tokio destroys its value or panic payload outside that dispatcher.
+
 This bounds permit holders, **not** waiting callers, request bodies, socket
 buffers, database connections in other components, or global fleet concurrency.
 Context preflight cannot atomically serialize a concurrent cancellation with
 semaphore acquisition; code must still check/run its admitted operation.
+Wait admission can also return a permit after the deadline when its timer has
+not fired yet; `run_blocking` performs that check itself, while callers of
+`enter` still must.
 Rate limiting, concurrency limiting, and retry accounting are separate policies.
 
 ## Process ownership and shutdown
@@ -505,8 +551,14 @@ retain their actual outcomes and do not suppress cleanup as requested aborts.
 Total configured allowance is drain + cancel + abort observation + cleanup work
 + cleanup final abort observation. Scheduling delays, synchronous blocking,
 non-yielding task bodies/destructors, and OS suspension can exceed it. This is
-not a hard wall-clock SLA. Nonpreemptible blocking work requires its own owner
-and shutdown strategy; Batter has no spawn_blocking wrapper.
+not a hard wall-clock SLA. `Bulkhead::run_blocking` bounds blocking closures
+for a waiting caller but is not process-owned work: drain, dependent cleanup
+and shutdown reports neither wait for nor report an abandoned closure, which
+may keep using a resource that cleanup closes. Tokio cannot preempt it.
+Runtime destruction waits for started closures, including queued ones that a
+busy blocking thread starts after shutdown begins, unless the application root
+uses `shutdown_timeout`, which leaves them running. Nonpreemptible work that
+must settle before cleanup still requires its own owner and shutdown strategy.
 
 The [subprocess tests](testing.md#non-yielding-subprocess-tests) exercise these
 limits with a direct task whose poll never returns. When another worker can

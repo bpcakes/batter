@@ -6,6 +6,131 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Tokio 1.53.1 blocking tasks for bounded blocking work, 2026-10-31
+
+For `batter-0772`, `Cargo.lock` resolves Tokio 1.53.1. The versioned
+documentation below states the public contract that `Bulkhead::run_blocking`
+relies on. The facts after it were read in the installed 1.53.1 source; they are
+source-inspected implementation behaviour, not documented guarantees, and a
+Tokio upgrade must recheck them.
+
+- [`task::spawn_blocking`](https://docs.rs/tokio/1.53.1/tokio/task/fn.spawn_blocking.html):
+  a started blocking task cannot be aborted, and `abort` before it starts "may"
+  prevent it from starting. Runtime shutdown waits indefinitely for started
+  blocking tasks; `shutdown_timeout` stops waiting but leaves them running.
+  Cancelling a task that has not started "is possible", "but this is not
+  guaranteed". Tokio recommends a semaphore or similar primitive to limit
+  CPU-bound parallelism, and a current-thread runtime still runs blocking
+  closures on separate threads.
+- [`runtime::Handle::spawn_blocking`](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Handle.html#method.spawn_blocking)
+  runs the closure on that handle's blocking pool, and
+  [`Handle::current`](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Handle.html#method.current)
+  panics outside a runtime context. `run_blocking` takes the handle as its first
+  statement, so that panic precedes any permit or decision. It then builds an
+  unpolled `Sleep`: `time/sleep.rs` `Sleep::new_timeout` looks the time driver
+  up and panics when timers are disabled, and registers nothing until polled,
+  so a runtime without `enable_time` also panics before admission instead of
+  in the result wait after handoff. A `Wait` call can reach the handoff in a
+  later poll made from another context, and `Sleep::new_timeout` reads the
+  current context, so `run_blocking` polls its result wait inside
+  [`Handle::enter`](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Handle.html#method.enter)
+  of the runtime checked at first poll. A `Sleep` keeps the handle it was built
+  with (`time/sleep.rs`), so the admission wait's timer, built at first poll,
+  needs no guard. Both timers therefore live in the first-poll runtime: a
+  current-thread runtime keeps its driver in its scheduler core
+  (`runtime/scheduler/current_thread/mod.rs`) and processes timers only inside
+  `block_on`, so a call finished from another context sees its deadline only
+  while that runtime is driven, and `TimerEntry::poll_elapsed` panics once it
+  has shut down. This reasoning was checked for Tokio's default timer only;
+  finishing a call from another context under `--cfg tokio_unstable` with the
+  alternative timer (`runtime/time_alt`) is unsupported and unverified.
+- tracing-subscriber 0.3.23 `registry/sharded.rs`: closing a span releases its
+  parent through the thread's default dispatcher, and `Registry::try_close`
+  panics on an unknown span ID. `run_blocking` therefore closes its
+  `batter.blocking_work` span under the dispatcher it captured at first poll.
+- [`task::JoinHandle`](https://docs.rs/tokio/1.53.1/tokio/task/struct.JoinHandle.html):
+  dropping the handle detaches the task, so an abandoned wait leaves the closure
+  running.
+- [`task::JoinError`](https://docs.rs/tokio/1.53.1/tokio/task/struct.JoinError.html):
+  `is_cancelled` and `try_into_panic` separate cancellation from a panic and
+  return the original payload.
+- [`Runtime::shutdown_timeout`](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Runtime.html#method.shutdown_timeout)
+  and [`shutdown_background`](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Runtime.html#method.shutdown_background)
+  bound or skip the wait for blocking tasks, which keep running;
+  `shutdown_background` documents the resulting resource leak.
+- [`runtime::Builder::max_blocking_threads`](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Builder.html#method.max_blocking_threads):
+  the default is 512 threads, which also serve `fs` operations, DNS resolution
+  through `ToSocketAddrs` and stdio. Beyond the limit tasks wait in a queue that
+  applies no backpressure and "could potentially grow unbounded".
+- [`sync::Semaphore::close`](https://docs.rs/tokio/1.53.1/tokio/sync/struct.Semaphore.html#method.close)
+  prevents new permits and notifies pending waiters. The source
+  (`sync/batch_semaphore.rs` `close`) only sets the closed bit and wakes the
+  waiters, so permits already issued are not revoked.
+- [`time::advance`](https://docs.rs/tokio/1.53.1/tokio/time/fn.advance.html)
+  moves paused time in one jump, and
+  [`time::pause`](https://docs.rs/tokio/1.53.1/tokio/time/fn.pause.html#preventing-auto-advance)
+  documents that auto-advance is inhibited while a blocking task runs.
+
+Source-inspected facts in the installed 1.53.1 crate:
+
+- `runtime/blocking/pool.rs` `Spawner::spawn_task`: once the pool's shutdown
+  flag is set, a new task is never queued; it is shut down immediately, which
+  drops the closure and stores a cancelled `JoinError`. The returned handle
+  therefore resolves cancelled, despite the "will never resolve" comment in
+  `Spawner::spawn_blocking`. Otherwise the task is pushed onto the queue first,
+  then an idle thread is notified or a new thread spawned. If spawning fails
+  with any error other than `WouldBlock`, or with `WouldBlock` while the pool
+  has no threads, `spawn_task` returns `NoThreads` and `Spawner::spawn_blocking`
+  panics with "OS can't spawn worker thread" in the caller, after the task was
+  queued. Batter leaves that panic uncaught because the queued closure already
+  owns its permit. This NoThreads path is source-inspected, untested.
+- `runtime/blocking/pool.rs` `Inner::run`: a busy worker's loop pops and runs
+  queued tasks without checking the shutdown flag, so queued closures can still
+  run after shutdown begins. Only an idle worker woken by shutdown drains the
+  queue through `shutdown_or_run_if_mandatory`, which shuts `spawn_blocking`'s
+  non-mandatory tasks down unstarted. Runtime shutdown therefore does not
+  reliably drop queued blocking work, and which worker takes a queued task is
+  not specified.
+- `runtime/blocking/task.rs` `BlockingTask::poll`: the closure runs to
+  completion inside one poll, so a started closure has no cancellation point.
+- `runtime/blocking/schedule.rs`: with `test-util` on a current-thread runtime,
+  `BlockingSchedule::new` inhibits paused-time auto-advance when the task is
+  created at spawn, and `release` allows it again when the task completes. The
+  inhibition therefore also covers a queued closure, not only a running one as
+  the `pause` documentation words it. Paused tests with an outstanding closure
+  must use `advance` or cancellation.
+- `runtime/task/state.rs` `transition_to_notified_and_cancel`: `abort` on a
+  queued task, which is already notified, only sets `CANCELLED`. When a worker
+  later takes it, `transition_to_running` reports the cancellation and the
+  closure is dropped unstarted with a cancelled `JoinError`. Batter's
+  mapping-level `NotStarted` test relies on this; `run_blocking` never aborts.
+- `runtime/task/harness.rs`: `shutdown` drops an unstarted task through
+  `cancel_task` under `catch_unwind`, so a capture whose destructor panics
+  yields a panic `JoinError` rather than a cancelled one; Batter reports it as
+  `Panicked`. `complete` and `drop_join_handle_slow` drop the output of a task
+  whose handle is gone under `catch_unwind`, on the completing blocking thread or
+  where the handle is dropped, so an abandoned value or panic payload is
+  destroyed unobserved.
+- `runtime/task/error.rs`: `Repr` is only `Cancelled` or `Panic`, and
+  `JoinError`'s `Debug` and `Display` print a string payload, so
+  `BlockingError` never stores a `JoinError`.
+- `runtime/time/mod.rs` `Driver::park_internal`: the timer driver processes
+  elapsed timers after parking. A task woken before the next park can observe
+  `Instant::now()` past a deadline whose timer has not fired, which is how
+  `Wait` admission can grant a permit after the deadline and why `run_blocking`
+  checks the context again before handoff.
+- `runtime/time/entry.rs` `TimerEntry::poll_elapsed` asserts that the time
+  driver has not shut down, so a deadline timer polled after runtime shutdown
+  panics.
+- `runtime/runtime.rs` `Drop for Runtime`: the current-thread scheduler's
+  shutdown destroys every spawned task and then shuts its drivers down, before
+  the `blocking_pool` field is dropped and shuts the pool down. A caller on the
+  same current-thread runtime is therefore destroyed before it could observe
+  `NotStarted`. The multi-thread ordering was not inspected for this claim.
+- `runtime/builder.rs`: a current-thread runtime caps blocking threads at
+  `max_blocking_threads`, while a multi-thread runtime adds its worker-thread
+  count to that cap.
+
 ## PostgreSQL 18 guarded index removal, 2026-10-27
 
 For `batter-fnj8.10`, PostgreSQL 18.6 SQL-boundary and public-API probes establish

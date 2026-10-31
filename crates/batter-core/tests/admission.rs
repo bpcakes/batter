@@ -1,3 +1,16 @@
+#[path = "admission/blocking_dispatch.rs"]
+mod blocking_dispatch;
+#[path = "admission/blocking_outcomes.rs"]
+mod blocking_outcomes;
+#[path = "admission/blocking_ownership.rs"]
+mod blocking_ownership;
+#[path = "admission/blocking_refusal.rs"]
+mod blocking_refusal;
+#[path = "admission/blocking_support.rs"]
+mod blocking_support;
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     operation::{Interruption, OperationContext},

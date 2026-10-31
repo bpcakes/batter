@@ -166,6 +166,34 @@ Acquiring per attempt limits active dependency calls but creates a different
 queueing policy. Neither choice consumes a user admission quota automatically.
 The application must choose and test the intended accounting.
 
+For synchronous CPU work or blocking I/O, call `run_blocking` instead of
+entering the bulkhead and moving the permit into `spawn_blocking` by hand:
+
+```rust
+match bulkhead.run_blocking(&context, Admission::Reject, move || hash(input)).await {
+    Ok(digest) => Ok(digest),
+    // Never ran and used no capacity.
+    Err(error @ BlockingError::NotAdmitted(_)) => Err(error.into()),
+    // Admitted, then dropped unstarted while the runtime shut down.
+    Err(error @ BlockingError::NotStarted) => Err(error.into()),
+    // May still be running and holds its permit until it returns.
+    Err(error @ BlockingError::Abandoned(_)) => Err(error.into()),
+    // The closure, or a capture's destructor, unwound; the permit is free
+    // and the payload is retained.
+    Err(error @ BlockingError::Panicked(_)) => Err(error.into()),
+}
+```
+
+Match the four errors in separate arms. An or-pattern that merges
+`NotAdmitted` with `Abandoned` erases the fact that abandoned work is still
+running, and an `Abandoned` result is never permission to replay automatically.
+A fallible closure returns its own error as `Ok(Err(error))`. Move owned data
+into the closure; move a `context.clone()` in only when the closure calls
+`check()` between steps, since it cannot otherwise observe cancellation. Keep
+`enter` for async work and for transferring a permit into a finite process
+task. The [compiled API example](../crates/batter-core/src/admission/blocking.rs)
+shows the replacement and the permit being free when the value arrives.
+
 ## Supervising a service
 
 [`Startup`](../crates/batter-core/src/startup.rs) has an executable rustdoc example
