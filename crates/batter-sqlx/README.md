@@ -1033,7 +1033,8 @@ another server or database. The lease owner's password (URL, `PGPASSWORD` or
 passfile) is always replaced. Each lease parses its URL once and refuses a URL
 whose database is not the lease's own, as a `dbname` query parameter would
 cause, with `LeaseDatabaseMismatch` inside `sqlx::Error::Configuration` before
-any pool exists. Select pools with `FixtureDatabase::pool(key)` (or
+any pool exists. The `fixture_lease_database_mismatch_retained` live probe proves
+that refusal and its retention on both the owned and low-level paths. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
 checks; on a `declare` plan an index does not record which login a pool uses.

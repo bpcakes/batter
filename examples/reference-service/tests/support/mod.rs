@@ -10,6 +10,7 @@ pub mod fixture_completion;
 pub mod fixture_completion_failure;
 pub mod fixture_diagnostics;
 pub mod fixture_failures;
+pub mod fixture_lease_target;
 pub mod fixture_login;
 pub mod fixture_login_failures;
 pub mod fixture_observation;

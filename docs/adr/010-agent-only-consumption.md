@@ -1295,7 +1295,8 @@ Pure construction cannot see the lease URL, so one rejection stays at runtime:
 the harness keeps the admin URL's query, and SQLx lets `dbname` override the
 path. Each lease's URL must select `lease.database_name()`; otherwise
 `LeaseDatabaseMismatch` is retained like any pool failure, before any pool
-exists. It travels in `sqlx::Error::Configuration`, following the repository's
+exists; the `fixture_lease_database_mismatch_retained` live probe proves this on
+both the owned and low-level paths. It travels in `sqlx::Error::Configuration`, following the repository's
 existing configuration-wrapping precedent, because a new `FixtureError` variant
 or `DatabaseCleanup` field would break exhaustive matches and struct literals.
 Server-owned outcomes (unknown role, expired or wrong password, connection

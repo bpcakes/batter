@@ -44,6 +44,7 @@ DATABASE_CASES = frozenset({
     "fixture_finish_preserves_body_failure",
     "fixture_foreign_template_rejected",
     "fixture_handled_pool_error_retained",
+    "fixture_lease_database_mismatch_retained",
     "fixture_login_cancelled_waiter_retains_pools",
     "fixture_login_pools_distinguish_principals",
     "fixture_login_rejection_retained",

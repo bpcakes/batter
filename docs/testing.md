@@ -1097,7 +1097,15 @@ while a later eager restricted pool connects. The principal case selects both
 pools by `PoolKey` and requires another plan's key to select nothing; the
 shared-admission case checks the same on a low-level `DatabaseFixture`. Reverting either path to per-pool construct-then-check fails
 its registration witness; a login that keeps the owner's password fails all four
-cases.
+cases. A fifth case, `fixture_lease_database_mismatch_retained`, starts a harness
+whose admin URL also names the admin database in a `dbname` query parameter, so
+every lease URL selects another database. The owned path must deliver
+`PoolAcquire` carrying `LeaseDatabaseMismatch` that the report retains by `Arc`
+identity although the body handled it; the low-level path must return `Connect`
+with that cause and successful cleanup. An eager pool's after-connect counter
+stays at zero on both paths, the refused database is absent and the probe's
+tagged inventory is empty. Delivering the refusal without registering it in the
+report fails this case.
 The retry follow-ups exercise the actual shared bounded completion helper:
 a pending error returns in 30 ms with its run/control intact, repairs a closed
 observer pool and retains the original body and observation causes. Another case
@@ -1213,7 +1221,7 @@ cleanup. It then runs the actual executable with a missing receiver and requires
 natural exit1, empty stdout and the exact sanitized stderr diagnostic. Each child
 has the existing eight-second reap bound; watchdog termination is failure, not
 successful settlement evidence. Its ordinary receiver/readiness phases remain
-the positive control; the current live inventory has 72 cases.
+the positive control; the current live inventory has 73 cases.
 
 Ordinary reference HTTP tests separately pin the composition boundaries: a bare
 in-process `/live` request succeeds without `ConnectInfo`, while an authenticated
@@ -2575,7 +2583,7 @@ remain unchanged, and the copied lock may change only Axum's path identity.
 
 The reference live runner additionally requires the ignored library test
 `delivery::worker::state::live_tests::provider_state_lock_and_retry_boundaries`
-after its 72-case integration inventory and maintenance-session probe. It uses a
+after its 73-case integration inventory and maintenance-session probe. It uses a
 disposable harness database, synthetic native lease identity and no heartbeat to
 isolate the SQL authority boundary: lock-only waits on the job and effect rows
 cross expiry and must leave application state unchanged. It also discards the
@@ -3010,7 +3018,7 @@ settlement allowance.
 
 ## Native lifecycle and offline retirement acceptance
 
-The current reference target has 72 entries: 67 live database probes, two
+The current reference target has 73 entries: 68 live database probes, two
 offline synthetic-acquisition signal controls, two offline executable-composition
 signal controls and the private child dispatch entry. The two metrics export
 probes exist only with the `metrics-export` feature, so the runner builds the

@@ -109,18 +109,18 @@ class ReferenceLiveControls(unittest.TestCase):
                     reference_live.main()
 
     def test_case_classes_are_exact_and_disjoint(self):
-        self.assertEqual(len(DATABASE_CASES), 67)
+        self.assertEqual(len(DATABASE_CASES), 68)
         self.assertEqual(len(SYNTHETIC_ACQUISITION_CASES), 2)
         self.assertEqual(len(EXECUTABLE_CASES), 2)
         self.assertEqual(DISPATCH_CASES, {"child_fixture"})
-        self.assertEqual(len(CASES), 72)
+        self.assertEqual(len(CASES), 73)
         classes = (DATABASE_CASES, SYNTHETIC_ACQUISITION_CASES, EXECUTABLE_CASES, DISPATCH_CASES)
         self.assertEqual(sum(len(cases) for cases in classes), len(CASES))
         for case, expected in PROTECTED_STARTUP.items():
             self.assertIn(case, expected)
         announcement = reference_live.announcement()
-        self.assertIn("72 required cases", announcement)
-        self.assertIn("67 live database probes", announcement)
+        self.assertIn("73 required cases", announcement)
+        self.assertIn("68 live database probes", announcement)
 
     def test_configuration_cases_cannot_be_omitted_from_inventory_or_execution(self):
         configured = {"retirement_preserves_history_and_disables_old_catalog",
