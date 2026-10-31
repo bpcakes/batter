@@ -1,16 +1,18 @@
 use crate::delivery::worker::state::ProviderAcceptance;
 
+use super::super::tests::{in_invocation, returned_failure};
 use super::*;
 use crate::delivery::{DeliveryService, OwnerId, SubmitDelivery};
+use batter::runledger::test_support::HandlerInvocation;
 use batter::{BoxError, admission::BulkheadCapacity, settings::SecretString};
-use runledger_core::jobs::{
-    JobContext, JobExecutionError, JobExecutionServices, JobExecutionUpdate,
-};
+use runledger_core::jobs::JobContext;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
-use std::time::Instant;
 
 mod confirmation;
+
+/// Native budget of each probe invocation; its lock and lease waits stay well inside it.
+const PROBE_BUDGET: Duration = Duration::from_secs(10);
 
 async fn with_profiled<T, E>(
     pool: &PgPool,
@@ -41,24 +43,21 @@ fn finish<T>(body: Result<T, BoxError>, cleanup: Result<(), BoxError>) -> Result
     )?)
 }
 
-struct Services(Instant);
-
 #[tokio::test]
 async fn returned_storage_failure_retains_known_provider_delay() -> Result<(), BoxError> {
     let pool =
         PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
     let worker = worker(&pool)?;
     pool.close().await;
-    let context = inert_context();
-    let services = Services(Instant::now() + Duration::from_secs(10));
     let payload = inert_payload();
-    let failure = worker
-        .record_provider_undispatched(
-            JobExecution::new(&context, &services),
-            &payload,
-            Duration::from_secs(60),
-        )
-        .await;
+    let failure = in_invocation(PROBE_BUDGET, inert_context(), move |execution| {
+        Box::pin(async move {
+            worker
+                .record_provider_undispatched(execution, &payload, Duration::from_secs(60))
+                .await
+        })
+    })
+    .await;
     assert_eq!(failure.code, CODE_STATE_UNAVAILABLE);
     assert_eq!(
         failure.retry_timing(),
@@ -97,55 +96,44 @@ async fn terminal_writers_reject_terminal_sources_before_sql_acquisition() -> Re
         PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
     let worker = worker(&pool)?;
     pool.close().await;
-    let context = inert_context();
-    let services = Services(Instant::now() + Duration::from_secs(10));
-    let execution = JobExecution::new(&context, &services);
     let payload = inert_payload();
-    for (source, expected) in [
-        (ProviderEffectState::Confirmed, "invariant"),
-        (ProviderEffectState::BusinessDenied, "invariant"),
-        (ProviderEffectState::ManualResolution, "invariant"),
-        (ProviderEffectState::Exhausted, "invariant"),
-        (ProviderEffectState::AwaitingAttempt, "storage"),
-        (ProviderEffectState::RetryableUndispatched, "storage"),
-        (ProviderEffectState::ReconcileNeeded, "storage"),
-    ] {
-        let manual = worker
-            .record_manual(
-                execution,
-                &payload,
-                "guard_probe",
-                None,
-                ProviderAcceptance::RuledOut,
-                source,
-            )
-            .await;
-        let denied = worker
-            .record_business_denial(execution, &payload, "guard_probe", source)
-            .await;
-        for (writer, result) in [("manual", manual), ("denial", denied)] {
-            let actual = match result {
-                Err(StateError::Invariant) => "invariant",
-                Err(StateError::Storage) => "storage",
-                other => panic!("unexpected {writer} result for {source:?}: {other:?}"),
-            };
-            assert_eq!(actual, expected, "{writer} source={source:?}");
-        }
-    }
+    in_invocation(PROBE_BUDGET, inert_context(), move |execution| {
+        Box::pin(async move {
+            for (source, expected) in [
+                (ProviderEffectState::Confirmed, "invariant"),
+                (ProviderEffectState::BusinessDenied, "invariant"),
+                (ProviderEffectState::ManualResolution, "invariant"),
+                (ProviderEffectState::Exhausted, "invariant"),
+                (ProviderEffectState::AwaitingAttempt, "storage"),
+                (ProviderEffectState::RetryableUndispatched, "storage"),
+                (ProviderEffectState::ReconcileNeeded, "storage"),
+            ] {
+                let manual = worker
+                    .record_manual(
+                        execution,
+                        &payload,
+                        "guard_probe",
+                        None,
+                        ProviderAcceptance::RuledOut,
+                        source,
+                    )
+                    .await;
+                let denied = worker
+                    .record_business_denial(execution, &payload, "guard_probe", source)
+                    .await;
+                for (writer, result) in [("manual", manual), ("denial", denied)] {
+                    let actual = match result {
+                        Err(StateError::Invariant) => "invariant",
+                        Err(StateError::Storage) => "storage",
+                        other => panic!("unexpected {writer} result for {source:?}: {other:?}"),
+                    };
+                    assert_eq!(actual, expected, "{writer} source={source:?}");
+                }
+            }
+        })
+    })
+    .await;
     Ok(())
-}
-
-#[async_trait]
-impl JobExecutionServices for Services {
-    fn deadline(&self) -> Instant {
-        self.0
-    }
-    fn remaining_budget(&self) -> Duration {
-        self.0.saturating_duration_since(Instant::now())
-    }
-    async fn persist_progress(&self, _: JobExecutionUpdate<'_>) -> Result<(), JobExecutionError> {
-        unreachable!("these probes exercise application SQL, not native progress")
-    }
 }
 
 #[tokio::test]
@@ -226,8 +214,6 @@ async fn stale_terminal_sources(worker: &DeliveryWorker) -> Result<(), BoxError>
         ProviderEffectState::RetryableUndispatched,
     ] {
         let (context, payload) = claimed(&worker.pool).await?;
-        let services = Services(Instant::now() + Duration::from_secs(10));
-        let execution = JobExecution::new(&context, &services);
         // Model another settled writer after this caller read AwaitingAttempt.
         // Preserve a provider identity and uncertainty to detect collateral loss.
         let before: Value = sqlx::query_scalar(
@@ -239,24 +225,33 @@ async fn stale_terminal_sources(worker: &DeliveryWorker) -> Result<(), BoxError>
         .bind(payload.delivery_id)
         .fetch_one(&worker.pool)
         .await?;
-        let manual = worker
-            .record_manual(
-                execution,
-                &payload,
-                "stale_probe",
-                None,
-                ProviderAcceptance::RuledOut,
-                ProviderEffectState::AwaitingAttempt,
-            )
-            .await;
-        let denied = worker
-            .record_business_denial(
-                execution,
-                &payload,
-                "stale_probe",
-                ProviderEffectState::AwaitingAttempt,
-            )
-            .await;
+        let (manual, denied) = in_invocation(PROBE_BUDGET, context, {
+            let (worker, payload) = (worker.clone(), payload.clone());
+            move |execution| {
+                Box::pin(async move {
+                    let manual = worker
+                        .record_manual(
+                            execution,
+                            &payload,
+                            "stale_probe",
+                            None,
+                            ProviderAcceptance::RuledOut,
+                            ProviderEffectState::AwaitingAttempt,
+                        )
+                        .await;
+                    let denied = worker
+                        .record_business_denial(
+                            execution,
+                            &payload,
+                            "stale_probe",
+                            ProviderEffectState::AwaitingAttempt,
+                        )
+                        .await;
+                    (manual, denied)
+                })
+            }
+        })
+        .await;
         assert!(
             matches!(manual, Err(StateError::Invariant)),
             "{retained:?}: {manual:?}"
@@ -289,20 +284,16 @@ async fn final_state_reserve_outlives_provider_work(
         .admission
         .enter(holder.context(), Admission::Wait)
         .await?;
-    let services =
-        super::super::tests::Invocation::new(FINAL_STATE_RESERVE + Duration::from_millis(100));
-    let failure = worker
-        .execute(
-            JobExecution::new(&context, &services),
-            serde_json::to_value(&payload)?,
-        )
-        .await
-        .expect_err("provider work expires while admission is held");
+    let run =
+        HandlerInvocation::for_context(FINAL_STATE_RESERVE + Duration::from_millis(100), context)?
+            .execute(
+                &worker.clone().into_job_handler(),
+                serde_json::to_value(&payload)?,
+            )
+            .await;
     drop(held);
-    assert!(
-        services.remaining_budget() > Duration::ZERO,
-        "the state committed before the native deadline"
-    );
+    // Returned rather than timed out: the state committed before the native deadline.
+    let failure = returned_failure(run);
     assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
     assert_eq!(failure.code, CODE_ADMISSION_INTERRUPTED);
     let (state, outcome): (String, Option<String>) = sqlx::query_as(
@@ -383,7 +374,6 @@ async fn claimed(pool: &PgPool) -> Result<(JobContext, DeliveryJobPayload), BoxE
 async fn lock_only_expiry(worker: &DeliveryWorker, effect_lock: LockedRow) -> Result<(), BoxError> {
     let effect_lock = effect_lock == LockedRow::Effect;
     let (context, payload) = claimed(&worker.pool).await?;
-    let services = Services(Instant::now() + Duration::from_secs(10));
     sqlx::query("UPDATE job_queue SET lease_expires_at = clock_timestamp() + interval '2 seconds' WHERE id = $1")
         .bind(context.job_id).execute(&worker.pool).await?;
     let mut blocker = worker.pool.begin().await?;
@@ -405,12 +395,21 @@ async fn lock_only_expiry(worker: &DeliveryWorker, effect_lock: LockedRow) -> Re
         .bind(id)
         .execute(&mut *blocker)
         .await?;
-    let mutation = worker.record_business_denial(
-        JobExecution::new(&context, &services),
-        &payload,
-        "fixture_denial",
-        ProviderEffectState::AwaitingAttempt,
-    );
+    let mutation = in_invocation(PROBE_BUDGET, context.clone(), {
+        let (worker, payload) = (worker.clone(), payload.clone());
+        move |execution| {
+            Box::pin(async move {
+                worker
+                    .record_business_denial(
+                        execution,
+                        &payload,
+                        "fixture_denial",
+                        ProviderEffectState::AwaitingAttempt,
+                    )
+                    .await
+            })
+        }
+    });
     let release = async {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -455,29 +454,39 @@ async fn lock_only_expiry(worker: &DeliveryWorker, effect_lock: LockedRow) -> Re
 
 async fn durable_eligibility(worker: &DeliveryWorker) -> Result<(), BoxError> {
     let (context, payload) = claimed(&worker.pool).await?;
-    let services = Services(Instant::now() + Duration::from_secs(10));
-    let execution = JobExecution::new(&context, &services);
-    assert!(
-        worker
-            .mark_dispatch_possible(execution, &payload, ProviderEffectState::AwaitingAttempt)
-            .await
-            .unwrap()
-    );
-    let failure = worker
-        .record_provider_undispatched(execution, &payload, Duration::from_secs(60))
-        .await;
-    assert_eq!(
-        failure.retry_timing(),
-        Some(runledger_core::jobs::JobRetryTiming::After(
-            Duration::from_secs(60)
-        ))
-    );
-    // Drop the native completion value: nothing persists it. The effect commit
-    // alone must protect both initial and proven-absence dispatch authorization.
-    drop(failure);
-    let loaded = worker.load(execution, &payload).await.unwrap();
-    assert!(matches!(loaded.plan(1), EffectPlan::Defer(delay) if delay > Duration::from_secs(50)));
-    dispatch_eligibility_boundaries(worker, execution, &payload).await
+    let worker = worker.clone();
+    in_invocation(PROBE_BUDGET, context, move |execution| {
+        Box::pin(async move {
+            assert!(
+                worker
+                    .mark_dispatch_possible(
+                        execution,
+                        &payload,
+                        ProviderEffectState::AwaitingAttempt
+                    )
+                    .await
+                    .unwrap()
+            );
+            let failure = worker
+                .record_provider_undispatched(execution, &payload, Duration::from_secs(60))
+                .await;
+            assert_eq!(
+                failure.retry_timing(),
+                Some(runledger_core::jobs::JobRetryTiming::After(
+                    Duration::from_secs(60)
+                ))
+            );
+            // Drop the native completion value: nothing persists it. The effect commit
+            // alone must protect both initial and proven-absence dispatch authorization.
+            drop(failure);
+            let loaded = worker.load(execution, &payload).await.unwrap();
+            assert!(
+                matches!(loaded.plan(1), EffectPlan::Defer(delay) if delay > Duration::from_secs(50))
+            );
+            dispatch_eligibility_boundaries(&worker, execution, &payload).await
+        })
+    })
+    .await
 }
 
 async fn dispatch_eligibility_boundaries(

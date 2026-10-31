@@ -40,7 +40,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 tokio-postgres = "=0.7.18"
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-batter = { workspace = true, features = ["sqlx-test-support"] }
+batter = { workspace = true, features = ["sqlx-test-support", "runledger-test-support"] }
 postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "test-util", "net", "io-util"] }
 

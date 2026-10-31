@@ -53,6 +53,27 @@ invoking their factories. The signal notifies; it does not join detached tasks,
 shield cleanup, undo remote effects or convert `OperationError` into `JobFailure`,
 which stays an explicit application mapping.
 
+To test a handler without a worker, queue or database, select the `test-support`
+feature in `[dev-dependencies]` and drive the registered value through
+`test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`.
+A handler that reads its job's organization, attempt or lease declares that
+context with `HandlerInvocation::for_context(budget, context)`, which rejects a
+non-positive run number or attempt as the queue row does. A retried attempt
+declares the progress its row retains with `with_progress`, so its writes are
+validated against it as the worker validates them against the locked row.
+It builds the real `JobExecution`: services that own the invocation's exit, so
+`job_phases` derives, a native deadline `budget` after execution starts, and
+in-memory progress persistence with the queue row's merge rule. It dispatches
+through `JobHandler::execute_with_services` as the worker does, destroys the
+handler future before it ends the invocation, on every exit and when the future
+is destroyed, and returns an exhaustive `HandlerExit`: the handler's own
+`Result<JobCompletion, JobFailure>` when observed strictly before the deadline,
+`TimedOut` otherwise, or `Panicked` with the message; the run also carries the
+persisted progress and the contained exit-hook panics. Durable outcome policy,
+retries, continuations and dead letters stay in the worker and are not
+simulated; there is no lease, so lease loss is not representable. The facade
+path is `batter::runledger::test_support` (feature `runledger-test-support`).
+
 Declare `PgSessionProfile` and construct `RunledgerDatabase`; an arbitrary native
 pool cannot establish serving authority after reset. The profile names login and
 effective roles, the authoritative schema, timeouts and optional tenant settings.

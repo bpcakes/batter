@@ -2,9 +2,11 @@
 """Execute the single-dependency facade consumer from a Git-free source copy.
 
 The acceptance consumer declares only `batter` from this workspace, plus ordinary
-registry crates, and no `[patch]` section. A separate harness crate owns the
-disposable PostgreSQL 18 database through Runledger's existing native test
-support, so the consumer's own dependency claim stays intact.
+registry crates, and no `[patch]` section. Its job tests reach the facade's
+worker-free handler drive through the same `batter` as a development dependency,
+and its binary must still build without native test support. A separate harness
+crate owns the disposable PostgreSQL 18 database through Runledger's existing
+native test support, so the consumer's own dependency claim stays intact.
 """
 import argparse
 import json
@@ -19,6 +21,10 @@ ROOT = Path(__file__).resolve().parent.parent
 CONSUMER_SOURCE = "consumers/single_facade_consumer.rs"
 HARNESS_SOURCE = "consumers/single_facade_harness.rs"
 FACADE_FEATURES = ("runledger", "runlimit-postgres", "runlimit-native-http")
+# Selected only for the consumer's tests, which drive its job handler without a worker.
+TEST_FEATURES = ("runledger-test-support",)
+# The library the test feature brings in; the consumer binary must not compile it.
+TEST_ONLY_CRATE = "runledger_test_support"
 HARNESS_FEATURES = ("runledger-test-support", "test-support")
 PACKAGE_LINTS = '[lints.rust]\nwarnings = "deny"\n'
 # One source identity for the facade, every adapter it selects, and every native
@@ -46,25 +52,28 @@ def workspace_names(metadata):
     return {package["name"] for package in metadata["packages"] if package["id"] in members}
 
 
+def facade(source, features):
+    return ('batter = { path = ' + json.dumps(str(Path(source) / "crates/batter"))
+            + ', default-features = false, features = ' + json.dumps(list(features)) + ' }')
+
+
 def consumer_manifest(source):
-    facade = ('batter = { path = ' + json.dumps(str(Path(source) / "crates/batter"))
-              + ', default-features = false, features = ' + json.dumps(list(FACADE_FEATURES)) + ' }')
-    dependencies = "\n".join([facade, *ECOSYSTEM])
+    dependencies = "\n".join([facade(source, FACADE_FEATURES), *ECOSYSTEM])
     return ('[package]\nname = "single-facade-consumer"\nversion = "0.0.0"\n'
             'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n' + dependencies + '\n'
-            '[dev-dependencies]\ntokio = { version = "1", features = ["test-util"] }\n'
+            '[dev-dependencies]\n' + facade(source, TEST_FEATURES) + '\n'
+            'tokio = { version = "1", features = ["test-util"] }\n'
             + PACKAGE_LINTS + '[[bin]]\nname = "single-facade-consumer"\npath = '
             + json.dumps(str(Path(source) / CONSUMER_SOURCE)) + '\n')
 
 
 def harness_manifest(source):
-    facade = ('batter = { path = ' + json.dumps(str(Path(source) / "crates/batter"))
-              + ', default-features = false, features = ' + json.dumps(list(HARNESS_FEATURES)) + ' }')
     tokio = 'tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }'
     return ('[package]\nname = "single-facade-harness"\nversion = "0.0.0"\n'
             'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
-            '[workspace]\nresolver = "3"\n[dependencies]\n' + facade + '\n' + tokio + '\n'
+            '[workspace]\nresolver = "3"\n[dependencies]\n' + facade(source, HARNESS_FEATURES)
+            + '\n' + tokio + '\n'
             + PACKAGE_LINTS + '[[bin]]\nname = "single-facade-harness"\npath = '
             + json.dumps(str(Path(source) / HARNESS_SOURCE)) + '\n')
 
@@ -99,15 +108,29 @@ def executable(output, name):
     raise RuntimeError("cargo did not report an executable for " + name)
 
 
+def require_absent(output, crate):
+    """Every crate a build compiles, fresh or not, reports one compiler artifact."""
+    for line in output.splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("reason") == "compiler-artifact" and record["target"]["name"] == crate:
+            raise RuntimeError("the consumer binary must build without " + crate)
+
+
 def require_markers(output):
     for marker in MARKERS:
         if output.splitlines().count(marker) != 1:
             raise RuntimeError("consumer did not execute its expected step exactly once: " + marker)
 
 
-def build(cargo, directory, target, name):
-    return executable(run(["env", "SQLX_OFFLINE=true", *cargo, "build", "--locked", "--offline",
-                           "--message-format", "json", "--target-dir", str(target)], directory), name)
+def build(cargo, directory, target, name, absent=()):
+    output = run(["env", "SQLX_OFFLINE=true", *cargo, "build", "--locked", "--offline",
+                  "--message-format", "json", "--target-dir", str(target)], directory)
+    for crate in absent:
+        require_absent(output, crate)
+    return executable(output, name)
 
 
 def check_format(cargo, directory):
@@ -157,7 +180,8 @@ def main():
                           required_identities=HARNESS_IDENTITIES)
         validate_single_dependency((harness / "Cargo.toml").read_text(), resolved_harness, names,
                                    package="single-facade-harness")
-        binary = build(cargo, consumer, target, "single-facade-consumer")
+        binary = build(cargo, consumer, target, "single-facade-consumer",
+                       absent=(TEST_ONLY_CRATE,))
         check_completion(cargo, consumer, target)
         check_completion(cargo, harness, target, "single-facade-harness")
         require_markers(run_harness(cargo, harness, target, binary))

@@ -8,6 +8,36 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Drive one job handler in a test without a worker, queue or database
+  (`batter-3upk`, closing gap 7 of the
+  [whole-application baseline](docs/evidence/whole-app-baseline-2026-10-09/README.md);
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#handler-test-facility-assessment-batter-3upk)).
+  `batter_runledger::test_support::HandlerInvocation`, reachable as
+  `batter::runledger::test_support` with the facade's `runledger-test-support`
+  feature, declares a budget, a fresh job or a claimed job's context
+  (`for_context`, which rejects a non-positive run number or attempt), an
+  optional resume checkpoint and the progress a retried row retains
+  (`with_progress`, refused where the row refuses it), and `execute`
+  runs the value a catalog registers through the worker's own dispatch with a
+  real `JobExecution`: services that own the invocation's exit signal, so
+  `job_phases` derives and the end cancels derived contexts; one monotonic
+  deadline the budget after the future is first polled, read by `deadline()`,
+  progress writes and the timeout alike; and in-memory progress persistence
+  with the queue row's merge rule. The handler future is destroyed before the
+  invocation ends, on every exit and when the future itself is destroyed. The
+  run's exhaustive `HandlerExit` is the handler's own result when observed
+  strictly before the deadline, `TimedOut` otherwise, or `Panicked` with the
+  message, beside `PersistedProgress` and the contained exit-hook panics. Panics
+  are caught around dispatch as well as polling, and an opaque `panic_any`
+  payload is retained rather than dropped; as in the worker, a destructor that
+  panics while the drive destroys the handler future is not contained. No
+  retry, continuation, dead-letter or lease behaviour is simulated. The
+  adapter's `test-support` feature now also selects `serde_json` and `uuid`.
+  The facade-only consumer's job tests and the reference worker's tests drive
+  their handlers through it instead of hand-written execution services; the
+  reference worker keeps two only as negative controls, for services without an
+  exit claim and for an invocation that already ended.
+
 - Add fixture pools for separately provisioned PostgreSQL logins (`batter-7r3.8`).
   `ConnectionPlan::declare(reserved)` returns a `PlanDeclaration`; each
   `pool(PlannedPool)` returns an opaque `PoolKey`, and `FixtureDatabase::pool` /

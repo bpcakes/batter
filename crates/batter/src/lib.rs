@@ -33,6 +33,7 @@
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
+//! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
 //!
 //! An interruption selected before the Runledger runner returns local commit
 //! acknowledgement proves neither rollback nor permission to replay. When the
@@ -169,7 +170,9 @@ pub mod sqlx {
 /// themselves, so one `batter` dependency reaches worker preparation, the job
 /// catalog, durable intents and the migrators without a second declaration of a
 /// native package. `runledger-test-support` additionally exposes
-/// `runledger::native::test_support` for a consumer's own tests. They are
+/// `runledger::native::test_support` for a consumer's database tests and
+/// `runledger::test_support` for driving one
+/// handler without a worker. They are
 /// low-level: `register_in` remains the protected composition, and reaching a
 /// native namespace does not move ownership of durable policy, storage or
 /// supervision into the facade.
@@ -178,7 +181,9 @@ pub mod sqlx {
 /// finalization contexts from the invocation: the worker's own deadline bounds
 /// them and the invocation's exit cancels them. Handlers join a native
 /// `JobCatalog` or `JobRegistry`; `register_in` registers the prepared worker,
-/// not a handler.
+/// not a handler. To test a handler, execute the same adapted value through
+/// `runledger::test_support::HandlerInvocation` instead of writing execution
+/// services.
 ///
 /// ```
 /// use batter::operation::OperationError;
@@ -254,6 +259,113 @@ pub mod sqlx {
 #[cfg(feature = "runledger")]
 pub mod runledger {
     pub use batter_runledger::*;
+
+    /// Drive one job handler in a test without a worker, queue or database.
+    ///
+    /// Enabled by `runledger-test-support` and owned by the Runledger adapter.
+    /// `HandlerInvocation::new(budget)` declares the native deadline for a fresh
+    /// job and `HandlerInvocation::for_context(budget, context)` for the claimed
+    /// job a handler reads; `with_checkpoint` and `with_progress` declare what a
+    /// retried row retains. `execute` builds the real `JobExecution` with an
+    /// owned exit signal, dispatches the handler as the worker does, ends the
+    /// invocation after destroying the handler future, and returns an exhaustive
+    /// `HandlerExit` with the persisted progress and contained exit-hook panics.
+    /// Durable outcome policy stays in the worker. Select the feature only in
+    /// `[dev-dependencies]`; see `native::test_support` for the resolver rule.
+    ///
+    /// ```
+    /// use batter::operation::OperationError;
+    /// use batter::runledger::native::core::jobs::{
+    ///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
+    /// };
+    /// use batter::runledger::native::core::prelude::async_trait;
+    /// use batter::runledger::test_support::{HandlerExit, HandlerInvocation};
+    /// use batter::runledger::{JobPhasesRejection, job_phases};
+    /// use serde_json::{Value, json};
+    /// use std::time::Duration;
+    ///
+    /// const RECORD_RESERVE: Duration = Duration::from_millis(300);
+    ///
+    /// struct Notify;
+    ///
+    /// #[async_trait]
+    /// impl JobExecutionHandler for Notify {
+    ///     fn job_type(&self) -> JobType<'static> {
+    ///         JobType::new("example.notify")
+    ///     }
+    ///
+    ///     async fn execute(
+    ///         &self,
+    ///         execution: JobExecution<'_>,
+    ///         payload: Value,
+    ///     ) -> Result<JobCompletion, JobFailure> {
+    ///         let phases = job_phases(execution, RECORD_RESERVE).map_err(|rejection| {
+    ///             match rejection {
+    ///                 JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => {
+    ///                     JobFailure::timeout("example.no_work_time", "No work time remained.")
+    ///                 }
+    ///                 JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => {
+    ///                     JobFailure::terminal("example.unsupported", "Invocation phases unavailable.")
+    ///                 }
+    ///             }
+    ///         })?;
+    ///         let accepted = payload.get("recipient").is_some();
+    ///         let sent = phases
+    ///             .work()
+    ///             .run("example.send", |_scope| async move {
+    ///                 accepted.then_some("receipt").ok_or(std::io::ErrorKind::InvalidInput)
+    ///             })
+    ///             .await;
+    ///         let outcome = match sent {
+    ///             Ok(_receipt) => Ok(JobCompletion::success()),
+    ///             Err(OperationError::Failed(_)) => {
+    ///                 Err(JobFailure::terminal("example.invalid_payload", "No recipient."))
+    ///             }
+    ///             Err(OperationError::Interrupted(_)) => {
+    ///                 Err(JobFailure::timeout("example.unknown", "Delivery is unknown."))
+    ///             }
+    ///         };
+    ///         phases
+    ///             .finalization()
+    ///             .run("example.record", |_scope| async { Ok::<_, std::io::Error>(()) })
+    ///             .await
+    ///             .map_err(|_| JobFailure::retryable("example.unrecorded", "Not recorded."))?;
+    ///         outcome
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build()?.block_on(async {
+    /// let handler = Notify.into_job_handler();
+    /// let run = HandlerInvocation::new(Duration::from_secs(5))?
+    ///     .execute(&handler, json!({ "recipient": "a" }))
+    ///     .await;
+    /// assert!(matches!(run.exit, HandlerExit::Returned(Ok(_))), "{:?}", run.exit);
+    /// assert!(run.exit_hook_panics.is_empty());
+    ///
+    /// let run = HandlerInvocation::new(Duration::from_secs(5))?
+    ///     .execute(&handler, json!({}))
+    ///     .await;
+    /// assert!(matches!(
+    ///     run.exit,
+    ///     HandlerExit::Returned(Err(failure)) if failure.code == "example.invalid_payload"
+    /// ));
+    ///
+    /// // Exactly the reserve leaves no work time: the handler's own mapping answers.
+    /// let run = HandlerInvocation::new(RECORD_RESERVE)?
+    ///     .execute(&handler, json!({ "recipient": "a" }))
+    ///     .await;
+    /// assert!(matches!(
+    ///     run.exit,
+    ///     HandlerExit::Returned(Err(failure)) if failure.code == "example.no_work_time"
+    /// ));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[cfg(feature = "runledger-test-support")]
+    pub mod test_support {
+        pub use batter_runledger::test_support::*;
+    }
 }
 
 /// Runlimit quota admission and its selected HTTP/error bridges.

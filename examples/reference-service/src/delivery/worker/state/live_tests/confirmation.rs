@@ -8,18 +8,40 @@ pub(super) async fn ordering(worker: &DeliveryWorker) -> Result<(), BoxError> {
 
 async fn prepared(worker: &DeliveryWorker) -> Result<(JobContext, DeliveryJobPayload), BoxError> {
     let (context, payload) = claimed(&worker.pool).await?;
-    let services = Services(Instant::now() + Duration::from_secs(10));
-    assert!(
-        worker
-            .mark_dispatch_possible(
-                JobExecution::new(&context, &services),
-                &payload,
-                ProviderEffectState::AwaitingAttempt,
-            )
-            .await
-            .unwrap()
-    );
+    let marked = in_invocation(PROBE_BUDGET, context.clone(), {
+        let (worker, payload) = (worker.clone(), payload.clone());
+        move |execution| {
+            Box::pin(async move {
+                worker
+                    .mark_dispatch_possible(
+                        execution,
+                        &payload,
+                        ProviderEffectState::AwaitingAttempt,
+                    )
+                    .await
+            })
+        }
+    })
+    .await;
+    assert!(marked.unwrap());
     Ok((context, payload))
+}
+
+/// Confirm the provider's acceptance inside one invocation of the claimed job.
+async fn confirm(
+    worker: &DeliveryWorker,
+    context: &JobContext,
+    payload: &DeliveryJobPayload,
+) -> Result<JobCompletion, JobFailure> {
+    let (worker, payload) = (worker.clone(), payload.clone());
+    in_invocation(PROBE_BUDGET, context.clone(), move |execution| {
+        Box::pin(async move {
+            worker
+                .confirm(execution, &payload, "fixture-accepted".into())
+                .await
+        })
+    })
+    .await
 }
 
 /// Return the actual blocked backend, not a timing-only inference.
@@ -49,7 +71,6 @@ async fn replacement_first(worker: &DeliveryWorker, expire: Expiry) -> Result<()
         sqlx::query("UPDATE job_queue SET lease_expires_at = clock_timestamp() + interval '2 seconds' WHERE id = $1")
             .bind(context.job_id).execute(&worker.pool).await?;
     }
-    let services = Services(Instant::now() + Duration::from_secs(10));
     let mut replacement = worker.pool.begin().await?;
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *replacement)
@@ -58,14 +79,8 @@ async fn replacement_first(worker: &DeliveryWorker, expire: Expiry) -> Result<()
         .bind(payload.record_id)
         .execute(&mut *replacement)
         .await?;
-    let confirmation = tokio::time::timeout(
-        Duration::from_secs(8),
-        worker.confirm(
-            JobExecution::new(&context, &services),
-            &payload,
-            "fixture-accepted".into(),
-        ),
-    );
+    let confirmation =
+        tokio::time::timeout(Duration::from_secs(8), confirm(worker, &context, &payload));
     let release = async {
         waiter(&worker.pool, pid).await?;
         // The record wait must not starve native lease maintenance.
@@ -117,7 +132,6 @@ async fn replacement_first(worker: &DeliveryWorker, expire: Expiry) -> Result<()
 
 async fn confirmation_first(worker: &DeliveryWorker) -> Result<(), BoxError> {
     let (context, payload) = prepared(worker).await?;
-    let services = Services(Instant::now() + Duration::from_secs(10));
     let mut effect_blocker = worker.pool.begin().await?;
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *effect_blocker)
@@ -128,14 +142,8 @@ async fn confirmation_first(worker: &DeliveryWorker) -> Result<(), BoxError> {
     .bind(payload.delivery_id)
     .execute(&mut *effect_blocker)
     .await?;
-    let confirmation = tokio::time::timeout(
-        Duration::from_secs(8),
-        worker.confirm(
-            JobExecution::new(&context, &services),
-            &payload,
-            "fixture-accepted".into(),
-        ),
-    );
+    let confirmation =
+        tokio::time::timeout(Duration::from_secs(8), confirm(worker, &context, &payload));
     let replace = async {
         let confirming_pid = waiter(&worker.pool, pid).await?;
         let replacement = tokio::time::timeout(Duration::from_secs(5), async {

@@ -26,7 +26,7 @@ integration namespaces explicitly:
 | `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
 | `runledger` | `batter::runledger`, `batter::runledger::native::{core, postgres, runtime}`, `batter::sqlx` | `batter-runledger`, `batter-sqlx`, the three native Runledger libraries |
-| `runledger-test-support` | `batter::runledger::native::test_support` | `runledger`, plus Runledger's own PostgreSQL test support |
+| `runledger-test-support` | `batter::runledger::test_support`, `batter::runledger::native::test_support` | `runledger`, the adapter's worker-free handler drive, plus Runledger's own PostgreSQL test support |
 | `runlimit` | `batter::runlimit`, `batter::runlimit::native` | `batter-runlimit`, `runlimit-core` |
 | `runlimit-memory` | `batter::runlimit::memory` | `runlimit`, plus `runlimit-memory` |
 | `runlimit-postgres` | `batter::runlimit::postgres`, `batter::runlimit::attempts` | `runlimit`, plus `runlimit-postgres` and `batter-sqlx` |
@@ -54,8 +54,8 @@ owns authenticated quota-before-body assembly. `native_transport::axum` leaves
 subject derivation, rejection mapping and response selection to the application
 and acquires no operation deadline, admission ordering or telemetry from the
 foundation; `native_transport::http` serializes an unstable Internet-Draft header
-set. `runledger::native::test_support` is test-only and must not be selected in a
-deployed graph. These namespaces authorize no change to native runtimes, storage,
+set. `runledger::native::test_support` and `runledger::test_support` are test-only
+and must not be selected in a deployed graph. These namespaces authorize no change to native runtimes, storage,
 policy or lifecycle ownership.
 
 `at-rest` re-exports the standalone, synchronous `batter-at-rest` package with

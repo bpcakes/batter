@@ -16,9 +16,10 @@ workspace = true
 
 [features]
 default = []
-# Reachability for Runledger's own Docker-provisioned PostgreSQL test support.
+# Reachability for Runledger's own Docker-provisioned PostgreSQL test support
+# and this crate's worker-free handler test facility (`test_support`).
 # Test-only; it selects no runtime behaviour and stays out of the default graph.
-test-support = ["dep:runledger-test-support"]
+test-support = ["dep:runledger-test-support", "dep:serde_json", "dep:uuid"]
 
 [dependencies]
 batter-core.workspace = true
@@ -29,6 +30,10 @@ runledger-core.workspace = true
 runledger-postgres.workspace = true
 runledger-runtime.workspace = true
 runledger-test-support = { workspace = true, optional = true }
+# The handler test facility takes the handler's JSON payload and derives one
+# time-ordered job identity per invocation, as the native queue does.
+serde_json = { version = "1", optional = true }
+uuid = { version = "1", features = ["v7"], optional = true }
 sqlx = { workspace = true, features = ["postgres"] }
 # Converts the native std deadline to the same monotonic clock as Tokio timers.
 tokio = { workspace = true, features = ["time"] }
@@ -38,3 +43,11 @@ batter-test-support.workspace = true
 serde_json = "1"
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
+
+[[test]]
+name = "handler_invocation"
+required-features = ["test-support"]
+
+[[test]]
+name = "handler_progress"
+required-features = ["test-support"]

@@ -12,8 +12,8 @@ from unittest import mock
 import check_single_facade_consumer as runner
 from check_single_facade_consumer import (CONSUMER_SOURCE, HARNESS_SOURCE, IDENTITIES, MARKERS,
                                           consumer_manifest, executable, harness_manifest,
-                                          require_markers, validate_single_dependency,
-                                          workspace_names)
+                                          require_absent, require_markers,
+                                          validate_single_dependency, workspace_names)
 from runledger_source import copy_source, validate_consumer
 
 NAMES = {'batter', 'batter-core', 'batter-runledger', 'batter-runlimit', 'runledger-core',
@@ -35,11 +35,22 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(package=name):
                 self.assertNotIn('[patch', text)
                 self.assertIn('default-features = false', text)
-                # Exactly one workspace path dependency, the facade.
+                # The only workspace path dependency is the facade, once per table.
                 paths = [line for line in text.splitlines() if 'path = ' in line
                          and not line.startswith('path = ')]
-                self.assertEqual(len(paths), 1, paths)
-                self.assertTrue(paths[0].startswith('batter = {'), paths[0])
+                self.assertEqual(len(paths), 2 if name == 'single-facade-consumer' else 1, paths)
+                for line in paths:
+                    self.assertTrue(line.startswith('batter = {'), line)
+                    self.assertIn('default-features = false', line)
+
+    def test_only_the_consumer_tests_select_the_handler_test_facility(self):
+        text = consumer_manifest(Path('/copied').resolve())
+        ordinary = text[text.index('[dependencies]'):text.index('[dev-dependencies]')]
+        development = text[text.index('[dev-dependencies]'):text.index('[lints.rust]')]
+        self.assertNotIn('test-support', ordinary)
+        facade = [line for line in development.splitlines() if line.startswith('batter = {')]
+        self.assertEqual(len(facade), 1, development)
+        self.assertTrue(facade[0].endswith('features = ["runledger-test-support"] }'), facade[0])
 
     def test_a_native_dependency_or_patch_cannot_pass(self):
         good = package('single-facade-consumer', ['batter', 'tokio', 'sqlx', 'serde_json'])
@@ -161,6 +172,17 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(executable("\n".join(lines), 'consumer'), '/built/consumer')
         with self.assertRaisesRegex(RuntimeError, 'did not report an executable'):
             executable("\n".join(lines[:4]), 'consumer')
+
+    def test_native_test_support_must_stay_out_of_the_consumer_binary(self):
+        built = ['not json',
+                 '{"reason":"compiler-artifact","target":{"name":"batter"},"fresh":true}',
+                 '{"reason":"compiler-artifact","target":{"name":"consumer"},'
+                 '"executable":"/built/consumer"}']
+        require_absent("\n".join(built), runner.TEST_ONLY_CRATE)
+        leaked = built + ['{"reason":"compiler-artifact",'
+                          '"target":{"name":"runledger_test_support"},"fresh":true}']
+        with self.assertRaisesRegex(RuntimeError, 'must build without runledger_test_support'):
+            require_absent("\n".join(leaked), runner.TEST_ONLY_CRATE)
 
 
 class CompilerGateTests(unittest.TestCase):

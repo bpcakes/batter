@@ -11,15 +11,20 @@ exist so the manifests those checks generate stay reviewable source in Git.
   derived work phase before the run counts as complete.
   Work and recording interruptions have their own timeout-kind diagnostics;
   only application failures report an invalid payload or a closed observer.
-  Its paused-time job tests expire work while the native reserve remains and
-  cover finalization expiry, cancellation, application failures and success.
+  Its paused-time job tests drive that handler through
+  `batter::runledger::test_support::HandlerInvocation`, selected by the same
+  `batter` in `[dev-dependencies]` with `runledger-test-support`, which the
+  consumer binary never compiles: success with the exit cancelling the derived
+  phases, application failures, a budget inside the reserve, work expiry while
+  the reserve remains, recording at the invocation deadline, cancellation, and
+  recording after the invocation ended.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly
   the property it proves.
 - `single_facade_harness.rs` owns the disposable PostgreSQL 18 database through
   Runledger's existing native test support and runs the consumer against it. It
-  is built from its own manifest so the consumer keeps proving it needs no test
-  support, and it reaches that support through the facade's
+  is built from its own manifest so the consumer binary keeps proving it needs
+  no test support, and it reaches that support through the facade's
   `runledger-test-support` feature, so it declares only `batter` as well. Its
   `test-support` feature selects the existing generic result combiner, not
   database provisioning.

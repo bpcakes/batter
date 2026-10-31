@@ -1047,7 +1047,8 @@ ordering and spawned-work reach missing from the bridge rustdoc, an example that
 collapsed provider outcomes, no guidance for nested limits or against a new root
 inside a handler, and terse `child` documentation. Two remain outside this task.
 Consumers write their own test execution services, and constructing a
-`JobContext` needs a UUID. A new independent root is still constructible inside
+`JobContext` needs a UUID; both are closed by the handler test facility
+assessment (`batter-3upk`) below. A new independent root is still constructible inside
 a handler, because `OperationOwner::new` and `RootDeadline` remain the general
 independent-root API; the guides direct nested limits to `child`, and only an
 exit test detects the unlinked root. These are two executed evaluations against
@@ -1178,7 +1179,8 @@ six documentation repairs, one missing re-export, two capability follow-ups,
 and two policy or default questions. The re-export and documentation repairs
 shipped in the same change. The capability follow-ups are one profiled pool
 owner shared with Runledger (`batter-nhu5`) and a handler test facility
-(`batter-3upk`). Shutdown budget sizing remains application policy; the consumer
+(`batter-3upk`, closed on 2026-10-24 by the assessment below). Shutdown budget
+sizing remains application policy; the consumer
 default between `PgSessionProfile::with_timeouts` and `new` remains unresolved
 and needs a maintainer decision. The evidence README records each disposition.
 This is one run of one agent and does not establish population reliability.
@@ -1330,6 +1332,139 @@ cover principals, authority, rejection, session-policy failure, both
 cancellation points and registration after failure; mutations reverting
 two-phase registration or keeping the owner's password fail them. Fresh-agent
 usability evaluation is proposed and unexecuted.
+
+### Handler test facility assessment (`batter-3upk`)
+
+The whole-application baseline's seventh gap and the residual recorded under
+the invocation phases assessment were the same obligation: the only in-process
+way to run a `JobExecutionHandler` was `JobExecution::new(&context, &services)`
+over hand-written `JobExecutionServices` owning a `JobInvocationOwner`, a
+recipe documented only on `JobExecutionServices::invocation`. The reference
+worker's tests, the facade-only consumer's tests and the baseline agent's crate
+each carry a copy. Each copy restates the deadline, keeps the owner behind a
+mutex so the test can end it, must end it after the handler returns and before
+asserting on derived contexts, must keep the deadline the services report equal
+to the one the test enforces, must handle the `#[must_use]` hook-panic report,
+and must mint a UUID for a `JobContext`. The rustdoc example itself never
+ended its owner, and the baseline agent's copy dropped the `#[must_use]` report
+until Clippy objected. Under the review questions this is caller memory of
+ordering, a paired completion and a deadline relationship (question 2), and a
+hand-written runtime in every test crate where one consuming library-owned
+execution could stand (questions 3 and 4).
+
+The canonical path is `batter_runledger::test_support::HandlerInvocation`,
+reachable as `batter::runledger::test_support` with the facade's
+`runledger-test-support` feature, so a consumer's development graph declares
+only `batter`. `new(budget)` declares a fresh job, and
+`for_context(budget, context)` the claimed job a handler reads: its
+organization, a later run or attempt, or the lease identity that fences the
+handler's own writes. Both accept the budget through the same
+`RootDeadline::after` acceptance as every Batter root budget, so zero and
+over-long budgets are rejected before a handler exists, and `for_context`
+rejects a non-positive run number or attempt, which the queue row's own checks
+exclude for a claimed job. `with_checkpoint` and `with_progress` are the
+optional inputs, the resume state the worker would supply: the checkpoint the
+handler reads, and the `progress_done` and `progress_total` that a retry, or a
+continuation preserving its state, keeps on the row and that the worker merges
+and validates every write against. `with_progress` refuses a pair the row's own
+constraint refuses, with the native `JobProgressValidationError`. Because the
+context is taken at construction, each replaces only its own fields, in either
+order: a builder that replaced the whole context would have let a later call
+silently discard an earlier checkpoint. `execute(&handler, payload)` consumes the declaration and owns the
+whole drive: it creates one `JobInvocationOwner`, builds services whose
+`deadline()`, `remaining_budget()`, progress writes and the enforcing timeout
+all read one instant set when the future is first polled, dispatches through
+`JobHandler::execute_with_services` exactly as the worker does, so an adapted
+handler is never asked to run without services and typed and legacy handlers
+run unchanged, contains a handler panic at the poll boundary, including one a
+hand-written dispatch raises before returning its future, because the dispatch
+call runs inside that boundary as it does in the worker, releases every caught
+payload as `JobInvocationHookPanics` releases notification payloads, retaining
+an opaque `panic_any` payload instead of running a destructor that could itself
+panic, destroys the
+handler future and only then ends the owner, returning its hook-panic report
+instead of dropping it. Its locals are declared in the worker's order, so
+destroying the facility's own future, the test's equivalent of a task abort,
+drops the handler future before the owner ends. Progress persistence is a row
+in memory, starting from the declared checkpoint and progress, with the queue
+row's `COALESCE` rule, validated on the effective pair and refused at the
+deadline, as `LeaseExecutionServices` refuses it.
+
+The outcome is an exhaustive `HandlerExit`: `Returned` carries the handler's
+own `Result<JobCompletion, JobFailure>` when it was observed strictly before
+the deadline; `TimedOut` is any observation at or after it, including a result
+from a handler that crossed the deadline without yielding, applying the
+acceptance rule `JobExecution::deadline` documents rather than Tokio's poll
+order; `Panicked` carries the message. As in the worker, nothing preempts a
+handler that never yields: the drive completes only once the handler next
+returns or yields. Returning the
+worker's `job.timeout_exceeded` and `job.handler_panic` failures instead was
+rejected: it would restate the worker's classification strings in Batter and
+let `is_err()` accept a late or panicking handler as a returned failure. The
+`HandlerRun` is `#[must_use]`, has no public constructor, and carries the
+persisted row and the hook-panic report beside the exit. Nothing a handler or
+test reaches can end the invocation, because the owner is never exposed, and a
+declaration drives exactly one invocation, because `execute` consumes it.
+
+Against the review questions: the validated inputs are rejected at
+declaration, and the payload, the checkpoint and the rest of a declared context
+are values the worker also passes through from the row unvalidated; whether a
+declared identity names a leased row is the handler's own lease fencing, as it
+is under the worker; no ordering, paired end, deadline relationship or panic-report
+handling remains with the test, and exhaustive matching replaces a `Result`
+whose error could stand for three different exits; authority is a consumed
+declaration and an unreachable owner; library-owned execution is the only
+ordinary path, while the custom-services recipe remains the documented
+low-level path for a custom runtime and is not equivalent, since it leaves the
+end obligation with its author. What remains is application policy or upstream
+behaviour, kept explicit: the handler's own `JobFailure` mapping; the worker's
+durable outcome policy, which the facility does not simulate, so retries,
+continuations and dead letters are asserted on the returned completion or
+failure rather than observed; lease loss, which is not representable because
+there is no lease; and remote effects, which a returned exit proves nothing
+about. The facility is adapter-owned rather than a native package change: its
+contract is the Batter test path for a Batter-bridged handler, and reachability
+authorizes no native runtime change. It sits behind the adapter's existing
+`test-support` feature, which already carries the native PostgreSQL test
+graph; that cost is recorded, not removed.
+
+The two residuals recorded at first delivery are closed. A later run or
+attempt, an organization and a leased identity are declared through
+`for_context` instead of custom services, and both consumers that carried a
+copy of the recipe now use the facility. The facade-only consumer's job tests
+drive its registered handler, and run single steps on the invocation's own
+clock through a handler that derives the same phases. The reference worker's
+handler, admission and state probes each run inside an invocation of the
+owner-scoped or leased context they need. Two custom-services values remain
+there as negative controls for states neither the worker nor the facility
+builds: services without an exit claim must still be refused, and an invocation
+that ended before derivation maps to the same budget exhaustion as no remaining
+work time. Paused-time tests cover
+success, retryable and terminal failures,
+phase rejection without a work factory, destruction before work with a spawned
+observer, an elapsed budget, a parked handler future destroyed before the
+invocation ends on both of those exits, a budget that starts at the first poll
+after delays following declaration and construction, with `remaining_budget()`
+reading the same deadline, acceptance at and one nanosecond before the
+deadline for results and at it for panics, contained panics including one a
+hand-written dispatch raises before returning its future, opaque payloads with
+panicking destructors retained before and at the deadline, retained hook
+panics, progress merge and rejection, declared checkpoints, declared retained
+progress bounding a resumed attempt's writes and refused at declaration where
+the row refuses it, budget validation,
+a claimed context reaching the handler unchanged with a later checkpoint
+replacing only the checkpoint, non-positive run numbers and attempts rejected
+at declaration, and typed, legacy and type-erased dispatch; the
+`with_checkpoint` doctest shows a declared checkpoint retained when nothing is
+committed, the `with_progress` doctest a retry refusing a write its retained
+total forbids, and the `for_context` doctest an owner-scoped handler accepting its
+claimed context and refusing a fresh one; a compile-fail
+rustdoc rejects reaching the declaration's fields;
+`scripts/check_facade_features.py` proves facade reachability and identity.
+The exit is not total in one recorded case: a destructor that panics while the
+drive destroys the handler future is not contained, as it is not in the worker,
+whose unwind boundary also covers polling only; a should-panic test pins this.
+Fresh-agent usability evaluation is proposed and unexecuted.
 
 ## Recurring example review defects
 
