@@ -8,6 +8,8 @@
 //! cancelling those futures or dropping their owners may invoke destructive lease
 //! Drop. Abandoned low-level template preparation can leave initializing templates
 //! outside deferred drain. Use [`SessionObserver`] for explicit independent session-absence observation.
+//! Declare pools for a separately provisioned login with [`ConnectionPlan::declare`]
+//! and [`PlannedPool::password_login`]; role lifecycle stays caller-owned.
 //! No runtime-death or remote-termination guarantee is implied.
 //!
 //! ```no_run
@@ -26,11 +28,13 @@
 //! ```
 
 mod acquisition;
+mod plan;
 mod report;
 mod runner;
 mod sessions;
 mod verification;
 
+pub use plan::{ConnectionPlan, LeaseDatabaseMismatch, PlanDeclaration, PlannedPool, PoolKey};
 pub use sessions::{CleanupPhase, DatabaseProgress, SessionObserver};
 
 pub use report::{
@@ -48,7 +52,7 @@ use batter_test_support::{TestFailure, finish};
 use postgres_test_harness::{
     DatabaseLease, DatabaseTemplate, FingerprintBuilder, PostgresHarness, TemplateSpec,
 };
-use sqlx::{PgConnection, PgPool, postgres::PgPoolOptions};
+use sqlx::{PgConnection, PgPool};
 pub(crate) use verification::{
     pause_after_verification_ledger_lock, pause_before_verification_ledger_history,
 };
@@ -91,44 +95,6 @@ pub fn template_spec(bundles: &[MigrationBundle<'_>], setup_revision: &str) -> T
     TemplateSpec::new(fingerprint.finish())
 }
 
-/// Declared application capacity for one lease, validated before acquisition.
-///
-/// Reserved connections include standalone blockers, observers and administration
-/// even when they target the admin database. Separately bounded suite resources
-/// and upstream owner/template/lifecycle sessions are additional server usage.
-/// Multiple harnesses do not share a server-wide budget. Pool clones share
-/// capacity; every separately constructed pool needs its own declaration.
-#[derive(Clone)]
-pub struct ConnectionPlan {
-    pools: Vec<PgPoolOptions>,
-    total: u32,
-}
-
-impl ConnectionPlan {
-    /// Sum pool maxima and standalone capacity using checked arithmetic.
-    pub fn new(pools: Vec<PgPoolOptions>, reserved: u32) -> Result<Self, FixtureError> {
-        let total = pools
-            .iter()
-            .try_fold(reserved, |total, pool| {
-                total.checked_add(pool.get_max_connections())
-            })
-            .ok_or(FixtureError::InvalidBudget)?;
-        if pools.is_empty() || pools.iter().any(|pool| pool.get_max_connections() == 0) {
-            return Err(FixtureError::InvalidBudget);
-        }
-        Ok(Self { pools, total })
-    }
-
-    /// Reject a declaration larger than the selected per-database capacity.
-    pub fn validate(&self, per_database: u32) -> Result<(), FixtureError> {
-        if self.total > per_database {
-            Err(FixtureError::InvalidBudget)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 /// Native causes remain inspectable; formatting never emits their contents.
 pub enum FixtureError {
     /// An empty, overflowing or over-budget connection declaration.
@@ -143,14 +109,19 @@ pub enum FixtureError {
     Acquisition(Arc<postgres_test_harness::Error>),
     /// Producer stopped before delivery. Its native join failure is in the report.
     AcquisitionStopped,
-    /// Pool acquisition failed with resources still registered for driver cleanup.
-    /// The same native cause is retained in the database report, even if handled.
-    /// The final report, not this error, establishes their cleanup outcome.
+    /// Pool configuration or its connectivity check failed with resources still
+    /// registered for driver cleanup. The same SQLx-typed cause is retained in the
+    /// database report, even if handled. Besides native connection and URL errors
+    /// it can carry the adapter's pre-construction [`LeaseDatabaseMismatch`] inside
+    /// `sqlx::Error::Configuration`. SQLx discards a connection whose
+    /// `after_connect` fails and retries until `sqlx::Error::PoolTimedOut`; the
+    /// hook's own error is never carried here. The final report, not this error,
+    /// establishes their cleanup outcome.
     PoolAcquire(Arc<sqlx::Error>),
-    /// Low-level pool acquisition failure after all opened pools closed and lease
-    /// cleanup was awaited. `None` means that cleanup succeeded on this path.
+    /// Low-level pool configuration or connectivity failure after all opened pools
+    /// closed and lease cleanup was awaited. `None` means that cleanup succeeded.
     Connect {
-        /// Native connection error.
+        /// SQLx-typed cause, with the same scope as [`Self::PoolAcquire`].
         source: sqlx::Error,
         /// Cleanup also failed after all opened pools were closed.
         cleanup: Option<postgres_test_harness::Error>,
@@ -265,7 +236,8 @@ impl FixtureSuite {
 
     /// Low-level acquisition: the caller owns finish and suite drain on every path.
     /// Prefer `start` for assertion-bearing bodies and partial acquisitions.
-    /// Checks one connection per pool; SQLx maintains minimum connections in the background.
+    /// Constructs every declared pool before checking one connection per pool;
+    /// SQLx maintains minimum connections in the background.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
         let lease = self
@@ -321,6 +293,7 @@ pub struct DatabaseFixture {
     pools: Vec<PgPool>,
     lease: DatabaseLease,
     pool_failures: Vec<Arc<sqlx::Error>>,
+    plan: u64,
 }
 
 impl DatabaseFixture {
@@ -329,6 +302,7 @@ impl DatabaseFixture {
             pools: Vec::new(),
             lease,
             pool_failures: Vec::new(),
+            plan: plan.id(),
         };
         if let Err(source) = fixture.open_pools(plan).await {
             let cleanup = fixture.dispose().await.err();
@@ -338,18 +312,24 @@ impl DatabaseFixture {
     }
 
     async fn open_pools(&mut self, plan: &ConnectionPlan) -> Result<(), sqlx::Error> {
-        for options in &plan.pools {
-            let pool = options.clone().connect_lazy(self.lease.database_url())?;
-            self.pools.push(pool.clone());
-            let connection = pool.acquire().await?;
-            drop(connection);
-        }
-        Ok(())
+        let resolved = plan.resolve(self.lease.database_url(), self.lease.database_name())?;
+        // Every pool is owned here before the first await; dispose closes them all.
+        let pools = plan::construct(resolved, &mut self.pools);
+        plan::check(&pools).await
     }
 
     /// Native pools in connection-plan order. All are closed during finish.
+    /// For a `ConnectionPlan::declare` plan, positional access does not
+    /// distinguish logins: select a pool with [`Self::pool`] and use this slice
+    /// to inspect every pool.
     pub fn pools(&self) -> &[PgPool] {
         &self.pools
+    }
+
+    /// The pool a [`PoolKey`] declared; `None` for a key from another plan.
+    /// See [`ConnectionPlan::declare`] for issuing keys.
+    pub fn pool(&self, key: PoolKey) -> Option<&PgPool> {
+        plan::lookup(&self.pools, self.plan, key)
     }
 
     /// Disposable database identity for independent catalog observations.

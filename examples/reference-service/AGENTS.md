@@ -270,7 +270,12 @@ both Tokio runtime flavors; ordinary diagnostics must use a separate pool.
 Temporary restricted logins use fresh random passwords with five-minute expiry
 and belong to the outer test cleanup owner. Expiry limits password authentication;
 it does not remove roles after process death. Join assertion failures before
-closing their pools and dropping the role. Retained observer pools
+closing their pools and dropping the role. `support/fixture_login.rs::with_login`
+owns that order for fixture login pools. The principal case's restricted pool
+takes its session policy from `database::session_profile`, the same declaration
+`database::configured` uses; the cancellation and rejection cases use bare
+options, and the session-policy failure case deliberately declares an effective
+role the login cannot assume. Retained observer pools
 close concurrently, so a blocked original checkout cannot delay initiating close
 on later replacements. Both endpoints must allow pg_control_system for distinct
 cluster identity preflight. PostgreSQL 18.4 permits this by default; if revoked,

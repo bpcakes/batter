@@ -57,7 +57,7 @@ async fn role_case(inject_panic_choice: BodyOutcome) -> ProbeResult {
     Ok(())
 }
 
-async fn create_role(catalog: &PgPool, role: &str) -> Result<String, sqlx::Error> {
+pub(super) async fn create_role(catalog: &PgPool, role: &str) -> Result<String, sqlx::Error> {
     // PostgreSQL quotes the identifier/literals, generates fresh random credentials
     // and sets expiry from its own clock. A killed process cannot leave a known,
     // permanently valid password; expiry does not promise role removal.
