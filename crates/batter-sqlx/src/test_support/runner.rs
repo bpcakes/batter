@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use tokio::task::JoinHandle;
 
 use super::acquisition::{Registered, Resources, join_producers, produce};
+use super::plan::{PoolKey, check, construct, lookup};
 use super::report::{BodyFailure, FixtureReport, FixtureReportRef};
 use super::{ConnectionPlan, DatabaseFixture, FixtureError, FixtureSuite};
 
@@ -17,12 +18,21 @@ pub type FixtureBody<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Sen
 pub struct FixtureDatabase {
     pools: Vec<PgPool>,
     name: String,
+    plan: u64,
 }
 
 impl FixtureDatabase {
-    /// Native pools in declaration order.
+    /// Native pools in declaration order, for inspection such as close checks.
+    /// Indexes are unambiguous only for `ConnectionPlan::new`, where every pool
+    /// uses the lease login; for a `ConnectionPlan::declare` plan select pools
+    /// with [`Self::pool`], since an index can reach the owner pool by mistake.
     pub fn pools(&self) -> &[PgPool] {
         &self.pools
+    }
+    /// The pool a [`PoolKey`] declared; `None` for a key from another plan.
+    /// See `ConnectionPlan::declare` for issuing keys.
+    pub fn pool(&self, key: PoolKey) -> Option<&PgPool> {
+        lookup(&self.pools, self.plan, key)
     }
     /// Database identity for independent catalog observations.
     pub fn database_name(&self) -> &str {
@@ -34,7 +44,10 @@ impl FixtureDatabase {
 ///
 /// Native acquisition producers register with the independent driver before
 /// their delivery waiter can be cancelled. Producers publish leases/templates
-/// before delivery; pools register before initialization. Body exit cannot skip
+/// before delivery; every declared pool registers, in declaration order and with
+/// no await in between, before the first connectivity check. An eager
+/// `min_connections` pool's background `after_connect` may already run during
+/// construction. Body exit cannot skip
 /// joining those producers and cleaning their leases. A run retains leases until body exit and rejects batches
 /// exceeding the harness simultaneous-lease limit rather than waiting on its own
 /// held permits. Shared harness owners must release their native capacity for
@@ -102,8 +115,10 @@ impl FixtureScope {
         .await
     }
 
-    /// Register an empty database and each lazy pool before its first acquisition.
-    /// This checks connectivity; SQLx owns background minimum-connection maintenance.
+    /// Register an empty database, then every declared lazy pool, before the first
+    /// connectivity check. Cancelling during the checks leaves the database and
+    /// all its pools registered. SQLx owns background minimum-connection
+    /// maintenance; an eager `min_connections` pool may connect as soon as it exists.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<FixtureDatabase, FixtureError> {
         let harness = self.harness.clone();
         self.acquire(plan, async move { harness.empty_database().await })
@@ -145,6 +160,7 @@ impl FixtureScope {
             .try_acquire_owned()
             .map_err(|_| FixtureError::BatchCapacity)?;
         let resources = self.resources.clone();
+        let plan_id = plan.id();
         let index = produce(&self.resources, async move {
             let lease = work.await?;
             let mut registered = resources.lock().unwrap_or_else(|error| error.into_inner());
@@ -153,6 +169,7 @@ impl FixtureScope {
                 pools: Vec::new(),
                 lease,
                 pool_failures: Vec::new(),
+                plan: plan_id,
             });
             capacity.forget(); // Held until the driver cleans this registered lease.
             Ok(index)
@@ -188,29 +205,31 @@ impl FixtureScope {
                 lease.database_url().to_owned(),
             )
         };
-        let mut pools = Vec::new();
-        for options in &plan.pools {
-            let pool = options
-                .clone()
-                .connect_lazy(&url)
-                .map_err(|error| self.pool_failed(index, error))?;
-            self.resources
+        // Resolution runs no caller code. A refusal registers its cause with no
+        // pool constructed; the lease is already registered for cleanup.
+        let resolved = plan
+            .resolve(&url, &name)
+            .map_err(|error| self.pool_failed(index, error))?;
+        // No await separates delivery from this registration: a waiter cancelled
+        // later leaves every declared pool registered. Unlike connect().await,
+        // each pool is retained before this run's checks poll after_connect.
+        let pools = construct(
+            resolved,
+            &mut self
+                .resources
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .fixtures[index]
-                .pools
-                .push(pool.clone());
-            // Unlike connect().await, the pool is retained before this explicit
-            // acquisition polls after_connect. SQLx may also maintain minimum
-            // connections in its own background task.
-            let connection = pool
-                .acquire()
-                .await
-                .map_err(|error| self.pool_failed(index, error))?;
-            drop(connection);
-            pools.push(pool);
-        }
-        Ok(FixtureDatabase { pools, name })
+                .pools,
+        );
+        check(&pools)
+            .await
+            .map_err(|error| self.pool_failed(index, error))?;
+        Ok(FixtureDatabase {
+            pools,
+            name,
+            plan: plan.id(),
+        })
     }
 }
 

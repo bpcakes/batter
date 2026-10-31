@@ -44,6 +44,10 @@ fn sqlx_namespace_reexports_the_direct_adapter_types() {
 fn sqlx_fixture_namespace_reexports_the_direct_fixture_types() {
     fn direct(_: batter_sqlx::test_support::ConnectionPlan) {}
     let _: fn(batter::sqlx::test_support::ConnectionPlan) = direct;
+    fn login(_: batter_sqlx::test_support::PlannedPool) {}
+    let _: fn(batter::sqlx::test_support::PlannedPool) = login;
+    fn key(_: batter_sqlx::test_support::PoolKey) {}
+    let _: fn(batter::sqlx::test_support::PoolKey) = key;
 }
 
 #[cfg(feature = "runledger")]

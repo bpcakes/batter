@@ -327,7 +327,7 @@ target; its native initialization, ownership, durable execution, callback and
 business-failure cases replace the retired hosted-control protocol cases.
 The earlier 58 runner entries (56 database and two offline signal cases), plus the
 separate maintenance-session probe, passed on both supported toolchains on Linux.
-The current inventory has 68 entries: 63 database probes, four offline signal
+The current inventory has 73 entries: 68 database probes, four offline signal
 controls and the private child entry; the two metrics export probes require the
 `metrics-export` feature, which the runner selects. Its eight protected-startup rows are
 described in [testing](../../docs/testing.md#protected-startup-consumer-process-cases);

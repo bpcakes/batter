@@ -166,7 +166,10 @@ MSRV verification belongs in CI.
 
 Read [the canonical fixture contract](README.md#optional-fixture-support) before
 changing `src/test_support.rs`, `src/test_support/` or fixture tests. Keep that
-contract in the README rather than duplicating it here. Session observation and
+contract in the README rather than duplicating it here. Declared capacity, the
+lease-bound pool logins and the resolve/construct/check order live in
+`src/test_support/plan.rs`; never let a declaration select another server or
+database, and keep every pool registered before the first check. Session observation and
 retry ownership live in `src/test_support/sessions.rs`; retained outcomes and
 redacted summaries live in `src/test_support/report.rs`. Reference composition
 and live failure controls belong to `examples/reference-service`, not the generic

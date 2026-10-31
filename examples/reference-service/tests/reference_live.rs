@@ -315,6 +315,36 @@ async fn fixture_role_cleanup_after_assertion() {
 }
 
 #[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 with superuser and SCRAM"]
+async fn fixture_login_pools_distinguish_principals() {
+    assert_probe(support::fixture_login::principals_and_authority().await);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 with superuser and SCRAM"]
+async fn fixture_login_rejection_retained() {
+    assert_probe(support::fixture_login_failures::rejected_login_retained().await);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 with superuser and SCRAM"]
+async fn fixture_login_session_policy_failure_retained() {
+    assert_probe(support::fixture_login_failures::session_policy_failure_retained().await);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 with superuser and SCRAM"]
+async fn fixture_login_cancelled_waiter_retains_pools() {
+    assert_probe(support::fixture_login::cancelled_waiter_retains_pools().await);
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn fixture_lease_database_mismatch_retained() {
+    assert_probe(support::fixture_lease_target::mismatch_retained().await);
+}
+
+#[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
 async fn configured_pool_capacity_and_acquire_timeout() {
     assert_probe(support::configuration::one_slot_pool().await);

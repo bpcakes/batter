@@ -1274,6 +1274,63 @@ records one, so that removal is unexercised defense against a future layer
 order. Fresh-agent usability evaluation and the downstream port are proposed
 and unexecuted.
 
+### Fixture login pool assessment (`batter-7r3.8`)
+
+A consumer needed fixture-managed pools that authenticate as a real restricted
+login; role switching on an owner connection cannot reproduce `session_user` or
+`system_user`. A proposed connect-options closure was rejected before
+implementation. It would let a declaration retarget the host, socket or database,
+caught only after a lease existed, and a closure that set only the username
+would still send the owner's URL, `PGPASSWORD` or passfile password, a paired
+call SQLx cannot undo because its setters cannot clear a password or socket.
+`PlannedPool::password_login` takes exactly a username and a `SecretString`
+password and replaces both on the lease's own native options, so neither
+retargeting, half-replaced credentials nor a swapped password (which PostgreSQL
+would echo into authentication errors) can be written. Silent identity rebinding, a caller-supplied full
+options template and producer-side construction were also weighed and rejected:
+the first two discard caller intent or the lease's TLS settings, and the third
+would move delivered-lease failures into the harness error channel.
+
+Pure construction cannot see the lease URL, so one rejection stays at runtime:
+the harness keeps the admin URL's query, and SQLx lets `dbname` override the
+path. Each lease's URL must select `lease.database_name()`; otherwise
+`LeaseDatabaseMismatch` is retained like any pool failure, before any pool
+exists; the `fixture_lease_database_mismatch_retained` live probe proves this on
+both the owned and low-level paths. It travels in `sqlx::Error::Configuration`, following the repository's
+existing configuration-wrapping precedent, because a new `FixtureError` variant
+or `DatabaseCleanup` field would break exhaustive matches and struct literals.
+Server-owned outcomes (unknown role, expired or wrong password, connection
+limits, a failing `after_connect`) stay native SQLx errors. Every declared pool
+is now constructed and registered before the first check, so a cancelled or
+failed check cannot strand an unregistered pool; each pool is pushed as it is
+built, so a construction panic cannot either.
+
+Role provisioning, grants, their ordering relative to templates and `DROP ROLE`
+are cluster-scoped consumer or outer-server policy, kept outside fixture cleanup.
+Positional addressing of mixed-login pools was a known-invalid composition: a
+wrong index could make a positive restricted assertion pass through the owner
+pool. Review replaced the positional mixed-login constructor, before release,
+with `ConnectionPlan::declare`, whose `pool` returns an opaque `PoolKey` bound to
+its plan; `FixtureDatabase::pool` refuses another plan's key instead of mapping
+it to a different pool. `ConnectionPlan::new` stays positional because all its
+pools share the lease login. `FixtureDatabase::pools()` and
+`DatabaseFixture::pools()` still give positional access on a `declare` plan:
+both are public since 0.0.1, so removing them would be a hard cut, and close
+inspection over every pool needs them. Their rustdoc directs `declare` plans to
+`pool(key)`; positional selection on a mixed-login plan is a disclosed,
+unprotected escape, not the protected path. An empty username
+is left to the server because construction-time rejection needs a new error
+variant. The binding holds at construction only, since native
+`PgPool::set_connect_options` and `connect_options` are upstream escape hatches.
+`PgProfiledPool` and `RunledgerDatabase` cannot host fixture pools, and its
+acquisition verification hook is crate-private, so the live evidence uses the
+reference pool settings and declared profile through public reset hooks, not
+full three-hook parity; that composition belongs with `batter-nhu5`. Live cases
+cover principals, authority, rejection, session-policy failure, both
+cancellation points and registration after failure; mutations reverting
+two-phase registration or keeping the owner's password fail them. Fresh-agent
+usability evaluation is proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
