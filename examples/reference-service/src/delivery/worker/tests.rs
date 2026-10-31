@@ -464,18 +464,19 @@ async fn invocation_exit_reaches_provider_admission_and_calls() -> Result<(), ba
     let (phases, waiting) = in_invocation(Duration::from_secs(60), context, move |execution| {
         Box::pin(async move {
             let phases = provider_phases(execution).expect("phases");
-            // Provider work that outlives the handler waits in its own task.
             let work = phases.work().clone();
-            let waiting =
-                tokio::spawn(
-                    async move { admission.enter(&work, Admission::Wait).await.map(drop) },
-                );
-            tokio::task::yield_now().await;
+            let mut waiting =
+                Box::pin(async move { admission.enter(&work, Admission::Wait).await.map(drop) });
+            // Its first poll, before the invocation ends, finds the slot held,
+            // so the exit interrupts the wait rather than the entry check.
+            let first =
+                std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
             assert!(
-                !waiting.is_finished(),
+                first.is_pending(),
                 "provider admission waits for the held slot"
             );
-            (phases, waiting)
+            // Provider work that outlives the handler waits in its own task.
+            (phases, tokio::spawn(waiting))
         })
     })
     .await;
