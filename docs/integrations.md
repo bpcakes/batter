@@ -1151,6 +1151,8 @@ Before promoting an adapter into a stable public API, use it in two different
 application composition roots, exercise partial-startup and shutdown failures,
 and document the external version contract. An ergonomic convenience is not a
 reason to hide native SQLx transactions or collapse meaningful upstream errors.
+[ADR-014](adr/014-reuse-after-two-consumers.md) records which adapters the
+surveyed application roots use, and keeps promotion a per-adapter decision.
 
 
 ### Optional fixture session observation
