@@ -3364,6 +3364,17 @@ longer need indefinite retention. Removal requires passing the isolated
 `tracing_dispatch` regression with the actual replacement graph. This finding is
 not evidence of a callback running under the foundation admission mutex.
 
+Rechecked for `batter-mxa0` and `batter-fnj8.5.1` on 2026-10-31: the locked
+versions above are unchanged. [Upstream issue #3611](https://github.com/tokio-rs/tracing/issues/3611)
+describes the same `JustOne` path losing events when an unsubscribed thread
+first visits a callsite while a scoped subscriber exists elsewhere. Both proposed
+repairs, [#3614](https://github.com/tokio-rs/tracing/pull/3614) and
+[#3615](https://github.com/tokio-rs/tracing/pull/3615), remain open at inspection.
+The metrics tests now use the existing OFF-filtered sentinel constructor.
+Fresh-process cleanup regressions cover WARN and INFO delivery and retain the
+original ordering/count assertions; bypassing the constructor reproduces both
+failures. This changes the test setup, not the dependency or production behavior.
+
 ## Fixture phase cancellation and subscriber retention, 2026-09-10
 
 The resolved graph uses Tokio 1.53.1. Its

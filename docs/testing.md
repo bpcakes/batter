@@ -2536,6 +2536,21 @@ admission-lock callbacks or filtered-event assertions. Raw subscriber arguments 
 `WithSubscriber::with_subscriber` also construct a dispatcher implicitly and must
 use this helper; already-built dispatcher clones need no second construction.
 
+The metrics ordering tests also construct their subscribers through this helper
+(`batter-mxa0`, `batter-fnj8.5.1`). Run
+`cargo test -p batter-core --all-features --test metrics --locked cold_callsites::`
+for the two fresh-process regressions. After capture installation, an unsubscribed
+thread first skips or closes a cleanup stack; the subscribed thread then checks
+the original warning/INFO-before-metric and skip-before-capture-destruction
+assertions. The shared Unix watchdog bounds each child to five seconds. Process
+isolation prevents sibling tests from warming the callsites or registering extra
+dispatchers that hide the defect. The ordinary skip test retains its panicking
+destructor case. Bypassing the helper must fail both isolated ordering assertions;
+the tests neither rebuild interest nor retry failures, install a global subscriber
+or relax event counts.
+This protects the test oracle against the pinned upstream filtering bug, not
+production applications that choose the same scoped-subscriber arrangement.
+
 `python3 scripts/check_http_graceful_mutation.py --output /tmp/http-mutation-evidence`
 requires Python 3.11+, cached locked dependencies and a new output directory
 outside the checkout. Optimized Python is rejected so assertions cannot disappear. It
