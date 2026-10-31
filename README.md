@@ -148,7 +148,10 @@ closure. It does not create/drop databases or migrate a Runledger schema. Every
 real connection secrets.
 
 `finite_command` uses `command::Command` to own one native loopback operation and
-retain cleanup independently of its waiter.
+retain cleanup independently of its waiter. Its executable root calls
+`start_with_unix_signals()?`, so SIGINT or SIGTERM cancels work and still
+finalizes, and moves the checked reply out of `CommandOwner::finish`; run it
+with `-- --until-signal` to wait for one.
 Service startup is a different ownership path; see
 [usage](docs/usage.md#finite-commands-and-owned-cleanup) and the
 executable [`Startup` example](crates/batter-core/src/startup.rs).

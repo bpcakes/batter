@@ -22,11 +22,13 @@ nonempty-input rule, cleanup sequence or exhaustive outcome with caller
 instructions. Application policy and remote effects remain explicit boundaries.
 
 For finite work, use [`Command`](../crates/batter-core/src/command.rs) and the
-[finite-command example](#finite-commands-and-owned-cleanup). The command owner
-retains registered finalizers after callback errors, unwinding or work cancellation.
-Borrowed waiter cancellation changes no ownership; owner drop requests cancellation
-while finalization continues on the live runtime. Use `check_command` to interpret
-the complete work/cleanup result.
+[finite-command example](#finite-commands-and-owned-cleanup). An executable root
+calls `start_with_unix_signals()?` and moves the checked value out of
+`finish().await?`; reusable helpers and in-process tests call
+`start_without_signals()`. The command coordinator retains registered finalizers
+after callback errors, unwinding, work cancellation or a signal. Owner drop
+requests cancellation while finalization continues on the live runtime. `start`
+with `check_command` remains for a report that several observers share.
 
 The lower-level APIs remain available where an application needs a different
 ownership boundary, but their caller obligations are explicit: direct
@@ -377,17 +379,103 @@ owner. Do not enable unused capacity or register a dummy service just to avoid
 
 ## Finite commands and owned cleanup
 
-Use `Command::new(work_context, cleanup_budget, callback).start()` for a finite
-operation. The callback receives a `CommandScope`: reserve a cleanup name before
-native acquisition and register the acquired resource immediately afterward,
-before another await. Returning an error with `?` still transfers control to
-owned finalization. The scope exposes a work context for nested native operations;
-its cancellation cannot travel upward to the parent context.
+An executable root builds the inert `Command::new(work_context, cleanup_budget,
+callback)`, or `Command::within(total_context, cleanup_budget, callback)?`, then
+calls `.start_with_unix_signals()?` and `.finish().await`. The callback receives a
+`CommandScope`: reserve a cleanup name before native acquisition and register the
+acquired resource immediately afterward, before another await. Returning an error
+with `?` still transfers control to owned finalization. The scope exposes a work
+context for nested native operations; its cancellation cannot travel upward to
+the parent context.
+
+```rust
+use batter::{
+    BoxError, RegistrationError, cleanup::CleanupBudget,
+    command::{Command, CommandFailure}, operation::OperationOwner,
+};
+use std::{process::ExitCode, time::Duration};
+
+async fn root() -> Result<ExitCode, BoxError> {
+    let second = Duration::from_secs(1);
+    let context = OperationOwner::new(Duration::from_secs(30))?.into_context();
+    let cleanup = CleanupBudget::new(second, second, second)?;
+    let owner = Command::new(context, cleanup, |scope| Box::pin(async move {
+        scope.stage("export")?;
+        Ok::<_, RegistrationError>(String::from("exported"))
+    }))
+    .start_with_unix_signals()?;
+    Ok(match owner.finish().await {
+        Ok(success) => {
+            println!("{}", success.into_value());
+            ExitCode::SUCCESS
+        }
+        // Work, interruption and every cleanup outcome remain in the report;
+        // its formatting omits value and cause contents.
+        Err(CommandFailure::Report(report)) => {
+            eprintln!("{report:?}");
+            ExitCode::FAILURE
+        }
+        Err(CommandFailure::Coordinator(_)) => ExitCode::FAILURE,
+    })
+}
+```
+
+`start_without_signals()` returns the same `CommandOwner` and installs nothing:
+SIGTERM and SIGINT keep the process's existing disposition. Use it in reusable
+helpers and in-process tests. Whether a call site is the executable root cannot
+be expressed locally, so the two start names make that choice visible; select
+signals only at the root. Do not start a command inside another command's work:
+if the outer work is cancelled or expires while awaiting the inner `finish`, the
+inner owner is dropped and its cleanup runs detached, joined and reported by
+nothing, and leaving the root can abandon it. Code inside command work takes the
+`&mut CommandScope` and registers its resources there; a helper that is not the
+root returns an inert `Command`, as the example's helper does.
+
+`finish` consumes the owner and never panics. It returns `CommandSuccess<T>` only
+when `CommandReport::is_success` would hold: work returned `Ok`, no interruption
+was effective when it returned, its future was destroyed without a panic and
+every finalizer succeeded. `value()` borrows and `into_value()` moves the work
+value out, so neither `expect` nor `Clone` is needed; `stage()` and `cleanup()`
+keep the evidence, and formatting omits the value. Any other outcome is
+`CommandFailure::Report` with the complete shared report, where a completed value
+is reachable only by reference (`report.work.as_ref()`). A coordinator that ended
+without a report, including on runtime shutdown, is `CommandFailure::Coordinator`.
+`T` and `E` need only `Send + 'static`. `?` converts `CommandFailure` into
+`BoxError` when `T: Send + Sync` and `E: Error + Send + Sync`; otherwise match it.
+
+`start_with_unix_signals` installs SIGTERM then SIGINT listeners synchronously
+before returning; an installation error returns with nothing spawned and the
+factory destroyed uninvoked. Only the coordinator polls them, and only while work
+can still be cancelled: once before invoking the factory, so a signal already
+visible prevents invocation; on every work poll, after cancellation and before the
+deadline; and once more when work returns, so a coincident signal becomes
+`interruption_after_work` and the command fails, as a concurrent `cancel` would.
+Either signal cancels the command's own work context and its descendants, never
+the parent, and is recorded as `CommandCause::Interrupted(Interruption::Cancelled)`
+without its identity. The listeners are dropped after the work future is destroyed
+and before cleanup on every path, and cleanup runs to completion under its own
+budget. A context that is already cancelled or expired installs nothing and
+records that interruption without invoking the factory.
+
+Limits: Tokio replaces each signal's process-wide disposition at installation and
+never restores it. After work stops, during cleanup, after `finish` and between two
+commands, SIGTERM and SIGINT are consumed without effect: a later phase that must
+stop on a signal needs its own policy, and a signal arriving between two
+signal-owning commands may or may not cancel the second before its work starts.
+Reception is cooperative: a signal becomes visible on a signal-driver turn, and
+non-yielding work is not preempted. A failed SIGINT installation leaves SIGTERM's
+disposition replaced. Starting with signals requires a Tokio runtime with its I/O
+and time drivers enabled; installation panics, as Tokio does, outside a runtime or
+without the I/O (signal) driver.
 
 The [finite-command example](../crates/batter/examples/finite_command.rs) binds a
 native loopback UDP socket, sends and receives one message, and releases the
-socket through registered cleanup. It uses the library report and owner. Socket
-close is synchronous; a dependency's async close/flush belongs inside its finalizer.
+socket through registered cleanup. Its inert `command` helper returns the
+unstarted `Command`; only its executable root calls `start_with_unix_signals()?`,
+moves the reply, which derives no `Clone`, out of `CommandSuccess` and maps every
+failure to an `ExitCode`. Its tests start the same helper with
+`start_without_signals()`. Socket close is synchronous; a dependency's async
+close/flush belongs inside its finalizer.
 
 ```sh
 cargo run -p batter --example finite_command --locked
@@ -396,23 +484,40 @@ cargo run -p batter --example finite_command --locked -- --fail-cleanup
 cargo run -p batter --example finite_command --locked -- --fail-both
 cargo run -p batter --example finite_command --locked -- --cancel
 cargo run -p batter --example finite_command --locked -- --deadline
+cargo run -p batter --example finite_command --locked -- --until-signal
 ```
 
 The default succeeds; each injected failure/interruption exits unsuccessfully.
 `--cancel` and `--deadline` interrupt after resource registration and still await
-successful cleanup. `CommandReport` retains the concrete work result, independent
-future-destruction panic and all cleanup observations. A cleanup coordinator
-failure cannot replace the work result. `check_command(command.wait().await)`
-returns the report only when the complete command contract succeeds; failure
-retains the same report. Automatic report formatting omits cause/value contents.
-The example prints only outcome facts at an explicit `ExitCode` boundary.
+successful cleanup. `--until-signal` registers the socket, prints
+`finite_command: waiting for SIGINT or SIGTERM` and waits under a 30-second work
+budget; Ctrl-C or `kill -TERM` then exits 1, not by signal death, with interrupted
+work and successful cleanup. `CommandReport` retains the concrete work result,
+independent future-destruction panic and all cleanup observations. A cleanup
+coordinator failure cannot replace the work result. Automatic report formatting
+omits cause/value contents. The example prints only outcome facts at an explicit
+`ExitCode` boundary. Its seven tests run in the ordinary workspace matrix,
+including one that re-executes the test binary as the root and sends real SIGINT
+and SIGTERM. The `owned_pool` example's root uses the same signal-owning path.
 
-`RunningCommand::cancel` interrupts work cooperatively, without a service drain
-phase. Cancelling a borrowed `wait()` has no effect; dropping the owner requests
-work cancellation while its coordinator finishes registered cleanup. A Unix signal
-handler can call `cancel` and await the retained report. Observers can await after
-owner drop. Work completion cancels its children before cleanup, while finalizers
-use an independent budget and must not capture work cancellation tokens.
+`Command::start` remains the shared-observation path. `RunningCommand` hands out
+cloneable `CommandObserver`s, and `check_command(command.wait().await)` returns the
+shared report only when the complete contract succeeds; failure retains the same
+report. Its outputs must be `Send + Sync` and a value stays behind the shared
+report. It installs no signal listeners. Use it only when other tasks must observe
+one report; do not hand-install `tokio::signal` listeners around it, or reach a
+value with `expect` or `Clone` after `check_command`.
+
+`CommandOwner::cancel` and `RunningCommand::cancel` interrupt work cooperatively,
+without a service drain phase. Cancelling a borrowed `wait()` has no effect, and
+observers can await after owner drop. Dropping `CommandOwner`, or an unfinished
+`finish` future, requests work cancellation; before the coordinator first runs,
+the factory is never invoked. Cleanup continues, and the unclaimed report, with
+its value, errors and panics, is destroyed under the coordinator's tracing
+dispatcher. The work deadline and cleanup budget already bound `finish`: do not
+wrap it in a timeout and then leave the root, because runtime shutdown would
+abandon cleanup. Work completion cancels its children before cleanup, while
+finalizers use an independent budget and must not capture work cancellation tokens.
 
 `Command::new` starts the cleanup allowance after work stops. For an enclosing
 absolute total, use `Command::within(total_context, cleanup_budget, callback)`:

@@ -395,7 +395,10 @@ Shared readiness/admission state, root control, and its status/admission/signal
 projections carry no completion channel.
 Command, startup and process observers share one private snapshot-before-wait
 mechanism while retaining distinct public outcome types and boundary-specific
-runtime-loss diagnostics. Managed native observation remains separate because a
+runtime-loss diagnostics. Owned command completion has no observer: the sole
+`CommandOwner` awaits its coordinator's `JoinHandle` directly, so runtime loss is
+a `JoinError` rather than an observer panic, and only its consuming `finish`
+moves the value out. Managed native observation remains separate because a
 closed publisher returns its last settlement snapshot instead of fabricating a
 terminal outcome or panicking.
 The lower-level `run_until` and `CleanupStack::close` remain cancellation-fragile when driven
@@ -450,7 +453,12 @@ A private wrapper restores the originating dispatcher during both polling and
 destruction of Batter-owned futures, including their nested spans. Operations
 and HTTP boundaries capture it on first poll; admitted finite work captures it
 at submission. This requires no downstream wrapper, global subscriber, extra
-task, or per-operation heap allocation.
+task, or per-operation heap allocation. Tokio drops an unclaimed task output in
+its harness or wherever the `JoinHandle` drops, outside that wrapper, so the
+owned command coordinator returns its report in a private output guard that
+captured the coordinator's dispatcher and span: a report nobody claims is
+destroyed under them, while a claimed report belongs to its claimant. The guard
+releases its captured span under that dispatcher on both paths.
 
 Critical components, finite tasks and cleanup hooks use the native
 `Span::or_current` fallback when their INFO task span is disabled. Select this

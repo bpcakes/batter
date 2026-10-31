@@ -86,7 +86,10 @@ SIGTERM/SIGINT synchronously and retain reception through initialization,
 handoff and supervised drain. Unselected startup preserves the native default.
 `Startup::new` remains the lower-level compatibility path for callers needing
 direct `&mut Supervisor` access. `finite_command` uses `command::Command` to retain finite work
-and cleanup independently of borrowed waiters. Its failure/interruption modes and
+and cleanup independently of borrowed waiters. Its executable root starts it with
+`start_with_unix_signals`, which owns SIGTERM/SIGINT only while work can be
+cancelled, and `CommandOwner::finish` moves the checked value out; helpers and
+tests use `start_without_signals`. Its failure/interruption modes and
 ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 
 Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed.
