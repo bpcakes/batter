@@ -1,9 +1,14 @@
 //! A finite PostgreSQL query whose native pool close is published before use.
 //! The database is externally provisioned and selected only by `DATABASE_URL`.
+//! The executable root owns SIGINT and SIGTERM: either cancels the query, and
+//! the registered pool close still runs under its own cleanup budget.
 
 use batter::sqlx::{SqlxFailure, pool_in, probe};
 use batter::{
-    RegistrationError, cleanup::CleanupBudget, command::Command, operation::OperationError,
+    BoxError, RegistrationError,
+    cleanup::{CleanupBudget, CleanupReport},
+    command::{Command, CommandFailure},
+    operation::{OperationError, OperationOwner},
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{error::Error, fmt, process::ExitCode, str::FromStr, time::Duration};
@@ -47,30 +52,24 @@ impl Error for ExampleError {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> ExitCode {
+async fn main() -> Result<ExitCode, BoxError> {
     let Some(database_url) = std::env::var_os("DATABASE_URL") else {
         eprintln!("DATABASE_URL is required");
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     };
     let Some(database_url) = database_url.to_str() else {
         eprintln!("DATABASE_URL must be valid Unicode");
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     };
-    let connect_options = match PgConnectOptions::from_str(database_url) {
-        Ok(options) => options,
-        Err(_) => {
-            eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
-            return ExitCode::FAILURE;
-        }
+    let Ok(connect_options) = PgConnectOptions::from_str(database_url) else {
+        eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
+        return Ok(ExitCode::FAILURE);
     };
 
     let second = Duration::from_secs(1);
-    let context = batter::operation::OperationOwner::new(Duration::from_secs(5))
-        .map(|owner| owner.into_context())
-        .expect("constant operation budget is valid");
-    let cleanup =
-        CleanupBudget::new(second, second, second).expect("constant cleanup budget is valid");
-    let command = Command::new(context, cleanup, move |scope| {
+    let context = OperationOwner::new(Duration::from_secs(5))?.into_context();
+    let cleanup = CleanupBudget::new(second, second, second)?;
+    let owner = Command::new(context, cleanup, move |scope| {
         Box::pin(async move {
             scope.stage("postgres.pool")?;
             let pool = pool_in(
@@ -85,28 +84,29 @@ async fn main() -> ExitCode {
             Ok::<_, ExampleError>(())
         })
     })
-    .start();
+    .start_with_unix_signals()?;
 
-    match command.wait().await {
-        Ok(report) => {
+    // Default command diagnostics retain causes without formatting their contents.
+    Ok(match owner.finish().await {
+        Ok(success) => {
+            println!(
+                "query succeeded: true; cleanup succeeded: {}; command succeeded: true",
+                success.cleanup().is_success()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(CommandFailure::Report(report)) => {
             println!(
                 "query succeeded: {}; cleanup succeeded: {}; command succeeded: {}",
                 report.work.is_ok(),
-                report
-                    .cleanup
-                    .as_ref()
-                    .is_ok_and(batter::cleanup::CleanupReport::is_success),
+                report.cleanup.as_ref().is_ok_and(CleanupReport::is_success),
                 report.is_success()
             );
-            if report.is_success() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
+            ExitCode::FAILURE
         }
-        Err(_) => {
+        Err(CommandFailure::Coordinator(_)) => {
             eprintln!("PostgreSQL command coordinator failed");
             ExitCode::FAILURE
         }
-    }
+    })
 }

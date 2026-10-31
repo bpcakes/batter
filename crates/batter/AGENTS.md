@@ -34,6 +34,10 @@ The facade must not duplicate runtime or leaf code or create a second type ident
 The default normal dependency graph contains only `batter-core`; adapters must
 depend on core rather than this facade. Preserve concrete errors, native futures,
 explicit cleanup, tracing target `batter`, and the Unix-only scope.
+Finite-command examples select `Command::start_with_unix_signals` only in their
+executable root and move values out of `CommandOwner::finish`; their helpers and
+tests use `start_without_signals`, never hand-installed `tokio::signal` listeners,
+`expect` after `check_command` or a `Clone` bound to copy a value out.
 A native namespace re-exports the native package itself, never a wrapper, and
 every one is feature-gated: no feature may silently select another backend or
 transport, and `default` stays empty. Reachability moves no ownership — keep

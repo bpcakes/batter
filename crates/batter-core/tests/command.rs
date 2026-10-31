@@ -4,6 +4,8 @@ mod budgets;
 mod completion;
 #[path = "command/failures.rs"]
 mod failures;
+#[path = "command/owner.rs"]
+mod owner;
 #[path = "command/runtime.rs"]
 mod runtime;
 

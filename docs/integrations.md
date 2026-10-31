@@ -481,7 +481,9 @@ awaited close hook has already been published; it does not mean the database was
 contacted. Perform a bounded query or `probe` before readiness. SQLx can begin
 minimum-connection maintenance during lazy construction, and pool close waits for
 accounted checkouts, so join dependent work and release leases before cleanup.
-The adapter-owned `owned_pool` example demonstrates this finite `Command` path.
+The adapter-owned `owned_pool` example demonstrates this finite `Command` path;
+its root calls `start_with_unix_signals()?`, so SIGINT or SIGTERM cancels the
+query while the registered pool close still runs.
 
 The [service example](../examples/postgres-lifecycle/src/main.rs), packaged as
 `batter-example-postgres-lifecycle`, selects `Startup::scoped(...)

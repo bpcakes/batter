@@ -1466,6 +1466,100 @@ drive destroys the handler future is not contained, as it is not in the worker,
 whose unwind boundary also covers polling only; a should-panic test pins this.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
+### Finite command signal and owned completion assessment (`batter-od4b`)
+
+A read-only survey of the two downstream consumers in
+[ADR-014](014-reuse-after-two-consumers.md), on 2026-09-27, found both
+hand-installing SIGTERM and SIGINT listeners around `Command` and cancelling the
+retained `RunningCommand`, although protected startup already owned that wiring
+through `with_unix_signals`. Four call sites, three in one consumer and one in
+the other, then used `expect` to reach a value after `check_command` returned the
+shared success report, and one consumer bounded its output by `Clone` to copy a
+result out of that report. Rebuilt signal wiring, a panic path after a successful
+check and a bound on a value only the caller receives are the repeated caller
+obligations this ADR names. The same consumer's three signal-cancellable stdout
+publishers are the stated non-goal: output publication stays application policy
+until a second concrete need appears. The survey is historical evidence, not a
+current measurement.
+
+The canonical path now has a sole owner whose consuming `finish` moves the value.
+`start_with_unix_signals` and `start_without_signals` return `CommandOwner`, which
+has no observer and no borrowed waiter, so nothing else holds the report. `finish`
+takes `self`, applies the `CommandReport::is_success` contract through one
+destructuring that names every report field, and returns `CommandSuccess<T>`, an
+opaque witness: its private fields make success unforgeable, and `into_value`
+needs neither `expect` nor `Clone`. A failure stays the existing
+`CommandFailure::Report`, where a completed value is reachable only by reference,
+so a value from an unsuccessful command cannot pass as checked output. Because the
+value is never shared, `T` and `E` need only `Send + 'static`; a `Sync` bound is
+unnecessary on the owned path. The command owns its signals: listeners are
+installed before the start returns, polled only by the coordinator while work can
+be cancelled, mapped to the existing `Interrupted(Cancelled)` on the command's own
+context and dropped before cleanup, so no caller wires `select!` around a second
+handle. Two explicitly named starts make a root without signals a visible choice.
+Whether a call site is the executable root cannot be expressed locally, so the
+library cannot choose: one neutral owned start would silently omit signals at
+roots, and one signalled start would install process-wide dispositions from
+helpers and tests.
+
+This is not a hard cut. No `CommandCause` or `CommandFailure` variant and no
+`CommandReport` field was added, so existing exhaustive matches still compile,
+and `start`, `RunningCommand`, `CommandObserver` and `check_command` keep their
+signatures. Rejected: `Arc::try_unwrap` on the shared report, which fails while
+any observer clone survives and so needs a fallback that restores the panic or
+the clone; a borrowed `finish(&mut self)`, which leaves a finished owner that can
+be finished again; `IntoFuture`, which makes `owner.await` hide that dropping the
+future cancels work; a `wait*` name, because every `wait` in this repository is a
+non-owning waiter whose cancellation has no effect, while dropping `finish`
+cancels work; and a type-state `with_unix_signals` wrapper before one start, which
+adds a type and still lets a root omit it silently.
+
+Against the review questions: construction has nothing new to reject, since a
+command stays inert and an already-interrupted context is recorded rather than
+given listeners; no install, select, cancel, check or extraction ordering remains
+with the caller; authority is a consuming owner and an opaque success witness,
+not a cloneable shared report plus `expect`; and library-owned execution is the
+only ordinary path to the value by move. Compile-fail rustdoc enforces it:
+constructing `CommandSuccess` fails with E0451, a second `finish` with E0382,
+moving the value out of `CommandFailure::Report` with E0507 and calling
+`observer` on `CommandOwner` with E0599, while a discarded owner is rejected
+under `deny(unused_must_use)`. What remains is application policy, upstream
+behaviour or a deliberate local limit, kept explicit. An installation
+`io::Error` returns to the root after the factory is destroyed uninvoked; Tokio
+panics outside a runtime or without its signal driver; an already-interrupted
+context installs nothing and records the interruption. After work stops,
+SIGTERM and SIGINT are consumed without effect and the replaced disposition is
+never restored. That combines Tokio behaviour with the application's policy for
+a multi-phase root: dropping listeners before cleanup is a deliberate library
+limit, not an upstream limit alone, so a later phase that must stop on a signal
+selects its own policy. Whether a signal between two signal-owning commands
+cancels the second depends on scheduling. Wrapping `finish` in an application
+timeout and then leaving the root lets runtime shutdown abandon cleanup; that
+root-exit composition is the application's, and the work deadline and cleanup
+budget already bound `finish`. Signal identity is not recorded: exit-status
+mapping is application policy, and recording it later would be additive.
+`RunningCommand` from `start` stays a neutral-looking, unsignalled
+shared-observation path for compatibility; its rustdoc and the facade path table
+direct a value-receiving root to the owner. A command started inside another
+command's work still compiles: an interrupted outer command drops the inner owner
+and nothing joins its cleanup. Review caught guidance that recommended
+`start_without_signals` for nested commands; the rustdoc, usage and facade table
+now direct work to register resources on its own `CommandScope` instead. A
+library-owned nested start that registers the inner join as an outer finalizer
+would remove this obligation, but no consumer has asked for nesting; it remains
+a recorded gap. A helper returning an inert command must spell the higher-ranked
+work bound in full, as the example's helper does; a nameable bound would be
+additive if consumers repeat it.
+
+Injected-source unit tests, public owner and runtime-loss tests, unclaimed-report
+dispatch tests, the fresh-process `command_signals` suite and the example's
+real-signal root test are the [executable evidence](../testing.md#verification-commands);
+outcomes belong to the owning Bead. Fresh-agent evaluations are proposed and
+unexecuted: give a fresh agent an ordinary operator CLI task that does not
+mention signals and check whether it selects `start_with_unix_signals` at the
+root, then ask it to add a failure-path test and check that the test uses
+`start_without_signals`.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
