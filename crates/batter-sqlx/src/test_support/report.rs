@@ -70,7 +70,10 @@ pub struct DatabaseCleanup {
     pub result: Result<(), FixtureError>,
     /// All failed session observations, even if a later explicit retry succeeded.
     pub observation_failures: Vec<Arc<FixtureError>>,
-    /// Native pool acquisition errors retained even when the body handled them.
+    /// SQLx-typed pool configuration or connectivity errors retained even when
+    /// the body handled them, including a `LeaseDatabaseMismatch` carried in
+    /// `sqlx::Error::Configuration`. At most one per database: opening stops at
+    /// the first failure, and the error does not identify the failing declaration.
     pub pool_failures: Vec<Arc<sqlx::Error>>,
 }
 

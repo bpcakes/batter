@@ -10,14 +10,20 @@ pub fn configured(
     options: PgConnectOptions,
     pool: PgPoolOptions,
 ) -> Result<RunledgerDatabase, sqlx::Error> {
-    let login = options.get_username();
-    let profile = PgSessionProfile::new(
+    let profile = session_profile(options.get_username())?;
+    RunledgerDatabase::connect_lazy(options, profile, pool)
+}
+
+/// The declared session policy for one authenticated login: it serves as
+/// itself, in `public`, with both server timeouts disabled. `configured` uses
+/// it for the production pool; tests reuse it for separately provisioned logins.
+pub fn session_profile(login: &str) -> Result<PgSessionProfile, sqlx::Error> {
+    PgSessionProfile::new(
         login,
         login,
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
     )
-    .map_err(|error| sqlx::Error::Configuration(Box::new(error)))?;
-    RunledgerDatabase::connect_lazy(options, profile, pool)
+    .map_err(|error| sqlx::Error::Configuration(Box::new(error)))
 }

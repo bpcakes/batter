@@ -1076,6 +1076,28 @@ Drop deletion, demonstrating the absence of a runtime-death completion guarantee
 The deferred fault test separately drains external mode and recovers both tagged
 residual databases after releasing the catalog lock. Every new case belongs to
 the checked Python inventory and its 180-second external process watchdog.
+Four restricted-login cases (`batter-7r3.8`) give each run a fresh SCRAM login
+with a random password and five-minute expiry, join the case, then drop the role
+and check its absence. The principal case pairs a lease-login pool with a
+`password_login` pool using the reference `PoolSettings` and declared session
+profile through public reset hooks. It requires the lease database on both
+pools, distinct `session_user`, `system_user` of `scram-sha-256:<login>`, a
+non-superuser login and the profile's search path, then a granted read beside
+exact 42501 for INSERT, DROP TABLE and CREATE TABLE in `public`. Both pool clones
+must be closed after the report. The rejection case pairs an accepted sibling
+login with a wrong-password plan (28P01 retained by `Arc` identity although
+handled) and declares the rejected login before an eager pool whose own connection
+proves registration, on both the owned path and the low-level `Connect` path
+(whose cleanup and drain it also checks). The
+session-policy case names an effective role the login cannot assume: the first
+`after_connect` cause is 42501 inside `SqlxFailure` and the retained outcome is
+`PoolTimedOut`. The cancellation case cancels during the restricted login's
+check (its backend must then be observed absent) and during an earlier check
+while a later eager restricted pool connects. The principal case selects both
+pools by `PoolKey` and requires another plan's key to select nothing; the
+shared-admission case checks the same on a low-level `DatabaseFixture`. Reverting either path to per-pool construct-then-check fails
+its registration witness; a login that keeps the owner's password fails all four
+cases.
 The retry follow-ups exercise the actual shared bounded completion helper:
 a pending error returns in 30 ms with its run/control intact, repairs a closed
 observer pool and retains the original body and observation causes. Another case
@@ -1191,7 +1213,7 @@ cleanup. It then runs the actual executable with a missing receiver and requires
 natural exit1, empty stdout and the exact sanitized stderr diagnostic. Each child
 has the existing eight-second reap bound; watchdog termination is failure, not
 successful settlement evidence. Its ordinary receiver/readiness phases remain
-the positive control; the current live inventory has 68 cases.
+the positive control; the current live inventory has 72 cases.
 
 Ordinary reference HTTP tests separately pin the composition boundaries: a bare
 in-process `/live` request succeeds without `ConnectInfo`, while an authenticated
@@ -2553,7 +2575,7 @@ remain unchanged, and the copied lock may change only Axum's path identity.
 
 The reference live runner additionally requires the ignored library test
 `delivery::worker::state::live_tests::provider_state_lock_and_retry_boundaries`
-after its 68-case integration inventory and maintenance-session probe. It uses a
+after its 72-case integration inventory and maintenance-session probe. It uses a
 disposable harness database, synthetic native lease identity and no heartbeat to
 isolate the SQL authority boundary: lock-only waits on the job and effect rows
 cross expiry and must leave application state unchanged. It also discards the
@@ -2988,7 +3010,7 @@ settlement allowance.
 
 ## Native lifecycle and offline retirement acceptance
 
-The current reference target has 68 entries: 63 live database probes, two
+The current reference target has 72 entries: 67 live database probes, two
 offline synthetic-acquisition signal controls, two offline executable-composition
 signal controls and the private child dispatch entry. The two metrics export
 probes exist only with the `metrics-export` feature, so the runner builds the

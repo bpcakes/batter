@@ -18,7 +18,7 @@ use super::{
     fixture_run::{self, ProbeError},
 };
 
-async fn observed_failure<F>(
+pub(super) async fn observed_failure<F>(
     body: F,
 ) -> Result<FixtureReport<(), FixtureError>, Box<dyn std::error::Error + Send + Sync>>
 where

@@ -2411,8 +2411,22 @@ abandoned initializer error/panic, shared admission, partial/sibling acquisition
 body panic, simultaneous errors, close ordering and independent catalog absence.
 `batter-kjl` additionally retains handled pool-acquisition errors in each database
 report; the delivered `PoolAcquire` and retained `pool_failures` share the same
-native cause through Arc. SQLx's internal after-connect retries may expose only
+SQLx-typed cause through Arc. SQLx's internal after-connect retries may expose only
 the final native acquisition error; this does not recover errors SQLx itself hides.
+
+`batter-7r3.8` constructs and registers every declared pool of a lease before
+the first connectivity check, so a failed check on either path, or a cancelled
+owned `FixtureScope` acquisition waiter, leaves all of them closed before lease
+cleanup. Cancelling low-level `empty`/`from_template` can still drop pools
+unclosed and invoke destructive lease Drop. `PoolKey` lookup refuses keys from
+another plan. `PlannedPool::password_login` replaces only the
+username and password of the lease's native options; a lease URL selecting
+another database is refused before any pool exists. Live probes prove distinct
+`session_user` and `system_user` for a lease-login and a restricted-login pool,
+42501 owner-only denials beside a granted read through the reference profile,
+28P01 and session-policy failures retained by identity, both cancellation points
+and pools registered after an earlier failure. Role lifecycle stays outside
+fixture cleanup, and the lease binding holds at pool construction only.
 
 `FixtureRun::wait_for` bounds observation only: `Ok(None)` means pending. A cancelled
 wait returns no result and can be resumed; a cleanup-driver JoinError is separate.

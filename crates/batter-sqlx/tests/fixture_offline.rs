@@ -19,6 +19,51 @@ fn budgets_include_standalone_capacity_and_reject_overflow() {
 }
 
 #[test]
+fn login_pools_share_the_capacity_rules_of_plain_plans() {
+    use batter_core::settings::SecretString;
+    use batter_sqlx::test_support::PlannedPool;
+    let login = |max| {
+        PlannedPool::password_login(
+            PgPoolOptions::new().max_connections(max),
+            "login",
+            SecretString::new("secret"),
+        )
+    };
+    let declare = |reserved, pools: Vec<PlannedPool>| {
+        let mut declaration = ConnectionPlan::declare(reserved);
+        for pool in pools {
+            declaration.pool(pool);
+        }
+        declaration.finish()
+    };
+    let mixed = declare(
+        2,
+        vec![
+            PlannedPool::lease_login(PgPoolOptions::new().max_connections(2)),
+            login(3),
+        ],
+    )
+    .unwrap();
+    assert!(mixed.validate(7).is_ok());
+    assert!(mixed.validate(6).is_err());
+    assert!(declare(u32::MAX, vec![login(1)]).is_err());
+    assert!(declare(1, vec![]).is_err());
+    assert!(declare(0, vec![login(0)]).is_err());
+    assert!(declare(0, vec![login(1), login(u32::MAX)]).is_err());
+}
+
+#[test]
+fn connection_plans_can_be_held_across_owned_fixture_awaits() {
+    fn shareable<T: Clone + Send + Sync + 'static>() {}
+    shareable::<ConnectionPlan>();
+    shareable::<batter_sqlx::test_support::PlannedPool>();
+    fn key<T: Copy + Send + Sync + Eq + std::hash::Hash + 'static>() {}
+    key::<batter_sqlx::test_support::PoolKey>();
+    fn cause<T: std::error::Error + Send + Sync + Copy + 'static>() {}
+    cause::<batter_sqlx::test_support::LeaseDatabaseMismatch>();
+}
+
+#[test]
 fn template_identity_tracks_exact_ordered_inputs() {
     let first = [MigrationInput {
         identity: "1",

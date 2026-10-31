@@ -8,6 +8,33 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add fixture pools for separately provisioned PostgreSQL logins (`batter-7r3.8`).
+  `ConnectionPlan::declare(reserved)` returns a `PlanDeclaration`; each
+  `pool(PlannedPool)` returns an opaque `PoolKey`, and `FixtureDatabase::pool` /
+  `DatabaseFixture::pool` select by key, refusing keys from another plan.
+  `PlannedPool::lease_login` keeps the lease URL's login;
+  `PlannedPool::password_login(options, username, password: SecretString)`
+  replaces only the username and password of the acquired lease's native connect
+  options, so no declaration can select another server or database or reuse the
+  owner's password. `LeaseDatabaseMismatch` is the redacted cause, inside
+  `sqlx::Error::Configuration`, when a lease URL selects a database other than
+  the lease. Role provisioning, grants and `DROP ROLE` stay caller-owned.
+  `ConnectionPlan::new` keeps its signature and lease-login behaviour.
+
+  Changed (not a hard cut; no `Breaking:`, `Migration:` or shim applies, and no
+  public item, signature or variant changed): every declared pool of a lease is
+  now constructed and registered before the first connectivity check, so pools
+  after a failed check, or after a cancelled owned acquisition waiter, exist and
+  are closed before lease cleanup.
+  This is observable only for eager pools (`min_connections > 0` with idle
+  timeout and maximum lifetime disabled), which may connect as soon as they exist.
+  The lease URL is parsed once per lease. A lease URL whose `dbname` query
+  parameter selects another database, previously misrouted silently, now fails
+  with `PoolAcquire`/`Connect` before any pool exists. `PoolAcquire`, `Connect`
+  and `DatabaseCleanup::pool_failures` docs now say SQLx-typed rather than native,
+  since that one cause is adapter-created. `ConnectionPlan` moved into a private
+  submodule and is re-exported at the same path.
+
 - **Breaking:** Remove all 17 public boolean-parameter wrappers introduced as
   deprecated compatibility paths in PR #67 (`batter-4dmd`). Settings selection,
   authority-policy builders and privilege construction now require the named

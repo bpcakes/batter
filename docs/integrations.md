@@ -1047,11 +1047,29 @@ Deferred drain is the upstream shared-queue barrier and can observe earlier
 submissions from another owner; it is not an exclusive per-run queue.
 
 `PoolAcquire(Arc<sqlx::Error>)` means registered pools await driver cleanup. Its
-cause also remains in `DatabaseCleanup::pool_failures` if handled by the body. Low-level `Connect`
+SQLx-typed cause also remains in `DatabaseCleanup::pool_failures` if handled by the body. Low-level `Connect`
 means all opened pools were closed and lease cleanup was awaited; its absent
-cleanup error means success. Both paths retain lazy pool handles before polling
-connectivity, including the pool whose initialization fails. They check one
-connection per pool; SQLx maintains its configured minimum in the background.
+cleanup error means success. Both paths parse the lease URL once, construct and
+retain every declared lazy pool, then check one connection per pool in
+declaration order. After a failed check every declared pool, including pools
+after the failing one, is closed before lease cleanup. SQLx maintains its
+configured minimum in the background; an eager pool may connect as soon as it
+exists. Only the owned `FixtureScope` path keeps every pool registered when its
+acquisition waiter is cancelled; cancelling low-level `empty`/`from_template`
+still drops the half-built fixture and can invoke destructive lease Drop. A lease URL selecting another database (for example through a `dbname`
+query parameter) is refused with `LeaseDatabaseMismatch` inside
+`sqlx::Error::Configuration` before any pool exists.
+
+`ConnectionPlan::declare` collects `PlannedPool::lease_login` and
+`PlannedPool::password_login` declarations, each returning a `PoolKey` that
+selects its pool from the acquired database and never another plan's. A password
+login takes a `SecretString` password and replaces only the username and
+password of the lease's native connect options; it cannot select another server
+or database and never reuses the owner's password. Role provisioning, grants
+and `DROP ROLE` remain consumer or outer-server responsibilities, after the
+report. Lease cleanup can terminate a lingering restricted session only when the
+harness admin may signal it. PgProfiledPool-hosted fixture pools are unsupported;
+apply session policy through native pool hooks.
 
 Cancelling `FixtureRun::wait` leaves the same driver available to a later wait.
 It returns a must-use borrowed report view; owned reports also warn on discard.

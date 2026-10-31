@@ -1011,10 +1011,66 @@ historical phases and errors. Pending is not clean reuse. Dropping the retry
 control can strand a parked driver; runtime loss can trigger destructive native
 lease Drop. The low-level manual APIs do not use this optional observer.
 
-Pool-acquisition errors share their concrete cause through `Arc<sqlx::Error>` in
-`FixtureError::PoolAcquire` and `DatabaseCleanup::pool_failures`; handling an error
-in the body cannot make the report successful. Inspect all report branches after
-finish, including separate consuming-cleanup and deferred-drain causes.
+Pool configuration and connectivity errors share their SQLx-typed cause through
+`Arc<sqlx::Error>` in `FixtureError::PoolAcquire` and
+`DatabaseCleanup::pool_failures`; handling an error in the body cannot make the
+report successful. Opening stops at the first failure, and the cause does not
+name the failing declaration. Inspect all report branches after finish,
+including separate consuming-cleanup and deferred-drain causes.
+
+### Fixture pools for separately provisioned logins
+
+`ConnectionPlan::new` declares pools that authenticate with the lease URL's own
+login, the harness admin that owns the disposable database.
+`ConnectionPlan::declare(reserved)` returns a `PlanDeclaration` whose `pool`
+method takes a `PlannedPool` and returns an opaque `PoolKey`; `finish` applies
+the same capacity rules. `PlannedPool::password_login(options, username,
+password)` declares a real restricted PostgreSQL login, with the password typed
+as `SecretString` so it cannot be swapped with the username. Only the username and
+password change: server address, socket, database, TLS settings, startup options
+and statement cache come from the acquired lease, so no declaration can select
+another server or database. The lease owner's password (URL, `PGPASSWORD` or
+passfile) is always replaced. Each lease parses its URL once and refuses a URL
+whose database is not the lease's own, as a `dbname` query parameter would
+cause, with `LeaseDatabaseMismatch` inside `sqlx::Error::Configuration` before
+any pool exists. Select pools with `FixtureDatabase::pool(key)` (or
+`DatabaseFixture::pool(key)`); a key from another plan selects nothing.
+`pools()` keeps declaration order for inspecting every pool, such as close
+checks; on a `declare` plan an index does not record which login a pool uses.
+
+For every lease, all declared pools are constructed and registered, in order and
+with no intervening await, before the first connectivity check runs any
+`after_connect`. After a failed check,
+every declared pool is closed before lease cleanup: by the owned driver
+(`PoolAcquire`) or before the low-level `Connect` returns. Cancelling an owned
+`FixtureScope` acquisition waiter also leaves every pool registered; cancelling
+low-level `empty`/`from_template` drops the half-built fixture unclosed and can
+invoke destructive lease Drop, as before. Pools without eager
+`min_connections` open nothing until used. An eager pool (`min_connections > 0`
+with both lifetimes disabled) starts SQLx's background connection, including
+its `after_connect`, while it is constructed, possibly before later pools are
+registered; its close can wait for a failing `after_connect` up to SQLx's
+internal deadline. Session policy belongs in
+native hooks such as `PgSessionProfile::reset_and_apply` in `after_connect` and
+`after_release`; `PgProfiledPool` and `RunledgerDatabase` constructors cannot host
+fixture pools. When the server's `pg_hba.conf` rule for the lease's transport
+uses password authentication, a wrong password fails the check immediately with
+native SQLSTATE `28P01`; a `trust` rule accepts any password (`system_user` is
+NULL), so credential tests should assert `system_user`. A failing `after_connect`
+or a role connection limit ends as `PoolTimedOut`.
+
+The consumer or outer server owns role provisioning (LOGIN, fresh password,
+bounded VALID UNTIL), grants and `DROP ROLE` after inspecting the report. Grant
+per-test privileges inside the lease, for example through the lease-login pool;
+grants to a per-run role inside a retained template would outlive the run and
+block `DROP ROLE`. Lease cleanup forcibly drops the database, which terminates a
+lingering restricted session only when the harness admin may signal it
+(superuser, member of the role, or `pg_signal_backend`); otherwise the report
+shows the cleanup failure. The binding to the lease holds when each pool is
+constructed: native `PgPool::set_connect_options` can retarget later connections
+and `PgPool::connect_options` reveals credentials. Never Debug-format native
+connect options. Client-certificate logins and detached-session quiescence
+beyond `SessionObserver` are not claimed.
 
 Session retries broadcast to all users of that control. Unread requests coalesce;
 a request during an active attempt is consumed after failure without cancelling

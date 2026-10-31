@@ -8,7 +8,7 @@ use std::{
 
 use batter::sqlx::test_support::{
     AcquisitionFailure, BodyFailure, ConnectionPlan, FixtureError, FixtureScope, FixtureSuite,
-    template_spec,
+    PlannedPool, template_spec,
 };
 use postgres_test_harness::{
     DatabaseTemplate, HarnessConfig, PostgresHarness, cleanup_stale_databases,
@@ -354,12 +354,20 @@ pub async fn shared_admission() -> ProbeResult {
     }
     .await;
     // The external owner still controls a usable harness after the run completes.
-    let later = suite
-        .empty(&ConnectionPlan::new(
-            vec![PgPoolOptions::new().max_connections(1)],
-            0,
-        )?)
-        .await?;
+    // The low-level owner also selects by key and refuses another plan's key.
+    let mut declaration = ConnectionPlan::declare(0);
+    let key = declaration.pool(PlannedPool::lease_login(
+        PgPoolOptions::new().max_connections(1),
+    ));
+    let mut other = ConnectionPlan::declare(0);
+    let foreign = other.pool(PlannedPool::lease_login(
+        PgPoolOptions::new().max_connections(1),
+    ));
+    let later = suite.empty(&declaration.finish()?).await?;
+    let selected = later
+        .pool(key)
+        .is_some_and(|pool| std::ptr::eq(pool, &later.pools()[0]));
+    let refused = later.pool(foreign).is_none();
     let later_cleanup = later.finish(Ok::<_, FixtureError>(())).await;
     let drain = suite.drain().await;
     observer.close().await;
@@ -369,6 +377,7 @@ pub async fn shared_admission() -> ProbeResult {
     held_absence?;
     observation?;
     assert!(pending && calls_before_release == 0);
+    assert!(selected && refused);
     assert!(observed.load(Ordering::SeqCst) > 0 && report.is_ok());
     assert_eq!(report.databases.len(), 1);
     Ok(())
