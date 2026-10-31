@@ -21,6 +21,8 @@ These decisions govern the source implementation and future work.
 
 | [013](013-managed-database-objects.md) | Apply consumer-declared routines, triggers and constraint triggers after migrations and verify them; source, ownership and grants stay downstream. |
 
+| [014](014-reuse-after-two-consumers.md) | Extract only what two application roots share: an application-installed redacting panic hook and bounded blocking work; no application root, DI, cache, queue or circuit framework. |
+
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, an update to the implemented status, and executed checks recorded in the
 owning Bead. Do not silently weaken them in the name of convenience or compiler

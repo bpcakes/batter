@@ -524,7 +524,7 @@ exercise the later documentation, package-description, or rustdoc refresh.
 | Schema/OpenAPI/client generation | Not implemented | No generated API/client pipeline exists. |
 | Durable correlation / distributed tracing | Not implemented | No serialization of cancellation tokens or monotonic deadlines. |
 | Request-scoped child-task joining | Not implemented | Ordinary composed futures recommended; no fake structured-concurrency guarantee. |
-| Cache/batching/service graph | Not implemented | Shared extraction requires two actual consumers with common semantics. |
+| Cache/batching/service graph | Not implemented; rejected by [ADR-014](adr/014-reuse-after-two-consumers.md) | Shared extraction requires two actual consumers with common semantics. The 2026-10-31 three-consumer survey found different cache, queue and composition semantics in each, and no construction container, so nothing is extracted. A declarative application root is also rejected. |
 | Memory safety/Send/Sync/Result replacement | Out of scope | Use Rust directly. |
 
 ## Limits of current evidence
