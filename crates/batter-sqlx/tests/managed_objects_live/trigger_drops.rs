@@ -3,6 +3,8 @@
 //! session's committed replacement, an earlier retirement's cascade or a
 //! relation replaced under the same name has made stale.
 
+use crate::verification::LockStatus;
+
 use super::constraint_triggers::{
     DEFERRED, IMMEDIATE, check_body, check_function, check_log, check_trigger, fired, holder,
     ledger_row, plain_check_trigger, verifies,
@@ -75,7 +77,7 @@ pub(super) async fn wait_for_any_lock_wait(
         if waiting {
             return Ok(());
         }
-        require(
+        require!(
             Instant::now() < deadline,
             "apply never waited for a lock on the raced relation",
         )?;
@@ -93,8 +95,9 @@ async fn race(
     manifest: &ManagedObjectManifest,
     gate_sql: &str,
     relation: &str,
-    exclusive: bool,
+    exclusive: LockStrength,
 ) -> Result<std::result::Result<AppliedManagedObjects, ManagedApplyError>> {
+    let exclusive = exclusive == LockStrength::Exclusive;
     let schema = fixture.schema();
     let apply_pid = pid(&pools.applying).await?;
     let mut gate = pools.blocker.begin().await?;
@@ -108,7 +111,7 @@ async fn race(
                 schema,
                 relation,
                 "AccessExclusiveLock",
-                false,
+                LockStatus::Waiting,
             )
             .await?;
         } else {
@@ -133,9 +136,16 @@ async fn apply_racing(
 ) -> Result<AppliedManagedObjects> {
     let schema = fixture.schema();
     let gate = format!("LOCK TABLE {schema}.records IN ACCESS EXCLUSIVE MODE; {replacement}");
-    race(fixture, pools, manifest, &gate, "records", true)
-        .await?
-        .map_err(with_sqlstate)
+    race(
+        fixture,
+        pools,
+        manifest,
+        &gate,
+        "records",
+        LockStrength::Exclusive,
+    )
+    .await?
+    .map_err(with_sqlstate)
 }
 
 /// SQL for the racing session: drop `records_check`, then re-create it as a
@@ -161,9 +171,10 @@ fn replacement(schema: &str, constraint: Option<bool>) -> String {
 /// retirement must leave the replacement in place.
 async fn retirement_race(
     fixture: &mut Fixture,
-    constraint: bool,
+    constraint: TriggerKind,
     settings: &[(&str, &str)],
 ) -> Result {
+    let constraint = constraint == TriggerKind::Constraint;
     let schema = fixture.schema().to_owned();
     fixture.add_migration(check_log(&schema));
     let (table, name) = (
@@ -203,18 +214,18 @@ async fn retirement_race(
         &replacement(&schema, Some(!constraint)),
     )
     .await?;
-    require(
+    require!(
         applied.retired() == 0,
         "a retirement dropped another kind's concurrent replacement",
     )?;
-    require(
+    require!(
         holder(&pools.observer, &schema).await?.1 != constraint,
         "the other kind's replacement did not survive the retirement",
     )?;
     // Verification is kind-exact too: the other kind holding a retired
     // identity is not the retired object.
     let reader = fixture.pool(Role::Reader).await?;
-    require(
+    require!(
         verifies(fixture, &reader, &retire.manifest).await?,
         "the surviving replacement was reported as the retired object",
     )
@@ -223,7 +234,7 @@ async fn retirement_race(
 #[tokio::test]
 #[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn managed_constraint_trigger_retirement_spares_a_concurrent_plain_replacement() -> Result {
-    Fixture::run(async |fixture| retirement_race(fixture, true, &[]).await).await
+    Fixture::run(async |fixture| retirement_race(fixture, TriggerKind::Constraint, &[]).await).await
 }
 
 /// The applying login defaults to REPEATABLE READ, so the case also fails if
@@ -235,7 +246,7 @@ async fn managed_trigger_retirement_spares_a_concurrent_constraint_replacement()
     Fixture::run(async |fixture| {
         retirement_race(
             fixture,
-            false,
+            TriggerKind::Ordinary,
             &[("default_transaction_isolation", "repeatable read")],
         )
         .await
@@ -281,18 +292,18 @@ async fn managed_triggers_converge_over_any_concurrent_holder() -> Result {
                 .await?;
                 let (_, is_constraint, enabled, definition) =
                     holder(&pools.observer, &schema).await?;
-                require(
+                require!(
                     applied.created_or_replaced() == 1
                         && is_constraint == (kind == "constraint_trigger")
                         && enabled == "O"
                         && definition.contains(clause),
                     "a declared trigger did not converge over the concurrent holder",
                 )?;
-                require(
+                require!(
                     ledger_row(fixture, &pools.observer).await?.0 == kind,
                     "the ledger did not record the declared kind",
                 )?;
-                require(
+                require!(
                     verifies(fixture, &reader, &declared.manifest).await?,
                     "a converged declaration did not verify",
                 )?;
@@ -337,7 +348,7 @@ async fn managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply
         ));
         let migrator = fixture.pool(Role::Migrator).await?;
         fixture.migrate_only(&migrator).await?;
-        require(
+        require!(
             parted_holders(&migrator, &schema).await?
                 == [
                     ("parted".to_owned(), false),
@@ -369,11 +380,11 @@ async fn managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply
             .apply(&migrator, &objects.manifest)
             .await
             .map_err(with_sqlstate)?;
-        require(
+        require!(
             applied.retired() == 1 && applied.created_or_replaced() == 2,
             "apply did not retire the parent trigger and create the partition trigger",
         )?;
-        require(
+        require!(
             parted_holders(&migrator, &schema).await? == [("parted_east".to_owned(), false)],
             "the partition trigger is not a standalone constraint trigger",
         )?;
@@ -382,17 +393,17 @@ async fn managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply
         )))
         .execute(&migrator)
         .await?;
-        require(
+        require!(
             fired(&migrator, &schema).await? == ["v1"],
             "the partition write did not fire the managed body exactly once",
         )?;
         let reader = fixture.pool(Role::Reader).await?;
-        require(
+        require!(
             verifies(fixture, &reader, &objects.manifest).await?,
             "the retired parent and declared partition trigger did not verify",
         )?;
         let again = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             again.created_or_replaced() == 0 && again.retired() == 0,
             "a repeated apply executed DDL",
         )
@@ -465,13 +476,21 @@ async fn replaced_relation_race(
          CREATE CONSTRAINT TRIGGER records_check AFTER INSERT ON {schema}.{relation}
          {DEFERRED} FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
     );
-    let outcome = race(fixture, &pools, &retire.manifest, &replace, relation, false).await?;
-    require(
+    let outcome = race(
+        fixture,
+        &pools,
+        &retire.manifest,
+        &replace,
+        relation,
+        LockStrength::Shared,
+    )
+    .await?;
+    require!(
         matches!(&outcome, Err(ManagedApplyError::IdentityMismatch { identity: refused })
             if *refused == identity),
         "a drop that reached a replaced relation was not refused",
     )?;
-    require(
+    require!(
         relation_holder(&pools.observer, &schema, relation).await? == Some(true),
         "the replacement's constraint trigger did not survive",
     )?;
@@ -480,13 +499,13 @@ async fn replaced_relation_race(
         .apply(&pools.applying, &retire.manifest)
         .await
         .map_err(with_sqlstate)?;
-    require(
+    require!(
         again.retired() == 0
             && relation_holder(&pools.observer, &schema, relation).await? == Some(true),
         "a plain trigger retirement dropped the replacement's constraint trigger",
     )?;
     let reader = fixture.pool(Role::Reader).await?;
-    require(
+    require!(
         verifies(fixture, &reader, &retire.manifest).await?,
         "the replacement was reported as the retired object",
     )
@@ -541,4 +560,16 @@ async fn managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_
         raced.and(cleanup)
     })
     .await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LockStrength {
+    Exclusive,
+    Shared,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TriggerKind {
+    Constraint,
+    Ordinary,
 }

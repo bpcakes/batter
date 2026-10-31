@@ -41,6 +41,8 @@
 //!
 #![forbid(unsafe_code)]
 
+use crate::managed::ConnectionDisposition;
+
 mod atomic;
 mod atomic_context;
 mod atomic_policy;
@@ -240,13 +242,19 @@ impl PgLease {
         work: impl AsyncFnOnce(&mut PgSession<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
         let outcome = work(&mut PgSession::new(self.connection_mut())).await;
-        self.finish_query(outcome.is_ok()).await;
+        self.finish_query(if outcome.is_ok() {
+            CompletionStatus::Succeeded
+        } else {
+            CompletionStatus::Failed
+        })
+        .await;
         outcome
     }
 
     // Share the consuming disposition path with native query helpers. They retain
     // the query result before this potentially cancellable cleanup begins.
-    async fn finish_query(mut self, success: bool) {
+    async fn finish_query(mut self, success: CompletionStatus) {
+        let success = success == CompletionStatus::Succeeded;
         if success {
             let ready = PgSession::new(self.connection_mut())
                 .prepare_pool_return()
@@ -412,7 +420,7 @@ impl PgLease {
             migrator,
             manifest,
             async |_, _| Ok(()),
-            true,
+            ConnectionDisposition::ReturnToPool,
         ));
         operation.await
     }
@@ -584,3 +592,9 @@ pub fn register_pool_close(
 
 #[cfg(feature = "test-support")]
 pub mod test_support;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CompletionStatus {
+    Succeeded,
+    Failed,
+}

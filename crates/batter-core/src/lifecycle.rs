@@ -5,8 +5,12 @@
 //! business rejection remains a typed successful task value and cannot be
 //! propagated into a drain with `?`. No automatic restart is provided.
 
+use crate::lifecycle::state::PeriodicRole;
+use crate::lifecycle::state::Supervision;
+
 mod caller_owned;
 mod capability;
+pub(crate) use capability::StartupPhase;
 mod driver;
 mod managed;
 mod process;
@@ -248,7 +252,7 @@ pub struct Supervisor {
 impl Supervisor {
     /// Build an initially unready supervisor, without spawning anything.
     pub fn new(budget: ShutdownBudget) -> Self {
-        let (coordinator, approval) = LifecycleCoordinator::new(true);
+        let (coordinator, approval) = LifecycleCoordinator::new(Supervision::Driven);
         Self {
             ownership: Some(SupervisorOwnership::new(coordinator.clone(), approval)),
             components: Vec::new(),
@@ -366,7 +370,14 @@ impl Supervisor {
             class,
             lifecycle,
             factory: Box::new(move |startup, coordinator| {
-                let admission = coordinator.periodic_admission(support, graceful);
+                let admission = coordinator.periodic_admission(
+                    if support {
+                        PeriodicRole::Support
+                    } else {
+                        PeriodicRole::Ordinary
+                    },
+                    graceful,
+                );
                 Box::pin(registration.run(startup, admission, obligation)) as ComponentFuture
             }),
         });
@@ -597,7 +608,7 @@ impl Supervisor {
         // Record before returning the report, after Stopped was published.
         // Native settlement may have tightened the clock after drain began;
         // the disabled shim leaves this supplier unevaluated.
-        terminal.finish(report.is_success(), || {
+        terminal.finish(&report, || {
             coordinator
                 .shared
                 .stop_started()

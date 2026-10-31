@@ -1,5 +1,7 @@
 //! Direct-task ownership, join accounting and escalation bookkeeping.
 
+use crate::telemetry::record::TaskCategory;
+
 #[cfg(test)]
 mod tests;
 
@@ -196,7 +198,15 @@ impl TaskSet {
         }
         // Recorder code runs only after a failure has closed process admission;
         // root admission closes when the driver requests drain.
-        crate::telemetry::record::task(exit.finite, exit.name, exit.outcome);
+        crate::telemetry::record::task(
+            if exit.finite {
+                TaskCategory::Process
+            } else {
+                TaskCategory::Component
+            },
+            exit.name,
+            exit.outcome,
+        );
         exit.cause
     }
 

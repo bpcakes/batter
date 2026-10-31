@@ -22,7 +22,8 @@ fn lock_denied(outcome: &std::result::Result<AppliedManagedObjects, ManagedApply
 }
 
 /// `check_record` and, when `trigger` is set, a plain trigger on `delegated`.
-fn delegated_objects(fixture: &Fixture, trigger: bool) -> Result<ManagedObjectManifest> {
+fn delegated_objects(fixture: &Fixture, trigger: ObjectKind) -> Result<ManagedObjectManifest> {
+    let trigger = trigger == ObjectKind::Trigger;
     let schema = fixture.schema();
     let mut objects = vec![check_function(schema, "v1")?];
     if trigger {
@@ -57,8 +58,8 @@ async fn managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table() -> R
         let applying = fixture.pool(Role::Migrator).await?;
         let observer = fixture.pool(Role::Migrator).await?;
         let (base, declared) = (
-            delegated_objects(fixture, false)?,
-            delegated_objects(fixture, true)?,
+            delegated_objects(fixture, ObjectKind::Routine)?,
+            delegated_objects(fixture, ObjectKind::Trigger)?,
         );
         let _ = fixture
             .apply(&applying, &base)
@@ -71,11 +72,11 @@ async fn managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table() -> R
             ))
             .await?;
         let catalog = catalog_state(&observer, &schema).await?;
-        require(
+        require!(
             lock_denied(&fixture.apply(&applying, &declared).await),
             "apply without a lock privilege on the trigger's table did not fail with 42501",
         )?;
-        require(
+        require!(
             catalog_state(&observer, &schema).await? == catalog,
             "an apply refused its lock changed the catalog",
         )?;
@@ -88,7 +89,7 @@ async fn managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table() -> R
             .apply(&applying, &declared)
             .await
             .map_err(with_sqlstate)?;
-        require(
+        require!(
             applied.created_or_replaced() == 1,
             "apply did not create the trigger once the owner granted MAINTAIN",
         )
@@ -124,11 +125,11 @@ async fn managed_trigger_locks_need_a_lock_privilege_on_a_separately_owned_parti
             ))
             .await?;
         let catalog = catalog_state(&observer, &schema).await?;
-        require(
+        require!(
             lock_denied(&fixture.apply(&applying, &retire).await),
             "apply without a lock privilege on a partition did not fail with 42501",
         )?;
-        require(
+        require!(
             catalog_state(&observer, &schema).await? == catalog,
             "an apply refused its lock changed the catalog",
         )?;
@@ -141,10 +142,16 @@ async fn managed_trigger_locks_need_a_lock_privilege_on_a_separately_owned_parti
             .apply(&applying, &retire)
             .await
             .map_err(with_sqlstate)?;
-        require(
+        require!(
             applied.retired() == 1,
             "apply did not retire the trigger once the partition's owner granted MAINTAIN",
         )
     })
     .await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ObjectKind {
+    Trigger,
+    Routine,
 }

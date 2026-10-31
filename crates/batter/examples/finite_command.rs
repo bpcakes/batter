@@ -39,8 +39,9 @@ enum CommandError {
 fn start(
     context: OperationContext,
     work: Work,
-    fail_cleanup: bool,
+    fail_cleanup: CleanupResult,
 ) -> RunningCommand<Vec<u8>, CommandError> {
+    let fail_cleanup = fail_cleanup == CleanupResult::Failure;
     let second = Duration::from_secs(1);
     let cleanup =
         CleanupBudget::new(second, second, second).expect("constant cleanup budget is valid");
@@ -97,7 +98,15 @@ async fn main() -> ExitCode {
     let context = batter::operation::OperationOwner::new(Duration::from_secs(1))
         .map(|owner| owner.into_context())
         .expect("constant command budget is valid");
-    let command = start(context, work, fail_cleanup);
+    let command = start(
+        context,
+        work,
+        if fail_cleanup {
+            CleanupResult::Failure
+        } else {
+            CleanupResult::Success
+        },
+    );
     let outcome = command.wait().await;
     // Default command diagnostics retain causes without formatting their contents.
     match outcome {
@@ -122,4 +131,10 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupResult {
+    Failure,
+    Success,
 }

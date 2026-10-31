@@ -74,7 +74,8 @@ async fn measure(client: &InProcessClient, path: &str) -> u128 {
     samples[SAMPLES / 2]
 }
 
-async fn run(bench: bool) {
+async fn run(bench: RunMode) {
+    let bench = bench == RunMode::Benchmark;
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     if bench {
@@ -114,5 +115,15 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(run(bench));
+        .block_on(run(if bench {
+            RunMode::Benchmark
+        } else {
+            RunMode::Smoke
+        }));
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunMode {
+    Benchmark,
+    Smoke,
 }

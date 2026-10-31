@@ -80,8 +80,8 @@ pub(super) async fn inspect_acl_object(
     owner: i64,
     acl: &[AclEntry],
     allowed: &[AllowedPrivilege],
-    allow_owner: bool,
-    allow_superuser: bool,
+    allow_owner: OwnerAllowance,
+    allow_superuser: SuperuserAllowance,
     public_grants: &PublicPolicy,
     public_object: PublicObject,
     privileges: &[ObjectPrivilege],
@@ -118,8 +118,8 @@ pub(super) async fn inspect_acl_object_collect(
     owner: i64,
     acl: &[AclEntry],
     allowed: &[AllowedPrivilege],
-    allow_owner: bool,
-    allow_superuser: bool,
+    allow_owner: OwnerAllowance,
+    allow_superuser: SuperuserAllowance,
     public_grants: &PublicPolicy,
     public_object: PublicObject,
     privileges: &[ObjectPrivilege],
@@ -155,8 +155,8 @@ pub(super) async fn inspect_acl_object_parts(
     allowed_acl_owner: Option<i64>,
     acl: &[&[AclEntry]],
     allowed: &[&[AllowedPrivilege]],
-    allow_owner: bool,
-    allow_superuser: bool,
+    allow_owner: OwnerAllowance,
+    allow_superuser: SuperuserAllowance,
     public_grants: &PublicPolicy,
     public_object: PublicObject,
     privileges: &[ObjectPrivilege],
@@ -194,12 +194,14 @@ async fn inspect_acl_object_parts_collect(
     allowed_acl_owner: Option<i64>,
     acl: &[&[AclEntry]],
     allowed: &[&[AllowedPrivilege]],
-    allow_owner: bool,
-    allow_superuser: bool,
+    allow_owner: OwnerAllowance,
+    allow_superuser: SuperuserAllowance,
     public_grants: &PublicPolicy,
     public_object: PublicObject,
     privileges: &[ObjectPrivilege],
 ) -> Result<(), VerificationError> {
+    let allow_owner = allow_owner == OwnerAllowance::Allow;
+    let allow_superuser = allow_superuser == SuperuserAllowance::Allow;
     let indexed_acl = IndexedAcl::new(acl);
     for role in graph.acl_sources(
         indexed_acl.grants.keys().map(|(grantee, _)| *grantee),
@@ -225,7 +227,10 @@ async fn inspect_acl_object_parts_collect(
         }
         for (privilege, granted, grant_option) in actual {
             evaluation.checkpoint(findings).await?;
-            if granted && !authority_allowed && !allows_parts(allowed, privilege, false) {
+            if granted
+                && !authority_allowed
+                && !allows_parts(allowed, privilege, GrantAuthority::PrivilegeOnly)
+            {
                 findings.push(Finding::new(
                     FindingKind::Privilege,
                     Some(object.to_owned()),
@@ -233,7 +238,10 @@ async fn inspect_acl_object_parts_collect(
                     Some(privilege),
                 ));
             }
-            if grant_option && !authority_allowed && !allows_parts(allowed, privilege, true) {
+            if grant_option
+                && !authority_allowed
+                && !allows_parts(allowed, privilege, GrantAuthority::Grantable)
+            {
                 findings.push(Finding::new(
                     FindingKind::GrantOption,
                     Some(object.to_owned()),
@@ -245,7 +253,9 @@ async fn inspect_acl_object_parts_collect(
     }
     for (privilege, granted, grant_option) in indexed_acl.public(privileges) {
         evaluation.checkpoint(findings).await?;
-        if granted && !public_grants.allows(&public_object, privilege, false) {
+        if granted
+            && !public_grants.allows(&public_object, privilege, GrantAuthority::PrivilegeOnly)
+        {
             findings.push(Finding::new(
                 FindingKind::Privilege,
                 Some(object.to_owned()),
@@ -253,7 +263,9 @@ async fn inspect_acl_object_parts_collect(
                 Some(privilege),
             ));
         }
-        if grant_option && !public_grants.allows(&public_object, privilege, true) {
+        if grant_option
+            && !public_grants.allows(&public_object, privilege, GrantAuthority::Grantable)
+        {
             findings.push(Finding::new(
                 FindingKind::GrantOption,
                 Some(object.to_owned()),
@@ -287,7 +299,7 @@ pub(super) fn public_privileges(
 pub(super) fn allows(
     allowed: &[AllowedPrivilege],
     privilege: ObjectPrivilege,
-    grant_option: bool,
+    grant_option: GrantAuthority,
 ) -> bool {
     allows_parts(&[allowed], privilege, grant_option)
 }
@@ -295,8 +307,9 @@ pub(super) fn allows(
 fn allows_parts(
     allowed: &[&[AllowedPrivilege]],
     privilege: ObjectPrivilege,
-    grant_option: bool,
+    grant_option: GrantAuthority,
 ) -> bool {
+    let grant_option = grant_option == GrantAuthority::Grantable;
     allowed
         .iter()
         .flat_map(|entries| entries.iter())
@@ -419,4 +432,22 @@ pub(super) fn public_object_name(object: &PublicObject) -> String {
         PublicObject::Parameter(name) => name.as_str().to_owned(),
         PublicObject::Database => "current_database".to_owned(),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SuperuserAllowance {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GrantAuthority {
+    Grantable,
+    PrivilegeOnly,
 }

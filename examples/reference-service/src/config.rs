@@ -37,6 +37,8 @@
 //! # Ok::<(), batter::settings::SettingsError>(())
 //! ```
 
+use crate::config::metrics::AmbientTelemetry;
+
 mod endpoint;
 mod metrics;
 mod pool;
@@ -93,11 +95,12 @@ fn merge_sources(
 ) -> Result<SettingsSource, SettingsError> {
     let mut values = SettingsSource::default();
     if let Some(file) = file {
-        values.overlay(file.select(names, &[], false)?);
+        values.overlay(file.select_dedicated(names)?);
     }
-    let environment = environment.select(environment_names, RESERVED_ENVIRONMENT_PREFIXES, true)?;
-    values.overlay(environment.select(names, &[], true)?);
-    values.overlay(overrides.select(names, &[], false)?);
+    let environment =
+        environment.select_environment(environment_names, RESERVED_ENVIRONMENT_PREFIXES)?;
+    values.overlay(environment.select_environment(names, &[])?);
+    values.overlay(overrides.select_dedicated(names)?);
     Ok(values)
 }
 
@@ -219,7 +222,7 @@ impl ServingSettings {
         // Unrelated environment names are ignored, except that enabled metrics
         // export rejects ambient OpenTelemetry configuration.
         let ambient_otel = environment
-            .select(&[], metrics::AMBIENT_PREFIXES, true)
+            .select_environment(&[], metrics::AMBIENT_PREFIXES)
             .is_err();
         let values = merge_sources(&names, &names, file, environment, overrides)?;
         let bind = values
@@ -251,7 +254,14 @@ impl ServingSettings {
             authenticator: authenticator(&values)?,
             trusted_peer_policy: TrustedPeerPolicy::direct(),
             provider: provider::ProviderSettings::from_values(&values)?,
-            metrics: metrics::MetricsSettings::from_values(&values, ambient_otel)?,
+            metrics: metrics::MetricsSettings::from_values(
+                &values,
+                if ambient_otel {
+                    AmbientTelemetry::Present
+                } else {
+                    AmbientTelemetry::Absent
+                },
+            )?,
         })
     }
 

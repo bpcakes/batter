@@ -1,4 +1,13 @@
 //! Shared capture assertions; offline controls stay in the `profile` test target.
+macro_rules! require {
+    ($condition:expr, $message:expr $(,)?) => {{
+        let condition: bool = $condition;
+        let message = $message;
+        condition
+            .then_some(())
+            .ok_or_else(|| batter_core::BoxError::from(std::io::Error::other(message)))
+    }};
+}
 use std::sync::{Arc, Mutex};
 use tracing::{
     Event, Subscriber,
@@ -14,7 +23,7 @@ pub(super) struct HookEvents(Arc<Mutex<Vec<String>>>);
 impl HookEvents {
     pub(super) fn assert_redacted(&self, hook: &str, markers: &[&str]) -> Result {
         let observed = self.0.lock().unwrap().join("\n");
-        require(
+        require!(
             !markers.iter().any(|marker| observed.contains(marker)),
             "SQLx pool logging disclosed native error contents",
         )?;
@@ -31,15 +40,15 @@ impl HookEvents {
             .cloned()
             .collect::<Vec<_>>()
             .join("\n");
-        require(
+        require!(
             !observed.is_empty(),
             "expected SQLx hook error was not logged",
         )?;
-        require(
+        require!(
             !markers.iter().any(|marker| observed.contains(marker)),
             "SQLx hook logging disclosed native error contents",
         )?;
-        require(
+        require!(
             observed.contains("PostgreSQL operation failed"),
             "hook log omitted safe diagnostic",
         )
@@ -61,13 +70,5 @@ impl Visit for Fields {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         use std::fmt::Write;
         write!(self.0, " {}={value:?}", field.name()).unwrap();
-    }
-}
-
-fn require(condition: bool, message: &'static str) -> Result {
-    if condition {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(message).into())
     }
 }

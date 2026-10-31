@@ -12,14 +12,15 @@ use super::{
 };
 
 pub async fn restricted_observer_sees_other_role() -> ProbeResult {
-    role_case(false).await
+    role_case(BodyOutcome::Success).await
 }
 
 pub async fn role_cleanup_after_assertion() -> ProbeResult {
-    role_case(true).await
+    role_case(BodyOutcome::Panic).await
 }
 
-async fn role_case(inject_panic: bool) -> ProbeResult {
+async fn role_case(inject_panic_choice: BodyOutcome) -> ProbeResult {
+    let inject_panic = inject_panic_choice == BodyOutcome::Panic;
     let catalog = admin().await?;
     // The SQL identifier contains only this literal prefix and decimal digits.
     let role = format!(
@@ -27,7 +28,7 @@ async fn role_case(inject_panic: bool) -> ProbeResult {
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     );
     let password = create_role(&catalog, &role).await?;
-    let result = restricted_case(&catalog, &role, &password, inject_panic).await;
+    let result = restricted_case(&catalog, &role, &password, inject_panic_choice).await;
     let removed = sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(&catalog)
         .await;
@@ -80,8 +81,9 @@ async fn restricted_case(
     catalog: &PgPool,
     role: &str,
     password: &str,
-    inject_panic: bool,
+    inject_panic: BodyOutcome,
 ) -> ProbeResult {
+    let inject_panic = inject_panic == BodyOutcome::Panic;
     let observer_pool = PgPoolOptions::new()
         .max_connections(1)
         .connect_with(
@@ -165,4 +167,10 @@ async fn observe_other_role(catalog: &PgPool, pool: &PgPool) -> ProbeResult {
         FixtureError::ObservationTimeout
     ));
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BodyOutcome {
+    Panic,
+    Success,
 }

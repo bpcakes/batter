@@ -91,7 +91,7 @@ async fn check_profiles(pool: &PgPool, login: &str, role: &str, schema: &str) ->
             )
             .fetch_one(&mut *connection)
             .await?;
-        require(
+        require!(
             actual_login == login && actual_role == role && !superuser && tenant == "restricted",
             "valid profile control must establish restricted identity and settings",
         )?;
@@ -119,7 +119,7 @@ async fn check_protected_work(
         Ok::<(), ()>(())
     }))
     .await?;
-    require(
+    require!(
         !invoked.load(Ordering::Relaxed),
         "atomic callback ran before login rejection",
     )?;
@@ -136,7 +136,7 @@ async fn check_protected_work(
         },
     ))
     .await?;
-    require(
+    require!(
         !invoked.load(Ordering::Relaxed),
         "snapshot callback ran before login rejection",
     )?;
@@ -148,7 +148,7 @@ async fn check_protected_work(
 
 fn assert_mismatch(error: &sqlx::Error, login: &str, role: &str) -> Result {
     let rendered = format!("{error} {error:?}");
-    require(
+    require!(
         !rendered.contains(login) && !rendered.contains(role),
         "login rejection disclosed identity",
     )?;
@@ -163,7 +163,7 @@ fn assert_mismatch(error: &sqlx::Error, login: &str, role: &str) -> Result {
     let sqlx::Error::Configuration(cause) = original else {
         return Err(std::io::Error::other("native profile mismatch was not retained").into());
     };
-    require(
+    require!(
         cause.downcast_ref::<PgProfileError>().is_some(),
         "setup must fail for profile mismatch rather than SQL permissions",
     )

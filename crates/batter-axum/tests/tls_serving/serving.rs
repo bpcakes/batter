@@ -111,7 +111,8 @@ async fn boundary(handle: &ShutdownHandle, held: Option<HeldBody>) -> AssembledH
     .unwrap()
 }
 
-fn request(path: &str, close: bool) -> Vec<u8> {
+fn request(path: &str, close: ConnectionLifetime) -> Vec<u8> {
+    let close = close == ConnectionLifetime::Close;
     let connection = if close { "close" } else { "keep-alive" };
     format!(
         "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: {connection}\r\n\
@@ -124,7 +125,10 @@ fn request(path: &str, close: bool) -> Vec<u8> {
 /// A probe outside admission answers over the same TLS listener.
 async fn assert_probe(client_config: &rustls::ClientConfig, address: SocketAddr) {
     let mut probe = support::connect(client_config, address).await;
-    probe.write_all(&request("/live", true)).await.unwrap();
+    probe
+        .write_all(&request("/live", ConnectionLifetime::Close))
+        .await
+        .unwrap();
     let mut live = String::new();
     timeout(WAIT, probe.read_to_string(&mut live))
         .await
@@ -138,7 +142,10 @@ async fn assert_probe(client_config: &rustls::ClientConfig, address: SocketAddr)
 async fn assert_peer(client_config: &rustls::ClientConfig, address: SocketAddr) {
     let mut client = support::connect(client_config, address).await;
     let expected = support::client_address(&client);
-    client.write_all(&request("/peer", true)).await.unwrap();
+    client
+        .write_all(&request("/peer", ConnectionLifetime::Close))
+        .await
+        .unwrap();
     let mut answered = String::new();
     timeout(WAIT, client.read_to_string(&mut answered))
         .await
@@ -204,7 +211,9 @@ async fn assembled_boundary_over_tls_acknowledges_serves_the_peer_and_drains_an_
 
     // A further connection is still serving a response when drain begins.
     let mut open = support::connect(&client_config, address).await;
-    open.write_all(&request("/stream", false)).await.unwrap();
+    open.write_all(&request("/stream", ConnectionLifetime::KeepAlive))
+        .await
+        .unwrap();
     let mut streamed = Vec::new();
     timeout(WAIT, async {
         while !streamed.windows(5).any(|chunk| chunk == b"first") {
@@ -321,4 +330,10 @@ async fn canonical_registration_releases_rejected_and_abandoned_custom_listeners
     assert_eq!(supervisor.status().readiness(), Readiness::Starting);
     drop(supervisor);
     drop(TcpListener::bind(accepted_address).await.unwrap());
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectionLifetime {
+    Close,
+    KeepAlive,
 }

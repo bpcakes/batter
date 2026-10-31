@@ -178,8 +178,15 @@ impl DeliveryWorker {
         ) {
             return Err(StateError::Invariant);
         }
-        self.record_failed_attempt(execution, payload, code, expected, false, Duration::ZERO)
-            .await
+        self.record_failed_attempt(
+            execution,
+            payload,
+            code,
+            expected,
+            ProviderAcceptance::RuledOut,
+            Duration::ZERO,
+        )
+        .await
     }
 
     /// Persist the outcome and its eligibility together, then construct the
@@ -196,7 +203,7 @@ impl DeliveryWorker {
                 payload,
                 CODE_PROVIDER_UNDISPATCHED,
                 ProviderEffectState::ReconcileNeeded,
-                false,
+                ProviderAcceptance::RuledOut,
                 delay,
             )
             .await
@@ -222,7 +229,7 @@ impl DeliveryWorker {
             payload,
             code,
             ProviderEffectState::ReconcileNeeded,
-            true,
+            ProviderAcceptance::Possible,
             Duration::ZERO,
         )
         .await
@@ -234,9 +241,10 @@ impl DeliveryWorker {
         payload: &DeliveryJobPayload,
         code: &'static str,
         expected: ProviderEffectState,
-        acceptance_possible: bool,
+        acceptance_possible: ProviderAcceptance,
         retry_delay: Duration,
     ) -> Result<ProviderEffectState, StateError> {
+        let acceptance_possible = acceptance_possible == ProviderAcceptance::Possible;
         let legal_source = if acceptance_possible {
             expected == ProviderEffectState::ReconcileNeeded
         } else {
@@ -319,9 +327,10 @@ impl DeliveryWorker {
         payload: &DeliveryJobPayload,
         code: &'static str,
         provider_effect_id: Option<&str>,
-        acceptance_possible: bool,
+        acceptance_possible: ProviderAcceptance,
         expected: ProviderEffectState,
     ) -> Result<(), StateError> {
+        let acceptance_possible = acceptance_possible == ProviderAcceptance::Possible;
         self.record_terminal(
             execution,
             payload,
@@ -606,3 +615,9 @@ impl UnresolvedEffectState {
 
 #[cfg(test)]
 mod live_tests;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProviderAcceptance {
+    Possible,
+    RuledOut,
+}

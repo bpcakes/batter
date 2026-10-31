@@ -1,3 +1,6 @@
+use crate::support::configuration::configuration_report::PoolClosure;
+use crate::support::configuration::configuration_report::ReadinessObservation;
+
 #[path = "configuration_report.rs"]
 mod configuration_report;
 use super::{ProbeResult, fixture_run};
@@ -165,6 +168,19 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
             return Err("startup unexpectedly reached running state".into());
         }
     };
-    configuration_report::check(report, acquired.map(|_| ()), closed_before_lease, no_ready)?;
+    configuration_report::check(
+        report,
+        acquired.map(|_| ()),
+        if closed_before_lease {
+            PoolClosure::Closed
+        } else {
+            PoolClosure::Open
+        },
+        if no_ready {
+            ReadinessObservation::Unready
+        } else {
+            ReadinessObservation::Ready
+        },
+    )?;
     Ok::<_, batter::BoxError>(())
 }

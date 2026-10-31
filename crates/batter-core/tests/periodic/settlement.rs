@@ -22,8 +22,9 @@ fn native_context() -> batter_core::operation::OperationContext {
 fn register_native(
     supervisor: &mut batter_core::lifecycle::Supervisor,
     after: Duration,
-    joined: bool,
+    joined: Settlement,
 ) {
+    let joined = joined == Settlement::Joined;
     let (stopped, requested) = oneshot::channel::<()>();
     let mut stopped = Some(stopped);
     supervisor
@@ -69,7 +70,11 @@ fn register_support(supervisor: &mut batter_core::lifecycle::Supervisor, schedul
 async fn pending_native_settlement_does_not_stop_support_early() {
     let schedule = Schedule::default();
     let mut supervisor = supervisor_with(SECOND * 10);
-    register_native(&mut supervisor, Duration::from_millis(2_500), true);
+    register_native(
+        &mut supervisor,
+        Duration::from_millis(2_500),
+        Settlement::Joined,
+    );
     register_support(&mut supervisor, &schedule);
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
@@ -92,7 +97,7 @@ async fn unsafe_native_settlement_keeps_support_until_forced_cancellation() {
     let mut supervisor = supervisor_with(Duration::from_millis(2_500));
     // Settlement publishes at once, but it does not permit dependency cleanup,
     // so a joined wrapper and a finished report are still not a stopped proof.
-    register_native(&mut supervisor, Duration::ZERO, false);
+    register_native(&mut supervisor, Duration::ZERO, Settlement::Pending);
     register_support(&mut supervisor, &schedule);
     supervisor
         .on_cleanup("dependency", || async {
@@ -123,7 +128,7 @@ async fn support_run_admitted_during_drain_receives_the_forced_deadline() {
     let budget = SECOND * 10;
     let mut supervisor = supervisor_with(drain);
     // Uncooperative settlement keeps support admission open until force-cancel.
-    register_native(&mut supervisor, Duration::ZERO, false);
+    register_native(&mut supervisor, Duration::ZERO, Settlement::Pending);
     let (observed, mut deadlines) = mpsc::unbounded_channel();
     register_periodic_in(
         &mut supervisor,
@@ -311,4 +316,10 @@ async fn active_support_run_stops_after_ordinary_settlement_before_cleanup() {
     assert_eq!(summary.deadline_exceeded, 0);
     assert_eq!(summary.stop_interrupted, 1);
     assert_eq!(summary.completion, PeriodicCompletion::Stopped);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Settlement {
+    Joined,
+    Pending,
 }

@@ -279,8 +279,8 @@ impl<'a, W: ValidationWork> PolicyIndex<'a, W> {
 ///     ..AuthorityPolicyBuilder::default()
 /// };
 /// policy.defaults.invoker_routines = ObjectDefaults {
-///     privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
-///     public_privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
+///     privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)],
+///     public_privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)],
 ///     allow_owner: false,
 /// };
 /// policy.public_overrides.push(PublicAllowance {

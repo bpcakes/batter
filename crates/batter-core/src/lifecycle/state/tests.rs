@@ -1,3 +1,7 @@
+use crate::lifecycle::state::PeriodicRole;
+use crate::lifecycle::state::QueueState;
+use crate::lifecycle::state::Supervision;
+
 use super::*;
 
 mod subscriber;
@@ -11,7 +15,7 @@ use std::{
 };
 
 fn ready() -> Shared {
-    let state = Shared::new(true);
+    let state = Shared::new(Supervision::Driven);
     state.start_driver();
     assert!(state.mark_ready());
     state
@@ -20,7 +24,7 @@ fn ready() -> Shared {
 #[tokio::test(start_paused = true)]
 async fn earlier_native_stop_wakes_each_active_process_phase() {
     for seconds in [1, 2, 3] {
-        let state = Arc::new(Shared::new(true));
+        let state = Arc::new(Shared::new(Supervision::Driven));
         let earlier = Instant::now();
         tokio::time::advance(std::time::Duration::from_secs(5)).await;
         state.request();
@@ -51,7 +55,7 @@ fn all_startup_orders_require_the_driver_approval_and_acknowledgement() {
         [2, 0, 1],
         [2, 1, 0],
     ] {
-        let state = Arc::new(Shared::new(true));
+        let state = Arc::new(Shared::new(Supervision::Driven));
         let mut startup = Some(state.register_component());
         for (index, event) in order.into_iter().enumerate() {
             match event {
@@ -86,7 +90,7 @@ fn transition_table_keeps_drain_and_stop_irreversible() {
     ];
     for (initial, outcomes) in table {
         for (event, expected) in outcomes.into_iter().enumerate() {
-            let state = Shared::new(true);
+            let state = Shared::new(Supervision::Driven);
             match initial {
                 Starting => {}
                 Ready => {
@@ -117,7 +121,7 @@ fn transition_table_keeps_drain_and_stop_irreversible() {
 #[test]
 fn late_component_acknowledgement_cannot_revive_shutdown() {
     for stopped in [false, true] {
-        let state = Arc::new(Shared::new(true));
+        let state = Arc::new(Shared::new(Supervision::Driven));
         let startup = state.register_component();
         state.mark_ready();
         state.start_driver();
@@ -203,7 +207,7 @@ fn admission_table_preserves_closure_and_the_active_descendant_exception() {
         ),
     ];
     for (transition, root, descendant) in cases {
-        let state = Shared::new(true);
+        let state = Shared::new(Supervision::Driven);
         transition(&state);
         let active = AtomicBool::new(true);
         let expired = AtomicBool::new(false);
@@ -215,13 +219,16 @@ fn admission_table_preserves_closure_and_the_active_descendant_exception() {
             let admission = state.admission();
             assert_eq!(
                 admission
-                    .check(ancestor, false)
+                    .check(ancestor, QueueState::Open)
                     .err()
                     .as_ref()
                     .map(discriminant),
                 expected.as_ref().map(discriminant)
             );
-            assert!(matches!(admission.check(ancestor, true), Err(Closed)));
+            assert!(matches!(
+                admission.check(ancestor, QueueState::Closed),
+                Err(Closed)
+            ));
         }
     }
 }
@@ -243,7 +250,7 @@ impl Wake for LockProbe {
 
 #[test]
 fn cancellation_and_readiness_wakers_run_outside_the_transition_lock() {
-    let state = Arc::new(Shared::new(true));
+    let state = Arc::new(Shared::new(Supervision::Driven));
     let probes: [Arc<LockProbe>; 3] = std::array::from_fn(|_| {
         Arc::new(LockProbe {
             state: state.clone(),
@@ -275,7 +282,14 @@ async fn periodic_admission_separates_support_from_pending_initialization() {
     // Before drain, both classes are admitted and carry no forced clock.
     for support in [false, true] {
         assert_eq!(
-            state.admit_periodic(support, graceful),
+            state.admit_periodic(
+                if support {
+                    PeriodicRole::Support
+                } else {
+                    PeriodicRole::Ordinary
+                },
+                graceful
+            ),
             PeriodicAdmission::Admitted { forced_at: None },
         );
     }
@@ -284,11 +298,11 @@ async fn periodic_admission_separates_support_from_pending_initialization() {
     // Ordinary admission closes on drain; initialized support continues and is
     // capped by the already recorded forced-cancellation instant.
     assert_eq!(
-        state.admit_periodic(false, graceful),
+        state.admit_periodic(PeriodicRole::Ordinary, graceful),
         PeriodicAdmission::Stopped,
     );
     assert_eq!(
-        state.admit_periodic(true, graceful),
+        state.admit_periodic(PeriodicRole::Support, graceful),
         PeriodicAdmission::Admitted {
             forced_at: Some(started + graceful)
         },
@@ -297,7 +311,14 @@ async fn periodic_admission_separates_support_from_pending_initialization() {
     state.force_cancel();
     for support in [false, true] {
         assert_eq!(
-            state.admit_periodic(support, graceful),
+            state.admit_periodic(
+                if support {
+                    PeriodicRole::Support
+                } else {
+                    PeriodicRole::Ordinary
+                },
+                graceful
+            ),
             PeriodicAdmission::Stopped,
         );
     }
@@ -309,11 +330,11 @@ async fn an_ordinary_failure_closes_only_ordinary_periodic_admission() {
     let state = ready();
     state.fail_task();
     assert_eq!(
-        state.admit_periodic(false, graceful),
+        state.admit_periodic(PeriodicRole::Ordinary, graceful),
         PeriodicAdmission::Stopped,
     );
     assert_eq!(
-        state.admit_periodic(true, graceful),
+        state.admit_periodic(PeriodicRole::Support, graceful),
         PeriodicAdmission::Admitted { forced_at: None },
     );
 }
@@ -326,7 +347,7 @@ async fn closing_support_rejects_later_support_runs() {
     state.close_support();
     assert!(state.is_support_stopping());
     assert_eq!(
-        state.admit_periodic(true, graceful),
+        state.admit_periodic(PeriodicRole::Support, graceful),
         PeriodicAdmission::Stopped,
     );
 }

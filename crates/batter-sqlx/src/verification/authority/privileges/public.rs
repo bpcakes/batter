@@ -1,6 +1,7 @@
 use super::super::super::policy::{
     AllowedPrivilege, AuthorityPolicy, ObjectPrivilege, PublicGrant, PublicObject, QualifiedName,
 };
+use super::GrantAuthority;
 use std::collections::{HashMap, HashSet};
 
 /// Index one already-expanded PUBLIC policy, keeping empty exact targets.
@@ -67,8 +68,9 @@ impl PublicPolicy {
         &self,
         name: &str,
         privilege: ObjectPrivilege,
-        grant_option: bool,
+        grant_option: GrantAuthority,
     ) -> bool {
+        let grant_option = grant_option == GrantAuthority::Grantable;
         self.parameters
             .get(name)
             .and_then(|grants| grants.get(&privilege))
@@ -87,8 +89,9 @@ impl PublicPolicy {
         &self,
         object: &PublicObject,
         privilege: ObjectPrivilege,
-        grant_option: bool,
+        grant_option: GrantAuthority,
     ) -> bool {
+        let grant_option = grant_option == GrantAuthority::Grantable;
         let allowed = |object| {
             self.grants
                 .get(object)
@@ -118,16 +121,16 @@ mod tests {
             public_grants: vec![
                 PublicGrant {
                     object: PublicObject::Relation(relation.clone()),
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+                    privilege: AllowedPrivilege::privilege(ObjectPrivilege::Select),
                 },
                 PublicGrant {
                     object: column.clone(),
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Update, true),
+                    privilege: AllowedPrivilege::grantable(ObjectPrivilege::Update),
                 },
             ],
             public_overrides: vec![PublicAllowance {
                 object: override_column.clone(),
-                privileges: vec![AllowedPrivilege::new(ObjectPrivilege::References, false)],
+                privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::References)],
             }],
             ..AuthorityPolicyBuilder::default()
         }
@@ -137,15 +140,27 @@ mod tests {
         assert!(indexed.selects_relation(&relation));
         assert!(indexed.contains(&column));
         assert!(indexed.contains(&override_column));
-        assert!(indexed.allows(&column, ObjectPrivilege::Select, false));
-        assert!(!indexed.allows(&column, ObjectPrivilege::Select, true));
-        assert!(indexed.allows(&column, ObjectPrivilege::Update, true));
-        assert!(indexed.allows(&override_column, ObjectPrivilege::References, false));
-        assert!(!indexed.allows(&override_column, ObjectPrivilege::References, true));
+        assert!(indexed.allows(
+            &column,
+            ObjectPrivilege::Select,
+            GrantAuthority::PrivilegeOnly
+        ));
+        assert!(!indexed.allows(&column, ObjectPrivilege::Select, GrantAuthority::Grantable));
+        assert!(indexed.allows(&column, ObjectPrivilege::Update, GrantAuthority::Grantable));
+        assert!(indexed.allows(
+            &override_column,
+            ObjectPrivilege::References,
+            GrantAuthority::PrivilegeOnly
+        ));
+        assert!(!indexed.allows(
+            &override_column,
+            ObjectPrivilege::References,
+            GrantAuthority::Grantable
+        ));
         assert!(!indexed.allows(
             &PublicObject::Relation(relation),
             ObjectPrivilege::Update,
-            false
+            GrantAuthority::PrivilegeOnly
         ));
     }
 }

@@ -1,3 +1,6 @@
+use crate::configuration::report::configuration_report::PoolClosure;
+use crate::configuration::report::configuration_report::ReadinessObservation;
+
 #[path = "../support/configuration_report.rs"]
 mod configuration_report;
 
@@ -53,9 +56,15 @@ async fn evidence_failures_retain_startup_cleanup_and_delivery_causes() {
         } else {
             send.send(()).unwrap();
         }
-        let checked = configuration_report::check(report.clone(), receive.await, true, true);
+        let checked = configuration_report::check(
+            report.clone(),
+            receive.await,
+            PoolClosure::Closed,
+            ReadinessObservation::Unready,
+        );
         if !cleanup_fails && !delivery_fails {
             checked.unwrap();
+            assert_invalid_evidence(&report);
             continue;
         }
         let error = checked.unwrap_err();
@@ -101,5 +110,24 @@ async fn evidence_failures_retain_startup_cleanup_and_delivery_causes() {
                     .is::<tokio::sync::oneshot::error::RecvError>()
             );
         }
+    }
+}
+
+fn assert_invalid_evidence(report: &Arc<batter::startup::StartupFailure<SettingsError>>) {
+    for (closure, readiness) in [
+        (PoolClosure::Open, ReadinessObservation::Unready),
+        (PoolClosure::Closed, ReadinessObservation::Ready),
+    ] {
+        let error = configuration_report::check(report.clone(), Ok(()), closure, readiness)
+            .expect_err("missing closure or readiness evidence must fail");
+        let TestFailure::Both {
+            body: StartupError::Failed(retained),
+            cleanup,
+        } = error
+        else {
+            panic!("startup and evidence failures must both survive");
+        };
+        assert!(Arc::ptr_eq(&retained, report));
+        assert_eq!(cleanup.reason(), "pool-close evidence mismatch");
     }
 }

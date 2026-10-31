@@ -3,6 +3,8 @@
 
 #[path = "metrics/capture.rs"]
 mod capture;
+#[path = "metrics/cold_callsites.rs"]
+mod cold_callsites;
 #[path = "metrics/ordering.rs"]
 mod ordering;
 #[path = "metrics/retry_destruction.rs"]
@@ -11,6 +13,13 @@ mod retry_destruction;
 mod shutdown_destruction;
 #[path = "metrics/terminal.rs"]
 mod terminal;
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
+#[test]
+fn child_fixture() {
+    cold_callsites::child_fixture();
+}
 
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},

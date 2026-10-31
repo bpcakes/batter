@@ -1,5 +1,7 @@
 //! Typed collector outcomes, transport bounds and noninterference.
 
+use crate::ExportTiming;
+
 use super::collector::{BODY_MARKER, Behavior};
 use super::{
     super::{
@@ -158,27 +160,30 @@ fn outer_deadline_classification_uses_only_typed_evidence() {
     let evidence = |phase, outcome| Evidence { phase, outcome };
     let failed = ExportOutcome::Failed;
     assert_eq!(
-        classify(true, evidence(Phase::Receiving, None)),
+        classify(ExportTiming::TimedOut, evidence(Phase::Receiving, None)),
         failed(ExportFailure::BodyTimedOut)
     );
     for phase in [Phase::Prepared, Phase::Sending] {
         assert_eq!(
-            classify(true, evidence(phase, None)),
+            classify(ExportTiming::TimedOut, evidence(phase, None)),
             failed(ExportFailure::HeadersTimedOut)
         );
     }
     assert_eq!(
-        classify(false, evidence(Phase::Prepared, None)),
+        classify(ExportTiming::Returned, evidence(Phase::Prepared, None)),
         failed(ExportFailure::Encoding)
     );
     // Typed transport evidence wins over the outer race.
     assert_eq!(
-        classify(true, evidence(Phase::Receiving, Some(Ok(())))),
+        classify(
+            ExportTiming::TimedOut,
+            evidence(Phase::Receiving, Some(Ok(())))
+        ),
         ExportOutcome::Acknowledged
     );
     assert_eq!(
         classify(
-            false,
+            ExportTiming::Returned,
             evidence(Phase::Sending, Some(Err(ExportFailure::Refused)))
         ),
         failed(ExportFailure::Refused)

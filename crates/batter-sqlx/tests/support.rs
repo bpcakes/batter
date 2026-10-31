@@ -1,3 +1,12 @@
+macro_rules! require {
+    ($condition:expr, $message:expr $(,)?) => {{
+        let condition: bool = $condition;
+        let message = $message;
+        condition
+            .then_some(())
+            .ok_or_else(|| batter_core::BoxError::from(std::io::Error::other(message)))
+    }};
+}
 use batter_core::BoxError;
 use sqlx::{Connection, PgConnection, PgPool, postgres::PgPoolOptions};
 use std::{future::Future, time::Duration};
@@ -7,13 +16,7 @@ pub type Result<T = ()> = std::result::Result<T, BoxError>;
 pub const LOCAL: Duration = Duration::from_secs(2);
 pub const OBSERVE: Duration = Duration::from_secs(5);
 
-pub fn require(condition: bool, message: &'static str) -> Result {
-    if condition {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(message).into())
-    }
-}
+pub(crate) use require;
 
 pub async fn bounded<T>(future: impl Future<Output = T>) -> Result<T> {
     let started = Instant::now();
@@ -22,7 +25,7 @@ pub async fn bounded<T>(future: impl Future<Output = T>) -> Result<T> {
         .map_err(|_| std::io::Error::other("local operation exceeded two-second budget"))?;
     // Tokio polls the inner future before checking its timeout. A late ready
     // result must not establish completion within the declared local budget.
-    require(
+    require!(
         started.elapsed() <= LOCAL,
         "local completion exceeded two-second budget",
     )?;
@@ -78,7 +81,7 @@ impl Fixture {
             if blocked {
                 return Ok(());
             }
-            require(
+            require!(
                 Instant::now() < deadline,
                 "backend did not reach server lock",
             )?;
@@ -89,9 +92,9 @@ impl Fixture {
     pub async fn replacement_and_close(&mut self) -> Result {
         let pid: i32 =
             bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&self.pool)).await??;
-        require(!self.retired.contains(&pid), "retired backend was reused")?;
+        require!(!self.retired.contains(&pid), "retired backend was reused")?;
         bounded(self.pool.close()).await?;
-        require(
+        require!(
             self.pool.size() == 0 && self.pool.is_closed(),
             "pool close did not release local accounting",
         )?;
@@ -131,7 +134,7 @@ impl Fixture {
                     eprintln!("retired_sessions_disappeared count={}", self.retired.len());
                     break Ok(());
                 }
-                require(
+                require!(
                     Instant::now() < deadline,
                     "retired server sessions remained after unlock",
                 )?;

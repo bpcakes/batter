@@ -40,6 +40,8 @@
 //! # }
 //! ```
 
+mod projection;
+use projection::AttemptBudget;
 mod service;
 mod worker;
 pub(crate) use worker::DeliveryWorker;
@@ -245,22 +247,6 @@ pub enum ProviderEffectState {
 impl ProviderEffectState {
     // Read-time projection covers failures for which the handler cannot safely
     // persist another transition (lost lease, unavailable DB, cancellation).
-    fn project(self, job: DeliveryState, attempts_spent: bool) -> Self {
-        match self {
-            Self::Confirmed | Self::BusinessDenied | Self::ManualResolution | Self::Exhausted => {
-                self
-            }
-            Self::AwaitingAttempt | Self::RetryableUndispatched | Self::ReconcileNeeded => {
-                match job {
-                    DeliveryState::Pending | DeliveryState::InFlight => self,
-                    DeliveryState::DeadLettered if attempts_spent => Self::Exhausted,
-                    DeliveryState::DeadLettered
-                    | DeliveryState::Cancelled
-                    | DeliveryState::Succeeded => Self::ManualResolution,
-                }
-            }
-        }
-    }
 
     fn from_database(value: &str) -> Result<Self, StorageError> {
         match value {
@@ -573,8 +559,14 @@ impl CommandRow {
             payload: self.request_payload,
             state,
             provider: ProviderOutcome {
-                state: ProviderEffectState::from_database(effect_state)?
-                    .project(state, attempt >= self.enqueue_max_attempts),
+                state: ProviderEffectState::from_database(effect_state)?.project(
+                    state,
+                    if attempt >= self.enqueue_max_attempts {
+                        AttemptBudget::Spent
+                    } else {
+                        AttemptBudget::Available
+                    },
+                ),
                 provider_effect_id: self.effect_provider_effect_id,
                 acceptance_possible: effect_acceptance_possible,
             },

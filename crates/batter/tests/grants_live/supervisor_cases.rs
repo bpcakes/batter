@@ -97,7 +97,7 @@ async fn require_coordination_cleanup(
 ) -> Result {
     let expiring = jobs::enqueue_job(owner, &submission(payload)).await?;
     let claimed = jobs::claim_jobs(login, "grants-cleanup", 1, 1).await?;
-    require(
+    require!(
         claimed.iter().any(|record| record.id == expiring),
         "the coordination-cleanup job was not claimable under this composition",
     )?;
@@ -105,18 +105,18 @@ async fn require_coordination_cleanup(
     // slower connection only leaves the lease further expired.
     tokio::time::sleep(Duration::from_millis(1_300)).await;
     let reaped = jobs::reap_expired_leases_with_diagnostics(login, 10, 1).await?;
-    require(
+    require!(
         reaped.summary.processed >= 1,
         "the reaper processed no expired lease under this composition",
     )?;
-    require(
+    require!(
         reaped.cleanup_errors.is_empty(),
         &format!(
             "the reaper retained coordination-cleanup errors: {:?}",
             reaped.cleanup_errors
         ),
     )?;
-    require(
+    require!(
         reaped.deferred_row_errors.is_empty(),
         &format!("the reaper deferred rows: {:?}", reaped.deferred_row_errors),
     )?;
@@ -141,7 +141,7 @@ async fn require_coordination_cleanup(
     )))
     .fetch_one(owner)
     .await?;
-    require(
+    require!(
         claimable == 0,
         &format!("{claimable} jobs were still claimable after the cleanup probe"),
     )?;
@@ -210,7 +210,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
         // real intent to promote, before the supervisor starts.
         let reapable = jobs::enqueue_job(owner_database.pool(), &submission(&payload)).await?;
         let claimed = jobs::claim_jobs(owner_database.pool(), "grants-stale", 1, 10).await?;
-        require(
+        require!(
             claimed.iter().any(|record| record.id == reapable),
             "the reapable job was not claimable by the owner",
         )?;
@@ -286,7 +286,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             )))
         };
         both(observed, settled)?;
-        require(
+        require!(
             executed.load(Ordering::Relaxed) >= 2,
             "the scheduler-disabled worker executed no handler",
         )?;
@@ -387,7 +387,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
                 )))
                 .fetch_one(owner_database.pool())
                 .await?;
-            require(
+            require!(
                 next_fire > due + chrono::Duration::days(28),
                 &format!("the schedule fires again at {next_fire}, inside the test window"),
             )?;
@@ -414,7 +414,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             )))
         };
         both(observed, settled)?;
-        require(
+        require!(
             scheduled_executed.load(Ordering::Relaxed) >= 1,
             "the default-loop worker executed no scheduled handler",
         )?;
@@ -436,7 +436,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
         )))
         .fetch_one(&wide_probe)
         .await?;
-        require(
+        require!(
             executable == 0,
             &format!("{executable} native routines remained executable by a serving login"),
         )?;
@@ -449,7 +449,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
         )))
         .fetch_one(&wide_probe)
         .await?;
-        require(triggers > 0, "the native triggers were not installed")?;
+        require!(triggers > 0, "the native triggers were not installed")?;
         fixture.track(owner_database.pool().clone());
         fixture.track(wide_database.pool().clone());
         Ok(())

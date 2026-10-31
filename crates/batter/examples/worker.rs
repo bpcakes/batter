@@ -207,7 +207,8 @@ async fn work_window(
     Ok((progress(pruning, renewal), receipt))
 }
 
-async fn demonstrate(window: Duration, signals: bool) -> Result<Observed, BoxError> {
+async fn demonstrate(window: Duration, signals: SignalHandling) -> Result<Observed, BoxError> {
+    let signals = signals == SignalHandling::Enabled;
     let store = Arc::new(Store::default());
     // One injected transient window shows retained, bounded failure evidence.
     store.unavailable_until.store(2, Ordering::Release);
@@ -277,7 +278,7 @@ async fn demonstrate(window: Duration, signals: bool) -> Result<Observed, BoxErr
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
     tracing_subscriber::fmt().with_target(false).try_init()?;
-    let observed = demonstrate(Duration::from_millis(900), true).await?;
+    let observed = demonstrate(Duration::from_millis(900), SignalHandling::Enabled).await?;
     let pruning = observed.pruning.snapshot();
     let renewal = observed.renewal.snapshot();
     tracing::info!(
@@ -312,7 +313,7 @@ mod tests {
     /// do not depend on the ordering of tasks with the same deadline.
     #[tokio::test(start_paused = true)]
     async fn support_renews_through_drain_while_pruning_stops_at_it() {
-        let observed = demonstrate(Duration::from_millis(875), false)
+        let observed = demonstrate(Duration::from_millis(875), SignalHandling::Disabled)
             .await
             .expect("the bounded demonstration completes successfully");
         // Pruning admitted nothing after the stop transition.
@@ -339,4 +340,11 @@ mod tests {
                 .contains("maintenance store is temporarily unavailable")
         );
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SignalHandling {
+    Enabled,
+    #[cfg(test)]
+    Disabled,
 }

@@ -1,3 +1,9 @@
+use crate::admission::AdmissionPhase;
+use crate::closure_races::ClosureCause;
+use crate::operations::CancellationState;
+use crate::operations::Expiry;
+use crate::ownership::DriverProgress;
+
 use super::{
     admission, closure_races, escalation, failures, operations, ownership, readiness,
     support::{Case, Choices, yields},
@@ -5,8 +11,8 @@ use super::{
 };
 
 pub async fn capacity(case: Case) {
-    admission::capacity_one(case, false).await;
-    admission::capacity_one(Case { index: 1, ..case }, true).await;
+    admission::capacity_one(case, AdmissionPhase::Running).await;
+    admission::capacity_one(Case { index: 1, ..case }, AdmissionPhase::Draining).await;
     transitions::queued_capacity(Case { index: 2, ..case }).await;
 }
 
@@ -21,7 +27,11 @@ pub async fn admission(case: Case, choices: &mut Choices) {
                 index: index + 4,
                 ..case
             },
-            failure,
+            if failure {
+                ClosureCause::Failure
+            } else {
+                ClosureCause::Drain
+            },
             choices.next(),
             std::future::ready(()),
         )
@@ -42,8 +52,16 @@ pub async fn operations(case: Case, choices: &mut Choices) {
                 index: index + 1,
                 ..case
             },
-            cancel,
-            expire,
+            if cancel {
+                CancellationState::Cancelled
+            } else {
+                CancellationState::Active
+            },
+            if expire {
+                Expiry::Expired
+            } else {
+                Expiry::Active
+            },
         )
         .await;
     }
@@ -75,8 +93,8 @@ pub async fn ownership(case: Case, choices: &mut Choices) {
     ownership::receipt_waiter(case, choices.next()).await;
     ownership::cleanup_waiter(Case { index: 1, ..case }, choices.next()).await;
     ownership::last_owner(Case { index: 2, ..case }, choices.next()).await;
-    ownership::caller_owned(Case { index: 3, ..case }, false).await;
-    ownership::caller_owned(Case { index: 4, ..case }, true).await;
+    ownership::caller_owned(Case { index: 3, ..case }, DriverProgress::Unpolled).await;
+    ownership::caller_owned(Case { index: 4, ..case }, DriverProgress::Polled).await;
     escalation::coordinator_failure(Case { index: 5, ..case }).await;
 }
 

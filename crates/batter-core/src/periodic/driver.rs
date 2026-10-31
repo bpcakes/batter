@@ -3,6 +3,8 @@
 //! There is exactly one directly owned future per registered component: no
 //! detached per-run task, no event queue and no second scheduler.
 
+use crate::lifecycle::StartupPhase;
+
 use super::{
     History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, PeriodicPolicy,
     history::Cause, schedule::Schedule,
@@ -107,14 +109,19 @@ where
     let mut ticker = Schedule::new(policy.interval());
     let mut invocation = 0u64;
     let ending = loop {
-        let initializing = pending.is_some();
-        match next_due(&mut ticker, &admission, initializing, initialization).await {
+        let phase = if pending.is_some() {
+            StartupPhase::Initializing
+        } else {
+            StartupPhase::Running
+        };
+        let initializing = phase == StartupPhase::Initializing;
+        match next_due(&mut ticker, &admission, phase, initialization).await {
             Due::Run => {}
             Due::Abandon => break Ending::Abandoned,
             Due::Expired => break Ending::InitializationExpired,
             Due::Stopped => break Ending::Stopped,
         }
-        let Some(grant) = admission.admit(initializing) else {
+        let Some(grant) = admission.admit(phase) else {
             // No run is admitted after its applicable stopping point. A
             // rejection can also follow another component's failure before
             // drain is observable, so wait for the actual stopping point
@@ -139,16 +146,7 @@ where
             history: &history,
             invocation,
         };
-        match execute(
-            name,
-            &mut work,
-            deadline,
-            &admission,
-            initializing,
-            retention,
-        )
-        .await
-        {
+        match execute(name, &mut work, deadline, &admission, phase, retention).await {
             Run::Succeeded => {
                 if pending.is_some() {
                     // The run boundary is cooperative: it neither rereads its
@@ -311,9 +309,10 @@ fn finish(
 async fn next_due(
     ticker: &mut Schedule,
     admission: &PeriodicAdmission,
-    initializing: bool,
+    initializing: StartupPhase,
     initialization: Option<Instant>,
 ) -> Due {
+    let initializing = initializing == StartupPhase::Initializing;
     let expiry = async {
         match initialization.filter(|_| initializing) {
             Some(deadline) => sleep_until(deadline).await,
@@ -352,7 +351,7 @@ async fn execute<F, Fut, E>(
     work: &mut F,
     deadline: Instant,
     admission: &PeriodicAdmission,
-    initializing: bool,
+    initializing: StartupPhase,
     retention: Retention<'_>,
 ) -> Run
 where
@@ -360,6 +359,7 @@ where
     Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
     E: Error + Send + Sync + 'static,
 {
+    let initializing = initializing == StartupPhase::Initializing;
     // The run's cancellation lineage descends from process forced cancellation,
     // so children cannot outlive it and cannot exceed its deadline. Ending one
     // run cancels only its own child scope, never a sibling or a future run.

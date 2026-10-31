@@ -351,7 +351,8 @@ async fn partial_startup_can_extract_and_close_registered_resources() {
     assert!(supervisor.take_cleanup().is_empty());
 }
 
-fn assert_unpolled_caller_owned_drop(unapproved: bool) {
+fn assert_unpolled_caller_owned_drop(unapproved: ReadinessDecision) {
+    let unapproved = unapproved == ReadinessDecision::Unapproved;
     let called = Arc::new(AtomicBool::new(false));
     let cleanup_called = Arc::new(AtomicBool::new(false));
     let mut supervisor = Supervisor::new(budget());
@@ -386,12 +387,12 @@ fn assert_unpolled_caller_owned_drop(unapproved: bool) {
 
 #[test]
 fn dropping_unpolled_ordinary_driver_signals_before_application_captures() {
-    assert_unpolled_caller_owned_drop(false);
+    assert_unpolled_caller_owned_drop(ReadinessDecision::Approved);
 }
 
 #[test]
 fn dropping_unpolled_unapproved_driver_signals_before_application_captures() {
-    assert_unpolled_caller_owned_drop(true);
+    assert_unpolled_caller_owned_drop(ReadinessDecision::Unapproved);
 }
 
 #[tokio::test(start_paused = true)]
@@ -490,4 +491,10 @@ async fn component_failure_retains_shutdown_future_until_cleanup_finishes() {
     assert_eq!(report.cleanup.records.len(), 1);
     assert!(report.cleanup.is_success());
     assert!(dropped.load(Ordering::SeqCst));
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReadinessDecision {
+    Unapproved,
+    Approved,
 }

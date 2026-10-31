@@ -1,3 +1,5 @@
+use crate::verification::authority::privileges::SuperuserAllowance;
+
 use super::PgTransaction;
 use super::migration;
 use super::policy::{AuthorityPolicy, MigrationPolicy};
@@ -494,7 +496,18 @@ pub(crate) async fn inspect_with_evaluation(
         }
     }
     let snapshot = CatalogSnapshot::load(transaction, policy, session_user, current_user).await?;
-    evaluate_snapshot_with(snapshot, policy, findings, includes_migrations, evaluation).await
+    evaluate_snapshot_with(
+        snapshot,
+        policy,
+        findings,
+        if includes_migrations {
+            MigrationCoverage::Included
+        } else {
+            MigrationCoverage::Excluded
+        },
+        evaluation,
+    )
+    .await
 }
 
 /// The same production evaluator is used by loaded-snapshot runtime oracles.
@@ -503,7 +516,7 @@ async fn evaluate_snapshot(
     snapshot: CatalogSnapshot,
     policy: &AuthorityPolicy,
     findings: Vec<super::report::Finding>,
-    includes_migrations: bool,
+    includes_migrations: MigrationCoverage,
 ) -> Result<VerificationReport, VerificationError> {
     let evaluation = &mut evaluation::Evaluation::new();
     evaluate_snapshot_with(snapshot, policy, findings, includes_migrations, evaluation).await
@@ -513,7 +526,7 @@ async fn evaluate_snapshot_with(
     snapshot: CatalogSnapshot,
     policy: &AuthorityPolicy,
     mut findings: Vec<super::report::Finding>,
-    includes_migrations: bool,
+    includes_migrations: MigrationCoverage,
     evaluation: &mut evaluation::Evaluation,
 ) -> Result<VerificationReport, VerificationError> {
     let parameters = index_parameters(&snapshot.parameters);
@@ -578,7 +591,11 @@ async fn evaluate_snapshot_with(
         &parameters,
         &graph,
         &expanded_authority,
-        policy.roles.allow_superuser,
+        if policy.roles.allow_superuser {
+            SuperuserAllowance::Allow
+        } else {
+            SuperuserAllowance::Deny
+        },
         &mut findings,
     )
     .await?;
@@ -596,8 +613,9 @@ fn build_report(
     snapshot: CatalogSnapshot,
     policy: &AuthorityPolicy,
     findings: Vec<super::report::Finding>,
-    includes_migrations: bool,
+    includes_migrations: MigrationCoverage,
 ) -> VerificationReport {
+    let includes_migrations = includes_migrations == MigrationCoverage::Included;
     let mut supported = vec![
         SupportedSurface::RoleMembership,
         SupportedSurface::RoleAttributes,
@@ -704,3 +722,9 @@ pub(crate) use evaluation::Evaluation;
 pub(crate) use ownership::inspect as inspect_ownership;
 #[cfg(test)]
 mod tests;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MigrationCoverage {
+    Included,
+    Excluded,
+}

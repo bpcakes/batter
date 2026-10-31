@@ -51,7 +51,7 @@ async fn migration_preserves_native_history_and_retires_checksum_failure() -> Re
         let reused: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&fixture.pool)
             .await?;
-        require(pid == reused, "successful migration lost pool reuse")?;
+        require!(pid == reused, "successful migration lost pool reuse")?;
         // Native history makes a second exact application a no-op.
         PgLease::acquire(&fixture.pool, &context)
             .await?
@@ -63,7 +63,7 @@ async fn migration_preserves_native_history_and_retires_checksum_failure() -> Re
             .migrate(&changed)
             .await
             .expect_err("native checksum mismatch must fail");
-        require(
+        require!(
             matches!(error.native(), sqlx::Error::Migrate(cause)
             if matches!(cause.as_ref(), sqlx::migrate::MigrateError::VersionMismatch(1))),
             "native checksum cause was not preserved",
@@ -72,7 +72,7 @@ async fn migration_preserves_native_history_and_retires_checksum_failure() -> Re
         let replacement: i32 =
             bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool))
                 .await??;
-        require(
+        require!(
             pid != replacement,
             "failed migration returned a possibly locked session",
         )?;

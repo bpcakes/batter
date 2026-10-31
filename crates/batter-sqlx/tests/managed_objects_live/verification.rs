@@ -43,8 +43,9 @@ pub(super) async fn wait_for_lock(
     schema: &str,
     table: &str,
     mode: &str,
-    granted: bool,
+    granted: LockStatus,
 ) -> Result {
+    let granted = granted == LockStatus::Granted;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let observed: bool = bounded(
@@ -67,7 +68,7 @@ pub(super) async fn wait_for_lock(
         if observed {
             return Ok(());
         }
-        require(
+        require!(
             Instant::now() < deadline,
             "expected database lock was not observed",
         )?;
@@ -115,8 +116,8 @@ async fn managed_verifier_waits_for_apply_before_snapshot() -> Result {
         // Its ledger lock must prevent the verifier from taking an old snapshot.
         let apply = async { Ok::<_, batter_core::BoxError>(fixture.apply(&applying, &changed).await?) };
         let inspect = async {
-            wait_for_lock(&observer, apply_pid, schema, "records", "ShareRowExclusiveLock", false).await?;
-            wait_for_lock(&observer, apply_pid, schema, "managed_objects", "AccessExclusiveLock", true).await?;
+            wait_for_lock(&observer, apply_pid, schema, "records", "ShareRowExclusiveLock", LockStatus::Waiting).await?;
+            wait_for_lock(&observer, apply_pid, schema, "managed_objects", "AccessExclusiveLock", LockStatus::Granted).await?;
             let verification = fixture.verify(&reader, VerificationPlan::managed_objects(&changed));
             tokio::pin!(verification);
             tokio::select! {
@@ -124,11 +125,11 @@ async fn managed_verifier_waits_for_apply_before_snapshot() -> Result {
                     let _ = result?;
                     return Err(std::io::Error::other("verifier escaped an in-flight apply").into());
                 }
-                observed = wait_for_lock(&observer, verify_pid, schema, "managed_objects", "AccessShareLock", false) => observed?,
+                observed = wait_for_lock(&observer, verify_pid, schema, "managed_objects", "AccessShareLock", LockStatus::Waiting) => observed?,
             }
             gate.commit().await?;
             let report = verification.await?;
-            require(report.is_within_declared_policy(), "verifier used a snapshot from before apply committed")
+            require!(report.is_within_declared_policy(), "verifier used a snapshot from before apply committed")
         };
         let _ = tokio::try_join!(apply, inspect)?;
         Ok(())
@@ -162,9 +163,9 @@ async fn managed_verifier_holds_apply_until_inspection_ends() -> Result {
                 let _ = result?;
                 return Err(std::io::Error::other("verifier missed the inspection gate").into());
             }
-            observed = wait_for_lock(&observer, verify_pid, schema, "verification_gate", "AccessShareLock", false) => observed?,
+            observed = wait_for_lock(&observer, verify_pid, schema, "verification_gate", "AccessShareLock", LockStatus::Waiting) => observed?,
         }
-        wait_for_lock(&observer, verify_pid, schema, "managed_objects", "AccessShareLock", true).await?;
+        wait_for_lock(&observer, verify_pid, schema, "managed_objects", "AccessShareLock", LockStatus::Granted).await?;
 
         let apply = fixture.apply(&applying, &changed);
         tokio::pin!(apply);
@@ -173,14 +174,14 @@ async fn managed_verifier_holds_apply_until_inspection_ends() -> Result {
                 let _ = result?;
                 return Err(std::io::Error::other("apply escaped the verifier's managed-ledger lock").into());
             }
-            observed = wait_for_lock(&observer, apply_pid, schema, "managed_objects", "AccessExclusiveLock", false) => observed?,
+            observed = wait_for_lock(&observer, apply_pid, schema, "managed_objects", "AccessExclusiveLock", LockStatus::Waiting) => observed?,
         }
         gate.commit().await?;
         let (report, _) = tokio::try_join!(verification, async {
             Ok::<_, batter_core::BoxError>(apply.await?)
         })?;
-        require(report.is_within_declared_policy(), "apply changed the set during verification")?;
-        require(
+        require!(report.is_within_declared_policy(), "apply changed the set during verification")?;
+        require!(
             fixture.verify(&reader, VerificationPlan::managed_objects(&changed)).await?.is_within_declared_policy(),
             "apply did not proceed after verification released its lock",
         )
@@ -212,7 +213,7 @@ async fn managed_verifier_rejects_ledger_created_after_lock_attempt() -> Result 
                 let _ = result?;
                 return Err(std::io::Error::other("verifier missed the late-ledger gate").into());
             }
-            observed = wait_for_lock(&migrator, verify_pid, schema, "verification_gate", "AccessShareLock", false) => observed?,
+            observed = wait_for_lock(&migrator, verify_pid, schema, "verification_gate", "AccessShareLock", LockStatus::Waiting) => observed?,
         }
         bounded(sqlx::raw_sql(AssertSqlSafe(format!(
             "CREATE TABLE {schema}.late_objects (LIKE {schema}.managed_objects INCLUDING ALL);
@@ -220,12 +221,12 @@ async fn managed_verifier_rejects_ledger_created_after_lock_attempt() -> Result 
         ))).execute(&migrator)).await??;
         gate.commit().await?;
         let report = verification.await?;
-        require(
+        require!(
             report.status() == VerificationStatus::Incomplete
                 && report.unsupported().contains(&UnsupportedSurface::UnprotectedManagedObjectLedger),
             "a late-created ledger was treated as protected",
         )?;
-        require(
+        require!(
             fixture.verify(&reader, VerificationPlan::managed_objects(&late.manifest)).await?.is_within_declared_policy(),
             "the late ledger was not otherwise a valid managed installation",
         )
@@ -242,7 +243,7 @@ async fn managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers() 
         let reader = fixture.pool(Role::Reader).await?;
         let schema = fixture.schema();
         let plan = || VerificationPlan::managed_objects(&objects.manifest);
-        require(
+        require!(
             fixture
                 .verify(&reader, plan())
                 .await?
@@ -269,7 +270,7 @@ async fn managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers() 
             )
             .await??;
             let report = fixture.verify(&reader, plan()).await?;
-            require(
+            require!(
                 !report.is_within_declared_policy()
                     && report.findings().iter().any(|item| item.kind == finding),
                 "unsupported managed ledger shape was not reported",
@@ -281,7 +282,7 @@ async fn managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers() 
                 .execute(&migrator),
             )
             .await??;
-            require(
+            require!(
                 fixture
                     .verify(&reader, plan())
                     .await?
@@ -297,7 +298,7 @@ async fn managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers() 
         )
         .await??;
         let report = fixture.verify(&reader, plan()).await?;
-        require(
+        require!(
             report.status() == VerificationStatus::Incomplete
                 && report
                     .unsupported()
@@ -309,7 +310,7 @@ async fn managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers() 
                 .execute(&migrator),
         )
         .await??;
-        require(
+        require!(
             fixture
                 .verify(&reader, plan())
                 .await?
@@ -318,4 +319,10 @@ async fn managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers() 
         )
     })
     .await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LockStatus {
+    Granted,
+    Waiting,
 }

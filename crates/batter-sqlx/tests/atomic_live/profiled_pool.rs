@@ -32,12 +32,12 @@ async fn owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_poli
             let present: bool = sqlx::query_scalar(
                 "SELECT to_regclass('pg_temp.profile_pool_temp') IS NOT NULL")
                 .fetch_one(&mut *connection).await?;
-            require(present, "contamination must create the temporary table")?;
+            require!(present, "contamination must create the temporary table")?;
             sqlx::query("SELECT pg_advisory_lock($1)").bind(key)
                 .execute(&mut *connection).await?;
             let available: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
                 .bind(key).fetch_one(&mut fixture.observer).await?;
-            require(!available, "the checked-out session must hold the lock")?;
+            require!(!available, "the checked-out session must hold the lock")?;
             drop(connection);
             connection = if fast {
                 bounded(async {
@@ -53,14 +53,14 @@ async fn owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_poli
             };
             let reused: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
                 .fetch_one(&mut *connection).await?;
-            require(reused == original, "cleanup must reuse the same physical session")?;
+            require!(reused == original, "cleanup must reuse the same physical session")?;
             let present: bool = sqlx::query_scalar(
                 "SELECT to_regclass('pg_temp.profile_pool_temp') IS NOT NULL")
                 .fetch_one(&mut *connection).await?;
-            require(!present, "release must remove the temporary table")?;
+            require!(!present, "release must remove the temporary table")?;
             let available: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
                 .bind(key).fetch_one(&mut fixture.observer).await?;
-            require(available, "release must clear the session advisory lock")?;
+            require!(available, "release must clear the session advisory lock")?;
             sqlx::query("SELECT pg_advisory_unlock($1)").bind(key)
                 .execute(&mut fixture.observer).await?;
             let observed: (String, String) = sqlx::query_as(

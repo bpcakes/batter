@@ -800,10 +800,16 @@ at `19c3575`, before the at-rest merge; cache speedups remain unmeasured.
 This public repository's standard hosted runner usage does not establish
 a billed dollar saving. See [primary references](references.md#github-actions-scheduling-and-caching-reviewed-2026-09-22).
 
-The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines`
-at warning level in all workspace packages. Root `clippy.toml` sets their thresholds to
-20 and 100 respectively. The existing `-D warnings` verification step enforces
-both limits across libraries, examples, and tests.
+Packages inheriting the workspace lint table enable `clippy::cognitive_complexity`,
+`clippy::too_many_lines`, and `clippy::fn_params_excessive_bools` at warning level.
+Root `clippy.toml` sets their thresholds to 20, 100, and zero boolean parameters.
+The existing `-D warnings` verification steps enforce these limits across libraries,
+examples, and tests. Native Runlimit enables the boolean-parameter lint through
+`pedantic`; native Runledger and standalone `batter-at-rest` keep their own lint tables.
+Named choices replace control parameters, and fallible test assertions use assertion
+macros. Public settings and authority APIs use only named methods; their boolean
+compatibility wrappers have been removed. There are no scoped exemptions to the
+boolean-parameter lint (`batter-4dmd`).
 
 ## Managed routines and triggers
 
@@ -2623,6 +2629,21 @@ registration window. This works around the reproduced pinned upstream cache path
 admission-lock callbacks or filtered-event assertions. Raw subscriber arguments to
 `WithSubscriber::with_subscriber` also construct a dispatcher implicitly and must
 use this helper; already-built dispatcher clones need no second construction.
+
+The metrics ordering tests also construct their subscribers through this helper
+(`batter-mxa0`, `batter-fnj8.5.1`). Run
+`cargo test -p batter-core --all-features --test metrics --locked cold_callsites::`
+for the two fresh-process regressions. After capture installation, an unsubscribed
+thread first skips or closes a cleanup stack; the subscribed thread then checks
+the original warning/INFO-before-metric and skip-before-capture-destruction
+assertions. The shared Unix watchdog bounds each child to five seconds. Process
+isolation prevents sibling tests from warming the callsites or registering extra
+dispatchers that hide the defect. The ordinary skip test retains its panicking
+destructor case. Bypassing the helper must fail both isolated ordering assertions;
+the tests neither rebuild interest nor retry failures, install a global subscriber
+or relax event counts.
+This protects the test oracle against the pinned upstream filtering bug, not
+production applications that choose the same scoped-subscriber arrangement.
 
 `python3 scripts/check_http_graceful_mutation.py --output /tmp/http-mutation-evidence`
 requires Python 3.11+, cached locked dependencies and a new output directory

@@ -28,7 +28,8 @@ pub const OUTCOMES: [&str; OUTCOME_VALUES] = {
     values
 };
 
-pub(super) const fn outcome(value: Outcome, unwinding: bool) -> &'static str {
+pub(super) const fn outcome(value: Outcome, unwinding: ThreadState) -> &'static str {
+    let unwinding = matches!(unwinding, ThreadState::Unwinding);
     match (value, unwinding) {
         (Outcome::Dropped, true) => PANICKED,
         (value, _) => outcome_label(value),
@@ -174,4 +175,10 @@ closed_domain! {
         Coalesce::Invalid => "invalid",
         Coalesce::Capacity => "capacity",
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadState {
+    Unwinding,
+    Running,
 }

@@ -139,11 +139,11 @@ mod tests {
                         public_relation.clone(),
                         Identifier::new("value").unwrap(),
                     ),
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+                    privilege: AllowedPrivilege::privilege(ObjectPrivilege::Select),
                 },
                 PublicGrant {
                     object: PublicObject::Parameter(parameter.clone()),
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Set, false),
+                    privilege: AllowedPrivilege::privilege(ObjectPrivilege::Set),
                 },
             ],
             ..AuthorityPolicy::default()

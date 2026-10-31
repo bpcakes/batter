@@ -43,7 +43,15 @@ fn fallback_keeps_envelope_prefix_headers_and_one_observation_through_lifecycle(
         let requests = capture.block_on(async {
             let (control, approval) = ShutdownHandle::new_with_readiness_approval();
             let mut approval = Some(approval);
-            let app = app(&control, declared).await;
+            let app = app(
+                &control,
+                if declared {
+                    RouteDeclaration::Declared
+                } else {
+                    RouteDeclaration::Direct
+                },
+            )
+            .await;
             let mut count = 0;
             for state in 0..3 {
                 if state == 1 {
@@ -52,7 +60,11 @@ fn fallback_keeps_envelope_prefix_headers_and_one_observation_through_lifecycle(
                 if state == 2 {
                     control.request();
                 }
-                for (method, path, expected) in cases(state == 1) {
+                for (method, path, expected) in cases(if state == 1 {
+                    ExpectedReadiness::Ready
+                } else {
+                    ExpectedReadiness::Unready
+                }) {
                     let response = app
                         .clone()
                         .request(
@@ -161,7 +173,8 @@ fn unreachable_fallback() -> StatusCode {
     panic!("undeclared fallback must never run")
 }
 
-async fn app(control: &ShutdownHandle, declared: bool) -> InProcessClient {
+async fn app(control: &ShutdownHandle, declared: RouteDeclaration) -> InProcessClient {
+    let declared = declared == RouteDeclaration::Declared;
     let routes = if declared {
         GuardedRouter::from_router(
             Router::new()
@@ -185,7 +198,8 @@ async fn app(control: &ShutdownHandle, declared: bool) -> InProcessClient {
         .in_process()
 }
 
-fn cases(ready: bool) -> [(Method, &'static str, StatusCode); 7] {
+fn cases(ready: ExpectedReadiness) -> [(Method, &'static str, StatusCode); 7] {
+    let ready = ready == ExpectedReadiness::Ready;
     let work = if ready {
         StatusCode::OK
     } else {
@@ -209,4 +223,16 @@ fn cases(ready: bool) -> [(Method, &'static str, StatusCode); 7] {
         (Method::POST, "/private/work", method),
         (Method::GET, "/default", work),
     ]
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RouteDeclaration {
+    Declared,
+    Direct,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExpectedReadiness {
+    Ready,
+    Unready,
 }

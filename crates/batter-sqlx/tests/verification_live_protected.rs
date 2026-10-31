@@ -1,3 +1,5 @@
+use batter_sqlx::verification::AuthorityAllowance;
+
 use super::support::{Result, require};
 use super::{AuthorityFixture, Names, exec, quote};
 use batter_core::operation::{OperationContext, OperationError};
@@ -63,7 +65,7 @@ async fn require_missing_select_is_native(
     }
     history.release();
     let denied = denied.await;
-    require(
+    require!(
         matches!(
             denied,
             Err(OperationError::Failed(VerificationError::Native(ref error)))
@@ -102,7 +104,7 @@ async fn require_checksum_length_guard(
             MigrationExpectation::new(3, [3]),
         ],
     )?;
-    require(
+    require!(
         verify_sqlx_migrations(pool, &context()?, &bounded_checksum)
             .await?
             .is_within_declared_policy(),
@@ -113,7 +115,7 @@ async fn require_checksum_length_guard(
         format!("UPDATE {table} SET checksum = checksum || '\\x00'::bytea WHERE version = 1"),
     )
     .await?;
-    require(
+    require!(
         verify_sqlx_migrations(pool, &context()?, &bounded_checksum)
             .await?
             .findings()
@@ -155,7 +157,7 @@ async fn require_identifier_literal_guard(
         SqlxLedgerMode::Exact,
         [MigrationExpectation::new(9, [9])],
     )?;
-    require(
+    require!(
         verify_sqlx_migrations(pool, &context()?, &unusual)
             .await?
             .is_within_declared_policy(),
@@ -213,7 +215,7 @@ async fn require_catalog_type_identity_guard(
         SqlxLedgerMode::Exact,
         Vec::<MigrationExpectation>::new(),
     )?;
-    require(
+    require!(
         verify_sqlx_migrations(pool, &context()?, &shadow)
             .await?
             .findings()
@@ -223,7 +225,7 @@ async fn require_catalog_type_identity_guard(
     )?;
     let legacy = MigrationPolicy::new(QualifiedName::new(&names.schema_a, shadow_name)?, [])?;
     let legacy_report = verify_migrations(pool, &context()?, &legacy).await?;
-    require(
+    require!(
         legacy_report
             .findings()
             .iter()
@@ -267,7 +269,7 @@ async fn require_combined_protected_request(
         )?
         .public_delivery(PublicDelivery::AllowDeclared),
     )?;
-    role.deny_current_database_ownership(true);
+    role.database_ownership(AuthorityAllowance::Deny);
     let compiled = role.compile()?;
     let absent_subset = SqlxMigrationManifest::new(
         QualifiedName::new(&names.schema_a, "absent_combined_history")?,
@@ -282,7 +284,7 @@ async fn require_combined_protected_request(
             .with_schema_inspection(policy)?,
     )
     .await?;
-    require(
+    require!(
         [
             SupportedSurface::RoleMembership,
             SupportedSurface::SqlxMigrationLedger,
@@ -295,7 +297,7 @@ async fn require_combined_protected_request(
                 .contains(&UnsupportedSurface::UnprotectedMigrationLedger),
         "one protected request did not merge exact-role, absent-subset and schema evidence",
     )?;
-    require(
+    require!(
         report.is_within_declared_policy(),
         "the canonical combined protected request did not pass cleanly",
     )?;
@@ -323,7 +325,7 @@ async fn require_exact_generic_schema(
             .with_schema_inspection(policy)?,
     )
     .await?;
-    require(
+    require!(
         [
             SupportedSurface::MigrationLedger,
             SupportedSurface::SecurityDefinerConfiguration,
@@ -349,7 +351,7 @@ async fn require_generic_authority_sqlx_schema(
         .into_iter()
         .map(|privilege| PublicGrant {
             object: PublicObject::Database,
-            privilege: AllowedPrivilege::new(privilege, false),
+            privilege: AllowedPrivilege::privilege(privilege),
         })
         .collect();
     let authority = AuthorityPolicyBuilder {
@@ -359,8 +361,8 @@ async fn require_generic_authority_sqlx_schema(
         },
         database: DatabasePolicy {
             privileges: vec![
-                AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-                AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                AllowedPrivilege::privilege(ObjectPrivilege::Connect),
+                AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
             ],
             allow_owner: false,
         },
@@ -376,7 +378,7 @@ async fn require_generic_authority_sqlx_schema(
             .with_schema_inspection(policy)?,
     )
     .await?;
-    require(
+    require!(
         [
             SupportedSurface::RoleMembership,
             SupportedSurface::DatabaseAcl,
@@ -405,7 +407,7 @@ async fn require_generic_migration_schema(
         VerificationPlan::migrations(&missing_generic).with_schema_inspection(policy)?,
     )
     .await?;
-    require(
+    require!(
         [
             SupportedSurface::MigrationLedger,
             SupportedSurface::SecurityDefinerConfiguration,
@@ -457,7 +459,7 @@ async fn protected_sqlx_ledger_checks_exact_shape_and_nonprefix_subset() -> Resu
                     ],
                 )?;
                 let report = verify_sqlx_migrations(&pool, &context()?, &exact).await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::WithinDeclaredPolicy
                         && report
                             .supported()
@@ -475,7 +477,7 @@ async fn protected_sqlx_ledger_checks_exact_shape_and_nonprefix_subset() -> Resu
                         MigrationExpectation::new(4, [4]),
                     ],
                 )?;
-                require(
+                require!(
                     verify_sqlx_migrations(&pool, &context()?, &subset)
                         .await?
                         .is_within_declared_policy(),
@@ -498,7 +500,7 @@ async fn protected_sqlx_ledger_checks_exact_shape_and_nonprefix_subset() -> Resu
                     format!("ALTER TABLE {table} ADD COLUMN extra integer NOT NULL DEFAULT 0"),
                 )
                 .await?;
-                require(
+                require!(
                     verify_sqlx_migrations(&pool, &context()?, &subset)
                         .await?
                         .findings()
@@ -555,7 +557,7 @@ async fn protected_schema_checks_all_definers_and_exact_stored_search_path() -> 
                     SchemaInspectionPolicy::canonical([Identifier::new(&names.schema_a)?])?;
                 let plan = VerificationPlan::schema_inspection(&policy);
                 let report = verify(&pool, &context()?, plan).await?;
-                require(
+                require!(
                     report.is_within_declared_policy()
                         && report.supported() == [SupportedSurface::SecurityDefinerConfiguration]
                         && report.unsupported() == [UnsupportedSurface::SecurityDefinerBody]
@@ -577,7 +579,7 @@ async fn protected_schema_checks_all_definers_and_exact_stored_search_path() -> 
                     VerificationPlan::schema_inspection(&missing_policy),
                 )
                 .await?;
-                require(
+                require!(
                     missing_report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::MissingObject
                             && finding.object.as_deref()
@@ -590,7 +592,7 @@ async fn protected_schema_checks_all_definers_and_exact_stored_search_path() -> 
                     format!("ALTER FUNCTION {schema}.configured_trigger() RESET search_path"),
                 )
                 .await?;
-                require(
+                require!(
                     verify(&pool, &context()?, plan)
                         .await?
                         .findings()
@@ -628,10 +630,10 @@ async fn protected_exact_role_rejects_set_reachable_ownership() -> Result {
                     Identifier::new(&names.schema_a)?,
                     DiscoveryScope::Declared,
                 )?;
-                manifest.deny_current_database_ownership(true);
+                manifest.database_ownership(AuthorityAllowance::Deny);
                 let compiled = manifest.compile()?;
                 let report = verify_exact_role(&pool, &context()?, &compiled).await?;
-                require(
+                require!(
                     report
                         .supported()
                         .contains(&SupportedSurface::CurrentDatabaseOwnership)

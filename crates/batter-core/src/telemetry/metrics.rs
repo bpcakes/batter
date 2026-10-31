@@ -138,6 +138,9 @@
 //! # }
 //! ```
 
+use crate::telemetry::metrics::vocabulary::ThreadState;
+use crate::telemetry::record::TaskCategory;
+
 pub mod catalog;
 mod installation;
 mod keys;
@@ -320,7 +323,14 @@ pub(crate) fn operation(
         return;
     }
     let operation = OPERATION_NAMES.label(name);
-    let outcome = vocabulary::outcome(outcome, std::thread::panicking());
+    let outcome = vocabulary::outcome(
+        outcome,
+        if std::thread::panicking() {
+            ThreadState::Unwinding
+        } else {
+            ThreadState::Running
+        },
+    );
     let Some(index) = named(operation, &OUTCOMES, outcome) else {
         return;
     };
@@ -380,7 +390,12 @@ pub(crate) fn root(observed: Readiness) {
     admission(AdmissionKind::Root, vocabulary::root(observed));
 }
 
-pub(crate) fn task(finite: bool, name: &'static str, outcome: TaskOutcome) {
+pub(crate) fn task(
+    finite: crate::telemetry::record::TaskCategory,
+    name: &'static str,
+    outcome: TaskOutcome,
+) {
+    let finite = matches!(finite, TaskCategory::Process);
     let kind = vocabulary::task_kind(finite);
     let outcome = vocabulary::task_outcome(outcome);
     let task = TASK_NAMES.label(name);

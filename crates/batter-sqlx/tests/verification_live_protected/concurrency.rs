@@ -97,14 +97,14 @@ async fn protected_sqlx_absent_lock_cannot_admit_late_ledger() -> Result {
                 .await?;
                 pause.release();
                 let report = verification.await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete
                         && report
                             .unsupported()
                             .contains(&UnsupportedSurface::UnprotectedMigrationLedger),
                     "a ledger created after the absent lock was treated as protected",
                 )?;
-                require(
+                require!(
                     verify_sqlx_migrations(&pool, &context()?, &manifest)
                         .await?
                         .is_within_declared_policy(),
@@ -161,7 +161,7 @@ async fn protected_sqlx_name_replacement_is_not_mistaken_for_locked_ledger() -> 
                     replace_ledger_schema(&mut fixture.admin, &names, table_name).await?;
                 pause.release();
                 let report = verification.await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete
                         && report
                             .unsupported()
@@ -223,7 +223,7 @@ async fn protected_sqlx_history_rejects_post_snapshot_name_replacement() -> Resu
                     replace_ledger_schema(&mut fixture.admin, &names, table_name).await?;
                 pause.release();
                 let report = verification.await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::Incomplete
                         && report
                             .unsupported()
@@ -265,7 +265,7 @@ async fn protected_sqlx_guards_reject_rls_inheritance_and_overflow() -> Result {
                     format!("ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"),
                 )
                 .await?;
-                require(
+                require!(
                     verify_sqlx_migrations(&pool, &context()?, &manifest)
                         .await?
                         .findings()
@@ -285,7 +285,7 @@ async fn protected_sqlx_guards_reject_rls_inheritance_and_overflow() -> Result {
                     format!("CREATE TABLE {child} () INHERITS ({table})"),
                 )
                 .await?;
-                require(
+                require!(
                     verify_sqlx_migrations(&pool, &context()?, &manifest)
                         .await?
                         .status()
@@ -304,7 +304,7 @@ async fn protected_sqlx_guards_reject_rls_inheritance_and_overflow() -> Result {
                     ),
                 )
                 .await?;
-                require(
+                require!(
                     verify_sqlx_migrations(&pool, &context()?, &manifest)
                         .await?
                         .findings()
@@ -357,7 +357,7 @@ async fn protected_sqlx_late_attachment_cannot_supply_snapshot_rows() -> Result 
                 )))
                 .fetch_one(&pool)
                 .await?;
-                require(serving_warmup == 0, "protected ledger was not empty")?;
+                require!(serving_warmup == 0, "protected ledger was not empty")?;
                 let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
                     .fetch_one(&pool)
                     .await?;
@@ -378,7 +378,7 @@ async fn protected_sqlx_late_attachment_cannot_supply_snapshot_rows() -> Result 
                 )))
                 .fetch_one(&mut mutator)
                 .await?;
-                require(
+                require!(
                     mutator_ledger_warmup == 0 && mutator_child_warmup == 1,
                     "late-attachment relations were not warm before the barrier",
                 )?;
@@ -413,7 +413,7 @@ async fn protected_sqlx_late_attachment_cannot_supply_snapshot_rows() -> Result 
                 change.commit().await?;
                 barrier.rollback().await?;
                 let report = verification.await?;
-                require(
+                require!(
                     report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::MissingMigration
                             && finding.subject.as_deref() == Some("1")

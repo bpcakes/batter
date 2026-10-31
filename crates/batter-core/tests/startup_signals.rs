@@ -1,5 +1,7 @@
 #[path = "startup_signals/service.rs"]
 mod owned_service;
+#[path = "startup_signals/scenario.rs"]
+mod scenario;
 
 use batter_core::{
     RegistrationError,
@@ -8,6 +10,7 @@ use batter_core::{
     operation::{OperationContext, OperationOwner},
     startup::{InitializationError, Startup, StartupCause, StartupError},
 };
+use scenario::{ChildInput, ComponentMode, SignalConfiguration, SignalExpectation};
 use std::{
     future::pending,
     io::{self, BufRead, BufReader, Read, Write},
@@ -175,27 +178,35 @@ fn configured_signals_cover_start_return_running_and_explicit_opt_out() {
     }
 
     for signal in ["TERM", "INT"] {
-        let output = run_signaled_child("service", signal, true);
+        let output = run_signaled_child("service", signal, SignalExpectation::Survives);
         assert!(output.contains("service-cleaned"), "{output:?}");
-        let output = run_signaled_child("startup", signal, true);
+        let output = run_signaled_child("startup", signal, SignalExpectation::Survives);
         assert!(output.contains("startup-cleanup"), "{output:?}");
         assert!(output.contains("startup-draining"), "{output:?}");
 
-        let output = run_signaled_child("held", signal, true);
+        let output = run_signaled_child("held", signal, SignalExpectation::Survives);
         assert!(output.contains("held-cleanup"), "{output:?}");
         assert!(output.contains("held-draining"), "{output:?}");
 
-        let output = run_signaled_child("waiter", signal, true);
+        let output = run_signaled_child("waiter", signal, SignalExpectation::Survives);
         assert!(output.contains("waiter-draining"), "{output:?}");
 
-        let output = run_signaled_child("running", signal, true);
+        let output = run_signaled_child("running", signal, SignalExpectation::Survives);
         assert!(output.contains("running-complete"), "{output:?}");
 
-        let output = run_signaled_child("unapproved", signal, true);
+        let output = run_signaled_child("unapproved", signal, SignalExpectation::Survives);
         assert!(output.contains("unapproved-complete"), "{output:?}");
 
-        run_signaled_child("configured-unstarted", signal, false);
-        run_signaled_child("started-unconfigured", signal, false);
+        run_signaled_child(
+            "configured-unstarted",
+            signal,
+            SignalExpectation::Terminates,
+        );
+        run_signaled_child(
+            "started-unconfigured",
+            signal,
+            SignalExpectation::Terminates,
+        );
     }
 
     let output = run_child_to_completion("reserved-name");
@@ -234,10 +245,10 @@ fn run_child(mode: &str) {
         "waiter" => run_waiter_child(),
         "running" => run_running_child(),
         "unapproved" => run_unapproved_child(),
-        "configured-unstarted" => run_default_termination_child(true),
-        "started-unconfigured" => run_default_termination_child(false),
-        "reserved-name" => run_reserved_name_child(false),
-        "reserved-managed-name" => run_reserved_name_child(true),
+        "configured-unstarted" => run_default_termination_child(SignalConfiguration::Configured),
+        "started-unconfigured" => run_default_termination_child(SignalConfiguration::Default),
+        "reserved-name" => run_reserved_name_child(ComponentMode::Direct),
+        "reserved-managed-name" => run_reserved_name_child(ComponentMode::Managed),
         "owner-loss" => run_owner_loss_child(),
         "repeat-cleanup" => run_repeated_cleanup_child(),
         "stderr-flood" => {
@@ -386,7 +397,8 @@ fn wait_for_parent() {
     std::io::stdin().read_exact(&mut release).unwrap();
 }
 
-fn run_reserved_name_child(managed: bool) {
+fn run_reserved_name_child(managed: ComponentMode) {
+    let managed = managed == ComponentMode::Managed;
     runtime().block_on(async {
         let calls = Arc::new(AtomicUsize::new(0));
         let called = calls.clone();
@@ -538,7 +550,8 @@ fn run_owner_loss_child() {
     });
 }
 
-fn run_default_termination_child(configured: bool) {
+fn run_default_termination_child(configured: SignalConfiguration) {
+    let configured = configured == SignalConfiguration::Configured;
     runtime().block_on(async {
         let specification = Startup::scoped(supervisor(), context(5), cleanup_budget(), |_scope| {
             Box::pin(std::future::pending::<Result<(), RegistrationError>>())
@@ -556,8 +569,9 @@ fn run_default_termination_child(configured: bool) {
     });
 }
 
-fn run_signaled_child(mode: &str, signal: &str, survives: bool) -> String {
-    let mut child = CapturedChild::spawn(mode, true);
+fn run_signaled_child(mode: &str, signal: &str, survives: SignalExpectation) -> String {
+    let survives = survives == SignalExpectation::Survives;
+    let mut child = CapturedChild::spawn(mode, ChildInput::Piped);
     let marker_deadline = Instant::now() + Duration::from_secs(5);
     let expected = match mode {
         "running" => "running-ready",
@@ -619,7 +633,7 @@ fn run_signaled_child(mode: &str, signal: &str, survives: bool) -> String {
 }
 
 fn run_repeated_signals_during_cleanup(first: &str, repeated: &str) -> String {
-    let child = CapturedChild::spawn("repeat-cleanup", false);
+    let child = CapturedChild::spawn("repeat-cleanup", ChildInput::Null);
     let child = wait_for_child_marker(child, "repeat-ready");
     let child = send_signal(child, first);
     let child = wait_for_child_marker(child, "repeat-cleanup-started");
@@ -678,7 +692,7 @@ fn run_child_to_completion(mode: &str) -> String {
 }
 
 fn run_child_to_completion_with_limit(mode: &str, limit: Duration) -> String {
-    let output = CapturedChild::spawn(mode, false).finish(Instant::now() + limit);
+    let output = CapturedChild::spawn(mode, ChildInput::Null).finish(Instant::now() + limit);
     assert!(!output.timed_out, "child timed out: mode={mode}");
     assert!(
         output.status.success(),
@@ -705,7 +719,8 @@ struct CapturedOutput {
 }
 
 impl CapturedChild {
-    fn spawn(mode: &str, piped_stdin: bool) -> Self {
+    fn spawn(mode: &str, piped_stdin: ChildInput) -> Self {
+        let piped_stdin = piped_stdin == ChildInput::Piped;
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([

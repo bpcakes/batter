@@ -291,7 +291,7 @@ mod tests {
 
         let mut missing_draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
         missing_draft.defaults.columns.privileges =
-            vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+            vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)];
         missing_draft.required_privileges.push(RequiredPrivilege {
             object: column("missing"),
             privilege: ObjectPrivilege::Select,
@@ -312,7 +312,7 @@ mod tests {
             RoutineSignature::new("service", "perform", std::iter::empty::<RoutineType>()).unwrap();
         let mut routine_draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
         routine_draft.defaults.invoker_routines.privileges =
-            vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)];
+            vec![AllowedPrivilege::privilege(ObjectPrivilege::Execute)];
         routine_draft.required_privileges.push(RequiredPrivilege {
             object: PublicObject::Routine(routine),
             privilege: ObjectPrivilege::Execute,
@@ -417,7 +417,7 @@ mod tests {
             .defaults
             .relations
             .privileges
-            .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
+            .push(AllowedPrivilege::privilege(ObjectPrivilege::Select));
         assert!(check(&policy).is_empty());
         policy.relations.push(RelationPolicy {
             relation: QualifiedName::new("service", "records").unwrap(),
@@ -454,7 +454,7 @@ mod tests {
             .defaults
             .relations
             .public_privileges
-            .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
+            .push(AllowedPrivilege::privilege(ObjectPrivilege::Select));
         let mut findings = Vec::new();
         crate::verification::authority::evaluation::tests::run(inspect_relations(
             &mut crate::verification::authority::evaluation::Evaluation::new(),
@@ -513,7 +513,7 @@ mod tests {
             .unwrap();
             let mut defaults = DiscoveryDefaults::default();
             defaults.relations.public_privileges =
-                vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+                vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)];
             manifest.set_discovery_defaults(defaults).unwrap();
             manifest
                 .add_relations(
@@ -524,7 +524,7 @@ mod tests {
                     )
                     .unwrap()
                     .public_delivery(delivery)
-                    .allow_row_type_public_usage(true),
+                    .row_type_public_usage(crate::verification::AuthorityAllowance::Allow),
                 )
                 .unwrap();
             let compiled = manifest.compile().unwrap();
@@ -580,7 +580,7 @@ mod tests {
             .unwrap();
             let mut defaults = DiscoveryDefaults::default();
             defaults.types.public_privileges =
-                vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)];
+                vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)];
             manifest.set_discovery_defaults(defaults).unwrap();
             manifest
                 .add_relations(
@@ -590,7 +590,11 @@ mod tests {
                         DeclarationPurpose::AllowedOnly,
                     )
                     .unwrap()
-                    .allow_row_type_public_usage(allow_row_type_public_usage),
+                    .row_type_public_usage(if allow_row_type_public_usage {
+                        crate::verification::AuthorityAllowance::Allow
+                    } else {
+                        crate::verification::AuthorityAllowance::Deny
+                    }),
                 )
                 .unwrap();
             let compiled = manifest.compile().unwrap();

@@ -55,7 +55,7 @@ mod tests {
             QualifiedName::new("service", "records").unwrap(),
             Identifier::new("id").unwrap(),
         );
-        let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
+        let select = AllowedPrivilege::privilege(ObjectPrivilege::Select);
         let mut policy = AuthorityPolicyBuilder {
             discovery: DiscoveryScope::Schemas(vec![Identifier::new("service").unwrap()]),
             public_overrides: vec![PublicAllowance {
@@ -86,7 +86,7 @@ mod tests {
         policy.public_overrides.clear();
         policy.public_grants.push(PublicGrant {
             object: relation,
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Update, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Update),
         });
         assert_eq!(
             policy.build(),

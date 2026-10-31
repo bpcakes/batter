@@ -4,6 +4,8 @@
 //! ceilings and the ownership guard. The native fragments contribute object
 //! declarations and nothing else, exactly as a consumer would compose them.
 
+use batter::sqlx::verification::AuthorityAllowance;
+
 use super::support::Result;
 use batter::runledger::grants::RunledgerOperation;
 use batter::runlimit::grants::RunlimitOperation;
@@ -91,7 +93,7 @@ impl<'a> Composition<'a> {
         )?;
         manifest.set_discovery_defaults(self.defaults())?;
         manifest.set_role_policy(RolePolicy::default())?;
-        manifest.deny_current_database_ownership(true);
+        manifest.database_ownership(AuthorityAllowance::Deny);
         // The cluster retains PostgreSQL's default PUBLIC database privileges.
         // Declaring them keeps that an explicit application choice instead of an
         // unexplained excess-authority finding.
@@ -135,7 +137,7 @@ impl<'a> Composition<'a> {
         let policy = FragmentObjectPolicy::new(Identifier::new(schema)?)
             // Both audited consumer shapes retain PostgreSQL's default PUBLIC
             // USAGE on table row types.
-            .allow_row_type_public_usage(true);
+            .row_type_public_usage(AuthorityAllowance::Allow);
         Ok(match self.public {
             PublicPolicy::Deny => policy,
             PublicPolicy::PermitSelectedDelivery => {
@@ -149,9 +151,8 @@ impl<'a> Composition<'a> {
             // Composite row types and the native enum types keep PostgreSQL's
             // default PUBLIC USAGE.
             types: ObjectDefaults {
-                public_privileges: vec![batter::sqlx::verification::AllowedPrivilege::new(
+                public_privileges: vec![batter::sqlx::verification::AllowedPrivilege::privilege(
                     ObjectPrivilege::Usage,
-                    false,
                 )],
                 ..ObjectDefaults::default()
             },
@@ -187,7 +188,7 @@ impl<'a> Composition<'a> {
                 [],
                 DeclarationPurpose::RequiredAndProvisioned,
             )?
-            .allow_row_type_public_usage(true),
+            .row_type_public_usage(AuthorityAllowance::Allow),
         )?;
         manifest.add_columns(
             ColumnGrantGroup::new(

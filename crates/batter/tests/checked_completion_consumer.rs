@@ -39,7 +39,8 @@ fn component(supervisor: &mut Supervisor) {
         .unwrap();
 }
 
-async fn ready_owner(fail_cleanup: bool) -> RunningSupervisor {
+async fn ready_owner(fail_cleanup: CleanupResult) -> RunningSupervisor {
+    let fail_cleanup = fail_cleanup == CleanupResult::Failure;
     let mut supervisor = Supervisor::new(budget());
     component(&mut supervisor);
     if fail_cleanup {
@@ -78,7 +79,7 @@ fn process_exit(result: anyhow::Result<()>) -> ExitCode {
 
 #[tokio::test]
 async fn ordinary_boundaries_and_exit_code_preserve_failed_cleanup() {
-    let running = ready_owner(false).await;
+    let running = ready_owner(CleanupResult::Success).await;
     running.handle().request();
     assert_eq!(
         process_exit(anyhow_boundary(&running).await),
@@ -86,7 +87,7 @@ async fn ordinary_boundaries_and_exit_code_preserve_failed_cleanup() {
     );
     boxed_boundary(&running).await.unwrap();
 
-    let running = ready_owner(true).await;
+    let running = ready_owner(CleanupResult::Failure).await;
     running.handle().request();
     let error = anyhow_boundary(&running).await.unwrap_err();
     let ShutdownFailure::Report(report) = error.downcast_ref::<ShutdownFailure>().unwrap() else {
@@ -196,7 +197,12 @@ fn record_completion_summary(
 #[tokio::test]
 async fn one_checked_observation_summarizes_success_and_failure_before_propagation() {
     for fail_cleanup in [false, true] {
-        let running = ready_owner(fail_cleanup).await;
+        let running = ready_owner(if fail_cleanup {
+            CleanupResult::Failure
+        } else {
+            CleanupResult::Success
+        })
+        .await;
         let observer = running.observer();
         running.handle().request();
         let mut summaries = Vec::new();
@@ -431,7 +437,7 @@ async fn worker_readiness_deadline_requests_shutdown_and_retains_outcomes() {
 
 #[tokio::test]
 async fn worker_ready_path_preserves_failed_cleanup() {
-    let running = ready_owner(true).await;
+    let running = ready_owner(CleanupResult::Failure).await;
     let worker = tokio::spawn({
         let running = running.clone();
         async move {
@@ -448,4 +454,10 @@ async fn worker_ready_path_preserves_failed_cleanup() {
         panic!("ready worker must propagate failed cleanup")
     };
     assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupResult {
+    Failure,
+    Success,
 }

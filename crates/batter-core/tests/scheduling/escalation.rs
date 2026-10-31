@@ -91,7 +91,14 @@ pub async fn outcomes(
     assert!(report.unjoined.is_empty());
     assert!(!report.abort_requested.contains(&"completed"));
     if mode < 2 && result.is_ok() {
-        successful_exit(&report, mode == 1);
+        successful_exit(
+            &report,
+            if mode == 1 {
+                StopPhase::Forced
+            } else {
+                StopPhase::Graceful
+            },
+        );
         assert_eq!(
             finalized.load(Ordering::SeqCst),
             report.abort_requested.is_empty()
@@ -102,7 +109,14 @@ pub async fn outcomes(
         // cooperates. Exact success/phase assertions use a paused clock; live
         // termination must still retain the actual abort and skip cleanup.
         assert!(matches!(result, Err(ProcessTaskError::Terminated)));
-        uncertain_exit(&report, mode == 2);
+        uncertain_exit(
+            &report,
+            if mode == 2 {
+                TaskFailure::Panicked
+            } else {
+                TaskFailure::Aborted
+            },
+        );
         if mode != 2 {
             assert!(report.forced_cancellation);
         }
@@ -115,7 +129,8 @@ pub async fn outcomes(
     report
 }
 
-fn successful_exit(report: &ShutdownReport, forced: bool) {
+fn successful_exit(report: &ShutdownReport, forced: StopPhase) {
+    let forced = forced == StopPhase::Forced;
     assert_eq!(report.completed_process_tasks, 2);
     assert!(report.tasks.is_empty());
     if forced || !report.abort_requested.is_empty() {
@@ -132,7 +147,8 @@ fn successful_exit(report: &ShutdownReport, forced: bool) {
     }
 }
 
-fn uncertain_exit(report: &ShutdownReport, panicked: bool) {
+fn uncertain_exit(report: &ShutdownReport, panicked: TaskFailure) {
+    let panicked = panicked == TaskFailure::Panicked;
     assert!(!report.is_success());
     assert_eq!(report.completed_process_tasks, 1);
     assert_eq!(report.tasks.len(), 1);
@@ -247,4 +263,16 @@ pub async fn unjoined_finite(case: Case) {
     );
     case.event("unjoined-report-and-pending-receipt-reconciled");
     case.event("runtime-drop-after-unjoined");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StopPhase {
+    Forced,
+    Graceful,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TaskFailure {
+    Panicked,
+    Aborted,
 }

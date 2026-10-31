@@ -1,3 +1,5 @@
+use crate::CleanupResult;
+
 use super::*;
 use batter::{
     cleanup::CleanupOutcome,
@@ -24,7 +26,10 @@ fn assert_closed(report: &CommandReport) {
 
 #[tokio::test]
 async fn successful_command_retains_native_reply_and_cleanup() {
-    let report = start(context(), Work::Echo, false).wait().await.unwrap();
+    let report = start(context(), Work::Echo, CleanupResult::Success)
+        .wait()
+        .await
+        .unwrap();
     assert!(report.is_success());
     assert_eq!(report.work.as_ref().unwrap(), b"prepare");
     assert_closed(&report);
@@ -32,7 +37,10 @@ async fn successful_command_retains_native_reply_and_cleanup() {
 
 #[tokio::test]
 async fn work_and_cleanup_failures_both_remain_inspectable() {
-    let report = start(context(), Work::Fail, true).wait().await.unwrap();
+    let report = start(context(), Work::Fail, CleanupResult::Failure)
+        .wait()
+        .await
+        .unwrap();
     assert!(!report.is_success());
     assert!(matches!(
         report.work,
@@ -50,7 +58,10 @@ async fn work_and_cleanup_failures_both_remain_inspectable() {
 
 #[tokio::test]
 async fn cleanup_failure_keeps_the_successful_work_value() {
-    let report = start(context(), Work::Echo, true).wait().await.unwrap();
+    let report = start(context(), Work::Echo, CleanupResult::Failure)
+        .wait()
+        .await
+        .unwrap();
     assert!(!report.is_success());
     assert_eq!(report.work.as_ref().unwrap(), b"prepare");
     assert_eq!(
@@ -61,7 +72,10 @@ async fn cleanup_failure_keeps_the_successful_work_value() {
 
 #[tokio::test]
 async fn work_failure_still_awaits_successful_cleanup() {
-    let report = start(context(), Work::Fail, false).wait().await.unwrap();
+    let report = start(context(), Work::Fail, CleanupResult::Success)
+        .wait()
+        .await
+        .unwrap();
     assert!(!report.is_success());
     assert!(matches!(
         report.work,
@@ -73,7 +87,7 @@ async fn work_failure_still_awaits_successful_cleanup() {
 #[tokio::test]
 async fn cancelled_command_still_awaits_successful_cleanup() {
     let context = context();
-    let report = start(context.clone(), Work::Cancel, false)
+    let report = start(context.clone(), Work::Cancel, CleanupResult::Success)
         .wait()
         .await
         .unwrap();
@@ -91,7 +105,7 @@ async fn cancelled_command_still_awaits_successful_cleanup() {
 #[tokio::test(start_paused = true)]
 async fn expired_command_still_has_a_separate_cleanup_budget() {
     let context = context();
-    let report = start(context.clone(), Work::Deadline, false)
+    let report = start(context.clone(), Work::Deadline, CleanupResult::Success)
         .wait()
         .await
         .unwrap();

@@ -1,3 +1,5 @@
+use crate::lifecycle::state::QueueState;
+
 use super::{LifecycleCoordinator, ShutdownSignal, tasks::TaskExit};
 use crate::{ConfigurationError, RegistrationError, scoped_dispatch, validation};
 use std::{
@@ -327,7 +329,14 @@ impl ProcessHandle {
             tracing::info_span!(target: "batter", "batter.process_task", task = name).or_current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
         let mut admission = self.coordinator.shared.admission();
-        admission.check(ancestor.map(Arc::as_ref), self.sender.is_closed())?;
+        admission.check(
+            ancestor.map(Arc::as_ref),
+            if self.sender.is_closed() {
+                QueueState::Closed
+            } else {
+                QueueState::Open
+            },
+        )?;
         let permit = self
             .permits
             .clone()

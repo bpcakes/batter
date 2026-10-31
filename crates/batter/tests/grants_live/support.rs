@@ -6,6 +6,15 @@
 //! privileges the rendered grant plan provisions plus PostgreSQL's PUBLIC
 //! defaults, which the application policy declares explicitly.
 
+macro_rules! require {
+    ($condition:expr, $message:expr $(,)?) => {{
+        let condition: bool = $condition;
+        let message: &str = $message;
+        condition
+            .then_some(())
+            .ok_or_else(|| crate::support::fail(message))
+    }};
+}
 use batter::sqlx::verification::CompiledExactRole;
 use batter::sqlx::verification::Identifier;
 use sqlx::{
@@ -45,13 +54,7 @@ fn with_cleanup_diagnostics(
     }
 }
 
-pub(crate) fn require(condition: bool, message: &str) -> Result {
-    if condition {
-        Ok(())
-    } else {
-        Err(fail(message))
-    }
-}
+pub(crate) use require;
 
 /// Report both failures when one run fails twice, so neither hides the other.
 ///
@@ -132,14 +135,14 @@ impl Fixture {
         )
         .fetch_one(&mut admin)
         .await?;
-        require(
+        require!(
             superuser,
             "BATTER_SQLX_ADMIN_URL must authenticate as a PostgreSQL superuser",
         )?;
         let version: String = sqlx::query_scalar("SHOW server_version_num")
             .fetch_one(&mut admin)
             .await?;
-        require(
+        require!(
             version.parse::<u32>()? / 10_000 == 18,
             "the grant-composition suite is scoped to executed PostgreSQL 18 evidence",
         )?;
@@ -315,7 +318,7 @@ pub(crate) async fn require_denied(pool: &PgPool, statement: &str) -> Result {
         .await
         .err()
         .ok_or_else(|| fail(&format!("forbidden statement was permitted: {statement}")))?;
-    require(
+    require!(
         error
             .as_database_error()
             .and_then(|database| database.code())
@@ -355,7 +358,7 @@ pub(crate) async fn verification(
 /// Require that a compiled role is satisfied exactly by the provisioned login.
 pub(crate) async fn require_within_policy(pool: &PgPool, role: &CompiledExactRole) -> Result {
     let report = verification(pool, role).await?;
-    require(
+    require!(
         report.status() == batter::sqlx::verification::VerificationStatus::WithinDeclaredPolicy,
         &format!(
             "a composed role was not satisfied exactly: {report:?} findings {:?}",
@@ -367,7 +370,7 @@ pub(crate) async fn require_within_policy(pool: &PgPool, role: &CompiledExactRol
 /// Require that verification reports a policy violation rather than passing.
 pub(crate) async fn require_violation(pool: &PgPool, role: &CompiledExactRole) -> Result {
     let report = verification(pool, role).await?;
-    require(
+    require!(
         report.status() == batter::sqlx::verification::VerificationStatus::Violations,
         &format!("verification accepted a drifted role: {report:?}"),
     )

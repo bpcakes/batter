@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::support::{Result, bounded, require};
 use super::{AuthorityFixture, FindingKind, RolePolicy, exec, finding, names_policy, quote};
 use sqlx::{Connection, PgConnection};
@@ -44,7 +50,7 @@ async fn verification_ledger_ddl_before_lock_is_observed() -> Result {
         let mut change = mutator.begin().await?;
         exec(&mut *change, format!("ALTER TABLE {ledger} ENABLE ROW LEVEL SECURITY")).await?;
         let policy = names_policy(&names, &names.schema_a, &names.ledger_a,
-            &names.table_a, RolePolicy::default(), Vec::new(), false, true, false, false, false)?;
+            &names.table_a, RolePolicy::default(), Vec::new(), ParameterAllowance::Deny, PublicTableAllowance::Include, SequenceAllowance::Deny, TableOwnerAllowance::Deny, RoutineAllowance::Deny)?;
         let verification = super::verify_policy(&pool, &policy);
         tokio::pin!(verification);
         tokio::select! {
@@ -53,7 +59,7 @@ async fn verification_ledger_ddl_before_lock_is_observed() -> Result {
         }
         change.commit().await?;
         let report = verification.await?;
-        require(finding(&report, FindingKind::LedgerRowSecurity),
+        require!(finding(&report, FindingKind::LedgerRowSecurity),
             "DDL committed ahead of ledger lock was absent from the verification snapshot")?;
         mutator.close().await?;
         Ok(())
@@ -88,7 +94,7 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
         sqlx::query("LOCK TABLE pg_catalog.pg_parameter_acl IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *barrier).await?;
         let policy = names_policy(&names, &names.schema_a, &names.ledger_a,
-            &names.table_a, RolePolicy::default(), Vec::new(), false, true, false, false, false)?;
+            &names.table_a, RolePolicy::default(), Vec::new(), ParameterAllowance::Deny, PublicTableAllowance::Include, SequenceAllowance::Deny, TableOwnerAllowance::Deny, RoutineAllowance::Deny)?;
         let verification = super::verify_policy(&pool, &policy);
         tokio::pin!(verification);
         tokio::select! {
@@ -99,7 +105,7 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid=$1
              AND relation::bigint=$2 AND mode='AccessShareLock' AND granted)"
         ).bind(pid).bind(oid).fetch_one(&mut fixture.admin).await?;
-        require(held, "verifier did not retain the ledger lock across catalog inspection")?;
+        require!(held, "verifier did not retain the ledger lock across catalog inspection")?;
         let ddl = format!("ALTER TABLE {ledger} ENABLE ROW LEVEL SECURITY");
         let change = sqlx::query(sqlx::AssertSqlSafe(ddl)).execute(&mut mutator);
         tokio::pin!(change);
@@ -114,13 +120,13 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
         }).await?;
         changed?;
         let report = report?;
-        require(report.findings().iter().any(|item| item.kind == FindingKind::UnexpectedMigration && item.subject.as_deref() == Some("2"))
+        require!(report.findings().iter().any(|item| item.kind == FindingKind::UnexpectedMigration && item.subject.as_deref() == Some("2"))
             && !finding(&report, FindingKind::LedgerRowSecurity),
             "concurrent DDL hid a ledger row from the pre-DDL snapshot")?;
         let visible: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT version FROM {ledger} ORDER BY version"
         ))).fetch_all(&pool).await?;
-        require(visible == vec![1], "post-verification DDL did not activate the row-filtering control")?;
+        require!(visible == vec![1], "post-verification DDL did not activate the row-filtering control")?;
         blocker.close().await?;
         Ok(())
     })).await
@@ -152,29 +158,29 @@ async fn verification_catalog_resolution_preserves_serving_state() -> Result {
         exec(&mut *native, format!("SET LOCAL search_path = pg_catalog, {}, pg_temp", quote(&names.schema_a))).await?;
         let prefix: String = sqlx::query_scalar("SELECT left(nspname, 3) FROM pg_catalog.pg_namespace WHERE nspname=$1")
             .bind(&names.schema_a).fetch_one(&mut *native).await?;
-        require(prefix == "pg_", "the exact name-typed overload did not intercept discovery's helper")?;
+        require!(prefix == "pg_", "the exact name-typed overload did not intercept discovery's helper")?;
         native.rollback().await?;
         sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {hidden_table}"))).execute(&pool).await?;
         let before: String = sqlx::query_scalar("SHOW search_path").fetch_one(&pool).await?;
         let intercepted: String = sqlx::query_scalar("SELECT current_database()::text").fetch_one(&pool).await?;
-        require(intercepted == "template1" && intercepted != database,
+        require!(intercepted == "template1" && intercepted != database,
             "the application-first search path did not intercept the helper")?;
         let mut policy = names_policy(&names, &names.schema_a, &names.ledger_a,
-            &names.table_a, RolePolicy::default(), Vec::new(), false, true, false, false, false)?;
+            &names.table_a, RolePolicy::default(), Vec::new(), ParameterAllowance::Deny, PublicTableAllowance::Include, SequenceAllowance::Deny, TableOwnerAllowance::Deny, RoutineAllowance::Deny)?;
         policy.authority.discovery = batter_sqlx::verification::DiscoveryScope::UserSchemas;
         let report = super::verify_policy(&pool, &policy).await?;
-        require(report.findings().iter().any(|item| item.kind == FindingKind::Privilege
+        require!(report.findings().iter().any(|item| item.kind == FindingKind::Privilege
             && item.object.as_deref().is_some_and(|name| name.contains("shadowed_records"))
             && item.privilege == Some(super::ObjectPrivilege::Delete)),
             "an exact application overload hid a discovered relation")?;
-        require(report.findings().iter().any(|item| item.kind == FindingKind::Privilege
+        require!(report.findings().iter().any(|item| item.kind == FindingKind::Privilege
             && item.object.as_deref() == Some(database.as_str())
             && item.subject.as_deref() == Some(names.login_a.as_str())
             && item.privilege == Some(super::ObjectPrivilege::Create)),
             "an application helper redirected database ACL inspection")?;
         let after: String = sqlx::query_scalar("SHOW search_path").fetch_one(&pool).await?;
         let restored: String = sqlx::query_scalar("SELECT current_database()::text").fetch_one(&pool).await?;
-        require(before == after && restored == "template1",
+        require!(before == after && restored == "template1",
             "verification did not restore the application's serving resolution state")?;
         Ok(())
     })).await
@@ -194,7 +200,7 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
         // SELECT on the parent permits reading descendants without a separate child grant.
         let versions: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT version FROM {ledger} ORDER BY version")))
             .fetch_all(&pool).await?;
-        require(versions == vec![1,2], "descendant control did not contribute a ledger row")?;
+        require!(versions == vec![1,2], "descendant control did not contribute a ledger row")?;
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&pool).await?;
         let catalog_oid: i64 = sqlx::query_scalar("SELECT 'pg_catalog.pg_attribute'::regclass::oid::bigint")
             .fetch_one(&mut fixture.admin).await?;
@@ -213,7 +219,7 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
         sqlx::query("LOCK TABLE pg_catalog.pg_attribute IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *barrier).await?;
         let policy = names_policy(&names, &names.schema_a, &names.ledger_a,
-            &names.table_a, RolePolicy::default(), Vec::new(), false, true, false, false, false)?;
+            &names.table_a, RolePolicy::default(), Vec::new(), ParameterAllowance::Deny, PublicTableAllowance::Include, SequenceAllowance::Deny, TableOwnerAllowance::Deny, RoutineAllowance::Deny)?;
         let verification = super::verify_policy(&pool, &policy);
         tokio::pin!(verification);
         tokio::select! {
@@ -222,7 +228,7 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
         }
         let query: String = sqlx::query_scalar("SELECT query FROM pg_catalog.pg_stat_activity WHERE pid=$1")
             .bind(pid).fetch_one(&mut fixture.admin).await?;
-        require(query.contains("FROM pg_catalog.pg_class AS c")
+        require!(query.contains("FROM pg_catalog.pg_class AS c")
             && query.contains("JOIN pg_catalog.pg_locks AS l"),
             "barrier did not pause the ledger lock-attestation read")?;
         let truncate = format!("TRUNCATE {child}");
@@ -239,12 +245,12 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
         }).await?;
         changed?;
         let report = report?;
-        require(report.status() == batter_sqlx::verification::VerificationStatus::Incomplete
+        require!(report.status() == batter_sqlx::verification::VerificationStatus::Incomplete
             && report.unsupported() == [batter_sqlx::verification::UnsupportedSurface::InheritedMigrationLedgers]
             && report.findings().is_empty(), "inherited ledger escaped the unsupported boundary")?;
         let remaining: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT version FROM {ledger} ORDER BY version")))
             .fetch_all(&pool).await?;
-        require(remaining == vec![1], "released descendant truncate did not complete")?;
+        require!(remaining == vec![1], "released descendant truncate did not complete")?;
         blocker.close().await?;
         Ok(())
     })).await

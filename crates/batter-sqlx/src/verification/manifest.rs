@@ -140,13 +140,19 @@ impl DatabaseGrantSpec {
 
     /// Permit the authenticated login to hold grant options for these
     /// privileges. The renderer still never provisions grant options.
-    pub const fn allow_grant_option(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_grant_option(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn grant_option(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.options.allow_grant_option = allow;
         self
     }
 
     /// Permit current-database ownership in the compiled authority policy.
-    pub const fn allow_owner(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_owner(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn ownership(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.allow_owner = allow;
         self
     }
@@ -183,13 +189,19 @@ impl SchemaGrantSpec {
     }
 
     /// Permit grant options for these privileges during verification only.
-    pub const fn allow_grant_option(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_grant_option(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn grant_option(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.options.allow_grant_option = allow;
         self
     }
 
     /// Permit ownership of this schema.
-    pub const fn allow_owner(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_owner(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn ownership(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.allow_owner = allow;
         self
     }
@@ -211,7 +223,7 @@ impl RelationGrantGroup {
     /// privilege. Later compatible groups may add privileges to that relation.
     /// PostgreSQL ordinarily gives PUBLIC USAGE on table row types, so callers
     /// that retain that default must opt in with
-    /// [`Self::allow_row_type_public_usage`].
+    /// [`Self::row_type_public_usage`].
     pub fn new(
         relations: impl IntoIterator<Item = QualifiedName>,
         privileges: impl IntoIterator<Item = ObjectPrivilege>,
@@ -237,19 +249,28 @@ impl RelationGrantGroup {
     }
 
     /// Permit grant options for these privileges during verification only.
-    pub const fn allow_grant_option(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_grant_option(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn grant_option(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.options.allow_grant_option = allow;
         self
     }
 
     /// Permit ownership of every relation in the group.
-    pub const fn allow_owner(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_owner(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn ownership(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.allow_owner = allow;
         self
     }
 
     /// Permit default PUBLIC USAGE on every relation's composite row type.
-    pub const fn allow_row_type_public_usage(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_row_type_public_usage(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn row_type_public_usage(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.allow_row_type_public_usage = allow;
         self
     }
@@ -294,7 +315,10 @@ impl ColumnGrantGroup {
     }
 
     /// Permit grant options for these privileges during verification only.
-    pub const fn allow_grant_option(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_grant_option(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn grant_option(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.options.allow_grant_option = allow;
         self
     }
@@ -334,19 +358,28 @@ impl RoutineGrantSpec {
     }
 
     /// Permit grant options for these privileges during verification only.
-    pub const fn allow_grant_option(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_grant_option(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn grant_option(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.options.allow_grant_option = allow;
         self
     }
 
     /// Permit ownership of this routine.
-    pub const fn allow_owner(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_owner(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn ownership(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.allow_owner = allow;
         self
     }
 
     /// Permit this exact routine to be SECURITY DEFINER.
-    pub const fn allow_security_definer(mut self, allow: bool) -> Self {
+    /// Migration: replaces `allow_security_definer(allow)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn security_definer(mut self, allow: AuthorityAllowance) -> Self {
+        let allow = matches!(allow, AuthorityAllowance::Allow);
         self.allow_security_definer = allow;
         self
     }
@@ -452,7 +485,10 @@ impl ExactRoleManifest {
 
     /// Reject ownership of the current database or any current-database object
     /// by a role reachable from the authenticated login.
-    pub const fn deny_current_database_ownership(&mut self, deny: bool) {
+    /// Migration: replaces `deny_current_database_ownership(deny)` with an explicit allowance.
+    /// See [`AuthorityAllowance`] for a construction example.
+    pub const fn database_ownership(&mut self, deny: AuthorityAllowance) {
+        let deny = matches!(deny, AuthorityAllowance::Deny);
         self.deny_current_database_ownership = deny;
     }
 
@@ -688,3 +724,23 @@ mod fragment_tests;
 mod render_tests;
 #[cfg(test)]
 mod tests;
+
+/// Whether a declaration permits an explicitly selected authority.
+///
+/// This is application policy, not proof that a remote role holds or lacks it.
+/// The verifier still checks the database snapshot.
+///
+/// ```
+/// use batter_sqlx::verification::{AuthorityAllowance, DatabaseGrantSpec, DeclarationPurpose, ObjectPrivilege};
+/// let spec = DatabaseGrantSpec::new([ObjectPrivilege::Connect], DeclarationPurpose::RequiredAndProvisioned)?
+///     .ownership(AuthorityAllowance::Deny)
+///     .grant_option(AuthorityAllowance::Allow);
+/// # Ok::<(), batter_sqlx::verification::ManifestError>(())
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthorityAllowance {
+    /// Permit the selected authority in the compiled policy.
+    Allow,
+    /// Reject the selected authority in the compiled policy.
+    Deny,
+}

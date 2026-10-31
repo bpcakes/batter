@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::support::{Result, require};
 use super::{AuthorityFixture, exec, names_policy, quote};
 use batter_core::operation::{Interruption, OperationError};
@@ -57,12 +63,12 @@ async fn verification_uses_one_snapshot_for_concurrent_acl_changes() -> Result {
                     &names.ledger_a,
                     &names.table_a,
                     RolePolicy::default(),
-                    vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
+                    vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
+                    ParameterAllowance::Deny,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Deny,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Deny,
                 )?;
                 let task =
                     tokio::spawn(async move { crate::verify_policy(&verifier, &policy).await });
@@ -82,7 +88,7 @@ async fn verification_uses_one_snapshot_for_concurrent_acl_changes() -> Result {
                     if waiting {
                         break;
                     }
-                    require(
+                    require!(
                         tokio::time::Instant::now() < deadline,
                         "snapshot verifier did not reach the role membership catalog lock",
                     )?;
@@ -104,7 +110,7 @@ async fn verification_uses_one_snapshot_for_concurrent_acl_changes() -> Result {
                     .await
                     .map_err(|_| std::io::Error::other("snapshot verifier did not finish"))?
                     .map_err(|_| std::io::Error::other("snapshot verifier task panicked"))??;
-                require(
+                require!(
                     !report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::Privilege
                             && finding.privilege == Some(ObjectPrivilege::Delete)
@@ -144,16 +150,16 @@ async fn verification_keeps_many_declared_objects_set_oriented() -> Result {
                         ..RolePolicy::default()
                     },
                     vec![
-                        AllowedPrivilege::new(ObjectPrivilege::Select, true),
-                        AllowedPrivilege::new(ObjectPrivilege::Insert, true),
-                        AllowedPrivilege::new(ObjectPrivilege::Update, true),
-                        AllowedPrivilege::new(ObjectPrivilege::Delete, true),
+                        AllowedPrivilege::grantable(ObjectPrivilege::Select),
+                        AllowedPrivilege::grantable(ObjectPrivilege::Insert),
+                        AllowedPrivilege::grantable(ObjectPrivilege::Update),
+                        AllowedPrivilege::grantable(ObjectPrivilege::Delete),
                     ],
-                    true,
-                    true,
-                    true,
-                    false,
-                    true,
+                    ParameterAllowance::Allow,
+                    PublicTableAllowance::Include,
+                    SequenceAllowance::Allow,
+                    TableOwnerAllowance::Deny,
+                    RoutineAllowance::Allow,
                 )?;
                 for index in 0..48_u32 {
                     let table = format!("bulk_{index}");
@@ -171,18 +177,18 @@ async fn verification_keeps_many_declared_objects_set_oriented() -> Result {
                         privileges: Vec::new(),
                         columns: vec![batter_sqlx::verification::ColumnPolicy {
                             column: Identifier::new("c0")?,
-                            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
+                            privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
                         }],
                         allow_owner: false,
                         allow_row_type_public_usage: true,
                     });
                 }
                 let report = crate::verify_policy(&login_a, &policy).await?;
-                require(
+                require!(
                     report.status() == VerificationStatus::WithinDeclaredPolicy,
                     "many declared relations did not remain within their empty ACL policy",
                 )?;
-                require(
+                require!(
                     !report.findings().iter().any(|finding| {
                         finding.kind == FindingKind::MissingObject
                             || finding
@@ -232,11 +238,11 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
             &names.table_a,
             RolePolicy::default(),
             Vec::new(),
-            false,
-            true,
-            false,
-            false,
-            false,
+            ParameterAllowance::Deny,
+            PublicTableAllowance::Include,
+            SequenceAllowance::Deny,
+            TableOwnerAllowance::Deny,
+            RoutineAllowance::Deny,
         )?;
         let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(10))?;
         let context = owner.context().clone();
@@ -262,7 +268,7 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
             if waiting {
                 break;
             }
-            require(
+            require!(
                 tokio::time::Instant::now() < deadline,
                 "verification query did not reach the locked ledger",
             )?;
@@ -270,11 +276,11 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
         }
         owner.cancel();
         let result = tokio::time::timeout(Duration::from_secs(5), &mut task).await??;
-        require(
+        require!(
             matches!(result, Err(OperationError::Interrupted(Interruption::Cancelled))),
             "checker cancellation was not classified",
         )?;
-        require(
+        require!(
             pool.size() == 0,
             "cancelled checker retained one-slot local capacity",
         )?;
@@ -287,7 +293,7 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
         .bind(pid)
         .fetch_one(&mut observer)
         .await?;
-        require(
+        require!(
             waiting,
             "local capacity recovery was mistaken for remote query termination",
         )?;
@@ -303,7 +309,7 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
             if !present {
                 break;
             }
-            require(
+            require!(
                 tokio::time::Instant::now() < deadline,
                 "retired backend did not terminate after lock release",
             )?;

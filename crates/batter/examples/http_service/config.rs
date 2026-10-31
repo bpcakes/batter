@@ -44,12 +44,12 @@ impl Config {
             ("BATTER_BULKHEAD_CAPACITY".into(), "32".into()),
         ])?;
         if let Some(file) = file {
-            values.overlay(file.select(NAMES, &[], false)?);
+            values.overlay(file.select_dedicated(NAMES)?);
         }
         let mut env_names = NAMES.to_vec();
         env_names.push("BATTER_ENV_FILE");
-        values.overlay(environment.select(&env_names, &["BATTER_"], true)?);
-        values.overlay(overrides.select(NAMES, &[], false)?);
+        values.overlay(environment.select_environment(&env_names, &["BATTER_"])?);
+        values.overlay(overrides.select_dedicated(NAMES)?);
         let bind = values
             .required("BATTER_BIND")?
             .parse()

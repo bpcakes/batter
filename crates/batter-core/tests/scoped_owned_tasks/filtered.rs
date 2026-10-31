@@ -17,8 +17,8 @@ async fn exercise() {
     let checks = ambient.within("unrelated", || {
         batter_core::telemetry::with_current_dispatch(
             async {
-                process_tasks(false).await;
-                process_tasks(true).await;
+                process_tasks(TaskStopping::Cooperative).await;
+                process_tasks(TaskStopping::Abort).await;
                 aborted_cleanup().await;
             }
             .in_current_span(),
@@ -42,7 +42,8 @@ fn assert_context(logs: &Logs, marker: &str, scope: &str) {
     }
 }
 
-async fn process_tasks(abort: bool) {
+async fn process_tasks(abort: TaskStopping) {
+    let abort = abort == TaskStopping::Abort;
     let driver = Logs::with_filter("info,batter=warn");
     let request = Logs::with_filter("info,batter=warn");
     let second = Duration::from_secs(1);
@@ -166,4 +167,10 @@ async fn aborted_cleanup() {
     assert!(close.await.unwrap_err().is_cancelled());
     tokio::time::timeout(second, ended).await.unwrap().unwrap();
     assert_context(&owner, "active.capture", "cleanup");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TaskStopping {
+    Abort,
+    Cooperative,
 }

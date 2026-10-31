@@ -10,7 +10,15 @@ const BOUND: Duration = Duration::from_secs(5);
 pub async fn driver_error_closes_admin_pools() -> ProbeResult {
     let harness = super::harness().await?;
     for held in [false, true] {
-        completion_case(harness.clone(), held).await?;
+        completion_case(
+            harness.clone(),
+            if held {
+                CheckoutState::Held
+            } else {
+                CheckoutState::Released
+            },
+        )
+        .await?;
     }
     successful_driver_with_blocked_admin_close(harness.clone()).await?;
     replacement_closes_while_original_is_blocked(harness.clone()).await?;
@@ -49,8 +57,9 @@ async fn replacement_closes_while_original_is_blocked(
 
 async fn completion_case(
     harness: postgres_test_harness::PostgresHarness,
-    held: bool,
+    held: CheckoutState,
 ) -> ProbeResult {
+    let held = held == CheckoutState::Held;
     let mut run = cancelled_run(harness.clone()).await?;
     let error = run.wait().await.expect_err("runtime destroyed the driver");
     assert!(error.is_cancelled());
@@ -170,4 +179,10 @@ async fn cancelled_run(
         run
     })
     .await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckoutState {
+    Held,
+    Released,
 }

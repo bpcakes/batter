@@ -32,8 +32,9 @@ impl MetricsSettings {
     /// `OTEL_*` name; it matters only when export is enabled.
     pub(super) fn from_values(
         values: &SettingsSource,
-        ambient_otel: bool,
+        ambient_otel: AmbientTelemetry,
     ) -> Result<Self, SettingsError> {
+        let ambient_otel = ambient_otel == AmbientTelemetry::Present;
         let Some(endpoint) = values.text(NAME)? else {
             return Ok(Self::Disabled);
         };
@@ -127,4 +128,10 @@ impl batter::service::Diagnostics for PreparedMetrics {
         };
         future
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AmbientTelemetry {
+    Present,
+    Absent,
 }

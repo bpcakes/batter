@@ -55,11 +55,12 @@ pub(super) fn budget() -> ShutdownBudget {
 }
 
 fn supervisor(
-    cooperative: bool,
+    cooperative: TaskCooperation,
     live: Arc<AtomicBool>,
     cleanup_called: Arc<AtomicBool>,
     entered: std::sync::mpsc::Sender<()>,
 ) -> Supervisor {
+    let cooperative = cooperative == TaskCooperation::Cooperative;
     let mut supervisor = Supervisor::new(budget());
     let handle = supervisor.handle();
     let active = live.clone();
@@ -185,7 +186,11 @@ pub fn run(scenario: &str) {
     let cleanup_called = Arc::new(AtomicBool::new(false));
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let supervisor = supervisor(
-        cooperative,
+        if cooperative {
+            TaskCooperation::Cooperative
+        } else {
+            TaskCooperation::Blocking
+        },
         live.clone(),
         cleanup_called.clone(),
         entered_tx,
@@ -251,4 +256,10 @@ pub fn run(scenario: &str) {
     // prevents native runtime destruction even after the report is available.
     drop(runtime);
     emit("runtime-dropped");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TaskCooperation {
+    Cooperative,
+    Blocking,
 }

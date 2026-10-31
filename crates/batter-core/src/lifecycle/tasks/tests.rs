@@ -1,3 +1,5 @@
+use crate::lifecycle::state::Supervision;
+
 use super::*;
 use crate::lifecycle::{
     ComponentStartup, Fatal, ProcessAdmissionError, ProcessHandle, Readiness, SupportObligation,
@@ -7,7 +9,7 @@ use tokio::sync::oneshot;
 
 #[test]
 fn registered_startup_pairs_acknowledgement_and_shutdown_observation() {
-    let (coordinator, approval) = LifecycleCoordinator::new(false);
+    let (coordinator, approval) = LifecycleCoordinator::new(Supervision::Standalone);
     let handle = coordinator.shutdown_handle();
     let startup = ComponentStartup::registered(&coordinator);
     coordinator.shared.start_driver();
@@ -27,7 +29,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         TaskOutcome::Failed,
         TaskOutcome::Panicked,
     ] {
-        let (coordinator, approval) = LifecycleCoordinator::new(false);
+        let (coordinator, approval) = LifecycleCoordinator::new(Supervision::Standalone);
         let lifecycle = RegisteredComponent::new(&coordinator);
         coordinator.shared.start_driver();
         approval.approve();
@@ -143,7 +145,7 @@ async fn finishing_unjoined_tasks_releases_ownership_without_claiming_terminatio
 
 #[tokio::test]
 async fn unjoined_component_evidence_excludes_a_finite_task_sharing_its_name() {
-    let (coordinator, _approval) = LifecycleCoordinator::new(false);
+    let (coordinator, _approval) = LifecycleCoordinator::new(Supervision::Standalone);
     coordinator.shared.start_driver();
     let lifecycle = RegisteredComponent::new(&coordinator);
     let (component_started, component_ready) = oneshot::channel();

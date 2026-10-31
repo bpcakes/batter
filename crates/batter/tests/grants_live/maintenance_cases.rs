@@ -82,7 +82,7 @@ impl Store for PostgresLimiter {
         )?;
         let subject = hasher()?.hash_for(&policy, label);
         let decision = limiter.check(&Check::new(subject)).await?;
-        require(decision.permits_request(), "the maintained limiter denied")?;
+        require!(decision.permits_request(), "the maintained limiter denied")?;
         Ok(subject.into_unbound_subject_key())
     }
 }
@@ -102,7 +102,7 @@ impl Store for PostgresGcraLimiter {
         )?;
         let subject = hasher()?.hash_for(&policy, label);
         let decision = limiter.check(&Check::new(subject)).await?;
-        require(decision.permits_request(), "the maintained limiter denied")?;
+        require!(decision.permits_request(), "the maintained limiter denied")?;
         Ok(subject.into_unbound_subject_key())
     }
 }
@@ -133,7 +133,7 @@ where
 {
     let deadline = Instant::now() + PATIENCE;
     while !condition().await? {
-        require(Instant::now() < deadline, what)?;
+        require!(Instant::now() < deadline, what)?;
         sleep(Duration::from_millis(25)).await;
     }
     Ok(())
@@ -227,7 +227,7 @@ async fn maintain<L: Store>(fixture: &mut Fixture, owner: &PgPool, family: Famil
         }
     };
     let summary = &success.report().periodic[0].summary;
-    require(
+    require!(
         summary.completion == PeriodicCompletion::Stopped
             && summary.acknowledged
             && summary.recoverable_failures == 0
@@ -235,11 +235,11 @@ async fn maintain<L: Store>(fixture: &mut Fixture, owner: &PgPool, family: Famil
             && summary.succeeded >= 3,
         &format!("unexpected maintenance evidence: {summary:?}"),
     )?;
-    require(
+    require!(
         *observed.lock().expect("probe lock") == Some((PeriodicCompletion::Stopped, false)),
         "maintenance had not stopped, or the pool was already closed, when finalizers began",
     )?;
-    require(
+    require!(
         pool.is_closed(),
         "the pool finalizer did not close the pool",
     )
@@ -295,7 +295,7 @@ async fn observe<L: Store>(
     .bind(key.as_bytes().as_slice())
     .fetch_one(owner)
     .await?;
-    require(live_rows == 1, "maintenance removed a live counter")
+    require!(live_rows == 1, "maintenance removed a live counter")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -340,7 +340,7 @@ async fn refused<L: Store>(fixture: &mut Fixture, family: Family) -> Result {
         )?,
     )?;
     let running = supervisor.start();
-    require(
+    require!(
         timeout(PATIENCE, running.status().wait_ready())
             .await
             .map_err(|_| fail("readiness neither published nor refused"))?
@@ -352,7 +352,7 @@ async fn refused<L: Store>(fixture: &mut Fixture, family: Family) -> Result {
         .await
         .map_err(|error| fail(&format!("coordinator failed: {error}")))?;
     let summary = &report.periodic[0].summary;
-    require(
+    require!(
         summary.completion == PeriodicCompletion::InitializationExpired && !summary.acknowledged,
         &format!("unexpected startup evidence: {summary:?}"),
     )?;
@@ -369,7 +369,7 @@ async fn refused<L: Store>(fixture: &mut Fixture, family: Family) -> Result {
             .map(|code| code.into_owned()),
         _ => None,
     };
-    require(
+    require!(
         code.as_deref() == Some(DENIED),
         &format!("the retained cleanup failure was not a permission refusal: {code:?}"),
     )

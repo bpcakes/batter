@@ -58,6 +58,25 @@ impl Recorder for OrderedRecorder {
 
 struct Diagnostics(Events);
 
+fn diagnostics(events: Events) -> tracing::dispatcher::DefaultGuard {
+    let subscriber = tracing_subscriber::registry().with(Diagnostics(events));
+    let dispatch = super::test_dispatch::new(subscriber);
+    tracing::dispatcher::set_default(&dispatch)
+}
+
+fn unscoped_first_hit(action: impl FnOnce() + Send + 'static) {
+    // In the isolated cases this thread reaches the library callsite first,
+    // while the capture subscriber is already registered on the test thread.
+    std::thread::spawn(move || {
+        assert!(tracing::dispatcher::get_default(|dispatch| {
+            dispatch.is::<tracing::subscriber::NoSubscriber>()
+        }));
+        action();
+    })
+    .join()
+    .unwrap();
+}
+
 impl<S: tracing::Subscriber> Layer<S> for Diagnostics {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
         if *event.metadata().level() == tracing::Level::WARN {
@@ -111,7 +130,7 @@ async fn recorder_panic_cannot_strand_an_accepted_process_task() {
 }
 
 #[tokio::test]
-async fn observed_cleanup_traces_before_recording() {
+pub(super) async fn observed_cleanup_traces_before_recording() {
     for succeeds in [true, false] {
         let events = Events::default();
         let recorder = OrderedRecorder {
@@ -120,8 +139,19 @@ async fn observed_cleanup_traces_before_recording() {
             panic_admission: false,
         };
         let _recorder = metrics::set_default_local_recorder(&recorder);
-        let subscriber = tracing_subscriber::registry().with(Diagnostics(events.clone()));
-        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let _subscriber = diagnostics(events.clone());
+        unscoped_first_hit(move || {
+            let mut stack = CleanupStack::new();
+            stack.push("unobserved.close", || async { Ok(()) }).unwrap();
+            let second = std::time::Duration::from_secs(1);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            let report =
+                runtime.block_on(stack.close(CleanupBudget::new(second, second, second).unwrap()));
+            assert_eq!(report.records.len(), 1);
+        });
         let mut stack = CleanupStack::new();
         stack
             .push("resource.close", move || async move {
@@ -168,8 +198,7 @@ async fn abandoned_and_dropped_cleanup_warn_before_recording() {
         panic_admission: false,
     };
     let _recorder = metrics::set_default_local_recorder(&recorder);
-    let subscriber = tracing_subscriber::registry().with(Diagnostics(events.clone()));
-    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let _subscriber = diagnostics(events.clone());
     let mut unclosed = CleanupStack::new();
     unclosed.push("unused", || async { Ok(()) }).unwrap();
     drop(unclosed);
@@ -193,6 +222,18 @@ async fn abandoned_and_dropped_cleanup_warn_before_recording() {
 
 #[test]
 fn skip_warns_for_every_hook_before_recording_and_destroying_captures() {
+    for destruction in [CaptureDestruction::Normal, CaptureDestruction::Panicking] {
+        assert_skip_ordering(destruction);
+    }
+}
+
+pub(super) enum CaptureDestruction {
+    Normal,
+    Panicking,
+}
+
+pub(super) fn assert_skip_ordering(destruction: CaptureDestruction) {
+    let panics = matches!(destruction, CaptureDestruction::Panicking);
     struct CaptureDrop {
         name: &'static str,
         events: Events,
@@ -208,63 +249,65 @@ fn skip_warns_for_every_hook_before_recording_and_destroying_captures() {
         }
     }
 
-    for panics in [false, true] {
-        let events = Events::default();
-        let recorder = OrderedRecorder {
-            capture: Capture::unbounded(),
-            events: events.clone(),
-            panic_admission: false,
-        };
-        let _recorder = metrics::set_default_local_recorder(&recorder);
-        let subscriber = tracing_subscriber::registry().with(Diagnostics(events.clone()));
-        let _subscriber = tracing::subscriber::set_default(subscriber);
+    let events = Events::default();
+    let recorder = OrderedRecorder {
+        capture: Capture::unbounded(),
+        events: events.clone(),
+        panic_admission: false,
+    };
+    let _recorder = metrics::set_default_local_recorder(&recorder);
+    let _subscriber = diagnostics(events.clone());
+    unscoped_first_hit(|| {
         let mut stack = CleanupStack::new();
-        for name in ["first", "second"] {
-            let captured = CaptureDrop {
-                name,
-                events: events.clone(),
-                panics: panics && name == "second",
-            };
-            stack
-                .push(name, move || async move {
-                    drop(captured);
-                    Ok(())
-                })
-                .unwrap();
-        }
-        let result = catch_unwind(AssertUnwindSafe(|| stack.skip(SkipReason::UnsafeTaskExit)));
-        assert_eq!(result.is_err(), panics);
-        if let Ok(report) = result {
-            assert_eq!(
-                report
-                    .skipped
-                    .iter()
-                    .map(|hook| hook.name)
-                    .collect::<Vec<_>>(),
-                ["second", "first"]
-            );
-        }
+        stack.push("unobserved.close", || async { Ok(()) }).unwrap();
+        assert_eq!(stack.skip(SkipReason::UnsafeTaskExit).skipped.len(), 1);
+    });
+    let mut stack = CleanupStack::new();
+    for name in ["first", "second"] {
+        let captured = CaptureDrop {
+            name,
+            events: events.clone(),
+            panics: panics && name == "second",
+        };
+        stack
+            .push(name, move || async move {
+                drop(captured);
+                Ok(())
+            })
+            .unwrap();
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| stack.skip(SkipReason::UnsafeTaskExit)));
+    assert_eq!(result.is_err(), panics);
+    if let Ok(report) = result {
         assert_eq!(
-            *events.lock().unwrap(),
-            [
-                Event::Warning,
-                Event::Warning,
-                Event::Metric,
-                Event::Destroyed("second"),
-                Event::Destroyed("first"),
-            ]
-        );
-        assert_eq!(
-            recorder
-                .capture
-                .count(CLEANUP_HOOKS, &[("outcome", "skipped")]),
-            2.0
-        );
-        assert_eq!(
-            recorder
-                .capture
-                .count(CLEANUP_HOOKS, &[("outcome", "dropped")]),
-            0.0
+            report
+                .skipped
+                .iter()
+                .map(|hook| hook.name)
+                .collect::<Vec<_>>(),
+            ["second", "first"]
         );
     }
+    assert_eq!(
+        *events.lock().unwrap(),
+        [
+            Event::Warning,
+            Event::Warning,
+            Event::Metric,
+            Event::Destroyed("second"),
+            Event::Destroyed("first"),
+        ]
+    );
+    assert_eq!(
+        recorder
+            .capture
+            .count(CLEANUP_HOOKS, &[("outcome", "skipped")]),
+        2.0
+    );
+    assert_eq!(
+        recorder
+            .capture
+            .count(CLEANUP_HOOKS, &[("outcome", "dropped")]),
+        0.0
+    );
 }

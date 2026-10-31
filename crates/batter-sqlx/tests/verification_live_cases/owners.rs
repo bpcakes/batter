@@ -1,3 +1,9 @@
+use crate::ParameterAllowance;
+use crate::PublicTableAllowance;
+use crate::RoutineAllowance;
+use crate::SequenceAllowance;
+use crate::TableOwnerAllowance;
+
 use super::VerificationPolicy;
 use crate::support::{Result, require};
 use crate::verify_policy as verify;
@@ -32,7 +38,7 @@ pub(super) async fn check(
     .execute(login_a)
     .await?;
     let owner_denied = verify(login_a, predefined_allowed).await?;
-    require(
+    require!(
         exact_finding(
             &owner_denied,
             FindingKind::Ownership,
@@ -67,7 +73,7 @@ pub(super) async fn check(
     }
     owner_allowed.authority.database.allow_owner = true;
     let owner_report = verify(login_a, &owner_allowed).await?;
-    require(
+    require!(
         owner_report.status() == VerificationStatus::WithinDeclaredPolicy,
         "inherited group ownership was not accepted by allow_owner",
     )?;
@@ -88,23 +94,23 @@ pub(super) async fn check(
         &names.ledger_b,
         &names.table_b,
         RolePolicy::default(),
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
-        true,
-        false,
-        false,
-        false,
-        false,
+        vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
+        ParameterAllowance::Allow,
+        PublicTableAllowance::Exclude,
+        SequenceAllowance::Deny,
+        TableOwnerAllowance::Deny,
+        RoutineAllowance::Deny,
     )?;
     let report = verify(&login_b, &policy_b).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::WithinDeclaredPolicy,
         "second independent fixture policy was not accepted",
     )?;
-    require(
+    require!(
         report.session_user() == names.login_b,
         "second fixture used the wrong login",
     )?;
-    require(
+    require!(
         !finding(&report, FindingKind::RoleAdminOption)
             && !report.findings().iter().any(|item| {
                 item.kind == FindingKind::RoleAttribute
@@ -123,7 +129,7 @@ pub(super) async fn check(
     )
     .await?;
     let report = verify(&login_b, &policy_b).await?;
-    require(
+    require!(
         finding(&report, FindingKind::Ownership),
         "reachable object ownership was not observed",
     )?;
@@ -133,7 +139,7 @@ pub(super) async fn check(
         type_policy.allow_owner = true;
     }
     let report = verify(&login_b, &owner_policy).await?;
-    require(
+    require!(
         report.status() == VerificationStatus::WithinDeclaredPolicy,
         "explicit owner allowance did not accept the owned fixture",
     )?;

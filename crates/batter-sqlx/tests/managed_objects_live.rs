@@ -50,16 +50,16 @@ async fn managed_objects_apply_after_migrations_and_verify_within_policy() -> Re
         let migrator = fixture.pool(Role::Migrator).await?;
         let before = pid(&migrator).await?;
         let applied = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             applied.created_or_replaced() == 4 && applied.unchanged() == 0,
             "first apply did not create every declared object",
         )?;
-        require(applied.retired() == 0, "first apply retired an object")?;
-        require(
+        require!(applied.retired() == 0, "first apply retired an object")?;
+        require!(
             applied.digest() == objects.manifest.digest(),
             "apply did not report the manifest digest",
         )?;
-        require(
+        require!(
             pid(&migrator).await? == before,
             "successful apply did not return its connection to the pool",
         )?;
@@ -70,7 +70,7 @@ async fn managed_objects_apply_after_migrations_and_verify_within_policy() -> Re
         )))
         .fetch_one(&migrator)
         .await?;
-        require(
+        require!(
             total == 5,
             "managed SQL routine returned an unexpected value",
         )?;
@@ -80,17 +80,17 @@ async fn managed_objects_apply_after_migrations_and_verify_within_policy() -> Re
         )))
         .fetch_all(&migrator)
         .await?;
-        require(
+        require!(
             rows.len() == 5,
             "ledger does not hold four objects and the set row",
         )?;
-        require(
+        require!(
             rows.iter()
                 .any(|(identity, kind)| identity == "manifest" && kind == "manifest"),
             "ledger has no set row",
         )?;
         for routine in [RECORD_TOTAL, "touch_updated_at()", "archive_records()"] {
-            require(
+            require!(
                 !fixture.public_can_execute(&migrator, routine).await?,
                 "PUBLIC kept EXECUTE on a managed routine",
             )?;
@@ -101,11 +101,11 @@ async fn managed_objects_apply_after_migrations_and_verify_within_policy() -> Re
         let plan =
             VerificationPlan::sqlx_migrations(&sqlx).with_managed_objects(&objects.manifest)?;
         let report = fixture.verify(&reader, plan).await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "applied managed objects did not verify",
         )?;
-        require(
+        require!(
             report
                 .supported()
                 .contains(&SupportedSurface::ManagedObjects)
@@ -131,16 +131,16 @@ async fn managed_objects_reapply_is_idempotent_and_executes_no_ddl() -> Result {
         let again = fixture
             .apply_beside_writer(&migrator, &objects.manifest, "records")
             .await?;
-        require(
+        require!(
             again.created_or_replaced() == 0 && again.unchanged() == 4 && again.retired() == 0,
             "repeated apply re-executed an unchanged object",
         )?;
         // xmin is part of the state: no routine or trigger row was rewritten.
-        require(
+        require!(
             catalog_state(&migrator, fixture.schema()).await? == catalog,
             "repeated apply changed the catalog",
         )?;
-        require(
+        require!(
             fixture.object_rows(&migrator).await? == ledger,
             "repeated apply rewrote unchanged ledger rows",
         )?;
@@ -151,7 +151,7 @@ async fn managed_objects_reapply_is_idempotent_and_executes_no_ddl() -> Result {
                 VerificationPlan::managed_objects(&objects.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "repeated apply did not verify",
         )
@@ -191,7 +191,7 @@ async fn managed_objects_retire_signatures_with_dependent_triggers() -> Result {
         let migrator = fixture.pool(Role::Migrator).await?;
         let reader = fixture.pool(Role::Reader).await?;
         let _ = fixture.apply(&migrator, &initial.manifest).await?;
-        require(
+        require!(
             fixture.exists(&migrator, "audit_record").await?,
             "initial audit routine was not created",
         )?;
@@ -207,11 +207,11 @@ async fn managed_objects_retire_signatures_with_dependent_triggers() -> Result {
             ],
         )?;
         let applied = fixture.apply(&migrator, &retired.manifest).await?;
-        require(
+        require!(
             applied.retired() == 2,
             "retirement did not drop both objects",
         )?;
-        require(
+        require!(
             !fixture.exists(&migrator, "audit_record").await?
                 && !fixture.trigger_exists(&migrator, "records_audit").await?,
             "retired objects still exist",
@@ -222,12 +222,12 @@ async fn managed_objects_retire_signatures_with_dependent_triggers() -> Result {
                 VerificationPlan::managed_objects(&retired.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "a completed retirement did not verify",
         )?;
         let again = fixture.apply(&migrator, &retired.manifest).await?;
-        require(
+        require!(
             again.retired() == 0,
             "an absent retired object was dropped again",
         )?;
@@ -237,7 +237,7 @@ async fn managed_objects_retire_signatures_with_dependent_triggers() -> Result {
                 VerificationPlan::managed_objects(&initial.manifest),
             )
             .await?;
-        require(
+        require!(
             report
                 .findings()
                 .iter()
@@ -277,16 +277,16 @@ async fn managed_objects_retirement_blocked_by_a_declared_trigger_changes_nothin
             .apply(&migrator, &blocked.manifest)
             .await
             .expect_err("dropping a routine a trigger still uses must fail");
-        require(
+        require!(
             matches!(error, ManagedApplyError::Statement(_))
                 && sqlstate(&error).as_deref() == Some("2BP01"),
             "dependent trigger did not block the retirement",
         )?;
-        require(
+        require!(
             pid(&migrator).await? != failing_pid,
             "failed apply returned its session to the pool",
         )?;
-        require(
+        require!(
             fixture.exists(&migrator, "touch_updated_at").await?,
             "failed apply dropped the routine",
         )?;
@@ -296,7 +296,7 @@ async fn managed_objects_retirement_blocked_by_a_declared_trigger_changes_nothin
                 VerificationPlan::managed_objects(&current.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "failed apply changed the installed set",
         )
@@ -326,7 +326,7 @@ async fn managed_objects_public_execute_policy_is_applied_and_verified() -> Resu
             "record_total",
             [RoutineType::new("pg_catalog", "int8")?],
         )?;
-        require(
+        require!(
             report.status() == VerificationStatus::Violations
                 && report.findings().len() == 1
                 && report.findings()[0].kind == FindingKind::ManagedObjectPublicExecute
@@ -336,11 +336,11 @@ async fn managed_objects_public_execute_policy_is_applied_and_verified() -> Resu
             "PUBLIC EXECUTE on a revoked routine was not reported",
         )?;
         let again = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             again.created_or_replaced() == 0,
             "an ACL change re-executed a definition",
         )?;
-        require(
+        require!(
             !fixture.public_can_execute(&migrator, RECORD_TOTAL).await?,
             "apply did not revoke PUBLIC EXECUTE again",
         )?;
@@ -350,7 +350,7 @@ async fn managed_objects_public_execute_policy_is_applied_and_verified() -> Resu
                 VerificationPlan::managed_objects(&objects.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "revoked PUBLIC EXECUTE did not verify",
         )?;
@@ -359,7 +359,7 @@ async fn managed_objects_public_execute_policy_is_applied_and_verified() -> Resu
         fixture.admin(&grant).await?;
         let unmanaged = fixture.objects(PublicExecute::Unmanaged);
         let _ = fixture.apply(&migrator, &unmanaged.manifest).await?;
-        require(
+        require!(
             fixture.public_can_execute(&migrator, RECORD_TOTAL).await?,
             "an unmanaged policy revoked PUBLIC EXECUTE",
         )?;
@@ -369,7 +369,7 @@ async fn managed_objects_public_execute_policy_is_applied_and_verified() -> Resu
                 VerificationPlan::managed_objects(&unmanaged.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "an unmanaged PUBLIC policy was checked",
         )
@@ -419,14 +419,14 @@ async fn managed_objects_out_of_band_drift_is_reported_and_repaired() -> Result 
             format!("\"records_touch\" ON \"{schema}\".\"records\""),
         ];
         expected.sort();
-        require(
+        require!(
             report.status() == VerificationStatus::Violations
                 && report.findings().len() == 2
                 && drifted == expected,
             "out-of-band definition changes were not reported as drift",
         )?;
         let repaired = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             repaired.created_or_replaced() == 2 && repaired.unchanged() == 2,
             "apply did not replace exactly the drifted objects",
         )?;
@@ -436,7 +436,7 @@ async fn managed_objects_out_of_band_drift_is_reported_and_repaired() -> Result 
                 VerificationPlan::managed_objects(&objects.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "repaired drift did not verify",
         )
@@ -457,7 +457,7 @@ async fn managed_objects_missing_ledger_is_a_finding() -> Result {
             VerificationPlan::sqlx_migrations(&sqlx).with_managed_objects(&objects.manifest)?;
         let report = fixture.verify(&reader, plan).await?;
         let ledger = format!("\"{}\".\"managed_objects\"", fixture.schema());
-        require(
+        require!(
             report.status() == VerificationStatus::Violations
                 && report.findings().len() == 1
                 && report.findings()[0].kind == FindingKind::MissingManagedObjectLedger
@@ -497,23 +497,23 @@ async fn managed_objects_reject_undeclared_identities_and_foreign_ledgers() -> R
             .apply(&migrator, &mismatched.manifest)
             .await
             .expect_err("another overload than declared must fail");
-        require(
+        require!(
             matches!(&error, ManagedApplyError::IdentityMismatch { identity }
                 if identity == total.as_str()),
             "an undeclared overload was accepted",
         )?;
-        require(
+        require!(
             pid(&migrator).await? != failing_pid,
             "failed apply returned its session to the pool",
         )?;
-        require(
+        require!(
             !fixture.exists(&migrator, "record_total").await?
                 && !fixture
                     .relation_exists(&migrator, "managed_objects")
                     .await?,
             "a failed apply left objects or a ledger behind",
         )?;
-        require(
+        require!(
             fixture.relation_exists(&migrator, "records").await?,
             "migrations committed before the failed apply were lost",
         )?;
@@ -534,7 +534,7 @@ async fn managed_objects_reject_undeclared_identities_and_foreign_ledgers() -> R
             .apply(&migrator, &invalid.manifest)
             .await
             .expect_err("a body invalid against the migrated catalog must fail");
-        require(
+        require!(
             sqlstate(&error).as_deref() == Some("42703"),
             "SQL body was not validated against the migrated catalog",
         )?;
@@ -550,11 +550,11 @@ async fn managed_objects_reject_undeclared_identities_and_foreign_ledgers() -> R
             .apply(&migrator, &foreign.manifest)
             .await
             .expect_err("a foreign ledger relation must be refused");
-        require(
+        require!(
             matches!(error, ManagedApplyError::LedgerShape),
             "a foreign ledger relation was not refused by shape",
         )?;
-        require(
+        require!(
             !fixture.exists(&migrator, "touch_updated_at").await?,
             "a refused ledger still applied objects",
         )?;
@@ -568,11 +568,11 @@ async fn managed_objects_reject_undeclared_identities_and_foreign_ledgers() -> R
             .apply(&migrator, &mismatched.manifest)
             .await
             .expect_err("an untouched pre-existing overload must not satisfy its entry");
-        require(
+        require!(
             matches!(error, ManagedApplyError::IdentityMismatch { .. }),
             "a pre-existing overload satisfied a statement that created another",
         )?;
-        require(
+        require!(
             catalog_state(&migrator, &schema).await? == catalog,
             "a rejected apply changed the catalog",
         )
@@ -602,7 +602,7 @@ async fn managed_objects_disabled_trigger_is_drift_and_reenabled() -> Result {
             )
             .await?;
         let trigger = format!("\"records_touch\" ON \"{schema}\".\"records\"");
-        require(
+        require!(
             report.status() == VerificationStatus::Violations
                 && report.findings().len() == 1
                 && report.findings()[0].kind == FindingKind::ManagedObjectDrift
@@ -610,7 +610,7 @@ async fn managed_objects_disabled_trigger_is_drift_and_reenabled() -> Result {
             "a disabled managed trigger was not reported as drift",
         )?;
         let repaired = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             repaired.created_or_replaced() == 1,
             "apply did not replace exactly the disabled trigger",
         )?;
@@ -622,14 +622,14 @@ async fn managed_objects_disabled_trigger_is_drift_and_reenabled() -> Result {
         .bind(&schema)
         .fetch_one(&migrator)
         .await?;
-        require(enabled == "O", "apply did not re-enable the trigger")?;
+        require!(enabled == "O", "apply did not re-enable the trigger")?;
         let report = fixture
             .verify(
                 &reader,
                 VerificationPlan::managed_objects(&objects.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "a re-enabled trigger did not verify",
         )
@@ -670,12 +670,12 @@ async fn managed_objects_public_execute_from_another_grantor_fails_apply() -> Re
             "record_total",
             [RoutineType::new("pg_catalog", "int8")?],
         )?;
-        require(
+        require!(
             matches!(&error, ManagedApplyError::PublicExecuteRetained { identity: retained }
                 if retained == identity.as_str()),
             "apply committed while PUBLIC kept EXECUTE",
         )?;
-        require(
+        require!(
             pid(&migrator).await? != failing_pid,
             "failed apply returned its session to the pool",
         )?;
@@ -685,7 +685,7 @@ async fn managed_objects_public_execute_from_another_grantor_fails_apply() -> Re
                 VerificationPlan::managed_objects(&objects.manifest),
             )
             .await?;
-        require(
+        require!(
             report
                 .findings()
                 .iter()
@@ -722,26 +722,26 @@ async fn managed_objects_retirement_of_another_kind_is_left_alone() -> Result {
             )?)],
         )?;
         let applied = fixture.apply(&migrator, &objects.manifest).await?;
-        require(
+        require!(
             applied.retired() == 0,
             "a procedure was retired as a function",
         )?;
-        require(
+        require!(
             fixture.exists(&migrator, "legacy").await?,
             "the procedure was dropped",
         )?;
-        require(
+        require!(
             fixture.public_can_execute(&reader, "legacy()").await?,
             "unmanaged procedure did not start with PUBLIC execution",
         )?;
         let before = catalog_state(&reader, &schema).await?;
         let applied =
             application_sql::apply(fixture, &migrator, &objects.manifest, async |_| Ok(())).await?;
-        require(
+        require!(
             applied.retired() == 0,
             "callback retired another routine kind",
         )?;
-        require(
+        require!(
             catalog_state(&reader, &schema).await? == before,
             "callback changed the retained procedure or its ACL",
         )?;
@@ -754,7 +754,7 @@ async fn managed_objects_retirement_of_another_kind_is_left_alone() -> Result {
                 VerificationPlan::managed_objects(&objects.manifest),
             )
             .await?;
-        require(
+        require!(
             report.status() == VerificationStatus::WithinDeclaredPolicy,
             "a procedure was reported as the retired function",
         )

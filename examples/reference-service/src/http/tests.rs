@@ -119,8 +119,9 @@ fn direct_request(
     body: Body,
     peer: IpAddr,
     authorization: Option<&str>,
-    forged_headers: bool,
+    forged_headers: RequestHeaders,
 ) -> HttpRequest<Body> {
+    let forged_headers = forged_headers == RequestHeaders::Forged;
     let mut builder = HttpRequest::builder()
         .method(method)
         .uri(path)
@@ -205,7 +206,7 @@ async fn native_json_rejection_stays_outside_the_application_problem_envelope() 
             Body::from("{"),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             Some("Bearer fake-token"),
-            false,
+            RequestHeaders::Ordinary,
         ))
         .await;
 
@@ -222,7 +223,7 @@ async fn native_path_rejection_stays_outside_the_application_problem_envelope() 
             Body::empty(),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             Some("Bearer fake-token"),
-            false,
+            RequestHeaders::Ordinary,
         ))
         .await;
 
@@ -239,7 +240,7 @@ async fn native_body_limit_rejection_stays_outside_the_application_problem_envel
             Body::from(vec![b' '; REQUEST_BODY_MAX_BYTES + 1]),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             Some("Bearer fake-token"),
-            false,
+            RequestHeaders::Ordinary,
         ))
         .await;
 
@@ -258,7 +259,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
                 Body::from("{}"),
                 peer,
                 authorization,
-                true,
+                RequestHeaders::Forged,
             ))
             .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -277,7 +278,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
             Body::from(r#"{"expected_generation":0,"idempotency_key":"key","payload":{}}"#),
             peer,
             Some("Bearer fake-token"),
-            true,
+            RequestHeaders::Forged,
         ))
         .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
@@ -380,7 +381,7 @@ async fn trusted_metadata_debug_redacts_peer_and_correlation() {
             Body::empty(),
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 90)),
             Some("Bearer fake-token"),
-            false,
+            RequestHeaders::Ordinary,
         ))
         .await;
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
@@ -439,7 +440,7 @@ async fn concurrent_forged_metadata_cannot_replace_authority_peer_or_correlation
                     Body::empty(),
                     peer,
                     Some("Bearer fake-token"),
-                    true,
+                    RequestHeaders::Forged,
                 ))
                 .await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -503,7 +504,7 @@ async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
             Body::empty(),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             Some("Bearer fake-token"),
-            false,
+            RequestHeaders::Ordinary,
         ))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -569,7 +570,7 @@ async fn the_request_client_replaces_a_peer_the_caller_already_supplied() {
                 Body::empty(),
                 supplied,
                 Some("Bearer fake-token"),
-                true,
+                RequestHeaders::Forged,
             ),
             selected,
         )
@@ -668,7 +669,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
         Body::empty(),
         pending_peer,
         Some("Bearer fake-token"),
-        true,
+        RequestHeaders::Forged,
     )));
     assert!(
         poll_fn(|cx| Poll::Ready(pending.as_mut().poll(cx)))
@@ -687,7 +688,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
             Body::empty(),
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)),
             Some("Bearer fake-token"),
-            true,
+            RequestHeaders::Forged,
         ))
         .await;
     assert_eq!(complete.status(), StatusCode::OK);
@@ -706,3 +707,9 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
 }
 
 mod admission_order;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RequestHeaders {
+    Forged,
+    Ordinary,
+}
