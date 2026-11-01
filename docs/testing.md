@@ -1784,6 +1784,9 @@ excludes archived reviews under `.agent/reviews`.
 | Per-attempt cap formula, total/same-poll cancellation precedence, current and earlier retained errors, destruction and panic | [retry_attempt_deadlines.rs](../crates/batter-core/tests/retry_attempt_deadlines.rs) |
 | Retry attempt telemetry matches application failure, same-poll cancellation and success without logging error contents | [telemetry.rs](../crates/batter-core/tests/telemetry.rs) |
 | Permit exhaustion/release, deadline wait, close/cancellation | [admission.rs](../crates/batter-core/tests/admission.rs) |
+| Bounded blocking work: a handed-off closure keeps its permit until it returns or unwinds after its caller is cancelled, aborted or past its deadline, or while it is queued behind an occupied blocking thread, including an abandoned panic, with an awaiter-held permit as the negative control; close refuses new runs while running work keeps its permit; overload, a pre-cancelled context, an interrupted `Wait`, the post-grant recheck with its `enter` control, an unpolled call, a dropped admission wait and polling outside a runtime all destroy the closure uncalled; panics keep their original or opaque payloads, values come from a blocking thread with capacity already free, domain errors stay concrete, work runs under the caller's dispatcher and span, and the future is `Send`; a cancelled join maps to `NotStarted`, a task on a dropping multi-thread runtime and a call polled from outside a current-thread runtime during `shutdown_timeout` report `NotStarted` with their closures destroyed uncalled and permits free, and a poll after that runtime is gone panics in the shut-down timer after handoff; the permit outlives the closure's captures on return, unwind and unrun destruction, and unrun captures are destroyed under the captured dispatcher; the work span closes there even on a thread with another default dispatcher, so the caller's span closes too, and a closed bulkhead still counts the running closure's permit; work runs, and a call destroyed while waiting for admission destroys its closure, under the dispatcher captured at first poll; a value or panic payload whose wait ended before the closure finished is destroyed, unobserved, under that dispatcher, as is a capture's panic payload when Tokio destroys a queued closure unstarted, which otherwise maps to `Panicked` with its original payload; a caught closure panic still records the result wait as failed; a runtime without timers panics before admission like polling outside a runtime, and a `Wait` call first polled on one runtime and finished on another without timers keeps its result wait in the first | [blocking_ownership.rs](../crates/batter-core/tests/admission/blocking_ownership.rs), [blocking_refusal.rs](../crates/batter-core/tests/admission/blocking_refusal.rs), [blocking_outcomes.rs](../crates/batter-core/tests/admission/blocking_outcomes.rs), [blocking_dispatch.rs](../crates/batter-core/tests/admission/blocking_dispatch.rs), included by the admission target, and [unit tests](../crates/batter-core/src/admission/blocking/tests.rs) |
+| `run_blocking` records one bulkhead decision per call polled inside a timer-enabled runtime, after its recheck: `admitted` for handed-off success, panic and abandonment, each refusal once, `deadline_exceeded` for both a `Wait` deadline and the recheck, `panicked` when destroyed while unwinding, none unpolled or outside a runtime, and no operation completion | [metrics blocking](../crates/batter-core/tests/metrics/blocking.rs), included by the metrics target |
+| `BlockingError` Debug/Display never disclose panic payloads and stay pairwise distinct; Display omits causes, which chain through `source()` and stay readable from the `NotAdmitted` and `Abandoned` variant fields (Debug prints them); the panic payload is never formatted and is read only through `PanicPayload::try_inspect`; compile-fail rustdoc rejects `?` from an `Interruption` or `AdmissionError` | [report_redaction.rs](../crates/batter-core/tests/report_redaction.rs), [blocking.rs](../crates/batter-core/src/admission/blocking.rs) rustdoc |
 | LIFO, all errors, async and synchronous-factory panic observation | [cleanup.rs](../crates/batter-core/tests/cleanup.rs) |
 | Timeout/reap before dependent hook, total budget, explicit skips | [cleanup.rs](../crates/batter-core/tests/cleanup.rs) |
 | Every budget-skipped hook logged/reported once; native capture-drop LIFO | [cleanup_observation.rs](../crates/batter-core/tests/cleanup_observation.rs) |
@@ -3002,6 +3005,40 @@ run through `scripts/verify.sh` in the `scripts` matrix part. macOS CI includes
 the portable
 example exits, report tests/doctests, and smoke controls; live checks remain a
 separate externally provisioned invocation.
+
+Bounded blocking work covers `BlockingError::NotStarted` through
+`run_blocking` in both runtime flavors. `a_task_on_a_dropping_multi_thread_runtime_is_not_started` holds a multi-thread runtime's
+only worker inside a task's poll while another thread drops the runtime, so
+Tokio destroys the task's closure at spawn and the call reports `NotStarted`
+before the last worker shuts the time driver down. `an_outside_call_during_current_thread_shutdown_is_not_started` polls a call from outside a
+current-thread runtime while `shutdown_timeout` waits on a busy blocking
+thread, then checks that a poll after the runtime is gone panics with Tokio's
+shut-down timer message after Tokio destroyed the closure at spawn.
+`cancelled_blocking_join_maps_to_not_started` also maps a real cancelled
+`JoinError` from a queued closure. A current-thread runtime's own tasks cannot
+observe `NotStarted`, because its scheduler destroys them before its pool shuts
+down (source-inspected). A multi-thread runtime's own tasks during
+`shutdown_timeout` or `shutdown_background`, a call polled from outside a
+multi-thread runtime and a call polled from outside a current-thread runtime
+during `shutdown_background` follow the same source paths and are not exercised
+separately. That a context cancelled after handoff returns `Abandoned`, and that
+one cancelled or already past its deadline before handoff returns
+`NotAdmitted`, instead of the timer panic is source-inspected, not exercised. Tokio's panic when the operating system refuses a blocking
+thread after the closure was queued is source-inspected, not exercised. Queuing
+behind a saturated pool is exercised with a one-thread pool; the default
+512-thread pool and its sharing with `tokio::fs` and DNS resolution are not.
+The recheck test `admission_granted_after_an_unfired_deadline_never_starts_work`
+relies on the current-thread scheduler running a woken task before its next
+driver turn fires the timer; its control
+`enter_alone_can_grant_a_permit_after_an_unfired_deadline` fails if that
+ordering changes, so the recheck test cannot pass vacuously through admission.
+With Tokio's `test-util` on a current-thread runtime, each blocking task
+inhibits paused-time auto-advance from spawn until it completes, so paused
+tests advance time with `tokio::time::advance` or cancel while a closure is
+outstanding. The blocking tests use channels and explicit gates, not sleeps.
+A gate's release sender is dropped when a failed assertion unwinds, so a parked
+closure returns and runtime drop cannot hang; a closure that never signals its
+start would still hang its test until the CI time limit.
 
 The suite does not establish full real-transport behavior, non-yielding task
 termination, transaction commit/cancellation or upstream worker compatibility, or HTTP handler-panic

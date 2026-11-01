@@ -118,7 +118,9 @@ supervised PostgreSQL limiter construction registers the native expiry cleanup a
 a periodic component rather than adding a cleanup engine. Its HTTP boundary
 owns async authentication, one atomic native batch, body ordering and retained
 quota facts; its opaque prepared service owns the required serving metadata.
-Bulkhead bounds simultaneous work; Runlimit accounts usage over time. Neither
+Bulkhead bounds simultaneous work, including blocking closures run through
+`run_blocking`, which keep their permit until they return; Runlimit accounts
+usage over time. Neither
 replaces the other. See
 [ADR-006](adr/006-workspace-packages.md) and the
 [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).

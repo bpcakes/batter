@@ -146,7 +146,9 @@ that can only narrow readiness and unrepresentable healthy-as-failure states.
 `crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries,
 typed failures, and pre-telemetry resolution of application-retained outcomes.
 `crates/batter-core/src/retry.rs` owns replay policy, bounded attempts, and backoff.
-`crates/batter-core/src/admission.rs` owns process-local concurrency permits.
+`crates/batter-core/src/admission.rs` owns process-local concurrency permits;
+`admission/blocking.rs` owns bounded blocking runs whose permit lives inside the
+blocking closure until it returns. Those runs are not process-owned work.
 `crates/batter-core/src/settings.rs` and `settings/` own explicit source reading, bound
 parsing and redacted diagnostics; application schemas remain outside the foundation.
 `crates/batter-core/src/telemetry.rs` records outcomes without printing error contents

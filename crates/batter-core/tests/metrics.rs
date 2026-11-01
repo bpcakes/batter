@@ -1,6 +1,8 @@
 //! Bounded metrics are recorded once per outcome and never alter results.
 #![cfg(feature = "metrics")]
 
+#[path = "metrics/blocking.rs"]
+mod blocking;
 #[path = "metrics/capture.rs"]
 mod capture;
 #[path = "metrics/cold_callsites.rs"]

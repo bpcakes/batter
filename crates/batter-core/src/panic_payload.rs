@@ -6,8 +6,9 @@ use std::{
 
 /// Retained unwinding panic payload; default formatting never inspects it.
 ///
-/// This root path is shared by startup, command, and managed lifecycle reports.
-/// The original [`crate::startup::PanicPayload`] path remains available.
+/// This root path is shared by startup, command, and managed lifecycle reports,
+/// and by [`crate::admission::BlockingError::Panicked`]. The original
+/// [`crate::startup::PanicPayload`] path remains available.
 pub struct PanicPayload(Mutex<Box<dyn Any + Send>>);
 
 /// Another caller is currently inspecting the retained panic payload.

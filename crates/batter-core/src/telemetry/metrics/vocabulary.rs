@@ -63,7 +63,10 @@ closed_domain! {
 
 closed_domain! {
     /// `decision` values for `admission="bulkhead"`. `dropped` and `panicked`
-    /// are polled `enter` futures destroyed before their decision.
+    /// are polled `enter` or `run_blocking` futures destroyed before their
+    /// decision. For `run_blocking`, `admitted` is recorded after its context
+    /// recheck, immediately before the closure is handed to Tokio, and
+    /// `cancelled`/`deadline_exceeded` include that recheck.
     pub BULKHEAD_DECISIONS, fn bulkhead(value: End<Result<(), &AdmissionError>>) {
         End::Finished(Ok(())) => "admitted",
         End::Finished(Err(AdmissionError::Overloaded)) => "overloaded",

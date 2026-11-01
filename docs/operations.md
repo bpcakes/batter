@@ -118,6 +118,20 @@ maintenance work, and test harness budgets explicitly. The Bulkhead waiter queue
 is not a memory limit. Prefer reject-at-capacity or an independently bounded
 queue when overload must not accumulate waiters.
 
+Size bulkheads used with `Bulkhead::run_blocking` together with the runtime's
+`max_blocking_threads`: Tokio's blocking pool defaults to 512 threads followed
+by an unbounded queue and is shared with `tokio::fs`, DNS resolution and other
+`spawn_blocking` callers. Bulkhead capacity counts admitted closures, queued or
+running, and reserves no thread. A closure that never returns holds its permit
+and a pool thread for the life of the process; it is visible only as rising
+`decision="overloaded"` counts or wait interruptions. An abandoned closure keeps
+running through request completion, drain and dependent cleanup, and a retry
+after `Abandoned` runs a second copy beside the first while capacity allows.
+When `#[tokio::main]` returns, runtime destruction waits for started closures;
+use `Runtime::shutdown_timeout` at the application root for a bounded exit,
+which leaves them running. Prefer `Admission::Reject` here: `Wait` bounds
+neither the number of waiters nor the memory their pending closures capture.
+
 For finite process work, configure `with_process_capacity` and transfer any
 dependency permit into its factory. A dropped result receipt must not free that
 permit while work continues. Root admission closes at drain, while active scope
