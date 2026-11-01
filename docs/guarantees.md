@@ -299,7 +299,19 @@ started closure. A closure panic is caught inside the blocking closure, and
 the process panic hook still runs on the blocking thread. `NotStarted` means
 Tokio destroyed the admitted closure unstarted while its runtime was shutting
 down. Tokio does not guarantee that outcome: a busy
-blocking thread keeps running queued closures after shutdown begins. Closing
+blocking thread keeps running queued closures after shutdown begins. A caller
+can see it only while the runtime's blocking pool is shutting down and its time
+driver has not yet shut down, which depends on the runtime flavor. A
+multi-thread runtime, the `#[tokio::main]` default, shuts its pool down while
+workers still poll its own tasks, on a plain drop as well as
+`Runtime::shutdown_timeout` or `shutdown_background`, so those tasks, and calls
+polled elsewhere, can receive it. A current-thread runtime's own tasks never
+do; only a call that is not one of its tasks, such as one polled on another
+thread under `Handle::enter`, can, during `shutdown_timeout` or
+`shutdown_background`. Once the time driver has shut down, a poll panics in the
+deadline timer instead, unless it first observes cancellation, or a deadline
+that had already passed when the context was checked; that returns
+`NotAdmitted` before handoff and `Abandoned` after it. Closing
 the bulkhead refuses new runs and wakes waiting ones; running closures keep
 their permits and deliver their results. Capacity counts queued and running
 closures, not threads, and Tokio's blocking pool is shared with `tokio::fs`,

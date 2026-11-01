@@ -1533,8 +1533,14 @@ remains is kept explicit (question 5):
   `spawn_blocking` callers, defaults to 512 threads and queues beyond that
   without bound, so bulkhead capacity counts admitted closures, not reserved
   threads. A busy blocking thread still runs queued closures during runtime
-  shutdown, so `NotStarted` is not guaranteed. When the operating system refuses
-  to create a blocking thread, other than a temporary refusal while threads
+  shutdown, so `NotStarted` is not guaranteed. A caller sees it only while the
+  pool is shutting down and the time driver has not yet shut down: a
+  multi-thread runtime's own tasks or a call polled from outside it, including
+  on a plain drop, or a call polled from outside a current-thread runtime
+  during `shutdown_timeout` or `shutdown_background`; afterwards a poll panics
+  in the timer unless it first observes cancellation, or a deadline that had
+  already passed at a context check. When the operating system refuses to
+  create a blocking thread, other than a temporary refusal while threads
   exist, Tokio panics in the caller after queueing the closure, with the permit
   inside; that path is source-inspected and untested.
 - Application policy: sizing the bulkhead against the pool; whether to replay
@@ -1597,7 +1603,9 @@ The integration tests are
 `returns_a_value_from_a_blocking_thread_and_frees_capacity_first`,
 `fallible_closure_keeps_its_concrete_domain_error`,
 `blocking_work_runs_under_the_callers_dispatcher_and_span`,
-`run_blocking_future_is_send`). The
+`run_blocking_future_is_send`,
+`a_task_on_a_dropping_multi_thread_runtime_is_not_started`,
+`an_outside_call_during_current_thread_shutdown_is_not_started`). The
 [unit tests](../../crates/batter-core/src/admission/blocking/tests.rs)
 (`cancelled_blocking_join_maps_to_not_started`,
 `panicked_blocking_join_maps_to_its_retained_payload`,
@@ -1625,10 +1633,10 @@ polled inside a timer-enabled runtime, and
 (`blocking_error_formatting_never_discloses_panic_payloads`) pins redacted,
 distinct formatting. The runnable `run_blocking` rustdoc example replaces the
 hand-written helper, and two compile-fail rustdoc examples on `BlockingError`
-reject `?` conversions. `NotStarted` is covered at the mapping level only,
-because a caller on the same current-thread runtime is destroyed before the
-blocking pool shuts down. Fresh-agent usability evaluation is proposed and
-unexecuted.
+reject `?` conversions. `NotStarted` is exercised through `run_blocking` for a
+task on a dropping multi-thread runtime and for a call polled from outside a
+current-thread runtime during `shutdown_timeout`. Fresh-agent usability
+evaluation is proposed and unexecuted.
 
 ## Recurring example review defects
 

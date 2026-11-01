@@ -132,11 +132,31 @@ Source-inspected facts in the installed 1.53.1 crate:
 - `runtime/time/entry.rs` `TimerEntry::poll_elapsed` asserts that the time
   driver has not shut down, so a deadline timer polled after runtime shutdown
   panics.
-- `runtime/runtime.rs` `Drop for Runtime`: the current-thread scheduler's
-  shutdown destroys every spawned task and then shuts its drivers down, before
-  the `blocking_pool` field is dropped and shuts the pool down. A caller on the
-  same current-thread runtime is therefore destroyed before it could observe
-  `NotStarted`. The multi-thread ordering was not inspected for this claim.
+- `runtime/runtime.rs` `Drop for Runtime` and `runtime/scheduler/`: `Drop`
+  calls the scheduler's `shutdown` before the `blocking_pool` field is dropped
+  and shuts the pool down. The current-thread scheduler destroys every spawned task and then
+  shuts its drivers down, so its own tasks never meet a shutting-down pool. The
+  multi-thread `Handle::shutdown` only closes the scheduler: a worker keeps
+  polling tasks until `Core::maintenance` or parking observes the close, and the
+  last worker's `shutdown_core` shuts the drivers down
+  (`scheduler/multi_thread/worker.rs`). Workers are blocking-pool threads, so
+  that can happen while the pool's shutdown waits. `Runtime::shutdown_timeout`
+  and `shutdown_background` call `Handle::shutdown`, a no-op for current-thread
+  (`scheduler/mod.rs`), then shut the pool down and wait up to the timeout; for
+  current-thread this all precedes `Drop`, which shuts the drivers down. In
+  `blocking/pool.rs`, `Spawner::spawn_task` destroys a task spawned after the
+  pool began shutting down, and idle threads destroy queued tasks with
+  `shutdown_or_run_if_mandatory`. `NotStarted` therefore reaches a caller only
+  while the pool is shutting down and the time driver has not yet shut down: a
+  multi-thread runtime's own tasks or a call polled from outside it, after a
+  plain drop as well as either shutdown method, or a call polled from outside a
+  current-thread runtime during `shutdown_timeout` or `shutdown_background`. `a_task_on_a_dropping_multi_thread_runtime_is_not_started` and `an_outside_call_during_current_thread_shutdown_is_not_started` exercise one
+  case of each; the latter also checks that a poll after the runtime is gone
+  panics in the shut-down timer after handoff. That a context cancelled or
+  already past its deadline before handoff returns `NotAdmitted` from
+  admission's context checks, and that one cancelled after handoff returns
+  `Abandoned` from `run_inner`'s initial `check` and biased `select!`, instead
+  of that panic, is source-inspected and not exercised.
 - `runtime/builder.rs`: a current-thread runtime caps blocking threads at
   `max_blocking_threads`, while a multi-thread runtime adds its worker-thread
   count to that cap.

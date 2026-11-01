@@ -56,6 +56,21 @@ pub enum BlockingError {
     /// released. Batter never aborts the task, so runtime shutdown is the only
     /// cause, and Tokio does not guarantee it: a busy blocking thread still
     /// runs queued closures during shutdown.
+    ///
+    /// A caller can see this only while the runtime's blocking pool is shutting
+    /// down and its time driver has not yet shut down, which depends on the
+    /// runtime flavor. A multi-thread runtime, the `#[tokio::main]` default,
+    /// shuts its pool down while workers still poll its own tasks, on a plain
+    /// drop as well as `Runtime::shutdown_timeout` or `shutdown_background`, so
+    /// those tasks, and calls polled elsewhere, can receive it. A
+    /// current-thread runtime's own tasks never do; only a call that is not one
+    /// of its tasks, such as one polled on another thread under
+    /// `Handle::enter`, can, during `shutdown_timeout` or `shutdown_background`.
+    /// Once the time driver has shut down, a poll panics in the deadline timer
+    /// instead, unless it first observes cancellation, or a deadline that had
+    /// already passed when the context was checked; that returns
+    /// [`Self::NotAdmitted`] before handoff and [`Self::Abandoned`] after it
+    /// (see [`Bulkhead::run_blocking`]).
     #[error("blocking work was dropped unstarted because its runtime is shutting down")]
     NotStarted,
     /// The closure was admitted and handed to Tokio, then cancellation or the
@@ -147,9 +162,11 @@ impl Bulkhead {
     /// its time driver (`enable_time`), before admission; later polls keep the
     /// result wait in that runtime, even from another context, so the deadline
     /// fires only while that runtime's time driver runs. When polled after that
-    /// runtime has shut down, in its deadline timer (Tokio's own panic), whether
-    /// waiting for admission or for the result; a handed-off closure keeps its
-    /// permit until it returns. After queueing the closure, when the operating
+    /// runtime has shut its time driver down, in its deadline timer (Tokio's own
+    /// panic), whether waiting for admission or for the result, unless the call
+    /// first observes cancellation, or a deadline that had already passed when
+    /// the context was checked before that timer's first poll; a handed-off
+    /// closure keeps its permit until it returns. After queueing the closure, when the operating
     /// system refuses to create a blocking thread (Tokio's own panic); the
     /// queued closure keeps its permit until it runs or the runtime shuts down.
     ///
