@@ -15,8 +15,10 @@
 //! Deadlines drop futures; they do not undo external effects. Cancellation is
 //! cooperative, not preemption. Supervision owns directly registered tasks,
 //! not tasks secretly spawned by a component. Owned startup, command and service
-//! drivers retain registered cleanup independently of borrowed waiters. Direct
-//! `CleanupStack::close` driving remains caller-owned. See `docs/guarantees.md`.
+//! drivers retain registered cleanup independently of borrowed waiters. A
+//! command's signal listeners live only while its work can be cancelled; Tokio
+//! never restores the replaced disposition. Direct `CleanupStack::close` driving
+//! remains caller-owned. See `docs/guarantees.md`.
 //!
 //! # Choosing between supported paths
 //!
@@ -26,7 +28,7 @@
 //! | Need | Use | Not |
 //! | --- | --- | --- |
 //! | A long-running service | [`startup::Startup::protected`] with an async-closure initializer, `with_unix_signals`, `start`, `wait_with_output` for a typed result such as the bound address, then [`lifecycle::RunningSupervisor::wait_checked`]; [`startup::ApplicationError`] when the initializer combines unrelated errors with `?`; with metrics export, [`service::start`] and `otlp::prepare` (feature `otlp`), unit output only | driving [`lifecycle::Supervisor::start`] yourself, a channel to carry startup values out, an adapter error type, or awaiting the raw report without the checked form |
-//! | Finite work: setup, migration, an operator command | [`command::Command::new`] or [`command::Command::within`], then [`command::check_command`] | `Startup`, which reports `EmptySupervisor` for a process with no critical component |
+//! | Finite work: setup, migration, an operator command | [`command::Command::new`] or [`command::Command::within`]; at an executable root [`command::Command::start_with_unix_signals`], then [`command::CommandOwner::finish`] and [`command::CommandSuccess::into_value`]; in reusable helpers and in-process tests [`command::Command::start_without_signals`]; [`command::Command::start`] with [`command::check_command`] only when observers must share one report | `Startup`, which reports `EmptySupervisor` for a process with no critical component; hand-installed `tokio::signal` listeners around a command; a command started inside another command's work, whose cleanup an interrupted outer command leaves unjoined; `expect` after `check_command`, or `Clone`, to copy a value out of a shared report |
 //! | A PostgreSQL pool the service owns | `sqlx::pool_in` after `reserve_cleanup` (feature `sqlx`); `sqlx::PgProfiledPool` when a session profile is declared; `runledger::RunledgerDatabase` when Runledger runs on the same pool (feature `runledger`) | a pool built outside startup with a manual close |
 //! | Routines, triggers and constraint triggers a release owns | one `sqlx::managed::ManagedObjectManifest` built from in-place source files: `sqlx::PgLease::migrate_and_apply` at setup, then the same manifest in `sqlx::verification::VerificationPlan::with_managed_objects` at readiness (feature `sqlx`) | whole routine bodies restated in new migrations, a constraint trigger created in a migration (it binds the previously installed body), or objects applied by hand before or after `PgLease::migrate` |
 //! | A transaction write | `sqlx::run_atomic_in`, or `sqlx::run_atomic_with_in` for an exhaustive failure policy; use their `run_atomic_profiled_in` / `run_atomic_profiled_with_in` counterparts with a profiled pool. For a durable job in the same transaction, wrap `runledger::run_atomic` in the caller's `context.run` | `sqlx::low_level::PgAtomicTransaction`, which leaves commit confirmation to the caller |
