@@ -25,7 +25,10 @@ contracts, capability facts and validation history.
   `Panicked` (the original payload, retained behind redacted formatting). The
   closure's value is returned unconverted, so a fallible closure keeps its
   concrete error inside `Ok(Err(error))`, and the closure runs under the
-  caller's tracing dispatcher in a `batter.blocking_work` span. Abandoned
+  caller's tracing dispatcher in a `batter.blocking_work` span. A value or
+  panic payload whose wait ended before the closure finished is destroyed
+  unobserved under that dispatcher, including when Tokio drops it on the
+  blocking thread. Abandoned
   closures are not process-owned: drain, dependent cleanup and shutdown reports
   neither wait for nor report them. `Bulkhead::enter` keeps its signature and
   behaviour; its rustdoc now directs synchronous CPU work and blocking I/O to

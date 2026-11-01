@@ -5,7 +5,7 @@ use crate::{
     PanicPayload,
     operation::{Interruption, OperationContext, OperationError},
 };
-use std::fmt;
+use std::{convert::Infallible, fmt, panic::AssertUnwindSafe};
 use tokio::{sync::OwnedSemaphorePermit, task::JoinError};
 use tracing::{Dispatch, Span};
 
@@ -68,8 +68,9 @@ pub enum BlockingError {
     )]
     Abandoned(#[source] Interruption),
     /// The closure panicked, or its captures panicked while being destroyed;
-    /// its permit was released while unwinding. The original payload is
-    /// retained, and formatting never inspects it.
+    /// its permit was released after the closure and its captures were
+    /// destroyed. The original payload is retained, and formatting never
+    /// inspects it.
     #[error("blocking work panicked")]
     Panicked(PanicPayload),
 }
@@ -113,15 +114,19 @@ impl Bulkhead {
     /// future abandons the result, never the work: the closure may be queued,
     /// running or finished, and it keeps its permit until it returns
     /// ([`BlockingError::Abandoned`]). Batter never aborts it. An abandoned
-    /// value or panic payload is destroyed unobserved; when the closure
-    /// finishes after the wait ended, Tokio destroys it outside the dispatcher.
+    /// value or panic payload is destroyed unobserved.
     ///
     /// `work` runs under the tracing dispatcher captured at first poll, in a
     /// `batter.blocking_work` span whose parent is the caller's span at
     /// handoff. A closure that Tokio destroys unstarted is destroyed under the
     /// same dispatcher and span, and the span itself is closed under that
-    /// dispatcher, so the caller's span is released there too. The closure
-    /// receives no context; to stop long
+    /// dispatcher, so the caller's span is released there too. An abandoned
+    /// value or panic payload, including a capture's panic while Tokio
+    /// destroys the closure unstarted, is also destroyed under that dispatcher,
+    /// even when Tokio destroys it on the blocking thread after the wait ended.
+    /// It is destroyed outside `batter.blocking_work`, but a span it holds
+    /// keeps that span and the caller's open until then. A delivered value is
+    /// the caller's to destroy. The closure receives no context; to stop long
     /// work early, move a `context.clone()` in and call
     /// [`OperationContext::check`] between steps.
     ///
@@ -239,8 +244,17 @@ impl Bulkhead {
         // can never leave the permit outside the closure.
         let call = BlockingCall::new(work, permit);
         let handle = runtime.spawn_blocking(move || call.run());
-        // Dropping the handle on interruption only detaches the task.
-        let wait = context.run_internal("batter.blocking_wait", move |_| handle);
+        // Dropping the handle on interruption only detaches the task. A caught
+        // panic is translated inside the wait, so the wait still records it as
+        // a failure.
+        let wait = context.run_internal("batter.blocking_wait", move |_| async move {
+            match handle.await {
+                Ok(delivered) => delivered
+                    .into_outcome()
+                    .map_err(|payload| BlockingError::Panicked(PanicPayload::new(payload))),
+                Err(error) => Err(join_failure(error)),
+            }
+        });
         let mut wait = std::pin::pin!(wait);
         // A `Wait` call can reach this point in a later poll made from another
         // context. Build and poll the wait's deadline timer in the runtime
@@ -255,7 +269,7 @@ impl Bulkhead {
         match waited {
             Ok(value) => Ok(value),
             Err(OperationError::Interrupted(reason)) => Err(BlockingError::Abandoned(reason)),
-            Err(OperationError::Failed(error)) => Err(join_failure(error)),
+            Err(OperationError::Failed(error)) => Err(error),
         }
     }
 }
@@ -273,10 +287,22 @@ fn recheck(
 
 /// A `JoinError` is either a panic or a cancellation. Batter holds the only
 /// handle and never aborts it, so a cancellation means Tokio destroyed the
-/// closure unstarted during runtime shutdown.
+/// closure unstarted during runtime shutdown. The closure's own panic arrives
+/// as a delivered outcome, so a panic here means a capture panicked while Tokio
+/// destroyed the closure unstarted, which `BlockingCall`'s `Drop` rethrows
+/// wrapped, or closing the blocking span panicked.
 fn join_failure(error: JoinError) -> BlockingError {
     match error.try_into_panic() {
-        Ok(payload) => BlockingError::Panicked(PanicPayload::new(payload)),
+        Ok(payload) => {
+            let payload = match payload.downcast::<Delivered<Infallible>>() {
+                Ok(wrapped) => match wrapped.into_outcome() {
+                    Ok(never) => match never {},
+                    Err(payload) => payload,
+                },
+                Err(payload) => payload,
+            };
+            BlockingError::Panicked(PanicPayload::new(payload))
+        }
         Err(error) => {
             debug_assert!(error.is_cancelled());
             BlockingError::NotStarted
@@ -304,32 +330,82 @@ impl<F> BlockingCall<F> {
         }
     }
 
-    fn run<T>(mut self) -> T
+    fn run<T>(mut self) -> Delivered<T>
     where
         F: FnOnce() -> T,
     {
         let work = self.work.take().expect("blocking work runs at most once");
-        tracing::dispatcher::with_default(&self.dispatch, || self.span.in_scope(work))
-        // `self` drops through `Drop` on return or while unwinding, releasing
-        // the permit before Tokio publishes the output.
+        // `work` and its captures are destroyed inside `catch_unwind`, so a
+        // panic becomes the outcome instead of unwinding into Tokio.
+        let outcome = tracing::dispatcher::with_default(&self.dispatch, || {
+            self.span
+                .in_scope(|| std::panic::catch_unwind(AssertUnwindSafe(work)))
+        });
+        let delivered = Delivered {
+            outcome: Some(outcome),
+            dispatch: self.dispatch.clone(),
+        };
+        // Release the span handle and the permit before Tokio publishes the
+        // outcome.
+        drop(self);
+        delivered
     }
 }
 
 impl<F> Drop for BlockingCall<F> {
     fn drop(&mut self) {
-        // Runs after `run` returns or unwinds, and when Tokio destroys the
-        // closure unstarted. Closing `batter.blocking_work` releases its parent
-        // through the thread's default dispatcher, so the span, and any unrun
-        // `work` inside it, are destroyed under the captured dispatcher. The
-        // permit field is released afterwards.
+        // Runs at the end of `run`, after `work` and its captures are
+        // destroyed, and when Tokio destroys the closure unstarted. Releasing
+        // `batter.blocking_work` releases its parent through the thread's
+        // default dispatcher, so the span, and any unrun `work` inside it, are
+        // destroyed under the captured dispatcher. The permit field is
+        // released afterwards, also while a rethrown panic unwinds.
         let span = std::mem::replace(&mut self.span, Span::none());
         let work = self.work.take();
-        tracing::dispatcher::with_default(&self.dispatch, || {
-            if let Some(work) = work {
-                span.in_scope(|| drop(work));
-            }
+        let unwound = tracing::dispatcher::with_default(&self.dispatch, || {
+            let unwound = work.and_then(|work| {
+                span.in_scope(|| std::panic::catch_unwind(AssertUnwindSafe(|| drop(work))).err())
+            });
             drop(span);
+            unwound
         });
+        if let Some(payload) = unwound {
+            // Tokio still receives a panic, wrapped so that a payload nobody
+            // takes is destroyed under the captured dispatcher. The hook ran
+            // when the capture panicked; `resume_unwind` does not run it again.
+            std::panic::resume_unwind(Box::new(Delivered::<Infallible> {
+                outcome: Some(Err(payload)),
+                dispatch: self.dispatch.clone(),
+            }));
+        }
+    }
+}
+
+/// The closure's value or caught panic payload on its way back through Tokio,
+/// or, as `Delivered<Infallible>`, a capture's panic payload rethrown while
+/// Tokio destroys the closure unstarted.
+///
+/// When the wait was abandoned first, Tokio destroys this on the blocking
+/// thread, which has no default dispatcher of its own. A value can hold spans
+/// created inside `batter.blocking_work`, and closing them releases their
+/// parents through the thread's default dispatcher, so an undelivered outcome
+/// is destroyed under the captured one.
+struct Delivered<T> {
+    outcome: Option<std::thread::Result<T>>,
+    dispatch: Dispatch,
+}
+
+impl<T> Delivered<T> {
+    fn into_outcome(mut self) -> std::thread::Result<T> {
+        self.outcome.take().expect("an outcome is delivered once")
+    }
+}
+
+impl<T> Drop for Delivered<T> {
+    fn drop(&mut self) {
+        if let Some(outcome) = self.outcome.take() {
+            tracing::dispatcher::with_default(&self.dispatch, || drop(outcome));
+        }
     }
 }
 

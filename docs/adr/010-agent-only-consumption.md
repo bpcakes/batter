@@ -1510,7 +1510,13 @@ these outcomes; two compile-fail rustdoc examples pin that. The four Display
 texts are distinct, so a log line cannot conflate work that is still running with
 work that never ran. The closure runs, and an unstarted closure is destroyed,
 under the dispatcher captured at first poll, in a `batter.blocking_work` span
-whose parent is the caller's span at handoff.
+whose parent is the caller's span at handoff. A closure panic is caught inside
+the closure owner, and the value or payload travels back through Tokio in a
+private wrapper, so an abandoned one is destroyed unobserved under the same
+dispatcher, outside that span, even when Tokio drops it on the blocking thread.
+A capture's panic while Tokio destroys an unstarted closure is rethrown in the
+same wrapper. A value or payload delivered to the caller is the caller's to
+drop.
 
 Against the review questions: nothing is constructed that execution later
 rejects, and `BulkheadCapacity` remains the validated capacity witness
@@ -1582,7 +1588,9 @@ The integration tests are
 [`blocking_dispatch.rs`](../../crates/batter-core/tests/admission/blocking_dispatch.rs)
 (`blocking_work_runs_under_the_dispatcher_captured_at_first_poll`,
 `a_call_destroyed_while_waiting_for_admission_destroys_work_under_its_first_dispatcher`,
-`a_wait_call_finished_elsewhere_keeps_the_runtime_checked_at_first_poll`) and
+`a_wait_call_finished_elsewhere_keeps_the_runtime_checked_at_first_poll`,
+`an_abandoned_value_is_destroyed_under_the_first_poll_dispatcher`,
+`an_abandoned_panic_payload_is_destroyed_under_the_first_poll_dispatcher`) and
 [`blocking_outcomes.rs`](../../crates/batter-core/tests/admission/blocking_outcomes.rs)
 (`closure_panic_is_reported_with_its_original_payload`,
 `opaque_panic_payload_is_retained`,
@@ -1597,10 +1605,15 @@ The integration tests are
 `work_and_unrun_work_use_the_captured_dispatcher_and_span`,
 `recheck_refuses_a_cancelled_or_expired_context_and_releases_the_permit`,
 `span_destruction_releases_the_callers_span_under_the_captured_dispatcher`,
-`close_keeps_a_running_closures_permit_until_it_returns`) cover the join
-mapping, release order, unrun destruction, span closing on a thread with
-another default dispatcher and the permit a closed bulkhead leaves with running
-work. The
+`close_keeps_a_running_closures_permit_until_it_returns`,
+`abandoned_outcomes_are_destroyed_under_the_captured_dispatcher`,
+`a_capture_panic_while_destroyed_unstarted_is_retained_under_the_captured_dispatcher`,
+`a_caught_closure_panic_still_records_a_failed_wait`) cover the join mapping,
+release order, unrun destruction, span closing on a thread with another
+default dispatcher, the permit a closed bulkhead leaves with running work, the
+destruction of abandoned values and panic payloads under the captured
+dispatcher, including a capture's panic from unstarted destruction, and the
+failed outcome a caught closure panic still records on the wait. The
 [metrics tests](../../crates/batter-core/tests/metrics/blocking.rs)
 (`handed_off_calls_record_one_admitted_decision`,
 `refused_calls_record_their_refusal_once`,

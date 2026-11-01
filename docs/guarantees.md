@@ -294,10 +294,11 @@ same poll as an interruption is discarded. Cancellation or the deadline returns
 `Abandoned`, and dropping the caller's future abandons the result in the same
 way: the closure may be queued, running or finished, and it keeps its permit
 until it returns or unwinds. Batter never aborts it, and Tokio cannot stop a
-started closure. `Panicked` retains the original payload behind redacted
-`Debug` and `Display`; the process panic hook still runs on the blocking
-thread. `NotStarted` means Tokio destroyed the admitted closure unstarted while
-its runtime was shutting down. Tokio does not guarantee that outcome: a busy
+started closure. A closure panic is caught inside the blocking closure, and
+`Panicked` retains the original payload behind redacted `Debug` and `Display`;
+the process panic hook still runs on the blocking thread. `NotStarted` means
+Tokio destroyed the admitted closure unstarted while its runtime was shutting
+down. Tokio does not guarantee that outcome: a busy
 blocking thread keeps running queued closures after shutdown begins. Closing
 the bulkhead refuses new runs and wakes waiting ones; running closures keep
 their permits and deliver their results. Capacity counts queued and running
@@ -316,8 +317,14 @@ the deadline fires only while that runtime's time driver runs (a current-thread
 runtime drives it only inside `block_on`), while cancellation is unaffected. A
 poll after that runtime has shut down panics in its deadline timer, whether
 the call waits for admission or for the result; after handoff the closure still
-keeps its permit until it returns. When an abandoned closure finishes after the
-wait ended, Tokio destroys its value or panic payload outside that dispatcher.
+keeps its permit until it returns. An abandoned closure's value or panic
+payload, including a capture's panic while Tokio destroys an unstarted
+closure, is destroyed unobserved under the dispatcher captured at first poll,
+whether the closure finishes before or after the wait ended. It is destroyed
+after Batter has left the `batter.blocking_work` span and released its handle;
+a span it holds keeps that span and the caller's open until then, and they
+close there under the same dispatcher. A value or payload delivered to the
+caller is the caller's to drop.
 
 This bounds permit holders, **not** waiting callers, request bodies, socket
 buffers, database connections in other components, or global fleet concurrency.

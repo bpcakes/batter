@@ -47,7 +47,9 @@ Tokio upgrade must recheck them.
 - tracing-subscriber 0.3.23 `registry/sharded.rs`: closing a span releases its
   parent through the thread's default dispatcher, and `Registry::try_close`
   panics on an unknown span ID. `run_blocking` therefore closes its
-  `batter.blocking_work` span under the dispatcher it captured at first poll.
+  `batter.blocking_work` span, and destroys an abandoned value or panic payload
+  that may hold a span created inside the closure, under the dispatcher it
+  captured at first poll.
 - [`task::JoinHandle`](https://docs.rs/tokio/1.53.1/tokio/task/struct.JoinHandle.html):
   dropping the handle detaches the task, so an abandoned wait leaves the closure
   running.
@@ -110,7 +112,15 @@ Source-inspected facts in the installed 1.53.1 crate:
   `Panicked`. `complete` and `drop_join_handle_slow` drop the output of a task
   whose handle is gone under `catch_unwind`, on the completing blocking thread or
   where the handle is dropped, so an abandoned value or panic payload is
-  destroyed unobserved.
+  destroyed unobserved. For a closure that ran, `complete` runs on the blocking
+  thread outside the dispatcher `run_blocking` captured, so Batter catches a
+  closure panic inside the closure and returns the value or payload in a private
+  wrapper whose destructor drops it under the dispatcher captured at first poll.
+  When `shutdown` destroys an unstarted closure and a capture's destructor
+  panics, Batter catches that panic and rethrows its payload in the same
+  wrapper, so `cancel_task` stores the wrapper as the panic `JoinError`; Tokio
+  destroys an unclaimed one under the captured dispatcher, and `run_blocking`
+  unwraps a claimed one into `Panicked` with the original payload.
 - `runtime/task/error.rs`: `Repr` is only `Cancelled` or `Panic`, and
   `JoinError`'s `Debug` and `Display` print a string payload, so
   `BlockingError` never stores a `JoinError`.

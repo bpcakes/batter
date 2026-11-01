@@ -129,7 +129,11 @@ Keep no await between the blocking-run decision and `spawn_blocking`. Never
 expose the blocking permit or `JoinHandle`, abort the blocking task, or add
 `From` conversions to `BlockingError`. Release the permit after the closure
 and its captures, before the result is published. Close the blocking span and
-destroy unrun work under the captured dispatcher; look up the runtime and its
+destroy unrun work, and an abandoned value or panic payload, under the captured
+dispatcher: catch a closure panic inside the blocking closure and return its
+payload, like a value, in the private wrapper, and rethrow a capture's panic
+from unstarted destruction in that wrapper, so Tokio never drops either
+unwrapped on the blocking thread. Look up the runtime and its
 time driver before admission, and poll the result wait inside that runtime. Shutdown settlement of
 abandoned closures stays on the ADR-014 watch list.
 
