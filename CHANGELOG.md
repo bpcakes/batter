@@ -8,6 +8,64 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Let finite commands own Unix-signal cancellation and return their checked
+  value by move (`batter-od4b`,
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#finite-command-signal-and-owned-completion-assessment-batter-od4b)).
+  `Command::start_with_unix_signals() -> io::Result<CommandOwner<T, E>>` is the
+  executable-root start; `Command::start_without_signals() -> CommandOwner<T, E>`
+  serves reusable helpers and in-process tests and installs nothing; work
+  registers its resources on its own `CommandScope` rather than awaiting a second
+  command, whose cleanup an interrupted outer command would leave unjoined.
+  Both return the sole, `#[must_use]` `CommandOwner`, with `cancel` and a
+  consuming `finish` that returns `CommandSuccess<T>` (`value`, `into_value`,
+  `stage`, `cleanup`; private fields; formatting omits the value) exactly when
+  `CommandReport::is_success` holds, and otherwise the existing
+  `CommandFailure::Report`, with a completed value only by reference, or
+  `CommandFailure::Coordinator`, including on runtime shutdown; it never panics.
+  `T` and `E` need only `Send + 'static`, not `Clone` or `Sync`. SIGTERM then
+  SIGINT are installed synchronously before the start returns, or not at all for
+  an already-cancelled or expired context. The coordinator polls them before
+  invoking the factory, every round after cancellation and before the deadline,
+  and when work returns, outside Tokio's cooperative budget, so a coincident
+  signal is a late interruption and not success. A signal cancels the command's own context and descendants, never the
+  parent, as `CommandCause::Interrupted(Interruption::Cancelled)`. Listeners drop
+  after work-future destruction and before cleanup on every path; later SIGTERM
+  and SIGINT are consumed without effect because Tokio never restores the
+  replaced disposition. Dropping the owner or an unfinished `finish` cancels
+  work, cleanup continues, and the unclaimed report is destroyed under the
+  coordinator's tracing dispatcher and span. `start` and `check_command` are
+  unchanged for reports several observers share.
+
+  ```rust,ignore
+  // Before: hand-installed listeners and a value copied out of a shared report.
+  let command = Command::new(context, cleanup, work).start();
+  let mut terminate = signal(SignalKind::terminate())?;
+  let mut interrupt = signal(SignalKind::interrupt())?;
+  tokio::select! {
+      _ = terminate.recv() => command.cancel(),
+      _ = interrupt.recv() => command.cancel(),
+      _ = command.observer().wait() => {}
+  }
+  let report = check_command(command.wait().await)?;
+  let value = report.work.as_ref().expect("checked success").clone();
+
+  // After: the command owns its signals and moves the checked value out.
+  let value = Command::new(context, cleanup, work)
+      .start_with_unix_signals()?
+      .finish()
+      .await?
+      .into_value();
+  ```
+
+  The `finite_command` example's inert helper returns the unstarted command, its
+  root alone calls `start_with_unix_signals()?` and moves the reply, which
+  derives no `Clone`, out of `CommandSuccess`, and its new `--until-signal` mode
+  waits after registration until Ctrl-C or `kill -TERM`, then exits 1 with
+  successful cleanup. Its tests use `start_without_signals`, plus one real
+  SIGINT/SIGTERM root test. The `owned_pool` root uses the signal-owning path and
+  `?` instead of `expect`. Not a hard cut: no `Breaking:`, `Migration:` or shim
+  applies; no public item, signature, variant or field changed.
+
 - Drive one job handler in a test without a worker, queue or database
   (`batter-3upk`, closing gap 7 of the
   [whole-application baseline](docs/evidence/whole-app-baseline-2026-10-09/README.md);

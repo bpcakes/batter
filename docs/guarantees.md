@@ -682,15 +682,79 @@ outer value to approve without exposing a detached approval capability.
 
 ## Owned finite commands
 
-`Command::new` is inert; `start` retains the callback, its work context and
-registered LIFO cleanup independently of waiters. Command cancellation stays
-below the supplied parent context. Returning an error with `?`, factory/poll
-unwinding or cancelling work still reaches registered finalization. Original
-work results actually returned by a poll, late boundary interruptions,
-future-destruction panics and cleanup
+`Command::new` and `Command::within` are inert. `start_with_unix_signals`,
+`start_without_signals` and `start` each retain the callback, its work context and
+registered LIFO cleanup in one coordinator, independently of waiters. Command
+cancellation stays below the supplied parent context. Returning an error with
+`?`, factory/poll unwinding, cancelling work or a command-owned signal still
+reaches registered finalization. Original work results actually returned by a
+poll, late boundary interruptions, future-destruction panics and cleanup
 outcomes coexist in `CommandReport`. A failed cleanup coordinator cannot erase
-the work result. `check_command` interprets the complete contract, and the shared
-report warns when implicitly discarded. Formatting excludes value/cause contents.
+the work result. `CommandOwner::finish` and `check_command` interpret the same
+complete contract, `CommandReport::is_success`; a discarded owner and an
+implicitly discarded shared report both warn. Formatting excludes value/cause
+contents.
+
+`start_with_unix_signals` and `start_without_signals` return the sole,
+non-cloneable `CommandOwner`, which has no observer or borrowed waiter. Its
+consuming `finish` awaits the coordinator's `JoinHandle` directly and returns
+`CommandSuccess<T>` exactly when `is_success` would hold, moving the work value
+out. Its fields are private, so success evidence cannot be constructed by
+callers, and its formatting omits the value. Every other report is
+`CommandFailure::Report`, retaining the original work error, panics and every
+cleanup error; a completed value there is reachable only by reference. A
+coordinator lost without a report is `CommandFailure::Coordinator`, retaining
+its `JoinError`: cancelled on runtime shutdown, or a panic when the coordinator
+itself panics, as it does without the runtime's time driver, with no cleanup
+claim; `finish` never panics. A command that completed before its runtime died still delivers its
+value to `finish` on another runtime. `T` and `E` need only `Send + 'static`.
+Dropping the owner, or an unfinished `finish` future, requests work cancellation,
+downward only; before the coordinator first runs, the factory is destroyed
+uninvoked. Cleanup continues on the live runtime, and the unclaimed report, with
+its value, errors, panics and cleanup errors, is destroyed under the
+coordinator's captured dispatcher and span rather than wherever Tokio drops task
+output. The captured span itself is released under that dispatcher whether or
+not `finish` claimed the report, so a nested span's parent closes in its own
+registry. The work deadline and cleanup budget already bound `finish`; wrapping it
+in an application timeout and then leaving the root lets runtime shutdown
+abandon cleanup.
+
+`start_with_unix_signals` installs SIGTERM then SIGINT listeners synchronously
+before returning, unless the context is already cancelled or expired: then
+nothing is installed and the report records that interruption without invoking
+the factory. An installation error returns before anything is spawned, after the
+factory is destroyed uninvoked. Only the coordinator polls the listeners, and only
+while work can still be cancelled: one non-blocking poll before the factory, so a
+visible signal destroys it uninvoked; every round in the order cancellation,
+signal, deadline, work; and once more when work returns, so a coincident signal is
+`interruption_after_work = Some(Cancelled)` and the command is unsuccessful, as
+after a concurrent `cancel`. Each observation runs outside Tokio's cooperative
+budget, so work that spent the task's budget in its final poll cannot hide a
+visible signal. A signal cancels the command's own scoped child
+context, reaching descendants before the work future is destroyed and never the
+parent, and is recorded as `Interrupted(Cancelled)` without its identity. The
+listeners are dropped after work-future destruction and before cleanup on every
+path. Cleanup then runs under its own budget; a signal during cleanup or after
+`finish` neither interrupts, fails nor restarts it. A command started inside
+another command's work is a separately owned task: if the outer work is
+interrupted while awaiting the inner `finish`, the inner owner drops and its
+cleanup runs detached, joined and reported by nothing. Resources acquired inside
+work register on the outer `CommandScope`.
+
+Signal ownership limits: Tokio replaces each signal's process-wide disposition at
+installation and does not restore it when listeners drop. After work stops,
+during cleanup, after `finish` and between commands, SIGTERM and SIGINT are
+consumed without effect; a root with later phases needs its own signal policy
+for them. Whether a signal arriving between two signal-owning commands cancels the
+second before its work starts depends on when a runtime's signal driver processes
+it. Reception is cooperative, not a fence at kernel delivery, and non-yielding
+work is not preempted. Signal identity is not recorded. A failed SIGINT
+installation leaves SIGTERM's disposition replaced; there is no rollback.
+Installation panics, as Tokio does, outside a runtime or without its I/O
+(signal) driver, and returns an installation error once that driver is gone. The
+coordinator also needs the time driver.
+`start_without_signals`, `start` and an inert command install nothing, so
+SIGTERM and SIGINT keep the process's existing disposition.
 
 Command interruption is captured at the final poll before destroying the work
 future. Cancellation or deadline expiry during destruction cannot reclassify
@@ -698,8 +762,9 @@ completed work; destruction panics and cleanup failures still make the report
 unsuccessful. This differs from startup readiness, which requires a live context
 after initializer destruction before acknowledging readiness.
 
-Cancelling borrowed waiters has no effect. Dropping `RunningCommand` requests
-work cancellation; observers retain completion without keeping that owner alive.
+For the shared path, cancelling borrowed waiters has no effect. Dropping
+`RunningCommand` requests work cancellation; observers retain completion without
+keeping that owner alive.
 Work completion cancels child contexts before cleanup. Finalizers must use their
 native independent cleanup, not captured work cancellation tokens. Resources are
 registered through validated reservations; no takeable stack lets the canonical
@@ -711,9 +776,12 @@ reserves cleanup's total work and abort-observation allowance inside an enclosin
 absolute deadline. Work and cleanup cannot restart that total. Scheduling delays
 can consume the reserve and produce explicit skipped hooks. Neither variant can
 preempt non-yielding code, undo remote effects or finalize after runtime death.
-Published reports survive runtime destruction; an observer whose monitor died
-before publication cannot fabricate a completed report. Tests in `tests/command`
-cover these ownership/budget distinctions; the finite example exercises native UDP.
+Shared published reports survive runtime destruction; an observer whose monitor
+died before publication cannot fabricate a completed report. Tests in
+`tests/command` cover these ownership/budget distinctions, private
+injected-source tests in `src/command/tests` the signal observation points, and
+fresh-process `tests/command_signals` real SIGTERM/SIGINT; the finite example
+exercises native UDP and real signals at its executable root.
 
 ## Owned startup contract
 
@@ -838,7 +906,8 @@ atomic fence at kernel delivery. Process-global signal selection belongs at the
 executable root; reusable in-process test helpers must not install it implicitly.
 
 Standalone finite commands use `Command` to retain work and cleanup independently
-of the caller's waiter. The lower-level `OperationContext::run` and
+of the caller's waiter; at an executable root, `start_with_unix_signals` owns
+SIGTERM/SIGINT for the work phase only. The lower-level `OperationContext::run` and
 `CleanupStack::close` remain separately driven operations; composing them manually
 does not create an owned finalization driver. No remote database termination or
 rollback guarantee follows from either local completion report.

@@ -152,7 +152,11 @@ impl<T: 'static, E: Error + 'static> Error for CommandFailure<T, E> {
 }
 
 /// Check work and all cleanup before returning the retained successful report.
-/// See [`super::Command`] for a complete finite command using this boundary.
+/// See [`super::Command::start`] for a shared-observation command using this
+/// boundary. To keep the work value without `Clone`, start the command with
+/// [`super::Command::start_with_unix_signals`] or
+/// [`super::Command::start_without_signals`] and call
+/// [`super::CommandOwner::finish`] instead.
 pub fn check_command<T, E>(
     outcome: CommandOutcome<T, E>,
 ) -> Result<SharedCommandReport<T, E>, CommandFailure<T, E>> {
@@ -160,5 +164,87 @@ pub fn check_command<T, E>(
         Ok(report) if report.is_success() => Ok(report),
         Ok(report) => Err(CommandFailure::Report(report)),
         Err(error) => Err(CommandFailure::Coordinator(error)),
+    }
+}
+
+impl<T, E> CommandReport<T, E> {
+    /// The same classification as [`Self::is_success`], moving the work value
+    /// out on success. Every field is named, so a new report field cannot be
+    /// skipped here silently. There is no panic path.
+    pub(super) fn into_checked(self) -> Result<CommandSuccess<T>, CommandFailure<T, E>> {
+        match self {
+            Self {
+                stage,
+                work: Ok(value),
+                interruption_after_work: None,
+                destruction_panic: None,
+                cleanup: Ok(cleanup),
+            } if cleanup.is_success() => Ok(CommandSuccess {
+                value,
+                stage,
+                cleanup,
+            }),
+            report => Err(CommandFailure::Report(SharedCommandReport(Arc::new(
+                report,
+            )))),
+        }
+    }
+}
+
+/// Evidence that the complete command contract succeeded, holding the work
+/// value moved out of its report.
+///
+/// Only [`super::CommandOwner::finish`] creates it, after the same checks as
+/// [`CommandReport::is_success`]: work returned `Ok`, no interruption was
+/// effective when it returned, its future was destroyed without a panic and
+/// every registered finalizer succeeded. Reaching the value needs neither
+/// `expect` nor `Clone`. Default formatting omits the value.
+///
+/// Success evidence cannot be constructed by callers:
+///
+/// ```compile_fail,E0451
+/// use batter_core::{cleanup::CleanupReport, command::CommandSuccess};
+/// fn forge() -> CommandSuccess<u8> {
+///     CommandSuccess { value: 1, stage: "forged", cleanup: CleanupReport::default() }
+/// }
+/// ```
+pub struct CommandSuccess<T> {
+    value: T,
+    stage: &'static str,
+    cleanup: CleanupReport,
+}
+
+impl<T> CommandSuccess<T> {
+    /// Borrow the checked work value.
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Move the checked work value out.
+    pub fn into_value(self) -> T {
+        self.value
+    }
+
+    /// The last stage the work validated with [`super::CommandScope::stage`].
+    pub fn stage(&self) -> &'static str {
+        self.stage
+    }
+
+    /// Every finalizer's successful outcome, in LIFO order; none was skipped.
+    pub fn cleanup(&self) -> &CleanupReport {
+        &self.cleanup
+    }
+}
+
+impl<T> fmt::Display for CommandSuccess<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "command at {} succeeded; ", self.stage)?;
+        fmt::Display::fmt(&self.cleanup, f)
+    }
+}
+
+impl<T> fmt::Debug for CommandSuccess<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }

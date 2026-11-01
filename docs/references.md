@@ -3897,10 +3897,12 @@ admission closure, typed result retention and bounded joining by itself.
 
 ### Finite commands need an owner, not another deadline helper
 
-The current `crates/batter/examples/finite_command.rs` explicitly requires callers
-to keep polling its outer future through cleanup. `OperationContext::reserve_finalization`
-creates two descendants of the same cancellation token; it neither shields cleanup
-nor arranges for cleanup to execute. Process admission also requires a running,
+The then-current `crates/batter/examples/finite_command.rs` explicitly required
+callers to keep polling its outer future through cleanup; the example now uses
+the owned, signal-selecting path recorded under
+[finite command signals](#finite-command-signals-and-owned-completion-2026-10-31).
+`OperationContext::reserve_finalization` creates two descendants of the same
+cancellation token; it neither shields cleanup nor arranges for cleanup to execute. Process admission also requires a running,
 ready service and does not end that service when one command completes.
 
 Decision: use the existing owned-startup coordinator pattern for a separate finite
@@ -5462,3 +5464,52 @@ PostgreSQL 18.6.
 - PostgreSQL 18 [error codes](https://www.postgresql.org/docs/18/errcodes-appendix.html):
   `28P01` invalid_password and `42501` insufficient_privilege, both observed on
   PostgreSQL 18.6 by the live cases.
+
+## Finite command signals and owned completion (2026-10-31)
+
+Owning Bead: `batter-od4b`. Rechecked against the locked Tokio 1.53.1 sources in
+the Cargo registry; no dependency version changed.
+
+- Tokio's [signal registry](https://docs.rs/tokio/1.53.1/src/tokio/signal/registry.rs.html)
+  keeps one `watch::Sender<()>` and one pending flag per signal number.
+  `register_listener` returns `tx.subscribe()`, whose receiver starts at the
+  current version, so it sees only later broadcasts; `record_event` sets the
+  pending flag; `broadcast` swaps each set flag and sends to every subscriber,
+  ignoring a send with no receivers. A [`Signal`](https://docs.rs/tokio/1.53.1/src/tokio/signal/mod.rs.html)
+  owns its receiver through `RxFuture`, so dropping it removes the listener.
+- In [`signal/unix.rs`](https://docs.rs/tokio/1.53.1/src/tokio/signal/unix.rs.html)
+  the process-level handler records the event and writes one byte to a global
+  pipe. `signal_enable` registers that handler once per signal through
+  `signal_hook_registry` and never unregisters it, and returns
+  `"signal driver gone"` from `check_inner` when the runtime's driver is gone.
+  `signal` itself calls `Handle::current()`, which panics outside a runtime, and
+  [`driver().signal()`](https://docs.rs/tokio/1.53.1/src/tokio/runtime/driver.rs.html),
+  which panics with "there is no signal driver running" without the I/O driver.
+  The `Signal` documentation states that, even after the listener is dropped,
+  later deliveries stay captured and the default behaviour is not reset. After a
+  command drops its listeners, a SIGTERM or SIGINT is therefore recorded and
+  broadcast to no receiver: consumed without effect. A failed SIGINT
+  installation cannot roll back SIGTERM's handler.
+- Each runtime's [signal driver](https://docs.rs/tokio/1.53.1/src/tokio/runtime/signal/mod.rs.html)
+  registers its own `try_clone` duplicate of the one global pipe receiver,
+  expecting at least one duplicate to see a wakeup; `process` drains it and
+  calls `globals().broadcast()`, which reaches every listener in the process,
+  whichever runtime created it. That is why the `command_signals` oracle runtime
+  can make a signal visible to a command whose runtime is blocked, and why a
+  signal arriving between two signal-owning commands reaches the second only if
+  a driver broadcasts after its listener subscribed.
+- [`sleep_until`](https://docs.rs/tokio/1.53.1/src/tokio/time/sleep.rs.html)
+  needs the time driver and otherwise panics where the sleep is created; for a
+  command that is inside its coordinator task, which `finish` reports as
+  `CommandFailure::Coordinator`.
+- [`JoinHandle`](https://docs.rs/tokio/1.53.1/src/tokio/runtime/task/join.rs.html)
+  detaches its task when dropped. In the [task harness](https://docs.rs/tokio/1.53.1/src/tokio/runtime/task/harness.rs.html),
+  `complete` drops the output itself when join interest is already unset, and
+  `drop_join_handle_slow` drops a completed output when the handle drops, under
+  `catch_unwind`; neither runs inside the task's future, so a dispatcher wrapper
+  around that future does not cover the output's destruction. The private
+  `ScopedOutput` guard therefore carries the coordinator's dispatcher and span
+  into the output. Runtime shutdown calls `shutdown`, whose `cancel_task` drops
+  the future and stores `JoinError::cancelled` (or a panic error if that drop
+  panicked); an owner awaiting from another runtime receives that error, which
+  `finish` returns as `CommandFailure::Coordinator` instead of panicking.

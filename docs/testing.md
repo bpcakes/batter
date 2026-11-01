@@ -492,26 +492,115 @@ and typed output through `service::start`.
 and managed rejection without factory invocation. `tests/startup_composition.rs` independently
 checks unsuccessful empty supervision with successful cleanup and successful
 finite-work-only supervision. `finite_command` is explicitly declared with
-`test = true`; its six example tests run in the ordinary all-targets workspace
-matrix. They check native loopback work, separate/simultaneous work and cleanup
-failures, and cleanup after post-acquisition cancellation or deadline. The command
-library contracts in `tests/command.rs` additionally cover owner/waiter loss,
-downward cancellation, original result and panic retention, absolute total reserves,
-cleanup timeouts and report observation across runtime destruction. The scoped
-task suite checks work and cleanup destruction under the originating subscriber.
+`test = true`; its seven example tests run in the ordinary all-targets workspace
+matrix. Six start the inert helper with `start_without_signals().finish()` and
+check native loopback work with the reply moved out, separate/simultaneous work
+and cleanup failures, a completed reply kept only by reference under cleanup
+failure, and cleanup after post-acquisition cancellation or deadline. The seventh
+re-executes its own test binary as the executable root in `--until-signal` mode,
+gated by exact arguments and an environment variable, waits for the line printed
+after listener installation and socket registration, and sends real SIGINT to one
+child and SIGTERM to another. In each child, `root` must return
+`ExitCode::FAILURE` (exit 1 for the real binary) after reporting interrupted work
+and successful cleanup; the child test process must then exit successfully, not
+by signal, within the guard.
+
+The command library contracts in `tests/command.rs` (31 tests) additionally cover
+owner/waiter loss, downward cancellation, original result and panic retention,
+absolute total reserves, cleanup timeouts and report observation across runtime
+destruction. Its `owner` module (eight tests) uses only the public
+`start_without_signals` path: a value that is neither `Clone` nor `Sync`, asserted
+at compile time, moves out with LIFO cleanup evidence; a failure keeps the original
+work error and every cleanup error downcastable through the `source` chain
+without formatting them; a completed value under cleanup failure and a final-poll
+cancellation stay by reference without success; dropping an unfinished `finish`
+cancels the work context before the work future is destroyed, still finalizes and
+spares the parent; an owner dropped before the coordinator runs invokes no
+factory; `cancel` precedes `finish`; and both outcomes cross a `BoxError` boundary.
+Three `runtime` tests return `CommandFailure::Coordinator` with a cancelled
+`JoinError`, without a panic, when the runtime dies during work; return it with a
+panic `JoinError` when the runtime has no time driver; and deliver the value on
+another runtime after the command completed. The scoped task suite checks
+work and cleanup destruction under the originating subscriber; two owner-loss
+tests destroy an unclaimed report's value and error under the driver dispatcher
+and span, never the ambient one.
+
+Eighteen private unit tests in `src/command/tests` never install a process-wide
+disposition. Thirteen start commands through `signals::start_with` with an
+injected `WorkSignals` source over a channel; two call `start_with` with a failing
+installer or one that must not run; two `checked` tests build reports directly;
+and the `unclaimed` test starts through `start_without_signals`. Channels and drop logs order
+them; timeouts are failure guards, and paused time is used only where deadline
+expiry or an advance before the first coordinator poll is the scenario. A
+delivery queued before the first poll destroys the factory uninvoked, even after
+the deadline passed; a delivery during work cancels the command's own context,
+so a descendant is already cancelled when the work future is destroyed, and
+spares the parent; and a delivery visible on work's final poll is a late
+interruption that keeps `Ok(7)` by reference, even when work spent the task's
+cooperative budget in that poll. Listeners are removed by the time `finish`
+returns on success, returned error, factory and poll panics, deadline expiry,
+`cancel`, owner drop and the pre-factory path. Their order is checked where a
+hook or marker can observe it: work destruction, removal, then cleanup for a
+delivery during work; removal before cleanup on success and owner drop; and
+factory destruction before removal on the pre-factory path. Every path reaches
+the coordinator's single listener drop after `run_work`, so the other paths'
+order is structural, not separately tested.
+An installation error returns after the factory is destroyed with no task
+spawned; an already-cancelled or expired context never calls the installer.
+`into_checked` agrees with `is_success` over 32 report combinations and retains
+every failed field; success and failure formatting omit the value; and an
+unclaimed owner report is destroyed under the starting dispatcher. Four
+`scoped_dispatch` unit tests drop `ScopedOutput` under its producer's dispatcher
+and span when unclaimed and under its claimant when claimed, and release a
+captured child span, closing its parent, in the producer's registry on both
+paths, even under a different fallback registry. The within-round
+order of a signal against a deadline is untested, because timer readiness
+depends on a driver turn.
+
+`tests/command_signals.rs` sends real SIGTERM and SIGINT to fresh child
+processes through the shared `test-support/process` launch protocol: six parent
+tests and the inert `child_fixture` entry, fourteen children per run. Each signal
+follows the child marker that makes it meaningful; timeouts are failure guards,
+in real time. The signal-before-first-poll case is deterministic: the child runs
+an oracle current-thread runtime on another OS thread with its own TERM/INT
+listeners and blocks the command's runtime synchronously until the oracle
+reports reception. Tokio 1.53.1 gives each runtime's signal driver a duplicate of
+one process-wide receiver and broadcasts to every listener in the process, so
+the oracle's driver makes the signal visible to the command's listener; the
+factory must not run, which also proves synchronous installation. Other cases
+signal pending work on current-thread and two-worker runtimes (interrupted work,
+LIFO cleanup with a retained unformatted audit failure, cancelled descendants,
+live parent), signal during cleanup of a successful command (still successful,
+value moved out), send one signal during work and another during cleanup in both
+orders (cancelled once, cleanup undisturbed), and require default TERM/INT
+termination for an inert command and for `start_without_signals`. Removal of the
+real Tokio listeners is not observed directly: it follows by construction from
+dropping them before cleanup and is proven against the injected oracle; the
+cleanup cases show only that later signals have no command effect. The INT
+negative controls share the [background-job caveat](#verification). Execution
+outcomes belong to `batter-od4b`; Linux is unverified until recorded there.
 
 ```sh
 cargo test -p batter-core --locked --test command --test startup_composition
+cargo test -p batter-core --locked --test command_signals
+cargo test -p batter-core --locked --test scoped_owned_tasks
+cargo test -p batter-core --locked --lib command::
+cargo test -p batter-core --locked --lib scoped_dispatch
+cargo test -p batter-core --doc --locked command::
 cargo test -p batter-core --locked --test typed_startup
 cargo test -p batter --locked --test typed_startup_consumer
 cargo test -p batter-core --doc --locked startup::Startup
 cargo test -p batter --doc --locked
+cargo test -p batter --locked --example finite_command
 cargo run -p batter --example finite_command --locked
+cargo run -p batter --example finite_command --locked -- --until-signal
 ```
 
 The command's `--fail-work`, `--fail-cleanup`, `--fail-both`, `--cancel` and
 `--deadline` modes must exit nonzero; interruption must still report successful
-cleanup. See [usage](usage.md#finite-commands-and-owned-cleanup).
+cleanup. `--until-signal` must exit 1 after Ctrl-C or `kill -TERM`, reporting
+interrupted work and successful cleanup. See
+[usage](usage.md#finite-commands-and-owned-cleanup).
 These tests require no database. Owned command finalization requires a live runtime;
 it cannot promise remote effect reversal or termination of arbitrary spawned tasks.
 
@@ -1706,6 +1795,7 @@ excludes archived reviews under `.agent/reviews`.
 | Owned startup waiter/owner loss, constrained registration, acquisition-registration barriers, LIFO failures, initialization deadline, returned-error/destruction panic, simultaneous drain/destruction classification and readiness/handoff | [startup.rs](../crates/batter-core/tests/startup.rs), [protected_startup.rs](../crates/batter-core/tests/protected_startup.rs), [registration.rs](../crates/batter-core/tests/registration.rs) |
 | Async-closure initializers: typed output only with the owner, rejected output destroyed before cleanup with retained destructor panic, queued output on owner loss, no output after failure or panic, boxed application failures through `?`, unit output through `service::start`, anyhow-style facade root | [typed_startup.rs](../crates/batter-core/tests/typed_startup.rs), [typed_startup_consumer.rs](../crates/batter/tests/typed_startup_consumer.rs), compile-fail rustdoc in [initializer.rs](../crates/batter-core/src/startup/initializer.rs), [handoff.rs](../crates/batter-core/src/startup/handoff.rs) and [service/driver.rs](../crates/batter-core/src/service/driver.rs) |
 | Protected synchronous signal install, policy precedence, reserved identity, retained injected IO/destructor/cleanup causes, deterministic same-poll failure/success reception, TERM/INT during start and running, cleanup-owned observation of delayed repeated signals without deadline restart, and unconfigured/unstarted default-disposition controls | [startup_signals.rs](../crates/batter-core/tests/startup_signals.rs), injected driver controls in [driver.rs](../crates/batter-core/src/startup/driver.rs), and lower-level controls in [unix.rs](../crates/batter-core/src/lifecycle/unix.rs) |
+| Finite command signal ownership and owned completion: injected pre-factory, during-work and final-poll delivery, listener removal before cleanup on every path, a final-poll delivery after work spent its cooperative budget, install failure and interrupted-context skip, `into_checked` against `is_success`, value-free formatting; public owner move-out, retained failures, unfinished-`finish` and pre-run owner drop, runtime loss and a missing time driver as `Coordinator`; unclaimed reports destroyed under the coordinator dispatch; real TERM/INT before the first poll, during work, during cleanup and repeated, plus unsignalled default-disposition controls | injected unit tests in [command/tests.rs](../crates/batter-core/src/command/tests.rs), owner tests in [owner.rs](../crates/batter-core/tests/command/owner.rs) and [runtime.rs](../crates/batter-core/tests/command/runtime.rs), [scoped_owned_tasks/command.rs](../crates/batter-core/tests/scoped_owned_tasks/command.rs), [command_signals.rs](../crates/batter-core/tests/command_signals.rs), compile-fail rustdoc in [owner.rs](../crates/batter-core/src/command/owner.rs) and [report.rs](../crates/batter-core/src/command/report.rs), and the [finite-command example tests](../crates/batter/examples/finite_command/tests.rs) |
 | Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
 | Completion/drain classification regression | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
 | Never-polled ordinary/unapproved caller-owned driver drop signals readiness/cancellation before captured values are destroyed; unapproved spawned-owner drop requests drain before its driver poll; borrowed non-Send shutdown | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs), [lifecycle_state.rs](../crates/batter-core/tests/lifecycle_state.rs) |

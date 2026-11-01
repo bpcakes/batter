@@ -44,6 +44,11 @@ Windows support and non-Unix fallbacks are out of scope.
   `std::error::Error` (its blanket `From` and `InitializationError` impl depend on that).
 - `src/command.rs` and `command/` own finite callbacks and independently retained
   LIFO finalization, with separate work/cleanup outcomes and an optional total reserve.
+  `command/owner.rs` owns the sole `CommandOwner` and its consuming `finish`;
+  `command/report.rs` owns `CommandSuccess` and the private `into_checked`;
+  `command/signals.rs` owns the private `WorkSignals` seam and SIGTERM/SIGINT
+  listeners; `command/driver.rs` owns both coordinators; injected-source unit
+  tests live in `command/tests.rs` and `command/tests/`.
 - `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
 - `src/completion.rs` privately owns the snapshot-before-wait mechanism shared by
   command, startup and process completion observers; their public policies stay separate.
@@ -58,7 +63,8 @@ Windows support and non-Unix fallbacks are out of scope.
   always-compiled `telemetry/record.rs` shim, never feature attributes. Emit only after results are known
   and outside admission locks; never add a buffer, retry or log for metrics.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
-  `src/scoped_dispatch.rs` owns its private pin/drop implementation.
+  `src/scoped_dispatch.rs` owns its private pin/drop implementation and the
+  `ScopedOutput` guard that destroys unclaimed task output under its producer.
 
 ## Edit here for X
 
@@ -97,6 +103,12 @@ Finite command scopes expose validated cleanup reservations, never a takeable
 stack or process-task admission. Command cancellation is downward and cleanup
 does not inherit it; callback return/unwinding cannot bypass registered cleanup.
 Reserve cleanup names before acquisition and register immediately after success.
+Command signal listeners exist only while work can be cancelled: install them
+synchronously before the owned start returns, poll them only in the coordinator,
+and drop them after work-future destruction and before cleanup. Owned completion
+moves a value out only through `into_checked`'s full report check; never share
+the owned report or add a `CommandCause`, `CommandFailure` variant or report
+field without a hard-cut entry.
 Extracted finalizers remain explicitly awaited and must not inherit process
 operation cancellation; extraction does not detach captured tokens.
 Health readers create no work; the sole monitor owns and destroys its active
@@ -131,6 +143,7 @@ Run from the workspace root:
 cargo test -p batter-core --locked
 cargo test -p batter-core --features metrics --locked
 cargo test -p batter-core --doc --locked
+cargo test -p batter-core --locked --test command_signals
 cargo clippy -p batter-core --all-targets --locked -- -D warnings
 python3 scripts/test_matrix.py workspace
 python3 scripts/test_matrix.py no-default-features
