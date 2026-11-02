@@ -863,15 +863,34 @@ manual dispatch. Feature-branch pushes use their PR run instead of starting a
 second complete matrix; branches without a PR can use manual dispatch. Linux
 verification calls the complete script, so its former standalone HTTP
 step is removed. The focused macOS job retains its explicit smoke step.
-Superseded runs for the same PR/ref are cancelled. Regular CI runs six matrix jobs:
-two Linux verification jobs, two focused macOS jobs, and two native Runlimit
-PostgreSQL jobs. Mondays at 04:23 UTC, the scheduled run executes only the Linux
-verification job with `stable`, including all five HTTP smoke profiles. Its
-concurrency group is separate from regular CI. Scheduled execution starts after
-the workflow reaches the default branch; no hosted result for this change is
-claimed. Existing test, lint, documentation and HTTP smoke commands remain
-required, with no cache-hit condition bypassing them. Job timeouts are 45 minutes
-for full Linux verification, 30 for macOS and 15 for native Runlimit PostgreSQL.
+Superseded runs for the same PR/ref are cancelled. A planning job runs
+`scripts/ci_plan.py` first. Regular CI then runs two Linux verification jobs
+(Rust 1.94.0 and 1.98.1), one focused macOS job and one native Runlimit
+PostgreSQL job, both on the pinned 1.98.1 toolchain. Rust 1.94.0 compatibility
+is verified on Linux; the macOS job exists for macOS process, signal and
+scheduling behavior. The Runlimit PostgreSQL job runs only when a change touches
+the local package closure of `runlimit-postgres` (from `cargo metadata
+--no-deps`, including that package's own dev-dependencies) or a workspace-wide
+input: the root manifest, lockfile, toolchain file, `.cargo/`, this workflow or
+the planner. Manual dispatch always runs it. Mondays at 04:23 UTC, the scheduled
+run executes only the Linux verification job with `stable`, including all five
+HTTP smoke profiles. Its concurrency group is separate from regular CI.
+Scheduled execution starts after the workflow reaches the default branch.
+
+After every test job in a same-repository pull-request or merge-group run
+passes, a recording job uploads a `verified-tree-<tree hash>` artifact, retained
+for 30 days. On a later push to `master` with exactly that tree, each test job
+restores its cache and skips its test steps only when the cache is an exact hit.
+A miss runs the full job, which also saves the master cache, so lockfile and
+toolchain changes still refresh it. The planner rejects fork, expired,
+other-workflow and push-event markers. A failed lookup selects the full run, and
+so does a failed planning job, because test jobs run unless the planner
+succeeded and selected a skip. A merge whose base moved after the PR run has a
+different tree and runs in full. Pull requests, merge groups, manual dispatch
+and the schedule run every required test, lint, documentation and HTTP smoke
+command; only the verified-tree push path skips them. Job timeouts are 45
+minutes for full Linux verification, 30 for macOS, 15 for native Runlimit
+PostgreSQL and 5 for planning and recording.
 
 The pinned Rust cache action restores Cargo downloads and compiled dependencies
 after toolchain installation. Its default keys separate jobs, compiler/host,
@@ -888,6 +907,16 @@ The optimized workflow passed [PR run 35713923253](https://github.com/bpcakes/ba
 at `19c3575`, before the at-rest merge; cache speedups remain unmeasured.
 This public repository's standard hosted runner usage does not establish
 a billed dollar saving. See [primary references](references.md#github-actions-scheduling-and-caching-reviewed-2026-09-22).
+
+The run history from 2026-10-05 to 2026-11-02 (258 runs) averaged about 228
+runner-minutes a day. Pushes to `master` used about 67 of them, and 43 of the 46
+PR merges in that history re-tested a tree whose PR run had passed. The macOS
+Rust 1.94.0 job used about 18. The two Runlimit PostgreSQL jobs used about 16,
+although replaying the planner over the 35 `master` commits selects that job for
+10. The verified-tree path, the single macOS toolchain and the scoped Runlimit
+job (`batter-f0jz`) are estimated to save about 85 runner-minutes a day at that
+volume; no hosted measurement of the change is claimed yet. See
+[primary references](references.md#github-actions-ci-scope-selection-reviewed-2026-11-02).
 
 Packages inheriting the workspace lint table enable `clippy::cognitive_complexity`,
 `clippy::too_many_lines`, and `clippy::fn_params_excessive_bools` at warning level.
@@ -1736,7 +1765,8 @@ hold windows and require the same outcomes; an absent peer must fail the
 handshake and prevent later batches. The ten-second handshake deadline and
 30-second control watchdog bound failures rather than prescribe scheduling.
 
-The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
+The existing `ci.yml` owns the Rust/toolchain/HTTP matrix, and
+`scripts/ci_plan.py` selects which of its jobs a run needs. `repo-policy.yml`
 checks file budgets and Python script controls. Both reuse only the pinned
 file-budget runtime binary cache. `batter-at-rest-portability.yml` separately
 verifies detached source, packaging and an external consumer on Rust 1.94.0;
@@ -2216,8 +2246,9 @@ the test's timing model. If the real parent dies, the OS's adopting reaper owns
 the terminated child's wait; only a surviving owner can explicitly reap it.
 The hosted macOS job type-checks every workspace target, builds and smoke-tests
 the HTTP example, and runs the focused subprocess, scheduling, ownership,
-report-doctest, database-independent lifecycle, Axum and readiness suites on
-Rust 1.94.0 and 1.98.1. Those jobs passed for commit
+report-doctest, database-independent lifecycle, Axum and readiness suites. It ran
+on Rust 1.94.0 and 1.98.1 until `batter-f0jz` and now runs on the pinned 1.98.1
+toolchain. Those jobs passed for commit
 `56814038f2a9cf6a34688ee39cd9f0e433487a1e`; they do not cover the later
 documentation, package-description, and rustdoc refresh or claim a full hosted
 macOS matrix. Separately, both full verification matrices and the rebuilt HTTP
