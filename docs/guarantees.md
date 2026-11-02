@@ -1,7 +1,7 @@
 # Guarantees, preconditions, and non-guarantees
 
 These describe the implemented contract and its limits. All workspace packages
-retain Rust 1.94 as their minimum, with development pinned to Rust 1.98.1.
+declare Rust 1.98.1, the pinned development toolchain, as their minimum.
 SQLx 0.9.0 belongs to the optional PostgreSQL adapter and unpublished example
 packages, not the foundation or generic test support. Passing tests do not establish guarantees beyond their scope.
 

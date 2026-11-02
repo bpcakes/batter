@@ -106,11 +106,11 @@ scripts/check-batter-at-rest-portability.sh
 ```
 
 The command requires Rustup, `jq`, Node.js, and Python 3.11 or newer (for the
-standard library's TOML parser). Install the minimum toolchain once with `rustup
-toolchain install 1.94.0 --profile minimal`; Rustup's minimal profile includes
-Cargo.
+standard library's TOML parser). It uses the repository's pinned toolchain,
+which is also the crate's minimum; install it with `rustup toolchain install
+1.98.1 --profile minimal` if needed. Rustup's minimal profile includes Cargo.
 
-The gate selects the exact Rust 1.94.0 minimum explicitly, copies the tracked
+The gate selects the exact Rust 1.98.1 minimum explicitly, copies the tracked
 and unignored `crates/batter-at-rest` commit candidate to a fresh directory under
 `TMPDIR` (defaulting to `/tmp`) outside the checkout and any Cargo project,
 checks source-manifest structure and detached dependency metadata, runs tests
@@ -132,9 +132,9 @@ configuration on that launch directory's ancestor path. In the detached
 directory the corresponding manual commands are:
 
 ```console
-cargo +1.94.0 test
-cargo +1.94.0 check --all-targets
-cargo +1.94.0 package --allow-dirty
+cargo +1.98.1 test
+cargo +1.98.1 check --all-targets
+cargo +1.98.1 package --allow-dirty
 ```
 
 Packageability is local validation, not evidence of a registry upload. Version

@@ -738,8 +738,8 @@ and retains both workspace/all-feature and native Runlimit/default-feature Clipp
 There is no separate full-matrix or HTTP rerun after a successful run.
 
 Run local verification once with the current release pinned in
-`rust-toolchain.toml` (1.98.1). Exact Rust 1.94.0 verification is CI-only unless
-explicitly requested to reproduce an MSRV failure. Upgrade the local pin and
+`rust-toolchain.toml` (1.98.1), which is also every package's declared minimum;
+CI runs the same toolchain once. Upgrade the pin, every `rust-version` and the
 pinned CI entries together; a weekly CI run checks floating `stable`.
 
 Python 3.9 or newer is required by the scheduling subprocess tests, including plain
@@ -792,7 +792,7 @@ provides separate Batter adapter/reference compatibility evidence. A Cargo.lock 
 the actual resolver must be committed after the first successful run.
 
 CI's `scripts/check-batter-at-rest-portability.sh` separately selects exact Rust
-1.94.0, copies only the tracked `crates/batter-at-rest` candidate into a neutral
+1.98.1, copies only the tracked `crates/batter-at-rest` candidate into a neutral
 temporary root, rejects workspace/path/config leakage, runs detached tests and
 the independent Node.js fixed-vector generator, runs all-target checks, creates
 a verified package, repeats checks from the unpacked artifact, and executes
@@ -846,7 +846,8 @@ probe outside the repository and recorded in the status table and the owning
 Bead; they are measured evidence from one Linux machine, not a retained test or
 a promised speedup.
 
-Regular CI targets MSRV 1.94.0 and the pinned 1.98.1 toolchain. The weekly
+Regular CI targets the pinned 1.98.1 toolchain, which is also the declared
+minimum. The weekly
 Linux verification job targets floating `stable`. CI requires the
 checked-in lockfile and uses the strict verification path; missing lockfiles fail
 before cache metadata resolution. [Run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
@@ -864,11 +865,11 @@ second complete matrix; branches without a PR can use manual dispatch. Linux
 verification calls the complete script, so its former standalone HTTP
 step is removed. The focused macOS job retains its explicit smoke step.
 Superseded runs for the same PR/ref are cancelled. A planning job runs
-`scripts/ci_plan.py` first. Regular CI then runs two Linux verification jobs
-(Rust 1.94.0 and 1.98.1), one focused macOS job and one native Runlimit
-PostgreSQL job, both on the pinned 1.98.1 toolchain. Rust 1.94.0 compatibility
-is verified on Linux; the macOS job exists for macOS process, signal and
-scheduling behavior. The Runlimit PostgreSQL job runs only when a change touches
+`scripts/ci_plan.py` first. Regular CI then runs one Linux verification job,
+one focused macOS job and one native Runlimit PostgreSQL job, all on the pinned
+1.98.1 toolchain. The macOS job exists for macOS process, signal and scheduling
+behavior. Until `batter-wis2`, a second Linux job verified the former Rust
+1.94.0 minimum. The Runlimit PostgreSQL job runs only when a change touches
 the local package closure of `runlimit-postgres` (from `cargo metadata
 --no-deps`, including that package's own dev-dependencies) or a workspace-wide
 input: the root manifest, lockfile, toolchain file, `.cargo/`, this workflow or
@@ -1769,7 +1770,7 @@ The existing `ci.yml` owns the Rust/toolchain/HTTP matrix, and
 `scripts/ci_plan.py` selects which of its jobs a run needs. `repo-policy.yml`
 checks file budgets and Python script controls. Both reuse only the pinned
 file-budget runtime binary cache. `batter-at-rest-portability.yml` separately
-verifies detached source, packaging and an external consumer on Rust 1.94.0;
+verifies detached source, packaging and an external consumer on Rust 1.98.1;
 that CI-only job remains unchanged.
 
 Run script regressions with:
@@ -3321,7 +3322,7 @@ child exit additionally requires the checked shutdown report to contain exactly
 one successful cleanup-stack `postgres.pool` record for the close hook registered
 by the application pool's `pool_in` call.
 Full workspace and fresh agent/review acceptance remain separate requirements;
-local checks use the pinned compiler and CI owns MSRV verification.
+local checks and CI use the pinned compiler, which is also the minimum.
 Owning Bead `batter-lp2.4` records what actually executed for this
 scope.
 
@@ -3918,8 +3919,8 @@ RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-post
 RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
 ```
 
-CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
-1.98.1. That imported upstream matrix does not broaden Batter's PostgreSQL 18
+CI retains upstream PostgreSQL 16 and executes both commands on the pinned Rust
+1.98.1 when the planner selects the job. That imported upstream service does not broaden Batter's PostgreSQL 18
 minimum. A workflow definition is not hosted execution evidence. The native test
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
@@ -3953,8 +3954,8 @@ execution markers only after successful process exit. Both fixtures are included
 in consumer verification.
 
 The source workspace's active compiler is passed explicitly to Cargo; an explicit
-`RUSTUP_TOOLCHAIN` takes precedence. CI selects `RUSTUP_TOOLCHAIN=1.94.0`
-for the minimum compiler; local checks use the pinned default. The root lock remains unchanged; the temporary lock may
+`RUSTUP_TOOLCHAIN` takes precedence. Local checks and CI use the pinned
+default, which is also the minimum. The root lock remains unchanged; the temporary lock may
 only prune unused packages. `python3 -m unittest discover -s scripts -p
 test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
 failure controls. Both commands are part of the bounded root test matrix. The same

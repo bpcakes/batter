@@ -117,7 +117,7 @@ Batter dependencies. Cargo resolves the native packages and foundation from that
 checkout; no consumer patch, sibling Runledger repository, or Git-history check
 is required. A source archive also contains the complete local dependency graph.
 
-These sources require **Rust 1.94+** and **PostgreSQL 18+**. Older
+These sources require **Rust 1.98.1+** and **PostgreSQL 18+**. Older
 PostgreSQL releases are not supported, even when an extension supplies an
 equivalent `uuidv7()` function. See [PostgreSQL requirements](#postgresql-requirements).
 

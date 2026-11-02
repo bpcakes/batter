@@ -127,7 +127,7 @@ replaces the other. See
 
 Each package declares its version, Rust minimum, and publication policy. The
 nine Batter packages use 0.0.1, native Runledger uses 0.13.0, and native
-Runlimit uses 0.4.0; all retain Rust 1.94 and restrict publication to crates.io.
+Runlimit uses 0.4.0; all declare Rust 1.98.1 and restrict publication to crates.io.
 The two examples remain unpublished. A shared workspace does not imply a
 mandatory stack; the root lockfile and verification matrix remain shared.
 

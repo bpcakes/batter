@@ -188,6 +188,8 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Raise the minimum supported Rust version from 1.94 to 1.98.1, the Batter
+  workspace's pinned toolchain. No public item changes.
 - When migration or preparation fails and advisory-lock release also fails,
   `SchemaCompatibilityError::MigrationCleanup(MigrationCleanupError)` retains
   both concrete errors through `operation_error()` and `unlock_error()`.

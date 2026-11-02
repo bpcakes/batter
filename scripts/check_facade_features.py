@@ -243,7 +243,7 @@ def manifest(name: str, dependencies: list[str], selected: tuple[str, ...] = ())
         f"name = {json.dumps(name)}\n"
         "version = \"0.0.0\"\n"
         "edition = \"2024\"\n"
-        "rust-version = \"1.94\"\n"
+        "rust-version = \"1.98.1\"\n"
         "publish = false\n\n"
         "[workspace]\nresolver = \"3\"\n\n"
         "[dependencies]\n"

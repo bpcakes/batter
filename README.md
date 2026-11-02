@@ -171,7 +171,7 @@ beside the consumer:
 batter = { path = "../batter/crates/batter" }
 # Select optional toolkit namespaces explicitly, for example:
 # batter = { path = "../batter/crates/batter", features = ["axum"] }
-# Standalone Rust 1.94 encryption/MAC leaf, also available through feature
+# Standalone Rust 1.98.1 encryption/MAC leaf, also available through feature
 # `at-rest` as `batter::at_rest` with identical types.
 batter-at-rest = { path = "../batter/crates/batter-at-rest" }
 # Direct foundation implementation, when an adapter or focused consumer needs it.
@@ -203,10 +203,9 @@ and Runlimit library package through explicitly native namespaces, so one
 [single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
 records the executed evidence and the caller obligations those namespaces carry. Each package declares its own version and Rust minimum.
 The nine Batter packages are 0.0.1, native Runledger is 0.13.0, and native
-Runlimit is 0.4.0. All retain Rust 1.94 as their minimum.
-The standalone `batter-at-rest` leaf verifies that minimum independently. The
-default toolchain is 1.98.1. SQLx 0.9.0 sets that floor in the adapter and
-examples; extracting it does not establish a lower library minimum.
+Runlimit is 0.4.0. All declare Rust 1.98.1, the pinned default toolchain, as
+their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
+`batter-at-rest` leaf verifies that minimum independently.
 
 | Package | Location | Job |
 | --- | --- | --- |
@@ -296,9 +295,10 @@ The script directly runs tests, all four Clippy feature configurations, formatti
 rustdoc, five built HTTP smokes and the file-budget check. Verification creates
 no Jig plans, receipts or gates. A successful run needs no second full test run.
 
-Local verification uses the pinned current release once. CI verifies both that
-release and exact Rust 1.94.0; a weekly CI run checks floating `stable`. Update
-`rust-toolchain.toml` and the pinned CI entries together when adopting a new release.
+Local verification and CI use the pinned release once; it is also every
+package's declared minimum. A weekly CI run checks floating `stable`. Update
+`rust-toolchain.toml`, every `rust-version` and the pinned CI entries together
+when adopting a new release.
 
 Checks preserve `Cargo.lock`. Use `bash scripts/verify.sh --bootstrap` only when
 formatting sources and generating a missing lockfile is intended. Repair
