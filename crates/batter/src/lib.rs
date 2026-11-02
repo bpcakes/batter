@@ -5,7 +5,7 @@
 //! adapter namespaces without changing native ownership.
 //!
 //! The default feature set is empty. Enable only the namespaces an application
-//! uses: `at-rest`, `axum`, `metrics`, `otlp`, `sqlx`, `runledger`, `runlimit`,
+//! uses: `at-rest`, `axum`, `metrics`, `otlp`, `outbound`, `sqlx`, `runledger`, `runlimit`,
 //! `test-support`, or the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
 //! `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
 //! `runledger-test-support`, and `sqlx-test-support`.
@@ -36,6 +36,7 @@
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
 //! | Synchronous CPU work or blocking I/O under a concurrency bound | [`admission::Bulkhead::run_blocking`] with the caller's context, matching its exhaustive [`admission::BlockingError`] in separate arms | [`admission::Bulkhead::enter`] with its permit moved into `tokio::task::spawn_blocking` by hand, a permit held by the awaiting future, or unbounded `spawn_blocking` |
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
+//! | A provider HTTP call | `outbound::Client::new` with a validated `outbound::Origin` and `outbound::ConnectTimeout`, built once and cloned; `client.request(method, path_segments)` with its headers and body, then `prepare()?`, which reports every construction error before anything is sent; `PreparedRequest::send_in` with the work phase of `reserve_finalization` after the application's dispatch fence is written, so the outcome can be recorded in the finalization phase unless the parent is cancelled; then an exhaustive `outbound::Exchange` match with no wildcard arm, where only `NotStarted` and `NotDispatched` (`proves_unsent`) show that this attempt wrote nothing and what a `Responded` status means is the application's reading of its provider (feature `outbound`) | a hand-built `reqwest` client, whose default redirects and replays make a connect error no proof that nothing was sent; retrying `Unknown` as though nothing was sent; reading `Responded` as processed, accepted or refused by the provider, when a load balancer or proxy may have answered; wrapping `send_in` in `run`, `retry`, `timeout` or `select!`, whose interruption drops the exchange and proves nothing |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
 //! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
 //!
@@ -98,6 +99,41 @@ pub use batter_core::*;
 #[cfg(feature = "at-rest")]
 pub mod at_rest {
     pub use batter_at_rest::*;
+}
+
+/// Send-once outbound provider HTTP exchange with exhaustive transport evidence.
+///
+/// Enabled by the `outbound` feature, which also selects the package's
+/// `operation` bridge. The implementation remains the standalone
+/// [`batter_outbound`] package, whose documentation holds the full contract,
+/// and every item has the same type identity through the direct and facade
+/// paths. Send with `PreparedRequest::send_in` under the work phase of a
+/// context whose finalization is reserved; only `NotStarted` and
+/// `NotDispatched` prove that an attempt wrote nothing. The facade's
+/// `outbound_exchange` example is the consumer contract.
+///
+/// ```no_run
+/// use batter::outbound::{Client, ConnectTimeout, Origin, ResponseLimit, http::Method};
+/// use std::time::Duration;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = Client::new(
+///     Origin::https("https://provider.example")?,
+///     ConnectTimeout::new(Duration::from_secs(5))?,
+/// )?;
+/// let request = client.request(Method::POST, ["v1", "effects"]).prepare()?;
+/// let context = batter::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
+/// let phases = context.reserve_finalization(Duration::from_millis(500))?;
+/// let exchange = request.send_in(phases.work(), ResponseLimit::new(64 * 1024)?).await;
+/// // Settle or hold the application's dispatch fence from `exchange` in
+/// // `phases.finalization()`; a cancelled parent runs no recording step.
+/// # let _ = exchange;
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "outbound")]
+pub mod outbound {
+    pub use batter_outbound::*;
 }
 
 /// Axum request, browser, readiness, and serving boundaries.

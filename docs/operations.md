@@ -107,6 +107,17 @@ Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a
 trusted sink with redaction.
 
+The outbound exchange (`batter::outbound`) emits no telemetry of its own. Record
+`Exchange::label()`, one of twelve stable values such as
+`not_dispatched.connect_failed`, `unknown.deadline` or
+`responded.body_too_large`, beside the application's own operation and provider
+fields. The exchange's `Debug` and `Display` output never includes the URL,
+query, header values or body, and the label is a fixed vocabulary, so the label
+is safe in logs and as a metric label; a `Response` still holds the received
+headers and body behind its accessors. The query string still reaches the
+provider and any intermediary, and a reqwest client built by hand outside the
+exchange formats the full URL, query included, into its errors.
+
 Batter never installs, takes or replaces the process panic hook; Rust's default
 hook prints every string payload. Each executable installs
 `batter::redacting_panic_hook()` as the first statement of `main` instead. It
@@ -166,6 +177,21 @@ Factory construction must not block, and non-yielding work can overrun the cap
 before Batter regains control; if completion is selected before the timer is
 observed, that late result can be accepted. The cap is cooperative, not a hard
 wall-clock bound. No timeout result proves that a mutation can safely be repeated.
+
+For provider calls through the outbound exchange, only `not_started.*` and
+`not_dispatched.*` outcomes show that an attempt wrote nothing. Every
+`unknown.*` outcome may have reached the provider, and its request can still
+arrive after the outcome is returned: it needs reconciliation through the
+provider's own lookup or idempotency protocol, tolerant of that late arrival,
+before the operation is retried or a reservation is released. Treat an exchange
+abandoned without an outcome the same way (no test abandons one). A
+`responded.*` status can come from a load balancer or proxy, so an alert on
+provider failures must read the application's interpretation, not the status
+alone. The exchange keeps 50 ms of the caller's deadline free and refuses to
+start with less than 100 ms left, so budgets near that floor end as
+`not_started.deadline`, which a send with the same deadline returns again at
+once. On macOS, a certificate check that blocks on network fetches can hold an
+exchange past its deadline (source-inspected; nothing has executed there).
 
 Reserve finalization time before starting work. Drive the shortened work context
 then explicitly await the sibling finalization context, retaining both outcomes.

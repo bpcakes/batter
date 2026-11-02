@@ -10,7 +10,9 @@ planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
 macOS arm64 have execution evidence on both supported toolchains, including
 focused hosted macOS jobs before `batter-f0jz`; regular hosted macOS CI now uses
 the pinned toolchain. Other Unix targets remain unverified. See
-[ADR-007](adr/007-unix-platform-scope.md).
+[ADR-007](adr/007-unix-platform-scope.md). `batter-outbound` postdates that
+evidence and has executed on Linux only; see
+[its contract](#outbound-provider-exchange).
 
 ## Native quota execution
 
@@ -269,6 +271,384 @@ There is no global RNG, fleet coordination, retry-token budget, or circuit break
 Replay keys, provider deduplication retention, payload matching, transaction
 isolation, and ambiguous commit handling belong to the application/upstream
 protocol. Choose one retry owner so nested budgets do not multiply attempts.
+
+## Outbound provider exchange
+
+`batter-outbound` (`batter-3s1a`, [ADR-015](adr/015-outbound-transport-evidence.md);
+also `batter::outbound` behind the facade's `outbound` feature) is an
+experimental standalone package that owns one question for one HTTP request:
+could this attempt have reached the peer? Its evidence comes from the loopback
+suites [preparation](../crates/batter-outbound/tests/preparation.rs),
+[before_head](../crates/batter-outbound/tests/before_head.rs),
+[body](../crates/batter-outbound/tests/body.rs),
+[operation](../crates/batter-outbound/tests/operation.rs) (feature `operation`),
+[wire](../crates/batter-outbound/tests/wire.rs),
+[redaction](../crates/batter-outbound/tests/redaction.rs),
+[tls_hello](../crates/batter-outbound/tests/tls_hello.rs) and
+[trust_store](../crates/batter-outbound/tests/trust_store.rs) (Linux only), from a
+unit test and doctests in the package's sources, and from the facade's
+[`outbound_exchange` example tests](../crates/batter/examples/outbound_exchange/tests.rs);
+each test named below belongs to one of them. The fault tests read what a
+scripted peer received. They have executed on Linux only. Every build of the
+package's own tests compiles reqwest's `gzip` and `http2` features through its
+dev-dependencies, as an unrelated dependency could through feature unification;
+the shipped feature set without them is compile-checked, not executed.
+
+`Client::new(Origin, ConnectTimeout)` is its only client constructor. A built
+client cannot be reconfigured, its clones share one connection pool
+(`clones_share_one_connection_pool`), and no client-wide total or read timeout
+is set. The fixed reqwest profile follows no redirects, so a 3xx is returned as
+a response (a 307 in `redirect_is_returned_and_never_followed`). It offers only
+`http/1.1` in ALPN, which the package sets in its own TLS configuration
+(`client_hello_offers_only_http1_and_modern_tls`, with `http2` compiled), and
+its plain-HTTP requests arrive in HTTP/1.1 origin form
+(`requests_arrive_as_http1_origin_form_without_referer_or_accept_encoding`). It
+turns response decompression off: with gzip compiled, no `Accept-Encoding` is
+sent (the same wire test) and a gzip-labelled body is returned as received
+(`encoded_body_is_returned_as_received_bytes`). It ignores `HTTP_PROXY` and
+`http_proxy` for a loopback origin, in a child process whose default reqwest
+client is the control that does go through the proxy
+(`proxy_environment_variables_are_ignored`). It never reuses a connection idle
+for more than four seconds
+(`idle_connections_are_closed_before_common_server_keep_alive_timeouts`), although
+hyper-util may keep an idle connection open for about eight seconds before
+evicting it (source-inspected). No test executes the rest of the profile:
+`HTTPS_PROXY` and `ALL_PROXY` for an HTTPS origin, which the same `no_proxy()`
+call disables (source-inspected, not tested); `no_brotli`, `no_zstd`,
+`no_deflate` and `no_hickory_dns`, whose reqwest features nothing in this
+workspace enables (source-inspected); and `http1_only()`, `retry::never()`,
+`referer(false)` and `https_only` for an HTTPS origin, which are defence in
+depth and not observable while ALPN is fixed, redirects are off and every
+request URL comes from the validated origin. The wire test's missing `Referer`
+and `Proxy-Authorization` are request shape, not evidence for those settings.
+
+The package configures TLS itself. reqwest is built with `rustls-no-provider`
+and receives, through `tls_backend_preconfigured`, a rustls `ClientConfig` that
+the package builds with the *ring* provider passed explicitly
+(`builder_with_provider`), TLS 1.3 and 1.2 only, ALPN `http/1.1`, the operating
+system verifier (`rustls-platform-verifier`) for an HTTPS origin, and an empty
+root store for `Origin::loopback`, whose plain-HTTP client never reads the host
+certificate store. reqwest uses that configuration as given, so a graph that
+also enables reqwest's `native-tls` or `http2` cannot change the backend or the
+ALPN list (source-inspected for `native-tls`; the ALPN test above runs with
+`http2` compiled). The package never installs or relies on a process-default
+crypto provider (`client_hello_offers_only_http1_and_modern_tls` checks that
+none is installed after a handshake), and this repository's lockfile contains
+no aws-lc-rs. The
+ClientHello offers no version other than TLS 1.3 and 1.2
+(`client_hello_offers_only_http1_and_modern_tls`); rustls supports nothing
+older, so that check shows the backend's range and cannot discriminate the
+package's own version list. On Linux, an HTTPS client loads the host certificate
+store at construction, and that store follows `SSL_CERT_FILE` and
+`SSL_CERT_DIR`. With `SSL_CERT_FILE` naming an empty file and `SSL_CERT_DIR`
+unset, `Client::new` returns `ClientError::Build` with a value-free message
+while a loopback client still builds
+(`an_empty_trust_store_refuses_https_clients_but_not_loopback_ones`, in a child
+process). No test completes a TLS handshake, so certificate verification is not
+exercised. When an application's graph compiles both *ring* and aws-lc-rs into
+rustls, for example because another crate enables reqwest's `rustls` feature,
+crates that call `rustls::ClientConfig::builder()` without a provider need the
+application root to install a process default with
+`rustls::crypto::CryptoProvider::install_default`; this package neither installs
+nor needs one. Where reqwest 0.13 has only `rustls-no-provider`, a plain
+`reqwest::Client::new()` built elsewhere panics without an installed provider
+(source-inspected); the proxy test's control installs *ring* in its child
+process for that reason.
+
+`Origin::https` accepts only `https://host` or `https://host:port`, with an
+optional trailing slash, and refuses another scheme, credentials, a path, a
+query, a fragment and port zero
+(`https_origins_accept_only_a_scheme_host_and_port`), as well as a host that
+`http::Uri` rejects, as `OriginError::Unparseable`
+(`urls_that_are_not_http_uris_are_refused_before_an_exchange_exists`).
+`Origin::loopback` admits plain HTTP only to a literal loopback socket address
+with a nonzero port
+(`loopback_origins_accept_only_a_loopback_address_with_a_port`).
+`ConnectTimeout` accepts more than zero and at most 60 seconds, and
+`ResponseLimit` 1 byte to 64 MiB
+(`limits_refuse_zero_and_values_above_their_maximum`). The connect timeout
+bounds DNS, TCP and TLS together by reqwest's source; only its TLS-handshake
+phase is exercised.
+
+`RequestDraft::prepare` reports the first construction problem
+(`preparation_reports_the_first_draft_problem`) as a value-free `PrepareError`
+before an exchange exists. `EmptySegment` refuses an empty path segment and one
+whose part before its first `;` is empty, such as `;x`. `DotSegment` refuses `.`
+and `..`, which URL normalization would drop silently, and a segment whose part
+before its first `;` is `.` or `..`, such as `..;` or `..;x=1`, which servers
+that strip `;` path parameters would treat as a dot segment; `...`, `.hidden`,
+`%2e%2e`, `a..`, `a;b` and `...;x` stay ordinary segments
+(`empty_and_dot_segments_are_refused`). `ControlCharacter` refuses a tab, line
+feed or carriage return, which URL parsing deletes before applying its
+dot-segment rules, so `.\t.` would become `..`; other control characters are
+percent-encoded inside the segment
+(`segments_that_url_parsing_would_rewrite_are_refused`). `InvalidUri` refuses a
+URL that `http::Uri` rejects, such as one with a 70 KiB segment or query value,
+which reqwest would refuse only when executing it
+(`urls_that_are_not_http_uris_are_refused_before_an_exchange_exists`).
+`ReservedHeader` refuses `Host`, `Content-Length`, `Transfer-Encoding`,
+`Connection`, `Upgrade`, `TE`, `Trailer`, `Expect`, `Keep-Alive`,
+`Proxy-Connection`, `Proxy-Authorization` and `Content-Type`
+(`every_reserved_header_is_refused`); `BodyAlreadySet` a second body
+(`a_second_body_is_refused`); `Json` a serialization failure
+(`a_json_serialization_failure_is_reported_at_preparation`); and
+`ConnectMethod` `CONNECT` (`connect_is_refused_and_other_methods_are_accepted`).
+`Build` reports a URL or request-builder failure and a segment count changed by
+URL normalization; the refusals before it leave it unreachable with the locked
+url 2.5.8 (defence in depth; no test returns `Build`). Values passed to
+`header()` are marked sensitive, while the `Content-Type` that `json` or `body`
+sets is not (`every_caller_header_value_is_marked_sensitive`, a unit test in
+`src/request.rs`), and they reach the peer unchanged
+(`header_values_reach_the_peer_unchanged`). Each segment is percent-encoded, so
+`/`, `?`, `#`, `%`, `\` and a space stay inside it
+(`segments_are_percent_encoded_inside_one_segment`), and no segment can change
+the scheme, host or port. `;` itself is not encoded (source-inspected), so what
+a server makes of the rest of a segment such as `a;b` is provider behaviour.
+Query pairs are form-encoded in call order
+(`query_pairs_are_form_encoded_in_call_order`), an empty path targets the origin
+root (`an_empty_path_targets_the_origin_root`), and a body carries its content
+type and length (`bodies_carry_their_content_type_and_length`).
+`PreparedRequest` is not `Clone`, and `send` and `send_in` consume it, as
+`compile_fail,E0599` (a clone) and `compile_fail,E0382` (a second `send`)
+doctests keep, so a second attempt is a second preparation.
+
+A send derives its exchange deadline as the caller's deadline minus `RESERVE`
+(50 ms). When that subtraction underflows or less than `MINIMUM_ATTEMPT` (50 ms)
+remains before the exchange deadline, the result is
+`NotStarted(DeadlineTooClose)` and reqwest never receives the request: a passed
+deadline and budgets of zero, `RESERVE` and 5 ms less than
+`RESERVE + MINIMUM_ATTEMPT` never connect (`passed_deadline_does_not_start`,
+`deadline_inside_reserve_and_minimum_attempt_does_not_start`), while a 350 ms
+budget sends exactly one request
+(`deadline_beyond_the_refusal_window_starts_one_request`). The check is followed
+by the first poll of reqwest's request future with no await between them, so a
+request is not first polled inside the last `RESERVE + MINIMUM_ATTEMPT` of the
+caller's budget, apart from preemption of the thread between the two. That
+ordering is source-inspected and guarded by review: no test would detect an
+await inserted between the check and the poll. A `NotStarted` returns without
+yielding and stands for the deadline or context it was given, so sending again
+with the same deadline or a cancelled context returns it again at once
+(source-inspected): retry only a `ConnectFailure`, with backoff and a fresh
+budget check. `send` and `send_in` must run inside a Tokio runtime with its time
+driver enabled.
+
+With `operation`, `send_in(&OperationContext, ResponseLimit)` checks its context
+first. A cancelled context returns `NotStarted(Cancelled)`
+(`cancelled_context_does_not_start`), also when its deadline has passed
+(`cancellation_takes_precedence_over_an_expired_deadline`), matching
+`batter-core`'s cancellation-first preflight, and a context too close to its
+deadline returns `NotStarted(DeadlineTooClose)` without connecting
+(`context_deadline_too_close_does_not_start`). Otherwise `send_in` behaves like
+`send` with `context.deadline()` and observes `context.cancelled()`. A
+cancellation from another thread between that check and the first poll yields
+the conservative `Unknown(Cancelled)` rather than `NotStarted`
+(source-inspected).
+
+The exchange returns its classification no later than its own deadline, apart
+from scheduling delay and the blocking macOS poll below, so an outer timer at
+the caller's deadline does not discard it. Where tests time a deadline outcome
+(`silent_peer_is_unknown_within_the_reserve`,
+`deadline_expiring_while_connecting_is_unknown`,
+`stalled_body_keeps_the_status_and_one_deadline_bounds_head_and_body`,
+`context_deadline_bounds_the_exchange_and_returns_before_it` and
+`context_deadline_bounds_a_stalled_body`), it returned at or after the exchange
+deadline and before the caller's deadline on the executing machine; timing under
+load is not measured. `RESERVE` is not a recording budget. The canonical path
+sends in the work phase of `OperationContext::reserve_finalization` and records
+the outcome in its finalization phase, as the `send_in` doctest and the facade
+example do; `context_deadline_bounds_the_exchange_and_returns_before_it`
+shows only that the context has not expired when a deadline outcome returns, not
+that a recording fits in what remains. A cancelled context, including one whose
+parent was cancelled, runs no recording step, so the dispatch fence that the
+application wrote before sending is what remains held: the example's
+`parent_cancellation_in_flight_holds_the_fence_and_records_nothing` cancels the
+parent after its fixture read the request and gets `Unknown(Cancelled)` with no
+record. On macOS, certificate verification calls the operating system
+synchronously inside the poll that drives the TLS handshake and may fetch over
+the network. Neither the connect timeout nor the exchange timer can interrupt
+that poll, so the `RESERVE` bound does not hold while it blocks. That is
+source-inspected: nothing has executed on macOS, and the macOS CI job only
+compiles the package.
+
+Before a response head, `reqwest::Error::is_connect` yields `NotDispatched`:
+`TimedOut` when `is_timeout` also holds, `Failed` otherwise. A refused TCP
+connection to a port that is bound but never listens and a failed TLS handshake
+are `NotDispatched(Failed)` (`refused_connection_is_not_dispatched`,
+`failed_tls_handshake_is_not_dispatched_and_sends_no_http`), and a stalled
+handshake is `NotDispatched(TimedOut)` after the connect timeout and before the
+exchange deadline (`stalled_tls_handshake_times_out_as_not_dispatched`). Both
+TLS cases use one connection whose first read is a TLS handshake record carrying
+no HTTP request; later bytes are not inspected. A DNS failure (`Failed`), a
+connect timeout during DNS or TCP setup or an operating-system connect timeout
+(`TimedOut`) and a pool-checkout failure (`Failed`) follow the same rule by
+source inspection only. Every other error is `Unknown(Transport)`: a peer that
+closes before or after reading the whole request
+(`close_before_reading_is_unknown_on_one_connection`,
+`close_after_the_full_request_is_unknown`), a reset
+(`reset_after_the_full_request_is_unknown`) and a malformed or truncated head
+(`malformed_or_truncated_head_is_unknown`), each on one connection. A head that
+the client rejects, such as one with too many headers or a conflicting
+`Content-Length`, is also `Unknown(Transport)` (source-inspected). The exchange
+timer is `Unknown(Deadline)` (`silent_peer_is_unknown_within_the_reserve`), and
+cancellation after the start is `Unknown(Cancelled)`, directly or through a
+parent (`cancellation_after_the_request_reached_the_peer_is_unknown`,
+`child_context_cancelled_through_its_parent_is_unknown`). reqwest's per-request
+timeout is never set, so deadline reasons come only from this package's timer;
+`is_timeout` also matches a kernel `ETIMEDOUT`, so it only separates the two
+connect failures. `Unknown` means that no response head the HTTP client accepted
+arrived. A request that the connection already took may still reach the peer
+after the outcome is returned (source-inspected), so reconciliation must
+tolerate a late arrival.
+
+After a head, the status is retained, and the headers are copied with every
+value marked sensitive and still readable through `Response::headers`
+(`complete_response_keeps_status_sensitive_headers_and_body`). The body is read
+through `chunk()` under the same timer, so one deadline bounds head and body
+(`stalled_body_keeps_the_status_and_one_deadline_bounds_head_and_body`). A
+declared `Content-Length` above the limit is `Body::TooLarge` without reading
+(`declared_length_above_the_limit_is_too_large_without_reading`), and a running
+total above it is `TooLarge` at the first chunk that would exceed it
+(`streamed_body_above_the_limit_stops_at_the_exceeding_chunk`). A body exactly
+at the limit, declared or chunked, is `Complete`
+(`body_exactly_at_the_limit_is_complete`), and so are a bodyless status and a
+`HEAD` response whatever length it declares
+(`bodyless_status_is_complete_and_empty`, `head_response_length_is_not_a_body`),
+both empty. A body shorter than its declared length or an unterminated chunked
+body followed by a close is `Failed(Transport)`
+(`short_body_then_close_is_a_transport_failure`,
+`unterminated_chunked_body_then_close_is_a_transport_failure`), the timer during
+the body is `Failed(Deadline)` (`context_deadline_bounds_a_stalled_body` and the
+stalled-body test above) and cancellation is `Failed(Cancelled)`
+(`cancellation_while_the_body_stalls_keeps_the_status`), each with the status
+kept. `Body::Complete` holds the body as received within the limit, after
+HTTP/1.1 chunked framing is removed; content coding is not removed, so the limit
+counts message-body bytes as received, not wire bytes. A response with neither
+`Content-Length` nor chunked framing ends when the peer closes the connection, so
+its truncation cannot be detected: `an_undelimited_body_ends_at_connection_close`
+returns such a body as `Complete`. The buffer grows only up to the limit and
+releases spare capacity before `Complete`, and preallocation from a declared
+length is capped at 1 MiB (source-inspected, not tested).
+
+Both selections are biased toward the request, then cancellation, then the
+timer, so a result that is ready wins over a timer or cancellation that is ready
+in the same poll. Tests leave the exchange unpolled while both sides become
+ready. A ready head and the end of its empty body win over an expired timer
+(`head_ready_with_the_expired_timer_is_kept`) and over a cancellation
+(`head_ready_with_cancellation_is_kept`). A cancellation wins over an expired
+timer before a head, as `Unknown(Cancelled)`
+(`cancellation_ready_with_the_expired_timer_is_reported`), and during a body, as
+`Failed(Cancelled)`
+(`cancellation_ready_with_the_expired_timer_during_the_body_is_reported`). Each
+of these tests asserts exactly one request on one connection. A ready non-empty
+body chunk tying with the timer or a cancellation is not exercised
+(source-inspected). This precedence deliberately differs from
+`OperationContext::run`, whose precedence for arbitrary futures is cancellation,
+then deadline, then completion: polling a request already handed to the client
+cannot start another request, because redirects and reqwest's replays are
+disabled. Polling after the exchange deadline can still advance the same
+request, for example write it on a connection that has just been established;
+that attempt is then `Unknown`, never `NotStarted` or `NotDispatched`
+(source-inspected, not tested).
+
+`Exchange` is exhaustive and `#[must_use]`, so a `match` needs no wildcard arm
+and a new variant would be a breaking change; a wildcard arm still compiles, and
+only a consumer-side lint can forbid it. No `From` conversion produces an
+outcome. `proves_unsent()` is true only for `NotStarted` and `NotDispatched` and
+concerns this attempt only, never earlier attempts or other requests of the same
+operation. Their payloads are opaque evidence: `NotStarted` and `NotDispatched`
+have private fields, no public constructor and no `Clone`; their only accessors
+are `NotStarted::reason()` (a `StartRefusal`) and `NotDispatched::failure()` (a
+`ConnectFailure`). A `compile_fail,E0451` doctest on `Exchange` keeps a
+hand-built `NotStarted` from compiling, so code that wraps an exchange cannot
+turn an interruption into proof that a request was unsent. `Unknown` stays
+constructible as the conservative value a wrapper may build for a lost exchange,
+and `Response` has no public constructor. `label()` returns one of twelve
+stable, value-free labels, each asserted by a test above:
+`not_started.deadline`, `not_started.cancelled`,
+`not_dispatched.connect_timeout`, `not_dispatched.connect_failed`,
+`unknown.deadline`, `unknown.cancelled`, `unknown.transport`, `responded`,
+`responded.body_too_large`, `responded.body_deadline`,
+`responded.body_cancelled` and `responded.body_transport`.
+
+No `Debug` or `Display` output of a client, origin, draft, prepared request,
+exchange, response, body or error includes a URL, query, header value or body:
+they print only placeholders, the scheme kind, reason names, static messages,
+the status code, the header count and the body variant with its length
+(`client_origin_draft_and_prepared_request_show_no_values`,
+`origin_errors_do_not_echo_the_refused_input`,
+`preparation_errors_do_not_echo_request_values`,
+`outcomes_without_a_head_show_no_request_values` and
+`responded_outcomes_show_no_received_values`). Those tests put a marker in the
+host, a segment, the query, a header, the body and the response, and check
+`Debug`, alternate `Debug` and, for errors, `Display` output. The peer's raw
+request carries the segment, query, header and body markers; the host marker is
+checked in origin, client, draft, prepared-request and origin-error output; and
+the received values stay readable. Redaction covers formatting only: a
+`Response` still holds the received headers and body behind `headers()`,
+`body()` and `into_parts()`. The package emits no telemetry.
+
+Manual mutations run during `batter-3s1a`, each restored, failed the test named:
+removing the package's ALPN line (`client_hello_offers_only_http1_and_modern_tls`),
+removing `no_gzip()` (`encoded_body_is_returned_as_received_bytes`), raising the
+idle timeout to 90 seconds
+(`idle_connections_are_closed_before_common_server_keep_alive_timeouts`),
+disabling the control-character and segment-count checks
+(`segments_that_url_parsing_would_rewrite_are_refused`), swapping cancellation
+and the timer in the body selection
+(`cancellation_ready_with_the_expired_timer_during_the_body_is_reported`) and
+giving loopback clients the platform verifier
+(`an_empty_trust_store_refuses_https_clients_but_not_loopback_ones`). Removing
+`http1_only()` fails no test.
+
+**Not supplied:** `NotDispatched` rests on hyper-util assigning its connect kind
+only to connector failures (DNS, TCP, TLS and the connect timeout) and
+pool-checkout failures, which `connection_for` produces before
+`try_send_request` hands the request to a connection, as surfaced by reqwest's
+source-chain walk in `is_connect`. That is implementation behaviour read in the
+[upstream sources](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02),
+not a documented contract, since reqwest documents `is_connect` only as "related
+to connect". The fault tests ran against the versions this repository's lockfile
+resolves: reqwest 0.13.5, hyper 1.11.1 and hyper-util 0.1.20. The manifest
+requires reqwest `^0.13.5` and does not constrain hyper or hyper-util, so an
+application's lockfile may resolve releases, older or newer, that these tests
+never ran against: keep those versions, or re-run the tests after upgrading
+them. The classification is conservative, not complete. A deadline that expires
+during the TLS handshake is `Unknown(Deadline)` although nothing was written
+(`deadline_expiring_while_connecting_is_unknown`); expiry during DNS or TCP
+setup is not exercised. A request written to a keep-alive connection that the
+server is closing, an HTTP/1 handshake or readiness failure after the connector
+and a request that hyper hands back unwritten on a fresh connection are also
+`Unknown` although the peer may have received nothing (source-inspected, not
+tested). hyper-util's `retry_canceled_requests`, on by default and not
+configurable through reqwest, resends a request that was never written when a
+reused pooled connection turns out to be closed (source-inspected, not tested).
+That is not a replay, but wire attempts are not observable, and the
+single-request assertions count what the peer received, not what hyper-util
+attempted. `Responded` means a status line from the peer, possibly an
+intermediary such as a load balancer, firewall or proxy; it never shows that the
+provider processed, accepted or refused the request. Dropping the send future
+after hand-off produces no outcome and must be treated as `Unknown`, including
+when an outer `run`, `retry` attempt, `timeout`, `select!` or shutdown drops it.
+`run` and `retry` also discard a ready exchange when they select cancellation or
+a deadline in the same poll, and no wrapper can map that interruption to
+`NotStarted` or `NotDispatched`. No test drops or wraps an exchange. A query string still reaches
+the provider and intermediaries; the package only keeps it out of its own
+values. A path written as one segment, such as `"v1/effects"`, is sent as one
+encoded segment and so reaches a different path; preparation does not refuse
+it. A hand-built reqwest client bypasses the whole profile, and only a
+consumer-side lint can forbid that. The exchange covers one request: whether an
+earlier request of the same operation was sent stays application evidence. There
+are no streaming bodies, HTTP/2, proxies, request signing, token acquisition,
+replay, retry, idempotency keys, Retry-After handling, fences, reconciliation or
+provider meaning. RFC 9110 §9.2.2 says that a client "SHOULD NOT automatically
+retry a request with a non-idempotent method unless it has some means to know
+that the request semantics are actually idempotent, regardless of the method, or
+some means to detect that the original request was never applied".
+`proves_unsent()` is evidence of the second kind for one attempt under the
+classification above, idempotency keys address the first, and the package itself
+never retries. RFC 9113 §8.7's peer-asserted non-processing does not apply
+because HTTP/2 is unsupported. None of these local types proves a remote effect.
+Fresh-agent usability evaluation is proposed and unexecuted.
 
 ## Admission contract
 

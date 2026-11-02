@@ -1,8 +1,8 @@
 # Integration ownership contracts
 
 The `batter-axum`, `batter-sqlx`, `batter-runledger`, `batter-runlimit` and
-`batter-otlp` adapters, native SQLx lifecycle example and
-unpublished reference command package exist in this snapshot. The latter
+`batter-otlp` adapters, the experimental `batter-outbound` exchange, native SQLx
+lifecycle example and unpublished reference command package exist in this snapshot. The latter
 composes pinned native upstream APIs in an atomic producer and explicit live probes; see the
 [compatibility manifest](reference-compatibility.md).
 Runlimit, Runledger, and postgres-test-harness are not dependencies of the
@@ -24,6 +24,7 @@ integration namespaces explicitly:
 | `axum` | `batter::axum` | `batter-axum` |
 | `metrics` | `batter::telemetry::metrics` | Core bounded metric recording |
 | `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
+| `outbound` | `batter::outbound` | Experimental `batter-outbound` with its `operation` bridge (`send_in`) |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
 | `runledger` | `batter::runledger`, `batter::runledger::native::{core, postgres, runtime}`, `batter::sqlx` | `batter-runledger`, `batter-sqlx`, the three native Runledger libraries |
 | `runledger-test-support` | `batter::runledger::test_support`, `batter::runledger::native::test_support` | `runledger`, the adapter's worker-free handler drive, plus Runledger's own PostgreSQL test support |
@@ -66,6 +67,12 @@ selected through the facade. Cargo feature unification means applications must i
 resolved graph; facade feature checks do not establish a security boundary.
 See the leaf's [integration obligations](../crates/batter-at-rest/README.md#security-and-lifecycle-boundary)
 for authoritative context, bounded work, and fenced rotation persistence.
+`outbound` re-exports the standalone `batter-outbound` package and enables its
+`operation` feature, so `PreparedRequest::send_in` takes an `OperationContext`.
+It also adds the package's client TLS stack to the application's graph: rustls
+with the *ring* provider and the operating system's certificate verifier.
+Direct `batter_outbound` use with default features selects no `batter-core`; see
+the [outbound adoption contract](#outbound-provider-exchange-experimental-transport-evidence).
 `runlimit-memory` and
 `runlimit-postgres` forward the existing native
 error bridges plus their own native backend through `batter::runlimit`; neither
@@ -298,8 +305,10 @@ release the listener. Native Axum accept errors are retried internally.
 Every listener helper accepts any `axum::serve::Listener`, so an application-owned
 TLS listener serves the same assembled boundary through the same lifecycle. The
 listener keeps binding, certificates, protocol versions, ALPN, client-certificate
-rules, handshake concurrency and accept retry; Batter adds no TLS dependency and
-no crypto provider. Drain destroys the accept in progress, including a handshake
+rules, handshake concurrency and accept retry. Batter adds no serving TLS
+dependency and installs no crypto provider; the client TLS stacks of
+`batter-outbound` and `batter-otlp`'s exporter configure no listener. Drain
+destroys the accept in progress, including a handshake
 awaited inside it, and releases the listener before awaiting connection
 completion. A listener that spawns handshakes instead of polling them inside
 `accept` leaves detached descendants that registration does not join.
@@ -1155,6 +1164,207 @@ and uses explicit empty resources. Applications must not mutate environment duri
 preparation. See the [adapter guide](../crates/batter-otlp/README.md),
 [reference configuration](../examples/reference-service/README.md#opt-in-metrics-export)
 and [primary sources](references.md#reference-metrics-export).
+
+## Outbound provider exchange: experimental transport evidence
+
+The experimental `batter-outbound` package (`batter-3s1a`) owns one question
+about an outbound HTTP request: could this attempt have reached the peer?
+[ADR-015](adr/015-outbound-transport-evidence.md) records the decision. It is
+not a provider adapter: ADR-014's rejection of provider adapters and of a
+generic provider interface stands, because provider failure contracts differ,
+and the shared part is only the transport rule that every surveyed application
+root hand-wrote. The contract is in [guarantees](guarantees.md#outbound-provider-exchange)
+and the upstream evidence in [references](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02).
+
+Call the exchange in the crate or module that owns the provider protocol: the
+code that already defines the provider's requests, reads its statuses and bodies,
+and owns its idempotency keys or dispatch fence and its reconciliation. Build
+one `Client` per provider origin where that code is constructed and clone it to
+share the pool, and take each request's deadline only after preparing it. Pass
+a path as separate segments, such as `["v1", "effects"]`. `["v1/effects"]` is
+one segment, sent as `/v1%2Feffects`. HTTP handlers, job handlers and commands
+call that provider code, not the exchange directly. Do not wrap the exchange in
+a cross-provider trait, a second client builder or a status-classifying helper. A hand-built reqwest
+client bypasses the fixed profile; an adopting application that wants every
+provider send to go through the exchange needs its own lint against direct
+reqwest sends, which this repository does not supply.
+
+Map each outcome to an application decision:
+
+- Only an outcome for which `proves_unsent()` holds, `NotStarted` or
+  `NotDispatched`, may release a dispatch fence, refund a reservation or quota
+  grant, or justify sending a non-idempotent request again without
+  reconciliation. It covers this attempt only; whether an earlier attempt of the
+  same operation was sent stays application evidence. Only the package can
+  produce these two outcomes.
+  - Send again only after a `NotDispatched`, with a backoff and a fresh budget
+    check.
+  - A `NotStarted` stands for the deadline or context it was given and returns
+    without yielding. Sending again under the same budget returns it at once,
+    so a loop that resends after every `proves_unsent()` outcome spins without
+    yielding.
+- `Unknown` keeps the fence and the reconciliation path, because the provider
+  may have acted. The request may also still reach the peer after `Unknown` is
+  returned, so reconciliation must tolerate a late arrival. A dropped send
+  future counts as `Unknown`. Never replay a non-idempotent request
+  automatically from `Unknown`: RFC 9110 §9.2.2 permits that only with a means
+  to know the request is idempotent or to detect that it was never applied.
+- `Responded` needs provider-specific interpretation, checked against the
+  provider's primary documentation, before it means accepted, refused or
+  retryable. The status can come from an intermediary such as a load balancer,
+  a 3xx is returned rather than followed, and `Body::TooLarge` and `Body::Failed`
+  keep the status while the provider's result may be in the unread body. A body
+  with neither `Content-Length` nor chunked framing ends when the peer closes
+  the connection, so a `Body::Complete` of that kind cannot show that nothing
+  was cut off.
+
+The facade's [`outbound_exchange` example](../crates/batter/examples/outbound_exchange.rs)
+is the consumer contract:
+
+- it writes the in-flight fence in a work-phase step (`example.fence`) before
+  `send_in`;
+- the exchange runs in the work phase of `reserve_finalization`;
+- one exhaustive `match` with no wildcard arm settles the application's fence;
+- the outcome is recorded in the finalization phase. A cancelled parent
+  cancels finalization too, so nothing is recorded and the fence written
+  before the send stays held.
+
+Its [tests](../crates/batter/examples/outbound_exchange/tests.rs) check these
+cases:
+
+- a delivered receipt settles the fence after one request;
+- a receipt status whose body exceeds the limit keeps the fence held;
+- a refused connection releases it;
+- a work phase too short to attempt is refused unsent and still recorded;
+- parent cancellation in flight holds the fence and records nothing;
+- only the outcomes for which `proves_unsent()` holds release it.
+
+Await `send_in` directly in the context that bounds it. Wrapped in `run`,
+`retry`, `timeout` or `select!`, the exchange is dropped when the outer
+interruption wins and returns no outcome. `run`, and `retry`'s attempt boundary,
+also discard an exchange that completes in the same poll as a cancellation.
+Because the exchange returns `RESERVE` before its context's deadline, a wrapping
+`run` on the same context normally sees it complete first (unverified).
+
+- A wrapper cannot map a lost exchange to `NotStarted` or `NotDispatched`,
+  which have no public constructor; it can build `Exchange::Unknown`.
+- No test exercises a dropped or wrapped exchange.
+- `RESERVE` only lets the classification arrive before the deadline. It is not
+  a recording budget, so reserve finalization time for the record.
+
+Batter's `retry` remains the in-process replay owner, with the caller's
+`ReplaySafety` assertion and classifier:
+
+- derive the idempotency key and payload once, outside the attempt factory;
+- prepare a fresh request from them inside each factory, since
+  `PreparedRequest` is not `Clone`;
+- pass the attempt's context to `send_in`, so that the reserve and start gate
+  sit inside the attempt cap;
+- classify the provider crate's own error rather than an `Exchange`.
+
+`ReplaySafety` has no value for a non-idempotent request that may be sent again
+only after an attempt proved unsent. `Idempotent` and `Deduplicated` would
+overclaim, and `Never` stops after the first failure. Such a request needs a
+hand-written second preparation after a `NotDispatched`, or a durable job.
+Durable retries keep Runledger's policy; a handler passes a context derived
+from `batter_runledger::job_phases` to `send_in`. Neither the retry nor the
+Runledger composition is exercised by a test in this repository.
+
+With default features, `batter-outbound` has no Batter runtime dependency, so a
+provider crate that must stay free of `batter-core` calls
+`send(deadline, limit)` with a `tokio::time::Instant`. Its only cancellation is
+dropping the future, which produces no outcome and counts as `Unknown`; the
+application root passes `context.deadline()` from its own `OperationContext`.
+Either path must run inside a Tokio runtime with its time driver enabled.
+An application on the facade selects feature `outbound`, which enables
+`operation`, and calls `send_in(&context, limit)`: a cancelled context returns
+`NotStarted(Cancelled)` before anything starts, and later cancellation returns
+`Unknown(Cancelled)` or `Body::Failed(Cancelled)`. Both paths return one type:
+the facade feature runner compiles the facade's `Exchange`, `PreparedRequest`
+and `http::StatusCode` as the direct package's, compiles `send_in` with the
+`outbound` feature alone, and requires `batter::outbound` to be absent without
+it. A crate whose policy forbids every Batter-named dependency, as Consumer B's
+provider crates do, can adopt neither path; the survey counts it as evidence of
+need, not as an adopter.
+
+The client builds its own rustls configuration with the *ring* provider passed
+explicitly, and reqwest uses it as given. The package therefore neither
+installs nor reads a process-default `CryptoProvider` and adds no aws-lc-rs.
+Two hazards remain in the application's own graph:
+
+- When the graph compiles both *ring* and aws-lc-rs into rustls, for example
+  because another crate enables reqwest's `rustls` feature, a crate that calls
+  `rustls::ClientConfig::builder()` without a provider panics. To avoid that,
+  the application root calls `rustls::crypto::CryptoProvider::install_default`
+  before any such builder runs.
+- A plain `reqwest::Client::new()` built elsewhere panics without an installed
+  provider when the graph's reqwest 0.13 has only `rustls-no-provider`.
+
+On Linux, an HTTPS client loads the host certificate store when it is built.
+That store follows `SSL_CERT_FILE` and `SSL_CERT_DIR`, and an empty store makes
+`Client::new` return `ClientError::Build`; a loopback client never reads it.
+The Linux-only `an_empty_trust_store_refuses_https_clients_but_not_loopback_ones`
+test shows both. On macOS, certificate verification calls the operating system
+synchronously inside the poll that drives the handshake and may fetch over the
+network, so neither the connect timeout nor the exchange's deadline bounds it
+(source-inspected). The package's tests have executed on Linux only, and macOS
+execution is unverified.
+
+External version contract, as the package manifest and the
+[primary sources](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
+record it. The fault tests ran against the locked versions below. The manifest
+constrains reqwest, rustls, rustls-platform-verifier, url, http and bytes, and
+does not constrain hyper or hyper-util:
+
+| Upstream | Version | Relied on for |
+| --- | --- | --- |
+| reqwest | 0.13.5 (`^0.13.5`), default features off, `rustls-no-provider` | The client profile, `tls_backend_preconfigured`, `Error::is_connect` and `is_timeout`, the bounded `chunk` read |
+| rustls | 0.23.46 (`^0.23.46`), default features off, `ring`, `std`, `tls12` | The *ring* provider passed explicitly, TLS 1.3 and 1.2, the `http/1.1` ALPN list; reqwest must resolve the same rustls release to accept the configuration |
+| rustls-platform-verifier | 0.7.1 (`^0.7.1`), with rustls-native-certs 0.8.4 locked | The operating-system verifier for HTTPS origins and, on Linux, the certificate store it loads |
+| hyper-util | 0.1.20 locked; not constrained, and reqwest 0.13.5 admits 0.1.12 and later | The connect error kind, the pool and its resend of a request that was never written |
+| hyper | 1.11.1 locked; not constrained, and reqwest 0.13.5 admits 1.1 and later | HTTP/1.1 connections and requests handed back unsent |
+| url | 2.5.8 | Segment encoding, dot-segment handling and the removal of tab, line feed and carriage return |
+| http, bytes | 1.x, re-exported as `batter_outbound::http` and `batter_outbound::Bytes` | Method, status, header and body types, and the `http::Uri` check before an exchange exists |
+
+Use the re-exported `http` and `Bytes` so that application and package types
+match. The classification was verified only against the locked versions. An
+application's lockfile may resolve other compatible releases, older or newer,
+that these tests never ran against. Keep the tested versions, or re-run the
+fault tests and recheck the references after any reqwest, hyper or hyper-util
+change, including a lockfile-only patch update.
+
+Test builds compile reqwest's `http2` and `gzip` features through the package's
+dev-dependencies, as an unrelated dependency could through feature unification:
+
+- the ClientHello still offers only `http/1.1`
+  (`client_hello_offers_only_http1_and_modern_tls`);
+- no `Accept-Encoding` is sent
+  (`requests_arrive_as_http1_origin_form_without_referer_or_accept_encoding`),
+  and a gzip-labelled body is returned as received
+  (`encoded_body_is_returned_as_received_bytes`).
+
+The brotli, zstd, deflate and hickory overrides are source-inspected, because
+no build here compiles those features. `retry::never()` is defence in depth
+while HTTP/2 is never negotiated. The shipped feature set, `rustls-no-provider`
+alone, is compile-checked by verification; only the standalone example command
+in docs/testing.md executes it, and verification does not run that command.
+
+A consumer on reqwest 0.12, as the owner-maintained billing library is, would
+compile a second reqwest line beside this one and share none of its types. The reference service's provider client
+and `batter-otlp`'s private transport stay on reqwest 0.12.28 and are not
+adopters.
+
+This is a focused experimental extraction, ADR-014's first track. The bundle is
+justified by coupling: `NotDispatched` is sound only while the same library owns
+redirects and retries, and the body cap must sit inside the head's deadline.
+Stable promotion follows the [extraction criteria](#dependency-direction-and-extraction-criteria)
+unchanged: two different application composition roots adopting it, exercised
+partial-startup and shutdown failures and this documented version contract.
+Until then the package stays experimental, and because its outcome enums are
+exhaustive, every new variant is a hard cut with a `Breaking:` entry. No
+surveyed root uses it yet; the realistic first adopters are Consumer A's direct
+client and Consumer C's clients. Facade examples and the reference service are
+not adopters.
 
 ## Dependency direction and extraction criteria
 

@@ -6,6 +6,355 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## reqwest 0.13.5 and hyper-util 0.1.20 for the outbound exchange, 2026-11-02
+
+For `batter-3s1a`, `Cargo.lock` resolves reqwest 0.13.5 (default features off,
+`rustls-no-provider`), rustls 0.23.46 (`ring`, `std`, `tls12`),
+rustls-platform-verifier 0.7.1, rustls-native-certs 0.8.4, hyper-util 0.1.20,
+hyper 1.11.1, tower-http 0.6.11, http-body-util 0.1.5, url 2.5.8 and http 1.5.0.
+Apart from the Effect 4.1.2 contrast at the end, the facts below were read in
+those installed sources, and every path and line range refers to exactly these
+versions. Apart from the quoted rustdoc and the RFCs, they are source-inspected
+implementation behaviour, not documented upstream guarantees. The package's manifest requires reqwest `^0.13.5` and does
+not constrain hyper or hyper-util, so an application's lockfile may resolve
+releases that neither these facts nor the package's fault tests cover. Every
+reqwest, hyper or hyper-util change, including a lockfile-only patch release,
+must recheck them and re-run the fault tests. The reqwest 0.12.28 retry review
+for `batter-i3ny` below covers another line.
+
+This lockfile resolves reqwest 0.13.5 with `h2`. The package's dev-dependencies
+compile reqwest's `http2` feature (`Cargo.toml:130-135`, otherwise selected
+only through `default`, 113-118) and its `gzip` feature (125) into every build
+of the package's own tests, as an unrelated dependency could through feature
+unification; the verification matrix's `workspace` part also unifies them into
+the facade example's tests.
+
+- Every outbound test that the verification matrix executes runs with those
+  features compiled.
+- The shipped dependency selects only `rustls-no-provider` (174-177). The
+  no-default-features matrix part's
+  `cargo check -p batter-outbound --lib --no-default-features` and the facade
+  feature runner's `cargo check` compile it. The standalone example command in
+  docs/testing.md (`cargo test -p batter --features outbound --example
+  outbound_exchange --locked`) builds reqwest with `rustls-no-provider` only, so
+  it is the one documented command that executes the shipped feature set;
+  verification does not run it.
+- The profile therefore sets its ALPN list itself, and keeps `http1_only()` and
+  `retry::never()` as defence in depth.
+
+The [2026-09-30 serving-listener entry](#generic-serving-listeners-and-connection-metadata-2026-09-30)
+says that its test-only TLS crates give no published package a TLS dependency.
+That stays true of those crates, but published packages do depend on TLS:
+
+- `batter-outbound` depends on rustls with *ring* and on
+  rustls-platform-verifier;
+- `batter-otlp` already depended on rustls with *ring* through reqwest
+  0.12.28's `rustls-tls-webpki-roots` feature (reqwest-0.12.28
+  `Cargo.toml:74-79`, `164-167`).
+
+Neither installs a process-default provider, and the lockfile still contains no
+aws-lc-rs, as that entry intended.
+
+reqwest 0.13.5:
+
+- Errors carry the URL. The [`Error`](https://docs.rs/reqwest/0.13.5/reqwest/struct.Error.html)
+  rustdoc (`src/error.rs:15-19`) warns that errors "may include the full URL",
+  for example an API key in a query. `Display` (257-306) appends
+  ` for url ({url})` whenever a URL is attached (300-302), and url's `Display`
+  writes the whole serialization, query included (url `src/lib.rs:2795-2800`);
+  `Debug` (240-255) prints the URL and the full source chain.
+  `PendingRequest::poll` attaches the original URL to every transport error and
+  to reqwest's own timeouts (`src/async_impl/client.rs:3093-3127`), and `json`
+  and `bytes` attach it to decode errors (`src/async_impl/response.rs:269-273`,
+  430-437). The exchange never formats, stores or returns a `reqwest::Error`.
+- Connect and timeout predicates. [`is_connect`](https://docs.rs/reqwest/0.13.5/reqwest/struct.Error.html#method.is_connect)
+  is documented only as "related to connect" (`error.rs:156-158`); its body
+  walks the source chain for a `hyper_util::client::legacy::Error` whose
+  `is_connect()` holds (159-171). `is_timeout` (118-149) is true for reqwest's own
+  `TimedOut`, a nested timed-out reqwest error, a hyper timeout or any
+  `io::ErrorKind::TimedOut` in the chain, so a kernel `ETIMEDOUT` satisfies it,
+  including one caused by the 30-second `TCP_USER_TIMEOUT` reqwest sets by
+  default on Linux (`client.rs:307-308`). `connect_timeout` wraps the whole
+  connector, DNS, TCP and TLS, in `tokio::time::timeout` and reports reqwest's
+  `TimedOut` (`src/connect.rs:904-954`), which hyper-util then wraps as a connect
+  error. `HyperService` maps every hyper-util error to `Kind::Request`
+  (`client.rs:139-158`), so `is_request` carries no delivery evidence.
+- reqwest's own timers. `timeout` and `read_timeout` default to none
+  (`client.rs:314-315`, rustdoc 1444-1465). When set, `execute_request` creates
+  their `Sleep`s when the request is executed, not when it is first polled
+  (2670-2682), and `PendingRequest::poll` reports either as `request(TimedOut)`
+  with no hyper-util error in the chain (3096-3111), so `is_connect` is false even
+  when the timer fired during connection setup. The exchange sets neither and
+  uses its own timer.
+- Lazy start. `Client::execute` calls `execute_request` (`client.rs:2613-2698`),
+  which builds the service future synchronously; `HyperService::call` returns an
+  unpolled async block (153-157), and hyper-util's `Client::request` returns its
+  `send_request` future unpolled (hyper-util `src/client/legacy/client.rs:216-238`).
+  No connection is attempted before the first poll. The exchange's start gate
+  refuses before `execute` is called.
+- Redirects and `Referer`. The default policy is `Policy::limited(10)`
+  (`src/redirect.rs:155-165`; `client.rs:311`, rustdoc 1389-1395), applied by
+  tower-http 0.6.11's `FollowRedirect` (`src/follow_redirect/mod.rs:257-337`):
+  301 and 302 turn POST into GET and drop the body and payload headers, 303
+  turns every method except HEAD into GET, and 307 and 308 resend the method, a
+  cloned body (`redirect.rs:350-353`) and every original header to the new
+  location. reqwest's `remove_sensitive_headers` (`redirect.rs:239-252`) removes
+  only `Authorization`, `Cookie`, `cookie2`, `Proxy-Authorization` and
+  `WWW-Authenticate`, and only when the host, port or scheme changes, so a custom
+  credential header or a credential in the body follows a cross-host 307 or 308.
+  `Referer` is on by default (`client.rs:313`, rustdoc 1397-1403), and
+  `make_referer` (`redirect.rs:294-304`) strips only userinfo and the fragment,
+  so the previous URL's query reaches the next host. `Policy::none()` (57-62)
+  follows nothing.
+- Default retries. [`ClientBuilder::retry`](https://docs.rs/reqwest/0.13.5/reqwest/struct.ClientBuilder.html#method.retry)
+  documents "Default behavior is to retry protocol NACKs" (`client.rs:1405-1414`).
+  The default `Builder` (`src/retry.rs:195-203`) is unscoped `ProtocolNacks`
+  without a budget, with `max_retries_per_request` 2 "on top of the original".
+  `is_retryable_error` (273-318) accepts, only when `http2` is compiled
+  (301-316), a remote GOAWAY with `NO_ERROR` and a remote `RST_STREAM` with
+  `REFUSED_STREAM`, citing RFC 9113 §8.7, without checking the method, and
+  `clone_request` (253-270) copies the method, URI, headers and a cloneable body.
+  The stack is hyper-util, then `tower::retry::Retry`, then `FollowRedirect`
+  (`client.rs:1017-1035`), so each redirect hop is retried on its own.
+  [`retry::never()`](https://docs.rs/reqwest/0.13.5/reqwest/retry/fn.never.html)
+  (`retry.rs:84-90`) builds a policy whose classifier never retries (101-112,
+  468-469); hyper-util's resend below it stays in place.
+- Bodies. `bytes` and `json` collect the whole body through http-body-util's
+  `BodyExt::collect` (`response.rs:269-273`, 290-292, 430-437), which pushes every
+  frame without a limit (http-body-util `src/combinators/collect.rs:26-44`);
+  reqwest has no response size limit. `chunk` (`response.rs:310-325`) returns one
+  data frame at a time and is the bounded-read hook. `content_length` (78-94) is
+  the body's exact size hint, the server-declared `Content-Length` when no
+  decompression runs.
+- Profile methods. `no_gzip`, `no_brotli`, `no_zstd` and `no_deflate`
+  (`client.rs:1319-1385`) and `no_hickory_dns` (2287-2302) exist even without
+  their features and turn them off when another dependency enables them.
+  `no_proxy` (1429-1440) clears proxies and the system-proxy lookup, which is
+  otherwise on by default (310, 416-419). `http1_only` (1565-1569) sets the
+  HTTP/1 preference. That preference selects the `http/1.1` ALPN list only in a
+  rustls configuration that reqwest builds itself (825-844), and it never
+  selects hyper-util's `http2_only` (941-947). `https_only` (2259-2265) makes
+  `execute_request` refuse a non-HTTPS URL (2626-2629). `tls_version_min`
+  (2078-2098) filters protocol versions only in reqwest's own rustls
+  configuration (688-717). The package no longer calls it, because its own
+  configuration fixes TLS 1.3 and 1.2. `pool_idle_timeout` defaults to 90
+  seconds (302, 1493-1504).
+- TLS backend.
+  - Features. `rustls` adds the aws-lc-rs provider and the platform verifier
+    (`Cargo.toml:169-173`, 86-91). `rustls-no-provider` adds the verifier and
+    rustls without a provider (174-177, 80-85).
+  - reqwest's own rustls configuration. It takes a process-default
+    `CryptoProvider` when one is installed, and otherwise
+    `default_rustls_crypto_provider` (`client.rs:719-723`). That function
+    returns aws-lc-rs when reqwest's `__rustls-aws-lc-rs` feature is compiled.
+    Otherwise it panics with a request to install a provider (2498-2511). A
+    plain `reqwest::Client::new()` therefore panics in a graph whose reqwest
+    has only `rustls-no-provider` and whose process has no installed provider.
+    With no extra roots, this configuration also builds the platform verifier
+    (758-760).
+  - `tls_backend_preconfigured` (2182-2235) downcasts its argument to a
+    `rustls::ClientConfig`, and records an unknown backend otherwise, which
+    `build` refuses (892-897). Its rustdoc warns that the method's internals
+    have no semver stability, and that a TLS-argument version mismatch with
+    reqwest yields that unknown backend (2187-2201).
+  - A preconfigured configuration reaches the connector as given (`BuiltRustls`,
+    643-687; `src/connect.rs:339-390`). reqwest applies none of its ALPN,
+    version, root or verifier settings to it. It clears ALPN only on the copy it
+    uses through a proxy (connect.rs:386-389), and `no_proxy` leaves the proxy
+    list empty.
+  - The default backend is native-tls whenever `__native-tls` is compiled
+    without `http3` (`src/tls.rs:621-636`). A preconfigured rustls
+    configuration still selects rustls, because the native-tls branch downcasts
+    only a native-tls connector (`client.rs:2211-2219`).
+
+hyper-util 0.1.20 (`src/client/legacy/client.rs`):
+
+- `ErrorKind` (63-72) is `Canceled`, `ChannelClosed`, `Connect`,
+  `UserUnsupportedRequestMethod`, `UserUnsupportedVersion`,
+  `UserAbsoluteUriRequired` or `SendRequest`. Only `is_connect` and
+  `connect_info` are public (1640-1650); `Display` is `client error ({kind:?})`
+  and `Debug` adds the source (1617-1632).
+- `Connect` is assigned to connector failures (514-517), to pool-checkout errors
+  that are not cancellations and to a cancelled connect followed by a failed
+  checkout (460-479), and to `CheckoutIsClosed` when canceled-request retries are
+  off (376-379). `try_send_request` (274-341) obtains its connection from
+  `connection_for` (279-284) before it hands the request to that connection
+  (324). A `Connect` error therefore means that this attempt handed the request
+  to no connection. The ordering is implementation behaviour, not a documented
+  contract.
+- After the connector, HTTP/1 handshake and readiness failures go through
+  `Error::tx` and become `SendRequest` (565-648, 1663-1665), the same kind as a
+  failure after the request was written.
+- When the connection fails, `try_send_request` reports `Canceled`, marked
+  retryable, if hyper handed the request back, and `SendRequest` otherwise
+  (324-341). `send_request` (241-272) resends a retryable request only when
+  `retry_canceled_requests` holds and the connection was reused, with no attempt
+  counter; a fresh connection's `Canceled` is returned. `Builder::new` sets
+  `retry_canceled_requests: true` (1025-1049), documented as retrying requests
+  "disrupted before ever starting to write" (1541-1556). reqwest 0.13.5 never
+  calls the setter (its source has no occurrence), so it cannot be configured
+  through reqwest, and neither crate reports wire attempts.
+- The pool evicts expired idle connections on an interval equal to the idle
+  timeout, at least 90 ms (`src/client/legacy/pool.rs:425-461`), driven by the
+  pool timer reqwest installs (reqwest 0.13.5 `src/async_impl/client.rs:979`),
+  while checkout never reuses a connection idle for longer than the timeout. With
+  this package's four-second timeout an idle socket can therefore stay open for
+  up to about eight seconds without being reused.
+
+hyper 1.11.1:
+
+- `TrySendError::take_message` (`src/client/dispatch.rs:302-310`): "If an error
+  occurs after the message has been serialized onto the connection, it will not
+  be available here." `src/client/conn/http1.rs:250-282` hands the message back
+  when the dispatcher was not ready, and `src/proto/h1/dispatch.rs:723-747` hands a
+  queued request back as canceled when the connection fails before it started
+  ("the message was never even started"); otherwise the message is absent.
+- `Error::is_incomplete_message` (`src/error.rs:254-277`) documents the stale
+  keep-alive case: "A request is written on a connection, and the next `read`
+  reports EOF (perhaps a server just closed an "idle" connection)". That failure
+  carries no message, so hyper-util reports `SendRequest`.
+
+rustls 0.23.46:
+
+- Default provider. `ClientConfig::builder` (`src/client/client_conn.rs:309-317`)
+  and `builder_with_protocol_versions` (319-343) take the process default
+  through `CryptoProvider::get_default_or_install_from_crate_features`
+  (`src/crypto/mod.rs:238-257`). `ServerConfig::builder` does the same
+  (`src/server/server_conn.rs:495`).
+  - That function panics with "Could not automatically determine the
+    process-level CryptoProvider from Rustls crate features" when no default
+    is installed and `from_crate_features` (259-286) names none.
+  - `from_crate_features` names none when both `ring` and `aws_lc_rs` are
+    compiled, when neither is, or with `custom-provider`.
+  - `CryptoProvider::install_default` (220-229) sets the default once per
+    process.
+- Explicit provider. `builder_with_provider` (`client_conn.rs:345-363`) takes
+  the provider as an argument and reads no default. `with_protocol_versions`
+  (`src/builder.rs:206-221`) returns an error, rather than panicking, when the
+  provider has no cipher suite for the requested versions.
+- Versions. `ALL_VERSIONS` and `DEFAULT_VERSIONS` are TLS 1.3 and, with the
+  `tls12` feature, TLS 1.2 (`src/versions.rs:34-46`). rustls has no older
+  version.
+- Graph hazard. In this lockfile rustls depends on `ring` and not on
+  `aws-lc-rs`. A graph that also enables reqwest's `rustls` feature compiles
+  both, and a crate that calls `ClientConfig::builder()` then panics unless
+  the application root installed a default first.
+  - bollard 0.21.1 makes that call in its TLS connection
+    (`src/docker.rs:542`).
+  - testcontainers 0.28.0 uses that connection for an `https` Docker host, or
+    for `tcp` with TLS verification (`src/core/client/bollard_client.rs:16-22`).
+    Its default `ring` feature selects bollard's `ssl` (`Cargo.toml:49`, `66`;
+    bollard `Cargo.toml:84-87`).
+  - `runledger-test-support` depends on testcontainers 0.28 with default
+    features.
+
+rustls-platform-verifier 0.7.1 and rustls-native-certs 0.8.4:
+
+- `BuilderVerifierExt::with_platform_verifier` (`src/lib.rs:46-72`) builds
+  `Verifier::new` with the builder's own provider (67), not the process
+  default. `ConfigVerifierExt::with_platform_verifier` (74-92) starts from
+  `ClientConfig::builder()` and so would read the process default; the package
+  does not use it.
+- On Linux and other non-Apple Unix targets, `Verifier::new`
+  (`src/verification/others.rs:23-29`) loads the native roots when it is built
+  (85-111), through `rustls_native_certs::load_native_certs`. It returns "No CA
+  certificates were loaded from the system" when the store is empty (104-107).
+  Verification then runs webpki over those preloaded roots (120-124, 128-140).
+- rustls-native-certs 0.8.4 `load_native_certs` (`src/lib.rs:46-125`) reads only
+  the locations in `SSL_CERT_FILE` or `SSL_CERT_DIR` when either is set, not
+  the platform store (48-57, 118-124).
+- On Apple targets, `Verifier::new` (`src/verification/apple.rs:55-66`) loads
+  nothing.
+  - `verify_server_cert` (247) evaluates trust synchronously through
+    Security.framework (`evaluate_with_error`, 209).
+  - The README lists revocation support on macOS (`README.md:20-26`). A
+    source comment notes that even the test-root override does not stop online
+    revocation fetching or root downloads (`apple.rs:183-187`).
+  - rustls calls the verifier inside the handshake. hyper-util polls the
+    connector on the request's own task until a pooled connection wins the
+    race (hyper-util `src/client/legacy/client.rs:416-422`, 435-447).
+  - So a blocking evaluation stops that task, and the exchange's timer cannot
+    be observed meanwhile. That is source-inspected; nothing has executed on
+    macOS.
+
+url 2.5.8:
+
+- `PathSegmentsMut::extend` (`src/path_segments.rs:175-266`) skips a segment that
+  is exactly `.` or `..` (247-249), as its rustdoc shows (216-235), and
+  percent-encodes `%` and `/` beyond the path set (177-180). For special schemes
+  such as `https` the segment set adds `\`, and the path set covers `#`, `?`,
+  `{`, `}`, space, `"`, `<`, `>` and the backtick (`src/parser.rs:19-42`,
+  1208-1213).
+- `parse_path` removes ASCII tab, line feed and carriage return in every context,
+  the segment setter included (`parser.rs:76-80`, 1240-1250), and then applies
+  dot-segment handling to what remains (1312-1342). A segment such as `.`, tab,
+  `.` therefore removes the preceding segment, and a lone tab yields an empty
+  one.
+- Neither path-segment set encodes `;` (`parser.rs:38`, 42), so `..;x` reaches
+  the peer as written. A server that strips `;` path parameters would read it
+  as `..`.
+- `RequestDraft::prepare` refuses these segments:
+  - an exact empty, `.` or `..` segment;
+  - a segment whose part before the first `;` is empty, `.` or `..`;
+  - a segment containing a tab, line feed or carriage return
+    (`PrepareError::ControlCharacter`).
+
+  It then checks that every segment survived as exactly one segment
+  (`PrepareError::Build`). With url 2.5.8 the refusals above leave no input
+  that fails that check, so it is defence in depth.
+
+http 1.5.0:
+
+- `Uri` refuses an input longer than 65,534 bytes (`src/uri/mod.rs:145`,
+  296-298). reqwest converts the URL only in `execute_request` and returns a
+  builder error when that conversion fails (reqwest `client.rs:2639-2642`).
+  `prepare` and `Origin` therefore run `http::Uri::try_from` themselves, and
+  return `PrepareError::InvalidUri` and `OriginError::Unparseable` before an
+  exchange exists.
+
+Standards:
+
+- [RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2):
+  "A client SHOULD NOT automatically retry a request with a non-idempotent method
+  unless it has some means to know that the request semantics are actually
+  idempotent, regardless of the method, or some means to detect that the original
+  request was never applied." It notes that some clients guess instead, for
+  example retrying a POST "if the underlying transport connection closed before
+  any part of a response is received, particularly if an idle persistent
+  connection was used". `proves_unsent()` is evidence of the second kind for one
+  attempt under the locked implementation; the package itself never retries.
+- [RFC 9113 §8.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7):
+  "HTTP/2 provides two mechanisms for providing a guarantee to a client that a
+  request has not been processed": GOAWAY "indicates the highest stream number
+  that might have been processed", and `REFUSED_STREAM` indicates "that the stream
+  is being closed prior to any processing having occurred". "Requests that have
+  not been processed have not failed; clients MAY automatically retry them, even
+  those with non-idempotent methods", and "A server MUST NOT indicate that a
+  stream has not been processed unless it can guarantee that fact." That is the
+  class reqwest's default `ProtocolNacks` retries. HTTP/2 is unsupported in this
+  version, so the exchange neither uses nor reports it.
+
+Effect 4.1.2, the contrast drawn in the
+[Effect reconciliation](effect-v4-reconciliation.md), read in the sources tagged
+`effect@4.1.2`:
+
+- [`HttpClient.retryTransient`](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpClient.ts#L947-L1057)
+  defaults its schedule to `Schedule.forever` and leaves `times` unset unless
+  the caller gives it (1033-1038). It repeats a response while
+  `isTransientResponse` holds and retries an error while `isTransientError`
+  holds (1039-1055). Neither check looks at the request method.
+- [`isTransientError`](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpClient.ts#L2387-L2423)
+  accepts a timeout, a transport error, or a status error with a transient
+  response.
+  [`isTransientResponse`](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpClient.ts#L2452-L2472)
+  accepts 408, 429, 500, 502, 503 and 504.
+- [`MaxBodySize`](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpIncomingMessage.ts#L135-L145)
+  defaults to `undefined`, so an incoming body has no size limit by default.
+- The agent-facing
+  [client example](https://github.com/Effect-TS/effect/blob/effect%404.1.2/ai-docs/src/50_http-client/10_basics.ts#L26-L83)
+  applies `retryTransient` (39-42) to the client that also sends a POST
+  (76-83).
+
 ## Rust 1.98.1 panic hooks for the redacting hook, 2026-11-02
 
 For `batter-4q78`, the pinned toolchain, Rust 1.98.1, is every package's minimum

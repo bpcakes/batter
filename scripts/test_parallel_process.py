@@ -350,7 +350,7 @@ class MatrixTests(unittest.TestCase):
 
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
-                         {"workspace": [2, 2], "no-default-features": [3], "doctests": [1],
+                         {"workspace": [2, 2], "no-default-features": [4, 1], "doctests": [1],
                           "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 3]})
         planned = matrix.parts()
         # Each part executes exactly the batches it plans, in the planned order.
@@ -359,7 +359,8 @@ class MatrixTests(unittest.TestCase):
         commands = {label: command for plan in planned.values() for labels, batch in plan
                     for label, command in zip(labels, batch)}
         self.assertCountEqual(commands.values(), [
-            matrix.CORE_CHECK, matrix.FACADE_CHECK, matrix.CORE_TESTS, matrix.WORKSPACE_TESTS,
+            matrix.CORE_CHECK, matrix.FACADE_CHECK, matrix.CORE_TESTS, matrix.OUTBOUND_CHECK,
+            matrix.OUTBOUND_TESTS, matrix.WORKSPACE_TESTS,
             matrix.HOSTILE_CONFIGURATION, matrix.DOC_TESTS, matrix.RUNNER_TESTS, matrix.SMOKE_TESTS,
             matrix.REFERENCE_RUNNER_TESTS, matrix.SQLX_RUNNER_TESTS, matrix.RUNLIMIT_FEATURES,
             matrix.RUNLEDGER_GRAPH, matrix.RUNLEDGER_CONTROLS, matrix.RUNLEDGER_CONSUMER,
@@ -369,7 +370,7 @@ class MatrixTests(unittest.TestCase):
             matrix.FUTURE_SIZE_RELEASE, matrix.SINGLE_FACADE_CONSUMER, matrix.SINGLE_FACADE_CONTROLS,
             matrix.HTTP_SMOKE_CONTROLS,
         ])
-        self.assertEqual(len(commands), 27)
+        self.assertEqual(len(commands), 29)
         self.assertIn("--all-targets", commands["workspace-tests"])
         self.assertIn("--workspace", commands["workspace-tests"])
         hostile = commands["configuration-hostile-environment"]
@@ -384,7 +385,7 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("test_reference_live.py", commands["reference-runner-controls"])
         self.assertIn("test_smoke_http.py", commands["http-smoke-controls"])
         self.assertTrue(all("--no-default-features" in command
-                            for command in batches["no-default-features"][0]))
+                            for batch in batches["no-default-features"] for command in batch))
         self.assertIn("--doc", batches["doctests"][0][0])
         self.assertIn("test_parallel_process.py", batches["scripts"][0][0])
         self.assertIn("scripts/test_smoke_postgres.py", batches["scripts"][0][1])

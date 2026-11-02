@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent
 CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-features", "--locked"]
 FACADE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
 CORE_TESTS = ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"]
+# The standalone outbound leaf without its `operation` bridge, so without batter-core.
+OUTBOUND_CHECK = ["cargo", "check", "-p", "batter-outbound", "--lib", "--no-default-features", "--locked"]
+OUTBOUND_TESTS = ["cargo", "test", "-p", "batter-outbound", "--no-default-features", "--locked"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
 # A clean developer shell must not hide ambient-state dependencies in tests.
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -113,8 +116,11 @@ def parts():
                        [WORKSPACE_TESTS, REFERENCE_RUNNER_TESTS]),
                       (["configuration-hostile-environment", "release-future-sizes"],
                        [HOSTILE_CONFIGURATION, FUTURE_SIZE_RELEASE])],
-        "no-default-features": [(["core-library", "facade-library", "core-tests"],
-                                 [CORE_CHECK, FACADE_CHECK, CORE_TESTS])],
+        # The outbound leaf's tests assert tight timing, so they run alone in
+        # their own batch after its library check compiled with the others.
+        "no-default-features": [(["core-library", "facade-library", "core-tests", "outbound-library"],
+                                 [CORE_CHECK, FACADE_CHECK, CORE_TESTS, OUTBOUND_CHECK]),
+                                (["outbound-tests"], [OUTBOUND_TESTS])],
         "doctests": [(["doctests"], [DOC_TESTS])],
         # Consumer builds use private target directories. The first two batches
         # bound concurrent builds and keep shared facade cache users apart.

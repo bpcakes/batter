@@ -11,6 +11,9 @@ and keep application errors concrete.
 For HTTP route and boundary composition, follow the
 [HTTP composition example](../crates/batter/examples/http_service.rs). Its
 process completion uses the same checked path after protected startup.
+For outbound provider HTTP calls, follow the
+[outbound exchange example](../crates/batter/examples/outbound_exchange.rs) and
+[Outbound provider calls](#outbound-provider-calls).
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
@@ -74,9 +77,9 @@ application:
 batter = { version = "0.1", features = ["at-rest", "axum", "sqlx"] }
 ```
 
-Use `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
-`batter::runlimit`, and `batter::test_support` for the corresponding
-feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
+Use `batter::at_rest`, `batter::axum`, `batter::outbound`, `batter::sqlx`,
+`batter::runledger`, `batter::runlimit`, and `batter::test_support` for the
+corresponding feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
 `runlimit-axum` forward the existing native adapter capabilities;
 `sqlx-test-support` additionally exposes `batter::sqlx::test_support` and
 generic test support. The same features also reach the native packages
@@ -90,6 +93,9 @@ Those namespaces are deliberately low-level and move no ownership. Direct adapte
 application needs their native package boundary. In particular,
 `batter-at-rest` supports direct runtime-free use as `batter_at_rest`; the
 facade feature re-exports the same types and is not required for encryption.
+Likewise, `batter-outbound` supports direct use as `batter_outbound` without
+`batter-core`, and the facade's `outbound` feature also enables its `operation`
+bridge.
 The complete feature table
 and ownership rules are in the [integration contract](integrations.md#facade-feature-selection).
 
@@ -165,6 +171,91 @@ RetryDecision::RetryAfter. Do not classify by matching error-message text. A
 database commit or external mutation needs an explicit idempotency/uncertainty
 design, not just this helper. Dropping an attempt future does not prove what a
 remote provider accepted.
+
+## Outbound provider calls
+
+Send provider HTTP requests through `batter::outbound` (feature `outbound`) from
+the code that owns the provider protocol, never through a hand-built reqwest
+client, whose default redirects and replays make a connect error no proof that
+nothing was sent. Build one `Client` per provider origin and clone it. Prepare
+each request, which reports every construction error before anything is sent,
+write the application's dispatch fence durably, and send the request once in
+the work phase of `reserve_finalization`, so the outcome can be recorded in the
+finalization phase unless the parent context is cancelled:
+
+```rust
+use batter::{
+    BoxError,
+    operation::OperationContext,
+    outbound::{Body, Client, Exchange, ResponseLimit, http::{Method, StatusCode}},
+};
+use std::{convert::Infallible, time::Duration};
+
+// `Fence` is the application's own dispatch fence. `None` means a cancelled
+// parent ran no recording step, so the fence written before the send stays held.
+async fn mutate(
+    client: &Client,
+    context: &OperationContext,
+) -> Result<(Exchange, Option<Fence>), BoxError> {
+    let request = client
+        .request(Method::POST, ["v1", "effects"])
+        .json(&serde_json::json!({ "effect": "example" }))
+        .prepare()?;
+    let phases = context.reserve_finalization(Duration::from_millis(500))?;
+    // Write "an effect may be in flight" durably before anything is sent.
+    phases
+        .work()
+        .run("example.fence", |_scope| async { Ok::<_, Infallible>(()) })
+        .await?;
+    let exchange = request.send_in(phases.work(), ResponseLimit::new(16 * 1024)?).await;
+    let fence = match &exchange {
+        // Only these prove that this attempt wrote nothing.
+        Exchange::NotStarted(_) | Exchange::NotDispatched(_) => Fence::Released,
+        // The provider may have acted: reconcile before any new attempt.
+        Exchange::Unknown(_) => Fence::Held,
+        // A load balancer may have answered; reading the status is provider policy.
+        Exchange::Responded(response) => match (response.status(), response.body()) {
+            (StatusCode::CREATED, Body::Complete(_receipt)) => Fence::Settled,
+            _ => Fence::Held,
+        },
+    };
+    // Record `fence` and `exchange.label()` in the application's store here.
+    let recorded = phases
+        .finalization()
+        .run("example.record", |_scope| async move { Ok::<_, Infallible>(fence) })
+        .await
+        .ok();
+    Ok((exchange, recorded))
+}
+```
+
+Match every `Exchange` variant without a wildcard arm, and never merge `Unknown`
+into the arm of the unsent outcomes: `Unknown` is never permission to retry as
+though nothing was sent, and its request can still reach the provider after the
+outcome is returned. Only the package constructs `NotStarted` and
+`NotDispatched`, so no wrapper can turn an interruption into either. Read a
+status together with its `Body`, since a status beside `Body::Failed` or
+`Body::TooLarge` is not the provider's complete answer. `PreparedRequest` is not
+`Clone`, so every attempt is a new preparation: derive the idempotency key and
+payload once, outside any attempt. Of the two unsent outcomes, retry only
+`NotDispatched`, with backoff and a fresh budget check: a `NotStarted` stands
+for its deadline or context and returns again at once, without yielding, when
+sent under the same one. Inside Batter's `retry`, prepare in each attempt
+factory and pass the attempt's context to `send_in`; no `ReplaySafety` value
+states that a non-idempotent request is retried only after `proves_unsent`, so
+such a request needs a hand-written second attempt or a durable job instead. No
+test in this repository exercises either composition. Await `send_in` directly.
+Inside `timeout`, `select!`, `run` or a `retry` attempt, the exchange is
+dropped when the outer interruption wins, and `retry` discards an `Ok` returned
+in the same poll as a cancellation; a dropped exchange has no outcome, so treat
+it as `Unknown` (no test drops one). The exchange emits no telemetry: record
+`exchange.label()`, which carries no URL, query, header value or body. A
+provider crate that must not depend on `batter-core` uses `batter_outbound`
+directly with `send(deadline, limit)`. The
+[runnable example](../crates/batter/examples/outbound_exchange.rs) compiles this
+composition, and the
+[adoption contract](integrations.md#outbound-provider-exchange-experimental-transport-evidence)
+covers placement, replay and the external version contract.
 
 ## Bound concurrent work separately
 

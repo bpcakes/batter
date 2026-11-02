@@ -437,7 +437,7 @@ fn every_batter_consuming_root_installs_the_redacting_hook_first() {
         );
     }
     // The exact inventory: adding or removing a root updates these counts.
-    assert_eq!(checked.len(), 15, "Batter-consuming roots: {checked:#?}");
+    assert_eq!(checked.len(), 16, "Batter-consuming roots: {checked:#?}");
     assert_eq!(native.len(), 12, "native roots: {native:#?}");
     for path in checked {
         let source = fs::read_to_string(path).unwrap();
