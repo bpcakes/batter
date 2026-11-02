@@ -7,14 +7,18 @@
 //! directory carries an exemption.
 //!
 //! The reader expects rustfmt layout: one declaration per line, its attributes
-//! on the lines directly above it. It resolves no file for a declaration whose
+//! on the lines directly above it. It places no file for a declaration whose
 //! location it does not follow: a `#[path]` inside an inline module, any
 //! declaration inside an inline module that carries a path attribute, a path
 //! set by another attribute such as `cfg_attr`, and a submodule of a file
 //! loaded through `#[path]` without its own `#[path]`. A file that no
 //! declaration resolves to, such as a crate root or a file loaded through one
-//! of those forms, counts as production, and so do its ungated submodules,
-//! which can only make the scan stricter.
+//! of those forms, counts as production, and so do its ungated submodules.
+//! Because such a declaration in production code may load a file that a test
+//! module also loads, it leaves no file of its library test-only. A form the
+//! reader does not follow can therefore only make the scan stricter. The
+//! reader does not see modules that a macro declares or Rust code that
+//! `include!` inserts.
 
 use std::{
     collections::BTreeSet,
@@ -175,7 +179,8 @@ fn targets(
 
 /// Derive which of `sources` are test-only: the files that a `#[cfg(test)]`
 /// declaration or a declaration inside a test-only file resolves to, except
-/// those that production code loads too.
+/// those that production code loads too. A production declaration whose file
+/// the reader cannot place leaves nothing test-only.
 pub(crate) fn test_only(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
     let parsed: Vec<_> = sources
         .iter()
@@ -189,18 +194,21 @@ pub(crate) fn test_only(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
                 .filter_map(|declaration| path_target(file, declaration))
         })
         .collect();
-    // Each declaration as (declaring file, gated where it stands, files).
+    // Each declaration as (declaring file, gated where it stands, files,
+    // unplaced): an unplaced declaration loads a file the reader cannot name.
     let edges: Vec<_> = parsed
         .iter()
         .flat_map(|(file, declarations)| {
             declarations.iter().map(|declaration| {
                 let gated =
                     declaration.gated || declaration.enclosing.iter().any(|(_, gated)| *gated);
-                (*file, gated, targets(file, declaration, &path_loaded))
+                let files = targets(file, declaration, &path_loaded);
+                let unplaced = !declaration.inline && files.is_empty();
+                (*file, gated, files, unplaced)
             })
         })
         .collect();
-    let resolved: BTreeSet<&PathBuf> = edges.iter().flat_map(|(.., files)| files).collect();
+    let resolved: BTreeSet<&PathBuf> = edges.iter().flat_map(|(_, _, files, _)| files).collect();
     // Production code starts at every file that no declaration resolves to.
     let mut production: BTreeSet<PathBuf> = sources
         .iter()
@@ -211,7 +219,7 @@ pub(crate) fn test_only(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
     let mut test = BTreeSet::new();
     loop {
         let size = (production.len(), test.len());
-        for (file, gated, files) in &edges {
+        for (file, gated, files, _) in &edges {
             if !*gated && production.contains(*file) {
                 production.extend(files.iter().cloned());
             }
@@ -220,7 +228,16 @@ pub(crate) fn test_only(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
             }
         }
         if size == (production.len(), test.len()) {
-            return &test - &production;
+            // Production code that loads a file the reader cannot name may
+            // load any test file, so none can be exempt.
+            let unplaced = edges.iter().any(|(file, gated, _, unplaced)| {
+                *unplaced && !*gated && production.contains(*file)
+            });
+            return if unplaced {
+                BTreeSet::new()
+            } else {
+                &test - &production
+            };
         }
     }
 }
@@ -295,5 +312,44 @@ fn only_files_of_cfg_test_modules_are_test_only() {
         "/src/x/main.rs",
     ] {
         assert!(!test_only.contains(Path::new(path)), "{path} is test-only");
+    }
+}
+
+#[test]
+fn production_modules_the_reader_cannot_place_exempt_nothing() {
+    let file = |path: &str, source: &str| (PathBuf::from(path), source.to_owned());
+    let library = |declarations: &str| {
+        [
+            file(
+                "/src/lib.rs",
+                &format!("#[cfg(test)]\nmod shared;\n#[cfg(test)]\nmod tests;\n{declarations}"),
+            ),
+            file("/src/shared.rs", ""),
+            file("/src/loader.rs", "mod shared;\n"),
+            file(
+                "/src/tests.rs",
+                "#[cfg_attr(unix, path = \"data.rs\")]\nmod data;\n",
+            ),
+        ]
+    };
+    // Control: when only test modules load it, the shared file is test-only,
+    // even though a test module holds a declaration the reader cannot place.
+    let control = test_only(&library(""));
+    for path in ["/src/shared.rs", "/src/tests.rs"] {
+        assert!(control.contains(Path::new(path)), "{path} is not test-only");
+    }
+    // A path set through `cfg_attr`, a `#[path]` inside an inline module and
+    // a submodule of a file loaded through `#[path]`, each in production code
+    // and each loading the shared file, leave nothing test-only.
+    for production in [
+        "#[cfg_attr(unix, path = \"shared.rs\")]\nmod platform;\n",
+        "mod outer {\n    #[path = \"../shared.rs\"]\n    mod platform;\n}\n",
+        "#[path = \"loader.rs\"]\nmod loader;\n",
+    ] {
+        let test_only = test_only(&library(production));
+        assert!(
+            test_only.is_empty(),
+            "{production:?} left {test_only:?} test-only"
+        );
     }
 }

@@ -1887,6 +1887,7 @@ panic. The
 `the_line_rule_flags_code_and_keeps_comments`,
 `only_binary_roots_and_cfg_test_modules_are_exempt`,
 `only_files_of_cfg_test_modules_are_test_only`,
+`production_modules_the_reader_cannot_place_exempt_nothing`,
 `every_batter_consuming_root_installs_the_redacting_hook_first`,
 `the_first_statement_rule_reads_main_bodies`) covers every production source
 path of every workspace library, meaning every file except those that a

@@ -656,8 +656,13 @@ directory, a test module's file that a production module also loads, the
 default places of test modules whose path the reader does not follow, a nested
 `main.rs` and a binary's helper module. The real scan must also exempt at least
 one test module that installs a hook. A file that the reader cannot attribute
-to any declaration counts as production, and so do its ungated submodules. The
-scan does not cover dependencies or see macro-built identifiers. It also classifies
+to any declaration counts as production, and so do its ungated submodules. When
+production code declares a module whose file the reader cannot place, through
+`cfg_attr`, a `#[path]` inside an inline module or a submodule of a file loaded
+through `#[path]`, no file of that library is exempt; a self-test pairs each of
+those forms with a `#[cfg(test)]` declaration of the same file. The scan does
+not cover dependencies or see macro-built identifiers, modules that a macro
+declares or Rust code that `include!` inserts. It also classifies
 every checked-in executable root, meaning each workspace member's `src/main.rs`,
 `src/bin/`, `examples/`, `benches/` and declared target paths and the consumer
 sources scripts build outside the workspace, with a self-test of the
