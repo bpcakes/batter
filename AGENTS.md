@@ -312,6 +312,8 @@ like "safe" or "reliable". Test what those words would actually mean.
 
 `scripts/verify.sh` owns the complete local verification command sequence.
 `scripts/test_matrix.py` owns the six test parts and their bounded subprocesses.
+`scripts/ci_plan.py` owns hosted Rust CI job selection; a skip must stay provable
+and every planner failure must select the full run.
 Keep these commands complete when adding fixtures, helpers or source roots.
 Jig is retained only for its standalone file-budget checker; use
 `bash scripts/check_file_budget.sh` for local changes against `origin/master`, or
