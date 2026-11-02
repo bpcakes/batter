@@ -146,7 +146,7 @@ python3 scripts/test_matrix.py runlimit
 python3 scripts/check_runlimit_workspace.py
 RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
 ```
-Local verification uses the root pinned toolchain; exact Rust 1.94.0 verification
-belongs in CI. Use only disposable PostgreSQL fixtures for live tests. CI retains PostgreSQL 16;
+Local verification and CI use the root pinned toolchain, which is also the
+declared minimum. Use only disposable PostgreSQL fixtures for live tests. CI retains PostgreSQL 16;
 record actual versions and executed platforms. No database is needed to compile.
 See [import provenance](IMPORT.md); use the root tracker, not upstream administration.

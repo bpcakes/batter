@@ -2,7 +2,7 @@
 name = "runlimit-postgres"
 version = "0.4.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.98.1"
 license = "MIT OR Apache-2.0"
 publish = ["crates-io"]
 description = "Replica-safe PostgreSQL rate-limit storage"

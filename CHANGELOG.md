@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Raise every package's minimum Rust version from 1.94 to 1.98.1, the pinned
+  toolchain (`batter-wis2`). Rust 1.98.1 fixes a 1.98.0 vtable miscompilation.
+  Applications on an older compiler must upgrade; no public item changes. CI
+  now verifies one toolchain, and the detached `batter-at-rest` gate uses 1.98.1.
 - Run bounded blocking work through `Bulkhead::run_blocking` (`batter-0772`;
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#bounded-blocking-work-assessment-batter-0772)).
   `run_blocking(context, admission, work)` admits under the caller's context

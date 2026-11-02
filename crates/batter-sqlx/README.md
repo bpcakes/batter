@@ -1,7 +1,7 @@
 # batter-sqlx
 
 An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
-0.0.1, Rust 1.94 minimum, Unix-only, and targeting crates.io. The foundation
+0.0.1, Rust 1.98.1 minimum, Unix-only, and targeting crates.io. The foundation
 does not depend on this package.
 PostgreSQL 18 is the minimum supported server for every adapter path, including
 both session-profile constructors; older servers are unsupported.

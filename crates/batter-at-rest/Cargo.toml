@@ -2,7 +2,7 @@
 name = "batter-at-rest"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.98.1"
 publish = ["crates-io"]
 license = "MIT"
 description = "Standalone application-layer envelope encryption and stable MAC keys"

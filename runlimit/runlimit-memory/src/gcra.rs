@@ -480,7 +480,7 @@ impl<C: Clock> GcraStore<C> {
 
 // Both async bodies contain no `.await`: they exist to defer the synchronous
 // check until the first poll, which the `Limiter` contract requires.
-// Rust 1.94 predates this Clippy lint; retain the deferral contract on both toolchains.
+// `unknown_lints` keeps Clippy releases that predate this lint quiet.
 #[allow(unknown_lints, clippy::unused_async_trait_impl)]
 impl<C: Clock> Limiter for GcraStore<C> {
     type Policy = GcraPolicy;

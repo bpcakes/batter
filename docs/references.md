@@ -939,6 +939,18 @@ and its [duplicate push run](https://github.com/bpcakes/batter/actions/runs/3569
 establish the duplicated execution. They predate the optimization and do not
 establish a cache hit or elapsed-time improvement for the revised workflow.
 
+## Rust minimum toolchain: reviewed 2026-11-02
+
+- Rust's [1.98.1 release notes](https://github.com/rust-lang/rust/blob/stable/RELEASES.md#version-1981-2026-09-03)
+  list one fix, a rustc vtable miscompilation
+  ([rust-lang/rust#161441](https://github.com/rust-lang/rust/issues/161441)).
+  Packages therefore declare `rust-version = "1.98.1"`, the exact pinned and
+  CI-tested release, rather than `1.98`. Cargo accepted the three-component
+  value for all four Clippy configurations and the complete verification.
+- `rustup check` reported stable 1.99.1 (2026-10-13). Its rustdoc rejects a
+  redundant explicit link in `batter-axum` under `-D warnings`, which fails the
+  weekly floating-`stable` run; moving the pin to 1.99 requires that repair.
+
 ## GitHub Actions CI scope selection: reviewed 2026-11-02
 
 - [Swatinem/rust-cache at the pinned commit](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/action.yml)

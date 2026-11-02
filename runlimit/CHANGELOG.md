@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- Raise the minimum supported Rust version from 1.94 to 1.98.1, the Batter
+  workspace's pinned toolchain. No public item changes.
 - `MemoryAttemptLimiter::admit` borrows the subject's policy and clones it
   only when it inserts a new subject; it no longer constructs an entry for an
   occupied key. Its bounded expiry cleanup copies the at most 16 examined keys

@@ -92,4 +92,4 @@ cancelled, and `CommandOwner::finish` moves the checked value out; helpers and
 tests use `start_without_signals`. Its failure/interruption modes and
 ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 
-Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed.
+Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed.

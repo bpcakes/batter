@@ -35,7 +35,7 @@ def manifest(source):
                        + json.dumps(str(source / 'runlimit/smoke' / (name + '_consumer.rs')))
                        + '\n' for name, _ in EXECUTIONS)
     return ('[package]\nname = "runlimit-source-consumer"\nversion = "0.0.0"\n'
-            'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
+            'edition = "2024"\nrust-version = "1.98.1"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n'
             + '\n'.join(dependencies) + '\n' + binaries)
 

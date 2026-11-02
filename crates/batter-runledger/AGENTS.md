@@ -95,4 +95,4 @@ Validate both feature branches together. `python3 scripts/check_single_facade_co
 executes the single-dependency consumer, and `python3 scripts/check_facade_features.py`
 proves each namespace's reachability, isolation and identity. Publication is governed by the active
 `batter-ddc` release task. Final acceptance includes root pinned-toolchain/live
-gates locally and MSRV verification in CI.
+gates locally and the same pinned-toolchain verification in CI.
