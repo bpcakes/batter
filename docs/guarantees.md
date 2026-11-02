@@ -385,7 +385,9 @@ output, as shown by the complete `ExitCode` example on `SharedShutdownReport`
 and the SQLx executable. Neither the foundation nor a report wrapper redacts an
 arbitrary domain error that an application formats itself. Direct
 `ShutdownFailure` Debug/Display is redacted, but arbitrary error-source
-traversal and native panic-hook output have no such promise. Raw-report lints
+traversal has no such promise, and Rust's default panic hook prints payloads
+unless the application root installs the
+[redacting panic hook](#application-installed-redacting-panic-hook). Raw-report lints
 are advisory: binding, explicit dropping, or allowing the lint bypasses them.
 Even a checked `Result` can be deliberately discarded by application code.
 
@@ -954,7 +956,10 @@ acquisition cancellation may have external effects before yielding ownership;
 resources acquired but not registered have only their native destruction
 semantics. Register immediately after success without another await. No detached
 work, arbitrary destructor, non-yielding initializer, aborting panic, process or
-runtime destruction is covered. The default panic hook may still print secrets.
+runtime destruction is covered. The default panic hook may still print secrets;
+an application root that installs the
+[redacting panic hook](#application-installed-redacting-panic-hook) first prints
+each panic's location instead.
 Unexpected coordinator termination retains a JoinError without inventing cleanup.
 
 Protected `.with_unix_signals(name)` is inert until `start`. Start first retains
@@ -2644,6 +2649,79 @@ formatting includes separate redacted driver-joined and driver-failure flags,
 so successful driver completion with pending admin closure remains distinguishable.
 
 
+## Application-installed redacting panic hook
+
+`batter::redacting_panic_hook()` (also `batter_core::redacting_panic_hook`)
+returns a `#[must_use]` `Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync + 'static>`,
+the type `std::panic::set_hook` takes. Constructing it installs nothing, and no
+Batter library installs, takes or replaces the process hook. No workspace library
+source names `set_hook`, `take_hook` or `update_hook` outside comments, files
+that a `#[cfg(test)]` module loads and no production module does, a test-only
+status derived from module declarations rather than file names or directories,
+and the binary roots that the executable-root inventory classifies
+(such as `src/main.rs` and `src/bin/*.rs`). The entrypoints that
+own process-wide signal handlers or catch panics keep an application's hook
+installed and unwrapped, passing each panic they catch to it once. Dependencies
+are not scanned. Every checked-in
+executable root in this repository that consumes Batter, among the workspace
+members' binaries, examples and benchmarks and the consumer sources built outside
+the workspace, installs the hook, unwrapped, as the first statement of `main`,
+except three named tooling roots, a live-suite preflight, a provisioning harness
+and a benchmark, that keep the default hook so their failures print diagnostic
+messages. Native Runledger and Runlimit roots name no Batter crate and keep their
+own policy, and programs that scripts generate as compile probes are not
+classified.
+
+Each panic writes one line to standard error, after a newline:
+`a thread panicked at <file>:<line>:<column>; panic payload redacted`, or `at an
+unknown location` when std reports none. The text is part of the contract, and a
+change to it is recorded in the changelog. The private renderer receives only the
+location's file, line and column, so the payload cannot reach that output. The
+hook never reads, writes or forwards the payload. Std formats a `panic!` message's
+arguments, or the `Debug` of an error passed to `unwrap` or `expect`, into the
+payload before any hook runs; `catch_unwind`, joins, Tokio `JoinError`s and Batter
+reports retain that payload, and this hook never writes it. The hook calls
+neither the previous nor the default hook, emits no tracing event, reads no
+thread name and prints no backtrace, whatever `RUST_BACKTRACE` says. It returns
+normally, so control flow is unchanged: an unwinding panic still runs destructors
+and reaches `catch_unwind`, a thread join or a Tokio `JoinError` with its original
+payload, and a panic escaping a libtest test function still ends the process with
+the same status 101 as under the default hook. A line of up to 512 bytes is
+rendered on the stack and written with one `write_all` to a duplicate of
+descriptor 2; a longer one is written in pieces. The hook never takes the
+`std::io::Stderr` lock, which another thread can hold indefinitely, and it does
+not wait for one that is held. When the descriptor cannot be duplicated, for
+example at the process descriptor limit, it writes nothing. Write errors are
+ignored. Closing the duplicate after each report releases the process-owned POSIX
+`fcntl` record locks the process holds on the file behind standard error;
+open-file-description locks are unaffected.
+
+The hook covers payload printing at panic time only and removes the formatting
+and delegation the consumers in ADR-014 performed. It does not remove the
+obligation to install it: nothing can prove that a binary installed it, installed
+it before its first panic, or kept it. Any later `set_hook` replaces it, the
+default hook is installed between a `take_hook` and the next `set_hook`, and a
+wrapper or later hook that formats `PanicHookInfo`, whose `Display` includes a
+string payload, or the payload itself, or that calls the default hook, prints the
+payload again. Wrapper code that can itself panic, such as `eprintln!` to a closed
+pipe, makes std abort the process, because a panic raised while a hook runs cannot
+unwind. Std also aborts when a panic occurs while it formats a `panic!` message's
+arguments for a hook; it then prints the nested panic's location, and its message
+only when that message is a constant string, but not the original payload. In a
+child that `std::process::Command` forks, std disables hooks before running
+`pre_exec` closures and `exec`, so a panic there prints the full payload without
+consulting any hook. With `#[tokio::main]` the default hook still covers runtime
+construction, which precedes the first statement of the body. In-process tests
+must not install the hook: its line bypasses libtest's output capture, and libtest
+prints a failing test's panic message only through the default hook, except for a
+`#[should_panic(expected = ...)]` mismatch, whose payload it prints itself. Tokio's `JoinError`
+formats a string payload in its `Debug` and `Display`, so formatting a retained
+one discloses it, as do error-source traversal of a report that retains one and
+explicit `PanicPayload::try_inspect`; payloads retained in Batter reports keep
+their explicit field access. The hook does not sanitize logs, other output or the
+process. Aborting panics and a real `fn main` boundary are source-inspected, not
+tested.
+
 ## Explicit settings and redacted diagnostics
 
 `batter::settings` supplies std-based explicit inputs, a bounded literal reader,
@@ -2670,7 +2748,9 @@ optional line numbers, never input keys, paths or values.
 in ordinary, nested and alternate Debug/Display. Secret access and error-source
 traversal are explicit trusted operations. The original native causes remain
 available; arbitrary source-chain reporters can expose them. No encryption,
-zeroization, process-wide logging policy or panic-hook redaction follows.
+zeroization, process-wide logging policy or panic-hook redaction follows from
+these types; see
+[Application-installed redacting panic hook](#application-installed-redacting-panic-hook).
 
 The reference root owns defaults, precedence and two concrete command schemas.
 `ServingSettings` contains a password-qualified endpoint, concrete

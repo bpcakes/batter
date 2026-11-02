@@ -19,6 +19,15 @@ Windows support and non-Unix fallbacks are out of scope.
   including the optional Axum, SQLx and Runlimit demonstrations.
 - `tests/native_transport_consumer.rs` executes the native Runlimit transport
   packages through facade paths and asserts their identity.
+- `tests/panic_hook_ownership.rs` scans every workspace library's production
+  sources for panic-hook installers, exempting only files that a `#[cfg(test)]`
+  module loads and no production module does (derived in
+  `panic_hook_ownership/modules.rs` from module declarations, never from file
+  names or directories) and exactly the binary roots the inventory classifies,
+  and classifies every checked-in executable
+  root in the repository: each root consuming Batter installs the redacting hook first,
+  except three named tooling roots, and native Runledger and Runlimit roots keep
+  their own policy.
 - `../../consumers/` holds the external single-dependency consumer sources; see
   the [single-dependency recipe](../../docs/reference-compatibility.md#single-dependency-recipe).
 
@@ -34,6 +43,14 @@ The facade must not duplicate runtime or leaf code or create a second type ident
 The default normal dependency graph contains only `batter-core`; adapters must
 depend on core rather than this facade. Preserve concrete errors, native futures,
 explicit cleanup, tracing target `batter`, and the Unix-only scope.
+Every example's `main` starts with
+`std::panic::set_hook(batter::redacting_panic_hook());`, unwrapped, before
+argument parsing, configuration, tracing or other work; a new `[[example]]`
+root does the same. Library code, helpers and in-process tests never install a
+hook; only an executable's `main`, or a fresh child process standing in for one,
+does. `tests/panic_hook_ownership.rs` classifies every checked-in executable root, with
+three named tooling exemptions and native roots out of scope, and holds the
+exact counts, so a new root updates them.
 Finite-command examples select `Command::start_with_unix_signals` only in their
 executable root and move values out of `CommandOwner::finish`; their helpers and
 tests use `start_without_signals`, never hand-installed `tokio::signal` listeners,

@@ -65,6 +65,10 @@ Windows support and non-Unix fallbacks are out of scope.
   the shared record-once guard in `metrics/terminal.rs`. Call sites use the
   always-compiled `telemetry/record.rs` shim, never feature attributes. Emit only after results are known
   and outside admission locks; never add a buffer, retry or log for metrics.
+- `src/panic_hook.rs` owns `redacting_panic_hook`, the boxed hook value an
+  application root installs as the first statement of `main`. Its private
+  renderer receives only a location. `tests/panic_hook.rs` runs it in fresh
+  child processes with secret-shaped payloads and default-hook controls.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation and the
   `ScopedOutput` guard that destroys unclaimed task output under its producer.
@@ -132,7 +136,10 @@ condition reason.
 Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or
-install a global subscriber/panic hook. Protected dispatch covers full future
+install, take or replace a global subscriber or panic hook; `redacting_panic_hook`
+only constructs the value. Inside that hook, never read the payload or the
+thread name, call another hook, emit tracing, panic or take the `Stderr` lock;
+write nothing when descriptor 2 cannot be duplicated. Protected dispatch covers full future
 destruction and nested spans. Task instrumentation retains the available parent
 when its own span is filtered; create spans and look up fallback parents outside
 the admission mutex. The foundation cannot depend on its adapters;
@@ -158,6 +165,7 @@ cargo test -p batter-core --locked
 cargo test -p batter-core --features metrics --locked
 cargo test -p batter-core --doc --locked
 cargo test -p batter-core --locked --test command_signals
+cargo test -p batter-core --locked --test panic_hook
 cargo clippy -p batter-core --all-targets --locked -- -D warnings
 python3 scripts/test_matrix.py workspace
 python3 scripts/test_matrix.py no-default-features

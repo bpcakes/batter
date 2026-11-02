@@ -34,3 +34,12 @@ private, allocation-free future wrapper, safely projected with pin-project-lite,
 across observed operation/HTTP bodies and owned task boundaries. No public
 runtime abstraction or consumer opt-in is introduced. Cleanup routes every skip
 through the same report-and-event path.
+
+Amendment, 2026-11-02 (`batter-4q78`): Batter now constructs a panic hook,
+`redacting_panic_hook`, that an application root installs as the first
+statement of `main`. It prints a panic's location and never its payload. Batter
+still installs no hook and still claims no whole-process panic redaction: an
+uninstalled, replaced or wrapping hook, Rust's own payload output in a child
+that `std::process::Command` forks, and formatting of a retained Tokio
+`JoinError` remain outside it. See the
+[ADR-010 assessment](010-agent-only-consumption.md#redacting-panic-hook-assessment-batter-4q78).

@@ -35,9 +35,14 @@ metric labels. Operation names must remain developer-controlled constants.
 `Error::source` remain trusted inspection. Settings do not erase memory or
 sanitize third-party logs.
 
-Rust's default panic hook can print payloads to stderr before JoinError is
-observed. Batter does not install or sanitize a global hook. Tracing hygiene is
-not whole-process secret redaction. Never put secrets in panic messages.
+Rust's default panic hook prints payloads to stderr before a JoinError is
+observed. Batter never installs, takes or replaces a global hook. An
+application root that installs `redacting_panic_hook` as the first statement of
+`main` prints each panic's location instead of its payload, but Rust still
+prints a payload itself in a child that `std::process::Command` forks, a wrapper
+or later hook that formats `PanicHookInfo` prints it again, and formatting a
+retained JoinError discloses a string payload. Tracing hygiene is not whole-process secret
+redaction. Never put secrets in panic messages.
 
 ## Dependencies and publishing
 

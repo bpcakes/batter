@@ -1732,6 +1732,181 @@ task on a dropping multi-thread runtime and for a call polled from outside a
 current-thread runtime during `shutdown_timeout`. Fresh-agent usability
 evaluation is proposed and unexecuted.
 
+### Redacting panic hook assessment (`batter-4q78`)
+
+[ADR-014](014-reuse-after-two-consumers.md#accepted-an-application-installed-redacting-panic-hook)
+found all three surveyed consumers installing a process panic hook, with two
+failure classes. Two consumers print every payload twice: they log the
+formatted `PanicHookInfo`, whose `Display` includes a string payload, and then
+call the default hook, which prints it again. And installation is late or
+missing: one consumer installs after configuration loading, some modes of
+another return before installing, and one operator binary installs nothing.
+[Guarantees](../guarantees.md) and [operations](../operations.md) already said
+that the default hook prints payloads and asked applications to keep credentials
+out of panic messages. Care alone cannot follow that instruction: `unwrap` and
+`expect` put the `Debug` of the error into the payload without anyone writing a
+message, so a credential inside a native error reaches standard error. Under the
+review questions, the output policy is something every root reconstructs
+(question 2) that a library-constructed value can own (question 4).
+
+The canonical path is `std::panic::set_hook(batter::redacting_panic_hook())`,
+unwrapped, as the first statement of every binary's `main`.
+`redacting_panic_hook` returns a boxed `Fn(&PanicHookInfo<'_>) + Send + Sync +
+'static`, the exact type `set_hook` takes. The closure reads only
+`PanicHookInfo::location` and hands file, line and column to a private renderer
+with no parameter through which a payload could pass. It never reads, writes or
+forwards the payload, calls no previous or default hook, emits no tracing event,
+reads no thread state and never takes the `Stderr` lock; it returns normally, so
+unwinding, joins, Tokio's `JoinError` and an uncaught panic's exit status are
+unchanged. Std itself formats a `panic!` message's arguments into the payload
+before any hook runs, so the guarantee is about what the hook writes, not about
+formatting. Every checked-in executable root in this repository that consumes
+Batter installs it first, except three named tooling roots whose failures must print
+their messages, a live-suite preflight, a provisioning harness and a benchmark;
+native Runledger and Runlimit roots cannot depend on the facade and keep their
+own policy. The
+facade's path table lists formatting or chaining hooks, panicking wrappers and
+late or partial installation as not equivalent.
+
+This removes the first failure class, formatting and delegation, for any root
+that installs the hook. It does not remove the second: installation, its timing
+and its omission stay with each binary's `main`. The example roots, the path
+table row and the repository's first-statement check are evidence, not
+enforcement. The library cannot own that obligation, for four reasons. Std
+cannot report the installed hook without replacing it: `take_hook` reinstalls
+the default hook, so any Batter check would itself replace the application's
+hook and open a window in which the default hook prints payloads, and the atomic
+`update_hook` is unstable. A check would come too late anyway, because the
+canonical roots read secret-bearing configuration before their first Batter
+entrypoint. An `install()` function would remove only the constructor-call
+pairing, which the compiler already flags, while `set_hook` stays a
+last-writer-wins replacement that no returned witness could keep true. And a
+required hook acknowledgement on `Startup::protected`,
+`Command::start_with_unix_signals` or `service::start` would be a hard cut that
+proves nothing, because a local type cannot prove a process-global effect.
+
+Against the review questions: the constructor takes no input, so nothing is
+constructed that execution later rejects (question 1). Rendering, the single
+write, descriptor handling and error suppression are library-owned; the call and
+its placement remain with the root (question 2). A discarded hook already warns
+through the core `Fn` traits' `#[must_use]`; the function's own `#[must_use]`
+only gives that warning an actionable message, and a compile-fail rustdoc
+example rejects a discarded hook under `deny(unused_must_use)`. Nothing local
+detects a missing, late, wrapped or replaced installation. No witness is
+offered (question 3), for the reasons above. The rustdoc of the root-only
+entrypoints, `Command::start_with_unix_signals`,
+`ScopedStartup::with_unix_signals`, `DeferredScopedStartup::with_unix_signals`
+and `service::start`, points to the hook, and the visible `main` of the signalled
+command and `ExitCode` examples installs it, which is the strongest lever
+available (question 4). Rejected alternatives:
+
+- Installing the hook in a library entrypoint, including the root-only signal
+  starts. The repository forbids library hook installation, a silent
+  replacement would discard an application's own hook, and those entrypoints run
+  after configuration loading.
+- An opaque hook type, which cannot implement `Fn` on stable and needs `.into()`
+  at every root; an `impl Fn` or function-item return, which needs `Box::new`.
+  None adds a guarantee.
+- A `tracing` event from inside the hook. A subscriber that panics while
+  formatting or reporting its own write failure, as tracing-subscriber does with
+  `eprintln!` on a closed pipe, makes std abort the process, and `catch_unwind`
+  inside a hook cannot contain it. A deferred, payload-free structured record is
+  the follow-up `batter-krpp`.
+- The thread name. Its only stable source, `thread::current`, panics once the
+  thread's handle has been dropped in its final runtime cleanup, which would make
+  std abort.
+- The `std::io::Stderr` lock, as the writer or as a fallback when descriptor 2
+  cannot be duplicated. A thread that holds that lock inside `eprint!` while
+  waiting for a lock the panicking thread owns would block the report
+  indefinitely; the default hook never takes the lock. At the descriptor limit
+  the hook therefore writes nothing.
+- A descriptor duplicated once at construction for that fallback. It would keep
+  the original standard error open after a daemonizing root redirects or closes
+  it, and would point a later report at a stale destination.
+- A Clippy `disallowed-methods` ban on `set_hook` as the ownership proof. The
+  canonical roots and fixtures must call it, so each would carry a lint
+  suppression that consumers copy.
+
+What remains is kept explicit (question 5):
+
+- Application policy: installing the hook first in every binary and mode,
+  keeping it installed and unwrapped, never installing it in library code or in
+  code that in-process tests run, whose panic messages libtest prints only
+  through the default hook apart from a `#[should_panic(expected = ...)]`
+  mismatch, and any structured panic record. Whether a call site
+  is an executable root cannot be expressed locally, as for
+  `start_with_unix_signals`.
+- Upstream behaviour: a later `set_hook` replaces the hook, the default hook is
+  installed between `take_hook` and the next `set_hook`, and a wrapper or later
+  hook that formats `PanicHookInfo` or the payload or calls the default hook
+  prints it again; a hook that only restores state and then calls this one keeps
+  the guarantee. Std aborts when a panic occurs while it prepares or runs a hook,
+  printing the nested panic's message only when it is a constant string, and
+  prints the full payload itself in a child that `std::process::Command` forks,
+  where it disables hooks before `pre_exec` closures and `exec`.
+  `#[tokio::main]` builds its runtime before the first statement of the body.
+  Tokio's `JoinError` formats a string payload. Closing the duplicated descriptor
+  releases the process-owned POSIX `fcntl` record locks on the file behind standard
+  error.
+- Unverifiable: that a process installed the hook before its first panic, and
+  that logs, error-source traversal or explicit `PanicPayload::try_inspect`
+  disclose nothing. Payloads retained in Batter reports keep their explicit
+  field access.
+- Low-level escape hatch: `std::panic::set_hook` and `take_hook` stay available
+  to every crate. The facade table names the default hook, formatting or
+  chaining hooks, panicking wrappers and late or partial installation as not
+  equivalent.
+
+The [unit tests](../../crates/batter-core/src/panic_hook/tests.rs)
+(`a_located_panic_is_one_line_in_one_write`,
+`a_panic_without_a_location_is_still_reported`,
+`a_line_longer_than_the_stack_buffer_is_written_whole_in_pieces`,
+`the_longest_line_that_fits_still_uses_one_write`,
+`write_failures_are_ignored_without_retrying_or_panicking`) pin the rendered
+line, the single write and ignored write errors. The fresh-process
+[`panic_hook`](../../crates/batter-core/tests/panic_hook.rs) target
+(`default_hook_control_prints_the_payloads`,
+`caught_panics_report_each_location_and_no_payload`,
+`an_uncaught_panic_ends_the_process_with_the_same_status`,
+`tokio_task_panics_unwind_into_join_errors_without_their_payload`,
+`a_spawned_thread_panic_reaches_its_join_with_the_payload_intact`,
+`the_report_does_not_wait_for_a_held_stderr_lock`,
+`at_the_descriptor_limit_the_hook_writes_nothing`,
+`batter_entrypoints_keep_the_application_installed_hook`) panics with a
+secret-shaped payload in every child except the entrypoints one, carried as a
+constant message, a formatted message, an `unwrap`-`Debug` and an opaque value,
+and requires standard error to be exactly one redacted line per recorded
+location, or empty at the descriptor limit. Default-hook controls show that the
+oracle sees a disclosure. In the lock case another thread holds the `Stderr`
+lock from before the panic until after the report, so a hook that took it would
+block until the parent's guard killed the child. In-child controls show that the
+identity check sees a wrapper and the count sees a hook swapped out around a
+panic. The
+[ownership scan](../../crates/batter/tests/panic_hook_ownership.rs)
+(`no_batter_library_installs_takes_or_replaces_the_panic_hook`,
+`the_line_rule_flags_code_and_keeps_comments`,
+`only_binary_roots_and_cfg_test_modules_are_exempt`,
+`only_files_of_cfg_test_modules_are_test_only`,
+`production_modules_the_reader_cannot_place_exempt_nothing`,
+`every_batter_consuming_root_installs_the_redacting_hook_first`,
+`the_first_statement_rule_reads_main_bodies`) covers every production source
+path of every workspace library, meaning every file except those that a
+`#[cfg(test)]` module loads and no production module does, and the binary roots
+the inventory classifies, not dependencies, and classifies every checked-in
+executable root: roots that consume Batter must install the hook first,
+three named tooling roots keep the default hook, and native roots, which name no
+Batter crate, are out of scope. The
+uncaught case exercises libtest's failure status, which equals std's status for
+a panic escaping a real `fn main`; that boundary and aborting panics are
+source-inspected only, because no repository test aborts a process and a host
+crash reporter can still be invoked. Fresh-agent usability evaluation is
+proposed and unexecuted: ask a fresh agent to build an HTTP service from the
+facade examples, to add an operator command binary, and to add structured panic
+logging to an existing service. It passes when the hook is the first statement
+of every binary and mode, no hook chains to the default hook, no log formats
+`PanicHookInfo` or the payload, no wrapper code can panic inside the hook, and
+no test or shared helper installs it.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

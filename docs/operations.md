@@ -9,7 +9,10 @@ Example shutdown listeners register SIGINT and SIGTERM directly. See
 
 ## Startup
 
-Parse and validate configuration without logging secrets. Acquire dependencies,
+Install `batter::redacting_panic_hook()` with `std::panic::set_hook` as the
+first statement of every binary's `main`, before argument parsing and
+configuration loading, so that a panic while reading settings prints its
+location and not their values. Parse and validate configuration without logging secrets. Acquire dependencies,
 register finalizers, run migrations/schema checks through the application's
 normal path, and perform readiness checks. Set readiness only when dependencies
 and required initialization are complete. Each registered critical component
@@ -102,9 +105,23 @@ remote durable storage. See the [adapter guide](../crates/batter-otlp/README.md)
 
 Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a
-trusted sink with redaction. The standard Rust panic hook can independently
-print panic payloads to stderr; Batter does not replace it. Never put credentials
-in panic messages and do not claim library span hygiene sanitizes the whole process.
+trusted sink with redaction.
+
+Batter never installs, takes or replaces the process panic hook; Rust's default
+hook prints every string payload. Each executable installs
+`batter::redacting_panic_hook()` as the first statement of `main` instead. It
+writes `a thread panicked at <file>:<line>:<column>; panic payload redacted` to
+standard error and nothing else: no thread name, no backtrace whatever
+`RUST_BACKTRACE` says, and no `RUST_BACKTRACE=1` note. Alert on `panicked at`;
+the line's text is part of Batter's contract. A panic raised inside a dependency
+reports that dependency's line, and an uncaught panic in `main` still exits with
+status 101. The hook never waits for the `Stderr` lock, so at the process
+descriptor limit, when it cannot duplicate standard error, it prints nothing for
+that panic. A binary without the hook, a later or wrapping hook that formats
+`PanicHookInfo` or the payload, Rust's own output for a panic in a child that
+`std::process::Command` forks, and Tokio `JoinError` `Debug` and `Display` still
+print payloads. Never put credentials in panic messages and do not claim library
+span hygiene sanitizes the whole process.
 
 Keep user/account/job/request IDs out of metric labels. Trace correlation and
 metric cardinality are different concerns. Persist only validated/versioned

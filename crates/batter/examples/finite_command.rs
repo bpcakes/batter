@@ -183,6 +183,8 @@ async fn root(arguments: &[OsString]) -> Result<ExitCode, BoxError> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<ExitCode, BoxError> {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     root(&arguments).await
 }

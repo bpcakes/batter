@@ -132,6 +132,13 @@ that the application installs at its root. It cannot prove that the hook was
 installed, that it was installed early enough, or that the process is
 sanitized. Those limits stay explicit in `batter-4q78`.
 
+Delivered under `batter-4q78` as `redacting_panic_hook`, which every checked-in
+executable root in this repository that consumes Batter installs as the first
+statement of `main`, except three named tooling roots. It removes the formatting and delegation failure
+class; installation timing and omission stay with each root. See its
+[ADR-010 assessment](010-agent-only-consumption.md#redacting-panic-hook-assessment-batter-4q78)
+and the structured-record follow-up `batter-krpp`.
+
 ### Accepted: bounded blocking work
 
 All three consumers hand-write the same helper: acquire a permit, move it into

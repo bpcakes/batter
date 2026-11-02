@@ -37,6 +37,8 @@ fn process_result(result: Result<(), BoxError>) -> Result<(), ProcessFailure> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     report_exit(run().await, &mut std::io::stderr().lock())
 }
 

@@ -10,7 +10,8 @@ Windows support and non-Unix fallbacks are out of scope.
 
 ## Key entrypoints
 
-- `src/main.rs` selects protected startup and Unix signals, creates the pool with
+- `src/main.rs` installs `batter::redacting_panic_hook()` as its first statement,
+  then selects protected startup and Unix signals, creates the pool with
   `batter::sqlx::pool_in` (`database_pool`), probes it, applies and verifies the
   schema, and observes startup.
 - `src/schema.rs` owns the embedded migrator, the managed-object manifest built

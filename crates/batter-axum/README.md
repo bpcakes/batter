@@ -488,7 +488,9 @@ does not produce another HTTP event.
 Handler panics propagate through the middleware. An unwind before a response
 emits one WARN `dropped` event without a status and cancels admitted operation
 context. Batter does not convert the panic to a 500 or log its payload. Rust's
-default panic hook remains separate and may print the payload.
+default panic hook remains separate and prints the payload unless the
+application root installs `batter::redacting_panic_hook()` first, as the
+facade's HTTP example does; that hook prints the handler's panic location only.
 
 From the workspace root:
 

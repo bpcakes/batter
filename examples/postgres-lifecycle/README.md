@@ -43,7 +43,10 @@ Do not propagate these rich errors from a `main` returning `Result`: Rust's
 termination implementation prints Debug. The explicit `ExitCode` boundary owns
 that output policy, including when writing the fixed diagnostic fails.
 Subprocess tests exercise missing, non-Unicode and malformed database URLs
-without contacting PostgreSQL. Rust's default panic hook remains unchanged.
+without contacting PostgreSQL. `main` installs `batter::redacting_panic_hook()`
+as its first statement, so a panic prints its location and never its payload,
+including a `DATABASE_URL` inside an error passed to `unwrap` or `expect`; the
+in-process tests never call `main` and keep the default hook.
 
 The normal test run also covers successful completion, startup plus cleanup
 failure, failed tasks, and failed shutdown cleanup through the same private

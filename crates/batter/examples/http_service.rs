@@ -131,6 +131,8 @@ async fn router(
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     report_exit(run().await)
 }
 

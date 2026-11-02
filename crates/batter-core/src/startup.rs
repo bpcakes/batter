@@ -377,7 +377,9 @@ impl<F> ScopedStartup<F> {
     /// [`InitializationError::SignalPolicyAlreadySelected`] during started
     /// cleanup; it is never last-wins. Dropping the unstarted specification
     /// installs nothing. Tokio's process-wide signal disposition is not restored
-    /// when listeners are dropped.
+    /// when listeners are dropped. Select signals only at an executable root,
+    /// whose `main` installs [`crate::redacting_panic_hook`] as its first
+    /// statement; startup installs no panic hook.
     ///
     /// ```no_run
     /// # use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}, operation::OperationContext, startup::Startup};
@@ -427,6 +429,10 @@ pub struct DeferredScopedStartup<F> {
 
 impl<F> DeferredScopedStartup<F> {
     /// Select library-owned Unix signals while retaining deferred approval.
+    ///
+    /// As with [`ScopedStartup::with_unix_signals`], select signals only at an
+    /// executable root, whose `main` installs [`crate::redacting_panic_hook`]
+    /// as its first statement.
     #[must_use = "the returned startup specification contains the selected Unix signal policy"]
     pub fn with_unix_signals(mut self, name: &'static str) -> Self {
         self.startup = self.startup.with_unix_signals(name);

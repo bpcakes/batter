@@ -9,6 +9,11 @@ Unix-only application is not a reusable database framework.
 ## Key entrypoints
 
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
+  `main`, the offline retirement command and the `signal_witness_fixture` test
+  binary, which stands in for the executable, install
+  `batter::redacting_panic_hook()` as their first statement; the
+  `reference_preflight` test tool keeps the default hook so that live-suite
+  failures print their messages.
   `src/runtime/completion.rs` maps core service completion into application exit policy.
 - `batter::service::start` owns startup, shutdown, diagnostic settlement and
   owner/observer publication. `batter::otlp` (feature `metrics-export`) owns the

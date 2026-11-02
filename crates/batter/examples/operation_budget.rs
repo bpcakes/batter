@@ -5,6 +5,8 @@ use std::{collections::hash_map::RandomState, hash::BuildHasher, time::Duration}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let parent = batter::operation::OperationOwner::new(Duration::from_secs(1))?.into_context();
     let phases = parent.reserve_finalization(Duration::from_millis(200))?;
     let policy = RetryPolicy::new(3, Duration::from_millis(10), Duration::from_millis(50))?;

@@ -6,7 +6,7 @@ Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
 This workspace contains eighteen library packages, the Runledger TUI, and two SQLx example packages,
-with failure-contract tests, doctests, and eight runnable demonstrations plus a
+with failure-contract tests, doctests, and nine runnable demonstrations plus a
 read-only live-suite preflight.
 The original authoring environment had no Rust toolchain. Subsequent local
 verification of the dependency-upgrade snapshot passed on Rust 1.94.0 and 1.98.1;
@@ -154,6 +154,8 @@ blocking closure until it returns. Those runs are not process-owned work.
 parsing and redacted diagnostics; application schemas remain outside the foundation.
 `crates/batter-core/src/telemetry.rs` records outcomes without printing error contents
 and exposes `with_current_dispatch` for adapter-owned futures.
+`crates/batter-core/src/panic_hook.rs` owns `redacting_panic_hook`, the
+payload-free hook value an application root installs; Batter never installs it.
 `crates/batter-core/src/service.rs` owns protected startup through diagnostic completion;
 `crates/batter-otlp` owns the opt-in bounded exporter behind that boundary.
 `crates/batter-core/src/completion.rs` privately centralizes retained completion
@@ -214,9 +216,10 @@ with their owning suite.
 consumer and its provisioning harness as standalone sources. They are not
 workspace members; `scripts/check_single_facade_consumer.py` builds them from a
 Git-free source copy in temporary manifests that declare only `batter`.
-`crates/batter/examples` contains the eight facade-owned runnable consumers:
+`crates/batter/examples` contains the nine facade-owned runnable consumers:
 worker, process ownership, operation budget, finite command, HTTP service,
-owned SQLx pool, SQLx verification, and quota service.
+owned SQLx pool, SQLx verification, quota service and grant composition. Each
+example root installs `redacting_panic_hook` as the first statement of `main`.
 `examples/postgres-lifecycle` is an unpublished native SQLx executable package.
 `examples/reference-service` owns pinned upstream compatibility and ignored live probes.
 There is no root Cargo package, `src/` tree, or integration-test target; the
@@ -257,7 +260,19 @@ Preserve all task and cleanup errors in reports. Report Debug/Display are
 redacted by the types themselves; retained errors are reachable only through
 explicit fields, and no report may derive Debug over an error field. Reports are internal objects,
 not HTTP payloads. Domain errors stay concrete. No global tracing subscriber or
-panic-hook installation belongs in the library.
+panic-hook installation belongs in the library: no library production source
+calls `set_hook`, `take_hook` or `update_hook` outside comments, files that a
+`#[cfg(test)]` module loads and no production module does, and the binary roots
+the executable-root inventory classifies (such as `src/main.rs` and
+`src/bin/*.rs`). `crates/batter/tests/panic_hook_ownership.rs` scans for
+them and takes test status from module declarations alone, so a test-like file
+name or directory exempts nothing. An
+application root installs `redacting_panic_hook`, unwrapped, as the first
+statement of `main`, as every checked-in executable root that consumes Batter in
+this repository does except three named tooling roots (a live-suite preflight, a
+provisioning harness and a benchmark); native Runledger and Runlimit roots, which
+name no Batter crate, keep their own policy. The hook prints a location and never reads, writes or
+forwards the payload, calls another hook or takes the `Stderr` lock.
 Owned-future dispatch context must also cover destruction, not just polling.
 Keep observations and nested instrumented spans inside the protected future;
 wrapping only a destructor's event leaves span destruction unprotected.
