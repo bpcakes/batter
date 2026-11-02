@@ -6,15 +6,17 @@
 //! The library scan covers every production code path of every workspace
 //! library, including paths no test exercises, but not dependencies; the
 //! `panic_hook` target in `batter-core` checks the exercised entrypoints at run
-//! time. A library file is exempt only when it belongs to a module declared
-//! under `#[cfg(test)]`, derived from the module declarations rather than file
-//! names, or when it is a binary root that the inventory below classifies. Every checked-in executable root is classified, meaning each workspace
-//! member's binaries, examples and benchmarks and the consumer sources that
-//! scripts build outside the workspace: a root that consumes Batter installs the
-//! hook, three named tooling roots keep the default hook, and native Runledger
-//! and Runlimit roots, which name no Batter crate, keep their own panic policy.
-//! Programs that scripts generate as compile and identity probes are not
-//! checked-in roots and are not classified.
+//! time. A library file is exempt only when it is a binary root that the
+//! inventory below classifies, or when a module under `#[cfg(test)]` loads it
+//! and no production module does, as `modules` derives from module declarations
+//! rather than file names or directories. Every checked-in executable root is
+//! classified, meaning each workspace member's binaries, examples and
+//! benchmarks and the consumer sources that scripts build outside the
+//! workspace: a root that consumes Batter installs the hook, three named
+//! tooling roots keep the default hook, and native Runledger and Runlimit
+//! roots, which name no Batter crate, keep their own panic policy. Programs
+//! that scripts generate as compile and identity probes are not checked-in
+//! roots and are not classified.
 
 #[path = "panic_hook_ownership/modules.rs"]
 mod modules;
@@ -76,10 +78,10 @@ fn rust_sources(directory: &Path, found: &mut Vec<(PathBuf, String)>) {
 }
 
 /// The production sources of one library `src` tree: everything except the
-/// files of modules declared under `#[cfg(test)]` and exactly the binary roots
-/// the executable-root inventory classifies, `src/main.rs`, `src/bin/*.rs` and
-/// `src/bin/*/main.rs`. Every other file under `src/bin/`, such as a binary's
-/// helper module, is scanned.
+/// files that a `#[cfg(test)]` module loads and no production module does, and
+/// exactly the binary roots the executable-root inventory classifies,
+/// `src/main.rs`, `src/bin/*.rs` and `src/bin/*/main.rs`. Every other file
+/// under `src/bin/`, such as a binary's helper module, is scanned.
 fn production_sources(src: &Path, sources: Vec<(PathBuf, String)>) -> Vec<(PathBuf, String)> {
     let test_only = modules::test_only(&sources);
     let bin = src.join("bin");

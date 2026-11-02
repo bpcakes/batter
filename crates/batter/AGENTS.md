@@ -20,10 +20,11 @@ Windows support and non-Unix fallbacks are out of scope.
 - `tests/native_transport_consumer.rs` executes the native Runlimit transport
   packages through facade paths and asserts their identity.
 - `tests/panic_hook_ownership.rs` scans every workspace library's production
-  sources for panic-hook installers, exempting only modules declared under
-  `#[cfg(test)]` (derived in `panic_hook_ownership/modules.rs` from module
-  declarations, never from file names) and exactly the binary roots the
-  inventory classifies, and classifies every checked-in executable
+  sources for panic-hook installers, exempting only files that a `#[cfg(test)]`
+  module loads and no production module does (derived in
+  `panic_hook_ownership/modules.rs` from module declarations, never from file
+  names or directories) and exactly the binary roots the inventory classifies,
+  and classifies every checked-in executable
   root in the repository: each root consuming Batter installs the redacting hook first,
   except three named tooling roots, and native Runledger and Runlimit roots keep
   their own policy.
