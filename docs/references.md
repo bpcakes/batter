@@ -8,18 +8,18 @@ validate Batter's source or prove any of its tests pass.
 
 ## Rust 1.98.1 panic hooks for the redacting hook, 2026-11-02
 
-For `batter-4q78`, the pinned toolchain is Rust 1.98.1 and the MSRV 1.94; every
-API the hook uses is stable at 1.94 (`PanicHookInfo` since 1.81, `AsFd` and
-descriptor duplication since 1.63). The documented contract comes first; the
-facts after it were read in the 1.98.1 source (tag `1.98.1`:
+For `batter-4q78`, the pinned toolchain, Rust 1.98.1, is every package's minimum
+(`batter-wis2`); every API the hook uses is stable there (`PanicHookInfo` since
+1.81, `AsFd` and descriptor duplication since 1.63). The documented contract
+comes first; the facts after it were read in the 1.98.1 source (tag `1.98.1`:
 `library/std/src/panicking.rs`, `panic.rs`, `rt.rs`, `thread/current.rs`,
 `io/stdio.rs`, `sys/process/unix/unix.rs`, `os/fd/owned.rs`, and libtest's
 `library/test/src/lib.rs` and `test_result.rs` read in the 1.99.0 tree, whose
 `panicking.rs` is byte-identical), are implementation behaviour rather than
-documented guarantees, and a toolchain upgrade must recheck them. The 1.94
-standard library was not source-inspected, and 1.94 behaviour is unverified
-here; the CI job definitions run the `panic_hook` target on 1.94, and no hosted
-result is recorded yet.
+documented guarantees, and a toolchain upgrade must recheck them. The CI job
+definitions run the `panic_hook` target on 1.98.1 in the Linux verification and
+macOS jobs and on floating `stable` in the weekly Linux run; hosted results
+belong to the owning Bead, not here.
 
 - [`panic::set_hook`](https://doc.rust-lang.org/1.98.1/std/panic/fn.set_hook.html)
   replaces the process-global hook, runs it before the panic runtime under both
@@ -1054,6 +1054,18 @@ The [baseline PR run](https://github.com/bpcakes/batter/actions/runs/35697207609
 and its [duplicate push run](https://github.com/bpcakes/batter/actions/runs/35697202800)
 establish the duplicated execution. They predate the optimization and do not
 establish a cache hit or elapsed-time improvement for the revised workflow.
+
+## Rust minimum toolchain: reviewed 2026-11-02
+
+- Rust's [1.98.1 release notes](https://github.com/rust-lang/rust/blob/stable/RELEASES.md#version-1981-2026-09-03)
+  list one fix, a rustc vtable miscompilation
+  ([rust-lang/rust#161441](https://github.com/rust-lang/rust/issues/161441)).
+  Packages therefore declare `rust-version = "1.98.1"`, the exact pinned and
+  CI-tested release, rather than `1.98`. Cargo accepted the three-component
+  value for all four Clippy configurations and the complete verification.
+- `rustup check` reported stable 1.99.1 (2026-10-13). Its rustdoc rejects a
+  redundant explicit link in `batter-axum` under `-D warnings`, which fails the
+  weekly floating-`stable` run; moving the pin to 1.99 requires that repair.
 
 ## GitHub Actions CI scope selection: reviewed 2026-11-02
 

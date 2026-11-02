@@ -60,7 +60,7 @@ def facade(source, features):
 def consumer_manifest(source):
     dependencies = "\n".join([facade(source, FACADE_FEATURES), *ECOSYSTEM])
     return ('[package]\nname = "single-facade-consumer"\nversion = "0.0.0"\n'
-            'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
+            'edition = "2024"\nrust-version = "1.98.1"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n' + dependencies + '\n'
             '[dev-dependencies]\n' + facade(source, TEST_FEATURES) + '\n'
             'tokio = { version = "1", features = ["test-util"] }\n'
@@ -71,7 +71,7 @@ def consumer_manifest(source):
 def harness_manifest(source):
     tokio = 'tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }'
     return ('[package]\nname = "single-facade-harness"\nversion = "0.0.0"\n'
-            'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
+            'edition = "2024"\nrust-version = "1.98.1"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n' + facade(source, HARNESS_FEATURES)
             + '\n' + tokio + '\n'
             + PACKAGE_LINTS + '[[bin]]\nname = "single-facade-harness"\npath = '

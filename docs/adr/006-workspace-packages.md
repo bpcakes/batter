@@ -110,3 +110,8 @@ path dependency also declares its registry version. The two example packages
 remain unpublished. This supersedes the earlier publication flags without
 changing package ownership, feature isolation, runtime behavior, or the rule
 that an upload requires explicit owner authorization and artifact validation.
+
+Toolchain amendment, 2026-11-02 (`batter-wis2`): every package, including the
+SQLx adapter and both examples, declares Rust 1.98.1, the pinned workspace
+toolchain, as its minimum. The Rust 1.94 minimums above are superseded, and CI
+verifies the single pinned toolchain.

@@ -233,8 +233,8 @@ context explicitly. No arbitrary spawned task inherits request metadata.
 
 From the root, run `cargo check -p batter-example-reference-service --all-targets
 --all-features --locked` and `bash scripts/test_reference_live.sh`. Follow root
-complete pinned-toolchain verification requirements locally; MSRV
-verification belongs in CI.
+complete pinned-toolchain verification requirements locally; the pinned
+toolchain is also the minimum.
 
 The live inventory requires two distinct disposable local PostgreSQL 18 clusters:
 `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL`. The primary uses a

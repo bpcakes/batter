@@ -16,7 +16,7 @@ passed on macOS with Rust 1.98.1 and exact 1.94.0 against PostgreSQL 18.6. The
 Rust 1.98.1 against PostgreSQL 18.6 before the service/exporter extraction.
 Those live results do not establish current-tree PostgreSQL behavior. The live
 suite had not been rerun at extraction; later current-tree results are recorded
-in `batter-i3ny`. Routine Rust 1.94.0 verification is CI-owned.
+in `batter-i3ny`. The pinned Rust 1.98.1 toolchain is also the minimum.
 Two exact legacy test aliases were removed rather than retained through the hard cutover.
 
 ## Staged worker and atomic delivery command

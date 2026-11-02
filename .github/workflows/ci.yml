@@ -96,7 +96,7 @@ jobs:
   subprocess-macos:
     needs: plan
     if: ${{ !cancelled() && github.event_name != 'schedule' }}
-    # Linux verification covers Rust 1.94.0; this job covers macOS process behavior.
+    # Linux verification covers the workspace; this job covers macOS process behavior.
     name: Subprocess harness (macOS, 1.98.1)
     runs-on: macos-latest
     timeout-minutes: 30
@@ -153,7 +153,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: ${{ fromJSON(github.event_name == 'schedule' && '["stable"]' || '["1.94.0", "1.98.1"]') }}
+        # The pinned toolchain is also every package's declared rust-version.
+        rust: ${{ fromJSON(github.event_name == 'schedule' && '["stable"]' || '["1.98.1"]') }}
     env:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:

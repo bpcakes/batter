@@ -58,7 +58,7 @@ def main():
             dependencies.append(name + ' = { path = ' + json.dumps(str(source / group / name)) + extra + ' }')
         (consumer / "Cargo.toml").write_text(
             '[package]\nname = "native-source-consumer"\nversion = "0.0.0"\nedition = "2024"\n'
-            'rust-version = "1.94"\npublish = false\n[workspace]\nresolver = "3"\n'
+            'rust-version = "1.98.1"\npublish = false\n[workspace]\nresolver = "3"\n'
             '[dependencies]\n' + '\n'.join(dependencies) + '\n')
         (consumer / "Cargo.lock").write_bytes(locked)
         (consumer / "src/main.rs").write_text(IDENTITY)

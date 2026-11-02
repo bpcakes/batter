@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REQUIRED_RUST_TOOLCHAIN="1.94.0"
-readonly EXPECTED_RUST_VERSION="1.94"
+readonly REQUIRED_RUST_TOOLCHAIN="1.98.1"
+readonly EXPECTED_RUST_VERSION="1.98.1"
 readonly EXPECTED_PACKAGE="batter-at-rest"
 readonly EXPECTED_VERSION="0.0.1"
 readonly EXPECTED_LICENSE="MIT"

@@ -38,19 +38,20 @@ not broaden this repository's platform support.
 
 ## Verification
 
-Local development uses the current stable release pinned in `rust-toolchain.toml`
-(Rust 1.98.1). Upgrade that pin deliberately, together with the pinned CI entries.
-All packages retain Rust 1.94 as their minimum; SQLx 0.9.0 requires it in the
-adapter and examples. Run `bash scripts/verify.sh` with the default toolchain.
+Local development and CI use the stable release pinned in `rust-toolchain.toml`
+(Rust 1.98.1). It is also every package's declared minimum (`rust-version =
+"1.98.1"`), so one toolchain covers both; 1.98.1 fixes a 1.98.0 vtable
+miscompilation. Upgrade the pin deliberately, together with every `rust-version`,
+the pinned CI entries and the `batter-at-rest` portability gate. Keeping an older
+minimum after a pin upgrade first requires a separate exact-minimum CI job.
+Run `bash scripts/verify.sh` with the default toolchain.
 It directly runs formatting, file budgets, all four Clippy configurations,
 all six test-matrix parts, rustdoc and all HTTP
 smoke profiles. It does not create plans, receipts or gates. Do not repeat the matrix after it passes.
-Routine Rust 1.94.0 verification belongs only in CI, including the standalone
-`batter-at-rest` gate in `scripts/check-batter-at-rest-portability.sh`. Do not
-install or run the MSRV locally unless explicitly asked to reproduce an MSRV
-failure. CI tests the pinned release and exact MSRV; a weekly run checks floating
-`stable`. This policy supersedes older two-toolchain instructions in task plans.
-Repair failures without relaxing
+The standalone `batter-at-rest` gate in `scripts/check-batter-at-rest-portability.sh`
+runs in CI. CI tests the pinned release once; a weekly run checks floating
+`stable`. This policy supersedes older two-toolchain instructions in task plans
+and the former Rust 1.94 minimum. Repair failures without relaxing
 semantic tests. Record verification outcomes in the owning Bead when the code or
 dependency graph changes.
 
@@ -409,7 +410,8 @@ keep generic agent workflow and repo policy here.
 - Run the relevant local verification for the area changed. Backend changes
   require the complete `scripts/verify.sh` run on the pinned toolchain.
 - Do not repeat a successful run unless later changes, failures, or changed
-  toolchain/environment/prerequisites invalidate its results. MSRV belongs in CI.
+  toolchain/environment/prerequisites invalidate its results. The pinned
+  toolchain is the minimum, so no separate MSRV run exists.
 - Review the diff for stale docs, policy drift, or missing dependent updates.
 - Record verification outcomes and limitations in the owning Bead.
 

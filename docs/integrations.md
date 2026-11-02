@@ -502,7 +502,8 @@ probe and cleanup budgets remain application choices. Its fixed process diagnost
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain after `wait_checked().await?`. No database abstraction or generic
 transaction retry is introduced.
-The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Compiling the
+The example uses SQLx 0.9.0, which requires Rust 1.94 or newer; the workspace
+minimum is the pinned Rust 1.98.1. Compiling the
 example does not establish pool closure.
 
 Application-owned migration/schema checks happen before readiness. There is no
