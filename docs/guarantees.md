@@ -2654,8 +2654,10 @@ so successful driver completion with pending admin closure remains distinguishab
 returns a `#[must_use]` `Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync + 'static>`,
 the type `std::panic::set_hook` takes. Constructing it installs nothing, and no
 Batter library installs, takes or replaces the process hook: no workspace library
-source names `set_hook`, `take_hook` or `update_hook` outside comments and
-test-only files, and the entrypoints that own process-wide signal handlers or
+source names `set_hook`, `take_hook` or `update_hook` outside comments and the
+files of modules declared under `#[cfg(test)]`, a test-only status derived from
+module declarations rather than file names, and the entrypoints that own
+process-wide signal handlers or
 catch panics keep an application's hook installed and unwrapped, passing each
 panic they catch to it once. Dependencies are not scanned. Every checked-in
 executable root in this repository that consumes Batter, among the workspace

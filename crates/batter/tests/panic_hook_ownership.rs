@@ -6,13 +6,18 @@
 //! The library scan covers every production code path of every workspace
 //! library, including paths no test exercises, but not dependencies; the
 //! `panic_hook` target in `batter-core` checks the exercised entrypoints at run
-//! time. Every checked-in executable root is classified, meaning each workspace
+//! time. A library file is exempt only when it belongs to a module declared
+//! under `#[cfg(test)]`, derived from the module declarations rather than file
+//! names, or when it is a binary root that the inventory below classifies. Every checked-in executable root is classified, meaning each workspace
 //! member's binaries, examples and benchmarks and the consumer sources that
 //! scripts build outside the workspace: a root that consumes Batter installs the
 //! hook, three named tooling roots keep the default hook, and native Runledger
 //! and Runlimit roots, which name no Batter crate, keep their own panic policy.
 //! Programs that scripts generate as compile and identity probes are not
 //! checked-in roots and are not classified.
+
+#[path = "panic_hook_ownership/modules.rs"]
+mod modules;
 
 use std::{
     fs,
@@ -53,25 +58,63 @@ fn library_sources(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Production sources below `directory`. Test-only modules live in files
-/// named `tests.rs` or below `tests/` directories; binary roots are
-/// applications.
-fn production_files(directory: &Path, found: &mut Vec<PathBuf>) {
+/// Every Rust source below `directory`, with its contents.
+fn rust_sources(directory: &Path, found: &mut Vec<(PathBuf, String)>) {
     let mut entries: Vec<_> = fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
     entries.sort();
     for path in entries {
-        let name = path.file_name().unwrap().to_str().unwrap();
         if path.is_dir() {
-            if name != "tests" && name != "bin" {
-                production_files(&path, found);
-            }
-        } else if name.ends_with(".rs") && name != "tests.rs" && name != "main.rs" {
-            found.push(path);
+            rust_sources(&path, found);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let source = fs::read_to_string(&path).unwrap();
+            found.push((path, source));
         }
     }
+}
+
+/// The production sources of one library `src` tree: everything except the
+/// files of modules declared under `#[cfg(test)]` and the binary roots
+/// `src/main.rs` and `src/bin/`, which the executable-root inventory classifies.
+fn production_sources(src: &Path, sources: Vec<(PathBuf, String)>) -> Vec<(PathBuf, String)> {
+    let test_only = modules::test_only(&sources);
+    sources
+        .into_iter()
+        .filter(|(path, _)| {
+            !test_only.contains(path)
+                && *path != src.join("main.rs")
+                && !path.starts_with(src.join("bin"))
+        })
+        .collect()
+}
+
+#[test]
+fn only_binary_roots_and_cfg_test_modules_are_exempt() {
+    let file = |path: &str, source: &str| (PathBuf::from(path), source.to_owned());
+    let sources = vec![
+        file("/src/lib.rs", "#[cfg(test)]\nmod tests;\nmod helpers;\n"),
+        file("/src/tests.rs", ""),
+        file("/src/helpers.rs", "mod tests;\n"),
+        file("/src/helpers/tests.rs", ""),
+        file("/src/main.rs", ""),
+        file("/src/bin/tool.rs", ""),
+        file("/src/x/main.rs", ""),
+        file("/src/x/bin/y.rs", ""),
+    ];
+    let production: Vec<_> = production_sources(Path::new("/src"), sources)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    let expected = [
+        "/src/lib.rs",
+        "/src/helpers.rs",
+        "/src/helpers/tests.rs",
+        "/src/x/main.rs",
+        "/src/x/bin/y.rs",
+    ];
+    assert_eq!(production, expected.map(PathBuf::from));
 }
 
 fn is_identifier(byte: u8) -> bool {
@@ -134,14 +177,18 @@ fn no_batter_library_installs_takes_or_replaces_the_panic_hook() {
     }
     let mut violations = Vec::new();
     let mut comment_mentions = 0;
+    let mut exempt_installers = 0;
     for source in &sources {
         let mut files = Vec::new();
-        production_files(source, &mut files);
+        rust_sources(source, &mut files);
         assert!(!files.is_empty(), "{} has no sources", source.display());
-        for file in files {
-            let text = fs::read_to_string(&file).unwrap();
+        let production = production_sources(source, files.clone());
+        for (file, text) in &files {
+            let exempt = !production.iter().any(|(path, _)| path == file);
             for (index, line) in text.lines().enumerate() {
-                if violates(line) {
+                if exempt {
+                    exempt_installers += usize::from(violates(line));
+                } else if violates(line) {
                     violations.push(format!("{}:{}", file.display(), index + 1));
                 } else if names_hook_function(line) {
                     comment_mentions += 1;
@@ -151,12 +198,16 @@ fn no_batter_library_installs_takes_or_replaces_the_panic_hook() {
     }
     assert!(
         violations.is_empty(),
-        "library code names a panic-hook installer; keep test hooks in `tests.rs` or \
-         `tests/` files: {violations:?}"
+        "library code names a panic-hook installer; keep test hooks in modules \
+         declared under `#[cfg(test)]`: {violations:?}"
     );
     // The redacting hook's own rustdoc names `set_hook`, so the comment
     // allowance is exercised rather than vacuous.
     assert!(comment_mentions > 0);
+    // A `#[cfg(test)]` module in a native library installs a hook, so the
+    // exemption is exercised on real declarations rather than vacuous. If that
+    // test moves, the self-tests still cover the exemption rule.
+    assert!(exempt_installers > 0);
 }
 
 /// Tooling that keeps Rust's default hook, so that its failures print the

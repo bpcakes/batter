@@ -260,8 +260,10 @@ redacted by the types themselves; retained errors are reachable only through
 explicit fields, and no report may derive Debug over an error field. Reports are internal objects,
 not HTTP payloads. Domain errors stay concrete. No global tracing subscriber or
 panic-hook installation belongs in the library: no library production source
-calls `set_hook`, `take_hook` or `update_hook` outside comments and test-only
-files, and `crates/batter/tests/panic_hook_ownership.rs` scans for them. An
+calls `set_hook`, `take_hook` or `update_hook` outside comments and the files of
+modules declared under `#[cfg(test)]`, and
+`crates/batter/tests/panic_hook_ownership.rs` scans for them; file names alone
+exempt nothing. An
 application root installs `redacting_panic_hook`, unwrapped, as the first
 statement of `main`, as every checked-in executable root that consumes Batter in
 this repository does except three named tooling roots (a live-suite preflight, a

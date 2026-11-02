@@ -642,9 +642,17 @@ swapped out around a panic. Aborting panics are not run: no repository test
 aborts a process, because a host crash reporter can still be invoked, so the
 non-unwinding path is source-inspected. The facade's `panic_hook_ownership`
 target scans every workspace library's production sources for `set_hook`,
-`take_hook` and `update_hook` outside `//` comment lines, skipping test-only
-`tests.rs` files and `tests/` directories, with a self-test of that line rule; it
-does not scan dependencies or see macro-built identifiers. It also classifies
+`take_hook` and `update_hook` outside `//` comment lines, with a self-test of that
+line rule. It exempts only the files of modules declared under `#[cfg(test)]`,
+including their submodules, which it derives from rustfmt-formatted module
+declarations rather than file names, and the binary roots `src/main.rs` and
+`src/bin/` that the root inventory classifies. A self-test accepts a file or
+directory module, a `#[path]` module and an inline module with file submodules,
+and keeps production code that only looks like test code, such as an ungated
+`tests` module or a nested `main.rs`. The real scan must also exempt at least one
+test module that installs a hook. A declaration the reader cannot resolve
+leaves its files scanned. The scan does not cover dependencies or see
+macro-built identifiers. It also classifies
 every checked-in executable root, meaning each workspace member's `src/main.rs`,
 `src/bin/`, `examples/`, `benches/` and declared target paths and the consumer
 sources scripts build outside the workspace, with a self-test of the
@@ -1870,7 +1878,7 @@ excludes archived reviews under `.agent/reviews`.
 | Initial finite errors/panics use `FiniteTaskExit`; critical errors/panics/early success retain `ComponentExit`; later finite failures preserve `Requested` | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs), [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs), and the `ProcessHandle::try_spawn` rustdoc example |
 | Mixed critical/finite ownership, first observed failure retained across task kinds, descendant cause labels, ready requests preceding unobserved finite/critical failures, and shutdown aborts preserving `Requested` | [shutdown_causes.rs](../crates/batter-core/tests/shutdown_causes.rs) |
 | Redacting panic hook: one rendered line per panic in one write, pieces beyond 512 bytes, an unknown-location form and ignored write errors; in fresh children, default-hook controls that print the payloads and locations, then caught constant-message, formatted-message, `unwrap`-`Debug` and opaque payloads, Tokio tasks on both runtime flavors, a spawned thread and an uncaught panic (status 101 under both hooks) with standard error equal to one redacted line per recorded location and no secret on either stream, original payloads after unwinding, a report made while another thread holds the `Stderr` lock, silence at the descriptor limit, and an application's hook kept, unwrapped and called once per panic through Batter entrypoints, with controls for a wrapper and a swap | [unit tests](../crates/batter-core/src/panic_hook/tests.rs), [panic_hook.rs](../crates/batter-core/tests/panic_hook.rs), [panic_hook.rs](../crates/batter-core/src/panic_hook.rs) rustdoc |
-| No workspace library's production source names a panic-hook installer outside comments; every checked-in executable root is classified, and each of the fifteen roots that consume Batter installs the redacting hook first, except three named tooling roots, while native Runledger and Runlimit roots are out of scope | [panic_hook_ownership.rs](../crates/batter/tests/panic_hook_ownership.rs) |
+| No workspace library's production source, meaning every file outside modules declared under `#[cfg(test)]` and binary roots, names a panic-hook installer outside comments, with self-tests of the line rule and of that exemption; every checked-in executable root is classified, and each of the fifteen roots that consume Batter installs the redacting hook first, except three named tooling roots, while native Runledger and Runlimit roots are out of scope | [panic_hook_ownership.rs](../crates/batter/tests/panic_hook_ownership.rs) |
 | Shutdown, task, cleanup and record Debug/Display redact retained error contents while the causes remain reachable through explicit fields | [report_redaction.rs](../crates/batter-core/tests/report_redaction.rs) |
 | Permanent admission closure before startup, unpolled driver drop/abort, dropped unstarted supervisor, post-start abort and completed shutdown; rejected factories stay inert | [terminal_admission.rs](../crates/batter-core/tests/process_ownership/terminal_admission.rs) |
 | Startup permutations, irreversible transition table, concurrent request/completion, admission precedence, nonblocking readiness snapshot and each waiter notified outside the transition lock, allowing redundant wakes | [state/tests.rs](../crates/batter-core/src/lifecycle/state/tests.rs) |
