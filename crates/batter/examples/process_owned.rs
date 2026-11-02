@@ -58,6 +58,8 @@ fn complete(
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     tracing_subscriber::fmt().with_target(false).try_init()?;
     let mut supervisor =
         Supervisor::with_process_capacity(support::shutdown_budget(), ProcessCapacity::new(2)?);

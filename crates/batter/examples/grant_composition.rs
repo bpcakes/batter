@@ -148,6 +148,8 @@ const WORKER_SERVICE: ConsumerRole = ConsumerRole {
 const CONSUMER_ROLES: [&ConsumerRole; 3] = [&INTENT_WRITER, &SCHEMA_INSPECTOR, &WORKER_SERVICE];
 
 fn main() -> ExitCode {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let mut rendered = String::new();
     for consumer in CONSUMER_ROLES {
         match compose(consumer) {

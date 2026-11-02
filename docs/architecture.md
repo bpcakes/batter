@@ -54,6 +54,7 @@ application composition root
   |-- batter facade -> batter-core lifecycle + cleanup
   |                         operation + retry + admission + settings
   |     `-- opt-in at-rest -> standalone batter-at-rest leaf
+  |-- process panic hook installation (application-owned; batter::redacting_panic_hook constructs one)
   |-- native tracing subscriber and exporter selection (application-owned)
   |-- optional batter-otlp -> batter-core protected service completion + native SDK
   |-- optional batter-axum -> batter-core + Axum / Tower
@@ -449,6 +450,12 @@ TaskRecord and CleanupRecord retain boxed original causes because heterogeneous
 components meet there. Automatic telemetry logs only category/name/count fields.
 A trusted sink may inspect causes, but HTTP serialization must use sanitized
 application-owned mappings. See [security](../SECURITY.md).
+
+Panic-time output belongs to the process hook, which Batter never installs.
+`redacting_panic_hook` is a constructed value: the application root installs
+it as the first statement of `main`, and it prints a location without reading
+the payload, so retained payloads and redacted reports are not undone at panic
+time. Payloads that Batter retains stay behind explicit fields.
 
 Scoped tracing is an execution-lifetime concern, not just a polling concern.
 A private wrapper restores the originating dispatcher during both polling and

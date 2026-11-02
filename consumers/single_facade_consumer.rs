@@ -424,6 +424,8 @@ async fn run_limiter(limiter: PostgresLimiter, subject: &str) -> Outcome {
 
 #[tokio::main]
 async fn main() -> Outcome {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let url = std::env::var("DATABASE_URL")?;
     let subject = std::env::var("FACADE_CONSUMER_SUBJECT")?;
     let database = database(&url)?;

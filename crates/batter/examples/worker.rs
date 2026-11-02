@@ -277,6 +277,8 @@ async fn demonstrate(window: Duration, signals: SignalHandling) -> Result<Observ
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     tracing_subscriber::fmt().with_target(false).try_init()?;
     let observed = demonstrate(Duration::from_millis(900), SignalHandling::Enabled).await?;
     let pruning = observed.pruning.snapshot();

@@ -89,7 +89,9 @@ impl<E, R> ServiceObserver<E, R> {
 /// are installed before return, as with [`ScopedStartup::start`]. Diagnostic
 /// panics do not prevent service execution. Finalization is released only after
 /// startup failure cleanup or checked running-driver completion is retained.
-/// See the module example for owner/observer composition.
+/// See the module example for owner/observer composition. The executable root
+/// that calls this installs [`crate::redacting_panic_hook`] as the first
+/// statement of `main`; the service installs no panic hook.
 ///
 /// The service owner does not deliver typed initializer output, so this
 /// accepts only an initializer whose output is `()`; one returning a value is

@@ -6,6 +6,122 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Rust 1.98.1 panic hooks for the redacting hook, 2026-11-02
+
+For `batter-4q78`, the pinned toolchain is Rust 1.98.1 and the MSRV 1.94; every
+API the hook uses is stable at 1.94 (`PanicHookInfo` since 1.81, `AsFd` and
+descriptor duplication since 1.63). The documented contract comes first; the
+facts after it were read in the 1.98.1 source (tag `1.98.1`:
+`library/std/src/panicking.rs`, `panic.rs`, `rt.rs`, `thread/current.rs`,
+`io/stdio.rs`, `sys/process/unix/unix.rs`, `os/fd/owned.rs`, and libtest's
+`library/test/src/lib.rs` and `test_result.rs` read in the 1.99.0 tree, whose
+`panicking.rs` is byte-identical), are implementation behaviour rather than
+documented guarantees, and a toolchain upgrade must recheck them. The 1.94
+standard library was not source-inspected, and 1.94 behaviour is unverified
+here; the CI job definitions run the `panic_hook` target on 1.94, and no hosted
+result is recorded yet.
+
+- [`panic::set_hook`](https://doc.rust-lang.org/1.98.1/std/panic/fn.set_hook.html)
+  replaces the process-global hook, runs it before the panic runtime under both
+  the unwinding and aborting strategies, and panics when called from a
+  panicking thread. [`take_hook`](https://doc.rust-lang.org/1.98.1/std/panic/fn.take_hook.html)
+  returns the current hook and reinstates the default one, so between it and the
+  next `set_hook` the default hook is installed; the atomic `update_hook` is
+  unstable. Nothing reports which hook is installed without replacing it, so no
+  library can check that an application installed a particular hook.
+- [`PanicHookInfo`](https://doc.rust-lang.org/1.98.1/std/panic/struct.PanicHookInfo.html):
+  `payload`, `payload_as_str` (since 1.91.0) and `location` are its accessors,
+  and `location` currently always returns `Some`. Its `Display` (`panic.rs`)
+  writes `panicked at {location}:\n{payload}` for a string payload, so a hook
+  that formats the info discloses the payload. A `#[track_caller]` function such
+  as `Result::unwrap` reports its caller's
+  [`Location`](https://doc.rust-lang.org/1.98.1/std/panic/struct.Location.html),
+  whose `Display` is `file:line:column`, and `unwrap`'s payload contains the
+  error's `Debug`. A `panic!` with a constant message carries a `&'static str`
+  payload; one with arguments carries a `String`.
+- `panicking.rs` `panic_with_hook` builds the hook's `PanicHookInfo` with
+  `payload.get()`, which formats a `panic!` message's arguments into a `String`
+  before any custom hook runs. `default_hook` renders `thread '{name}' ({os id})
+  panicked at {location}:\n{payload}` into a 512-byte stack buffer and writes it
+  with one `write_all` when it fits, otherwise formats it directly in several
+  writes, to the raw standard error stream rather than through the
+  `std::io::Stderr` lock, or into libtest's output-capture sink when one is set.
+  It reads the thread name through a private accessor, prints a backtrace as
+  `RUST_BACKTRACE` selects, and forces a full one for a panic raised while the
+  same thread is already panicking, unless that panic forces no backtrace, as
+  std's own `panic in a destructor during cleanup` abort does.
+- `panic_with_hook` prints without consulting any hook in two cases. A panic
+  raised while the same thread prepares or runs its hook, including while
+  `payload.get()` formats the arguments, prints `panicked at {location}:` and
+  that nested panic's message only when it is a constant string
+  (`StaticStrPayload` alone implements `as_str`), then aborts. After
+  `panic::always_abort`, which `sys/process/unix/unix.rs` calls only in the
+  child that `Command` forks, before
+  [`pre_exec`](https://doc.rust-lang.org/1.98.1/std/os/unix/process/trait.CommandExt.html#tymethod.pre_exec)
+  closures and `exec`, a panic prints `aborting due to panic at
+  {location}:\n{payload}` and aborts. A child of the application's own `fork`
+  keeps the installed hook. A panic that cannot unwind runs the hook and then
+  prints `thread caused non-unwinding panic. aborting.` without its payload.
+  `resume_unwind` never runs the hook.
+- `rt.rs` `lang_start_internal` catches a panic escaping `main`, drops its
+  payload without printing it and returns exit status 101. libtest runs each test
+  on a thread named after it, reports a plain failed test with status 101 and
+  never prints that test's payload; it prints a `#[should_panic(expected = ...)]`
+  mismatch's payload. When it captures output it installs a wrapper around the
+  built-in hook, and after every run, with or without capture, it takes the hook
+  again, which reinstates the default hook.
+- `thread/current.rs`: the only stable route to a thread's name is
+  [`thread::current`](https://doc.rust-lang.org/1.98.1/std/thread/fn.current.html),
+  which allocates a handle on a thread's first call and panics once the
+  thread's handle has been dropped in its final runtime cleanup. A panic inside
+  a hook makes std abort the process, so the redacting hook reads no thread name.
+- [`BorrowedFd::try_clone_to_owned`](https://doc.rust-lang.org/1.98.1/std/os/fd/struct.BorrowedFd.html#method.try_clone_to_owned)
+  duplicates a descriptor with `fcntl(F_DUPFD_CLOEXEC, 3)` on Linux and macOS
+  (`os/fd/owned.rs`) and returns an error at the descriptor limit;
+  `io::stderr().as_fd()` borrows descriptor 2 without locking. Every write
+  through [`io::Stderr`](https://doc.rust-lang.org/1.98.1/std/io/struct.Stderr.html)
+  takes its process-wide reentrant lock, which `eprint!` holds while it formats
+  its arguments, so another thread can hold it indefinitely, and `eprint!`
+  panics when the write fails (`io/stdio.rs` `print_to`).
+- [POSIX `write`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/write.html):
+  a write of at most `PIPE_BUF` bytes to a pipe is not interleaved with other
+  writers. [Linux `pipe(7)`](https://man7.org/linux/man-pages/man7/pipe.7.html)
+  gives `PIPE_BUF` as 4096 bytes; the locked libc 0.2.189 defines it as 512 for
+  Apple targets (`src/unix/bsd/mod.rs`), so the hook's 512-byte single write is
+  atomic on a pipe on both systems.
+- [POSIX `fcntl`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fcntl.html):
+  a process's process-owned record locks on a file are removed when it closes
+  any descriptor for that file, while open-file-description locks are removed
+  only when every descriptor for that description is closed. Closing the hook's
+  duplicate therefore releases the former and not the latter.
+- [`io::Write::write_fmt`](https://doc.rust-lang.org/1.98.1/std/io/trait.Write.html#method.write_fmt)
+  panics when a formatting implementation reports an error that the underlying
+  writer did not; the hook formats only `&str` and `u32` values, which report
+  only writer errors.
+- Tokio 1.53.1 [`JoinError`](https://docs.rs/tokio/1.53.1/tokio/task/struct.JoinError.html):
+  `runtime/task/error.rs` formats a string payload in both `Display`
+  (`task {id} panicked with message {payload:?}`) and `Debug`. Tokio stores a
+  task's payload in the `JoinError` and prints nothing itself;
+  `runtime/scheduler/multi_thread/worker.rs` prints a fixed line only when its own
+  worker loop panics under debug assertions. tokio-macros 2.7.2 `src/entry.rs`
+  builds the runtime with `.expect("Failed building the Runtime")` before it runs
+  the `#[tokio::main]` body, and Tokio's `src/loom/std/mod.rs` panics with the
+  value of an invalid `TOKIO_WORKER_THREADS`.
+- tracing-subscriber 0.3.23: `tracing_subscriber::fmt()` builds a subscriber
+  with `log_internal_errors` enabled (`fmt/mod.rs`), while `fmt::layer()`
+  defaults it to disabled despite its setter's documentation
+  (`fmt/fmt_layer.rs`). With it enabled, `on_event` reports a failed event write
+  with `eprintln!`, and a formatting failure by writing to the same writer, then
+  with `eprintln!` if that write fails. A hook that emits a `tracing` event
+  through such a subscriber can therefore panic inside the hook.
+- Locked dependencies, searched on 2026-11-02 for `set_hook`, `take_hook` and
+  `update_hook` outside tests: ratatui 0.30.2 `src/init.rs` chains the hook in
+  `init`, `try_init`, `init_with_options`, `try_init_with_options` and `run`,
+  none of which any workspace package calls (the operator TUI builds its
+  `Terminal` directly), and proc-macro2 1.0.107 swaps it only under
+  `cfg(no_is_available)`, for compilers older than 1.57. This is evidence about
+  one `Cargo.lock`, not a test.
+
 ## Tokio 1.53.1 blocking tasks for bounded blocking work, 2026-10-31
 
 For `batter-0772`, `Cargo.lock` resolves Tokio 1.53.1. The versioned

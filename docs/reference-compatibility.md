@@ -379,7 +379,12 @@ drive methods remain available outside the protected adapter path.
 An in-flight claim can still dispatch after stop. No linearized no-claim barrier,
 arbitrary-handler-spawn join, remote backend termination or runtime-death cleanup
 guarantee is claimed. Non-yielding futures can outlast the reporting window.
-Native/default panic-hook output remains outside Batter's diagnostic promises.
+The reference binary, its offline retirement command and the
+`signal_witness_fixture` test binary that stands in for it install
+`batter::redacting_panic_hook()` as the first statement of `main`, so a panic
+prints its location and not its payload; Rust's own payload output in a child
+that `std::process::Command` forks remains outside Batter's diagnostic promises.
+The live-suite preflight is test tooling and keeps the default hook.
 
 Retirement is an explicit offline command, after external revocation of old
 producer restarts. It checks expected cluster/database identity, other sessions

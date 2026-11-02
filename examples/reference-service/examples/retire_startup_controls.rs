@@ -11,6 +11,8 @@ mod diagnostics;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let (facts, success) = match run().await {
         Ok(outcome) => diagnostics::outcome(outcome),
         Err(_) => (diagnostics::setup_failure(), false),

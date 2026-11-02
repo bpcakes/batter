@@ -604,6 +604,68 @@ interrupted work and successful cleanup. See
 These tests require no database. Owned command finalization requires a live runtime;
 it cannot promise remote effect reversal or termination of arbitrary spawned tasks.
 
+`tests/panic_hook.rs` runs the redacting panic hook in fresh child processes
+through the same launch protocol, reading each child's standard output and
+standard error through separate pipes: eight parent tests and the inert
+`child_fixture` entry, ten children per run. Every child except `entrypoints`
+panics with a secret-shaped payload and first records each panic's location on
+standard output, which never receives hook output, so its shared `panicked at`
+detector stays meaningful there. For the hook cases the parent requires standard
+error to equal exactly one `a thread panicked at <location>; panic payload
+redacted` line per recorded panic, in order, or nothing at the descriptor limit,
+so no payload, thread name or backtrace can appear, and requires neither the
+secret nor its distinctive core, `panic-secret-6f1c`, on either stream. The caught default-hook control prints all three string
+payloads and all four recorded locations, and the uncaught control prints its
+payload and location, so the oracle is not vacuous; the opaque `panic_any`
+payload, which the default hook never prints, is location and integrity evidence
+only. Caught constant-message, formatted-message, `unwrap`-`Debug` and opaque
+payloads come back intact after their frames unwound, under `RUST_BACKTRACE=1`,
+and the shared detector still classifies the redacted line as a panic; a task
+panic on a current-thread runtime, on the caller's thread, and on a two-worker
+runtime, on a worker thread, reaches its `JoinError` with the original payload
+while the runtime keeps running; a spawned thread's join returns it; and a panic
+escaping the libtest test function ends the child with the same status, 101,
+under both hooks. That is libtest's status for a failed test; std's `lang_start`
+returns the same status for a panic escaping a real `fn main`, which is
+source-inspected, not executed. One child panics while another thread holds the
+`Stderr` lock, taken before the panic and released only after the report is
+recorded, so a hook that took the lock would block until the parent's guard
+killed the child. One runs under `ulimit -n 32` through `/bin/sh`, exhausts its
+descriptors, and unwinds with its payload while the hook writes nothing. The
+last installs an application hook with a real heap address, constructs and drops
+the redacting hook, and panics inside a signalled command's work, a protected
+startup initializer with signals and a `run_blocking` closure; each panic must
+reach that hook exactly once and leave it installed and unwrapped, checked by
+taking the hook, comparing its address and reinstalling it. Its in-child controls
+show that the address check detects a wrapper and the count detects a hook
+swapped out around a panic. Aborting panics are not run: no repository test
+aborts a process, because a host crash reporter can still be invoked, so the
+non-unwinding path is source-inspected. The facade's `panic_hook_ownership`
+target scans every workspace library's production sources for `set_hook`,
+`take_hook` and `update_hook` outside `//` comment lines, skipping test-only
+`tests.rs` files and `tests/` directories, with a self-test of that line rule; it
+does not scan dependencies or see macro-built identifiers. It also classifies
+every checked-in executable root, meaning each workspace member's `src/main.rs`,
+`src/bin/`, `examples/`, `benches/` and declared target paths and the consumer
+sources scripts build outside the workspace, with a self-test of the
+first-statement rule; programs that scripts generate as compile and identity
+probes are not classified. The fifteen roots that consume Batter must install the hook
+as their first statement; three named tooling roots, a live-suite preflight, a
+provisioning harness and a benchmark, keep the default hook; and the twelve
+native Runledger and Runlimit roots, which name no Batter crate, are out of scope.
+Exact counts make a new root a deliberate update. That is a check of this
+repository's source shape, not proof that applications install the hook.
+libtest installs its own wrapper hook only when it captures output, and the
+children run with `--nocapture`. The macOS CI job definition now includes the
+`panic_hook` target; no hosted result is claimed. Execution outcomes belong to
+`batter-4q78`.
+
+```sh
+cargo test -p batter-core --locked --lib panic_hook::
+cargo test -p batter-core --locked --test panic_hook
+cargo test -p batter --locked --test panic_hook_ownership
+```
+
 The optional SQLx adapter's offline contracts run with ordinary workspace gates.
 Its live tests are explicitly ignored even with all features/targets. With
 `DATABASE_URL` identifying an externally provisioned disposable PostgreSQL
@@ -1807,6 +1869,8 @@ excludes archived reviews under `.agent/reviews`.
 | Finite capacity/receipt ownership, descendants, typed failure vs normal business denial | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs) |
 | Initial finite errors/panics use `FiniteTaskExit`; critical errors/panics/early success retain `ComponentExit`; later finite failures preserve `Requested` | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs), [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs), and the `ProcessHandle::try_spawn` rustdoc example |
 | Mixed critical/finite ownership, first observed failure retained across task kinds, descendant cause labels, ready requests preceding unobserved finite/critical failures, and shutdown aborts preserving `Requested` | [shutdown_causes.rs](../crates/batter-core/tests/shutdown_causes.rs) |
+| Redacting panic hook: one rendered line per panic in one write, pieces beyond 512 bytes, an unknown-location form and ignored write errors; in fresh children, default-hook controls that print the payloads and locations, then caught constant-message, formatted-message, `unwrap`-`Debug` and opaque payloads, Tokio tasks on both runtime flavors, a spawned thread and an uncaught panic (status 101 under both hooks) with standard error equal to one redacted line per recorded location and no secret on either stream, original payloads after unwinding, a report made while another thread holds the `Stderr` lock, silence at the descriptor limit, and an application's hook kept, unwrapped and called once per panic through Batter entrypoints, with controls for a wrapper and a swap | [unit tests](../crates/batter-core/src/panic_hook/tests.rs), [panic_hook.rs](../crates/batter-core/tests/panic_hook.rs), [panic_hook.rs](../crates/batter-core/src/panic_hook.rs) rustdoc |
+| No workspace library's production source names a panic-hook installer outside comments; every checked-in executable root is classified, and each of the fifteen roots that consume Batter installs the redacting hook first, except three named tooling roots, while native Runledger and Runlimit roots are out of scope | [panic_hook_ownership.rs](../crates/batter/tests/panic_hook_ownership.rs) |
 | Shutdown, task, cleanup and record Debug/Display redact retained error contents while the causes remain reachable through explicit fields | [report_redaction.rs](../crates/batter-core/tests/report_redaction.rs) |
 | Permanent admission closure before startup, unpolled driver drop/abort, dropped unstarted supervisor, post-start abort and completed shutdown; rejected factories stay inert | [terminal_admission.rs](../crates/batter-core/tests/process_ownership/terminal_admission.rs) |
 | Startup permutations, irreversible transition table, concurrent request/completion, admission precedence, nonblocking readiness snapshot and each waiter notified outside the transition lock, allowing redundant wakes | [state/tests.rs](../crates/batter-core/src/lifecycle/state/tests.rs) |

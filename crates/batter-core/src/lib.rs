@@ -44,10 +44,12 @@ pub mod startup;
 pub mod telemetry;
 
 mod completion;
+mod panic_hook;
 mod panic_payload;
 mod scoped_dispatch;
 mod validation;
 
+pub use panic_hook::redacting_panic_hook;
 pub use panic_payload::{PanicPayload, PanicPayloadBusy};
 pub use validation::{ConfigurationError, RegistrationError};
 

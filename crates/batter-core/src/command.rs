@@ -3,7 +3,9 @@
 //! Starting a [`Command`] retains the work and its registered cleanup on the live
 //! Tokio runtime. An executable root calls [`Command::start_with_unix_signals`],
 //! so SIGTERM and SIGINT cancel work and still finalize; reusable helpers and
-//! in-process tests call [`Command::start_without_signals`]. Both return the sole
+//! in-process tests call [`Command::start_without_signals`]. That root also
+//! installs [`crate::redacting_panic_hook`] as the first statement of `main`,
+//! before argument parsing and configuration loading. Both starts return the sole
 //! [`CommandOwner`], whose consuming [`CommandOwner::finish`] checks the complete
 //! contract and moves the work value out. [`Command::start`] instead publishes one
 //! shared report to every [`CommandObserver`], checked with [`check_command`].
@@ -137,7 +139,8 @@ impl<F> Command<F> {
     /// it with the sole [`CommandOwner`], whose consuming
     /// [`CommandOwner::finish`] moves the checked work value out. Use this at an
     /// executable root, so an operator's Ctrl-C or a service manager's SIGTERM
-    /// cancels work and still runs registered cleanup.
+    /// cancels work and still runs registered cleanup. That root's `main`
+    /// installs [`crate::redacting_panic_hook`] first, as the example below does.
     ///
     /// Both listeners are installed synchronously, SIGTERM then SIGINT, before
     /// this returns. Only the command coordinator polls them, and only while work
@@ -184,6 +187,7 @@ impl<F> Command<F> {
     /// use std::{process::ExitCode, time::Duration};
     /// #[tokio::main(flavor = "current_thread")]
     /// async fn main() -> Result<ExitCode, BoxError> {
+    ///     std::panic::set_hook(batter_core::redacting_panic_hook());
     ///     let second = Duration::from_secs(1);
     ///     let cleanup = CleanupBudget::new(second, second, second)?;
     ///     let context = OperationOwner::new(Duration::from_secs(30))?.into_context();

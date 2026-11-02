@@ -17,6 +17,8 @@ use std::{process::ExitCode, str::FromStr, time::Duration};
 #[tokio::main(flavor = "current_thread")]
 #[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     if std::env::var_os("BATTER_VERIFY_ALLOW_LATER").is_some() {
         eprintln!(
             "BATTER_VERIFY_ALLOW_LATER is unsupported; provide the complete expected migration manifest"

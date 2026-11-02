@@ -75,7 +75,7 @@ jobs:
       - name: Compile all workspace targets, including Unix signal examples
         run: cargo check --workspace --all-features --all-targets --locked
       - name: Exercise Unix subprocess and scheduling contracts
-        run: cargo test -p batter-core --test non_yielding --test scheduling --test process_ownership --test component_ownership --locked
+        run: cargo test -p batter-core --test non_yielding --test scheduling --test process_ownership --test component_ownership --test panic_hook --locked
       - name: Exercise report doctests and database-independent lifecycle exits
         run: |
           cargo test -p batter-core --doc --locked

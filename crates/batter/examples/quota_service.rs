@@ -20,6 +20,8 @@ use std::{convert::Infallible, time::Duration};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let policy = FixedWindowPolicy::new(
         PolicyId::new("api.submit").unwrap(),
         ScopeId::new("owner").unwrap(),

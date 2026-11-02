@@ -6,7 +6,9 @@
 //! finalization. Owner loss requests drain; borrowed wait cancellation does not.
 //! Diagnostic panics retain their payload separately from the original service
 //! result. The runtime must outlive all phases; synchronous or non-yielding
-//! diagnostic code cannot be preempted by an asynchronous deadline.
+//! diagnostic code cannot be preempted by an asynchronous deadline. The
+//! executable root that calls [`start`] installs [`crate::redacting_panic_hook`]
+//! as the first statement of `main`; the service installs no panic hook.
 //!
 //! ```no_run
 //! use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor},

@@ -10,6 +10,8 @@ const SIGINT_OBSERVED: &str = "batter-fixture:executable-sigint-observed";
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => {

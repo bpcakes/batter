@@ -8,6 +8,39 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Construct an application-installed panic hook that never writes payloads
+  (`batter-4q78`;
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#redacting-panic-hook-assessment-batter-4q78)).
+  `redacting_panic_hook()` (also `batter::redacting_panic_hook`) returns a
+  `#[must_use]` `Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync + 'static>` that every
+  binary passes, unwrapped, to `std::panic::set_hook` as the first statement of
+  `main`, before argument parsing, configuration and tracing initialization. Each
+  panic writes one line, `a thread panicked at <file>:<line>:<column>; panic
+  payload redacted`, to standard error through a duplicate of descriptor 2, in
+  one write when it fits in 512 bytes and in several otherwise; the text is part
+  of the contract, and a later change to it will be recorded here. The hook never
+  reads, writes or forwards the payload, so neither a `panic!` message nor the
+  `Debug` of an error passed to `unwrap` reaches that output, although std still
+  formats both into the payload before any hook runs. It calls no previous or
+  default hook, emits no tracing event, prints no thread name or backtrace, never
+  takes the `Stderr` lock and writes nothing when the descriptor cannot be
+  duplicated, and it returns normally, so unwinding, joins, Tokio `JoinError`s and
+  status 101 for an uncaught panic are unchanged. Batter still never installs,
+  takes or replaces the process hook, which a scan of every workspace library's
+  production sources now checks. Every checked-in executable root that consumes
+  Batter, among the workspace members' binaries, examples and benchmarks and the
+  consumer sources built outside the workspace, installs the hook first, except
+  the live-suite preflight, the consumer provisioning harness and the HTTP
+  adapter's dispatch benchmark; native Runledger and Runlimit roots, which name no
+  Batter crate, keep their own policy. The rustdoc of `Command::start_with_unix_signals`,
+  `ScopedStartup::with_unix_signals`, `DeferredScopedStartup::with_unix_signals`
+  and `service::start` points to it. Std still
+  prints a payload itself in a child that `std::process::Command` forks, a wrapper
+  that formats `PanicHookInfo` or calls the default hook prints it again, and
+  Tokio's `JoinError` formatting still includes a string payload. A structured,
+  payload-free panic record outside the hook is follow-up `batter-krpp`. Additive
+  API only: no `Breaking:`, `Migration:` or shim applies.
+
 - Run bounded blocking work through `Bulkhead::run_blocking` (`batter-0772`;
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#bounded-blocking-work-assessment-batter-0772)).
   `run_blocking(context, admission, work)` admits under the caller's context

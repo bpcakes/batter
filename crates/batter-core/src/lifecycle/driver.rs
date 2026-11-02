@@ -147,6 +147,8 @@ fn classify_shutdown(outcome: DriverOutcome) -> Result<ShutdownSuccess, Shutdown
 ///
 /// #[tokio::main(flavor = "current_thread")]
 /// async fn main() -> ExitCode {
+///     // Panic output follows the same policy: a location, never a payload.
+///     std::panic::set_hook(batter_core::redacting_panic_hook());
 ///     match run().await {
 ///         Ok(()) => ExitCode::SUCCESS,
 ///         Err(_failure) => {

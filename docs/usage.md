@@ -14,6 +14,18 @@ process completion uses the same checked path after protected startup.
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
+Every executable root, meaning each service, operator command and mode, starts
+with `std::panic::set_hook(batter::redacting_panic_hook());` as the first
+statement of `main`, before argument parsing, configuration loading, tracing
+initialization or mode dispatch. The hook's line names each panic's location and
+never its payload, so neither a `panic!` message nor the `Debug` of an error
+passed to `unwrap` reaches that line. Batter never installs a hook. Keep it out of
+library code, tests and helpers that tests call, and install it unwrapped: a
+wrapper that formats `PanicHookInfo`, logs the payload, chains to the default
+hook or can itself panic undoes it or aborts the process. The
+[hook's rustdoc](../crates/batter-core/src/panic_hook.rs) lists what it cannot
+cover.
+
 The canonical path must also make locally expressible invalid operational states
 unrepresentable. When adding or materially changing public API, apply the
 [ADR-010 invalid-state review](adr/010-agent-only-consumption.md#public-api-invalid-state-review):

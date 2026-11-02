@@ -27,6 +27,7 @@
 //!
 //! | Need | Use | Not |
 //! | --- | --- | --- |
+//! | Panic output from any executable root | `std::panic::set_hook(batter::redacting_panic_hook())`, unwrapped, as the first statement of every binary's `main`, before argument parsing, configuration, tracing and mode dispatch; inside a `#[tokio::main]` body the runtime is built first, so install it in a synchronous `main` before building the runtime when runtime-construction panics matter. The hook writes one location line per panic, never the payload or a backtrace; its rustdoc lists the panics it cannot cover | the default hook, or a chain that calls it; a wrapper or later hook, the application's or a dependency's, that formats, logs or sends `PanicHookInfo` or its payload, or that can itself panic (`eprintln!`, `thread::current`, a `tracing` event), which aborts the process; installing it late, in only some binaries or modes, or from library code, tests or a helper that tests call |
 //! | A long-running service | [`startup::Startup::protected`] with an async-closure initializer, `with_unix_signals`, `start`, `wait_with_output` for a typed result such as the bound address, then [`lifecycle::RunningSupervisor::wait_checked`]; [`startup::ApplicationError`] when the initializer combines unrelated errors with `?`; with metrics export, [`service::start`] and `otlp::prepare` (feature `otlp`), unit output only | driving [`lifecycle::Supervisor::start`] yourself, a channel to carry startup values out, an adapter error type, or awaiting the raw report without the checked form |
 //! | Finite work: setup, migration, an operator command | [`command::Command::new`] or [`command::Command::within`]; at an executable root [`command::Command::start_with_unix_signals`], then [`command::CommandOwner::finish`] and [`command::CommandSuccess::into_value`]; in reusable helpers and in-process tests [`command::Command::start_without_signals`]; [`command::Command::start`] with [`command::check_command`] only when observers must share one report | `Startup`, which reports `EmptySupervisor` for a process with no critical component; hand-installed `tokio::signal` listeners around a command; a command started inside another command's work, whose cleanup an interrupted outer command leaves unjoined; `expect` after `check_command`, or `Clone`, to copy a value out of a shared report |
 //! | A PostgreSQL pool the service owns | `sqlx::pool_in` after `reserve_cleanup` (feature `sqlx`); `sqlx::PgProfiledPool` when a session profile is declared; `runledger::RunledgerDatabase` when Runledger runs on the same pool (feature `runledger`) | a pool built outside startup with a manual close |
@@ -37,6 +38,16 @@
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
 //! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
+//!
+//! Every executable root starts the same way, whatever it goes on to run:
+//!
+//! ```no_run
+//! #[tokio::main]
+//! async fn main() {
+//!     std::panic::set_hook(batter::redacting_panic_hook());
+//!     // Parse arguments, load configuration and initialize tracing after it.
+//! }
+//! ```
 //!
 //! An interruption selected before the Runledger runner returns local commit
 //! acknowledgement proves neither rollback nor permission to replay. When the

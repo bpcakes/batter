@@ -53,6 +53,8 @@ impl Error for ExampleError {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<ExitCode, BoxError> {
+    // First statement, unwrapped: prints each panic's location, never its payload.
+    std::panic::set_hook(batter::redacting_panic_hook());
     let Some(database_url) = std::env::var_os("DATABASE_URL") else {
         eprintln!("DATABASE_URL is required");
         return Ok(ExitCode::FAILURE);
