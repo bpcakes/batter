@@ -76,16 +76,19 @@ fn rust_sources(directory: &Path, found: &mut Vec<(PathBuf, String)>) {
 }
 
 /// The production sources of one library `src` tree: everything except the
-/// files of modules declared under `#[cfg(test)]` and the binary roots
-/// `src/main.rs` and `src/bin/`, which the executable-root inventory classifies.
+/// files of modules declared under `#[cfg(test)]` and exactly the binary roots
+/// the executable-root inventory classifies, `src/main.rs`, `src/bin/*.rs` and
+/// `src/bin/*/main.rs`. Every other file under `src/bin/`, such as a binary's
+/// helper module, is scanned.
 fn production_sources(src: &Path, sources: Vec<(PathBuf, String)>) -> Vec<(PathBuf, String)> {
     let test_only = modules::test_only(&sources);
+    let bin = src.join("bin");
     sources
         .into_iter()
         .filter(|(path, _)| {
             !test_only.contains(path)
                 && *path != src.join("main.rs")
-                && !path.starts_with(src.join("bin"))
+                && !is_target_source(&bin, path)
         })
         .collect()
 }
@@ -100,6 +103,8 @@ fn only_binary_roots_and_cfg_test_modules_are_exempt() {
         file("/src/helpers/tests.rs", ""),
         file("/src/main.rs", ""),
         file("/src/bin/tool.rs", ""),
+        file("/src/bin/server/main.rs", ""),
+        file("/src/bin/server/support.rs", ""),
         file("/src/x/main.rs", ""),
         file("/src/x/bin/y.rs", ""),
     ];
@@ -107,10 +112,12 @@ fn only_binary_roots_and_cfg_test_modules_are_exempt() {
         .into_iter()
         .map(|(path, _)| path)
         .collect();
+    // A binary's helper module is neither a root nor test-only, so it is scanned.
     let expected = [
         "/src/lib.rs",
         "/src/helpers.rs",
         "/src/helpers/tests.rs",
+        "/src/bin/server/support.rs",
         "/src/x/main.rs",
         "/src/x/bin/y.rs",
     ];
@@ -286,6 +293,15 @@ fn the_first_statement_rule_reads_main_bodies() {
         Err("main is empty")
     );
     assert!(!has_main("fn helper() {}\n    fn main() {}\n"));
+}
+
+/// Whether `path` is one of the files `target_sources` lists for `directory`:
+/// a Rust source directly in it, or the `main.rs` of one of its subdirectories.
+fn is_target_source(directory: &Path, path: &Path) -> bool {
+    let in_directory = |parent: Option<&Path>| parent == Some(directory);
+    (in_directory(path.parent()) && path.extension().is_some_and(|extension| extension == "rs"))
+        || (path.file_name().is_some_and(|name| name == "main.rs")
+            && in_directory(path.parent().and_then(Path::parent)))
 }
 
 /// Rust sources directly in `directory`, plus each subdirectory's `main.rs`.

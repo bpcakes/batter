@@ -1890,7 +1890,8 @@ panic. The
 `every_batter_consuming_root_installs_the_redacting_hook_first`,
 `the_first_statement_rule_reads_main_bodies`) covers every production source
 path of every workspace library, meaning every file outside modules declared
-under `#[cfg(test)]` and binary roots, not dependencies, and classifies every checked-in
+under `#[cfg(test)]` and the binary roots the inventory classifies, not
+dependencies, and classifies every checked-in
 executable root: roots that consume Batter must install the hook first,
 three named tooling roots keep the default hook, and native roots, which name no
 Batter crate, are out of scope. The

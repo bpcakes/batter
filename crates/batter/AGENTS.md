@@ -22,7 +22,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `tests/panic_hook_ownership.rs` scans every workspace library's production
   sources for panic-hook installers, exempting only modules declared under
   `#[cfg(test)]` (derived in `panic_hook_ownership/modules.rs` from module
-  declarations, never from file names) and binary roots, and classifies every checked-in executable
+  declarations, never from file names) and exactly the binary roots the
+  inventory classifies, and classifies every checked-in executable
   root in the repository: each root consuming Batter installs the redacting hook first,
   except three named tooling roots, and native Runledger and Runlimit roots keep
   their own policy.
