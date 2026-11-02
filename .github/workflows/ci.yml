@@ -13,16 +13,48 @@ permissions:
 concurrency:
   group: rust-ci-${{ github.event_name == 'schedule' && 'stable-weekly' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+# scripts/ci_plan.py selects the work. A push to master whose exact tree already
+# passed every test job in a same-repository PR or merge-group run only confirms
+# that the master Rust cache is an exact hit; a miss runs the full job and saves
+# the cache. Test jobs still run in full when the planner fails.
 jobs:
+  plan:
+    name: Plan Rust CI scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tree: ${{ steps.plan.outputs.tree }}
+      tree_verified: ${{ steps.plan.outputs.tree_verified }}
+      verified_run: ${{ steps.plan.outputs.verified_run }}
+      runlimit_postgres: ${{ steps.plan.outputs.runlimit_postgres }}
+    env:
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install toolchain for workspace metadata
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Select jobs for this change
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # A PR checks out its test merge, whose first parent is the base tip.
+          PLAN_BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.merge_group.base_sha || github.event.before }}
+        run: python3 scripts/ci_plan.py
+
   native-runlimit-postgres:
-    if: github.event_name != 'schedule'
-    name: Native Runlimit PostgreSQL (${{ matrix.rust }})
+    needs: plan
+    if: >-
+      ${{ !cancelled() && github.event_name != 'schedule'
+      && (needs.plan.result != 'success' || needs.plan.outputs.runlimit_postgres == 'true') }}
+    name: Native Runlimit PostgreSQL (1.98.1)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: ["1.94.0", "1.98.1"]
     services:
       postgres:
         image: postgres:16-alpine
@@ -38,55 +70,73 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+      RUSTUP_TOOLCHAIN: "1.98.1"
       RUNLIMIT_POSTGRES_TEST_DATABASE_URL: postgresql://runlimit:runlimit@127.0.0.1:5432/runlimit
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Cache Rust dependencies
+        id: rust-cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # PRs reuse master caches without creating a cache for every PR.
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Reuse the earlier verification of this tree
+        id: reuse
+        if: needs.plan.outputs.tree_verified == 'true' && steps.rust-cache.outputs.cache-hit == 'true'
+        env:
+          VERIFIED_RUN: ${{ needs.plan.outputs.verified_run }}
+        run: echo "This tree passed in $VERIFIED_RUN and the master cache is current; tests are skipped." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Execute native PostgreSQL tests with default and all features
+        if: steps.reuse.outcome == 'skipped'
         run: |
           cargo test -p runlimit-postgres --tests --locked -- --ignored --test-threads=1
           cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
 
   subprocess-macos:
-    if: github.event_name != 'schedule'
-    name: Subprocess harness (macOS, ${{ matrix.rust }})
+    needs: plan
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
+    # Linux verification covers Rust 1.94.0; this job covers macOS process behavior.
+    name: Subprocess harness (macOS, 1.98.1)
     runs-on: macos-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: ["1.94.0", "1.98.1"]
     env:
-      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+      RUSTUP_TOOLCHAIN: "1.98.1"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust toolchain
-        run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Cache Rust dependencies
+        id: rust-cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Reuse the earlier verification of this tree
+        id: reuse
+        if: needs.plan.outputs.tree_verified == 'true' && steps.rust-cache.outputs.cache-hit == 'true'
+        env:
+          VERIFIED_RUN: ${{ needs.plan.outputs.verified_run }}
+        run: echo "This tree passed in $VERIFIED_RUN and the master cache is current; tests are skipped." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Compile all workspace targets, including Unix signal examples
+        if: steps.reuse.outcome == 'skipped'
         run: cargo check --workspace --all-features --all-targets --locked
       - name: Exercise Unix subprocess and scheduling contracts
+        if: steps.reuse.outcome == 'skipped'
         run: cargo test -p batter-core --test non_yielding --test scheduling --test process_ownership --test component_ownership --test panic_hook --locked
       - name: Exercise report doctests and database-independent lifecycle exits
+        if: steps.reuse.outcome == 'skipped'
         run: |
           cargo test -p batter-core --doc --locked
           cargo test -p batter --doc --locked
           cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --test diagnostics --locked
           python3 scripts/test_smoke_postgres.py -v
       - name: Exercise HTTP adapter and live readiness contracts
+        if: steps.reuse.outcome == 'skipped'
         run: |
           cargo test -p batter-axum --all-targets --locked
           cargo test -p batter --features axum --example http_service --locked
       - name: Build and smoke-test the HTTP example
+        if: steps.reuse.outcome == 'skipped'
         run: |
           cargo build -p batter --features axum --example http_service --locked
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service
@@ -96,6 +146,8 @@ jobs:
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
 
   verify:
+    needs: plan
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -113,10 +165,18 @@ jobs:
       - name: Require the checked-in lockfile before cache metadata resolution
         run: test -f Cargo.lock
       - name: Cache Rust dependencies
+        id: rust-cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Reuse the earlier verification of this tree
+        id: reuse
+        if: needs.plan.outputs.tree_verified == 'true' && steps.rust-cache.outputs.cache-hit == 'true'
+        env:
+          VERIFIED_RUN: ${{ needs.plan.outputs.verified_run }}
+        run: echo "This tree passed in $VERIFIED_RUN and the master cache is current; verification is skipped." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Cache Jig runtime
+        if: steps.reuse.outcome == 'skipped'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -124,9 +184,41 @@ jobs:
             .agent/.cache/jig/release-*-contract-*-runtime/bin/jig
           key: ${{ runner.os }}-${{ runner.arch }}-jig-release-${{ hashFiles('.jig/runtime-version', '.jig.toml', '.agent/jig-contract.json', 'scripts/jig', 'scripts/install-jig.sh') }}
       - name: Prepare pinned Jig file-budget checker
+        if: steps.reuse.outcome == 'skipped'
         run: scripts/jig file-budget validate
       - name: Verify Docker prerequisite for native PostgreSQL 18 tests
+        if: steps.reuse.outcome == 'skipped'
         run: docker info
       - name: Verify locked workspace
+        if: steps.reuse.outcome == 'skipped'
         shell: bash
         run: bash scripts/verify.sh
+
+  # Only a run whose every test job passed may vouch for its tree. A job added
+  # here later must also be listed in `needs` before it may reuse the marker.
+  record-verified-tree:
+    name: Record verified tree
+    needs: [plan, native-runlimit-postgres, subprocess-macos, verify]
+    if: >-
+      ${{ !cancelled()
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+      && needs.plan.result == 'success' && needs.plan.outputs.tree != ''
+      && needs.verify.result == 'success'
+      && needs.subprocess-macos.result == 'success'
+      && (needs.native-runlimit-postgres.result == 'success'
+          || (needs.native-runlimit-postgres.result == 'skipped'
+              && needs.plan.outputs.runlimit_postgres == 'false')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Describe the verified tree
+        env:
+          TREE: ${{ needs.plan.outputs.tree }}
+        run: printf '{"tree":"%s","commit":"%s","run":"%s"}\n' "$TREE" "$GITHUB_SHA" "$GITHUB_RUN_ID" > verified-tree.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-tree-${{ needs.plan.outputs.tree }}
+          path: verified-tree.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30

@@ -1055,6 +1055,35 @@ and its [duplicate push run](https://github.com/bpcakes/batter/actions/runs/3569
 establish the duplicated execution. They predate the optimization and do not
 establish a cache hit or elapsed-time improvement for the revised workflow.
 
+## GitHub Actions CI scope selection: reviewed 2026-11-02
+
+- [Swatinem/rust-cache at the pinned commit](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/action.yml)
+  declares the `cache-hit` output as an exact key match. Its
+  [restore](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/src/restore.ts)
+  sets that output only when the restored key equals the computed key, and its
+  [save](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/src/save.ts)
+  skips an up-to-date cache. A verified-tree push therefore skips tests only
+  when the master cache already matches the current lockfile and compiler.
+- [actions/upload-artifact v7.0.2](https://github.com/actions/upload-artifact/blob/cf430e030ddbb5b0abf93d22962f4752f3646cd9/action.yml),
+  pinned at `cf430e030ddbb5b0abf93d22962f4752f3646cd9`, accepts `name`, `path`,
+  `if-no-files-found`, `retention-days` and `overwrite` and runs on `node24`.
+- GitHub's [artifacts REST API](https://docs.github.com/en/rest/actions/artifacts#list-artifacts-for-a-repository)
+  lists repository artifacts filtered by exact `name`; each artifact's
+  `workflow_run` carries `repository_id` and `head_repository_id`. Fork runs can
+  upload artifacts under any name, so the planner trusts only markers whose two
+  IDs match. It then reads the [workflow run](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run)
+  and requires `path` `.github/workflows/ci.yml` and a `pull_request` or
+  `merge_group` event. A live call on 2026-11-02 returned
+  `.github/workflows/ci.yml` and `pull_request` for an existing PR run.
+- GitHub's [pull_request event](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
+  checks out the PR's test merge commit. The planner diffs that commit against
+  its first parent, the base tip, and diffs pushes from the event's `before`.
+- GitHub's [status check functions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions)
+  and [needs context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#needs-context)
+  define `!cancelled()` and dependency results. Test jobs use them to run after
+  a failed planner, and the recording job uses them to require that every test
+  job succeeded, or that Runlimit PostgreSQL was skipped by the plan.
+
 ## At-rest facade feature review, 2026-09-22
 
 The [Cargo feature-unification contract](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification)
