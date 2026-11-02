@@ -7,8 +7,10 @@
 //! directory carries an exemption.
 //!
 //! The reader expects rustfmt layout: one declaration per line, its attributes
-//! on the lines directly above it. It places no file for a declaration whose
-//! location it does not follow: a `#[path]` inside an inline module, any
+//! on the lines directly above it, each possibly wrapped over several lines
+//! until its brackets close. It places no file for a declaration whose
+//! location it does not follow: a `mod` item it cannot read, such as
+//! `mod $name;` in a macro, a `#[path]` inside an inline module, any
 //! declaration inside an inline module that carries a path attribute, a path
 //! set by another attribute such as `cfg_attr`, and a submodule of a file
 //! loaded through `#[path]` without its own `#[path]`. A file that no
@@ -17,8 +19,9 @@
 //! Because such a declaration in production code may load a file that a test
 //! module also loads, it leaves no file of its library test-only. A form the
 //! reader does not follow can therefore only make the scan stricter. The
-//! reader does not see modules that a macro declares or Rust code that
-//! `include!` inserts.
+//! reader does not see Rust code that `include!` inserts or modules that a
+//! procedural macro generates, and it takes a literal `mod` item in a
+//! `macro_rules!` body for a declaration of the file that defines the macro.
 
 use std::{
     collections::BTreeSet,
@@ -46,8 +49,18 @@ struct Declaration {
     enclosing: Vec<(String, bool)>,
 }
 
-/// `mod NAME;` or `mod NAME {`, after an optional visibility, as `(NAME, inline)`.
-fn module_item(line: &str) -> Option<(&str, bool)> {
+/// A line that declares a module.
+enum Item<'a> {
+    /// `mod NAME;` or `mod NAME {`, as `(NAME, inline)`.
+    Module(&'a str, bool),
+    /// A `mod` item the reader cannot read, such as `mod $name;` in a macro,
+    /// with whether it opens a block.
+    Unreadable(bool),
+}
+
+/// The module item on `line`, after an optional visibility. A raw identifier
+/// `r#NAME` names the file `NAME`.
+fn module_item(line: &str) -> Option<Item<'_>> {
     let mut rest = line.trim_start();
     if let Some(after) = rest.strip_prefix("pub") {
         rest = match after.strip_prefix('(') {
@@ -58,25 +71,54 @@ fn module_item(line: &str) -> Option<(&str, bool)> {
         .trim_start();
     }
     let rest = rest.strip_prefix("mod ")?.trim_start();
-    let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+    let rest = rest.strip_prefix("r#").unwrap_or(rest);
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
     let (name, tail) = rest.split_at(end);
-    match tail.trim_start().chars().next() {
-        Some(';') if !name.is_empty() => Some((name, false)),
-        Some('{') if !name.is_empty() => Some((name, true)),
-        _ => None,
+    Some(match (name.is_empty(), tail.trim_start().chars().next()) {
+        (false, Some(';')) => Item::Module(name, false),
+        (false, Some('{')) => Item::Module(name, true),
+        _ => Item::Unreadable(line.trim_end().ends_with('{')),
+    })
+}
+
+/// Whether `attribute` closes every `[` it opens, outside string literals.
+fn closed(attribute: &str) -> bool {
+    let (mut depth, mut in_string, mut escaped) = (0_i32, false, false);
+    for character in attribute.chars() {
+        match (in_string, character) {
+            (true, _) if escaped => escaped = false,
+            (true, '\\') => escaped = true,
+            (_, '"') => in_string = !in_string,
+            (false, '[') => depth += 1,
+            (false, ']') => depth -= 1,
+            _ => {}
+        }
     }
+    depth <= 0
 }
 
 /// The `mod` declarations of one rustfmt-formatted source file.
 fn declarations(source: &str) -> Vec<Declaration> {
     let mut found = Vec::new();
-    let mut attributes: Vec<&str> = Vec::new();
+    let mut attributes: Vec<String> = Vec::new();
+    // An attribute that rustfmt wrapped over several lines, until it closes.
+    let mut wrapped: Option<String> = None;
     // Inline modules still open, as (indent, name, gated, relocated).
     let mut open: Vec<(usize, String, bool, bool)> = Vec::new();
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("#[") {
-            attributes.push(trimmed);
+        let attribute = match wrapped.take() {
+            Some(start) => Some(format!("{start} {trimmed}")),
+            None => trimmed.starts_with("#[").then(|| trimmed.to_owned()),
+        };
+        if let Some(attribute) = attribute {
+            if closed(&attribute) {
+                attributes.push(attribute);
+            } else {
+                wrapped = Some(attribute);
+            }
             continue;
         }
         if trimmed.is_empty() || trimmed.starts_with("//") {
@@ -85,13 +127,19 @@ fn declarations(source: &str) -> Vec<Declaration> {
         let indent = line.len() - line.trim_start().len();
         if trimmed.starts_with('}') && open.last().is_some_and(|(depth, ..)| *depth == indent) {
             open.pop();
-        } else if let Some((name, inline)) = module_item(line) {
+        } else if let Some(item) = module_item(line) {
             open.retain(|(depth, ..)| *depth < indent);
-            let gated = attributes.contains(&"#[cfg(test)]");
+            let (name, inline, readable) = match item {
+                Item::Module(name, inline) => (name, inline, true),
+                Item::Unreadable(inline) => ("", inline, false),
+            };
+            let gated = attributes
+                .iter()
+                .any(|attribute| attribute == "#[cfg(test)]");
             let path = attributes
                 .iter()
                 .find_map(|attribute| attribute.strip_prefix("#[path = \"")?.strip_suffix("\"]"));
-            let location = if open.iter().any(|(.., relocated)| *relocated) {
+            let location = if !readable || open.iter().any(|(.., relocated)| *relocated) {
                 Location::Unknown
             } else if let Some(path) = path {
                 Location::Path(path.to_owned())
@@ -322,7 +370,10 @@ fn production_modules_the_reader_cannot_place_exempt_nothing() {
         [
             file(
                 "/src/lib.rs",
-                &format!("#[cfg(test)]\nmod shared;\n#[cfg(test)]\nmod tests;\n{declarations}"),
+                &format!(
+                    "#[cfg(test)]\nmod shared;\n#[cfg(test)]\n#[allow(\n    dead_code,\n    \
+                     reason = \"fixture\"\n)]\nmod tests;\n{declarations}"
+                ),
             ),
             file("/src/shared.rs", ""),
             file("/src/loader.rs", "mod shared;\n"),
@@ -333,18 +384,22 @@ fn production_modules_the_reader_cannot_place_exempt_nothing() {
         ]
     };
     // Control: when only test modules load it, the shared file is test-only,
-    // even though a test module holds a declaration the reader cannot place.
+    // even though a test module holds a declaration the reader cannot place,
+    // and an attribute that rustfmt wrapped keeps the `#[cfg(test)]` above it.
     let control = test_only(&library(""));
     for path in ["/src/shared.rs", "/src/tests.rs"] {
         assert!(control.contains(Path::new(path)), "{path} is not test-only");
     }
-    // A path set through `cfg_attr`, a `#[path]` inside an inline module and
-    // a submodule of a file loaded through `#[path]`, each in production code
-    // and each loading the shared file, leave nothing test-only.
+    // A path set through `cfg_attr`, on one line or wrapped by rustfmt, a
+    // `#[path]` inside an inline module, a submodule of a file loaded through
+    // `#[path]` and a `mod` item the reader cannot read, each in production
+    // code and each able to load the shared file, leave nothing test-only.
     for production in [
         "#[cfg_attr(unix, path = \"shared.rs\")]\nmod platform;\n",
+        "#[cfg_attr(\n    target_os = \"linux\",\n    path = \"shared.rs\"\n)]\nmod platform;\n",
         "mod outer {\n    #[path = \"../shared.rs\"]\n    mod platform;\n}\n",
         "#[path = \"loader.rs\"]\nmod loader;\n",
+        "macro_rules! declare {\n    ($name:ident) => {\n        mod $name;\n    };\n}\n",
     ] {
         let test_only = test_only(&library(production));
         assert!(
@@ -352,4 +407,16 @@ fn production_modules_the_reader_cannot_place_exempt_nothing() {
             "{production:?} left {test_only:?} test-only"
         );
     }
+    // A raw identifier names its file without `r#`, so the reader places a
+    // production `mod r#type;` and keeps only its file scanned.
+    let test_only = test_only(&[
+        file(
+            "/src/lib.rs",
+            "#[cfg(test)]\n#[path = \"type.rs\"]\nmod type_tests;\n#[cfg(test)]\nmod tests;\nmod r#type;\n",
+        ),
+        file("/src/type.rs", ""),
+        file("/src/tests.rs", ""),
+    ]);
+    assert!(!test_only.contains(Path::new("/src/type.rs")));
+    assert!(test_only.contains(Path::new("/src/tests.rs")));
 }

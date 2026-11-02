@@ -646,23 +646,30 @@ target scans every workspace library's production sources for `set_hook`,
 line rule. It exempts only files that a module declared under `#[cfg(test)]`,
 or one of its submodules, loads and no production module does, which it derives
 from rustfmt-formatted module declarations rather than file names or
-directories, and exactly the binary roots that the root inventory classifies,
-`src/main.rs`, `src/bin/*.rs` and `src/bin/*/main.rs`; any other file under
-`src/bin/`, such as a binary's helper module, is scanned. Self-tests accept a
-file or directory module, a `#[path]` module and an inline module with file
-submodules, and keep production code that only looks exempt scanned: an
-ungated `tests` module, a production `#[path]` module inside a test module's
-directory, a test module's file that a production module also loads, the
-default places of test modules whose path the reader does not follow, a nested
-`main.rs` and a binary's helper module. The real scan must also exempt at least
-one test module that installs a hook. A file that the reader cannot attribute
-to any declaration counts as production, and so do its ungated submodules. When
+directories, and exactly the roots that the root inventory classifies, such as
+`src/main.rs`, `src/bin/*.rs` and `src/bin/*/main.rs` with a `main` it
+recognizes; any other file, such as a binary's helper module or a file under
+`src/bin/` whose `main` the inventory does not recognize, is scanned.
+Self-tests accept a file or directory module, a `#[path]` module and an inline
+module with file submodules, and keep production code that only looks exempt
+scanned: an ungated `tests` module, a production `#[path]` module inside a test
+module's directory, a test module's file that a production module also loads,
+the default places of test modules whose path the reader does not follow, a
+nested `main.rs`, a binary's helper module and a file under `src/bin/` that the
+inventory did not classify. The real scan must also exempt at least one test
+module that installs a hook. A file that the reader cannot attribute to any
+declaration counts as production, and so do its ungated submodules. When
 production code declares a module whose file the reader cannot place, through
-`cfg_attr`, a `#[path]` inside an inline module or a submodule of a file loaded
-through `#[path]`, no file of that library is exempt; a self-test pairs each of
-those forms with a `#[cfg(test)]` declaration of the same file. The scan does
-not cover dependencies or see macro-built identifiers, modules that a macro
-declares or Rust code that `include!` inserts. It also classifies
+`cfg_attr` (on one line or wrapped by rustfmt), a `#[path]` inside an inline
+module, a submodule of a file loaded through `#[path]` or a `mod` item it cannot
+read, such as `mod $name;` in a macro, no file of that library is exempt; a
+self-test pairs each of those forms with a `#[cfg(test)]` declaration of the
+same file. The reader joins attributes that rustfmt wraps over several lines
+and reads raw identifiers such as `mod r#type;`. The scan does not cover
+dependencies or see macro-built identifiers, Rust code that `include!` inserts
+or modules that a procedural macro generates, and it takes a literal `mod` item
+in a `macro_rules!` body for a declaration of the file that defines the macro.
+It also classifies
 every checked-in executable root, meaning each workspace member's `src/main.rs`,
 `src/bin/`, `examples/`, `benches/` and declared target paths and the consumer
 sources scripts build outside the workspace, with a self-test of the

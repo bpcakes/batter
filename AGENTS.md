@@ -262,8 +262,8 @@ not HTTP payloads. Domain errors stay concrete. No global tracing subscriber or
 panic-hook installation belongs in the library: no library production source
 calls `set_hook`, `take_hook` or `update_hook` outside comments, files that a
 `#[cfg(test)]` module loads and no production module does, and the binary roots
-the executable-root inventory classifies (`src/main.rs`, `src/bin/*.rs`,
-`src/bin/*/main.rs`). `crates/batter/tests/panic_hook_ownership.rs` scans for
+the executable-root inventory classifies (such as `src/main.rs` and
+`src/bin/*.rs`). `crates/batter/tests/panic_hook_ownership.rs` scans for
 them and takes test status from module declarations alone, so a test-like file
 name or directory exempts nothing. An
 application root installs `redacting_panic_hook`, unwrapped, as the first

@@ -2659,7 +2659,7 @@ source names `set_hook`, `take_hook` or `update_hook` outside comments, files
 that a `#[cfg(test)]` module loads and no production module does, a test-only
 status derived from module declarations rather than file names or directories,
 and the binary roots that the executable-root inventory classifies
-(`src/main.rs`, `src/bin/*.rs` and `src/bin/*/main.rs`). The entrypoints that
+(such as `src/main.rs` and `src/bin/*.rs`). The entrypoints that
 own process-wide signal handlers or catch panics keep an application's hook
 installed and unwrapped, passing each panic they catch to it once. Dependencies
 are not scanned. Every checked-in

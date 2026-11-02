@@ -79,19 +79,17 @@ fn rust_sources(directory: &Path, found: &mut Vec<(PathBuf, String)>) {
 
 /// The production sources of one library `src` tree: everything except the
 /// files that a `#[cfg(test)]` module loads and no production module does, and
-/// exactly the binary roots the executable-root inventory classifies,
-/// `src/main.rs`, `src/bin/*.rs` and `src/bin/*/main.rs`. Every other file
-/// under `src/bin/`, such as a binary's helper module, is scanned.
-fn production_sources(src: &Path, sources: Vec<(PathBuf, String)>) -> Vec<(PathBuf, String)> {
+/// exactly the `roots` that the executable-root inventory classifies, such as
+/// `src/main.rs` and `src/bin/*.rs`. A binary's helper module, and a file under
+/// `src/bin/` whose `main` the inventory does not recognize, are scanned.
+fn production_sources(
+    sources: Vec<(PathBuf, String)>,
+    roots: &[PathBuf],
+) -> Vec<(PathBuf, String)> {
     let test_only = modules::test_only(&sources);
-    let bin = src.join("bin");
     sources
         .into_iter()
-        .filter(|(path, _)| {
-            !test_only.contains(path)
-                && *path != src.join("main.rs")
-                && !is_target_source(&bin, path)
-        })
+        .filter(|(path, _)| !test_only.contains(path) && !roots.contains(path))
         .collect()
 }
 
@@ -107,19 +105,30 @@ fn only_binary_roots_and_cfg_test_modules_are_exempt() {
         file("/src/bin/tool.rs", ""),
         file("/src/bin/server/main.rs", ""),
         file("/src/bin/server/support.rs", ""),
+        file("/src/bin/unrecognized.rs", ""),
         file("/src/x/main.rs", ""),
         file("/src/x/bin/y.rs", ""),
     ];
-    let production: Vec<_> = production_sources(Path::new("/src"), sources)
+    // The roots the inventory classified: it recognized no `main` in
+    // `/src/bin/unrecognized.rs`, so that file is not one.
+    let roots = [
+        "/src/main.rs",
+        "/src/bin/tool.rs",
+        "/src/bin/server/main.rs",
+    ]
+    .map(PathBuf::from);
+    let production: Vec<_> = production_sources(sources, &roots)
         .into_iter()
         .map(|(path, _)| path)
         .collect();
-    // A binary's helper module is neither a root nor test-only, so it is scanned.
+    // A binary's helper module and an unclassified file under `src/bin/` are
+    // neither roots nor test-only, so they are scanned.
     let expected = [
         "/src/lib.rs",
         "/src/helpers.rs",
         "/src/helpers/tests.rs",
         "/src/bin/server/support.rs",
+        "/src/bin/unrecognized.rs",
         "/src/x/main.rs",
         "/src/x/bin/y.rs",
     ];
@@ -184,6 +193,7 @@ fn no_batter_library_installs_takes_or_replaces_the_panic_hook() {
             "{package} is not scanned"
         );
     }
+    let roots = executable_roots(&root);
     let mut violations = Vec::new();
     let mut comment_mentions = 0;
     let mut exempt_installers = 0;
@@ -191,7 +201,7 @@ fn no_batter_library_installs_takes_or_replaces_the_panic_hook() {
         let mut files = Vec::new();
         rust_sources(source, &mut files);
         assert!(!files.is_empty(), "{} has no sources", source.display());
-        let production = production_sources(source, files.clone());
+        let production = production_sources(files.clone(), &roots);
         for (file, text) in &files {
             let exempt = !production.iter().any(|(path, _)| path == file);
             for (index, line) in text.lines().enumerate() {
@@ -295,15 +305,6 @@ fn the_first_statement_rule_reads_main_bodies() {
         Err("main is empty")
     );
     assert!(!has_main("fn helper() {}\n    fn main() {}\n"));
-}
-
-/// Whether `path` is one of the files `target_sources` lists for `directory`:
-/// a Rust source directly in it, or the `main.rs` of one of its subdirectories.
-fn is_target_source(directory: &Path, path: &Path) -> bool {
-    let in_directory = |parent: Option<&Path>| parent == Some(directory);
-    (in_directory(path.parent()) && path.extension().is_some_and(|extension| extension == "rs"))
-        || (path.file_name().is_some_and(|name| name == "main.rs")
-            && in_directory(path.parent().and_then(Path::parent)))
 }
 
 /// Rust sources directly in `directory`, plus each subdirectory's `main.rs`.
