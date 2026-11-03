@@ -12,7 +12,9 @@ nothing, and only the package can construct them. It refuses to start inside
 the last 100 ms of the caller's deadline and returns at least 50 ms before it,
 apart from scheduling delay and, on macOS, a certificate check that blocks the
 poll (source-inspected). Its `Debug` and `Display` output carries no URL, query,
-header value or body, and it emits no telemetry. Without its opt-in `operation`
+header value or body, and it adds no instrumentation of its own, although its
+dependencies' log events can name the destination host, socket addresses and
+certificate names (source-inspected). Without its opt-in `operation`
 feature it has no `batter-core` dependency; with it, `send_in` takes an
 `OperationContext`. `NotDispatched` rests on reqwest and hyper-util
 implementation behaviour. The fault tests ran only on Linux and only against the

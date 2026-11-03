@@ -130,8 +130,8 @@ async fn client_hello_offers_only_http1_and_modern_tls() {
             "{version:#06x}"
         );
     }
-    // The client passed ring explicitly: building it and running a handshake
-    // installed no process-default provider.
+    // The client passed ring explicitly: building it and sending a ClientHello
+    // installed no process-default provider. The handshake never completes.
     assert!(
         rustls::crypto::CryptoProvider::get_default().is_none(),
         "the client installed a process-default crypto provider"

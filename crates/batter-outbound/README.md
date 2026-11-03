@@ -109,8 +109,9 @@ package builds itself and reqwest's `rustls-no-provider` feature uses as given,
 so a TLS or provider feature that another crate enables does not change it
 (source-inspected). The ClientHello offers only `http/1.1` and TLS 1.3 or 1.2
 (tested; rustls supports nothing older). The package never installs or relies on
-a process-default crypto provider (tested: none is installed after a TLS
-handshake) and adds no aws-lc-rs. `https_only` is set for
+a process-default crypto provider (tested: none is installed after building the
+client and sending a ClientHello; no test completes a handshake) and adds no
+aws-lc-rs. `https_only` is set for
 an HTTPS origin as defence in depth, since every request URL comes from the
 origin. An HTTPS client loads the host certificate store at construction; on
 Linux that store follows `SSL_CERT_FILE` and `SSL_CERT_DIR`, and an empty one
@@ -260,7 +261,18 @@ interpretation before it means accepted, refused or retryable.
   value or body. A `Response` still holds the received headers and body:
   `Response::headers` and `Body` return them only through explicit accessors,
   with header values marked sensitive.
-- No telemetry is emitted. Record `Exchange::label()`.
+- The package adds no instrumentation of its own. Record `Exchange::label()`.
+  Its dependencies do emit `log` and `tracing` events (source-inspected):
+  reqwest logs the destination host at debug level, hyper-util logs the
+  origin's authority and each socket address it connects to at debug and trace
+  level, and rustls-platform-verifier logs a failed certificate verification
+  at error level, including the expected and presented names for a name
+  mismatch. None of them carries an exchange's path, query, header value or
+  body. They appear only through a logger or subscriber the application
+  installs; filter the `reqwest`, `hyper_util` and `rustls_platform_verifier`
+  targets there. The
+  [references](../../docs/references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
+  cite each event.
 - Each exchange covers one request. Whether an earlier request of the same
   operation was sent stays application evidence. A hand-built reqwest client
   bypasses every rule above; only a consumer-side lint can forbid that.
@@ -292,9 +304,11 @@ rustls-platform-verifier 0.7.1, hyper-util 0.1.20, hyper 1.11.1 and url 2.5.8.
 Test builds also compile reqwest's `gzip` and `http2` features through this
 package's dev-dependencies, as an unrelated dependency could through feature
 unification, so the package's own tests always run with them compiled and show
-the profile overriding them; the shipped feature set is compile-checked without
-them. See `docs/references.md` at the workspace root for the inspected sources,
-and `docs/guarantees.md` for the contract and the tests that back it.
+the profile overriding them. The shipped feature set is compile-checked without
+them and executed by the facade example's tests in the verification matrix's
+`outbound-shipped-features` batch. See `docs/references.md` at the workspace
+root for the inspected sources, and `docs/guarantees.md` for the contract and
+the tests that back it.
 
 Run `cargo test -p batter-outbound --all-features --locked`, and
 `cargo test -p batter-outbound --no-default-features --locked` for the build

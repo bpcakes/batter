@@ -26,8 +26,15 @@ store and its environment, such as `SSL_CERT_FILE` and `SSL_CERT_DIR` on Linux,
 any process-default crypto provider that other crates in its graph need,
 certificate pinning, which the package does not offer, and every egress or
 destination policy: `Origin::https` accepts any HTTPS host the application
-passes, IP literals included. No test verifies a certificate, and nothing has
-executed on macOS.
+passes, IP literals included. The package adds no instrumentation of its own,
+but its dependencies log destination identities (source-inspected): reqwest the
+host at debug level, hyper-util the origin's authority and the socket addresses
+it connects to at debug and trace level, and rustls-platform-verifier a failed
+certificate verification at error level, with the expected and presented names
+for a name mismatch. None of them carries an exchange's path, query, header
+value or body. The application's logger or subscriber configuration owns filtering the
+`reqwest`, `hyper_util` and `rustls_platform_verifier` targets. No test
+verifies a certificate, and nothing has executed on macOS.
 
 Bulkhead does not bound its waiter count or request memory. HTTP deadlines stop
 at response construction and do not protect streaming sessions or every slow

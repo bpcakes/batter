@@ -1759,7 +1759,12 @@ The six test parts retain their existing command selections:
   standalone `batter-outbound` library check without the `operation` bridge, so
   without `batter-core`; then, alone in a second batch so their timing
   assertions share no batch with a compiling check, the `batter-outbound` tests
-  without that bridge. The `workspace` part runs them with it.
+  without that bridge; then, alone in a third batch, the facade
+  `outbound_exchange` example tests built with
+  `-p batter --no-default-features --features outbound`, whose build does not
+  activate `batter-outbound`'s dev-only reqwest `gzip` and `http2` features and
+  so executes the shipped reqwest selection. The `workspace` part runs the
+  package tests with the bridge.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.
 - `runlimit`: native default-feature tests, the release regression and graph checks.
@@ -1830,10 +1835,10 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The six parts hold 29 commands in batches of at most four: `workspace`,
-`no-default-features` and `scripts` use two batches, `consumers` uses three, and
+The six parts hold 30 commands in batches of at most four: `workspace` and
+`scripts` use two batches, `no-default-features` and `consumers` use three, and
 the others use one. Runner controls
-require that the parts partition all 29 commands exactly once, that each part
+require that the parts partition all 30 commands exactly once, that each part
 executes exactly the batches it plans in order, and that direct verification
 invokes each part exactly once. They inject a failure at every command
 position and require that no later batch of that part starts; surplus mocked
@@ -3232,9 +3237,10 @@ start would still hang its test until the CI time limit.
 The `batter-outbound` suites run on loopback against a scripted peer and have
 executed on Linux only; the macOS CI job only compiles them. Every build of
 them compiles reqwest's `gzip` and `http2` through the package's
-dev-dependencies, so verification compile-checks the shipped feature set with
-the `outbound-library` command but does not execute it; the standalone example
-command below is the one documented command that does. No test completes a TLS
+dev-dependencies; the shipped feature set is compile-checked by the
+`outbound-library` command and executed only by the facade example's tests in
+the `outbound-shipped-features` batch, which runs the loopback exchanges of the
+example below without those features. No test completes a TLS
 handshake or verifies a certificate. Unexercised and source-inspected: a DNS
 failure, a connect timeout during DNS or TCP setup, pool-checkout failures and
 hyper-util's `retry_canceled_requests` resend, the stale keep-alive race,

@@ -29,16 +29,20 @@ of the package's own tests, as an unrelated dependency could through feature
 unification; the verification matrix's `workspace` part also unifies them into
 the facade example's tests.
 
-- Every outbound test that the verification matrix executes runs with those
-  features compiled.
+- The package's own tests, and the facade example's tests in the `workspace`
+  part, run with those features compiled.
 - The shipped dependency selects only `rustls-no-provider` (174-177). The
   no-default-features matrix part's
   `cargo check -p batter-outbound --lib --no-default-features` and the facade
-  feature runner's `cargo check` compile it. The standalone example command in
-  docs/testing.md (`cargo test -p batter --features outbound --example
-  outbound_exchange --locked`) builds reqwest with `rustls-no-provider` only, so
-  it is the one documented command that executes the shipped feature set;
-  verification does not run it.
+  feature runner's `cargo check` compile it. The no-default-features part's
+  `outbound-shipped-features` batch (`cargo test -p batter --no-default-features
+  --features outbound --example outbound_exchange --locked`) builds package
+  `batter`'s tests, which activate no `batter-outbound` dev-dependency, so reqwest
+  is built with `rustls-no-provider` only: `cargo tree -p batter
+  --no-default-features --features outbound -e features,normal,dev -i reqwest`
+  lists `rustls-no-provider`, `__rustls` and `__tls`, without `gzip` or `http2`.
+  It is the one verification command that executes the shipped feature set, for
+  the example's loopback exchanges.
 - The profile therefore sets its ALPN list itself, and keeps `http1_only()` and
   `retry::never()` as defence in depth.
 
@@ -311,6 +315,50 @@ http 1.5.0:
   `prepare` and `Origin` therefore run `http::Uri::try_from` themselves, and
   return `PrepareError::InvalidUri` and `OriginError::Unparseable` before an
   exchange exists.
+
+Log events. The package adds no instrumentation of its own. In the shipped graph
+(`cargo tree -p batter --no-default-features --features outbound -e normal`),
+only three crates depend on `log` or `tracing` (`cargo tree -i log`,
+`cargo tree -i tracing`): reqwest and rustls-platform-verifier through `log`,
+hyper-util through `tracing`. hyper 1.11.1 is built without its `tracing`
+feature and rustls 0.23.46 without `logging`, so neither emits events. An event
+reaches output only through a logger or subscriber the application installs,
+and that configuration owns its filtering; the targets begin with `reqwest`,
+`hyper_util` and `rustls_platform_verifier`. The events below name the
+destination, a socket address, certificate names or an error description. None
+formats a request path, query, header value or body on the package's path; the
+items note the events that could and why the package never reaches them.
+
+- reqwest 0.13.5 logs `starting new connection '{host:?}'` at debug level for
+  every new connection (`src/connect.rs:929`). Its byte-level read and write
+  traces (2036-2087) need `connection_verbose(true)`, which defaults to false
+  (`src/async_impl/client.rs:301`, applied at 923) and which the package never
+  sets. Its proxy events (`src/connect.rs:784`, 805, 851) are unreachable under
+  `no_proxy()`, and its retry traces (`src/retry.rs:234-258`, 361) carry no
+  request value.
+- hyper-util 0.1.20 names the pool key, the origin's scheme and authority, at
+  debug level when it reuses or pools an idle connection
+  (`src/client/legacy/pool.rs:268`, 401) and at trace level elsewhere in the
+  pool (186-817). It traces the connect target's scheme, host and port
+  (`src/client/legacy/connect/http.rs:481-486`), logs each resolved socket
+  address at debug level (767, 770) and traces it with the connect error (774).
+  An HTTP/1 connection error is logged at debug level
+  (`src/client/legacy/client.rs:588`), connect and readiness errors are traced
+  (263, 381, 438, 626, 644), and TCP option failures are warnings with the I/O
+  error (`connect/http.rs:561`, 844, 904-933). The two events that format a
+  request's path or URI are unreachable: `client.rs:918` logs a stripped path
+  only for a `CONNECT` request, which preparation refuses, and 951 logs a URI
+  that lacks a scheme or an authority, which no prepared request does.
+- rustls-platform-verifier 0.7.1 logs `failed to verify TLS certificate: {e}` at
+  error level (`src/verification/others.rs:146` on Linux, `apple.rs:274` on
+  macOS). rustls 0.23.46 formats a name mismatch, `NotValidForNameContext`, as
+  the expected server name followed by every name the certificate presents
+  (`src/error.rs:663-699`). On Linux the verifier also warns about system roots
+  that fail to load (`others.rs:95`, 99), with the loader's error, which can
+  include a file path (rustls-native-certs 0.8.4 `src/lib.rs:341-353`), and logs
+  the number loaded at debug level (109). Its `cert-logging` feature, which would
+  log each end-entity certificate at debug level (`src/verification/mod.rs:51-61`),
+  is not enabled.
 
 Standards:
 

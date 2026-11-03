@@ -33,8 +33,9 @@ const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
 /// - uses rustls with the *ring* provider passed explicitly, TLS 1.3 or 1.2
 ///   only, and the operating system's certificate verifier for HTTPS origins
 ///   (the offered versions and ALPN are tested). It neither reads nor installs a
-///   process-default crypto provider (tested: none is installed after a TLS
-///   handshake) and adds no aws-lc-rs;
+///   process-default crypto provider (tested: none is installed after building
+///   the client and sending a ClientHello; no test completes a handshake) and
+///   adds no aws-lc-rs;
 /// - allows plain HTTP only for [`Origin::loopback`], whose client never reads
 ///   the host certificate store (tested on Linux).
 ///

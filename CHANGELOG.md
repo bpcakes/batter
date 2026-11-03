@@ -54,7 +54,10 @@ contracts, capability facts and validation history.
   less than `RESERVE + MINIMUM_ATTEMPT` (100 ms) left never starts, and deadline
   reasons come only from that timer; `RESERVE` is not a recording budget. No
   `Debug` or `Display` output includes a URL, query, header value or body, and
-  no telemetry is emitted. `NotDispatched` rests on reqwest and hyper-util
+  the package adds no instrumentation of its own; the `log` and `tracing`
+  events of reqwest, hyper-util and rustls-platform-verifier can name the
+  destination host, socket addresses and certificate names, and the
+  application's logger filters them. `NotDispatched` rests on reqwest and hyper-util
   implementation behaviour. The fault tests ran against the versions this
   repository's lockfile resolves (reqwest 0.13.5, hyper 1.11.1, hyper-util
   0.1.20), and only on Linux; the manifest requires reqwest `^0.13.5` and does

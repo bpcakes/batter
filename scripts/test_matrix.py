@@ -14,6 +14,11 @@ CORE_TESTS = ["cargo", "test", "-p", "batter-core", "--no-default-features", "--
 # The standalone outbound leaf without its `operation` bridge, so without batter-core.
 OUTBOUND_CHECK = ["cargo", "check", "-p", "batter-outbound", "--lib", "--no-default-features", "--locked"]
 OUTBOUND_TESTS = ["cargo", "test", "-p", "batter-outbound", "--no-default-features", "--locked"]
+# Every batter-outbound test build also compiles its dev-only reqwest features
+# (gzip, http2). The facade example's tests do not activate those
+# dev-dependencies, so this executes the shipped reqwest feature selection.
+OUTBOUND_SHIPPED_EXAMPLE = ["cargo", "test", "-p", "batter", "--no-default-features", "--features",
+                            "outbound", "--example", "outbound_exchange", "--locked"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
 # A clean developer shell must not hide ambient-state dependencies in tests.
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -117,10 +122,13 @@ def parts():
                       (["configuration-hostile-environment", "release-future-sizes"],
                        [HOSTILE_CONFIGURATION, FUTURE_SIZE_RELEASE])],
         # The outbound leaf's tests assert tight timing, so they run alone in
-        # their own batch after its library check compiled with the others.
+        # their own batch after its library check compiled with the others. The
+        # shipped-feature example build compiles a different reqwest selection,
+        # so it also runs alone rather than beside those timing assertions.
         "no-default-features": [(["core-library", "facade-library", "core-tests", "outbound-library"],
                                  [CORE_CHECK, FACADE_CHECK, CORE_TESTS, OUTBOUND_CHECK]),
-                                (["outbound-tests"], [OUTBOUND_TESTS])],
+                                (["outbound-tests"], [OUTBOUND_TESTS]),
+                                (["outbound-shipped-features"], [OUTBOUND_SHIPPED_EXAMPLE])],
         "doctests": [(["doctests"], [DOC_TESTS])],
         # Consumer builds use private target directories. The first two batches
         # bound concurrent builds and keep shared facade cache users apart.

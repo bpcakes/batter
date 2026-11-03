@@ -181,18 +181,19 @@ nothing was sent. Build one `Client` per provider origin and clone it. Prepare
 each request, which reports every construction error before anything is sent,
 write the application's dispatch fence durably, and send the request once in
 the work phase of `reserve_finalization`, so the outcome can be recorded in the
-finalization phase unless the parent context is cancelled:
+finalization phase unless that phase is interrupted:
 
 ```rust
 use batter::{
     BoxError,
-    operation::OperationContext,
+    operation::{OperationContext, OperationError},
     outbound::{Body, Client, Exchange, ResponseLimit, http::{Method, StatusCode}},
 };
 use std::{convert::Infallible, time::Duration};
 
-// `Fence` is the application's own dispatch fence. `None` means a cancelled
-// parent ran no recording step, so the fence written before the send stays held.
+// `Fence` is the application's own dispatch fence. `None` means the finalization
+// phase was interrupted (the parent was cancelled or its budget expired), so no
+// recording step ran and the fence written before the send stays held.
 async fn mutate(
     client: &Client,
     context: &OperationContext,
@@ -220,11 +221,18 @@ async fn mutate(
         },
     };
     // Record `fence` and `exchange.label()` in the application's store here.
-    let recorded = phases
+    let recorded = match phases
         .finalization()
         .run("example.record", |_scope| async move { Ok::<_, Infallible>(fence) })
         .await
-        .ok();
+    {
+        Ok(fence) => Some(fence),
+        // Interrupted: the record step did not run.
+        Err(OperationError::Interrupted(_)) => None,
+        // Stops compiling once the record step gains a real store error, which
+        // must then be propagated rather than discarded.
+        Err(OperationError::Failed(never)) => match never {},
+    };
     Ok((exchange, recorded))
 }
 ```
@@ -248,8 +256,11 @@ test in this repository exercises either composition. Await `send_in` directly.
 Inside `timeout`, `select!`, `run` or a `retry` attempt, the exchange is
 dropped when the outer interruption wins, and `retry` discards an `Ok` returned
 in the same poll as a cancellation; a dropped exchange has no outcome, so treat
-it as `Unknown` (no test drops one). The exchange emits no telemetry: record
-`exchange.label()`, which carries no URL, query, header value or body. A
+it as `Unknown` (no test drops one). The exchange adds no instrumentation of
+its own: record `exchange.label()`, which carries no URL, query, header value or
+body. Its dependencies' log events can name the destination host, socket
+addresses and certificate names; the application's logger filters them (see
+[operations](operations.md#telemetry-and-diagnostics)). A
 provider crate that must not depend on `batter-core` uses `batter_outbound`
 directly with `send(deadline, limit)`. The
 [runnable example](../crates/batter/examples/outbound_exchange.rs) compiles this

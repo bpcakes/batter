@@ -1346,8 +1346,9 @@ dev-dependencies, as an unrelated dependency could through feature unification:
 The brotli, zstd, deflate and hickory overrides are source-inspected, because
 no build here compiles those features. `retry::never()` is defence in depth
 while HTTP/2 is never negotiated. The shipped feature set, `rustls-no-provider`
-alone, is compile-checked by verification; only the standalone example command
-in docs/testing.md executes it, and verification does not run that command.
+alone, is compile-checked by verification and executed by the facade example's
+tests in the `outbound-shipped-features` matrix batch; the package's own suites
+always run with the dev-only features compiled.
 
 A consumer on reqwest 0.12, as the owner-maintained billing library is, would
 compile a second reqwest line beside this one and share none of its types. The reference service's provider client

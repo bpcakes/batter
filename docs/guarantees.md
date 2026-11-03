@@ -292,7 +292,8 @@ each test named below belongs to one of them. The fault tests read what a
 scripted peer received. They have executed on Linux only. Every build of the
 package's own tests compiles reqwest's `gzip` and `http2` features through its
 dev-dependencies, as an unrelated dependency could through feature unification;
-the shipped feature set without them is compile-checked, not executed.
+the shipped feature set without them is compile-checked, and executed only by the
+facade example's tests in the `outbound-shipped-features` matrix batch.
 
 `Client::new(Origin, ConnectTimeout)` is its only client constructor. A built
 client cannot be reconfigured, its clones share one connection pool
@@ -333,9 +334,9 @@ also enables reqwest's `native-tls` or `http2` cannot change the backend or the
 ALPN list (source-inspected for `native-tls`; the ALPN test above runs with
 `http2` compiled). The package never installs or relies on a process-default
 crypto provider (`client_hello_offers_only_http1_and_modern_tls` checks that
-none is installed after a handshake), and this repository's lockfile contains
-no aws-lc-rs. The
-ClientHello offers no version other than TLS 1.3 and 1.2
+none is installed after building the client and sending a ClientHello; no test
+completes a handshake), and this repository's lockfile contains no aws-lc-rs.
+The ClientHello offers no version other than TLS 1.3 and 1.2
 (`client_hello_offers_only_http1_and_modern_tls`); rustls supports nothing
 older, so that check shows the backend's range and cannot discriminate the
 package's own version list. On Linux, an HTTPS client loads the host certificate
@@ -585,7 +586,16 @@ request carries the segment, query, header and body markers; the host marker is
 checked in origin, client, draft, prepared-request and origin-error output; and
 the received values stay readable. Redaction covers formatting only: a
 `Response` still holds the received headers and body behind `headers()`,
-`body()` and `into_parts()`. The package emits no telemetry.
+`body()` and `into_parts()`. The package adds no instrumentation of its own.
+Its dependencies' `log` and `tracing` events are outside that coverage: reqwest
+logs the destination host at debug level, hyper-util the origin's authority and
+the socket addresses it connects to at debug and trace level, and
+rustls-platform-verifier a failed certificate verification at error level, with
+the expected and presented names for a name mismatch. None of them carries an
+exchange's path, query, header value or body, which is source-inspected, not
+tested; the
+application's logger owns their filtering
+([references](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)).
 
 Manual mutations run during `batter-3s1a`, each restored, failed the test named:
 removing the package's ALPN line (`client_hello_offers_only_http1_and_modern_tls`),

@@ -47,7 +47,10 @@ deadline handling in `src/send.rs`, the outcome vocabulary in `src/exchange.rs`,
 and preparation rules in `src/request.rs` and `src/origin.rs`. Record every
 upstream fact the classification relies on in `docs/references.md`, and keep
 `README.md`, `docs/guarantees.md` and `docs/integrations.md` in step, and
-`SECURITY.md` when a TLS or limit setting changes. Status
+`SECURITY.md` when a TLS or limit setting changes. When reqwest, hyper-util or
+rustls-platform-verifier change, recheck the log events listed in
+`docs/references.md` and their disclosure in the README, the crate rustdoc,
+`SECURITY.md`, `docs/operations.md` and the ADR-010 assessment. Status
 interpretation, retry or replay, idempotency keys, Retry-After, fences,
 reconciliation and telemetry belong to the application or the crate that owns
 the provider protocol, never here. The facade namespace lives in

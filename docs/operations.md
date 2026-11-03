@@ -107,8 +107,8 @@ Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a
 trusted sink with redaction.
 
-The outbound exchange (`batter::outbound`) emits no telemetry of its own. Record
-`Exchange::label()`, one of twelve stable values such as
+The outbound exchange (`batter::outbound`) adds no instrumentation of its own.
+Record `Exchange::label()`, one of twelve stable values such as
 `not_dispatched.connect_failed`, `unknown.deadline` or
 `responded.body_too_large`, beside the application's own operation and provider
 fields. The exchange's `Debug` and `Display` output never includes the URL,
@@ -116,7 +116,17 @@ query, header values or body, and the label is a fixed vocabulary, so the label
 is safe in logs and as a metric label; a `Response` still holds the received
 headers and body behind its accessors. The query string still reaches the
 provider and any intermediary, and a reqwest client built by hand outside the
-exchange formats the full URL, query included, into its errors.
+exchange formats the full URL, query included, into its errors. The exchange's
+dependencies do log destination identities: reqwest the host at debug level,
+hyper-util the origin's authority and the socket addresses it connects to at
+debug and trace level, and rustls-platform-verifier a failed certificate
+verification at error level, with the expected and presented names for a name
+mismatch. None of them carries an exchange's path, query, header value or
+body. Filter the `reqwest`, `hyper_util` and `rustls_platform_verifier`
+targets in the application's logger or subscriber when destination names must
+stay out of logs; the
+[references](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
+cite each event.
 
 Batter never installs, takes or replaces the process panic hook; Rust's default
 hook prints every string payload. Each executable installs

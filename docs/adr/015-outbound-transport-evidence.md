@@ -363,8 +363,11 @@ exhaustive and `#[must_use]`.
   adding a variant is a public hard cut. A wildcard arm, `if let` or
   `matches!` still compiles. Only a consumer-side lint can forbid one, as the
   [ADR-010 assessment](010-agent-only-consumption.md#outbound-exchange-assessment-batter-3s1a)
-  records. No `From` conversion produces an outcome. The package emits no
-  telemetry.
+  records. No `From` conversion produces an outcome. The package adds no
+  instrumentation of its own; its dependencies' log events, which can name the
+  destination host, socket addresses and certificate names, are listed in the
+  [references](../references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02) and are
+  filtered by the application's logger.
 
 ### Deadlines
 
@@ -574,8 +577,9 @@ owns.
   - The ClientHello test shows the `http/1.1`-only ALPN offer, and the body and
     wire tests show undecoded gzip bytes and no `Accept-Encoding`.
   - The shipped feature set, `rustls-no-provider` alone, is compile-checked by
-    verification; only the standalone example command in docs/testing.md
-    executes it, and verification does not run that command.
+    verification and executed by the facade example's tests in the
+    `outbound-shipped-features` matrix batch; the package's own suites always
+    run with the dev-only features compiled.
   - brotli, zstd, deflate and hickory are not compiled here, so those overrides
     are source-inspected.
 - **Platform.** The package's tests have executed on Linux only. The CI

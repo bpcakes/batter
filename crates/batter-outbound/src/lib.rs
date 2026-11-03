@@ -117,8 +117,16 @@
 //! - Dropping the send future after the request was handed to the client
 //!   produces no outcome (no test drops one). Treat a dropped exchange as
 //!   [`Exchange::Unknown`].
-//! - No telemetry is emitted. [`Exchange::label`] returns a value-free label to
-//!   record.
+//! - The package adds no instrumentation of its own; [`Exchange::label`]
+//!   returns a value-free label to record. Its dependencies emit `log` and
+//!   `tracing` events: reqwest logs the destination host at debug level,
+//!   hyper-util logs the origin's authority and each socket address it
+//!   connects to at debug and trace level, and rustls-platform-verifier logs a
+//!   failed certificate verification at error level, with the expected and
+//!   presented names for a name mismatch. None of them carries an exchange's
+//!   path, query, header value or body (source-inspected). They appear only
+//!   through a logger or subscriber the application installs, whose
+//!   configuration owns their filtering.
 //! - HTTP/2, request signing, token acquisition, proxies and operator-supplied
 //!   destinations are not supported. Unix only.
 
