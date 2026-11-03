@@ -254,3 +254,10 @@ predate later hard cuts.
 - A third consumer adopting the lifecycle layer, or consumers converging on
   stage and settings policy, could reopen the application-root question. Only
   shared failure semantics can do so; line counts cannot.
+- 2026-11-02 (`batter-3s1a`): [ADR-015](015-outbound-transport-evidence.md)
+  records an experimental track 1 extraction of outbound transport evidence. It
+  does not reopen the rejected provider adapters or the generic provider
+  interface. No application root has adopted it, so it lacks the two-consumer
+  evidence that track 2 requires. The facade declares it as an optional
+  dependency, so a crates.io release of `batter` must publish it first. Its
+  place in the `batter-ddc` release train is not yet recorded.

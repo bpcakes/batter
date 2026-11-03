@@ -16,7 +16,7 @@ Windows support and non-Unix fallbacks are out of scope.
 - `Cargo.toml` owns the feature contract, including the bridges that make every
   native Runledger and Runlimit library package reachable through one dependency.
 - `examples/` contains all facade-owned runnable consumers and their support,
-  including the optional Axum, SQLx and Runlimit demonstrations.
+  including the optional Axum, SQLx, Runlimit and outbound demonstrations.
 - `tests/native_transport_consumer.rs` executes the native Runlimit transport
   packages through facade paths and asserts their identity.
 - `tests/panic_hook_ownership.rs` scans every workspace library's production
@@ -55,6 +55,11 @@ Finite-command examples select `Command::start_with_unix_signals` only in their
 executable root and move values out of `CommandOwner::finish`; their helpers and
 tests use `start_without_signals`, never hand-installed `tokio::signal` listeners,
 `expect` after `check_command` or a `Clone` bound to copy a value out.
+The `outbound_exchange` example writes its dispatch fence in a work-phase step
+before `send_in`, records the outcome only in the reserved finalization phase,
+builds each client before its budget starts, and points refused attempts at a
+socket that is bound but never listens, held for the whole attempt; its tests
+live in `examples/outbound_exchange/tests.rs`.
 A native namespace re-exports the native package itself, never a wrapper, and
 every one is feature-gated: no feature may silently select another backend or
 transport, and `default` stays empty. Reachability moves no ownership — keep

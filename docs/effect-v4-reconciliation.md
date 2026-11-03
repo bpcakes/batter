@@ -1,9 +1,9 @@
 # Effect v4 analysis reconciled with Batter
 
-Updated: 2026-09-16. Originally reviewed 2026-09-09 against Git baseline `22848ea`;
-the implemented-evidence column now includes later settings, fixture, ownership
-and HTTP-lifetime deliveries. This is a design reconciliation, not a new
-implementation.
+Updated: 2026-11-02. Originally reviewed 2026-09-09 against Git baseline `22848ea`;
+the implemented-evidence column now includes later settings, fixture, ownership,
+HTTP-lifetime and outbound-exchange deliveries. This is a design reconciliation,
+not a new implementation.
 
 Batter implements much of the operational core proposed in the analysis. The
 atomic reference producer and selected provider-effect worker paths are
@@ -25,7 +25,7 @@ application composition roots or upstream libraries.
 | 1. Error model | [OperationError<E>](../crates/batter-core/src/operation.rs), legacy [RetryError<E>](../crates/batter-core/src/retry.rs), and the non-exhaustive opt-in `RetryExecutionError<E>` preserve concrete failures and distinguish total interruption from a per-attempt deadline; [HttpFailure](../crates/batter-axum/src/lib.rs) has stable sanitized codes, default Problem JSON, and configurable rendering. | No universal Error, app-wide domain-code contract, or HTTP panic catcher. Domain errors remain concrete; wire policy belongs to the application. |
 | 2. Composition root and lifecycle | [Supervisor](../crates/batter-core/src/lifecycle.rs), [owned driver](../crates/batter-core/src/lifecycle/driver.rs), [finite work](../crates/batter-core/src/lifecycle/process.rs), and [CleanupStack](../crates/batter-core/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. Private state owns terminal transitions and abandonment. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. Non-yielding, scheduling, component-ownership and HTTP/1.1 lifetime suites have scoped execution evidence; they do not detect hidden children or bound streaming bodies after response construction. |
 | 3. Ambient request context | HTTP handlers explicitly extract `AdmittedRequest`, whose `OperationContext` carries deadline/cancellation (`batter-tc9w.6`). Opt-in `low_level::operational_http` supplies opaque server-generated `CorrelationId`, also carried by the admitted request, and retained HTTP event fields; the [HTTP example](../crates/batter/examples/http_service.rs) adopts both. The reference root separately combines that ID with the native direct peer in `TrustedRequestMetadata`, while bearer-selected `OwnerId` stays separate authority. | No task-local request context, proxy trust mode, tenant/principal framework, inbound trace-parent handling, durable envelope, or automatic spawn propagation. Explicit metadata remains non-authoritative. |
-| 4. Retry policy | [RetryPolicy and RetryOptions](../crates/batter-core/src/retry.rs) implement fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, injected jitter, and opt-in per-attempt deadline caps that never renew total time. | No `backon` dependency, outbound HTTP/SQLx/job adapter, or retry-token budget. Share mechanics while retaining one retry owner for each operation. |
+| 4. Retry policy | [RetryPolicy and RetryOptions](../crates/batter-core/src/retry.rs) implement fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, injected jitter, and opt-in per-attempt deadline caps that never renew total time. The experimental standalone [`batter-outbound`](../crates/batter-outbound/src/lib.rs) package, opt-in as `batter::outbound`, sends one HTTP/1.1 request once through a fixed client that follows no redirects and never replays. It classifies the attempt as not started, not dispatched, unknown or responded ([ADR-015](adr/015-outbound-transport-evidence.md)). | No `backon` dependency, SQLx or job retry adapter, or retry-token budget. The outbound exchange replays nothing, though hyper-util's resend of a request that a reused connection never wrote stays below it (source-inspected). It assigns no provider meaning: replay, idempotency keys, Retry-After, fences and reconciliation stay with the application. HTTP/2 and operator-supplied destinations are unsupported, and it is not a stable promotion. Share mechanics while retaining one retry owner for each operation. |
 | 5. Config and secrets | [`batter::settings`](../crates/batter-core/src/settings.rs) supplies explicit bounded sources, parsing and redacted diagnostics; HTTP and reference roots own their schemas and native constructors. The reference command maps a configured opaque bearer token to an application owner and consumes the native request/pool/admission constructors. [Argument validation](../crates/batter-core/src/validation.rs) still rejects invalid budgets/registration. | Not a configuration framework, general authentication system, or secret-erasure tool. Argument validation is not a config API. |
 | 6. Observability | [Telemetry](../crates/batter-core/src/telemetry.rs) records outcomes/timing; independent HTTP observation covers assembled routes, probes/fallback and rejection, with explicit response severity and retained correlation under filtering. [Scoped dispatch](../crates/batter-core/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | Opt-in bounded outcome [metrics](../crates/batter-core/src/telemetry/metrics.rs) are implemented. The [OTLP adapter](../crates/batter-otlp/src/lib.rs) owns exporter setup and the final export after service completion; the reference application selects and configures it. No durable trace propagation is implemented. No global subscriber installation belongs in the library; arbitrary synchronous subscriber failures are not isolated. |
 | 7. Schema and contract | HTTP infrastructure rendering can match an application's wire envelope. Optional Serde currently serializes that envelope. | No validated JSON extractor, schema generation, OpenAPI, or client round-trip pipeline. |
@@ -97,6 +97,25 @@ boundaries stay visible, and an unknown commit outcome is not a replay permissio
 Replacing the implementation with `backon` is unnecessary unless it preserves all
 existing contracts and solves a concrete maintenance problem.
 
+Effect 4.1.2's `HttpClient` is the contrasting reference point for outbound HTTP.
+Its [`retryTransient`](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpClient.ts#L947-L1057)
+replays a request after any transport error or timeout, and after a 408, 429,
+500, 502, 503 or 504 response
+([predicates](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpClient.ts#L2418-L2472)).
+Nothing checks the request method or how far the request got, and with neither
+`times` nor a schedule it retries without end. Its
+[`MaxBodySize`](https://github.com/Effect-TS/effect/blob/effect%404.1.2/packages/effect/src/http/HttpIncomingMessage.ts#L135-L145)
+defaults to undefined, so a response body has no size limit by default.
+Effect's agent-facing
+[client example](https://github.com/Effect-TS/effect/blob/effect%404.1.2/ai-docs/src/50_http-client/10_basics.ts#L26-L83)
+applies `retryTransient` to the client that also sends its POST. These facts are
+recorded with the outbound exchange's
+[primary sources](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02).
+`batter-outbound` takes the opposite position. A prepared request is sent once,
+a response limit is required, and the outcome says only whether the attempt
+could have reached the peer. Whether to replay stays with the operation's retry
+owner.
+
 **Setup belongs at the root.** An observability recipe may configure a subscriber,
 exporters, and ordered flush, while reusable Batter code emits observations.
 Root config may compose upstream typed options; it should not require upstream
@@ -126,7 +145,7 @@ flag merely to reproduce Effect's packaging. HTTP and SQLx adoption now
 use separate packages; neither is a foundation feature. See
 [ADR-006](adr/006-workspace-packages.md) and [Cargo's feature policy reference](references.md#boundary-conventions-reviewed-2026-09-08).
 
-[AGENTS.md](../AGENTS.md), rustdoc, nine runnable demonstrations plus a read-only
+[AGENTS.md](../AGENTS.md), rustdoc, ten runnable demonstrations plus a read-only
 live-suite preflight, and the
 [failure-contract test map](testing.md) already provide the agent-facing starting
 point. No `llms.txt` exists. An additional index would be navigation only, not a competing contract. Predictability should come from checked types,

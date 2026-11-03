@@ -8,6 +8,79 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Send one outbound provider HTTP request with exhaustive transport evidence
+  through the new experimental package `batter-outbound` (`batter-3s1a`;
+  [ADR-015](docs/adr/015-outbound-transport-evidence.md);
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#outbound-exchange-assessment-batter-3s1a)),
+  also `batter::outbound` behind the facade's new opt-in `outbound` feature.
+  `Client::new(Origin, ConnectTimeout)` builds the only client profile: no
+  redirects, proxy environment variables ignored (tested for `HTTP_PROXY` with a
+  loopback origin), an ALPN list of `http/1.1` only, no response decompression
+  (tested for gzip; Brotli, zstd and deflate are not compiled here), no reuse of
+  a connection idle for more than four seconds, and the package's own rustls
+  configuration with the *ring* provider passed explicitly, TLS 1.3 and 1.2 only
+  and the operating system's certificate verifier for an HTTPS origin;
+  `http1_only()`, `retry::never()` and `referer(false)` are also set as defence
+  in depth. An HTTPS client loads the host certificate store when it is built
+  and fails with `ClientError::Build` when that store is empty; a loopback
+  client trusts no roots and never reads it. `Origin::https` admits one HTTPS
+  origin and refuses a host that `http::Uri` rejects, and `Origin::loopback`
+  admits plain HTTP to a literal loopback address.
+  `client.request(method, segments)` percent-encodes each segment, marks every
+  value passed to `header` sensitive and refuses framing and hop-by-hop
+  headers. `prepare()` reports the first construction problem as
+  a value-free `PrepareError` before an exchange exists: `EmptySegment` and
+  `DotSegment`, also for the part of a segment before a `;`, `ControlCharacter`
+  for a tab, line feed or carriage return in a segment, `InvalidUri` for a URL
+  that is not a valid `http::Uri`, such as an over-long one, `ReservedHeader`,
+  `BodyAlreadySet`, `Json`, `ConnectMethod` and `Build`, which no known input
+  reaches after the other refusals (defence in depth). The non-`Clone`
+  `PreparedRequest` is consumed by `send(deadline, limit)` or, with the
+  package's `operation` feature, `send_in(&OperationContext, limit)`, inside a
+  Tokio runtime with its time driver. The exhaustive, `#[must_use]` `Exchange` is
+  `NotStarted(NotStarted)` (never handed to the HTTP client; `reason()` returns
+  a `StartRefusal`), `NotDispatched(NotDispatched)` (connection establishment
+  failed, so no request bytes were written; `failure()` returns a
+  `ConnectFailure`), `Unknown(UnknownReason)` (may have reached the peer, and no
+  response head that the HTTP client accepted arrived) or `Responded` (the
+  status, sensitive headers and a `Body` read under a `ResponseLimit` of 1 byte
+  to 64 MiB, with the status kept when the body fails). `NotStarted` and
+  `NotDispatched` are opaque, with no public constructor or `Clone`, so only the
+  package produces the two outcomes for which `proves_unsent()` holds; `Unknown`
+  stays constructible as the conservative value for a lost exchange. `label()`
+  returns one of twelve stable, value-free labels. One timer at the caller's
+  deadline minus `RESERVE` (50 ms) bounds the head and the body, apart from a
+  macOS certificate check that blocks the poll (source-inspected), a send with
+  less than `RESERVE + MINIMUM_ATTEMPT` (100 ms) left never starts, and deadline
+  reasons come only from that timer; `RESERVE` is not a recording budget. No
+  `Debug` or `Display` output includes a URL, query, header value or body, and
+  the package adds no instrumentation of its own; the `log` and `tracing`
+  events of reqwest, hyper-util and rustls-platform-verifier, and rustls's own
+  when another crate enables its `logging` feature, can name the destination
+  host, socket addresses and certificate names, and the application's logger
+  filters them. `NotDispatched` rests on reqwest and hyper-util
+  implementation behaviour. The fault tests ran against the versions this
+  repository's lockfile resolves (reqwest 0.13.5, hyper 1.11.1, hyper-util
+  0.1.20), and only on Linux; the manifest requires reqwest `^0.13.5` and does
+  not constrain hyper or hyper-util, so keep those versions or re-run the tests
+  after upgrading them. What a status or body means, replay, idempotency keys,
+  Retry-After, dispatch fences and reconciliation stay with applications;
+  HTTP/2, proxies, certificate pinning and operator-supplied destinations are
+  unsupported. Without `operation` the package has no `batter-core` dependency.
+  Selecting the package, directly or through the facade's `outbound` feature,
+  compiles reqwest's `rustls-no-provider` feature, rustls with *ring* and the
+  platform verifier into the consumer, and no aws-lc-rs; the
+  package neither installs nor needs a process-default crypto provider. Crates
+  that call `rustls::ClientConfig::builder()` without a provider need the
+  application root to install one with `CryptoProvider::install_default` when
+  the application's graph also compiles aws-lc-rs into rustls, and a plain
+  `reqwest::Client::new()` needs one when the graph's reqwest 0.13 has only
+  `rustls-no-provider` (neither its `rustls` nor its `native-tls` feature). The facade's new `outbound_exchange` example writes its
+  dispatch fence in the work phase of `reserve_finalization` before `send_in`,
+  settles it from the outcome in the finalization phase, and leaves it held when
+  a parent cancellation lets no recording step run. Additive API only: no
+  `Breaking:`, `Migration:` or shim applies.
+
 - Construct an application-installed panic hook that never writes payloads
   (`batter-4q78`;
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#redacting-panic-hook-assessment-batter-4q78)).

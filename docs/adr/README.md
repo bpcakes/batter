@@ -14,14 +14,11 @@ These decisions govern the source implementation and future work.
 | [008](008-http-transport-ownership.md) | Observe response, body, connection and direct server lifetimes separately. |
 | [009](009-http-lifetime-observations.md) | Measured HTTP/1.1 lifetimes; preserve response-construction ownership. |
 | [010](010-agent-only-consumption.md) | Optimize the canonical integration path for coding-agent consumers. |
-
 | [011](011-native-runledger-workspace.md) | Keep native Runledger packages in the shared workspace without merging runtime ownership. |
-
 | [012](012-native-runlimit-workspace.md) | Keep native Runlimit packages local while preserving policy, storage and transport ownership. |
-
 | [013](013-managed-database-objects.md) | Apply consumer-declared routines, triggers and constraint triggers after migrations and verify them; source, ownership and grants stay downstream. |
-
 | [014](014-reuse-after-two-consumers.md) | Extract only what two application roots share: an application-installed redacting panic hook and bounded blocking work; no application root, DI, cache, queue or circuit framework. |
+| [015](015-outbound-transport-evidence.md) | Own only the transport evidence of one outbound HTTP request, in an experimental standalone leaf with a fixed send-once client and an exhaustive outcome; provider meaning, replay, idempotency, fences and reconciliation stay downstream. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, an update to the implemented status, and executed checks recorded in the

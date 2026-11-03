@@ -13,6 +13,33 @@ and external-effect idempotency are outside Batter. A readiness gate is not an
 authorization gate. A concurrency permit is not a per-user rate limit. A timeout
 is not rollback or permission to replay a mutation.
 
+Two library-built clients are exceptions. The `batter-otlp` exporter's private
+transport uses reqwest 0.12.28's rustls with *ring* and compiled-in webpki
+roots, and bounds its payload and response bodies. The experimental outbound
+exchange (`batter-outbound`, also `batter::outbound`) builds its own client
+too: the package fixes its rustls configuration, with the *ring* provider passed explicitly,
+TLS 1.3 and 1.2 only and, for an HTTPS origin, the operating system's
+certificate verifier; `https_only` for an HTTPS origin, as defence in depth
+behind `Origin::https`; an ALPN list of `http/1.1` only; and a required
+`ResponseLimit` on every response body. The application still owns the trust
+store and its environment, such as `SSL_CERT_FILE` and `SSL_CERT_DIR` on Linux,
+any process-default crypto provider that other crates in its graph need,
+certificate pinning, which the package does not offer, and every egress or
+destination policy: `Origin::https` accepts any HTTPS host the application
+passes, IP literals included. The package adds no instrumentation of its own,
+but its dependencies log destination identities (source-inspected): reqwest the
+host at debug level, hyper-util the origin's authority and the socket addresses
+it connects to at debug and trace level, and rustls-platform-verifier a failed
+certificate verification at error level, with the expected and presented names
+for a name mismatch. When another crate in the application's graph enables
+rustls's `logging` feature, a default of rustls, tokio-rustls and
+hyper-rustls, rustls also logs the server name at debug level and the
+ClientHello and the server certificate chain at trace level. None of them
+carries an exchange's path, query, header value or body. The application's
+logger or subscriber configuration owns filtering the `reqwest`,
+`hyper_util`, `rustls_platform_verifier` and `rustls` targets. No test
+verifies a certificate, and nothing has executed on macOS.
+
 Bulkhead does not bound its waiter count or request memory. HTTP deadlines stop
 at response construction and do not protect streaming sessions or every slow
 upload/connection path. Runtime-thread blocking can defeat cooperative timers.

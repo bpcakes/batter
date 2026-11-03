@@ -674,7 +674,7 @@ every checked-in executable root, meaning each workspace member's `src/main.rs`,
 `src/bin/`, `examples/`, `benches/` and declared target paths and the consumer
 sources scripts build outside the workspace, with a self-test of the
 first-statement rule; programs that scripts generate as compile and identity
-probes are not classified. The fifteen roots that consume Batter must install the hook
+probes are not classified. The sixteen roots that consume Batter must install the hook
 as their first statement; three named tooling roots, a live-suite preflight, a
 provisioning harness and a benchmark, keep the default hook; and the twelve
 native Runledger and Runlimit roots, which name no Batter crate, are out of scope.
@@ -837,9 +837,14 @@ on the host or container running the matrix: the ordinary reference configuratio
 target performs a native PostgreSQL protocol handshake on a test-owned IPv6
 listener, without an external database. Enable that prerequisite before running
 the gate; this semantic test is mandatory and does not silently skip when IPv6
-is unavailable. The example readiness tests run automatically
-under `--all-targets`; they are not ignored and contact only test-owned listeners
-on `127.0.0.1`. A sandbox denying those operations cannot run the complete gate.
+is unavailable. On Linux, the `batter-outbound` tests and doctests that build an
+HTTPS client also need a loadable host certificate store: the platform verifier
+loads it when the client is built, following `SSL_CERT_FILE` and `SSL_CERT_DIR`,
+and an empty store fails construction, while loopback clients never read it
+([trust_store.rs](../crates/batter-outbound/tests/trust_store.rs)). The example
+readiness tests run automatically under `--all-targets`; they are not ignored
+and contact only test-owned listeners on `127.0.0.1`. A sandbox denying those
+operations cannot run the complete gate.
 HTTP process smokes run at the end of direct verification.
 Their launcher replaces inherited `BATTER_*` settings with the selected smoke
 profile and owns its `RUST_LOG` choice. Live-fixture variables, ambient settings
@@ -861,12 +866,26 @@ The live readiness fixture awaits teardown before checking results and reports
 the saved request, supervisor and server outcomes together if any failed.
 
 The script checks isolated `-p batter-core --no-default-features` library
-compilation and core tests, the no-default facade, and the bounded facade
-feature runner. `scripts/check_facade_features.py` uses disposable external
-workspaces to compile each declared feature, the standalone at-rest leaf, the representative Axum/SQLx and
-Runlimit unions, and all-features; it checks the selected normal graph, nine
-focused disabled-module failures, and one all-feature direct/facade identity
-fixture. It then runs the checked-completion and composed quota/SQLx handler
+compilation and core tests, the no-default facade, the `batter-outbound` library
+and tests without its `operation` bridge, so without `batter-core`, and the
+bounded facade feature runner. `scripts/check_facade_features.py` uses disposable
+external workspaces to compile each declared feature, including `at-rest` and
+`outbound`, which reach the standalone leaves through the facade, the
+representative Axum/SQLx and Runlimit unions, and all-features; it checks the
+selected normal graph, nineteen focused disabled-module failures, and one
+all-feature direct/facade identity fixture. The `outbound`-only case compiles a
+`PreparedRequest::send_in` call on `batter::operation::OperationContext`, so the
+feature cannot drop the bridge, and the identity fixture, the runner's only
+consumer that declares `batter-outbound` directly, returns the direct package's
+`Exchange` from that call. No external consumer builds `batter-outbound`
+without its bridge; the in-workspace `no-default-features` commands are that
+evidence. The runner also derives a `cargo tree` command from the matrix's
+`outbound-shipped-features` command and requires reqwest's features in that
+build to equal those of `batter-outbound`'s normal graph, so the batch keeps
+executing the shipped selection; its self-test checks that
+`batter-outbound`'s own test build, with `gzip` and `http2`, fails the
+comparison.
+It then runs the checked-completion and composed quota/SQLx handler
 consumers described at the top of this guide. It runs under the invoking
 toolchain and leaves the repository lock unchanged. The separate `scripts/check_runlimit_features.py` gate still covers
 every native Runlimit feature combination. The matrix then checks all
@@ -1741,7 +1760,16 @@ The six test parts retain their existing command selections:
   hostile-environment configuration tests and optimized canonical future-size
   bounds. The two Cargo runs occupy separate batches because both uplift
   `target/debug/batter-example-reference-service`; see the scheduling rule below.
-- `no-default-features`: minimal core/facade compilation and core tests.
+- `no-default-features`: minimal core/facade compilation, core tests and the
+  standalone `batter-outbound` library check without the `operation` bridge, so
+  without `batter-core`; then, alone in a second batch so their timing
+  assertions share no batch with a compiling check, the `batter-outbound` tests
+  without that bridge; then, alone in a third batch, the facade
+  `outbound_exchange` example tests built with
+  `-p batter --no-default-features --features outbound`, whose build does not
+  activate `batter-outbound`'s dev-only reqwest `gzip` and `http2` features and
+  so executes the shipped reqwest selection. The `workspace` part runs the
+  package tests with the bridge.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.
 - `runlimit`: native default-feature tests, the release regression and graph checks.
@@ -1812,9 +1840,10 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The six parts hold 26 commands in batches of at most four: `workspace` and
-`scripts` use two batches, `consumers` uses three, and the others use one. Runner controls
-require that the parts partition all 26 commands exactly once, that each part
+The six parts hold 30 commands in batches of at most four: `workspace` and
+`scripts` use two batches, `no-default-features` and `consumers` use three, and
+the others use one. Runner controls
+require that the parts partition all 30 commands exactly once, that each part
 executes exactly the batches it plans in order, and that direct verification
 invokes each part exactly once. They inject a failure at every command
 position and require that no later batch of that part starts; surplus mocked
@@ -1926,7 +1955,7 @@ excludes archived reviews under `.agent/reviews`.
 | Initial finite errors/panics use `FiniteTaskExit`; critical errors/panics/early success retain `ComponentExit`; later finite failures preserve `Requested` | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs), [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs), and the `ProcessHandle::try_spawn` rustdoc example |
 | Mixed critical/finite ownership, first observed failure retained across task kinds, descendant cause labels, ready requests preceding unobserved finite/critical failures, and shutdown aborts preserving `Requested` | [shutdown_causes.rs](../crates/batter-core/tests/shutdown_causes.rs) |
 | Redacting panic hook: one rendered line per panic in one write, pieces beyond 512 bytes, an unknown-location form and ignored write errors; in fresh children, default-hook controls that print the payloads and locations, then caught constant-message, formatted-message, `unwrap`-`Debug` and opaque payloads, Tokio tasks on both runtime flavors, a spawned thread and an uncaught panic (status 101 under both hooks) with standard error equal to one redacted line per recorded location and no secret on either stream, original payloads after unwinding, a report made while another thread holds the `Stderr` lock, silence at the descriptor limit, and an application's hook kept, unwrapped and called once per panic through Batter entrypoints, with controls for a wrapper and a swap | [unit tests](../crates/batter-core/src/panic_hook/tests.rs), [panic_hook.rs](../crates/batter-core/tests/panic_hook.rs), [panic_hook.rs](../crates/batter-core/src/panic_hook.rs) rustdoc |
-| No workspace library's production source, meaning every file except those that a `#[cfg(test)]` module loads and no production module does, and the binary roots the root inventory classifies, names a panic-hook installer outside comments, with self-tests of the line rule and of that exemption; every checked-in executable root is classified, and each of the fifteen roots that consume Batter installs the redacting hook first, except three named tooling roots, while native Runledger and Runlimit roots are out of scope | [panic_hook_ownership.rs](../crates/batter/tests/panic_hook_ownership.rs) |
+| No workspace library's production source, meaning every file except those that a `#[cfg(test)]` module loads and no production module does, and the binary roots the root inventory classifies, names a panic-hook installer outside comments, with self-tests of the line rule and of that exemption; every checked-in executable root is classified, and each of the sixteen roots that consume Batter installs the redacting hook first, except three named tooling roots, while native Runledger and Runlimit roots are out of scope | [panic_hook_ownership.rs](../crates/batter/tests/panic_hook_ownership.rs) |
 | Shutdown, task, cleanup and record Debug/Display redact retained error contents while the causes remain reachable through explicit fields | [report_redaction.rs](../crates/batter-core/tests/report_redaction.rs) |
 | Permanent admission closure before startup, unpolled driver drop/abort, dropped unstarted supervisor, post-start abort and completed shutdown; rejected factories stay inert | [terminal_admission.rs](../crates/batter-core/tests/process_ownership/terminal_admission.rs) |
 | Startup permutations, irreversible transition table, concurrent request/completion, admission precedence, nonblocking readiness snapshot and each waiter notified outside the transition lock, allowing redundant wakes | [state/tests.rs](../crates/batter-core/src/lifecycle/state/tests.rs) |
@@ -1960,6 +1989,16 @@ excludes archived reviews under `.agent/reviews`.
 | Subscriber callbacks precede finite admission locking | [subscriber.rs](../crates/batter-core/src/lifecycle/state/tests/subscriber.rs): actual submission under enabled/filtered task spans; `try_lock` assertions cover `new_span`, `current_span` and `clone_span`, with callback counts rejecting a vacuous pass. The fixture never starts a coordinator or application factory. |
 | Assembled boundary served over a generic listener | [tls_serving.rs](../crates/batter-axum/tests/tls_serving.rs): real rustls with a generated certificate; acknowledgement before readiness, probe outside admission, transport peer against a client-owned oracle, drain waiting for a response still streaming, a pending handshake destroyed at drain, and rejected/abandoned listener release. |
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
+| Outbound refusals before any connection: origin schemes, credentials, paths, queries, fragments, port zero, non-loopback addresses and hosts `http::Uri` rejects; limit bounds; every reserved header; a second body; a JSON failure; the first draft problem reported; `CONNECT`; empty, `.` and `..` segments and segments whose part before a `;` is empty, `.` or `..`, with look-alikes accepted; tab, line feed and carriage return in a segment; URLs `http::Uri` rejects | [preparation.rs](../crates/batter-outbound/tests/preparation.rs) |
+| Outbound send-once and value types: header values passed to `header()` marked sensitive and the body's `Content-Type` not; `PreparedRequest` neither cloneable nor sendable twice; a hand-built `NotStarted` does not compile | `every_caller_header_value_is_marked_sensitive` and the `compile_fail,E0599`/`E0382` doctests in [request.rs](../crates/batter-outbound/src/request.rs); the `compile_fail,E0451` doctest in [exchange.rs](../crates/batter-outbound/src/exchange.rs) |
+| Outbound outcomes before a head: start refusals with no connection and a 350 ms budget sending exactly one request; a refused TCP connection and a failed TLS handshake as `NotDispatched(Failed)` and a stalled handshake as `NotDispatched(TimedOut)`; `Unknown` for a deadline during the TLS handshake; in each TLS case one connection whose first read is a TLS handshake record; `Unknown` also for a silent peer within the reserve, closes before and after reading, a reset and malformed or truncated heads | [before_head.rs](../crates/batter-outbound/tests/before_head.rs) |
+| Outbound status kept through every body result: complete with sensitive readable headers, empty, `HEAD`, exactly at the limit (declared and chunked), declared or streamed above it without waiting, short or unterminated then closed, stalled under one deadline for head and body, undelimited and ended by a close as `Complete`, gzip-labelled bytes returned undecoded with gzip compiled, and a ready head with its empty body's end kept over an expired timer | [body.rs](../crates/batter-outbound/tests/body.rs) |
+| Outbound `send_in`: cancelled or too-close contexts refused unsent, cancellation over an expired deadline, cancellation after delivery, directly or through a parent, as `Unknown(Cancelled)`, cancellation during a stalled body with the status kept, a ready head kept over cancellation, cancellation reported over an expired timer before a head and during the body, and context deadlines bounding head and body within the reserve | [operation.rs](../crates/batter-outbound/tests/operation.rs), feature `operation` |
+| Outbound wire shape: HTTP/1.1 origin form without `Accept-Encoding` (gzip compiled), `Referer`, `Proxy-Authorization`, `TE` or `Upgrade`; header values unchanged; segment, query and body encoding; an empty path at the root; a 307 returned unfollowed; clones sharing one connection; a new connection after more than four seconds idle; `HTTP_PROXY` ignored for a loopback origin against a default-client control in a child process | [wire.rs](../crates/batter-outbound/tests/wire.rs) |
+| Outbound ClientHello with reqwest's `http2` compiled: ALPN exactly `http/1.1` and no version but TLS 1.3 and 1.2, on one connection | [tls_hello.rs](../crates/batter-outbound/tests/tls_hello.rs) |
+| Outbound trust store on Linux, in a child process: with an empty host store an HTTPS client fails with the value-free `ClientError::Build`, while a loopback client still builds | [trust_store.rs](../crates/batter-outbound/tests/trust_store.rs) |
+| Outbound formatting: markers in the host, a segment, the query, a header, the body and the response appear in no `Debug`, alternate `Debug` or error `Display` output of clients, origins, drafts, prepared requests, errors, outcomes, responses, bodies and header maps, while the peer's raw request carries the request markers and received values stay readable | [redaction.rs](../crates/batter-outbound/tests/redaction.rs) |
+| Facade outbound consumer: a loopback receipt settles the example's fence after one delivered request; a 201 whose body exceeds the receipt limit keeps it held; a refused connection is `NotDispatched` and releases it; a work phase shorter than `RESERVE + MINIMUM_ATTEMPT` is refused unsent and still recorded; parent cancellation in flight records nothing and leaves the pre-send fence held; and the fence is released exactly when `proves_unsent` holds | [outbound_exchange/tests.rs](../crates/batter/examples/outbound_exchange/tests.rs) |
 
 Timer tests use Tokio's paused time. This controls the Tokio clock, not system
 wall time or a PostgreSQL server's clock. Paused time is appropriate for the
@@ -2919,6 +2958,45 @@ the application commit, kills the real worker, and checks recovery issues no POS
 and schedules at or after the retained provider boundary. Synthetic SQL authority
 coverage and real native recovery coverage are distinct evidence.
 
+## Outbound exchange facade example
+
+`crates/batter/examples/outbound_exchange.rs` is the facade's consumer contract
+for `batter::outbound`. It writes its dispatch fence in an `example.fence`
+work-phase step before `send_in` and records the settled fence in the reserved
+finalization phase. Its seven tests, in `outbound_exchange/tests.rs`, run under
+`--all-targets` in the `workspace` part and contact only test-owned sockets on
+`127.0.0.1`: a listener, or a socket that is bound but never listens and stays
+bound for the whole attempt, so no other listener can take its port. Every
+client is built before its budget starts. A fixture mutation returns
+`Responded` with the fixture's 201 receipt and settles the example's fence, and
+the test checks the request line, credential header, JSON content type and body
+that the fixture received. A 201 whose declared body exceeds the receipt limit
+is `responded.body_too_large` and keeps the fence held. A refused connection
+gives `NotDispatched` whose `failure()` is `ConnectFailure::Failed`, for which
+`proves_unsent` holds, and releases the fence. A 599 ms budget whose 500 ms
+finalization reserve leaves
+a work phase shorter than `RESERVE + MINIMUM_ATTEMPT` is refused as
+`NotStarted(DeadlineTooClose)` against a refusing port, where a started exchange
+would report `NotDispatched`, and its outcome is still recorded in the reserved
+finalization phase. Cancelling the parent after the fixture read the request
+gives `Unknown(Cancelled)` and no record, because parent cancellation also
+cancels finalization; the fence written before the send stays held. A mapping
+test over real `NotStarted` and `NotDispatched` outcomes and hand-built
+`Unknown` values releases the fence exactly when `proves_unsent` holds and keeps
+it for every `Unknown`; the last test covers the fixture's request framing.
+These are loopback results for the example's own policy. They say nothing about
+TLS, a remote provider or an intermediary.
+
+```sh
+cargo test -p batter --features outbound --example outbound_exchange --locked
+cargo run -p batter --features outbound --example outbound_exchange --locked
+```
+
+`main` prints `mutation exchange: responded` and
+`closed-port exchange: not_dispatched.connect_failed` and exits 0. That output
+is unverified for the current source: `main` asserts neither label, and no test
+or verification step runs it.
+
 ## HTTP process smoke test
 
 The example defaults its logging filter only when `RUST_LOG` is absent.
@@ -3160,6 +3238,29 @@ outstanding. The blocking tests use channels and explicit gates, not sleeps.
 A gate's release sender is dropped when a failed assertion unwinds, so a parked
 closure returns and runtime drop cannot hang; a closure that never signals its
 start would still hang its test until the CI time limit.
+
+The `batter-outbound` suites run on loopback against a scripted peer and have
+executed on Linux only; the macOS CI job only compiles them. Every build of
+them compiles reqwest's `gzip` and `http2` through the package's
+dev-dependencies; the shipped feature set is compile-checked by the
+`outbound-library` command and executed only by the facade example's tests in
+the `outbound-shipped-features` batch, which runs the loopback exchanges of the
+example below without those features. No test completes a TLS
+handshake or verifies a certificate. Unexercised and source-inspected: a DNS
+failure, a connect timeout during DNS or TCP setup, pool-checkout failures and
+hyper-util's `retry_canceled_requests` resend, the stale keep-alive race,
+`HTTPS_PROXY` and `ALL_PROXY` for an HTTPS origin (`HTTP_PROXY` for a loopback
+origin is tested against a discriminating control), a dropped or wrapped send
+future, a ready non-empty body chunk tying with the timer or a cancellation, the
+bounded body-buffer growth and its 1 MiB preallocation cap, an await inserted
+between the start check and the first poll, and the macOS verifier blocking the
+handshake poll. `no_brotli`, `no_zstd`, `no_deflate` and `no_hickory_dns` are
+source-inspected because no build here enables those reqwest features.
+`http1_only()`, `retry::never()`, `referer(false)` and `https_only` are defence
+in depth that no test can observe while ALPN is fixed, redirects are off and
+every URL comes from the validated origin; removing `http1_only()` fails no
+test. The segment-count check behind `PrepareError::Build` is unreachable with
+the locked url 2.5.8, so no test returns `Build`.
 
 The suite does not establish full real-transport behavior, non-yielding task
 termination, transaction commit/cancellation or upstream worker compatibility, or HTTP handler-panic

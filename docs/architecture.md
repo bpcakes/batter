@@ -39,9 +39,10 @@ collection of wrappers around every dependency.
 The root is a virtual Cargo workspace. The `batter` facade and its single
 `batter-core` implementation, the `batter-axum`, `batter-sqlx`,
 `batter-runledger`, `batter-runlimit` and `batter-otlp` adapters, `batter-test-support`
-utilities, and the standalone `batter-at-rest` crypto leaf are nine Batter
-libraries. Four native Runledger libraries and its operator TUI live under
-`runledger/`; five native Runlimit libraries live under `runlimit/`.
+utilities, the standalone `batter-at-rest` crypto leaf and the standalone
+`batter-outbound` provider-exchange leaf are ten Batter libraries. Four native
+Runledger libraries and its operator TUI live under `runledger/`; five native
+Runlimit libraries live under `runlimit/`.
 `batter-example-postgres-lifecycle` is an unpublished executable package;
 `batter-example-reference-service` owns native upstream compatibility probes.
 Public functions accept native futures, concrete errors, and runtime
@@ -53,10 +54,13 @@ application composition root
   |-- native services / concrete constructors / domain errors
   |-- batter facade -> batter-core lifecycle + cleanup
   |                         operation + retry + admission + settings
-  |     `-- opt-in at-rest -> standalone batter-at-rest leaf
+  |     |-- opt-in at-rest -> standalone batter-at-rest leaf
+  |     `-- opt-in outbound -> standalone batter-outbound leaf + its operation bridge
   |-- process panic hook installation (application-owned; batter::redacting_panic_hook constructs one)
   |-- native tracing subscriber and exporter selection (application-owned)
   |-- optional batter-otlp -> batter-core protected service completion + native SDK
+  |-- optional batter-outbound -> native reqwest profile + its own ring rustls config (no Batter dependency)
+  |     `-- opt-in operation -> batter-core OperationContext deadline + cancellation
   |-- optional batter-axum -> batter-core + Axum / Tower
   |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
   |     `-- opt-in test-support -> external harness + generic test support
@@ -69,10 +73,10 @@ application composition root
 ```
 
 The facade's default feature set is empty, so an ordinary `batter` dependency
-selects only `batter-core`. Applications opt into `batter::at_rest`, `batter::axum`,
-`batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
-`batter::test_support` explicitly. `runlimit-memory`, `runlimit-postgres`,
-`runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
+selects only `batter-core`. Applications opt into `batter::at_rest`,
+`batter::outbound`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
+`batter::runlimit`, and `batter::test_support` explicitly. `runlimit-memory`,
+`runlimit-postgres`, `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
 `runledger-test-support`, and `sqlx-test-support` forward the existing adapter
 features; `runledger-test-support` also selects the Runledger adapter's
 worker-free handler drive, and none adds facade-owned storage, HTTP, or fixture
@@ -127,7 +131,7 @@ replaces the other. See
 [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
 
 Each package declares its version, Rust minimum, and publication policy. The
-nine Batter packages use 0.0.1, native Runledger uses 0.13.0, and native
+ten Batter packages use 0.0.1, native Runledger uses 0.13.0, and native
 Runlimit uses 0.4.0; all declare Rust 1.98.1 and restrict publication to crates.io.
 The two examples remain unpublished. A shared workspace does not imply a
 mandatory stack; the root lockfile and verification matrix remain shared.
@@ -512,6 +516,37 @@ Use narrow dependencies or Axum FromRef in applications. Do not pass a giant
 AppContext merely to avoid constructor arguments. Add construction machinery
 only after repeated real applications demonstrate that it simplifies—not hides—
 resource ownership and partial-failure behavior.
+
+## Outbound provider exchange ownership
+
+`batter-outbound` owns the transport part of one outbound provider call: whether
+this attempt could have reached the peer. Its library-built client follows no
+redirects, offers only HTTP/1.1 and requires a connect timeout. It hands reqwest
+a rustls configuration that the package builds itself, with the *ring* provider
+passed explicitly, TLS 1.3 and 1.2 only, the operating system's verifier for
+HTTPS origins and an empty root store for loopback origins, so it never relies
+on a process-default crypto provider and adds no aws-lc-rs to the graph. The
+[guarantees](guarantees.md#outbound-provider-exchange) cite the test behind each
+profile setting and label the ones that no test executes. A prepared request is
+sent once and returns an exhaustive `Exchange`; only `NotStarted` and
+`NotDispatched`, whose evidence values only the package can construct, prove
+that the attempt wrote nothing. `NotDispatched` rests on the connect
+classification of the reqwest and hyper-util versions that this repository's
+lockfile resolves, which is implementation behavior rather than a documented
+upstream contract; the manifest does not constrain hyper or hyper-util, so an
+application's lockfile may resolve releases that the fault tests never ran
+against. A `Responded` status may come from an intermediary, so it never shows
+that the provider processed the request. The package depends on no Batter crate
+by default, so a provider crate that does not use Batter can adopt it; its
+opt-in `operation` feature adds `PreparedRequest::send_in` over an
+`OperationContext`, called with the work phase of `reserve_finalization` so the
+outcome is recorded in the finalization phase rather than inside `RESERVE`, and
+the facade's `outbound` feature selects that bridge.
+Provider meaning, replay, idempotency keys, dispatch fences and reconciliation
+stay with the application. Its tests have executed on Linux only. It is a
+focused experimental extraction (track 1 of
+[ADR-014](adr/014-reuse-after-two-consumers.md#stable-adapter-promotion)), not a
+stable promotion or a provider adapter.
 
 ## Native Runlimit workspace ownership
 

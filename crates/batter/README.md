@@ -2,8 +2,8 @@
 
 `batter` is the public facade for the native Tokio operational toolkit. It
 keeps the established `batter::...` foundation paths while optional at-rest,
-Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected through
-additive facade features.
+outbound, Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected
+through additive facade features.
 
 The implementation of the foundation lives in [`batter-core`](../batter-core).
 The facade only re-exports that implementation and owns the runnable foundation
@@ -19,6 +19,7 @@ The default feature set is empty. The available feature/module pairs are:
 | `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity; [MIT-licensed dependency](../batter-at-rest/LICENSE) |
 | `axum` | `batter::axum` |
 | `metrics` | `batter::telemetry::metrics`: bounded foundation outcome metrics through the `metrics` facade; no recorder or exporter is installed |
+| `outbound` | `batter::outbound`, preserving direct `batter_outbound` type identity, with its `operation` bridge selected so `PreparedRequest::send_in` takes `batter::operation::OperationContext` |
 | `sqlx` | `batter::sqlx` |
 | `runledger` | `batter::runledger` and `batter::runledger::native::{core, postgres, runtime}`, plus the required `batter::sqlx` capability |
 | `runledger-test-support` | `batter::runledger::test_support`: drive one job handler without a worker, queue or database; and `batter::runledger::native::test_support`: test-only reachability for Runledger's own PostgreSQL support |
@@ -38,9 +39,9 @@ For example:
 batter = { path = "../batter", features = ["axum", "runlimit-axum"] }
 ```
 
-The facade selects namespaces; `batter-at-rest`, native Axum, SQLx, Runledger, Runlimit and the
-external PostgreSQL harness remain direct ecosystem dependencies with their
-existing ownership and configuration.
+The facade selects namespaces; `batter-at-rest`, `batter-outbound`, native Axum, SQLx,
+Runledger, Runlimit and the external PostgreSQL harness remain direct ecosystem
+dependencies with their existing ownership and configuration.
 
 The `native`, `memory`, `postgres` and `native_transport` namespaces are the
 native packages themselves, so one `batter` dependency needs no direct
@@ -51,10 +52,17 @@ They are deliberately low-level and do not move ownership:
 `batter::runlimit::http` the protected quota-before-body assembly, while each
 native module documents the obligations its callers take on.
 
-The standalone encryption package can be selected directly as `batter-at-rest`;
-the facade always retains its normal `batter-core` dependency. Cargo unifies
+The standalone encryption package can be selected directly as `batter-at-rest`,
+and the outbound exchange as `batter-outbound`, which depends on no Batter
+package unless its `operation` feature is selected; the facade always retains
+its normal `batter-core` dependency. Cargo unifies
 dependency features, so audit the final application's resolved graph. Feature
-isolation in this facade is not a security boundary.
+isolation in this facade is not a security boundary. The outbound client uses
+its own *ring* rustls configuration and never a process-default crypto
+provider; if the application's graph also compiles aws-lc-rs into rustls, for
+example through reqwest's `rustls` feature, crates that build a rustls
+configuration without naming a provider need the application root to install a
+process default first.
 
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
@@ -67,6 +75,7 @@ cargo run -p batter --example worker
 cargo run -p batter --example process_owned
 cargo run -p batter --example operation_budget
 cargo run -p batter --example finite_command
+cargo run -p batter --features outbound --example outbound_exchange
 ```
 
 Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed,

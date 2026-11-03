@@ -31,7 +31,7 @@ if [[ ! -f Cargo.lock ]]; then
   printf 'Cargo.lock is absent. Run this script with --bootstrap once; review and commit the result.\n' >&2
   exit 2
 fi
-printf 'Workspace tests require loopback TCP sockets and Unix subprocess permissions.\n'
+printf 'Workspace tests require loopback TCP sockets, Unix subprocess permissions and a host certificate store.\n'
 cargo fmt --all -- --check
 bash scripts/check_file_budget.sh
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files

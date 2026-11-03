@@ -53,6 +53,8 @@ Hosted Linux verification and focused macOS jobs passed on both supported
 toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 for commit `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. The documentation,
 package-description, and rustdoc refresh in this checkout postdates that run.
+`batter-outbound` also postdates it: its tests have executed on Linux only, and
+it has no hosted or macOS execution evidence.
 The full workspace verification now requires Docker for native Runledger
 PostgreSQL 18 tests. Batter adapter/reference live PostgreSQL evidence remains
 scoped to the separately recorded runs. See
@@ -137,6 +139,7 @@ cargo run -p batter --example finite_command
 DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter --features sqlx --example owned_pool
 cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service
+cargo run -p batter --features outbound --example outbound_exchange
 DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
@@ -155,7 +158,15 @@ with `-- --until-signal` to wait for one.
 Service startup is a different ownership path; see
 [usage](docs/usage.md#finite-commands-and-owned-cleanup) and the
 executable [`Startup` example](crates/batter-core/src/startup.rs).
-The eighth facade example, `verification`, requires an explicit migration
+`outbound_exchange` sends one JSON mutation through `batter::outbound` to a
+local fixture and one to a loopback port that is bound but never listens, each
+under an operation context with a reserved finalization phase. It writes its
+dispatch fence in a work-phase step before each send, records the settled fence
+in the finalization phase unless the parent context is cancelled, and prints
+only the two exchange labels, which its tests assert as `responded` and
+`not_dispatched.connect_failed`. Settling that fence from the exhaustive
+`Exchange` is the example's own policy.
+The `verification` facade example requires an explicit migration
 manifest and authority policy; see the
 [SQLx verifier guide](crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
 
@@ -174,6 +185,9 @@ batter = { path = "../batter/crates/batter" }
 # Standalone Rust 1.98.1 encryption/MAC leaf, also available through feature
 # `at-rest` as `batter::at_rest` with identical types.
 batter-at-rest = { path = "../batter/crates/batter-at-rest" }
+# Standalone outbound provider HTTP exchange, also available through feature
+# `outbound` as `batter::outbound` with identical types and the `operation` bridge.
+batter-outbound = { path = "../batter/crates/batter-outbound" }
 # Direct foundation implementation, when an adapter or focused consumer needs it.
 batter-core = { path = "../batter/crates/batter-core" }
 # Add this dependency for the HTTP adapter.
@@ -188,10 +202,12 @@ batter-test-support = { path = "../batter/crates/batter-test-support" }
 
 ## Packages
 
-The default `batter` graph does not bring in encryption, Axum, SQLx, or test utilities.
+The default `batter` graph does not bring in encryption, the outbound HTTP exchange,
+Axum, SQLx, or test utilities.
 Adapter APIs are also available from their direct packages. The facade exposes
-`batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
-`batter::test_support` through additive opt-in features, and the `metrics`
+`batter::at_rest`, `batter::outbound`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
+`batter::runlimit`, and `batter::test_support` through additive opt-in features;
+`outbound` also selects that package's `operation` bridge. The `metrics`
 feature records bounded outcome metrics through `batter::telemetry::metrics`; the
 `otlp` feature selects explicit bounded export through `batter::otlp` and
 `batter::service::start`; `runlimit-memory`,
@@ -202,7 +218,7 @@ and Runlimit library package through explicitly native namespaces, so one
 `batter` dependency needs no direct native declaration and no `[patch]`; the
 [single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
 records the executed evidence and the caller obligations those namespaces carry. Each package declares its own version and Rust minimum.
-The nine Batter packages are 0.0.1, native Runledger is 0.13.0, and native
+The ten Batter packages are 0.0.1, native Runledger is 0.13.0, and native
 Runlimit is 0.4.0. All declare Rust 1.98.1, the pinned default toolchain, as
 their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
 `batter-at-rest` leaf verifies that minimum independently.
@@ -212,6 +228,7 @@ their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
 | `batter-otlp` | [crates/batter-otlp](crates/batter-otlp/README.md) | Optional bounded OTLP metrics exporter through protected service completion. |
 | `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | MIT-licensed synchronous standalone envelope encryption and stable MAC keys. |
+| `batter-outbound` | [crates/batter-outbound](crates/batter-outbound/README.md) | Experimental standalone send-once provider HTTP exchange: one library-built client profile and an exhaustive outcome recording whether an attempt could have reached the peer, with an opt-in `OperationContext` bridge. Provider meaning, replay and reconciliation stay with the application. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, managed routines and triggers applied after migrations, explicit low-level connection disposition, and opt-in fixtures. |
