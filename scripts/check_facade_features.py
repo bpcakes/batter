@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Prove Batter facade feature isolation and cross-package type identity."""
+"""Prove Batter facade feature isolation and cross-package type identity.
+
+It also checks that the matrix's shipped-feature example build resolves reqwest
+exactly as `batter-outbound` ships it.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ import tempfile
 
 from parallel_process import ProcessOutcome, render_outcomes, run_parallel
 from consumer_manifest import consumer_patches
+from test_matrix import OUTBOUND_SHIPPED_EXAMPLE
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FEATURES = {
@@ -285,6 +290,58 @@ def check_graph(metadata: dict, selected: tuple[str, ...], known: set[tuple[str,
                 f"{selected}: normal graph expected {package}={expected}, "
                 f"observed {package in names}; names={sorted(names)}"
             )
+
+
+# `cargo tree` flags that list each package with its features, one per line,
+# for the graph a test build compiles.
+TREE_FEATURES = ["--prefix", "none", "--format", "{p}|{f}", "--offline"]
+
+
+def tree_features(tree: str, name: str) -> dict[str, frozenset[str]]:
+    """Map each version of `name` in `cargo tree` output to its features."""
+    observed: dict[str, set[frozenset[str]]] = {}
+    for line in tree.splitlines():
+        package, separator, features = line.removesuffix(" (*)").partition("|")
+        if separator and package.split(" ", 1)[0] == name:
+            observed.setdefault(package, set()).add(frozenset(filter(None, features.split(","))))
+    conflicting = sorted(package for package, selections in observed.items() if len(selections) != 1)
+    if conflicting:
+        raise RuntimeError(f"cargo tree listed more than one feature set for {conflicting}")
+    return {package: next(iter(selections)) for package, selections in observed.items()}
+
+
+def shipped_example_tree_command(cargo: list[str]) -> list[str]:
+    """Return the `cargo tree` form of the matrix's shipped-feature example command."""
+    command = list(OUTBOUND_SHIPPED_EXAMPLE)
+    if command[:2] != ["cargo", "test"] or "--example" not in command:
+        raise RuntimeError(f"unexpected shipped-feature example command {command!r}")
+    example = command.index("--example")
+    del command[example:example + 2]
+    return cargo + ["tree"] + command[2:] + ["-e", "normal,dev"] + TREE_FEATURES
+
+
+def check_shipped_outbound_selection(cargo: list[str]) -> str:
+    """Require the shipped-feature example build to resolve reqwest as batter-outbound ships it.
+
+    `batter-outbound`'s own test builds compile reqwest's dev-only `gzip` and
+    `http2`. The matrix's `outbound-shipped-features` batch claims to execute
+    the shipped selection instead, which holds only while no dev-dependency of
+    package `batter` adds a reqwest feature.
+    """
+    shipped = tree_features(execute(
+        cargo + ["tree", "-p", "batter-outbound", "-e", "normal", "--locked"] + TREE_FEATURES, ROOT),
+        "reqwest")
+    if len(shipped) != 1:
+        raise RuntimeError(f"expected one reqwest in batter-outbound's normal graph, observed {sorted(shipped)}")
+    [(package, features)] = shipped.items()
+    built = tree_features(execute(shipped_example_tree_command(cargo), ROOT), "reqwest").get(package)
+    if built != features:
+        raise RuntimeError(
+            f"the outbound-shipped-features batch builds {package} with "
+            f"{sorted(built) if built is not None else 'no such package'}, "
+            f"not the shipped {sorted(features)}"
+        )
+    return f"{package} [{', '.join(sorted(features))}]"
 
 
 def run_positive_case(cargo: list[str], host: str, root_lock: bytes,
@@ -752,6 +809,8 @@ def main() -> int:
         f"cargo-lock-sha256={hashlib.sha256(root_lock).hexdigest()} target={target}",
         flush=True,
     )
+    shipped = check_shipped_outbound_selection(cargo)
+    print(f"facade outbound example: tests build {shipped}, the shipped selection", flush=True)
     with tempfile.TemporaryDirectory(prefix="batter-facade-features-") as directory:
         parent = Path(directory)
         for selected in feature_cases():

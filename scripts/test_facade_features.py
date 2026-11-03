@@ -100,5 +100,57 @@ sys.exit(101)
         self.assertEqual((facade.ROOT / "Cargo.lock").read_bytes(), root_lock)
 
 
+class ShippedOutboundSelectionTests(unittest.TestCase):
+    TREE = "\n".join([
+        "batter v0.0.1 (/workspace/crates/batter)|outbound",
+        "reqwest v0.13.5|__rustls,__tls,rustls-no-provider",
+        "reqwest v0.12.28|__rustls,rustls-tls-webpki-roots",
+        "reqwest v0.13.5|__rustls,__tls,rustls-no-provider (*)",
+        "reqwest-middleware v0.4.2|",
+    ])
+    SHIPPED = "reqwest v0.13.5|__rustls,__tls,rustls-no-provider"
+
+    def test_tree_features_map_each_version_and_ignore_other_packages(self):
+        self.assertEqual(facade.tree_features(self.TREE, "reqwest"), {
+            "reqwest v0.13.5": frozenset({"__rustls", "__tls", "rustls-no-provider"}),
+            "reqwest v0.12.28": frozenset({"__rustls", "rustls-tls-webpki-roots"}),
+        })
+
+    def test_tree_features_reject_two_selections_of_one_version(self):
+        with self.assertRaisesRegex(RuntimeError, "more than one feature set"):
+            facade.tree_features("reqwest v0.13.5|__tls\nreqwest v0.13.5|__tls,gzip", "reqwest")
+
+    def test_the_tree_command_keeps_the_batch_selection_without_its_example(self):
+        command = facade.shipped_example_tree_command(["cargo", "+toolchain"])
+        selection = [part for part in facade.OUTBOUND_SHIPPED_EXAMPLE[2:]
+                     if part not in ("--example", "outbound_exchange")]
+        self.assertEqual(command[:3], ["cargo", "+toolchain", "tree"])
+        self.assertEqual(command[3:3 + len(selection)], selection)
+        self.assertNotIn("--example", command)
+        self.assertEqual(command[command.index("-e") + 1], "normal,dev")
+
+    def test_an_example_build_with_another_reqwest_selection_is_rejected(self):
+        for built in ("reqwest v0.13.5|__rustls,__tls,gzip,http2,rustls-no-provider",
+                      "reqwest v0.12.28|__rustls,rustls-tls-webpki-roots"):
+            outputs = iter([self.SHIPPED, built])
+            with self.subTest(built=built), \
+                    patch.object(facade, "execute", side_effect=lambda command, cwd, **_: next(outputs)), \
+                    self.assertRaisesRegex(RuntimeError, "not the shipped"):
+                facade.check_shipped_outbound_selection(["cargo"])
+
+    def test_the_real_example_build_matches_and_the_package_test_build_does_not(self):
+        toolchain = os.environ.get("RUSTUP_TOOLCHAIN") or facade.execute(
+            ["rustup", "show", "active-toolchain"], facade.ROOT).split()[0]
+        cargo = ["cargo", "+" + toolchain]
+        self.assertIn("rustls-no-provider", facade.check_shipped_outbound_selection(cargo))
+        # Control: batter-outbound's own test build compiles the dev-only
+        # features, so the comparison distinguishes the two real graphs.
+        own = facade.tree_features(facade.execute(
+            cargo + ["tree", "-p", "batter-outbound", "-e", "normal,dev", "--locked"]
+            + facade.TREE_FEATURES, facade.ROOT), "reqwest")
+        self.assertEqual(len(own), 1)
+        self.assertLessEqual({"gzip", "http2"}, set(next(iter(own.values()))))
+
+
 if __name__ == "__main__":
     unittest.main()

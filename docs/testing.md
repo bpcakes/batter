@@ -879,7 +879,12 @@ feature cannot drop the bridge, and the identity fixture, the runner's only
 consumer that declares `batter-outbound` directly, returns the direct package's
 `Exchange` from that call. No external consumer builds `batter-outbound`
 without its bridge; the in-workspace `no-default-features` commands are that
-evidence.
+evidence. The runner also derives a `cargo tree` command from the matrix's
+`outbound-shipped-features` command and requires reqwest's features in that
+build to equal those of `batter-outbound`'s normal graph, so the batch keeps
+executing the shipped selection; its self-test checks that
+`batter-outbound`'s own test build, with `gzip` and `http2`, fails the
+comparison.
 It then runs the checked-completion and composed quota/SQLx handler
 consumers described at the top of this guide. It runs under the invoking
 toolchain and leaves the repository lock unchanged. The separate `scripts/check_runlimit_features.py` gate still covers

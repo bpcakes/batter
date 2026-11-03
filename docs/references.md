@@ -42,7 +42,11 @@ the facade example's tests.
   --no-default-features --features outbound -e features,normal,dev -i reqwest`
   lists `rustls-no-provider`, `__rustls` and `__tls`, without `gzip` or `http2`.
   It is the one verification command that executes the shipped feature set, for
-  the example's loopback exchanges.
+  the example's loopback exchanges. `scripts/check_facade_features.py` derives
+  that `cargo tree` form from the batch's own command and requires reqwest's
+  features there to equal those of `cargo tree -p batter-outbound -e normal`;
+  its self-test shows `batter-outbound`'s own test build, which adds `gzip` and
+  `http2`, failing that comparison.
 - The profile therefore sets its ALPN list itself, and keeps `http1_only()` and
   `retry::never()` as defence in depth.
 

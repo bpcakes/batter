@@ -570,16 +570,18 @@ owns.
     release on another rustls line would make `Client::new` return
     `ClientError::Build`, and reqwest documents no semver stability for that
     method's internals (source-inspected).
-- **Feature set under test.** Every outbound test that the verification matrix
-  executes builds with reqwest's `http2` and `gzip` features, which the
-  package's dev-dependencies compile, as an unrelated dependency could through
-  feature unification.
+- **Feature set under test.** Every build of the package's own tests compiles
+  reqwest's `http2` and `gzip` features through the package's
+  dev-dependencies, as an unrelated dependency could through feature
+  unification.
   - The ClientHello test shows the `http/1.1`-only ALPN offer, and the body and
     wire tests show undecoded gzip bytes and no `Accept-Encoding`.
   - The shipped feature set, `rustls-no-provider` alone, is compile-checked by
     verification and executed by the facade example's tests in the
-    `outbound-shipped-features` matrix batch; the package's own suites always
-    run with the dev-only features compiled.
+    `outbound-shipped-features` matrix batch. The facade feature runner
+    requires reqwest's features in that build to equal those of the package's
+    normal graph, so a dev-dependency that adds a reqwest feature fails
+    verification instead of silently changing what the batch executes.
   - brotli, zstd, deflate and hickory are not compiled here, so those overrides
     are source-inspected.
 - **Platform.** The package's tests have executed on Linux only. The CI
