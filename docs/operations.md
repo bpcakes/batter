@@ -107,7 +107,7 @@ Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a
 trusted sink with redaction.
 
-The outbound exchange (`batter::outbound`) adds no instrumentation of its own.
+The outbound exchange (`batter::outbound_http`) adds no instrumentation of its own.
 Record `Exchange::label()`, one of twelve stable values such as
 `not_dispatched.connect_failed`, `unknown.deadline` or
 `responded.body_too_large`, beside the application's own operation and provider

@@ -329,7 +329,7 @@ dependencies = [
  "batter-axum",
  "batter-core",
  "batter-otlp",
- "batter-outbound",
+ "batter-outbound-http",
  "batter-runledger",
  "batter-runlimit",
  "batter-sqlx",
@@ -464,7 +464,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "batter-outbound"
+name = "batter-outbound-http"
 version = "0.0.1"
 dependencies = [
  "batter-core",

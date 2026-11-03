@@ -1,5 +1,5 @@
 [package]
-name = "batter-outbound"
+name = "batter-outbound-http"
 description = "Send-once outbound HTTP exchange with exhaustive transport evidence"
 version = "0.0.1"
 edition.workspace = true
@@ -7,7 +7,7 @@ rust-version = "1.98.1"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation = "https://docs.rs/batter-outbound"
+documentation = "https://docs.rs/batter-outbound-http"
 publish = ["crates-io"]
 readme = "README.md"
 

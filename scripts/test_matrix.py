@@ -12,13 +12,13 @@ CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-feat
 FACADE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
 CORE_TESTS = ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"]
 # The standalone outbound leaf without its `operation` bridge, so without batter-core.
-OUTBOUND_CHECK = ["cargo", "check", "-p", "batter-outbound", "--lib", "--no-default-features", "--locked"]
-OUTBOUND_TESTS = ["cargo", "test", "-p", "batter-outbound", "--no-default-features", "--locked"]
-# Every batter-outbound test build also compiles its dev-only reqwest features
+OUTBOUND_CHECK = ["cargo", "check", "-p", "batter-outbound-http", "--lib", "--no-default-features", "--locked"]
+OUTBOUND_TESTS = ["cargo", "test", "-p", "batter-outbound-http", "--no-default-features", "--locked"]
+# Every batter-outbound-http test build also compiles its dev-only reqwest features
 # (gzip, http2). The facade example's tests do not activate those
 # dev-dependencies, so this executes the shipped reqwest feature selection.
 OUTBOUND_SHIPPED_EXAMPLE = ["cargo", "test", "-p", "batter", "--no-default-features", "--features",
-                            "outbound", "--example", "outbound_exchange", "--locked"]
+                            "outbound-http", "--example", "outbound_exchange", "--locked"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
 # A clean developer shell must not hide ambient-state dependencies in tests.
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",

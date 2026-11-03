@@ -130,7 +130,7 @@ declaration or `[patch]`; reachability moves no ownership. See the
 `crates/batter-at-rest` owns synchronous envelope encryption and stable MAC keys.
 It has explicit standalone metadata and carries its own copy of the workspace MIT license; the facade may
 only re-export its types behind the opt-in `at-rest` feature.
-`crates/batter-outbound` owns the send-once outbound provider HTTP exchange: the
+`crates/batter-outbound-http` owns the send-once outbound provider HTTP exchange: the
 one library-built `reqwest` client profile, validated origins and limits, request
 preparation and the exhaustive `Exchange` recording whether one attempt could
 have reached the peer. `src/client.rs` builds that profile's own rustls
@@ -143,8 +143,8 @@ classification; `src/operation.rs`, behind the opt-in `operation` feature,
 bridges `OperationContext` deadlines and cancellation, and that feature's
 `batter-core` is the package's only Batter dependency. Provider meaning, replay,
 idempotency keys, dispatch fences and reconciliation stay with the application.
-The facade may only re-export it as `batter::outbound` behind the opt-in
-`outbound` feature, which selects that bridge.
+The facade may only re-export it as `batter::outbound_http` behind the opt-in
+`outbound-http` feature, which selects that bridge.
 `crates/batter-core/src/lifecycle.rs` and `crates/batter-core/src/lifecycle/` own critical/finite process tasks, readiness
 acknowledgements, shutdown phases, and the separately driven completion report.
 `crates/batter-core/src/startup.rs` and `startup/` own initialization, failure cleanup
@@ -301,7 +301,7 @@ bracket helper that skips finalization when its outer future is cancelled.
 
 Applications -> batter facade or direct packages; operational adapters ->
 batter-core -> native ecosystem libraries. `batter-at-rest` remains a leaf and
-must not depend on the facade or core. `batter-outbound` is a leaf whose only
+must not depend on the facade or core. `batter-outbound-http` is a leaf whose only
 Batter dependency is `batter-core`, behind its opt-in `operation` feature; it
 must never depend on the facade. Runlimit, Runledger, and postgres-test-harness must not
 depend on the batter facade. Keep their own

@@ -2,7 +2,7 @@
 
 `batter` is the public facade for the native Tokio operational toolkit. It
 keeps the established `batter::...` foundation paths while optional at-rest,
-outbound, Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected
+outbound HTTP, Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected
 through additive facade features.
 
 The implementation of the foundation lives in [`batter-core`](../batter-core).
@@ -19,7 +19,7 @@ The default feature set is empty. The available feature/module pairs are:
 | `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity; [MIT-licensed dependency](../batter-at-rest/LICENSE) |
 | `axum` | `batter::axum` |
 | `metrics` | `batter::telemetry::metrics`: bounded foundation outcome metrics through the `metrics` facade; no recorder or exporter is installed |
-| `outbound` | `batter::outbound`, preserving direct `batter_outbound` type identity, with its `operation` bridge selected so `PreparedRequest::send_in` takes `batter::operation::OperationContext` |
+| `outbound-http` | `batter::outbound_http`, preserving direct `batter_outbound_http` type identity, with its `operation` bridge selected so `PreparedRequest::send_in` takes `batter::operation::OperationContext` |
 | `sqlx` | `batter::sqlx` |
 | `runledger` | `batter::runledger` and `batter::runledger::native::{core, postgres, runtime}`, plus the required `batter::sqlx` capability |
 | `runledger-test-support` | `batter::runledger::test_support`: drive one job handler without a worker, queue or database; and `batter::runledger::native::test_support`: test-only reachability for Runledger's own PostgreSQL support |
@@ -39,7 +39,7 @@ For example:
 batter = { path = "../batter", features = ["axum", "runlimit-axum"] }
 ```
 
-The facade selects namespaces; `batter-at-rest`, `batter-outbound`, native Axum, SQLx,
+The facade selects namespaces; `batter-at-rest`, `batter-outbound-http`, native Axum, SQLx,
 Runledger, Runlimit and the external PostgreSQL harness remain direct ecosystem
 dependencies with their existing ownership and configuration.
 
@@ -53,7 +53,7 @@ They are deliberately low-level and do not move ownership:
 native module documents the obligations its callers take on.
 
 The standalone encryption package can be selected directly as `batter-at-rest`,
-and the outbound exchange as `batter-outbound`, which depends on no Batter
+and the outbound exchange as `batter-outbound-http`, which depends on no Batter
 package unless its `operation` feature is selected; the facade always retains
 its normal `batter-core` dependency. Cargo unifies
 dependency features, so audit the final application's resolved graph. Feature
@@ -75,7 +75,7 @@ cargo run -p batter --example worker
 cargo run -p batter --example process_owned
 cargo run -p batter --example operation_budget
 cargo run -p batter --example finite_command
-cargo run -p batter --features outbound --example outbound_exchange
+cargo run -p batter --features outbound-http --example outbound_exchange
 ```
 
 Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed,

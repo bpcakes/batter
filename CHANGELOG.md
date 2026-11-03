@@ -9,10 +9,10 @@ contracts, capability facts and validation history.
 ## Unreleased
 
 - Send one outbound provider HTTP request with exhaustive transport evidence
-  through the new experimental package `batter-outbound` (`batter-3s1a`;
+  through the new experimental package `batter-outbound-http` (`batter-3s1a`;
   [ADR-015](docs/adr/015-outbound-transport-evidence.md);
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#outbound-exchange-assessment-batter-3s1a)),
-  also `batter::outbound` behind the facade's new opt-in `outbound` feature.
+  also `batter::outbound_http` behind the facade's new opt-in `outbound-http` feature.
   `Client::new(Origin, ConnectTimeout)` builds the only client profile: no
   redirects, proxy environment variables ignored (tested for `HTTP_PROXY` with a
   loopback origin), an ALPN list of `http/1.1` only, no response decompression
@@ -67,7 +67,7 @@ contracts, capability facts and validation history.
   Retry-After, dispatch fences and reconciliation stay with applications;
   HTTP/2, proxies, certificate pinning and operator-supplied destinations are
   unsupported. Without `operation` the package has no `batter-core` dependency.
-  Selecting the package, directly or through the facade's `outbound` feature,
+  Selecting the package, directly or through the facade's `outbound-http` feature,
   compiles reqwest's `rustls-no-provider` feature, rustls with *ring* and the
   platform verifier into the consumer, and no aws-lc-rs; the
   package neither installs nor needs a process-default crypto provider. Crates

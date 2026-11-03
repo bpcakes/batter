@@ -7,7 +7,7 @@
 #[path = "support/peer.rs"]
 mod peer;
 
-use batter_outbound::{
+use batter_outbound_http::{
     Body, BodyFailure, Exchange, RESERVE, Response,
     http::{Method, StatusCode},
 };

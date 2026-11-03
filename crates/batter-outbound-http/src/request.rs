@@ -126,7 +126,7 @@ impl RequestDraft {
     /// Validate and build the request. No connection is made.
     ///
     /// ```
-    /// use batter_outbound::{Client, ConnectTimeout, Origin, PrepareError, http::Method};
+    /// use batter_outbound_http::{Client, ConnectTimeout, Origin, PrepareError, http::Method};
     /// use std::time::Duration;
     ///
     /// let client = Client::new(
@@ -219,14 +219,14 @@ impl fmt::Debug for RequestDraft {
 /// every send visible in the application's own code.
 ///
 /// ```compile_fail,E0599
-/// # use batter_outbound::PreparedRequest;
+/// # use batter_outbound_http::PreparedRequest;
 /// fn twice(request: PreparedRequest) -> (PreparedRequest, PreparedRequest) {
 ///     (request.clone(), request)
 /// }
 /// ```
 ///
 /// ```compile_fail,E0382
-/// # use batter_outbound::{PreparedRequest, ResponseLimit};
+/// # use batter_outbound_http::{PreparedRequest, ResponseLimit};
 /// async fn twice(request: PreparedRequest, deadline: tokio::time::Instant, limit: ResponseLimit) {
 ///     let _first = request.send(deadline, limit).await;
 ///     let _second = request.send(deadline, limit).await;

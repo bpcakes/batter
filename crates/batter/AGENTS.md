@@ -16,7 +16,7 @@ Windows support and non-Unix fallbacks are out of scope.
 - `Cargo.toml` owns the feature contract, including the bridges that make every
   native Runledger and Runlimit library package reachable through one dependency.
 - `examples/` contains all facade-owned runnable consumers and their support,
-  including the optional Axum, SQLx, Runlimit and outbound demonstrations.
+  including the optional Axum, SQLx, Runlimit and outbound HTTP demonstrations.
 - `tests/native_transport_consumer.rs` executes the native Runlimit transport
   packages through facade paths and asserts their identity.
 - `tests/panic_hook_ownership.rs` scans every workspace library's production

@@ -17,7 +17,7 @@ use std::fmt;
 /// `Exchange::Unknown(..)`, the conservative outcome.
 ///
 /// ```compile_fail,E0451
-/// use batter_outbound::{Exchange, NotStarted, StartRefusal};
+/// use batter_outbound_http::{Exchange, NotStarted, StartRefusal};
 /// let forged = Exchange::NotStarted(NotStarted { reason: StartRefusal::Cancelled });
 /// ```
 #[must_use = "an exchange records whether the peer may have received the request"]

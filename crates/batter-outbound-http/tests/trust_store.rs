@@ -5,7 +5,7 @@
 //! on Linux follows `SSL_CERT_FILE` and `SSL_CERT_DIR`. The parent runs this
 //! test again in a child whose store is empty, so no other test sees it.
 
-use batter_outbound::{Client, ClientError, ConnectTimeout, Origin};
+use batter_outbound_http::{Client, ClientError, ConnectTimeout, Origin};
 use std::{net::SocketAddr, process::Command, time::Duration};
 
 const TEST: &str = "an_empty_trust_store_refuses_https_clients_but_not_loopback_ones";

@@ -13,7 +13,7 @@
 use batter::{
     BoxError,
     operation::{OperationContext, OperationError, OperationOwner},
-    outbound::{
+    outbound_http::{
         Body, Client, ConnectTimeout, Exchange, Origin, ResponseLimit,
         http::{HeaderName, HeaderValue, Method, StatusCode},
     },

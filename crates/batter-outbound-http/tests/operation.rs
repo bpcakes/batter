@@ -11,7 +11,7 @@
 mod peer;
 
 use batter_core::operation::{OperationOwner, RootDeadline};
-use batter_outbound::{
+use batter_outbound_http::{
     Body, BodyFailure, Exchange, MINIMUM_ATTEMPT, PreparedRequest, RESERVE, StartRefusal,
     UnknownReason,
     http::{Method, StatusCode},
