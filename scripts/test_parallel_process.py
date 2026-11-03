@@ -322,19 +322,30 @@ class MatrixTests(unittest.TestCase):
                          "sys.stdout.flush(); sys.stderr.write('failure details\\n'); "
                          "raise SystemExit(7)")
         stdout, stderr = io.StringIO(), io.StringIO()
+        launched = []
+
+        def stubs_only(commands, **kwargs):
+            # Only stubs may run: a real build's output depends on the Cargo
+            # cache and would make the size bound below environment-dependent.
+            self.assertTrue(all(peer[:2] == [sys.executable, "-c"] for peer in commands), commands)
+            launched.extend(commands)
+            return parallel.run_parallel(commands, **kwargs)
+
         with mock.patch.object(sys, "argv", ["test_matrix.py", "no-default-features"]), \
                 mock.patch.object(matrix, "CORE_CHECK", command), \
-                mock.patch.object(matrix, "FACADE_CHECK", python("print('peer completed')")), \
+                mock.patch.object(matrix, "FACADE_CHECK", python("print('facade peer completed')")), \
                 mock.patch.object(matrix, "CORE_TESTS", python("print('tests peer completed')")), \
+                mock.patch.object(matrix, "OUTBOUND_CHECK", python("print('outbound peer completed')")), \
+                mock.patch.object(matrix, "run_parallel", stubs_only), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             self.assertEqual(matrix.main(), 1)
+        self.assertIn(command, launched)
         rendered = stdout.getvalue()
-        self.assertIn("BUILD_START\n", rendered)
-        self.assertIn("FINAL_TEST_FAILURE\n", rendered)
-        self.assertIn("failure details\n", rendered)
-        self.assertIn("peer completed\n", rendered)
-        self.assertIn("tests peer completed\n", rendered)
-        self.assertIn(parallel.Capture.OMITTED.decode(), rendered)
+        for marker in ("BUILD_START\n", "FINAL_TEST_FAILURE\n", "failure details\n",
+                       "facade peer completed\n", "tests peer completed\n",
+                       "outbound peer completed\n", parallel.Capture.OMITTED.decode()):
+            # A short message: assertIn would print the whole 8 MiB rendering.
+            self.assertTrue(marker in rendered, marker)
         self.assertIn('"overflow": true', stderr.getvalue())
         self.assertIn('"status": 7', stderr.getvalue())
         self.assertLess(len(rendered), 8 * 1024 * 1024 + 1024)

@@ -142,6 +142,11 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
         toolchain = os.environ.get("RUSTUP_TOOLCHAIN") or facade.execute(
             ["rustup", "show", "active-toolchain"], facade.ROOT).split()[0]
         cargo = ["cargo", "+" + toolchain]
+        # main() resolves the graph online before this offline check; do the
+        # same, so the test does not rely on an earlier test filling the cache.
+        host = facade.execute(["rustc", "+" + toolchain, "--print", "host-tuple"], facade.ROOT).strip()
+        facade.execute(cargo + ["metadata", "--format-version", "1", "--filter-platform", host,
+                                "--all-features", "--locked"], facade.ROOT)
         self.assertIn("rustls-no-provider", facade.check_shipped_outbound_selection(cargo))
         # Control: batter-outbound's own test build compiles the dev-only
         # features, so the comparison distinguishes the two real graphs.

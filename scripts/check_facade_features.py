@@ -326,7 +326,9 @@ def check_shipped_outbound_selection(cargo: list[str]) -> str:
     `batter-outbound`'s own test builds compile reqwest's dev-only `gzip` and
     `http2`. The matrix's `outbound-shipped-features` batch claims to execute
     the shipped selection instead, which holds only while no dev-dependency of
-    package `batter` adds a reqwest feature.
+    package `batter` adds a reqwest feature. Like the consumer cases, it runs
+    offline, so the caller must have resolved the graph online first, as
+    `main()` does.
     """
     shipped = tree_features(execute(
         cargo + ["tree", "-p", "batter-outbound", "-e", "normal", "--locked"] + TREE_FEATURES, ROOT),
