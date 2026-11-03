@@ -328,7 +328,8 @@ hyper-util through `tracing`. hyper 1.11.1 is built without its `tracing`
 feature and rustls 0.23.46 without `logging`, so neither emits events. An event
 reaches output only through a logger or subscriber the application installs,
 and that configuration owns its filtering; the targets begin with `reqwest`,
-`hyper_util` and `rustls_platform_verifier`. The events below name the
+`hyper_util` and `rustls_platform_verifier`, and with `rustls` when another
+crate enables rustls's `logging` feature (the last item). The events below name the
 destination, a socket address, certificate names or an error description. None
 formats a request path, query, header value or body on the package's path; the
 items note the events that could and why the package never reaches them.
@@ -363,6 +364,19 @@ items note the events that could and why the package never reaches them.
   the number loaded at debug level (109). Its `cert-logging` feature, which would
   log each end-entity certificate at debug level (`src/verification/mod.rs:51-61`),
   is not enabled.
+- rustls 0.23.46 emits no events in this repository's graphs: `cargo tree
+  --workspace --all-features -e features,normal,dev -i rustls@0.23.46` lists no
+  `logging` feature. `logging` is one of rustls's default features
+  (`Cargo.toml` `[features] default`), and the locked tokio-rustls 0.26.5 and
+  hyper-rustls 0.27.9 enable it by default (`logging = ["rustls/logging"]`), so
+  another crate in an application's graph commonly turns it on through feature
+  unification. rustls then logs, under the `rustls` target, `No cached session
+  for {server_name:?}` (`src/client/hs.rs:1151`) and `Server DNS name is {:?}`
+  (`src/client/tls12.rs:857`) at debug level, and the ClientHello with its
+  server name (`hs.rs:492`), the ServerHello (`hs.rs:693`) and the server
+  certificate chain (`src/client/tls12.rs:856`, `src/client/tls13.rs:1178`) at
+  trace level. TLS carries the HTTP request encrypted, so none of these events
+  holds a path, query, header value or body.
 
 Standards:
 

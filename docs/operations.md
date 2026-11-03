@@ -121,10 +121,13 @@ dependencies do log destination identities: reqwest the host at debug level,
 hyper-util the origin's authority and the socket addresses it connects to at
 debug and trace level, and rustls-platform-verifier a failed certificate
 verification at error level, with the expected and presented names for a name
-mismatch. None of them carries an exchange's path, query, header value or
-body. Filter the `reqwest`, `hyper_util` and `rustls_platform_verifier`
-targets in the application's logger or subscriber when destination names must
-stay out of logs; the
+mismatch. When another crate in the application's graph enables rustls's
+`logging` feature, a default of rustls, tokio-rustls and hyper-rustls, rustls
+also logs the server name at debug level and the ClientHello and the server
+certificate chain at trace level. None of them carries an exchange's path,
+query, header value or body. Filter the `reqwest`, `hyper_util`,
+`rustls_platform_verifier` and `rustls` targets in the application's logger or
+subscriber when destination names must stay out of logs; the
 [references](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
 cite each event.
 

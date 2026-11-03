@@ -2191,9 +2191,13 @@ What remains is kept explicit (question 5):
     origin's authority and the socket addresses it connects to at debug and
     trace level, and rustls-platform-verifier logs a failed certificate
     verification at error level, with the expected and presented names for a
-    name mismatch. None of them carries an exchange's path, query, header
-    value or body. They appear only through a logger or subscriber the application
-    installs, so filtering them is that configuration's job; a library cannot
+    name mismatch. When another crate in the application's graph enables
+    rustls's `logging` feature, a default of rustls, tokio-rustls and
+    hyper-rustls, rustls also logs the server name at debug level and the
+    ClientHello and the server certificate chain at trace level. None of them
+    carries an exchange's path, query, header value or body. They appear only
+    through a logger or subscriber the application installs, so filtering them
+    is that configuration's job; a library cannot
     filter a global logger it does not own (source-inspected; see the
     [references](../references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)).
 - **Unverifiable remote effect.** Whether the provider processed a request that

@@ -267,10 +267,14 @@ interpretation before it means accepted, refused or retryable.
   origin's authority and each socket address it connects to at debug and trace
   level, and rustls-platform-verifier logs a failed certificate verification
   at error level, including the expected and presented names for a name
-  mismatch. None of them carries an exchange's path, query, header value or
+  mismatch. When another crate in the application's graph enables rustls's
+  `logging` feature, which rustls, tokio-rustls and hyper-rustls enable by
+  default, rustls also logs the server name at debug level and the
+  ClientHello, with its server name, and the server certificate chain at trace
+  level. None of them carries an exchange's path, query, header value or
   body. They appear only through a logger or subscriber the application
-  installs; filter the `reqwest`, `hyper_util` and `rustls_platform_verifier`
-  targets there. The
+  installs; filter the `reqwest`, `hyper_util`, `rustls_platform_verifier` and
+  `rustls` targets there. The
   [references](../../docs/references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
   cite each event.
 - Each exchange covers one request. Whether an earlier request of the same

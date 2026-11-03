@@ -31,9 +31,13 @@ but its dependencies log destination identities (source-inspected): reqwest the
 host at debug level, hyper-util the origin's authority and the socket addresses
 it connects to at debug and trace level, and rustls-platform-verifier a failed
 certificate verification at error level, with the expected and presented names
-for a name mismatch. None of them carries an exchange's path, query, header
-value or body. The application's logger or subscriber configuration owns filtering the
-`reqwest`, `hyper_util` and `rustls_platform_verifier` targets. No test
+for a name mismatch. When another crate in the application's graph enables
+rustls's `logging` feature, a default of rustls, tokio-rustls and
+hyper-rustls, rustls also logs the server name at debug level and the
+ClientHello and the server certificate chain at trace level. None of them
+carries an exchange's path, query, header value or body. The application's
+logger or subscriber configuration owns filtering the `reqwest`,
+`hyper_util`, `rustls_platform_verifier` and `rustls` targets. No test
 verifies a certificate, and nothing has executed on macOS.
 
 Bulkhead does not bound its waiter count or request memory. HTTP deadlines stop

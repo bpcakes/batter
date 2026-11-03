@@ -123,10 +123,13 @@
 //!   hyper-util logs the origin's authority and each socket address it
 //!   connects to at debug and trace level, and rustls-platform-verifier logs a
 //!   failed certificate verification at error level, with the expected and
-//!   presented names for a name mismatch. None of them carries an exchange's
-//!   path, query, header value or body (source-inspected). They appear only
-//!   through a logger or subscriber the application installs, whose
-//!   configuration owns their filtering.
+//!   presented names for a name mismatch. When another crate in the
+//!   application enables rustls's `logging` feature, a default of rustls,
+//!   tokio-rustls and hyper-rustls, rustls also logs the server name at debug
+//!   level and the ClientHello and the server certificate chain at trace
+//!   level. None of them carries an exchange's path, query, header value or
+//!   body (source-inspected). They appear only through a logger or subscriber
+//!   the application installs, whose configuration owns their filtering.
 //! - HTTP/2, request signing, token acquisition, proxies and operator-supplied
 //!   destinations are not supported. Unix only.
 

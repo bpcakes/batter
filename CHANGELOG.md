@@ -55,9 +55,10 @@ contracts, capability facts and validation history.
   reasons come only from that timer; `RESERVE` is not a recording budget. No
   `Debug` or `Display` output includes a URL, query, header value or body, and
   the package adds no instrumentation of its own; the `log` and `tracing`
-  events of reqwest, hyper-util and rustls-platform-verifier can name the
-  destination host, socket addresses and certificate names, and the
-  application's logger filters them. `NotDispatched` rests on reqwest and hyper-util
+  events of reqwest, hyper-util and rustls-platform-verifier, and rustls's own
+  when another crate enables its `logging` feature, can name the destination
+  host, socket addresses and certificate names, and the application's logger
+  filters them. `NotDispatched` rests on reqwest and hyper-util
   implementation behaviour. The fault tests ran against the versions this
   repository's lockfile resolves (reqwest 0.13.5, hyper 1.11.1, hyper-util
   0.1.20), and only on Linux; the manifest requires reqwest `^0.13.5` and does
