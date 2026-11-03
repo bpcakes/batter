@@ -11,7 +11,7 @@ Fast jump index for agent-facing guidance in this repository.
 - [Batter facade](./crates/batter/AGENTS.md): public re-exports, feature namespaces, and foundation examples.
 - [OTLP metrics](./crates/batter-otlp/AGENTS.md): explicit bounded export through protected service completion.
 - [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.98.1 portability, and detached MIT license metadata.
-- [Outbound exchange](./crates/batter-outbound/AGENTS.md): standalone send-once
+- [Outbound exchange](./crates/batter-outbound-http/AGENTS.md): standalone send-once
   provider HTTP exchange, the fixed client profile with its own *ring* rustls
   configuration, transport classification and its upstream evidence for the
   lockfile-resolved reqwest, hyper and hyper-util versions, and the opt-in

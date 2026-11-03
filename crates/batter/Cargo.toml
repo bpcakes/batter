@@ -22,7 +22,7 @@ axum = ["dep:batter-axum"]
 metrics = ["batter-core/metrics"]
 otlp = ["dep:batter-otlp", "metrics"]
 # The standalone outbound exchange with its OperationContext bridge selected.
-outbound = ["dep:batter-outbound", "batter-outbound/operation"]
+outbound-http = ["dep:batter-outbound-http", "batter-outbound-http/operation"]
 sqlx = ["dep:batter-sqlx"]
 runledger = ["dep:batter-runledger", "sqlx"]
 runledger-test-support = ["runledger", "batter-runledger/test-support"]
@@ -41,7 +41,7 @@ sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 batter-otlp = { workspace = true, optional = true }
 batter-core = { path = "../batter-core", version = "0.0.1", default-features = false }
 batter-at-rest = { workspace = true, optional = true }
-batter-outbound = { workspace = true, optional = true }
+batter-outbound-http = { workspace = true, optional = true }
 batter-axum = { workspace = true, optional = true }
 batter-sqlx = { workspace = true, optional = true }
 batter-runledger = { workspace = true, optional = true }
@@ -106,7 +106,7 @@ required-features = ["runlimit-memory", "runlimit-axum"]
 [[example]]
 name = "outbound_exchange"
 test = true
-required-features = ["outbound"]
+required-features = ["outbound-http"]
 
 [[test]]
 name = "composed_handler_consumer"

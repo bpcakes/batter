@@ -10,7 +10,7 @@
 //! a client can reach only the peer it was built for, even when many test
 //! processes bind ports at once.
 
-use batter_outbound::{Client, ConnectTimeout, Origin, RESERVE, ResponseLimit};
+use batter_outbound_http::{Client, ConnectTimeout, Origin, RESERVE, ResponseLimit};
 use std::{fmt, net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

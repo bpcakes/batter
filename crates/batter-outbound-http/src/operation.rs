@@ -27,7 +27,7 @@ impl PreparedRequest {
     /// application wrote before sending is what remains held.
     ///
     /// ```no_run
-    /// use batter_outbound::{Client, ConnectTimeout, Origin, ResponseLimit, http::Method};
+    /// use batter_outbound_http::{Client, ConnectTimeout, Origin, ResponseLimit, http::Method};
     /// use batter_core::operation::OperationOwner;
     /// use std::time::Duration;
     ///

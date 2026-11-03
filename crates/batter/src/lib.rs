@@ -5,7 +5,7 @@
 //! adapter namespaces without changing native ownership.
 //!
 //! The default feature set is empty. Enable only the namespaces an application
-//! uses: `at-rest`, `axum`, `metrics`, `otlp`, `outbound`, `sqlx`, `runledger`, `runlimit`,
+//! uses: `at-rest`, `axum`, `metrics`, `otlp`, `outbound-http`, `sqlx`, `runledger`, `runlimit`,
 //! `test-support`, or the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
 //! `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
 //! `runledger-test-support`, and `sqlx-test-support`.
@@ -36,7 +36,7 @@
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
 //! | Synchronous CPU work or blocking I/O under a concurrency bound | [`admission::Bulkhead::run_blocking`] with the caller's context, matching its exhaustive [`admission::BlockingError`] in separate arms | [`admission::Bulkhead::enter`] with its permit moved into `tokio::task::spawn_blocking` by hand, a permit held by the awaiting future, or unbounded `spawn_blocking` |
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
-//! | A provider HTTP call | `outbound::Client::new` with a validated `outbound::Origin` and `outbound::ConnectTimeout`, built once and cloned; `client.request(method, path_segments)` with its headers and body, then `prepare()?`, which reports every construction error before anything is sent; `PreparedRequest::send_in` with the work phase of `reserve_finalization` after the application's dispatch fence is written, so the outcome can be recorded in the finalization phase unless the parent is cancelled; then an exhaustive `outbound::Exchange` match with no wildcard arm, where only `NotStarted` and `NotDispatched` (`proves_unsent`) show that this attempt wrote nothing and what a `Responded` status means is the application's reading of its provider (feature `outbound`) | a hand-built `reqwest` client, whose default redirects and replays make a connect error no proof that nothing was sent; retrying `Unknown` as though nothing was sent; reading `Responded` as processed, accepted or refused by the provider, when a load balancer or proxy may have answered; wrapping `send_in` in `run`, `retry`, `timeout` or `select!`, whose interruption drops the exchange and proves nothing |
+//! | A provider HTTP call | `outbound_http::Client::new` with a validated `outbound_http::Origin` and `outbound_http::ConnectTimeout`, built once and cloned; `client.request(method, path_segments)` with its headers and body, then `prepare()?`, which reports every construction error before anything is sent; `PreparedRequest::send_in` with the work phase of `reserve_finalization` after the application's dispatch fence is written, so the outcome can be recorded in the finalization phase unless the parent is cancelled; then an exhaustive `outbound_http::Exchange` match with no wildcard arm, where only `NotStarted` and `NotDispatched` (`proves_unsent`) show that this attempt wrote nothing and what a `Responded` status means is the application's reading of its provider (feature `outbound-http`) | a hand-built `reqwest` client, whose default redirects and replays make a connect error no proof that nothing was sent; retrying `Unknown` as though nothing was sent; reading `Responded` as processed, accepted or refused by the provider, when a load balancer or proxy may have answered; wrapping `send_in` in `run`, `retry`, `timeout` or `select!`, whose interruption drops the exchange and proves nothing |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
 //! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
 //!
@@ -103,9 +103,9 @@ pub mod at_rest {
 
 /// Send-once outbound provider HTTP exchange with exhaustive transport evidence.
 ///
-/// Enabled by the `outbound` feature, which also selects the package's
+/// Enabled by the `outbound-http` feature, which also selects the package's
 /// `operation` bridge. The implementation remains the standalone
-/// [`batter_outbound`] package, whose documentation holds the full contract,
+/// [`batter_outbound_http`] package, whose documentation holds the full contract,
 /// and every item has the same type identity through the direct and facade
 /// paths. Send with `PreparedRequest::send_in` under the work phase of a
 /// context whose finalization is reserved; only `NotStarted` and
@@ -113,7 +113,7 @@ pub mod at_rest {
 /// `outbound_exchange` example is the consumer contract.
 ///
 /// ```no_run
-/// use batter::outbound::{Client, ConnectTimeout, Origin, ResponseLimit, http::Method};
+/// use batter::outbound_http::{Client, ConnectTimeout, Origin, ResponseLimit, http::Method};
 /// use std::time::Duration;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -131,9 +131,9 @@ pub mod at_rest {
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "outbound")]
-pub mod outbound {
-    pub use batter_outbound::*;
+#[cfg(feature = "outbound-http")]
+pub mod outbound_http {
+    pub use batter_outbound_http::*;
 }
 
 /// Axum request, browser, readiness, and serving boundaries.

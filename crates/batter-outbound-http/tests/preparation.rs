@@ -3,7 +3,7 @@
 //! Nothing here connects: every refusal is reported by a constructor or by
 //! `RequestDraft::prepare`.
 
-use batter_outbound::{
+use batter_outbound_http::{
     Client, ConnectTimeout, LimitError, Origin, OriginError, PrepareError, RequestDraft,
     ResponseLimit,
     http::{HeaderName, HeaderValue, Method, header},

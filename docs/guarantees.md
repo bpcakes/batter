@@ -10,7 +10,7 @@ planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
 macOS arm64 have execution evidence on both supported toolchains, including
 focused hosted macOS jobs before `batter-f0jz`; regular hosted macOS CI now uses
 the pinned toolchain. Other Unix targets remain unverified. See
-[ADR-007](adr/007-unix-platform-scope.md). `batter-outbound` postdates that
+[ADR-007](adr/007-unix-platform-scope.md). `batter-outbound-http` postdates that
 evidence and has executed on Linux only; see
 [its contract](#outbound-provider-exchange).
 
@@ -274,18 +274,18 @@ protocol. Choose one retry owner so nested budgets do not multiply attempts.
 
 ## Outbound provider exchange
 
-`batter-outbound` (`batter-3s1a`, [ADR-015](adr/015-outbound-transport-evidence.md);
-also `batter::outbound` behind the facade's `outbound` feature) is an
+`batter-outbound-http` (`batter-3s1a`, [ADR-015](adr/015-outbound-transport-evidence.md);
+also `batter::outbound_http` behind the facade's `outbound-http` feature) is an
 experimental standalone package that owns one question for one HTTP request:
 could this attempt have reached the peer? Its evidence comes from the loopback
-suites [preparation](../crates/batter-outbound/tests/preparation.rs),
-[before_head](../crates/batter-outbound/tests/before_head.rs),
-[body](../crates/batter-outbound/tests/body.rs),
-[operation](../crates/batter-outbound/tests/operation.rs) (feature `operation`),
-[wire](../crates/batter-outbound/tests/wire.rs),
-[redaction](../crates/batter-outbound/tests/redaction.rs),
-[tls_hello](../crates/batter-outbound/tests/tls_hello.rs) and
-[trust_store](../crates/batter-outbound/tests/trust_store.rs) (Linux only), from a
+suites [preparation](../crates/batter-outbound-http/tests/preparation.rs),
+[before_head](../crates/batter-outbound-http/tests/before_head.rs),
+[body](../crates/batter-outbound-http/tests/body.rs),
+[operation](../crates/batter-outbound-http/tests/operation.rs) (feature `operation`),
+[wire](../crates/batter-outbound-http/tests/wire.rs),
+[redaction](../crates/batter-outbound-http/tests/redaction.rs),
+[tls_hello](../crates/batter-outbound-http/tests/tls_hello.rs) and
+[trust_store](../crates/batter-outbound-http/tests/trust_store.rs) (Linux only), from a
 unit test and doctests in the package's sources, and from the facade's
 [`outbound_exchange` example tests](../crates/batter/examples/outbound_exchange/tests.rs);
 each test named below belongs to one of them. The fault tests read what a

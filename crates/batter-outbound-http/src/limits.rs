@@ -17,7 +17,7 @@ impl ResponseLimit {
     /// Accept a limit from one byte to [`ResponseLimit::MAX_BYTES`].
     ///
     /// ```
-    /// use batter_outbound::{LimitError, ResponseLimit};
+    /// use batter_outbound_http::{LimitError, ResponseLimit};
     ///
     /// assert_eq!(ResponseLimit::new(64 * 1024).unwrap().bytes(), 65_536);
     /// assert_eq!(ResponseLimit::new(0), Err(LimitError::Zero));
@@ -58,7 +58,7 @@ impl ConnectTimeout {
     /// Accept a timeout above zero and at most [`ConnectTimeout::MAX`].
     ///
     /// ```
-    /// use batter_outbound::{ConnectTimeout, LimitError};
+    /// use batter_outbound_http::{ConnectTimeout, LimitError};
     /// use std::time::Duration;
     ///
     /// assert!(ConnectTimeout::new(Duration::from_secs(5)).is_ok());

@@ -4,11 +4,17 @@
 
 Accepted, 2026-11-02. Owning Bead: `batter-3s1a`. The repository owner approved
 the assessment before this record was written and asked for its
-implementation. It adds the standalone package `batter-outbound` and the
-facade's opt-in `outbound` feature. This is a focused experimental extraction
+implementation. It adds the standalone package `batter-outbound-http` and the
+facade's opt-in `outbound-http` feature. This is a focused experimental extraction
 under [ADR-014](014-reuse-after-two-consumers.md#stable-adapter-promotion)
 track 1, not a stable promotion. It does not reopen the provider adapters or
 the generic provider interface that ADR-014 rejected.
+
+Naming amendment, 2026-11-03 (`batter-r2kc`): before any release, the package
+was renamed from `batter-outbound`, the facade feature from `outbound` and the
+facade module from `batter::outbound`, so the name states that it is HTTP and
+does not suggest an outbox or a retrying delivery layer. No released name
+changed, so no `Breaking:` entry, `Migration:` note or deprecation shim applies.
 
 ## Context
 
@@ -183,7 +189,7 @@ This package does not support HTTP/2.
 
 ## Decision
 
-Batter adds `batter-outbound`. It owns one question for one HTTP request,
+Batter adds `batter-outbound-http`. It owns one question for one HTTP request,
 whether this attempt could have reached the peer, and nothing above it. The
 following stay with applications or provider crates:
 
@@ -204,8 +210,8 @@ that does not use Batter's runtime can still use it.
 - The opt-in `operation` feature adds
   `PreparedRequest::send_in(&OperationContext, ResponseLimit)` and depends on
   `batter-core`.
-- The facade re-exports the package as `batter::outbound` behind its opt-in
-  `outbound` feature, which enables `operation`.
+- The facade re-exports the package as `batter::outbound_http` behind its opt-in
+  `outbound-http` feature, which enables `operation`.
 - reqwest 0.13.5 is built without default features and with
   `rustls-no-provider`, so it compiles no crypto provider of its own. The
   package builds its own rustls 0.23 `ClientConfig` and hands it to reqwest
@@ -225,7 +231,7 @@ that does not use Batter's runtime can still use it.
   cannot switch the backend either: reqwest selects rustls for a
   preconfigured rustls configuration even when another crate compiles its
   native-tls support (source-inspected).
-- The public API uses `http` 1.x types, re-exported as `batter_outbound::http`,
+- The public API uses `http` 1.x types, re-exported as `batter_outbound_http::http`,
   and `Bytes`. No reqwest type is public.
 
 ### Client profile

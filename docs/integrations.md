@@ -1,7 +1,7 @@
 # Integration ownership contracts
 
 The `batter-axum`, `batter-sqlx`, `batter-runledger`, `batter-runlimit` and
-`batter-otlp` adapters, the experimental `batter-outbound` exchange, native SQLx
+`batter-otlp` adapters, the experimental `batter-outbound-http` exchange, native SQLx
 lifecycle example and unpublished reference command package exist in this snapshot. The latter
 composes pinned native upstream APIs in an atomic producer and explicit live probes; see the
 [compatibility manifest](reference-compatibility.md).
@@ -24,7 +24,7 @@ integration namespaces explicitly:
 | `axum` | `batter::axum` | `batter-axum` |
 | `metrics` | `batter::telemetry::metrics` | Core bounded metric recording |
 | `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
-| `outbound` | `batter::outbound` | Experimental `batter-outbound` with its `operation` bridge (`send_in`) |
+| `outbound-http` | `batter::outbound_http` | Experimental `batter-outbound-http` with its `operation` bridge (`send_in`) |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
 | `runledger` | `batter::runledger`, `batter::runledger::native::{core, postgres, runtime}`, `batter::sqlx` | `batter-runledger`, `batter-sqlx`, the three native Runledger libraries |
 | `runledger-test-support` | `batter::runledger::test_support`, `batter::runledger::native::test_support` | `runledger`, the adapter's worker-free handler drive, plus Runledger's own PostgreSQL test support |
@@ -67,11 +67,11 @@ selected through the facade. Cargo feature unification means applications must i
 resolved graph; facade feature checks do not establish a security boundary.
 See the leaf's [integration obligations](../crates/batter-at-rest/README.md#security-and-lifecycle-boundary)
 for authoritative context, bounded work, and fenced rotation persistence.
-`outbound` re-exports the standalone `batter-outbound` package and enables its
+`outbound-http` re-exports the standalone `batter-outbound-http` package and enables its
 `operation` feature, so `PreparedRequest::send_in` takes an `OperationContext`.
 It also adds the package's client TLS stack to the application's graph: rustls
 with the *ring* provider and the operating system's certificate verifier.
-Direct `batter_outbound` use with default features selects no `batter-core`; see
+Direct `batter_outbound_http` use with default features selects no `batter-core`; see
 the [outbound adoption contract](#outbound-provider-exchange-experimental-transport-evidence).
 `runlimit-memory` and
 `runlimit-postgres` forward the existing native
@@ -307,7 +307,7 @@ TLS listener serves the same assembled boundary through the same lifecycle. The
 listener keeps binding, certificates, protocol versions, ALPN, client-certificate
 rules, handshake concurrency and accept retry. Batter adds no serving TLS
 dependency and installs no crypto provider; the client TLS stacks of
-`batter-outbound` and `batter-otlp`'s exporter configure no listener. Drain
+`batter-outbound-http` and `batter-otlp`'s exporter configure no listener. Drain
 destroys the accept in progress, including a handshake
 awaited inside it, and releases the listener before awaiting connection
 completion. A listener that spawns handshakes instead of polling them inside
@@ -1167,7 +1167,7 @@ and [primary sources](references.md#reference-metrics-export).
 
 ## Outbound provider exchange: experimental transport evidence
 
-The experimental `batter-outbound` package (`batter-3s1a`) owns one question
+The experimental `batter-outbound-http` package (`batter-3s1a`) owns one question
 about an outbound HTTP request: could this attempt have reached the peer?
 [ADR-015](adr/015-outbound-transport-evidence.md) records the decision. It is
 not a provider adapter: ADR-014's rejection of provider adapters and of a
@@ -1270,19 +1270,19 @@ Durable retries keep Runledger's policy; a handler passes a context derived
 from `batter_runledger::job_phases` to `send_in`. Neither the retry nor the
 Runledger composition is exercised by a test in this repository.
 
-With default features, `batter-outbound` has no Batter runtime dependency, so a
+With default features, `batter-outbound-http` has no Batter runtime dependency, so a
 provider crate that must stay free of `batter-core` calls
 `send(deadline, limit)` with a `tokio::time::Instant`. Its only cancellation is
 dropping the future, which produces no outcome and counts as `Unknown`; the
 application root passes `context.deadline()` from its own `OperationContext`.
 Either path must run inside a Tokio runtime with its time driver enabled.
-An application on the facade selects feature `outbound`, which enables
+An application on the facade selects feature `outbound-http`, which enables
 `operation`, and calls `send_in(&context, limit)`: a cancelled context returns
 `NotStarted(Cancelled)` before anything starts, and later cancellation returns
 `Unknown(Cancelled)` or `Body::Failed(Cancelled)`. Both paths return one type:
 the facade feature runner compiles the facade's `Exchange`, `PreparedRequest`
 and `http::StatusCode` as the direct package's, compiles `send_in` with the
-`outbound` feature alone, and requires `batter::outbound` to be absent without
+`outbound-http` feature alone, and requires `batter::outbound_http` to be absent without
 it. A crate whose policy forbids every Batter-named dependency, as Consumer B's
 provider crates do, can adopt neither path; the survey counts it as evidence of
 need, not as an adopter.
@@ -1324,7 +1324,7 @@ does not constrain hyper or hyper-util:
 | hyper-util | 0.1.20 locked; not constrained, and reqwest 0.13.5 admits 0.1.12 and later | The connect error kind, the pool and its resend of a request that was never written |
 | hyper | 1.11.1 locked; not constrained, and reqwest 0.13.5 admits 1.1 and later | HTTP/1.1 connections and requests handed back unsent |
 | url | 2.5.8 | Segment encoding, dot-segment handling and the removal of tab, line feed and carriage return |
-| http, bytes | 1.x, re-exported as `batter_outbound::http` and `batter_outbound::Bytes` | Method, status, header and body types, and the `http::Uri` check before an exchange exists |
+| http, bytes | 1.x, re-exported as `batter_outbound_http::http` and `batter_outbound_http::Bytes` | Method, status, header and body types, and the `http::Uri` check before an exchange exists |
 
 Use the re-exported `http` and `Bytes` so that application and package types
 match. The classification was verified only against the locked versions. An

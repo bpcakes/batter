@@ -629,7 +629,7 @@ accept, certificate and key selection, protocol versions, ALPN,
 client-certificate rules and handshake concurrency are the listener's own policy;
 Batter installs no process-default crypto provider and takes no serving TLS
 dependency outside test material. Outside test material, the only TLS
-dependencies of its libraries are client-side, in `batter-outbound` and in
+dependencies of its libraries are client-side, in `batter-outbound-http` and in
 `batter-otlp`'s exporter transport, and they configure no listener. A listener
 that spawns handshakes onto the runtime instead of polling
 them inside `accept` creates detached descendants, exactly like Axum's own
@@ -1946,7 +1946,7 @@ The canonical path has four steps:
    work phase of `reserve_finalization` instead, and the outcome is recorded
    in `phases.finalization()`.
 
-The facade reaches it as `batter::outbound` behind its opt-in `outbound`
+The facade reaches it as `batter::outbound_http` behind its opt-in `outbound-http`
 feature. The runnable `outbound_exchange` facade example shows the intended
 composition:
 
@@ -2254,7 +2254,7 @@ Two orderings matter for the start gate and the ready-result precedence:
   A ready non-empty body chunk tying with the timer or cancellation is
   untested, so review still guards that case.
 
-The [`before_head`](../../crates/batter-outbound/tests/before_head.rs) target
+The [`before_head`](../../crates/batter-outbound-http/tests/before_head.rs) target
 pins the outcomes before a head against a loopback fault peer that counts
 connections and requests:
 
@@ -2271,7 +2271,7 @@ connections and requests:
 - `malformed_or_truncated_head_is_unknown`
 - `silent_peer_is_unknown_within_the_reserve`
 
-The [`body`](../../crates/batter-outbound/tests/body.rs) target pins the kept
+The [`body`](../../crates/batter-outbound-http/tests/body.rs) target pins the kept
 status, the sensitive headers, the one deadline over head and body, and the
 declared and streamed limits:
 
@@ -2288,7 +2288,7 @@ declared and streamed limits:
 - `an_undelimited_body_ends_at_connection_close`
 - `encoded_body_is_returned_as_received_bytes`
 
-The [`wire`](../../crates/batter-outbound/tests/wire.rs) target reads the raw
+The [`wire`](../../crates/batter-outbound-http/tests/wire.rs) target reads the raw
 request the peer received:
 
 - `requests_arrive_as_http1_origin_form_without_referer_or_accept_encoding`
@@ -2304,7 +2304,7 @@ request the peer received:
   `HTTP_PROXY` and `http_proxy` and uses a default reqwest client as the
   control
 
-The [`operation`](../../crates/batter-outbound/tests/operation.rs) target
+The [`operation`](../../crates/batter-outbound-http/tests/operation.rs) target
 covers `send_in`:
 
 - `cancelled_context_does_not_start`
@@ -2319,7 +2319,7 @@ covers `send_in`:
 - `context_deadline_bounds_a_stalled_body`
 - `child_context_cancelled_through_its_parent_is_unknown`
 
-The [`preparation`](../../crates/batter-outbound/tests/preparation.rs) target
+The [`preparation`](../../crates/batter-outbound-http/tests/preparation.rs) target
 covers construction:
 
 - `https_origins_accept_only_a_scheme_host_and_port`
@@ -2334,7 +2334,7 @@ covers construction:
 - `segments_that_url_parsing_would_rewrite_are_refused`
 - `urls_that_are_not_http_uris_are_refused_before_an_exchange_exists`
 
-The [`redaction`](../../crates/batter-outbound/tests/redaction.rs) target
+The [`redaction`](../../crates/batter-outbound-http/tests/redaction.rs) target
 checks the `Debug` and `Display` output of clients, origins, drafts, prepared
 requests, errors and outcomes for marker values. On-the-wire controls show that
 the segment, query, header and body markers were sent. The host marker enters
@@ -2347,7 +2347,7 @@ draft, prepared-request and origin-error output:
 - `outcomes_without_a_head_show_no_request_values`
 - `responded_outcomes_show_no_received_values`
 
-The [`tls_hello`](../../crates/batter-outbound/tests/tls_hello.rs) target reads
+The [`tls_hello`](../../crates/batter-outbound-http/tests/tls_hello.rs) target reads
 the ClientHello with reqwest's `http2` compiled into the test build:
 
 - `client_hello_offers_only_http1_and_modern_tls`, which asserts one
@@ -2355,7 +2355,7 @@ the ClientHello with reqwest's `http2` compiled into the test build:
   supports no older version, so the version check pins the backend rather
   than detecting a weaker minimum.
 
-The Linux-only [`trust_store`](../../crates/batter-outbound/tests/trust_store.rs)
+The Linux-only [`trust_store`](../../crates/batter-outbound-http/tests/trust_store.rs)
 target runs its check in a child process with `SSL_CERT_FILE=/dev/null` and
 `SSL_CERT_DIR` unset:
 
@@ -2403,7 +2403,7 @@ fresh agent for two tasks:
 
 - add a provider mutation with an application-owned dispatch fence to a worker
   built from the facade examples;
-- migrate a hand-written reqwest provider call onto `batter::outbound`.
+- migrate a hand-written reqwest provider call onto `batter::outbound_http`.
 
 It passes when every one of these holds:
 

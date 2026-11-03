@@ -7,7 +7,7 @@
 #[path = "support/peer.rs"]
 mod peer;
 
-use batter_outbound::{
+use batter_outbound_http::{
     Client, ConnectFailure, Exchange, MINIMUM_ATTEMPT, PreparedRequest, RESERVE, StartRefusal,
     UnknownReason, http::Method,
 };

@@ -33,19 +33,19 @@ the facade example's tests.
   part, run with those features compiled.
 - The shipped dependency selects only `rustls-no-provider` (174-177). The
   no-default-features matrix part's
-  `cargo check -p batter-outbound --lib --no-default-features` and the facade
+  `cargo check -p batter-outbound-http --lib --no-default-features` and the facade
   feature runner's `cargo check` compile it. The no-default-features part's
   `outbound-shipped-features` batch (`cargo test -p batter --no-default-features
-  --features outbound --example outbound_exchange --locked`) builds package
-  `batter`'s tests, which activate no `batter-outbound` dev-dependency, so reqwest
+  --features outbound-http --example outbound_exchange --locked`) builds package
+  `batter`'s tests, which activate no `batter-outbound-http` dev-dependency, so reqwest
   is built with `rustls-no-provider` only: `cargo tree -p batter
-  --no-default-features --features outbound -e features,normal,dev -i reqwest`
+  --no-default-features --features outbound-http -e features,normal,dev -i reqwest`
   lists `rustls-no-provider`, `__rustls` and `__tls`, without `gzip` or `http2`.
   It is the one verification command that executes the shipped feature set, for
   the example's loopback exchanges. `scripts/check_facade_features.py` derives
   that `cargo tree` form from the batch's own command and requires reqwest's
-  features there to equal those of `cargo tree -p batter-outbound -e normal`;
-  its self-test shows `batter-outbound`'s own test build, which adds `gzip` and
+  features there to equal those of `cargo tree -p batter-outbound-http -e normal`;
+  its self-test shows `batter-outbound-http`'s own test build, which adds `gzip` and
   `http2`, failing that comparison.
 - The profile therefore sets its ALPN list itself, and keeps `http1_only()` and
   `retry::never()` as defence in depth.
@@ -54,7 +54,7 @@ The [2026-09-30 serving-listener entry](#generic-serving-listeners-and-connectio
 says that its test-only TLS crates give no published package a TLS dependency.
 That stays true of those crates, but published packages do depend on TLS:
 
-- `batter-outbound` depends on rustls with *ring* and on
+- `batter-outbound-http` depends on rustls with *ring* and on
   rustls-platform-verifier;
 - `batter-otlp` already depended on rustls with *ring* through reqwest
   0.12.28's `rustls-tls-webpki-roots` feature (reqwest-0.12.28
@@ -321,7 +321,7 @@ http 1.5.0:
   exchange exists.
 
 Log events. The package adds no instrumentation of its own. In the shipped graph
-(`cargo tree -p batter --no-default-features --features outbound -e normal`),
+(`cargo tree -p batter --no-default-features --features outbound-http -e normal`),
 only three crates depend on `log` or `tracing` (`cargo tree -i log`,
 `cargo tree -i tracing`): reqwest and rustls-platform-verifier through `log`,
 hyper-util through `tracing`. hyper 1.11.1 is built without its `tracing`

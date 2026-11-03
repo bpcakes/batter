@@ -837,11 +837,11 @@ on the host or container running the matrix: the ordinary reference configuratio
 target performs a native PostgreSQL protocol handshake on a test-owned IPv6
 listener, without an external database. Enable that prerequisite before running
 the gate; this semantic test is mandatory and does not silently skip when IPv6
-is unavailable. On Linux, the `batter-outbound` tests and doctests that build an
+is unavailable. On Linux, the `batter-outbound-http` tests and doctests that build an
 HTTPS client also need a loadable host certificate store: the platform verifier
 loads it when the client is built, following `SSL_CERT_FILE` and `SSL_CERT_DIR`,
 and an empty store fails construction, while loopback clients never read it
-([trust_store.rs](../crates/batter-outbound/tests/trust_store.rs)). The example
+([trust_store.rs](../crates/batter-outbound-http/tests/trust_store.rs)). The example
 readiness tests run automatically under `--all-targets`; they are not ignored
 and contact only test-owned listeners on `127.0.0.1`. A sandbox denying those
 operations cannot run the complete gate.
@@ -866,24 +866,24 @@ The live readiness fixture awaits teardown before checking results and reports
 the saved request, supervisor and server outcomes together if any failed.
 
 The script checks isolated `-p batter-core --no-default-features` library
-compilation and core tests, the no-default facade, the `batter-outbound` library
+compilation and core tests, the no-default facade, the `batter-outbound-http` library
 and tests without its `operation` bridge, so without `batter-core`, and the
 bounded facade feature runner. `scripts/check_facade_features.py` uses disposable
 external workspaces to compile each declared feature, including `at-rest` and
-`outbound`, which reach the standalone leaves through the facade, the
+`outbound-http`, which reach the standalone leaves through the facade, the
 representative Axum/SQLx and Runlimit unions, and all-features; it checks the
 selected normal graph, nineteen focused disabled-module failures, and one
-all-feature direct/facade identity fixture. The `outbound`-only case compiles a
+all-feature direct/facade identity fixture. The `outbound-http`-only case compiles a
 `PreparedRequest::send_in` call on `batter::operation::OperationContext`, so the
 feature cannot drop the bridge, and the identity fixture, the runner's only
-consumer that declares `batter-outbound` directly, returns the direct package's
-`Exchange` from that call. No external consumer builds `batter-outbound`
+consumer that declares `batter-outbound-http` directly, returns the direct package's
+`Exchange` from that call. No external consumer builds `batter-outbound-http`
 without its bridge; the in-workspace `no-default-features` commands are that
 evidence. The runner also derives a `cargo tree` command from the matrix's
 `outbound-shipped-features` command and requires reqwest's features in that
-build to equal those of `batter-outbound`'s normal graph, so the batch keeps
+build to equal those of `batter-outbound-http`'s normal graph, so the batch keeps
 executing the shipped selection; its self-test checks that
-`batter-outbound`'s own test build, with `gzip` and `http2`, fails the
+`batter-outbound-http`'s own test build, with `gzip` and `http2`, fails the
 comparison.
 It then runs the checked-completion and composed quota/SQLx handler
 consumers described at the top of this guide. It runs under the invoking
@@ -1761,13 +1761,13 @@ The six test parts retain their existing command selections:
   bounds. The two Cargo runs occupy separate batches because both uplift
   `target/debug/batter-example-reference-service`; see the scheduling rule below.
 - `no-default-features`: minimal core/facade compilation, core tests and the
-  standalone `batter-outbound` library check without the `operation` bridge, so
+  standalone `batter-outbound-http` library check without the `operation` bridge, so
   without `batter-core`; then, alone in a second batch so their timing
-  assertions share no batch with a compiling check, the `batter-outbound` tests
+  assertions share no batch with a compiling check, the `batter-outbound-http` tests
   without that bridge; then, alone in a third batch, the facade
   `outbound_exchange` example tests built with
-  `-p batter --no-default-features --features outbound`, whose build does not
-  activate `batter-outbound`'s dev-only reqwest `gzip` and `http2` features and
+  `-p batter --no-default-features --features outbound-http`, whose build does not
+  activate `batter-outbound-http`'s dev-only reqwest `gzip` and `http2` features and
   so executes the shipped reqwest selection. The `workspace` part runs the
   package tests with the bridge.
 - `doctests`: workspace all-feature doctests.
@@ -1989,15 +1989,15 @@ excludes archived reviews under `.agent/reviews`.
 | Subscriber callbacks precede finite admission locking | [subscriber.rs](../crates/batter-core/src/lifecycle/state/tests/subscriber.rs): actual submission under enabled/filtered task spans; `try_lock` assertions cover `new_span`, `current_span` and `clone_span`, with callback counts rejecting a vacuous pass. The fixture never starts a coordinator or application factory. |
 | Assembled boundary served over a generic listener | [tls_serving.rs](../crates/batter-axum/tests/tls_serving.rs): real rustls with a generated certificate; acknowledgement before readiness, probe outside admission, transport peer against a client-owned oracle, drain waiting for a response still streaming, a pending handshake destroyed at drain, and rejected/abandoned listener release. |
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
-| Outbound refusals before any connection: origin schemes, credentials, paths, queries, fragments, port zero, non-loopback addresses and hosts `http::Uri` rejects; limit bounds; every reserved header; a second body; a JSON failure; the first draft problem reported; `CONNECT`; empty, `.` and `..` segments and segments whose part before a `;` is empty, `.` or `..`, with look-alikes accepted; tab, line feed and carriage return in a segment; URLs `http::Uri` rejects | [preparation.rs](../crates/batter-outbound/tests/preparation.rs) |
-| Outbound send-once and value types: header values passed to `header()` marked sensitive and the body's `Content-Type` not; `PreparedRequest` neither cloneable nor sendable twice; a hand-built `NotStarted` does not compile | `every_caller_header_value_is_marked_sensitive` and the `compile_fail,E0599`/`E0382` doctests in [request.rs](../crates/batter-outbound/src/request.rs); the `compile_fail,E0451` doctest in [exchange.rs](../crates/batter-outbound/src/exchange.rs) |
-| Outbound outcomes before a head: start refusals with no connection and a 350 ms budget sending exactly one request; a refused TCP connection and a failed TLS handshake as `NotDispatched(Failed)` and a stalled handshake as `NotDispatched(TimedOut)`; `Unknown` for a deadline during the TLS handshake; in each TLS case one connection whose first read is a TLS handshake record; `Unknown` also for a silent peer within the reserve, closes before and after reading, a reset and malformed or truncated heads | [before_head.rs](../crates/batter-outbound/tests/before_head.rs) |
-| Outbound status kept through every body result: complete with sensitive readable headers, empty, `HEAD`, exactly at the limit (declared and chunked), declared or streamed above it without waiting, short or unterminated then closed, stalled under one deadline for head and body, undelimited and ended by a close as `Complete`, gzip-labelled bytes returned undecoded with gzip compiled, and a ready head with its empty body's end kept over an expired timer | [body.rs](../crates/batter-outbound/tests/body.rs) |
-| Outbound `send_in`: cancelled or too-close contexts refused unsent, cancellation over an expired deadline, cancellation after delivery, directly or through a parent, as `Unknown(Cancelled)`, cancellation during a stalled body with the status kept, a ready head kept over cancellation, cancellation reported over an expired timer before a head and during the body, and context deadlines bounding head and body within the reserve | [operation.rs](../crates/batter-outbound/tests/operation.rs), feature `operation` |
-| Outbound wire shape: HTTP/1.1 origin form without `Accept-Encoding` (gzip compiled), `Referer`, `Proxy-Authorization`, `TE` or `Upgrade`; header values unchanged; segment, query and body encoding; an empty path at the root; a 307 returned unfollowed; clones sharing one connection; a new connection after more than four seconds idle; `HTTP_PROXY` ignored for a loopback origin against a default-client control in a child process | [wire.rs](../crates/batter-outbound/tests/wire.rs) |
-| Outbound ClientHello with reqwest's `http2` compiled: ALPN exactly `http/1.1` and no version but TLS 1.3 and 1.2, on one connection | [tls_hello.rs](../crates/batter-outbound/tests/tls_hello.rs) |
-| Outbound trust store on Linux, in a child process: with an empty host store an HTTPS client fails with the value-free `ClientError::Build`, while a loopback client still builds | [trust_store.rs](../crates/batter-outbound/tests/trust_store.rs) |
-| Outbound formatting: markers in the host, a segment, the query, a header, the body and the response appear in no `Debug`, alternate `Debug` or error `Display` output of clients, origins, drafts, prepared requests, errors, outcomes, responses, bodies and header maps, while the peer's raw request carries the request markers and received values stay readable | [redaction.rs](../crates/batter-outbound/tests/redaction.rs) |
+| Outbound refusals before any connection: origin schemes, credentials, paths, queries, fragments, port zero, non-loopback addresses and hosts `http::Uri` rejects; limit bounds; every reserved header; a second body; a JSON failure; the first draft problem reported; `CONNECT`; empty, `.` and `..` segments and segments whose part before a `;` is empty, `.` or `..`, with look-alikes accepted; tab, line feed and carriage return in a segment; URLs `http::Uri` rejects | [preparation.rs](../crates/batter-outbound-http/tests/preparation.rs) |
+| Outbound send-once and value types: header values passed to `header()` marked sensitive and the body's `Content-Type` not; `PreparedRequest` neither cloneable nor sendable twice; a hand-built `NotStarted` does not compile | `every_caller_header_value_is_marked_sensitive` and the `compile_fail,E0599`/`E0382` doctests in [request.rs](../crates/batter-outbound-http/src/request.rs); the `compile_fail,E0451` doctest in [exchange.rs](../crates/batter-outbound-http/src/exchange.rs) |
+| Outbound outcomes before a head: start refusals with no connection and a 350 ms budget sending exactly one request; a refused TCP connection and a failed TLS handshake as `NotDispatched(Failed)` and a stalled handshake as `NotDispatched(TimedOut)`; `Unknown` for a deadline during the TLS handshake; in each TLS case one connection whose first read is a TLS handshake record; `Unknown` also for a silent peer within the reserve, closes before and after reading, a reset and malformed or truncated heads | [before_head.rs](../crates/batter-outbound-http/tests/before_head.rs) |
+| Outbound status kept through every body result: complete with sensitive readable headers, empty, `HEAD`, exactly at the limit (declared and chunked), declared or streamed above it without waiting, short or unterminated then closed, stalled under one deadline for head and body, undelimited and ended by a close as `Complete`, gzip-labelled bytes returned undecoded with gzip compiled, and a ready head with its empty body's end kept over an expired timer | [body.rs](../crates/batter-outbound-http/tests/body.rs) |
+| Outbound `send_in`: cancelled or too-close contexts refused unsent, cancellation over an expired deadline, cancellation after delivery, directly or through a parent, as `Unknown(Cancelled)`, cancellation during a stalled body with the status kept, a ready head kept over cancellation, cancellation reported over an expired timer before a head and during the body, and context deadlines bounding head and body within the reserve | [operation.rs](../crates/batter-outbound-http/tests/operation.rs), feature `operation` |
+| Outbound wire shape: HTTP/1.1 origin form without `Accept-Encoding` (gzip compiled), `Referer`, `Proxy-Authorization`, `TE` or `Upgrade`; header values unchanged; segment, query and body encoding; an empty path at the root; a 307 returned unfollowed; clones sharing one connection; a new connection after more than four seconds idle; `HTTP_PROXY` ignored for a loopback origin against a default-client control in a child process | [wire.rs](../crates/batter-outbound-http/tests/wire.rs) |
+| Outbound ClientHello with reqwest's `http2` compiled: ALPN exactly `http/1.1` and no version but TLS 1.3 and 1.2, on one connection | [tls_hello.rs](../crates/batter-outbound-http/tests/tls_hello.rs) |
+| Outbound trust store on Linux, in a child process: with an empty host store an HTTPS client fails with the value-free `ClientError::Build`, while a loopback client still builds | [trust_store.rs](../crates/batter-outbound-http/tests/trust_store.rs) |
+| Outbound formatting: markers in the host, a segment, the query, a header, the body and the response appear in no `Debug`, alternate `Debug` or error `Display` output of clients, origins, drafts, prepared requests, errors, outcomes, responses, bodies and header maps, while the peer's raw request carries the request markers and received values stay readable | [redaction.rs](../crates/batter-outbound-http/tests/redaction.rs) |
 | Facade outbound consumer: a loopback receipt settles the example's fence after one delivered request; a 201 whose body exceeds the receipt limit keeps it held; a refused connection is `NotDispatched` and releases it; a work phase shorter than `RESERVE + MINIMUM_ATTEMPT` is refused unsent and still recorded; parent cancellation in flight records nothing and leaves the pre-send fence held; and the fence is released exactly when `proves_unsent` holds | [outbound_exchange/tests.rs](../crates/batter/examples/outbound_exchange/tests.rs) |
 
 Timer tests use Tokio's paused time. This controls the Tokio clock, not system
@@ -2961,7 +2961,7 @@ coverage and real native recovery coverage are distinct evidence.
 ## Outbound exchange facade example
 
 `crates/batter/examples/outbound_exchange.rs` is the facade's consumer contract
-for `batter::outbound`. It writes its dispatch fence in an `example.fence`
+for `batter::outbound_http`. It writes its dispatch fence in an `example.fence`
 work-phase step before `send_in` and records the settled fence in the reserved
 finalization phase. Its seven tests, in `outbound_exchange/tests.rs`, run under
 `--all-targets` in the `workspace` part and contact only test-owned sockets on
@@ -2988,8 +2988,8 @@ These are loopback results for the example's own policy. They say nothing about
 TLS, a remote provider or an intermediary.
 
 ```sh
-cargo test -p batter --features outbound --example outbound_exchange --locked
-cargo run -p batter --features outbound --example outbound_exchange --locked
+cargo test -p batter --features outbound-http --example outbound_exchange --locked
+cargo run -p batter --features outbound-http --example outbound_exchange --locked
 ```
 
 `main` prints `mutation exchange: responded` and
@@ -3239,7 +3239,7 @@ A gate's release sender is dropped when a failed assertion unwinds, so a parked
 closure returns and runtime drop cannot hang; a closure that never signals its
 start would still hang its test until the CI time limit.
 
-The `batter-outbound` suites run on loopback against a scripted peer and have
+The `batter-outbound-http` suites run on loopback against a scripted peer and have
 executed on Linux only; the macOS CI job only compiles them. Every build of
 them compiles reqwest's `gzip` and `http2` through the package's
 dev-dependencies; the shipped feature set is compile-checked by the

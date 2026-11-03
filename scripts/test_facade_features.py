@@ -102,7 +102,7 @@ sys.exit(101)
 
 class ShippedOutboundSelectionTests(unittest.TestCase):
     TREE = "\n".join([
-        "batter v0.0.1 (/workspace/crates/batter)|outbound",
+        "batter v0.0.1 (/workspace/crates/batter)|outbound-http",
         "reqwest v0.13.5|__rustls,__tls,rustls-no-provider",
         "reqwest v0.12.28|__rustls,rustls-tls-webpki-roots",
         "reqwest v0.13.5|__rustls,__tls,rustls-no-provider (*)",
@@ -148,10 +148,10 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
         facade.execute(cargo + ["metadata", "--format-version", "1", "--filter-platform", host,
                                 "--all-features", "--locked"], facade.ROOT)
         self.assertIn("rustls-no-provider", facade.check_shipped_outbound_selection(cargo))
-        # Control: batter-outbound's own test build compiles the dev-only
+        # Control: batter-outbound-http's own test build compiles the dev-only
         # features, so the comparison distinguishes the two real graphs.
         own = facade.tree_features(facade.execute(
-            cargo + ["tree", "-p", "batter-outbound", "-e", "normal,dev", "--locked"]
+            cargo + ["tree", "-p", "batter-outbound-http", "-e", "normal,dev", "--locked"]
             + facade.TREE_FEATURES, facade.ROOT), "reqwest")
         self.assertEqual(len(own), 1)
         self.assertLessEqual({"gzip", "http2"}, set(next(iter(own.values()))))

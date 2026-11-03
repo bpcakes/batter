@@ -28,7 +28,7 @@ impl Origin {
     /// slash and nothing else.
     ///
     /// ```
-    /// use batter_outbound::{Origin, OriginError};
+    /// use batter_outbound_http::{Origin, OriginError};
     ///
     /// assert!(Origin::https("https://provider.example").is_ok());
     /// assert_eq!(Origin::https("http://provider.example"), Err(OriginError::NotHttps));
@@ -50,7 +50,7 @@ impl Origin {
     /// Accept plain HTTP to a literal loopback address, such as a local fixture.
     ///
     /// ```
-    /// use batter_outbound::{Origin, OriginError};
+    /// use batter_outbound_http::{Origin, OriginError};
     /// use std::net::SocketAddr;
     ///
     /// let local: SocketAddr = "127.0.0.1:8080".parse().unwrap();

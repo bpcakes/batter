@@ -57,7 +57,7 @@ reconciliation and telemetry belong to the application or the crate that owns
 the provider protocol, never here. The facade namespace lives in
 `crates/batter/src/lib.rs`; the runnable consumer is the facade's
 `outbound_exchange` example. The scripted loopback fault peer lives at
-`crates/batter-outbound/tests/support/peer.rs`; it counts connections and keeps
+`crates/batter-outbound-http/tests/support/peer.rs`; it counts connections and keeps
 raw requests, so every fault test can assert one request or none. The
 dev-dependencies compile reqwest's `gzip` and `http2` into test builds; keep
 them, because `tests/tls_hello.rs` and the encoded-body test in `tests/body.rs`
@@ -109,8 +109,8 @@ facade or an adapter.
 
 ## Common commands
 
-- `cargo test -p batter-outbound --all-features --locked`
-- `cargo test -p batter-outbound --no-default-features --locked` (without `batter-core`)
-- `cargo clippy -p batter-outbound --all-targets --all-features --locked -- -D warnings`
-- `cargo doc -p batter-outbound --all-features --no-deps --locked`
+- `cargo test -p batter-outbound-http --all-features --locked`
+- `cargo test -p batter-outbound-http --no-default-features --locked` (without `batter-core`)
+- `cargo clippy -p batter-outbound-http --all-targets --all-features --locked -- -D warnings`
+- `cargo doc -p batter-outbound-http --all-features --no-deps --locked`
 - `bash scripts/verify.sh`

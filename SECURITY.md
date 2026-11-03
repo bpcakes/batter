@@ -16,7 +16,7 @@ is not rollback or permission to replay a mutation.
 Two library-built clients are exceptions. The `batter-otlp` exporter's private
 transport uses reqwest 0.12.28's rustls with *ring* and compiled-in webpki
 roots, and bounds its payload and response bodies. The experimental outbound
-exchange (`batter-outbound`, also `batter::outbound`) builds its own client
+exchange (`batter-outbound-http`, also `batter::outbound_http`) builds its own client
 too: the package fixes its rustls configuration, with the *ring* provider passed explicitly,
 TLS 1.3 and 1.2 only and, for an HTTPS origin, the operating system's
 certificate verifier; `https_only` for an HTTPS origin, as defence in depth

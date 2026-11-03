@@ -40,7 +40,7 @@ The root is a virtual Cargo workspace. The `batter` facade and its single
 `batter-core` implementation, the `batter-axum`, `batter-sqlx`,
 `batter-runledger`, `batter-runlimit` and `batter-otlp` adapters, `batter-test-support`
 utilities, the standalone `batter-at-rest` crypto leaf and the standalone
-`batter-outbound` provider-exchange leaf are ten Batter libraries. Four native
+`batter-outbound-http` provider-exchange leaf are ten Batter libraries. Four native
 Runledger libraries and its operator TUI live under `runledger/`; five native
 Runlimit libraries live under `runlimit/`.
 `batter-example-postgres-lifecycle` is an unpublished executable package;
@@ -55,11 +55,11 @@ application composition root
   |-- batter facade -> batter-core lifecycle + cleanup
   |                         operation + retry + admission + settings
   |     |-- opt-in at-rest -> standalone batter-at-rest leaf
-  |     `-- opt-in outbound -> standalone batter-outbound leaf + its operation bridge
+  |     `-- opt-in outbound-http -> standalone batter-outbound-http leaf + its operation bridge
   |-- process panic hook installation (application-owned; batter::redacting_panic_hook constructs one)
   |-- native tracing subscriber and exporter selection (application-owned)
   |-- optional batter-otlp -> batter-core protected service completion + native SDK
-  |-- optional batter-outbound -> native reqwest profile + its own ring rustls config (no Batter dependency)
+  |-- optional batter-outbound-http -> native reqwest profile + its own ring rustls config (no Batter dependency)
   |     `-- opt-in operation -> batter-core OperationContext deadline + cancellation
   |-- optional batter-axum -> batter-core + Axum / Tower
   |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
@@ -74,7 +74,7 @@ application composition root
 
 The facade's default feature set is empty, so an ordinary `batter` dependency
 selects only `batter-core`. Applications opt into `batter::at_rest`,
-`batter::outbound`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
+`batter::outbound_http`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
 `batter::runlimit`, and `batter::test_support` explicitly. `runlimit-memory`,
 `runlimit-postgres`, `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
 `runledger-test-support`, and `sqlx-test-support` forward the existing adapter
@@ -519,7 +519,7 @@ resource ownership and partial-failure behavior.
 
 ## Outbound provider exchange ownership
 
-`batter-outbound` owns the transport part of one outbound provider call: whether
+`batter-outbound-http` owns the transport part of one outbound provider call: whether
 this attempt could have reached the peer. Its library-built client follows no
 redirects, offers only HTTP/1.1 and requires a connect timeout. It hands reqwest
 a rustls configuration that the package builds itself, with the *ring* provider
@@ -541,7 +541,7 @@ by default, so a provider crate that does not use Batter can adopt it; its
 opt-in `operation` feature adds `PreparedRequest::send_in` over an
 `OperationContext`, called with the work phase of `reserve_finalization` so the
 outcome is recorded in the finalization phase rather than inside `RESERVE`, and
-the facade's `outbound` feature selects that bridge.
+the facade's `outbound-http` feature selects that bridge.
 Provider meaning, replay, idempotency keys, dispatch fences and reconciliation
 stay with the application. Its tests have executed on Linux only. It is a
 focused experimental extraction (track 1 of

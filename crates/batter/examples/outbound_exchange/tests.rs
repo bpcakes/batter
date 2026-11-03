@@ -5,7 +5,9 @@
 //! hand. Every client is built before its budget starts.
 
 use super::*;
-use batter::outbound::{ConnectFailure, MINIMUM_ATTEMPT, RESERVE, StartRefusal, UnknownReason};
+use batter::outbound_http::{
+    ConnectFailure, MINIMUM_ATTEMPT, RESERVE, StartRefusal, UnknownReason,
+};
 use tokio::{sync::oneshot, time::Instant};
 
 fn client(address: SocketAddr) -> Client {

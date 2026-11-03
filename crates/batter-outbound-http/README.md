@@ -1,4 +1,4 @@
-# batter-outbound
+# batter-outbound-http
 
 Send-once outbound HTTP exchange with exhaustive transport evidence. This
 experimental 0.0.1 package targets Unix, including Linux and macOS; its tests
@@ -12,7 +12,7 @@ a byte limit within the same deadline, and returns one exhaustive `Exchange`.
 What a status or a body means stays with the application.
 
 ```rust
-use batter_outbound::{
+use batter_outbound_http::{
     Body, Client, ConnectTimeout, Exchange, Origin, ResponseLimit,
     http::{HeaderName, HeaderValue, Method, StatusCode},
 };
@@ -45,8 +45,8 @@ async fn example(token: &str) -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The crate-level rustdoc compiles this example, and the `send_in` rustdoc compiles
-its `operation` variant. Through the facade, select feature `outbound` and use
-`batter::outbound`; the facade's `outbound_exchange` example runs a complete
+its `operation` variant. Through the facade, select feature `outbound-http` and use
+`batter::outbound_http`; the facade's `outbound_exchange` example runs a complete
 consumer against a local fixture.
 
 ## Outcomes
@@ -295,7 +295,7 @@ matching `batter-core`'s precedence, and cancellation after the start returns
 context whose finalization is reserved, and record the outcome in the
 finalization phase. A cancelled context, including one whose parent was
 cancelled, runs no recording step, so the dispatch fence that the application
-wrote before sending is what remains held. The facade's `outbound` feature
+wrote before sending is what remains held. The facade's `outbound-http` feature
 enables `operation`.
 
 ## Platform and verification
@@ -314,8 +314,8 @@ them and executed by the facade example's tests in the verification matrix's
 root for the inspected sources, and `docs/guarantees.md` for the contract and
 the tests that back it.
 
-Run `cargo test -p batter-outbound --all-features --locked`, and
-`cargo test -p batter-outbound --no-default-features --locked` for the build
+Run `cargo test -p batter-outbound-http --all-features --locked`, and
+`cargo test -p batter-outbound-http --no-default-features --locked` for the build
 without `batter-core`, then the workspace verification script. The tests run
 against a scripted loopback peer that records every connection and raw request.
 Tests that build an HTTPS client need a non-empty host certificate store, which

@@ -9,7 +9,7 @@
 #[path = "support/peer.rs"]
 mod peer;
 
-use batter_outbound::{ConnectFailure, Exchange, http::Method};
+use batter_outbound_http::{ConnectFailure, Exchange, http::Method};
 use peer::{Peer, Step, after, limit, millis};
 use std::time::Duration;
 

@@ -77,7 +77,7 @@ application:
 batter = { version = "0.1", features = ["at-rest", "axum", "sqlx"] }
 ```
 
-Use `batter::at_rest`, `batter::axum`, `batter::outbound`, `batter::sqlx`,
+Use `batter::at_rest`, `batter::axum`, `batter::outbound_http`, `batter::sqlx`,
 `batter::runledger`, `batter::runlimit`, and `batter::test_support` for the
 corresponding feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
 `runlimit-axum` forward the existing native adapter capabilities;
@@ -93,8 +93,8 @@ Those namespaces are deliberately low-level and move no ownership. Direct adapte
 application needs their native package boundary. In particular,
 `batter-at-rest` supports direct runtime-free use as `batter_at_rest`; the
 facade feature re-exports the same types and is not required for encryption.
-Likewise, `batter-outbound` supports direct use as `batter_outbound` without
-`batter-core`, and the facade's `outbound` feature also enables its `operation`
+Likewise, `batter-outbound-http` supports direct use as `batter_outbound_http` without
+`batter-core`, and the facade's `outbound-http` feature also enables its `operation`
 bridge.
 The complete feature table
 and ownership rules are in the [integration contract](integrations.md#facade-feature-selection).
@@ -174,7 +174,7 @@ remote provider accepted.
 
 ## Outbound provider calls
 
-Send provider HTTP requests through `batter::outbound` (feature `outbound`) from
+Send provider HTTP requests through `batter::outbound_http` (feature `outbound-http`) from
 the code that owns the provider protocol, never through a hand-built reqwest
 client, whose default redirects and replays make a connect error no proof that
 nothing was sent. Build one `Client` per provider origin and clone it. Prepare
@@ -187,7 +187,7 @@ finalization phase unless that phase is interrupted:
 use batter::{
     BoxError,
     operation::{OperationContext, OperationError},
-    outbound::{Body, Client, Exchange, ResponseLimit, http::{Method, StatusCode}},
+    outbound_http::{Body, Client, Exchange, ResponseLimit, http::{Method, StatusCode}},
 };
 use std::{convert::Infallible, time::Duration};
 
@@ -261,7 +261,7 @@ its own: record `exchange.label()`, which carries no URL, query, header value or
 body. Its dependencies' log events can name the destination host, socket
 addresses and certificate names; the application's logger filters them (see
 [operations](operations.md#telemetry-and-diagnostics)). A
-provider crate that must not depend on `batter-core` uses `batter_outbound`
+provider crate that must not depend on `batter-core` uses `batter_outbound_http`
 directly with `send(deadline, limit)`. The
 [runnable example](../crates/batter/examples/outbound_exchange.rs) compiles this
 composition, and the

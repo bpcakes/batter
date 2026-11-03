@@ -2,7 +2,7 @@
 """Prove Batter facade feature isolation and cross-package type identity.
 
 It also checks that the matrix's shipped-feature example build resolves reqwest
-exactly as `batter-outbound` ships it.
+exactly as `batter-outbound-http` ships it.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ EXPECTED_FEATURES = {
     "axum",
     "metrics",
     "otlp",
-    "outbound",
+    "outbound-http",
     "sqlx",
     "runledger",
     "runledger-test-support",
@@ -124,7 +124,7 @@ def feature_cases() -> list[tuple[str, ...]]:
         ("axum",),
         ("metrics",),
         ("otlp",),
-        ("outbound",),
+        ("outbound-http",),
         ("sqlx",),
         ("runledger",),
         ("runledger-test-support",),
@@ -168,7 +168,7 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "batter-otlp": "otlp" in chosen,
         "opentelemetry_sdk": "otlp" in chosen,
         "opentelemetry-otlp": "otlp" in chosen,
-        "batter-outbound": "outbound" in chosen,
+        "batter-outbound-http": "outbound-http" in chosen,
         "batter-sqlx": batter_sqlx,
         "batter-runledger": runledger,
         "batter-runlimit": runlimit,
@@ -202,10 +202,10 @@ def facade_source(selected: tuple[str, ...]) -> str:
         lines.insert(1, "use batter::otlp::{prepare, Schedule};")
     if "at-rest" in chosen:
         lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
-    if "outbound" in chosen:
-        lines.insert(1, "use batter::outbound::{Client, Exchange, Origin, PreparedRequest};")
+    if "outbound-http" in chosen:
+        lines.insert(1, "use batter::outbound_http::{Client, Exchange, Origin, PreparedRequest};")
         # The feature alone must select the operation bridge on the facade's context.
-        lines.append("#[allow(dead_code)]\nasync fn send_once(request: PreparedRequest, context: &OperationContext, limit: batter::outbound::ResponseLimit) -> Exchange { request.send_in(context, limit).await }")
+        lines.append("#[allow(dead_code)]\nasync fn send_once(request: PreparedRequest, context: &OperationContext, limit: batter::outbound_http::ResponseLimit) -> Exchange { request.send_in(context, limit).await }")
     if "axum" in chosen or "runlimit-axum" in chosen:
         # Supported paths only: assembly is sealed into protected serving or
         # an opaque request client, and the raw helpers live in low_level.
@@ -321,9 +321,9 @@ def shipped_example_tree_command(cargo: list[str]) -> list[str]:
 
 
 def check_shipped_outbound_selection(cargo: list[str]) -> str:
-    """Require the shipped-feature example build to resolve reqwest as batter-outbound ships it.
+    """Require the shipped-feature example build to resolve reqwest as batter-outbound-http ships it.
 
-    `batter-outbound`'s own test builds compile reqwest's dev-only `gzip` and
+    `batter-outbound-http`'s own test builds compile reqwest's dev-only `gzip` and
     `http2`. The matrix's `outbound-shipped-features` batch claims to execute
     the shipped selection instead, which holds only while no dev-dependency of
     package `batter` adds a reqwest feature. Like the consumer cases, it runs
@@ -331,10 +331,10 @@ def check_shipped_outbound_selection(cargo: list[str]) -> str:
     `main()` does.
     """
     shipped = tree_features(execute(
-        cargo + ["tree", "-p", "batter-outbound", "-e", "normal", "--locked"] + TREE_FEATURES, ROOT),
+        cargo + ["tree", "-p", "batter-outbound-http", "-e", "normal", "--locked"] + TREE_FEATURES, ROOT),
         "reqwest")
     if len(shipped) != 1:
-        raise RuntimeError(f"expected one reqwest in batter-outbound's normal graph, observed {sorted(shipped)}")
+        raise RuntimeError(f"expected one reqwest in batter-outbound-http's normal graph, observed {sorted(shipped)}")
     [(package, features)] = shipped.items()
     built = tree_features(execute(shipped_example_tree_command(cargo), ROOT), "reqwest").get(package)
     if built != features:
@@ -370,8 +370,8 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
     ]
     if "at-rest" in chosen:
         deps.append("batter-at-rest = { path = " + json.dumps(str(ROOT / "crates/batter-at-rest")) + " }")
-    if "outbound" in chosen:
-        deps.append("batter-outbound = { path = " + json.dumps(str(ROOT / "crates/batter-outbound")) + " }")
+    if "outbound-http" in chosen:
+        deps.append("batter-outbound-http = { path = " + json.dumps(str(ROOT / "crates/batter-outbound-http")) + " }")
     if "axum" in chosen or "runlimit-axum" in chosen:
         deps.append("batter-axum = { path = " + json.dumps(str(ROOT / "crates/batter-axum")) + " }")
     if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
@@ -421,13 +421,13 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "fn borrowed_identity(_: batter_at_rest::BorrowedSealedPayload<'_>) {}",
             "const _: for<'a> fn(batter::at_rest::BorrowedSealedPayload<'a>) = borrowed_identity;",
         ]
-    if "outbound" in chosen:
+    if "outbound-http" in chosen:
         lines += [
-            "const _: fn(batter::outbound::Exchange) = |_: batter_outbound::Exchange| {};",
-            "const _: fn(batter::outbound::PreparedRequest) = |_: batter_outbound::PreparedRequest| {};",
-            "const _: fn(batter::outbound::http::StatusCode) = |_: batter_outbound::http::StatusCode| {};",
+            "const _: fn(batter::outbound_http::Exchange) = |_: batter_outbound_http::Exchange| {};",
+            "const _: fn(batter::outbound_http::PreparedRequest) = |_: batter_outbound_http::PreparedRequest| {};",
+            "const _: fn(batter::outbound_http::http::StatusCode) = |_: batter_outbound_http::http::StatusCode| {};",
             # The bridge takes the facade's context and returns the direct package's outcome.
-            "async fn outbound_send_in(request: batter::outbound::PreparedRequest, context: &OperationContext, limit: batter::outbound::ResponseLimit) -> batter_outbound::Exchange { request.send_in(context, limit).await }",
+            "async fn outbound_send_in(request: batter::outbound_http::PreparedRequest, context: &OperationContext, limit: batter::outbound_http::ResponseLimit) -> batter_outbound_http::Exchange { request.send_in(context, limit).await }",
         ]
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines += [
@@ -660,7 +660,7 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
         ((), "axum", "batter::axum"),
         ((), "metrics", "batter::telemetry::metrics"),
         ((), "otlp", "batter::otlp"),
-        ((), "outbound", "batter::outbound"),
+        ((), "outbound-http", "batter::outbound_http"),
         ((), "sqlx", "batter::sqlx"),
         ((), "runledger", "batter::runledger"),
         ((), "runlimit", "batter::runlimit"),

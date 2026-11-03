@@ -31,7 +31,7 @@
 //! and reconciliation all stay with the application.
 //!
 //! ```no_run
-//! use batter_outbound::{
+//! use batter_outbound_http::{
 //!     Body, Client, ConnectTimeout, Exchange, Origin, ResponseLimit,
 //!     http::{HeaderName, HeaderValue, Method, StatusCode},
 //! };
