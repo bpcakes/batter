@@ -1,10 +1,12 @@
-//! Canonical PostgreSQL futures stay small when consumers compose them.
+//! Canonical PostgreSQL futures stay small and `Send` when consumers compose them.
 //!
 //! The workspace suite runs these checks unoptimized and the verification
 //! matrix repeats them with `--release`. Futures are built against a lazy pool
 //! and dropped unpolled, so no database is involved. Each entry point erases its
 //! whole operation once on first poll; its future keeps only its arguments and
-//! one pointer, however large the native or callback state behind it.
+//! one pointer, however large the native or callback state behind it. Each must
+//! also be `Send`, as Axum handlers and `tokio::spawn` require; a regression
+//! fails to compile.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
@@ -19,7 +21,7 @@ use std::{future::Future, time::Duration};
 /// these futures measured 2.6-79 KB on Rust 1.98.1.
 const ERASED: usize = 1024;
 
-fn bounded(name: &str, future: impl Future) {
+fn bounded(name: &str, future: impl Future + Send) {
     let size = std::mem::size_of_val(&future);
     assert!(
         size <= ERASED,

@@ -1,9 +1,12 @@
-//! Canonical quota and attempt futures stay small when consumers compose them.
+//! Canonical quota and attempt futures stay small and `Send` when consumers
+//! compose them.
 //!
 //! The workspace suite runs these checks unoptimized and the verification
 //! matrix repeats them with `--release`. Futures are built against lazy pools and
 //! dropped unpolled. Native checks, native admission and admitted work are each
-//! erased once, so consumer work state never enters the quota future.
+//! erased once, so consumer work state never enters the quota future. Each must
+//! also be `Send`, as Axum handlers and `tokio::spawn` require; a regression
+//! fails to compile.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
@@ -30,7 +33,7 @@ use std::{convert::Infallible, future::Future, num::NonZeroU32, time::Duration};
 /// and `AttemptRunner::run` 28 KB.
 const CANONICAL: usize = 4 * 1024;
 
-fn bounded(name: &str, future: impl Future) {
+fn bounded(name: &str, future: impl Future + Send) {
     let size = std::mem::size_of_val(&future);
     assert!(
         size <= CANONICAL,

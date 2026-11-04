@@ -23,7 +23,17 @@ atomic-runner futures must stay within 1 KiB, including a runner callback that
 holds 16 KiB across an await. Quota and attempt futures, quota work holding 16 KiB,
 and a quota-protected composition of a pooled query and an atomic workflow must
 stay within 4 KiB. All five tests fail at the pinned base; for example
-`AttemptRunner::run` measured 28,408 bytes there.
+`AttemptRunner::run` measured 28,408 bytes there. Both size helpers also
+require `Send`, as Axum handlers and `tokio::spawn` do (`batter-m5g4`), so a
+regression fails to compile.
+`crates/batter-core/tests/send_futures.rs` type-checks, without calling, every
+public `batter-core` future against `Send` inputs: the `run_until` drivers and
+every supervisor waiter, lifecycle signals, process receipts, health and
+cleanup runs, startup, command and service waiters, and operation, retry and
+bulkhead futures; bulkhead blocking runs stay pinned in
+`admission/blocking_outcomes.rs`. Holding an `Rc` across
+`LifecycleStatus::wait_ready` fails that target, which is the negative control
+run for this claim.
 `crates/batter/tests/composed_handler_consumer.rs` registers one Axum handler
 composing `Quota::run`, `run_atomic_in` and `PgQueryHandle` behind
 `HttpBoundary`. `scripts/check_facade_features.py` also copies it into an

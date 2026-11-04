@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Pin `Send` on every public `batter-core` future and on the canonical SQLx and
+  Runlimit futures, so a change that stops one being spawnable fails to compile.
+  Tests only; no public API change (`batter-m5g4`).
+
 - Warn on missing documentation, `unwrap`, leftover `dbg!`/`todo!`, assertions without
   messages and suppressions without reasons in every workspace lint inheritor; stable
   suppressions are now reasoned `#[expect]`s. Previously undocumented public
