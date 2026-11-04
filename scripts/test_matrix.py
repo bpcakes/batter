@@ -19,6 +19,9 @@ OUTBOUND_TESTS = ["cargo", "test", "-p", "batter-outbound-http", "--no-default-f
 # dev-dependencies, so this executes the shipped reqwest feature selection.
 OUTBOUND_SHIPPED_EXAMPLE = ["cargo", "test", "-p", "batter", "--no-default-features", "--features",
                             "outbound-http", "--example", "outbound_exchange", "--locked"]
+# The `flags`-only build that declared-mode consumers select: no store, no HTTP
+# or job integration, so none of those optional packages may be required.
+FLAGS_DECLARED = ["cargo", "test", "-p", "batter-flags", "--no-default-features", "--locked"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
 # A clean developer shell must not hide ambient-state dependencies in tests.
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -128,7 +131,8 @@ def parts():
         "no-default-features": [(["core-library", "facade-library", "core-tests", "outbound-library"],
                                  [CORE_CHECK, FACADE_CHECK, CORE_TESTS, OUTBOUND_CHECK]),
                                 (["outbound-tests"], [OUTBOUND_TESTS]),
-                                (["outbound-shipped-features"], [OUTBOUND_SHIPPED_EXAMPLE])],
+                                (["outbound-shipped-features"], [OUTBOUND_SHIPPED_EXAMPLE]),
+                                (["flags-declared"], [FLAGS_DECLARED])],
         "doctests": [(["doctests"], [DOC_TESTS])],
         # Consumer builds use private target directories. The first two batches
         # bound concurrent builds and keep shared facade cache users apart.

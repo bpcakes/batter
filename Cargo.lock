@@ -329,6 +329,7 @@ dependencies = [
  "batter-at-rest",
  "batter-axum",
  "batter-core",
+ "batter-flags",
  "batter-otlp",
  "batter-outbound-http",
  "batter-runledger",
@@ -336,6 +337,8 @@ dependencies = [
  "batter-sqlx",
  "batter-test-support",
  "chrono",
+ "runflag-core",
+ "runflag-postgres",
  "runlimit-axum",
  "runlimit-core",
  "runlimit-http",
@@ -442,6 +445,28 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots",
+]
+
+[[package]]
+name = "batter-flags"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "batter-axum",
+ "batter-core",
+ "batter-runledger",
+ "batter-sqlx",
+ "batter-test-support",
+ "runflag-core",
+ "runflag-postgres",
+ "runledger-core",
+ "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3227,6 +3252,46 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "runflag-cli"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "runflag-core",
+ "runflag-postgres",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "runflag-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "runflag-postgres"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "runflag-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -1,0 +1,53 @@
+[package]
+name = "runflag-postgres"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+publish = ["crates-io"]
+description = "Audited PostgreSQL control-plane storage for runflag flags and kill switches"
+documentation = "https://docs.rs/runflag-postgres"
+readme = "../README.md"
+repository = "https://github.com/bpcakes/batter"
+homepage = "https://github.com/bpcakes/batter"
+keywords = ["feature-flags", "kill-switch", "postgres"]
+categories = ["config", "database"]
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+runflag-core = { workspace = true, features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# `macros` only for `sqlx::migrate!`; queries run at runtime, so no `.sqlx`
+# offline data and no `query!`.
+sqlx = { workspace = true, features = [
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+    "postgres",
+    "runtime-tokio",
+    "uuid",
+] }
+tokio = { workspace = true, features = ["time"] }
+uuid = { version = "1.29.0", features = ["serde"] }
+
+[dev-dependencies]
+# Pins the migration checksums the schema tests assert.
+sha2 = "0.11.1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints.rust]
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

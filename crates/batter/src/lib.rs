@@ -6,9 +6,10 @@
 //!
 //! The default feature set is empty. Enable only the namespaces an application
 //! uses: `at-rest`, `axum`, `metrics`, `otlp`, `outbound-http`, `sqlx`, `runledger`, `runlimit`,
-//! `test-support`, or the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
-//! `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
-//! `runledger-test-support`, and `sqlx-test-support`.
+//! `flags`, `test-support`, or the narrower bridge features `runlimit-memory`,
+//! `runlimit-postgres`, `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
+//! `runledger-test-support`, `sqlx-test-support`, `flags-postgres`, `flags-axum`, and
+//! `flags-runledger`.
 //!
 //! # Important limits
 //!
@@ -449,6 +450,21 @@ pub mod runledger {
 #[cfg(feature = "runlimit")]
 pub mod runlimit {
     pub use batter_runlimit::*;
+}
+
+/// Typed flags and kill switches: declared mode and the optional control plane.
+///
+/// Enabled by the `flags` feature, which is experimental. The implementation
+/// remains [`batter_flags`]; `flags::native` is the native catalog package
+/// itself, so handles, decisions and views keep one type identity through the
+/// direct and facade paths. `flags-postgres` adds `flags::postgres` and the
+/// protected `flags::control_plane` registration and selects `sqlx`;
+/// `flags-axum` adds `flags::http` and selects `axum`; `flags-runledger` adds
+/// `flags::jobs` and selects `runledger`. The crate is a scaffold until the
+/// declared-mode and control-plane tasks land their items.
+#[cfg(feature = "flags")]
+pub mod flags {
+    pub use batter_flags::*;
 }
 
 /// Generic scripted outcomes and body/cleanup result combination for tests.

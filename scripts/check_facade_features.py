@@ -37,7 +37,26 @@ EXPECTED_FEATURES = {
     "runlimit-native-axum",
     "test-support",
     "sqlx-test-support",
+    "flags",
+    "flags-postgres",
+    "flags-axum",
+    "flags-runledger",
 }
+# A case directory is one path component, and the label naming every feature
+# at once exceeds the 255-byte NAME_MAX of macOS and Linux file systems. Short
+# selections keep their readable label; longer ones are named by their count
+# and a digest of the label, which stays distinct per selection.
+MAX_READABLE_LABEL = 100
+
+
+def case_label(selected: tuple[str, ...]) -> str:
+    label = "-".join(selected) or "default"
+    if len(label) <= MAX_READABLE_LABEL:
+        return label
+    digest = hashlib.sha256(label.encode()).hexdigest()[:16]
+    return f"{len(selected)}-features-{digest}"
+
+
 # Every facade feature that selects a Runlimit bridge. The last two reach the
 # native transport packages without the Batter Axum adapter or this facade's
 # protected quota-before-body assembly.
@@ -349,7 +368,7 @@ def check_shipped_outbound_selection(cargo: list[str]) -> str:
 def run_positive_case(cargo: list[str], host: str, root_lock: bytes,
                       known: set[tuple[str, str, str | None]], parent: Path, target: Path,
                       selected: tuple[str, ...]) -> None:
-    label = "-".join(selected) or "default"
+    label = case_label(selected)
     case = parent / f"consumer-{label}"
     (case / "src").mkdir(parents=True)
     (case / "Cargo.toml").write_text(manifest("facade-feature-consumer", [facade_dependency(selected)], selected))
@@ -527,7 +546,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
 
 def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Path, target: Path,
                       selected: tuple[str, ...]) -> None:
-    label = "-".join(selected) or "default"
+    label = case_label(selected)
     case = parent / f"identity-{label}"
     (case / "src").mkdir(parents=True)
     (case / "Cargo.toml").write_text(manifest("facade-identity-consumer", identity_dependencies(selected), selected))
@@ -683,7 +702,7 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
 
 def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Path, target: Path,
                       selected: tuple[str, ...], disabled: str, symbol: str) -> None:
-    label = "-".join(selected) or "default"
+    label = case_label(selected)
     case = parent / f"negative-{label}-{disabled}"
     (case / "src").mkdir(parents=True)
     (case / "Cargo.toml").write_text(manifest("facade-negative-consumer", [facade_dependency(selected)], selected))
