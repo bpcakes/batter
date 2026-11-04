@@ -9,6 +9,9 @@ protected registration path live in `batter-flags` under `crates/`.
 
 This family is authored in this repository on its own 0.1.0 version line and
 takes the ownership tier of the imported native families: grammar, evaluation
-and storage that work without Batter. The packages are scaffolds: manifests,
-lints and feature shapes are settled, and the implementation arrives with the
-delivery tasks of the flags epic.
+and storage that work without Batter. `runflag-core` implements the catalog:
+typed declarations of release flags, mode flags and kill switches, branded
+handles, the catalog and declaration digests and, with its `serde` feature, the
+manifest and the manifest diff. Its snapshots and evaluation, the PostgreSQL
+store and the operator command are still scaffolds; their implementation
+arrives with later delivery tasks of the flags epic.
