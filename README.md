@@ -53,8 +53,9 @@ Hosted Linux verification and focused macOS jobs passed on both supported
 toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 for commit `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. The documentation,
 package-description, and rustdoc refresh in this checkout postdates that run.
-`batter-outbound-http` also postdates it: Linux execution evidence is supplemented
-by local macOS checks in `batter-8e8r`; it has no hosted execution evidence.
+`batter-outbound-http` also postdates it. Its earlier local macOS evidence in
+`batter-8e8r` predates the owned-connection transport (`batter-u387`), whose
+verification is recorded separately; no new macOS or hosted run is claimed.
 The full workspace verification now requires Docker for native Runledger
 PostgreSQL 18 tests. Batter adapter/reference live PostgreSQL evidence remains
 scoped to the separately recorded runs. See

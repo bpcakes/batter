@@ -148,7 +148,7 @@ async fn head_ready_with_the_expired_timer_is_kept() {
         outcome = &mut exchange => panic!("finished before the request arrived: {outcome:?}"),
     }
     peer.wait_writes(1).await;
-    // Let the connection task read the head, then let the timer fire.
+    // Keep the exchange unpolled while the response reaches the socket.
     tokio::time::sleep(millis(100)).await;
     tokio::time::sleep_until(deadline).await;
     let outcome = exchange.await;
@@ -274,9 +274,8 @@ async fn an_undelimited_body_ends_at_connection_close() {
     );
 }
 
-/// These bytes are not gzip, so a decoding client would fail the body. Test
-/// builds compile reqwest's gzip support through this package's
-/// dev-dependencies, so the test fails if the profile stops turning it off.
+/// These bytes are not gzip, so a decoding client would fail. Dev-only reqwest
+/// compiles gzip into this build; the owned transport still returns raw bytes.
 #[tokio::test]
 async fn encoded_body_is_returned_as_received_bytes() {
     let script = vec![
@@ -290,4 +289,34 @@ async fn encoded_body_is_returned_as_received_bytes() {
         response.body().complete().map(|b| &b[..]),
         Some(&b"not-gzip"[..])
     );
+}
+
+/// A readable head and nonempty body are retained after a polling stall, even
+/// when the deadline has expired. Reading must not enable any new writes.
+#[tokio::test(flavor = "current_thread")]
+async fn ready_nonempty_body_is_kept_after_the_deadline() {
+    let peer = Peer::start([
+        Step::Read,
+        write("HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"),
+    ])
+    .await;
+    let prepared = peer
+        .client()
+        .request(Method::GET, ["v1"])
+        .prepare()
+        .unwrap();
+    let deadline = after(millis(800));
+    let exchange = prepared.send(deadline, limit(LIMIT));
+    tokio::pin!(exchange);
+    tokio::select! {
+        biased;
+        () = peer.wait_requests(1) => {}
+        outcome = &mut exchange => panic!("finished before request arrived: {outcome:?}"),
+    }
+    peer.wait_writes(1).await;
+    tokio::time::sleep_until(deadline).await;
+    let outcome = exchange.await;
+    assert_eq!(outcome.label(), "responded", "{outcome:?}");
+    assert_eq!(response(&outcome).body().complete().unwrap(), "hello");
+    peer.single_request().await;
 }

@@ -38,16 +38,16 @@ impl ResponseLimit {
     }
 }
 
-/// How long establishing one connection may take: DNS, TCP and TLS together.
-/// Tests execute the TLS phase; the DNS and TCP phases are covered by the same
-/// reqwest connector timeout by source inspection.
+/// How long connection setup may take: DNS, TCP, TLS and HTTP/1 together.
 ///
-/// A connection that does not complete in time is reported as
-/// [`crate::ConnectFailure::TimedOut`], which proves that no request bytes were
-/// written. When less time than this remains before the exchange deadline, the
-/// deadline may expire first; that case is reported as
-/// [`crate::UnknownReason::Deadline`], because the exchange cannot tell which
-/// phase was running.
+/// One timeout covers the exchange-owned setup future, including address
+/// fallback, within the exchange's absolute deadline.
+///
+/// A setup timeout returns [`crate::Exchange::NotDispatched`] with
+/// [`crate::ConnectFailure::TimedOut`], proving no request bytes were written.
+/// Deadline expiry or cancellation before the HTTP request handoff instead
+/// returns [`crate::Exchange::NotStarted`]. Successful setup is checked against
+/// both clocks before the HTTP request handoff.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConnectTimeout(Duration);
 

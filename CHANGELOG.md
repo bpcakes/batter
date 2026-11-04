@@ -8,6 +8,24 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
+  address fallback inside the exchange future, with at most two TCP candidates
+  and one shared setup budget; drop losing sockets before TLS/HTTP. Preserve
+  the earlier `Accept: */*` default when callers omit `Accept`, while retaining
+  their explicit values. Add real TLS buffered-request/error-read controls and
+  late setup-completion coverage, and retain the assessment's remaining caller
+  obligations. Public call shapes remain unchanged.
+
+- Own each outbound HTTP exchange's TCP/TLS connection and low-level hyper
+  HTTP/1 driver (`batter-u387`). Deadline/cancellation gates now cover the real
+  request handoff and each transport write/flush, including below TLS, so a
+  stalled exchange cannot resume a queued writer after stopping. No connection
+  pool, reuse or silent resend remains; each call pays fresh setup. Before
+  handoff, expiry/cancellation now returns `NotStarted`, including during TLS
+  setup, while connection errors/timeouts return `NotDispatched` from owned
+  phases. Available replies still win after handoff. Public signatures, enum
+  variants and labels are unchanged; no hard cut or deprecation shim applies.
+
 - Warn on missing documentation, `unwrap`, leftover `dbg!`/`todo!`, assertions without
   messages and suppressions without reasons in every workspace lint inheritor; stable
   suppressions are now reasoned `#[expect]`s. Previously undocumented public

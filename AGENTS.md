@@ -130,21 +130,20 @@ declaration or `[patch]`; reachability moves no ownership. See the
 `crates/batter-at-rest` owns synchronous envelope encryption and stable MAC keys.
 It has explicit standalone metadata and carries its own copy of the workspace MIT license; the facade may
 only re-export its types behind the opt-in `at-rest` feature.
-`crates/batter-outbound-http` owns the send-once outbound provider HTTP exchange: the
-one library-built `reqwest` client profile, validated origins and limits, request
-preparation and the exhaustive `Exchange` recording whether one attempt could
-have reached the peer. `src/client.rs` builds that profile's own rustls
-configuration and hands it to reqwest, which is compiled with
-`rustls-no-provider`: the *ring* provider passed explicitly, never a process
-default, TLS 1.3 and 1.2 only, ALPN `http/1.1`, the operating system verifier
-for HTTPS origins and an empty root store for loopback origins, so no aws-lc-rs
-enters the graph. `src/send.rs` owns the single send path and its transport
-classification; `src/operation.rs`, behind the opt-in `operation` feature,
-bridges `OperationContext` deadlines and cancellation, and that feature's
-`batter-core` is the package's only Batter dependency. Provider meaning, replay,
-idempotency keys, dispatch fences and reconciliation stay with the application.
-The facade may only re-export it as `batter::outbound_http` behind the opt-in
-`outbound-http` feature, which selects that bridge.
+`crates/batter-outbound-http` owns the send-once outbound provider HTTP exchange:
+validated origins and limits, preparation, and exhaustive phase-owned `Exchange`
+evidence. `client.rs` builds explicit ring rustls configuration, TLS 1.3/1.2,
+`http/1.1` ALPN, the operating system verifier for HTTPS and empty roots for
+loopback. `transport.rs` owns fresh TCP/TLS connections and write gates above
+and below TLS; `transport/dial.rs` owns bounded address fallback, with at most
+two TCP candidates under the same setup deadline and losers dropped before
+TLS/HTTP; `send.rs` owns the immediate pre-`send_request` gate and drives
+hyper's low-level HTTP/1 connection inside the exchange future, never spawned.
+No pool, reuse, redirect or resend. `operation.rs`, behind opt-in `operation`,
+bridges OperationContext and is the package's only Batter dependency.
+Provider meaning, replay, idempotency, fences and reconciliation remain with
+the application. The facade only reexports `batter::outbound_http` behind
+`outbound-http`, selecting the bridge.
 `crates/batter-core/src/lifecycle.rs` and `crates/batter-core/src/lifecycle/` own critical/finite process tasks, readiness
 acknowledgements, shutdown phases, and the separately driven completion report.
 `crates/batter-core/src/startup.rs` and `startup/` own initialization, failure cleanup

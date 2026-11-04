@@ -18,8 +18,8 @@
 //!
 //! | Outcome | What this attempt established |
 //! | --- | --- |
-//! | [`Exchange::NotStarted`] | The request was never handed to the HTTP client. |
-//! | [`Exchange::NotDispatched`] | Connection establishment failed (TCP, TLS or the connect timeout, which tests execute; DNS and pool checkout by source inspection), so no request bytes were written. |
+//! | [`Exchange::NotStarted`] | The request was never handed to an HTTP connection. |
+//! | [`Exchange::NotDispatched`] | Connection setup failed or timed out before handoff, so no request bytes were written. |
 //! | [`Exchange::Unknown`] | The request may have reached the peer, and no response head that the HTTP client accepted arrived. |
 //! | [`Exchange::Responded`] | A response head arrived. Its status is kept even when the body then fails. |
 //!
@@ -63,75 +63,94 @@
 //! # }
 //! ```
 //!
+//! # Owned connection
+//!
+//! `Client::new(origin, connect_timeout)` is the only constructor. A client fixes
+//! one validated origin and shares only its TLS configuration when cloned. Every
+//! exchange opens a fresh TCP connection, performs TLS for HTTPS, and uses hyper's
+//! low-level HTTP/1 connection API. The exchange future drives that connection
+//! itself; it never spawns a connection driver or writer. There is no pool,
+//! connection reuse, resend, redirect, proxy lookup or content decoder. Every call
+//! therefore pays connection and TLS setup. Feature unification with another
+//! client's HTTP/2 or gzip support cannot change this transport.
+//!
+//! Hostname setup retains bounded address fallback inside this future: the
+//! other address family starts after at most 300 ms or half the remaining setup
+//! budget, and addresses within each family share its remaining time. At most
+//! two TCP candidates run together; losers drop before TLS or HTTP handoff.
+//! Preparation keeps the default `Accept: */*` when callers omit `Accept`, and
+//! preserves their explicit values and sensitivity.
+//!
+//! TLS keeps the explicit *ring* provider, TLS 1.3 and 1.2 only, ALPN `http/1.1`,
+//! and the operating system verifier for HTTPS. Loopback HTTP clients use an empty
+//! root store and never read the host certificate store. On Linux, HTTPS client
+//! construction loads the host store (`SSL_CERT_FILE`/`SSL_CERT_DIR`); an empty
+//! store returns `ClientError::Build`. On macOS, the platform verifier runs during
+//! the handshake. No process-default provider is installed or needed here. Other
+//! crates using default-provider rustls builders still need application-owned
+//! configuration when their graph enables both providers.
+//!
 //! # Deadlines
 //!
-//! The exchange keeps [`RESERVE`] free at the end of the caller's deadline, so it
-//! returns its classification before that deadline and an outer timer at the
-//! same deadline does not discard it. `RESERVE` is not a recording budget:
-//! record a durable outcome in a separately reserved finalization phase. The
-//! exchange refuses to start when less than `RESERVE + MINIMUM_ATTEMPT`
-//! remains. One timer bounds the response head and the bounded body read. When
-//! a response or body chunk is ready at the same time as the timer or
-//! cancellation, the ready result is kept: polling an already dispatched request
-//! cannot start another one, because redirects and replays are disabled. Tests
-//! force that tie for a response head and for the end of an empty body; a tie
-//! with a non-empty body chunk follows the same select order but is not
-//! forced by a test.
-//! Sending requires a Tokio runtime with its time driver enabled.
+//! The exchange deadline is the caller's deadline minus `RESERVE` (50 ms).
+//! Connection setup begins only with at least `MINIMUM_ATTEMPT` (50 ms) left before
+//! that exchange deadline. DNS, TCP, TLS and HTTP/1 setup have one connect timeout
+//! of more than zero and at most 60 seconds, inside the same exchange deadline.
 //!
-//! With the `operation` feature, `PreparedRequest::send_in` takes the deadline
-//! and cancellation of a `batter_core::operation::OperationContext`. A context
-//! cancelled before the start returns [`StartRefusal::Cancelled`]; cancellation
-//! after the start returns [`UnknownReason::Cancelled`] or
-//! [`BodyFailure::Cancelled`]. A cancelled context cannot run a recording step,
-//! so the dispatch fence an application writes before sending is what remains
-//! held.
+//! Before handoff, cancellation wins over the exchange timer, which wins over
+//! connection progress. The final clock/cancellation check sits immediately before
+//! `send_request`, with no await between them. An expired or cancelled exchange
+//! that has not handed its request to the connection returns `NotStarted`, even
+//! when TCP or TLS setup already began. A setup error or connect timeout returns
+//! `NotDispatched`. These outcomes follow owned phases; they do not infer dispatch
+//! from reqwest or hyper-util error kinds.
+//!
+//! After handoff, an available response or body frame wins over cancellation and
+//! the timer, and cancellation wins over the timer. Each write, vectored write,
+//! flush and shutdown checks the gate before polling the underlying transport.
+//! The TCP stream under TLS is guarded too, because a TLS read can write pending
+//! records. After stopping, the connection can still read an available reply but
+//! cannot advance its writer. A queued or partially written request therefore
+//! cannot resume writing when a stalled exchange is polled after its deadline or
+//! cancellation. No detached connection task can progress while the exchange is
+//! unpolled. Without a response head, interruption after handoff is `Unknown`;
+//! a received status survives every body failure.
+//!
+//! With `operation`, await `send_in(context, limit)` directly in the work phase of
+//! `reserve_finalization`, then record the outcome in the finalization phase.
+//! `RESERVE` lets classification precede an outer deadline; it is not a recording
+//! budget. Dropping a send future drops its connection and produces no outcome:
+//! treat a lost exchange as `Unknown`. An outer `run`, `retry`, `timeout` or
+//! `select!` can still discard a ready exchange according to its own precedence.
+//! Sending requires a Tokio runtime with its time driver enabled.
 //!
 //! # Limits
 //!
-//! - [`Exchange::NotDispatched`] relies on hyper-util assigning its connect error
-//!   kind only to connector and pool-checkout failures, before a request is
-//!   handed to a connection. That is implementation behavior, not a documented
-//!   upstream contract. The fault tests ran against the versions this
-//!   repository's lockfile resolves (reqwest 0.13.5, hyper 1.11.1, hyper-util
-//!   0.1.20). The manifest requires reqwest `^0.13.5` and does not constrain
-//!   hyper or hyper-util, so an application's lockfile may resolve releases
-//!   these tests never ran against: keep those versions, or re-run the tests
-//!   after upgrading them.
-//! - On macOS, certificate verification for HTTPS calls the operating system
-//!   synchronously inside the poll that drives the handshake, and that call may
-//!   fetch over the network. Neither the connect timeout nor the exchange timer
-//!   can interrupt it, so the `RESERVE` bound does not hold while it blocks.
-//!   This is source-inspected; no test has executed on macOS.
-//! - Some attempts that wrote nothing, or that the server never processed, are
-//!   reported as [`Exchange::Unknown`]. A deadline that expires during the TLS
-//!   handshake is tested; expiry during DNS or TCP setup is not exercised. A
-//!   keep-alive connection that
-//!   the server closes just as the request is written, and an HTTP/1 handshake
-//!   failure, are source-inspected. Unknown never claims more than the
-//!   evidence supports.
-//! - When a pooled connection turns out to be closed before a request was
-//!   written to it, hyper-util sends that request again on a new connection
-//!   (source-inspected, not observable through reqwest). This resends something
-//!   the peer never received; it is not a replay.
-//! - Dropping the send future after the request was handed to the client
-//!   produces no outcome (no test drops one). Treat a dropped exchange as
-//!   [`Exchange::Unknown`].
-//! - The package adds no instrumentation of its own; [`Exchange::label`]
-//!   returns a value-free label to record. Its dependencies emit `log` and
-//!   `tracing` events: reqwest logs the destination host at debug level,
-//!   hyper-util logs the origin's authority and each socket address it
-//!   connects to at debug and trace level, and rustls-platform-verifier logs a
-//!   failed certificate verification at error level, with the expected and
-//!   presented names for a name mismatch. When another crate in the
-//!   application enables rustls's `logging` feature, a default of rustls,
-//!   tokio-rustls and hyper-rustls, rustls also logs the server name at debug
-//!   level and the ClientHello and the server certificate chain at trace
-//!   level. None of them carries an exchange's path, query, header value or
-//!   body (source-inspected). They appear only through a logger or subscriber
-//!   the application installs, whose configuration owns their filtering.
-//! - HTTP/2, request signing, token acquisition, proxies and operator-supplied
-//!   destinations are not supported. Unix only.
+//! - `ResponseLimit` accepts 1 byte to 64 MiB. A declared or streamed length above
+//!   it returns `TooLarge`; chunked framing is removed and content codings remain
+//!   encoded. Preallocation is capped at 1 MiB and buffer growth stays within the
+//!   limit. A body delimited only by connection close cannot reveal truncation.
+//! - Deadlines are cooperative. Scheduling delay or synchronous certificate
+//!   verification on macOS can delay return beyond `RESERVE`. A gate cannot
+//!   interrupt an already-entered poll or eliminate thread preemption between a
+//!   clock check and a socket operation. The handoff and write checks have no
+//!   intervening await. Bytes already accepted by the kernel can arrive later,
+//!   including through TCP retransmission. `Unknown` remains necessary.
+//! - A request that fails after handoff remains conservatively `Unknown`, even if
+//!   no byte was actually written. Only owned pre-handoff phases prove unsent.
+//! - No formatted value from this package includes URLs, queries, header values or
+//!   bodies. Response accessors retain the actual headers and body; header values
+//!   are sensitive. A query still reaches the provider and intermediaries.
+//! - The package adds no instrumentation. `label()` provides twelve fixed labels.
+//!   rustls-platform-verifier can log certificate failures and names; rustls can
+//!   log names and certificates when another dependency enables `logging`.
+//!   Application logger configuration owns filtering. The outbound transport no
+//!   longer invokes reqwest or hyper-util's legacy client, so their destination
+//!   and pool logs are absent from this path.
+//! - Provider semantics, replay authorization, idempotency keys, Retry-After,
+//!   dispatch fences and reconciliation remain application-owned. HTTP/2, proxies,
+//!   signing, token acquisition, certificate pinning and operator-supplied
+//!   destinations remain unsupported.
 
 #![forbid(unsafe_code)]
 
@@ -143,6 +162,7 @@ mod operation;
 mod origin;
 mod request;
 mod send;
+mod transport;
 
 pub use bytes::Bytes;
 /// The `http` 1.x types used in this package's public API.

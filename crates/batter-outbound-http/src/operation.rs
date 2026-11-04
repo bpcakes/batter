@@ -11,9 +11,9 @@ use batter_core::operation::{Interruption, OperationContext};
 impl PreparedRequest {
     /// Send the request once under `context`'s deadline and cancellation.
     ///
-    /// A context that is already cancelled returns
+    /// Cancellation before handoff to the connection returns
     /// [`crate::StartRefusal::Cancelled`] without sending. Cancellation after the
-    /// start returns [`crate::UnknownReason::Cancelled`] or
+    /// handoff returns [`crate::UnknownReason::Cancelled`] or
     /// [`crate::BodyFailure::Cancelled`]. Otherwise this behaves like
     /// [`PreparedRequest::send`] with `context.deadline()`: the classification
     /// arrives at least [`crate::RESERVE`] before the context expires, apart from
@@ -61,11 +61,12 @@ impl PreparedRequest {
             return Exchange::NotStarted(NotStarted::new(StartRefusal::Cancelled));
         }
         send::run(
-            self.http,
+            self.client,
             self.request,
             context.deadline(),
             limit,
             context.cancelled(),
+            || matches!(context.check(), Err(Interruption::Cancelled)),
         )
         .await
     }
