@@ -17,6 +17,8 @@
 //! roots, which name no Batter crate, keep their own panic policy. Programs
 //! that scripts generate as compile and identity probes are not checked-in
 //! roots and are not classified.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "panic_hook_ownership/modules.rs"]
 mod modules;

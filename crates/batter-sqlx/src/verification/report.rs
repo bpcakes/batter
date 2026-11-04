@@ -22,25 +22,39 @@ pub enum VerificationStatus {
 /// managed-object manifest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FindingKind {
+    /// A required migration version has no ledger row.
     MissingMigration,
+    /// A required migration's ledger checksum differs from the expected one.
     MigrationChecksumMismatch,
+    /// A required migration's ledger row is not marked successful.
     UnsuccessfulMigration,
+    /// A ledger row that the additional-migration policy does not permit.
     UnexpectedMigration,
+    /// One migration version has more than one ledger row.
     DuplicateMigrationRow,
     /// A migration or managed-object ledger exceeded the verifier's bounded
     /// row capacity.
     MigrationLedgerLimit,
+    /// A required ledger column is absent.
     MissingLedgerColumn,
+    /// A required ledger column has the wrong type, schema or nullability.
     LedgerColumnShape,
     /// Row-level security could filter migration or managed-object ledger rows
     /// and invalidate the ledger comparison.
     LedgerRowSecurity,
+    /// A reachable role carries a role attribute the policy does not permit.
     RoleAttribute,
+    /// The login holds `ADMIN` authority over a role outside the allowed admin roles.
     RoleAdminOption,
+    /// A reachable role owns a declared object whose policy does not permit ownership.
     Ownership,
+    /// A reachable role or PUBLIC holds a privilege the policy does not permit.
     Privilege,
+    /// A privilege carries a grant option the policy does not permit.
     GrantOption,
+    /// A reachable role holds configuration-parameter authority the policy does not permit.
     ProtectedParameter,
+    /// A declared or required object does not exist in the snapshot.
     MissingObject,
     /// A requested built-in or required custom parameter lacks observable context.
     /// Existence may be unknown or separately observed; no missing-object or
@@ -452,6 +466,7 @@ impl fmt::Debug for VerificationReport {
 
 /// A redacted failure from catalog inspection, native SQLx, or rollback.
 pub enum VerificationError {
+    /// A native SQLx query, connection or transaction operation failed.
     Native(SqlxFailure),
     /// PostgreSQL returned an identifier outside the verifier's bounded
     /// catalog identity model. The exact structural [`PolicyError`] is retained
@@ -473,8 +488,11 @@ pub enum VerificationError {
     EvaluationCapacity,
     /// Checkout retained a SQLx-managed transaction.
     ConnectionState,
+    /// Rolling back the read-only snapshot transaction failed.
     Rollback {
+        /// The verification failure that preceded the rollback, if any.
         primary: Option<Box<Self>>,
+        /// The native rollback failure.
         source: SqlxFailure,
     },
 }

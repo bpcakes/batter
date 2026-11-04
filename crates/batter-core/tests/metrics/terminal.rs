@@ -195,7 +195,7 @@ async fn unwinding_boundaries_record_panicked_instead_of_dropped() {
             context
                 .run("example.read", |_| async {
                     panic!("operation defect");
-                    #[allow(unreachable_code)]
+                    #[expect(unreachable_code, reason = "names the return type")]
                     Ok::<(), &str>(())
                 })
                 .await
@@ -212,7 +212,7 @@ async fn unwinding_boundaries_record_panicked_instead_of_dropped() {
             &policy,
             |_| async {
                 panic!("attempt defect");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<(), &str>(())
             },
             |_| RetryDecision::Retry,

@@ -1,3 +1,4 @@
+//! Fixture probe diagnostics print branches and counts, never native contents.
 #[path = "support/fixture_diagnostics.rs"]
 mod diagnostics;
 

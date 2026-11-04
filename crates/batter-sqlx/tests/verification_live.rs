@@ -4,8 +4,10 @@
 //! schemas through an explicitly supplied administrative connection.  They
 //! are ignored by ordinary workspace gates and selected by
 //! `scripts/test_sqlx_live.sh`.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 mod support;
 mod verification_fixture;
 mod verification_live_adoption;
@@ -49,7 +51,11 @@ impl VerificationPolicy {
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the complete fixture policy is declared in one place"
+)]
 fn names_policy(
     names: &Names,
     schema: &str,

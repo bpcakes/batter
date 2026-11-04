@@ -1,4 +1,6 @@
 //! A direct component join is meaningful only with an application-owned child protocol.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome, SkipReason},

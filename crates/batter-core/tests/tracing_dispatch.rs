@@ -1,18 +1,20 @@
 //! Isolate process-wide callsite registration from other tests' dispatchers.
-#[allow(dead_code)]
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/capture.rs"]
 mod capture;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/evidence.rs"]
 mod evidence;
 #[path = "../../../test-support/process/launch.rs"]
 mod launch;
 #[path = "../../../test-support/dispatch.rs"]
 mod test_dispatch;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/timing.rs"]
 mod timing;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/watchdog.rs"]
 mod watchdog;
 

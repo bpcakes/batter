@@ -1,3 +1,6 @@
+//! Protected service startup through ordered diagnostic completion.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{
@@ -290,7 +293,7 @@ async fn owner_dropped_before_first_poll_still_retains_cleanup_and_diagnostics()
         |_| {
             Box::pin(async {
                 panic!("initializer must not start after owner loss");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<_, std::io::Error>(())
             })
         },

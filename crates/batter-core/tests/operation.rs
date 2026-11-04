@@ -1,3 +1,4 @@
+//! Operation deadlines and cancellation travel downward from parent to child.
 use batter_core::{
     ConfigurationError,
     operation::{Interruption, OperationError},
@@ -62,7 +63,7 @@ async fn expired_context_does_not_invoke_factory() {
     let result = context
         .run("expired", |_| {
             panic!("factory must not be invoked");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             async {
                 Ok::<_, std::io::Error>(())
             }
@@ -192,7 +193,7 @@ async fn panic_is_not_converted_to_expected_failure() {
         context
             .run("panic", |_| async {
                 panic!("programming defect");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<_, std::io::Error>(())
             })
             .await

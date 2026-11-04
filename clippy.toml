@@ -1,3 +1,6 @@
 cognitive-complexity-threshold = 20
 too-many-lines-threshold = 100
 max-fn-params-bools = 0
+# A panic is the assertion inside tests; production and example code still
+# propagates or states the invariant with expect.
+allow-unwrap-in-tests = true

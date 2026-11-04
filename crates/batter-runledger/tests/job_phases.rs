@@ -1,6 +1,8 @@
 //! Invocation-derived operation phases without PostgreSQL. The native worker's
 //! own exit paths are covered by Runledger's worker tests; these tests drive the
 //! same `JobInvocationOwner` the worker uses through custom services.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     ConfigurationError,

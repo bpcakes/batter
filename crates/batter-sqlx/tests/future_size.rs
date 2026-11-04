@@ -5,6 +5,8 @@
 //! and dropped unpolled, so no database is involved. Each entry point erases its
 //! whole operation once on first poll; its future keeps only its arguments and
 //! one pointer, however large the native or callback state behind it.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::operation::{OperationContext, OperationOwner};
 use batter_sqlx::{

@@ -1,3 +1,6 @@
+//! Request admission and response budgets at the HTTP boundary.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use axum::{
     Extension, Json, Router,
     body::{Body, to_bytes},

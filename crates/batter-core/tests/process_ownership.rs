@@ -1,3 +1,6 @@
+//! Finite process tasks: observation before abort, retained failures and reports.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "process_ownership/error_sources.rs"]
 mod error_sources;
 
@@ -104,7 +107,7 @@ async fn only_unfinished_work_is_aborted_and_real_abort_still_skips_cleanup() {
     supervisor
         .on_cleanup("resource", || async {
             panic!("genuine abort must keep dependency cleanup conservative");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok(())
         })
         .unwrap();
@@ -425,7 +428,7 @@ async fn finite_factory_panic_is_observed_and_skips_dependent_cleanup() {
     supervisor
         .on_cleanup("dependency", || async {
             panic!("must skip dependency");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok(())
         })
         .unwrap();

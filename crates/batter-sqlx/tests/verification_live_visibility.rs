@@ -13,7 +13,10 @@ use batter_sqlx::verification::{
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> Result {
     AuthorityFixture::create()
         .await?
@@ -197,7 +200,10 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn verification_reserved_custom_parameter_requirement() -> Result {
     use batter_sqlx::verification::{
         AuthorityPolicyBuilder, DatabasePolicy, PublicGrant, verify_authority,

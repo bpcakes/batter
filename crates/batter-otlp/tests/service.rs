@@ -1,4 +1,6 @@
 //! Public adapter composition in a database-free worker root.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "support/collector.rs"]
 mod collector;
 #[path = "support/otel_env.rs"]
@@ -20,7 +22,10 @@ use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequ
 use std::time::Duration;
 
 // One scenario checks startup, cleanup, export and the second installation.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario checks startup, cleanup, export and the second installation"
+)]
 #[tokio::test]
 async fn owned_worker_exports_after_cleanup_and_second_installation_is_rejected() {
     if otel_env::rerun_if_ambient() {

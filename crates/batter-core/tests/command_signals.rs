@@ -1,13 +1,15 @@
 //! Real SIGTERM and SIGINT against finite commands, each case in a fresh child
 //! process launched through the shared fixture protocol. The parent sends a
 //! signal only after the child printed the marker that makes it meaningful.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/capture.rs"]
 mod capture;
 #[path = "command_signals/child.rs"]
 mod child;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/evidence.rs"]
 mod evidence;
 #[path = "command_signals/fixture.rs"]

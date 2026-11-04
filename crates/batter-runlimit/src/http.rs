@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     extract::{ConnectInfo, FromRequestParts, Request, State},
     handler::Handler,
-    http::{HeaderMap, StatusCode, header, request::Parts},
+    http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -516,7 +516,7 @@ where
         .quota
         .run_recorded(
             &context,
-            Checks::new(&checks).unwrap(),
+            Checks::new(&checks).expect("construction rejects an empty policy list"),
             |snapshot| match snapshot {
                 Snapshot::Started => {
                     started = Some(unstarted.take().expect("one quota check").start());
@@ -563,7 +563,7 @@ where
             if let Some(seconds) = retry_after.map(|delay| delay.seconds()) {
                 response
                     .headers_mut()
-                    .insert(header::RETRY_AFTER, seconds.to_string().parse().unwrap());
+                    .insert(header::RETRY_AFTER, HeaderValue::from(seconds));
             }
             response
         }

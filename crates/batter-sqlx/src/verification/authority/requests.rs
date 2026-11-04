@@ -429,7 +429,10 @@ pub(super) async fn inspect_relations(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the complete immutable inspection context for one relation's columns"
+)]
 async fn inspect_relation_columns(
     evaluation: &mut Evaluation,
     relation: &RelationObject,

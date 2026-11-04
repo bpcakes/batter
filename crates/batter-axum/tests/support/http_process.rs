@@ -1,16 +1,16 @@
 //! Both HTTP targets use the same launch authority and success evidence.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/capture.rs"]
 mod capture;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/evidence.rs"]
 mod evidence;
 #[path = "../../../../test-support/process/launch.rs"]
 mod launch;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/timing.rs"]
 pub mod timing;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "http_process_watchdog.rs"]
 mod watchdog;
 

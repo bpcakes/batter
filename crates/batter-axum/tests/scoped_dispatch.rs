@@ -1,3 +1,6 @@
+//! An aborted HTTP request destroys its nested spans under its own dispatch.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "../../../test-support/capture.rs"]
 mod capture;
 

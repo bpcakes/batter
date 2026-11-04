@@ -1,3 +1,4 @@
+//! Facade re-exports keep core type identity and established module paths.
 use std::any::TypeId;
 
 #[test]

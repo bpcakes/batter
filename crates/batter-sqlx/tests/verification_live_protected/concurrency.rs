@@ -320,7 +320,10 @@ async fn protected_sqlx_guards_reject_rls_inheritance_and_overflow() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn protected_sqlx_late_attachment_cannot_supply_snapshot_rows() -> Result {
     AuthorityFixture::create()
         .await?

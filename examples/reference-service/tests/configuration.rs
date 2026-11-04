@@ -1,3 +1,6 @@
+//! Service configuration loading, boundaries and process-level reporting.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "support/configuration_process.rs"]
 mod process_runtime;
 #[path = "../../../test-support/temp_dir.rs"]

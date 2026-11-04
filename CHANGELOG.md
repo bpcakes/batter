@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Warn on missing documentation, `unwrap`, leftover `dbg!`/`todo!`, assertions without
+  messages and suppressions without reasons in every workspace lint inheritor; stable
+  suppressions are now reasoned `#[expect]`s. Previously undocumented public
+  `batter-sqlx` verification fields and variants gain rustdoc. No public API change
+  (`batter-kbyg`).
+
 - Migrate OTLP and the reference provider to reqwest 0.13.5 with explicit ring
   TLS and bundled WebPKI roots. Keep HTTP/1.1 and disable response decompression
   and protocol retries regardless of consumer features (`batter-7oob`).

@@ -1,3 +1,6 @@
+//! Session profile validation, exact timeouts and pool event redaction.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "profile/hook_events.rs"]
 mod hook_events;
 

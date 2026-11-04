@@ -4,8 +4,10 @@
 //! dev-dependencies), as an unrelated dependency could through feature
 //! unification. The profile must still offer only HTTP/1.1 in ALPN, and TLS
 //! 1.3 or 1.2.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 

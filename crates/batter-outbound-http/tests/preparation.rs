@@ -2,6 +2,8 @@
 //!
 //! Nothing here connects: every refusal is reported by a constructor or by
 //! `RequestDraft::prepare`.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_outbound_http::{
     Client, ConnectTimeout, LimitError, Origin, OriginError, PrepareError, RequestDraft,

@@ -169,7 +169,7 @@ async fn profiled_scope_checks_external_schema_loss_before_work() -> Result {
             1,
             tx.application(async |_| {
                 panic!("catalog drift must be rejected before invoking work");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<(), ()>(())
             }),
         )

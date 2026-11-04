@@ -1,3 +1,6 @@
+//! Startup policies and Unix signal configuration from start through drain.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "startup_signals/service.rs"]
 mod owned_service;
 #[path = "startup_signals/scenario.rs"]
@@ -10,7 +13,7 @@ use batter_core::{
     operation::{OperationContext, OperationOwner},
     startup::{InitializationError, Startup, StartupCause, StartupError},
 };
-use scenario::{ChildInput, ComponentMode, SignalConfiguration, SignalExpectation};
+use scenario::{ChildInput, ComponentMode, SignalConfiguration, SignalExpectation, join_capture};
 use std::{
     future::pending,
     io::{self, BufRead, BufReader, Read, Write},
@@ -788,13 +791,5 @@ impl CapturedChild {
             stderr,
             timed_out,
         }
-    }
-}
-
-fn join_capture(name: &str, capture: JoinHandle<io::Result<String>>) -> String {
-    match capture.join() {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => format!("<{name} capture failed: {error}>"),
-        Err(_) => format!("<{name} capture panicked>"),
     }
 }

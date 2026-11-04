@@ -28,7 +28,7 @@ use std::{
 use tokio::sync::{Notify, oneshot, watch};
 
 /// Scripted collector response for every following request.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Behavior {
     /// 200 with an empty protobuf response.
@@ -123,7 +123,7 @@ impl Collector {
         format!("http://{}/v1/metrics", self.address)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "shared; not every test crate uses this item")]
     pub fn set(&self, behavior: Behavior) {
         *self
             .shared
@@ -142,7 +142,7 @@ impl Collector {
     }
 
     /// Wait until at least `count` requests arrived.
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "shared; not every test crate uses this item")]
     pub async fn wait_requests(
         &self,
         count: usize,
@@ -164,7 +164,7 @@ impl Collector {
 
     /// End stalled responses: stalled headers become 503, stalled bodies end
     /// short of their declared length. The server keeps serving.
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "shared; not every test crate uses this item")]
     pub fn release(&self) {
         self.closing.send_replace(true);
     }
@@ -289,7 +289,7 @@ async fn export(State(shared): State<Arc<Shared>>, body: Bytes) -> Response {
 }
 
 /// One exported series flattened from an OTLP request.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Series {
     pub name: String,
@@ -299,7 +299,7 @@ pub struct Series {
     pub value: Value,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Sum {
@@ -322,7 +322,7 @@ fn text(value: Option<&AnyValue>) -> String {
 }
 
 /// Flatten every data point in one request.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 pub fn series(request: &ExportMetricsServiceRequest) -> Vec<Series> {
     let mut flattened = Vec::new();
     for resource in &request.resource_metrics {
@@ -379,7 +379,7 @@ pub fn series(request: &ExportMetricsServiceRequest) -> Vec<Series> {
 }
 
 /// The single series with `name` whose labels contain every `wanted` pair.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 pub fn find<'a>(series: &'a [Series], name: &str, wanted: &[(&str, &str)]) -> Option<&'a Series> {
     series.iter().find(|series| {
         series.name == name
@@ -393,7 +393,7 @@ pub fn find<'a>(series: &'a [Series], name: &str, wanted: &[(&str, &str)]) -> Op
 }
 
 /// The monotonic counter value of the matching series, if present.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 pub fn counter(series: &[Series], name: &str, wanted: &[(&str, &str)]) -> Option<i64> {
     match find(series, name, wanted)?.value {
         Value::Sum {
@@ -405,7 +405,7 @@ pub fn counter(series: &[Series], name: &str, wanted: &[(&str, &str)]) -> Option
 }
 
 /// Resource attributes of the first resource in a request.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared; not every test crate uses this item")]
 pub fn resource(request: &ExportMetricsServiceRequest) -> Vec<(String, String)> {
     request
         .resource_metrics

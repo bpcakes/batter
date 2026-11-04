@@ -184,7 +184,7 @@ async fn outer_task_abort_drops_active_probe_and_invalidates_readers() {
 async fn probe_panic_remains_a_critical_failure_and_stops_the_writer() {
     let monitor = HealthMonitor::new(policy(), || async {
         panic!("deliberate probe panic");
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code, reason = "names the return type")]
         Ok::<_, Infallible>(())
     });
     let reader = monitor.reader();
@@ -210,7 +210,7 @@ async fn already_draining_run_never_invokes_its_factory() {
     handle.request();
     let monitor = HealthMonitor::new(policy(), || {
         panic!("a drained monitor must not construct a probe");
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code, reason = "names the return type")]
         async {
             Ok::<_, Infallible>(())
         }

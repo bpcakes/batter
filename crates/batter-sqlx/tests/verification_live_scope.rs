@@ -46,7 +46,6 @@ fn incomplete(report: &VerificationReport) -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_temporary_namespace_requests_are_incomplete() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();
@@ -116,7 +115,6 @@ async fn verification_temporary_namespace_requests_are_incomplete() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_public_relation_overrides_control_column_defaults() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();
@@ -154,7 +152,6 @@ async fn verification_public_relation_overrides_control_column_defaults() -> Res
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_required_and_excess_authority_share_captured_snapshot() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();

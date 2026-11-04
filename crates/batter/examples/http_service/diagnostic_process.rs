@@ -1,18 +1,18 @@
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this example uses part of it")]
 #[path = "../../../../test-support/process/capture.rs"]
 mod capture;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this example uses part of it")]
 #[path = "../../../../test-support/process/evidence.rs"]
 mod evidence;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this example uses part of it")]
 #[path = "../../../../test-support/process/launch.rs"]
 pub(super) mod launch;
 #[path = "../../../../test-support/temp_dir.rs"]
 mod temp_dir;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this example uses part of it")]
 #[path = "../../../../test-support/process/timing.rs"]
 mod timing;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this example uses part of it")]
 mod watchdog {
     include!("../../../../test-support/process/watchdog.rs");
 

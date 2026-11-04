@@ -1,5 +1,7 @@
 //! Explicit PostgreSQL 18 acceptance. Run with a dedicated disposable database:
 //! DATABASE_URL=... cargo test -p batter-runlimit --features postgres --test attempts_live -- --ignored
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::operation::OperationContext;
 use batter_runlimit::attempts::{
     AttemptError, AttemptPhase, AttemptRunner, AttemptWriteError, Authentication,
@@ -343,7 +345,7 @@ async fn cancelled_verification_keeps_busy_lease_without_open_application_transa
             },
             async |_, ()| {
                 panic!("cancelled verification must not invoke application transaction");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<Authentication<(), ()>, sqlx::Error>(Authentication::Accepted(()))
             },
         )

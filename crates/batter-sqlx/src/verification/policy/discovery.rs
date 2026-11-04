@@ -307,8 +307,11 @@ pub enum DiscoveryScope {
 /// explicit PUBLIC entry for a target replaces that target's PUBLIC defaults.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ObjectDefaults {
+    /// Privileges reachable roles may hold on a discovered object.
     pub privileges: Vec<AllowedPrivilege>,
+    /// Privileges PUBLIC may hold on a discovered object.
     pub public_privileges: Vec<AllowedPrivilege>,
+    /// Permit a role reachable by the login to own a discovered object.
     pub allow_owner: bool,
 }
 
@@ -317,13 +320,21 @@ pub struct ObjectDefaults {
 /// cross the caller's authority boundary; routine body correctness is unproven.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DiscoveryDefaults {
+    /// Defaults for discovered schemas.
     pub schemas: ObjectDefaults,
+    /// Defaults for discovered relations.
     pub relations: ObjectDefaults,
+    /// Defaults for columns of discovered relations.
     pub columns: ObjectDefaults,
+    /// Defaults for discovered sequences.
     pub sequences: ObjectDefaults,
+    /// Defaults for discovered types.
     pub types: ObjectDefaults,
+    /// Defaults for discovered `SECURITY INVOKER` routines.
     pub invoker_routines: ObjectDefaults,
+    /// Defaults for discovered `SECURITY DEFINER` routines.
     pub definer_routines: ObjectDefaults,
+    /// Allow PostgreSQL's default PUBLIC `USAGE` on discovered relations' row types.
     pub allow_row_type_public_usage: bool,
 }
 
@@ -334,7 +345,9 @@ pub struct DiscoveryDefaults {
 /// still supply column privileges, so a column deny cannot subtract them.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicAllowance {
+    /// The PUBLIC grant target.
     pub object: PublicObject,
+    /// Privileges PUBLIC may hold on the target; empty rejects every grant.
     pub privileges: Vec<AllowedPrivilege>,
 }
 
@@ -354,7 +367,9 @@ pub struct PublicAllowance {
 /// ```
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RequiredPrivilege {
+    /// The object the privilege applies to.
     pub object: PublicObject,
+    /// The privilege the effective current role must hold.
     pub privilege: ObjectPrivilege,
 }
 

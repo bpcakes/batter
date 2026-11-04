@@ -71,7 +71,7 @@ async fn fail_fast_caught_validation_loss_keeps_first_cause() -> Result {
             let error = scope
                 .sql(async |_| {
                     panic!("lost scope must not run work");
-                    #[allow(unreachable_code)]
+                    #[expect(unreachable_code, reason = "names the return type")]
                     Ok(())
                 })
                 .await

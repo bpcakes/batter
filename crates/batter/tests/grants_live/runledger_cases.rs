@@ -34,7 +34,10 @@ fn conflict_code<T>(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_scopes() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;

@@ -2,8 +2,10 @@
 //!
 //! These tests read the raw bytes the loopback peer received, so they check
 //! the request as sent rather than as configured.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 

@@ -1,3 +1,4 @@
+//! Configuration failures and hung children under an external watchdog.
 use std::{path::Path, process::Command};
 
 fn run_control(name: &str) {
