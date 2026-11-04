@@ -2,7 +2,7 @@
 
 Send-once outbound HTTP exchange with exhaustive transport evidence. This
 experimental 0.0.1 package targets Unix, including Linux and macOS; its tests
-have executed on Linux only, and macOS execution is unverified.
+have Linux evidence and local macOS checks recorded in `batter-8e8r`.
 
 A provider call can fail in a way that leaves the caller unsure whether the
 provider received the request. This package owns the transport part of that
@@ -301,7 +301,8 @@ enables `operation`.
 ## Platform and verification
 
 This crate follows the workspace's Unix-only platform policy; Windows is
-unsupported and not planned. Its tests have executed on Linux only. They ran
+unsupported and not planned. Linux execution evidence is supplemented by local
+macOS checks in `batter-8e8r`. Tests ran
 against the versions this repository's lockfile resolves: reqwest 0.13.5
 (default features off, `rustls-no-provider`), rustls 0.23.46 (`ring`),
 rustls-platform-verifier 0.7.1, hyper-util 0.1.20, hyper 1.11.1 and url 2.5.8.

@@ -4,6 +4,8 @@
 //! arbitrary provider supports keyed lookup, payload retention, or the outcome
 //! vocabulary implemented by the local protocol fixture.
 
+mod tls;
+
 use batter::{
     operation::{Interruption, OperationContext, OperationError},
     settings::SecretString,
@@ -47,12 +49,22 @@ pub(crate) struct ProviderClient {
     token: SecretString,
 }
 
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls::config())
+        .http1_only()
+        .retry(reqwest::retry::never())
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
+        .redirect(Policy::none())
+        .no_proxy()
+}
+
 impl ProviderClient {
     pub(crate) fn new(base_url: Url, token: SecretString) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .no_proxy()
-            .build()?;
+        let client = client_builder().build()?;
         Ok(Self {
             client,
             base_url,

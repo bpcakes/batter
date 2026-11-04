@@ -6,6 +6,9 @@
 //! a collector body back upstream. The export owner reads the typed outcome;
 //! it never inspects upstream error text.
 
+#[path = "tls.rs"]
+mod tls;
+
 use crate::diagnostics::ExportFailure;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -166,6 +169,12 @@ impl BoundedClient {
 
 fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
+        .tls_backend_preconfigured(tls::config())
+        .http1_only()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
         .redirect(Policy::none())
         .no_proxy()
         // Consumer feature unification can enable HTTP/2 protocol retries.
@@ -234,3 +243,7 @@ impl HttpClient for BoundedClient {
 #[cfg(test)]
 #[path = "tests/http2.rs"]
 mod http2;
+
+#[cfg(test)]
+#[path = "tests/tls.rs"]
+mod tls_tests;

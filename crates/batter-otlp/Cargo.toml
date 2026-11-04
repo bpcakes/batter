@@ -17,8 +17,10 @@ workspace = true
 batter-core = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 url.workspace = true
-reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 thiserror.workspace = true
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1.0.11"
 metrics-exporter-otel = { version = "0.3.1" }
 opentelemetry = { version = "0.31.0", default-features = false, features = ["metrics"] }
 opentelemetry_sdk = { version = "0.31.0", default-features = false, features = ["metrics", "experimental_metrics_custom_reader"] }
@@ -32,8 +34,10 @@ mime = "0.3.17"
 async-trait = { version = "0.1.89" }
 
 [dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 h2 = "0.4.19"
-reqwest = { version = "0.12.28", default-features = false, features = ["http2"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["http2", "gzip"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 axum.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "net", "io-util"] }

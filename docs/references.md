@@ -6,6 +6,122 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Reqwest consolidation, 2026-11-04
+
+`batter-7oob` migrates the OTLP adapter and reference provider from reqwest
+0.12.28 to 0.13.5; Cargo now resolves one reqwest version. OpenTelemetry remains
+on the bridge-compatible 0.31 line. The implementation was checked against the
+downloaded reqwest 0.13.5 and rustls 0.23.46 sources and the pinned
+[ClientBuilder documentation](https://docs.rs/reqwest/0.13.5/reqwest/struct.ClientBuilder.html).
+
+- `rustls-no-provider` requires a provider unless a preconfigured TLS backend
+  is supplied. Both clients pass `tls_backend_preconfigured` an explicit ring
+  configuration with TLS 1.2/1.3 and WebPKI roots (updated to 1.0.11). They do
+  not use the platform verifier or install/read the global provider. The
+  reqwest/rustls release lines must remain compatible: reqwest downcasts the
+  configuration and rejects an unknown backend type at construction.
+  Unrelated plain reqwest builders with only `rustls-no-provider` still require
+  application-owned provider setup. That upstream constructor policy cannot be
+  enforced by these private clients; their builders never rely on it.
+- Their shipped 0.12 manifests did not enable HTTP/2 or decompression. Both
+  now explicitly pin HTTP/1.1 in ALPN and the builder, and disable gzip, Brotli,
+  deflate and zstd. This also prevents feature unification with the outbound
+  package's dev dependencies from changing response bytes after consolidation.
+  Previously, consumer features could enable those behaviors; they no longer
+  change these private client profiles.
+- The OTLP client retains `retry::never`; the reference provider now sets it
+  explicitly too. With HTTP/2 compiled and forced in a test, the native default
+  sends three attempts after `REFUSED_STREAM`, versus one with each production
+  retry policy. Redirects and proxy discovery remain disabled. Connect/body
+  error classification and application-owned replay decisions remain unchanged;
+  the 0.13.5 `is_connect` source review in the next section applies to all three
+  clients, superseding the historical 0.12 review for these two.
+- New shared loopback regressions reject a self-signed certificate over TLS
+  1.2 and 1.3, then complete a handshake using a separately trusting control;
+  inspect the actual ClientHello ALPN; and assert no global provider appears.
+  With gzip compiled, actual client response bytes stay encoded while an
+  explicitly enabled control decodes them. These check the builder passed to
+  reqwest, not just a standalone rustls configuration.
+
+No public signatures or persisted formats change. The fixed profiles enforce
+provider ownership and response-byte/replay policy internally; applications
+cannot substitute a builder into these paths. Public-CA acceptance, the live
+reference PostgreSQL effect suite and hosted CI are not established by these
+loopback tests. `bash scripts/verify.sh` passed on macOS arm64 / Rust 1.98.1:
+formatting, file budgets, all four Clippy configurations, all six matrix parts,
+rustdoc and all HTTP smoke profiles. `cargo outdated -R --offline` now lists
+only the bridge-constrained OpenTelemetry packages, with no obsolete reqwest
+feature warnings. This follow-up did not run Linux or the ignored reference live
+effect suite. Verification is recorded in `batter-7oob`.
+
+## Dependency refresh, 2026-11-04
+
+For `batter-8e8r`, Cargo updated Tokio 1.54.1, thiserror 2.0.21,
+serde_json 1.0.154, UUID 1.29.0, SHA-2 0.11.1, zeroize 1.9.1, h2 0.4.20,
+tokio-rustls 0.26.6, proptest 1.12.0 and TOML 1.2.0. Rust remains 1.98.1.
+The following primary sources were inspected in the downloaded registry source
+for the exact versions linked here; the web renderer was unavailable.
+
+- [AES-GCM 0.11.1 changelog](https://docs.rs/crate/aes-gcm/0.11.1/source/CHANGELOG.md)
+  and [AEAD 0.6.1 API](https://docs.rs/aead/0.6.1/aead/trait.AeadInOut.html):
+  the new in/out API accepts the same buffer for input and output. The at-rest
+  adapter retains detached 16-byte tags appended to ciphertext and uses
+  in-place slice conversions, with zeroizing scratch buffers on failure.
+- [HMAC 0.13.0](https://docs.rs/hmac/0.13.0/hmac/) moves key construction to
+  `KeyInit`; [HKDF 0.13.0](https://docs.rs/hkdf/0.13.0/hkdf/) retains the
+  extract/expand path used here. NIST/RFC known answers and the existing
+  independently generated Node envelope fixture cover unchanged cryptographic
+  bytes; the fixture is not regenerated for this upgrade.
+- [rand_core 0.10.1 changelog](https://docs.rs/crate/rand_core/0.10.1/source/CHANGELOG.md)
+  removes `OsRng`. The leaf now directly uses
+  [getrandom 0.4.3 `fill`](https://docs.rs/getrandom/0.4.3/getrandom/fn.fill.html),
+  which returns an error on partial failure and leaves destination contents
+  unspecified on error. The existing failure source now modifies half the
+  destination before failing; seal and changed-key rewrap must still return
+  only `RandomnessUnavailable`.
+- [tower-http 0.7.1 request IDs](https://docs.rs/crate/tower-http/0.7.1/source/src/request_id.rs):
+  comparison with 0.6.11 changes only constructors/accessors to `const fn`.
+  Batter uses only this module, with `RequestId` privately wrapped; it does not
+  expose tower-http types. Reqwest still resolves its own tower-http 0.6.11.
+- [metrics-exporter-otel 0.3.1 manifest](https://docs.rs/crate/metrics-exporter-otel/0.3.1/source/Cargo.toml)
+  requires OpenTelemetry 0.31. Keep the SDK, exporter, HTTP and protobuf family
+  aligned with that bridge; updating the direct requirements to 0.33 would
+  introduce incompatible meter types.
+- [reqwest 0.13.5 features](https://docs.rs/crate/reqwest/0.13.5/source/Cargo.toml)
+  remove `rustls-tls-webpki-roots`; `rustls` selects aws-lc-rs and the platform
+  verifier. The follow-up `batter-7oob` migrates OTLP and the reference provider
+  to 0.13.5 using explicit rustls configurations and bundled WebPKI roots.
+  The outbound exchange already uses 0.13.5 with its own TLS configuration;
+  its reqwest, hyper and hyper-util versions are unchanged by this refresh.
+
+No public API signatures or persisted format definitions change. On macOS arm64
+with Rust 1.98.1, the final `bash scripts/verify.sh` passed: formatting, budgets,
+all four Clippy configurations, all six matrix parts (including native PostgreSQL
+18 and the external facade consumer), rustdoc and all HTTP smoke profiles. The
+detached `check-batter-at-rest-portability.sh` gate passed too. Linux Docker on
+Rust 1.98.1 passed the outbound `before_head` and `redaction` targets with the
+repaired fixture; the full refreshed workspace was not verified on Linux in this
+run. These are local results, not hosted CI evidence. Details are recorded in
+`batter-8e8r` and `batter-8e8r.1`.
+
+### macOS refusal fixture repair
+
+`batter-8e8r.1` replaces bound-but-unconnected sockets in the facade example and
+outbound fault tests. On the macOS arm64 host, a standalone socket probe found
+that connecting to such a port times out; holding both ends of an established
+loopback connection and targeting its client-side port instead produces
+`ConnectionRefused`. This is executed OS behavior, not a claim that `bind`
+alone guarantees refusal. Apple's [connect(2) manual](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/connect.2.html)
+distinguishes refusal from connection-establishment timeout; Linux's
+[bind(2) manual](https://man7.org/linux/man-pages/man2/bind.2.html) documents
+address allocation and `EADDRINUSE`. The fixtures explicitly bind before
+connecting, retain both stream owners until after the HTTP attempt, and bound
+their own setup with a two-second timeout. Regression checks retain exact
+`NotDispatched(Failed)` assertions, reject a competing non-reuse bind, and send
+a marker over the held connection to detect unexpected HTTP bytes or closure.
+This prevents accidental ephemeral allocation, not deliberate explicit
+`SO_REUSEADDR`/`SO_REUSEPORT` rebinding by another process.
+
 ## reqwest 0.13.5 and hyper-util 0.1.20 for the outbound exchange, 2026-11-02
 
 For `batter-3s1a`, `Cargo.lock` resolves reqwest 0.13.5 (default features off,

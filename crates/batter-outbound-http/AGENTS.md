@@ -9,7 +9,7 @@ deadline, a bounded body read under the same deadline, and the exhaustive
 crate that owns the provider protocol. Experimental (`batter-3s1a`, ADR-015,
 ADR-014 track 1), not a provider adapter. Standalone leaf like `batter-at-rest`.
 Unix only; Linux/macOS execution claims require actual recorded checks, and the
-tests have executed on Linux only.
+tests have Linux evidence and local macOS checks in `batter-8e8r`.
 
 ## Key entrypoints
 

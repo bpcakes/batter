@@ -11,7 +11,7 @@
 //! processes bind ports at once.
 
 use batter_outbound_http::{Client, ConnectTimeout, Origin, RESERVE, ResponseLimit};
-use std::{fmt, net::SocketAddr, time::Duration};
+use std::{fmt, io, net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpSocket, TcpStream},
@@ -271,26 +271,52 @@ impl fmt::Debug for Recorded {
     }
 }
 
-/// A loopback port that refuses connections. Its socket stays bound without
-/// listening, so the kernel cannot give the port to another test's listener,
-/// in this or another process, while this value lives. A released port can
-/// be reassigned at once, and a request sent to it would reach that peer.
+/// A client-side port held by an established loopback connection. Keeping
+/// both ends alive prevents ephemeral port reassignment, while new connects
+/// are refused on both Linux and macOS. A merely bound socket stalls on macOS.
 pub struct RefusingPort {
     address: SocketAddr,
-    _bound: TcpSocket,
+    connection: (TcpStream, TcpStream),
 }
 
 impl RefusingPort {
-    pub fn bind() -> Self {
-        let socket = TcpSocket::new_v4().expect("socket");
-        socket
-            .bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-            .expect("bind");
-        let address = socket.local_addr().expect("address");
-        Self {
-            address,
-            _bound: socket,
-        }
+    pub async fn bind() -> Self {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+            let socket = TcpSocket::new_v4().expect("socket");
+            socket
+                .bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+                .expect("bind");
+            let client = socket
+                .connect(listener.local_addr().unwrap())
+                .await
+                .expect("connect");
+            let address = client.local_addr().expect("address");
+            let (peer, _) = listener.accept().await.expect("accept");
+            Self {
+                address,
+                connection: (client, peer),
+            }
+        })
+        .await
+        .expect("bounded reservation setup")
+    }
+
+    /// The reservation remains allocated and carries no bytes from the exchange.
+    pub async fn assert_reserved(&mut self) {
+        let contender = TcpSocket::new_v4().unwrap();
+        assert_eq!(
+            contender.bind(self.address).unwrap_err().kind(),
+            io::ErrorKind::AddrInUse
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            self.connection.0.write_all(b"reservation").await.unwrap();
+            let mut received = [0; 11];
+            self.connection.1.read_exact(&mut received).await.unwrap();
+            assert_eq!(&received, b"reservation");
+        })
+        .await
+        .expect("reservation still connected");
     }
 
     /// A plain HTTP client for this refusing port.

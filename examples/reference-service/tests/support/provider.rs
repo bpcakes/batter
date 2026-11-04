@@ -18,6 +18,16 @@ use tokio::sync::{Notify, oneshot};
 
 use super::ProbeResult;
 
+#[path = "../../src/provider/tls.rs"]
+mod tls;
+
+pub(super) fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls::config())
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+}
+
 pub const TOKEN: &str = "fixture-provider-token";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,10 +150,7 @@ impl ProviderFixture {
             .next()
             .map(|(key, effect)| (key.clone(), effect.clone()))
             .ok_or("provider identity check requires one accepted effect")?;
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .build()?;
+        let client = client_builder().build()?;
         let repeated = client
             .post(format!("{}effects", self.base_url()))
             .bearer_auth(TOKEN)

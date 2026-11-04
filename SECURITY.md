@@ -14,8 +14,10 @@ authorization gate. A concurrency permit is not a per-user rate limit. A timeout
 is not rollback or permission to replay a mutation.
 
 Two library-built clients are exceptions. The `batter-otlp` exporter's private
-transport uses reqwest 0.12.28's rustls with *ring* and compiled-in webpki
-roots, and bounds its payload and response bodies. The experimental outbound
+transport uses reqwest 0.13.5 with explicit rustls *ring* configuration and
+bundled WebPKI roots, and bounds its payload and response bodies. It installs
+no global provider, fixes HTTP/1.1 and disables redirects, proxies, retries and
+decompression. The reference provider uses the same TLS policy. The experimental outbound
 exchange (`batter-outbound-http`, also `batter::outbound_http`) builds its own client
 too: the package fixes its rustls configuration, with the *ring* provider passed explicitly,
 TLS 1.3 and 1.2 only and, for an HTTPS origin, the operating system's
@@ -37,8 +39,10 @@ hyper-rustls, rustls also logs the server name at debug level and the
 ClientHello and the server certificate chain at trace level. None of them
 carries an exchange's path, query, header value or body. The application's
 logger or subscriber configuration owns filtering the `reqwest`,
-`hyper_util`, `rustls_platform_verifier` and `rustls` targets. No test
-verifies a certificate, and nothing has executed on macOS.
+`hyper_util`, `rustls_platform_verifier` and `rustls` targets. No outbound-exchange
+test verifies a certificate. Its local macOS checks in `batter-8e8r` cover
+transport behavior; the separate OTLP/reference migration in `batter-7oob`
+tests self-signed certificate rejection and an explicitly trusting control.
 
 Bulkhead does not bound its waiter count or request memory. HTTP deadlines stop
 at response construction and do not protect streaming sessions or every slow

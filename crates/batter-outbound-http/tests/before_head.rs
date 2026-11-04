@@ -75,7 +75,7 @@ async fn deadline_beyond_the_refusal_window_starts_one_request() {
 
 #[tokio::test]
 async fn refused_connection_is_not_dispatched() {
-    let refusing = RefusingPort::bind();
+    let mut refusing = RefusingPort::bind().await;
     let outcome = send(effect(&refusing.client()), after(Duration::from_secs(2))).await;
     assert!(
         matches!(&outcome, Exchange::NotDispatched(failure) if failure.failure() == ConnectFailure::Failed),
@@ -83,6 +83,7 @@ async fn refused_connection_is_not_dispatched() {
     );
     assert!(outcome.proves_unsent());
     assert_eq!(outcome.label(), "not_dispatched.connect_failed");
+    refusing.assert_reserved().await;
 }
 
 #[tokio::test]

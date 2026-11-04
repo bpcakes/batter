@@ -1,6 +1,16 @@
 use super::*;
 use serde_json::json;
 
+mod http2;
+
+#[path = "../../../../crates/batter-otlp/tests/support/client.rs"]
+mod tls_fixture;
+
+#[tokio::test]
+async fn client_uses_explicit_tls_without_trusting_a_fixture_certificate() {
+    tls_fixture::assert_bundled_tls(client_builder().build().unwrap()).await;
+}
+
 #[test]
 fn invalid_retained_header_fails_before_dispatch() {
     let client = ProviderClient::new(
@@ -102,9 +112,7 @@ async fn native_transport_timeouts_keep_their_code_and_release_capacity() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let client = ProviderClient {
-            client: reqwest::Client::builder()
-                .no_proxy()
-                .redirect(Policy::none())
+            client: client_builder()
                 .read_timeout(Duration::from_millis(200))
                 .build()
                 .unwrap(),
@@ -298,4 +306,13 @@ async fn connector_failure_is_known_not_dispatched() {
 pub(crate) enum StallPoint {
     Body,
     Headers,
+}
+
+#[tokio::test]
+async fn consumer_gzip_feature_does_not_change_response_bytes() {
+    tls_fixture::assert_no_decompression(
+        client_builder().build().unwrap(),
+        client_builder().gzip(true).build().unwrap(),
+    )
+    .await;
 }
