@@ -126,7 +126,10 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;

@@ -1,3 +1,6 @@
+//! Which request or failure is recorded as the cause of a shutdown.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::lifecycle::ComponentExit;
 use batter_core::lifecycle::Fatal;
 use batter_core::{

@@ -1,3 +1,6 @@
+//! Operation admission observes linearized lifecycle state and closes after stop.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::lifecycle::Fatal;
 use batter_core::{BoxError, lifecycle::ComponentExit};
 use batter_core::{
@@ -223,7 +226,7 @@ fn abandonment_signals_before_dropping_inert_application_captures() {
             .on_cleanup("inert-resource", move || {
                 let _capture = cleanup_capture;
                 panic!("abandonment must not run async cleanup");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 async {
                     Ok(())
                 }
@@ -301,7 +304,7 @@ fn assert_rejections(process: &ProcessHandle, expected: ProcessAdmissionError) {
         let error = process
             .try_spawn(name, |_| {
                 panic!("rejected factory must remain inert");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 async {
                     Ok::<_, Fatal<Infallible>>(())
                 }

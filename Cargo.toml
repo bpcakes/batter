@@ -26,10 +26,18 @@ license = "MIT"
 repository = "https://github.com/bpcakes/batter"
 homepage = "https://github.com/bpcakes/batter"
 
+[workspace.lints.rust]
+missing_docs = "warn"
+
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
 too_many_lines = "warn"
 fn_params_excessive_bools = "warn"
+allow_attributes_without_reason = "warn"
+unwrap_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+missing_assert_message = "warn"
 
 [workspace.dependencies]
 batter-otlp = { path = "crates/batter-otlp", version = "0.0.1", default-features = false }

@@ -1,3 +1,6 @@
+//! Finite commands: inert specifications, owner drop and shared observation.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "command/budgets.rs"]
 mod budgets;
 #[path = "command/completion.rs"]
@@ -58,7 +61,7 @@ async fn inert_specification_and_owner_drop_before_first_poll_invoke_no_work() {
     assert!(!called.load(Ordering::SeqCst));
     let command = Command::new(context(), budget(), |_| {
         panic!("abandoned owner must not invoke a never-polled factory");
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code, reason = "names the return type")]
         Box::pin(async { Ok::<_, Infallible>(()) })
     })
     .start();

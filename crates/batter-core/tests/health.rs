@@ -1,3 +1,6 @@
+//! Dependency health sampling, publication and writer ownership.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     ConfigurationError, RegistrationError,
     cleanup::CleanupBudget,

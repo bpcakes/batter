@@ -169,7 +169,10 @@ async fn await_count(pool: &sqlx::PgPool, sql: String, expected: i64, label: &st
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;

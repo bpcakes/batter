@@ -68,7 +68,6 @@ async fn verification_ledger_ddl_before_lock_is_observed() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();
@@ -134,7 +133,6 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_catalog_resolution_preserves_serving_state() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();
@@ -188,7 +186,6 @@ async fn verification_catalog_resolution_preserves_serving_state() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();

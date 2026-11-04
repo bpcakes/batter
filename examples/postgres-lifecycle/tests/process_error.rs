@@ -1,3 +1,4 @@
+//! A missing configuration exits with a redacted process error.
 use std::{path::Path, process::Command};
 
 #[test]

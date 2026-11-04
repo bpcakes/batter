@@ -2,7 +2,7 @@
 //!
 //! `limit` models a saturated or unavailable collector: samples beyond it are
 //! discarded by the recorder and counted, never reported back to Batter.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "shared support; this crate uses part of it")]
 
 use super::catalog::{self, MetricKind};
 use metrics::{

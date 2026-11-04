@@ -4,6 +4,8 @@
 //! matrix repeats them with `--release`. Futures are built against lazy pools and
 //! dropped unpolled. Native checks, native admission and admitted work are each
 //! erased once, so consumer work state never enters the quota future.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     cleanup::CleanupBudget,

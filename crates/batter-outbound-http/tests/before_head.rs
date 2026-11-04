@@ -2,8 +2,10 @@
 //!
 //! Every request goes to a loopback fault peer that counts connections and
 //! complete requests, so each outcome is checked against what reached it.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 

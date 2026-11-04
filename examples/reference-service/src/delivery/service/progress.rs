@@ -36,7 +36,10 @@ impl SubmissionProgress {
 
     pub(super) fn transaction_began(&self) -> ActiveSubmission {
         let mut phase = self.lock();
-        debug_assert!(matches!(*phase, SubmissionPhase::BeforeTransaction));
+        debug_assert!(
+            matches!(*phase, SubmissionPhase::BeforeTransaction),
+            "a submission begins its transaction once"
+        );
         *phase = SubmissionPhase::TransactionActive;
         drop(phase);
         ActiveSubmission {

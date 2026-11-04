@@ -1,4 +1,6 @@
 //! Bounded process-contained exploration; seeds do not control Tokio scheduling.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use crate::closure_races::ClosureCause;
 

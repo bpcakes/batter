@@ -21,7 +21,6 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
-#[allow(clippy::too_many_lines)]
 async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifier() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;
@@ -233,7 +232,10 @@ async fn excessive_table_update_grant_options_and_shadow_schemas_are_rejected() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn one_login_composes_both_adapters_with_its_own_application_objects() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;

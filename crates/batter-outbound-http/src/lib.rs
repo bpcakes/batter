@@ -134,7 +134,6 @@
 //!   destinations are not supported. Unix only.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
 
 mod client;
 mod exchange;

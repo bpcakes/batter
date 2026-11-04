@@ -4,6 +4,8 @@
 //! local listener that accepts connections but never answers holds an
 //! acquisition until a native timeout. Live cleanup under restricted grants is
 //! in the facade's `grants_live` suite.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     RegistrationError,

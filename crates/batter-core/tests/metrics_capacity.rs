@@ -1,4 +1,6 @@
 //! The process-wide name table is bounded; this binary owns it exclusively.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #![cfg(feature = "metrics")]
 
 #[path = "metrics/capture.rs"]

@@ -1,4 +1,4 @@
-// Cargo forwards this source identity to direct dependents, not to the runtime.
+//! Cargo forwards this source identity to direct dependents, not to the runtime.
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!(

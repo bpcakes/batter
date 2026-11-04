@@ -64,7 +64,6 @@ pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicyBuilder> {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_discovery_dependent_types_follow_native_acl() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();

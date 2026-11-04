@@ -1,4 +1,6 @@
 //! PostgreSQL 18 contracts for owned scopes; included in the explicit live runner.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "atomic_live/cancellation.rs"]
 mod cancellation;
 #[path = "atomic_live/commit.rs"]

@@ -4,6 +4,8 @@
 //! Debug and Display like the command and startup reports. Retained errors stay
 //! reachable only through the public fields, so disclosure is an explicit read.
 //! `BlockingError` likewise never formats a retained panic payload.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     BoxError,

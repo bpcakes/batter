@@ -1,3 +1,6 @@
+//! A future's tracing dispatch stays installed through polling and destruction.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "../../../test-support/dispatch.rs"]
 mod test_dispatch;
 

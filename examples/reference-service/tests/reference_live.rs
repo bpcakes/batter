@@ -1,4 +1,6 @@
 //! Explicit PostgreSQL 18 compatibility probes. Run through the root live runner.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "support/mod.rs"]
 mod support;

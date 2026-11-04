@@ -1,3 +1,6 @@
+//! Startups without components or reserved capacity still report a complete lifetime.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::lifecycle::Fatal;
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome},

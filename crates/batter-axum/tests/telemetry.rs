@@ -1,4 +1,7 @@
-#[allow(dead_code)]
+//! HTTP telemetry records the actual status without untrusted request values.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/capture.rs"]
 mod capture;
 

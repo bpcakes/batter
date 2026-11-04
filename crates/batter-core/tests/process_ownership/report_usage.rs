@@ -15,41 +15,65 @@ use tokio::task::JoinError;
 
 // These functions are typechecked, not executed: waiting is irrelevant to the
 // lint contract. A missing must_use attribute leaves an unfulfilled expectation.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "typechecked lint control, never called")]
 async fn ignored_raw_reports(stack: CleanupStack, budget: CleanupBudget, supervisor: Supervisor) {
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     stack.close(budget).await;
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     supervisor.run_until(async {}).await;
 }
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "typechecked lint control, never called")]
 async fn ignored_after_unwrap(running: RunningSupervisor, observer: SupervisorObserver) {
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     running.wait().await.unwrap();
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     running.shutdown().await.unwrap();
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     observer.wait().await.unwrap();
 }
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "typechecked lint control, never called")]
 async fn ignored_after_question_mark(
     running: RunningSupervisor,
     observer: SupervisorObserver,
 ) -> Result<(), Arc<JoinError>> {
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     running.wait().await?;
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     running.shutdown().await?;
-    #[expect(unused_must_use)]
+    #[expect(
+        unused_must_use,
+        reason = "discarding this result is the must_use control"
+    )]
     observer.wait().await?;
     Ok(())
 }
 
 // The checked path returns a Result whose success witness may be discarded.
 // This must continue compiling under the exact lint that rejects raw disposal.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "typechecked lint control, never called")]
 #[deny(unused_must_use)]
 async fn checked_question_mark(
     running: RunningSupervisor,

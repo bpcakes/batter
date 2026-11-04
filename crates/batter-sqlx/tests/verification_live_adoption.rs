@@ -38,7 +38,6 @@ fn has(
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_required_privileges_follow_current_inheritance() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();
@@ -101,7 +100,6 @@ async fn verification_required_privileges_follow_current_inheritance() -> Result
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_discovery_checks_unlisted_objects_and_exact_overrides() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();

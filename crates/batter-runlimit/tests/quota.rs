@@ -1,3 +1,6 @@
+//! Native quota admission runs before work and consumes nothing until polled.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 mod support;
 use batter_core::operation::{Interruption, OperationError};
 use batter_runlimit::quota::{Admission, Checks, InterruptedCheck, Quota, RunResult};
@@ -201,7 +204,7 @@ async fn unresolved_quota_timeout_drops_backend_and_never_starts_work() {
     let result = quota
         .run(&context(10), Checks::new(&checks).unwrap(), |_| async {
             panic!("work must not start");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok::<(), Infallible>(())
         })
         .await;
@@ -350,7 +353,7 @@ async fn backend_error_preserves_cause_and_certainty_without_retry() {
         let result = quota
             .run(&context(100), Checks::new(&checks).unwrap(), |_| async {
                 panic!("must not run");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<(), Infallible>(())
             })
             .await;

@@ -8,7 +8,11 @@ use batter_sqlx::verification::{
 };
 use sqlx::PgPool;
 
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "one live verification case keeps its steps in execution order"
+)]
 pub(super) async fn check(
     fixture: &mut AuthorityFixture,
     names: &Names,

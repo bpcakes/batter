@@ -298,7 +298,10 @@ async fn acknowledged_transactions_reuse_and_abandoned_transactions_retire() -> 
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() -> Result {
     use futures_util::FutureExt as _;
     let url = std::env::var("DATABASE_URL")

@@ -9,6 +9,11 @@
 //! `cargo bench -p batter-axum --bench declared_dispatch --locked` prints the
 //! median nanoseconds per request. Without `--bench`, as under `cargo test`, it
 //! sends each request once and checks only its status.
+#![allow(clippy::unwrap_used, reason = "setup panics before measuring")]
+#![allow(
+    clippy::missing_assert_message,
+    reason = "setup panics before measuring"
+)]
 
 use axum::{
     Router,

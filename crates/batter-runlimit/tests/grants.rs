@@ -4,6 +4,8 @@
 //! `batter_runlimit::grants`: each statement was read off the native
 //! `runlimit-postgres` SQL for this source version. A change to the exported
 //! fragment that is not also a change to the native statements fails here.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_sqlx::verification::AuthorityAllowance;
 

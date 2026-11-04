@@ -1,4 +1,6 @@
 //! OS-process containment for futures whose poll never returns to Tokio.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "non_yielding/capture.rs"]
 mod capture;

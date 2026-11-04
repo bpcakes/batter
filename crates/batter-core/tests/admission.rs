@@ -1,3 +1,6 @@
+//! Concurrency admission capacity, waiting and closing, and bounded blocking runs.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "admission/blocking_dispatch.rs"]
 mod blocking_dispatch;
 #[path = "admission/blocking_outcomes.rs"]

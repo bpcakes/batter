@@ -1,4 +1,5 @@
-#[allow(dead_code)]
+//! Live PostgreSQL checks that profiles use effective role function privileges.
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 mod support;
 
 use batter_sqlx::{PgProfiledPool, PgSessionProfile};

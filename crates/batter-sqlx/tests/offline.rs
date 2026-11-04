@@ -1,3 +1,6 @@
+//! SQLx behavior that needs no database: redaction, inert calls and closed pools.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     lifecycle::{ShutdownBudget, Supervisor},
     operation::{Interruption, OperationError},

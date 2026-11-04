@@ -85,7 +85,10 @@ pub enum Outcome {
 }
 
 closed_domain! {
-    #[cfg_attr(not(feature = "metrics"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "metrics"),
+        expect(dead_code, reason = "only metric recording reads outcome labels")
+    )]
     pub(crate) OUTCOME_LABELS, fn outcome_label(value: Outcome) {
         Outcome::Succeeded => "succeeded",
         Outcome::Failed => "failed",
@@ -125,7 +128,10 @@ pub(crate) struct Observation {
 }
 
 impl Observation {
-    #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "metrics"),
+        expect(unused_variables, reason = "only metric recording reads the boundary")
+    )]
     pub(crate) fn new(operation: &'static str, boundary: Boundary) -> Self {
         let span = tracing::info_span!(
             target: "batter",

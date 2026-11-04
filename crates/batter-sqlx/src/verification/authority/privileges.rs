@@ -71,7 +71,10 @@ impl IndexedAcl {
 // The arguments are the complete immutable inspection context for one ACL
 // object; keeping them explicit avoids hiding policy or PUBLIC semantics in a
 // second object abstraction.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the complete immutable inspection context for one ACL object"
+)]
 pub(super) async fn inspect_acl_object(
     evaluation: &mut Evaluation,
     graph: &RoleGraph<'_>,
@@ -108,7 +111,10 @@ pub(super) async fn inspect_acl_object(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the complete immutable inspection context for one ACL object"
+)]
 pub(super) async fn inspect_acl_object_collect(
     evaluation: &mut Evaluation,
     graph: &RoleGraph<'_>,
@@ -145,7 +151,10 @@ pub(super) async fn inspect_acl_object_collect(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the complete immutable inspection context for one ACL object"
+)]
 pub(super) async fn inspect_acl_object_parts(
     evaluation: &mut Evaluation,
     graph: &RoleGraph<'_>,
@@ -183,7 +192,10 @@ pub(super) async fn inspect_acl_object_parts(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the complete immutable inspection context for one ACL object"
+)]
 async fn inspect_acl_object_parts_collect(
     evaluation: &mut Evaluation,
     graph: &RoleGraph<'_>,

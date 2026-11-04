@@ -1028,6 +1028,17 @@ volume; no hosted measurement of the change is claimed yet. See
 Packages inheriting the workspace lint table enable `clippy::cognitive_complexity`,
 `clippy::too_many_lines`, and `clippy::fn_params_excessive_bools` at warning level.
 Root `clippy.toml` sets their thresholds to 20, 100, and zero boolean parameters.
+The same table warns on `missing_docs`, `clippy::unwrap_used`, `clippy::dbg_macro`,
+`clippy::todo`, `clippy::missing_assert_message` and
+`clippy::allow_attributes_without_reason` (`batter-kbyg`). Every linted `#[allow]`
+and `#[expect]` states a reason. A suppression whose lint fires in every compiled
+configuration is an `#[expect]`, so it fails once the lint stops firing; an
+`#[allow]` remains only where firing varies, such as `dead_code` in shared test
+support that each including crate uses differently, or a size lint that sits near
+its threshold or fires only on macOS. `allow-unwrap-in-tests` covers `#[test]`
+functions and `#[cfg(test)]` modules; integration-test roots whose helper functions
+unwrap or assert without a message carry reasoned crate-level allows for those two
+lints. Library, example and build-script code has no such exemption.
 The existing `-D warnings` verification steps enforce these limits across libraries,
 examples, and tests. Native Runlimit enables the boolean-parameter lint through
 `pedantic`; native Runledger and standalone `batter-at-rest` keep their own lint tables.

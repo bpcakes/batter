@@ -1,5 +1,5 @@
-// The unpublished native integration checks the foundation Cargo actually chose.
-// Forward core too: a consumer patch must not silently select a second source.
+//! The unpublished native integration checks the foundation Cargo actually chose.
+//! Forward core too: a consumer patch must not silently select a second source.
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!(

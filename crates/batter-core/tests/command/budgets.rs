@@ -12,7 +12,7 @@ async fn expired_work_is_inert_and_total_reserve_is_validated_before_work() {
         budget(),
         |_| {
             panic!("expired work factory must remain inert");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Box::pin(async { Ok::<_, Infallible>(()) })
         },
     )
@@ -28,7 +28,7 @@ async fn expired_work_is_inert_and_total_reserve_is_validated_before_work() {
         budget(),
         |_| {
             panic!("invalid total must never run work");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Box::pin(async { Ok::<_, Infallible>(()) })
         },
     );
@@ -109,7 +109,7 @@ async fn cleanup_timeout_keeps_work_value_and_skips_later_hooks_within_total() {
                     .unwrap()
                     .register(|| async {
                         panic!("cleanup work budget exhausted");
-                        #[allow(unreachable_code)]
+                        #[expect(unreachable_code, reason = "names the return type")]
                         Ok(())
                     });
                 scope

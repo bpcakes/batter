@@ -1,12 +1,14 @@
-#![cfg(feature = "operation")]
 //! `send_in` under an `OperationContext`'s deadline and cancellation.
 //!
 //! Cancellation before the start proves nothing was sent; cancellation after
 //! the start never claims more than the peer's evidence supports. Each test
 //! prepares its request before its context's budget starts, so client
 //! construction time under load cannot use up the budget.
+#![cfg(feature = "operation")]
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 

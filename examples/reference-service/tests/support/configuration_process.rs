@@ -1,18 +1,18 @@
 // Reuse repository-owned Unix kill/reap/capture machinery; these controls own
 // only the configuration child environment and its explicit launch protocol.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/capture.rs"]
 mod capture;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/evidence.rs"]
 mod evidence;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/launch.rs"]
 pub(crate) mod launch;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/timing.rs"]
 mod timing;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 mod watchdog {
     include!("../../../../test-support/process/watchdog.rs");
 

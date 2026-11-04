@@ -1,4 +1,6 @@
 //! Guarded route groups with their own request and browser policy.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "route_groups/admitted.rs"]
 mod admitted;
 #[path = "route_groups/admitted_dispatch.rs"]

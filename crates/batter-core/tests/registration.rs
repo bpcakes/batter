@@ -1,3 +1,6 @@
+//! Rejected component and managed registrations never invoke their factories.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     BoxError, RegistrationError,
     cleanup::CleanupBudget,

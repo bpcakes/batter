@@ -1,3 +1,6 @@
+//! LIFO finalizers, retained cleanup errors and panics inside the cleanup boundary.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome, CleanupStack, SkipReason},
@@ -81,7 +84,7 @@ async fn cleanup_panic_is_retained_and_later_hooks_still_run() {
     cleanup
         .push("panicking", || async {
             panic!("cleanup defect");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok(())
         })
         .unwrap();
@@ -132,7 +135,7 @@ async fn total_work_budget_is_shared_and_skipped_hooks_are_explicit() {
     cleanup
         .push("never-started", || async {
             panic!("must be skipped");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok(())
         })
         .unwrap();
