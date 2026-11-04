@@ -50,7 +50,12 @@ async fn consumer_http2_feature_cannot_enable_protocol_retries() {
     tokio::time::timeout(Duration::from_secs(10), async {
         // Positive control: the pinned native default really retries this NACK.
         assert_eq!(
-            refused_streams(reqwest::Client::builder().no_proxy()).await,
+            refused_streams(
+                reqwest::Client::builder()
+                    .tls_backend_preconfigured(super::tls::config())
+                    .no_proxy()
+            )
+            .await,
             3
         );
         assert_eq!(refused_streams(client_builder()).await, 1);

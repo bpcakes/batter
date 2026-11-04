@@ -186,9 +186,7 @@ async fn seed_acceptance(pool: &PgPool, provider_url: &str, delivery: Uuid) -> P
     let (key, payload): (String, Value) = sqlx::query_as(
         "SELECT provider_key, provider_payload FROM reference_delivery_effects WHERE delivery_id = $1",
     ).bind(delivery).fetch_one(pool).await?;
-    let response: Value = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    let response: Value = super::super::provider::client_builder()
         .timeout(EXTERNAL_EFFECT_ALLOWANCE)
         .build()?
         .post(format!("{provider_url}effects"))

@@ -49,6 +49,9 @@ Unix-only application is not a reusable database framework.
   claim and for an invocation that already ended.
 - `src/provider.rs` owns the selected HTTP effect protocol. It is application
   code, not a generic provider adapter or an exactly-once claim.
+  `src/provider/tls.rs` keeps bundled WebPKI trust, explicit ring and TLS 1.2/1.3;
+  the client fixes HTTP/1.1, no redirects/proxies/retries/decompression regardless
+  of additive reqwest features. Its TLS helper is also loaded by live fixtures.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
   `src/http.rs` assembles them through `HttpBoundary`; `src/http/tests.rs` and
   `src/http/tests/admission_order.rs` cover the boundary without PostgreSQL.

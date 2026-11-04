@@ -1,8 +1,8 @@
 //! One provider mutation through the protected outbound exchange, and one
 //! attempt whose connection the operating system refuses. Both stay on
 //! loopback: a local fixture stands in for the provider and answers one
-//! request, and the second client targets a port that is bound but never
-//! listens.
+//! request, and the second client targets the reserved client-side port of an
+//! established loopback connection.
 //!
 //! The exchange reports what this attempt established about delivery, never
 //! what the provider did. Writing the dispatch fence before the send, settling
@@ -21,7 +21,7 @@ use batter::{
 use std::{convert::Infallible, io, net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpSocket},
+    net::{TcpListener, TcpSocket, TcpStream},
     time::timeout_at,
 };
 
@@ -185,14 +185,31 @@ fn request_length(request: &[u8]) -> Option<usize> {
     Some(head + declared.unwrap_or(0))
 }
 
-/// A port that is bound but never listens, so the operating system refuses
-/// every connection to it. Keep the socket alive for the whole attempt: a
-/// released port could be reassigned to another listener at once.
-fn refusing_port() -> io::Result<(TcpSocket, SocketAddr)> {
-    let socket = TcpSocket::new_v4()?;
-    socket.bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
-    let address = socket.local_addr()?;
-    Ok((socket, address))
+/// Holds both ends of a connection so its client-side port stays allocated.
+/// Unlike a merely bound socket, this port refuses new connections on macOS
+/// as well as Linux. Never release the reservation before the exchange ends.
+struct RefusingPort {
+    connection: (TcpStream, TcpStream),
+}
+
+impl RefusingPort {
+    fn address(&self) -> io::Result<SocketAddr> {
+        self.connection.0.local_addr()
+    }
+}
+
+async fn refusing_port() -> io::Result<RefusingPort> {
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let socket = TcpSocket::new_v4()?;
+        socket.bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
+        let client = socket.connect(listener.local_addr()?).await?;
+        let (peer, _) = listener.accept().await?;
+        Ok(RefusingPort {
+            connection: (client, peer),
+        })
+    })
+    .await?
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -220,8 +237,8 @@ async fn main() -> Result<(), BoxError> {
 
     // The operating system refuses the connection before any request byte is
     // written, so the exchange proves this attempt unsent.
-    let (_bound, closed) = refusing_port()?;
-    let client = Client::new(Origin::loopback(closed)?, connect_timeout)?;
+    let refusing = refusing_port().await?;
+    let client = Client::new(Origin::loopback(refusing.address()?)?, connect_timeout)?;
     let context = OperationOwner::new(BUDGET)?.into_context();
     let (unreachable, _fence) = mutate(&client, &context).await?;
     println!("closed-port exchange: {}", unreachable.label());

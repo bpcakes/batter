@@ -537,7 +537,11 @@ fn real_validation_and_open_errors_do_not_echo_rejected_values() {
 struct FailingRandom;
 
 impl RandomSource for FailingRandom {
-    fn fill(&mut self, _destination: &mut [u8]) -> Result<(), Error> {
+    fn fill(&mut self, destination: &mut [u8]) -> Result<(), Error> {
+        // getrandom permits modified output on failure. Never treat a partial
+        // fill as a usable key or nonce, including during changed-key rewrap.
+        let partial = destination.len() / 2;
+        destination[..partial].fill(0xa5);
         Err(Error::RandomnessUnavailable)
     }
 }

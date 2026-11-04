@@ -1307,8 +1307,8 @@ The Linux-only `an_empty_trust_store_refuses_https_clients_but_not_loopback_ones
 test shows both. On macOS, certificate verification calls the operating system
 synchronously inside the poll that drives the handshake and may fetch over the
 network, so neither the connect timeout nor the exchange's deadline bounds it
-(source-inspected). The package's tests have executed on Linux only, and macOS
-execution is unverified.
+(source-inspected; certificate verification is untested). Linux execution
+evidence is supplemented by local macOS checks in `batter-8e8r`.
 
 External version contract, as the package manifest and the
 [primary sources](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
@@ -1352,7 +1352,8 @@ always run with the dev-only features compiled.
 
 A consumer on reqwest 0.12, as the owner-maintained billing library is, would
 compile a second reqwest line beside this one and share none of its types. The reference service's provider client
-and `batter-otlp`'s private transport stay on reqwest 0.12.28 and are not
+and `batter-otlp`'s private transport also use reqwest 0.13.5 after `batter-7oob`,
+with bundled WebPKI roots and explicit ring TLS; they are not
 adopters.
 
 This is a focused experimental extraction, ADR-014's first track. The bundle is

@@ -413,7 +413,7 @@ On macOS, certificate verification calls the operating system synchronously
 inside the poll that drives the TLS handshake, and that call may fetch over the
 network. Neither the connect timeout nor the exchange timer can interrupt it,
 so the `RESERVE` bound does not hold while it blocks. This is source-inspected;
-nothing has executed on macOS.
+the local macOS checks in `batter-8e8r` do not exercise certificate verification.
 
 `MINIMUM_ATTEMPT` exists because a request written just before the deadline
 could rarely be answered. A refusal that proves nothing was sent would become
@@ -590,9 +590,10 @@ owns.
     verification instead of silently changing what the batch executes.
   - brotli, zstd, deflate and hickory are not compiled here, so those overrides
     are source-inspected.
-- **Platform.** The package's tests have executed on Linux only. The CI
+- **Platform.** Linux test evidence is supplemented by local macOS checks in
+  `batter-8e8r`. The CI
   definition's macOS job compiles the package and runs none of its tests.
-  macOS execution, including its certificate verifier, is unverified.
+  macOS certificate verification remains unverified.
 - **Crypto providers in the application's graph.** The package neither
   installs nor needs a process-default provider, but two hazards remain in an
   application's own graph:
@@ -649,7 +650,9 @@ owns.
     dependencies.
   - The billing library would need reqwest 0.13.
   - batter-otlp and the reference service keep their private copies on
-    reqwest 0.12.28. This decision does not migrate them.
+    reqwest 0.12.28 at this decision. The later `batter-7oob` refresh migrates
+    those private transports to 0.13.5 with their own bundled-root TLS profile;
+    they still do not adopt the outbound exchange API.
 - **Promotion.** Stable promotion still needs two adopting application roots
   under the [integration contract](../integrations.md). It also needs exercised
   partial-startup and shutdown failures and a documented external version

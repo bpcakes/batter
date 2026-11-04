@@ -8,6 +8,18 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Migrate OTLP and the reference provider to reqwest 0.13.5 with explicit ring
+  TLS and bundled WebPKI roots. Keep HTTP/1.1 and disable response decompression
+  and protocol retries regardless of consumer features (`batter-7oob`).
+
+- Refresh compatible workspace dependencies and move the Axum adapter to
+  tower-http 0.7.1. Upgrade at-rest encryption to AES-GCM 0.11.1, HKDF/HMAC 0.13.0
+  and SHA-256 0.11.1, using getrandom 0.4.3 directly for system randomness.
+  Public APIs and version-1 ciphertext bytes are preserved (`batter-8e8r`).
+- Fix outbound refusal fixtures on macOS by retaining an established loopback
+  connection's client-side port throughout the attempt. The example and fault
+  tests keep their exact non-dispatch assertions (`batter-8e8r.1`).
+
 - Send one outbound provider HTTP request with exhaustive transport evidence
   through the new experimental package `batter-outbound-http` (`batter-3s1a`;
   [ADR-015](docs/adr/015-outbound-transport-evidence.md);

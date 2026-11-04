@@ -140,7 +140,7 @@ async fn outcomes_without_a_head_show_no_request_values() {
     assert_eq!(not_started.label(), "not_started.deadline");
     assert_debug_hidden(&not_started);
 
-    let refusing = RefusingPort::bind();
+    let refusing = RefusingPort::bind().await;
     let not_dispatched = marked(&refusing.client())
         .prepare()
         .unwrap()

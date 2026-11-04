@@ -16,6 +16,17 @@ Do not mutate the process environment during preparation. HTTP(S) endpoints must
 name `/v1/metrics` without URL credentials, query or fragment. The reference
 service adds its own literal-loopback, plain-HTTP restriction.
 
+The reqwest 0.13 transport uses an explicit rustls configuration with the ring
+provider, TLS 1.2/1.3 and bundled WebPKI roots. It neither reads the platform
+trust store nor installs a process-default crypto provider. HTTP/1.1, no redirects,
+no proxy discovery, no protocol retries and no response decompression are fixed
+even when another dependency enables reqwest's HTTP/2 or compression features.
+
+This selects reqwest's `rustls-no-provider` feature. An application building a
+separate plain `reqwest::Client` without a provider-enabled feature must supply
+its own TLS configuration or install a process-default provider at its root.
+This adapter does neither on the application's behalf.
+
 Batter installs the recorder before startup and owns the service through cleanup
 and diagnostic completion. Owner drop requests drain; cancelling a borrowed
 waiter does not. Service and diagnostics have separate retained outcomes,

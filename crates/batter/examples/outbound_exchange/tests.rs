@@ -1,6 +1,6 @@
 //! Consumer-contract tests for the outbound example. Each fence decision for an
 //! outcome only the package can produce is driven by a real exchange against a
-//! test-owned loopback listener or a bound port that never listens; the
+//! test-owned loopback listener or a reserved connected client-side port; the
 //! mapping table adds the conservative `Unknown` values a caller may build by
 //! hand. Every client is built before its budget starts.
 
@@ -80,8 +80,8 @@ async fn a_receipt_status_without_a_usable_body_keeps_the_fence_held() {
 
 #[tokio::test]
 async fn a_refused_connection_proves_the_mutation_unsent_and_releases_the_fence() {
-    let (_bound, closed) = refusing_port().unwrap();
-    let client = client(closed);
+    let mut refusing = refusing_port().await.unwrap();
+    let client = client(refusing.address().unwrap());
     let context = OperationOwner::new(BUDGET).unwrap().into_context();
     let (exchange, fence) = mutate(&client, &context).await.unwrap();
     assert!(
@@ -91,6 +91,32 @@ async fn a_refused_connection_proves_the_mutation_unsent_and_releases_the_fence(
     assert_eq!(exchange.label(), "not_dispatched.connect_failed");
     assert!(exchange.proves_unsent());
     assert_eq!(fence, Some(Fence::Released));
+    let contender = TcpSocket::new_v4().unwrap();
+    assert_eq!(
+        contender
+            .bind(refusing.address().unwrap())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::AddrInUse
+    );
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        refusing
+            .connection
+            .0
+            .write_all(b"reservation")
+            .await
+            .unwrap();
+        let mut received = [0; 11];
+        refusing
+            .connection
+            .1
+            .read_exact(&mut received)
+            .await
+            .unwrap();
+        assert_eq!(&received, b"reservation");
+    })
+    .await
+    .expect("reservation still connected");
 }
 
 #[tokio::test]
@@ -99,8 +125,8 @@ async fn a_budget_too_short_to_attempt_is_refused_unsent_and_still_recorded() {
     // needs RESERVE + MINIMUM_ATTEMPT of it. One millisecond short leaves the
     // fence step the most room while the start gate still refuses. Against a
     // refusing port a started exchange would report NotDispatched instead.
-    let (_bound, closed) = refusing_port().unwrap();
-    let client = client(closed);
+    let refusing = refusing_port().await.unwrap();
+    let client = client(refusing.address().unwrap());
     let budget = RECORD_RESERVE + RESERVE + MINIMUM_ATTEMPT - Duration::from_millis(1);
     let context = OperationOwner::new(budget).unwrap().into_context();
     let (exchange, fence) = mutate(&client, &context).await.unwrap();
@@ -144,8 +170,8 @@ async fn parent_cancellation_in_flight_holds_the_fence_and_records_nothing() {
 
 #[tokio::test]
 async fn only_outcomes_that_prove_nothing_was_sent_release_the_fence() {
-    let (_bound, closed) = refusing_port().unwrap();
-    let client = client(closed);
+    let refusing = refusing_port().await.unwrap();
+    let client = client(refusing.address().unwrap());
     let request = || {
         client
             .request(Method::POST, ["v1", "effects"])

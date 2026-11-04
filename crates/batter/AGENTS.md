@@ -58,7 +58,7 @@ tests use `start_without_signals`, never hand-installed `tokio::signal` listener
 The `outbound_exchange` example writes its dispatch fence in a work-phase step
 before `send_in`, records the outcome only in the reserved finalization phase,
 builds each client before its budget starts, and points refused attempts at a
-socket that is bound but never listens, held for the whole attempt; its tests
+connected client-side port, with both ends held for the whole attempt; its tests
 live in `examples/outbound_exchange/tests.rs`.
 A native namespace re-exports the native package itself, never a wrapper, and
 every one is feature-gated: no feature may silently select another backend or

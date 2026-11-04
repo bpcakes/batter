@@ -2178,7 +2178,8 @@ What remains is kept explicit (question 5):
   - On macOS, certificate verification calls the operating system
     synchronously inside the poll that drives the handshake and may fetch over
     the network. Neither the connect timeout nor the exchange timer can
-    interrupt it. This is source-inspected; nothing has executed on macOS.
+    interrupt it. This is source-inspected; local macOS checks in `batter-8e8r`
+    do not exercise certificate verification.
   - On Linux, an HTTPS client's certificate store follows `SSL_CERT_FILE` and
     `SSL_CERT_DIR`, and an empty store fails `Client::new` with
     `ClientError::Build`.
@@ -2371,7 +2372,8 @@ Inside the package sources:
 The facade example's
 [tests](../../crates/batter/examples/outbound_exchange/tests.rs) drive the
 fence decisions through real exchanges, against a test-owned listener or a
-bound port that never listens. The mapping test also builds `Unknown` values
+reserved client-side port of an established connection, with both ends retained
+until the exchange finishes. The mapping test also builds `Unknown` values
 by hand, the only outcome a caller can construct. The last test checks the
 fixture's own request framing:
 

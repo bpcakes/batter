@@ -20,6 +20,11 @@ Unix only; Linux/macOS execution claims require actual recorded checks.
 Change transport/SDK integration here, lifecycle ownership and catalog schema in
 batter-core, configuration sources and deployment policy in the application.
 Shared collector test source lives at `crates/batter-otlp/tests/support/collector.rs`.
+Shared TLS/compression regressions live beside it in `client.rs` and are also
+loaded by the reference provider's unit tests. `src/pipeline/tls.rs` owns TLS
+1.2/1.3, bundled WebPKI roots, explicit ring and HTTP/1.1; never install a global
+provider or select reqwest's `rustls` feature, which enables aws-lc-rs. Disable
+decompression and protocol retries even when consumer features enable them.
 
 ## Invariants
 

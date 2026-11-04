@@ -11,7 +11,7 @@ macOS arm64 have execution evidence on both supported toolchains, including
 focused hosted macOS jobs before `batter-f0jz`; regular hosted macOS CI now uses
 the pinned toolchain. Other Unix targets remain unverified. See
 [ADR-007](adr/007-unix-platform-scope.md). `batter-outbound-http` postdates that
-evidence and has executed on Linux only; see
+evidence; local macOS checks supplement its Linux evidence in `batter-8e8r`; see
 [its contract](#outbound-provider-exchange).
 
 ## Native quota execution
@@ -289,7 +289,8 @@ suites [preparation](../crates/batter-outbound-http/tests/preparation.rs),
 unit test and doctests in the package's sources, and from the facade's
 [`outbound_exchange` example tests](../crates/batter/examples/outbound_exchange/tests.rs);
 each test named below belongs to one of them. The fault tests read what a
-scripted peer received. They have executed on Linux only. Every build of the
+scripted peer received. Linux evidence is supplemented by local macOS checks
+in `batter-8e8r`. Every build of the
 package's own tests compiles reqwest's `gzip` and `http2` features through its
 dev-dependencies, as an unrelated dependency could through feature unification;
 the shipped feature set without them is compile-checked, and executed only by the
@@ -468,12 +469,12 @@ record. On macOS, certificate verification calls the operating system
 synchronously inside the poll that drives the TLS handshake and may fetch over
 the network. Neither the connect timeout nor the exchange timer can interrupt
 that poll, so the `RESERVE` bound does not hold while it blocks. That is
-source-inspected: nothing has executed on macOS, and the macOS CI job only
-compiles the package.
+source-inspected: the macOS tests do not exercise certificate verification,
+and the macOS CI job only compiles the package.
 
 Before a response head, `reqwest::Error::is_connect` yields `NotDispatched`:
 `TimedOut` when `is_timeout` also holds, `Failed` otherwise. A refused TCP
-connection to a port that is bound but never listens and a failed TLS handshake
+connection to a reserved connected client-side port and a failed TLS handshake
 are `NotDispatched(Failed)` (`refused_connection_is_not_dispatched`,
 `failed_tls_handshake_is_not_dispatched_and_sends_no_http`), and a stalled
 handshake is `NotDispatched(TimedOut)` after the connect timeout and before the

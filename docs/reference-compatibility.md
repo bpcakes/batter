@@ -1,5 +1,14 @@
 # Native reference compatibility
 
+2026-11-04 (`batter-7oob`): the private provider and optional OTLP adapter use
+reqwest 0.13.5 with explicit ring TLS 1.2/1.3 and bundled WebPKI roots. HTTP/1.1,
+no redirects/proxies, no protocol retries and no decompression are fixed even
+under additive features. Shared loopback TLS/compression tests and the provider's
+HTTP/2 retry negative control cover the migration; the live PostgreSQL provider
+effect suite is not rerun by these tests. See the
+[source review](references.md#reqwest-consolidation-2026-11-04) and `batter-7oob`
+for final verification outcomes.
+
 2026-09-26 extraction (`batter-i3ny`): the reference now selects optional
 `batter-otlp` through core protected service completion. The native versions below
 remain unchanged. Historical live runs predate this extraction; current pinned
@@ -269,7 +278,7 @@ optional test-support harness retain one native type graph.
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
 | Runledger historical Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Superseded native transaction/session views; native SQLx types, inert preparation, initialization observation and consuming settlement | Historical evidence only; the current graph uses the local imported native packages |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
-| reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
+| reqwest registry | 0.13.5 | Application-only provider transport with `json` and `rustls-no-provider`, explicit ring TLS 1.2/1.3 and bundled WebPKI roots; HTTP/1.1, no redirects, proxies, retries or decompression | Local macOS arm64 / Rust 1.98.1 full verification, including TLS/compression/replay regressions, passed in `batter-7oob`. Earlier live worker evidence used 0.12.28; the live effect suite is not rerun here. |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |
 
 Identical Runledger version numbers do not imply identical registry and Git

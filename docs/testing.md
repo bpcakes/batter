@@ -2965,8 +2965,12 @@ for `batter::outbound_http`. It writes its dispatch fence in an `example.fence`
 work-phase step before `send_in` and records the settled fence in the reserved
 finalization phase. Its seven tests, in `outbound_exchange/tests.rs`, run under
 `--all-targets` in the `workspace` part and contact only test-owned sockets on
-`127.0.0.1`: a listener, or a socket that is bound but never listens and stays
-bound for the whole attempt, so no other listener can take its port. Every
+`127.0.0.1`: a listener, or the client-side port of an established connection.
+Both ends stay open for the whole attempt, preventing ephemeral port
+reassignment. A merely bound socket times out on macOS instead of refusing.
+The refusal tests also reject a competing non-reuse bind and exchange a marker
+over the retained connection afterward, proving it remains live and carries no
+HTTP request. Reservation setup has a two-second timeout. Every
 client is built before its budget starts. A fixture mutation returns
 `Responded` with the fixture's 201 receipt and settles the example's fence, and
 the test checks the request line, credential header, JSON content type and body
@@ -3240,7 +3244,8 @@ closure returns and runtime drop cannot hang; a closure that never signals its
 start would still hang its test until the CI time limit.
 
 The `batter-outbound-http` suites run on loopback against a scripted peer and have
-executed on Linux only; the macOS CI job only compiles them. Every build of
+Linux execution evidence, supplemented by local macOS checks in `batter-8e8r`;
+the macOS CI job only compiles them. Every build of
 them compiles reqwest's `gzip` and `http2` through the package's
 dev-dependencies; the shipped feature set is compile-checked by the
 `outbound-library` command and executed only by the facade example's tests in
@@ -3401,6 +3406,17 @@ and exact per-name success; that ordinary workspace run left all 54 live probes
 ignored. The runner controls reject missing startup/cancellation cases too.
 
 ## Reference metrics export
+
+The reqwest 0.13 migration (`batter-7oob`) adds shared loopback TLS and compression
+regressions in `crates/batter-otlp/tests/support/client.rs`, driven by the OTLP
+transport and reference provider unit tests. Each real client rejects a local
+self-signed certificate over TLS 1.2 and 1.3, while an explicitly trusting control
+completes the same fixture handshake. ClientHello ALPN stays HTTP/1.1 and no global
+provider is installed. With gzip compiled, production clients return the exact
+encoded response; a decompression-enabled control returns the decoded body.
+The reference provider's HTTP/2 refusal control observes three native default
+attempts versus one with production retry policy, matching the OTLP regression.
+These tests use no external HTTPS service and do not attest to a public CA.
 
 Extraction verification (`batter-i3ny`, 2026-09-26): the complete
 `bash scripts/verify.sh` passed on macOS arm64 with pinned Rust 1.98.1, including

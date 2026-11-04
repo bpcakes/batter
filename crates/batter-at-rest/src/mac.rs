@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -99,7 +99,7 @@ impl MacKey {
     }
 
     fn computation(&self) -> HmacSha256 {
-        <HmacSha256 as Mac>::new_from_slice(self.bytes.as_ref().as_ref())
+        <HmacSha256 as KeyInit>::new_from_slice(self.bytes.as_ref().as_ref())
             .expect("HMAC accepts keys of any size")
     }
 

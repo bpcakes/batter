@@ -1,6 +1,5 @@
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce, Tag, aead::AeadInPlace};
+use aes_gcm::{Aes256Gcm, KeyInit, aead::AeadInOut};
 use hkdf::Hkdf;
-use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -230,9 +229,7 @@ struct SystemRandom;
 
 impl RandomSource for SystemRandom {
     fn fill(&mut self, destination: &mut [u8]) -> Result<(), Error> {
-        OsRng
-            .try_fill_bytes(destination)
-            .map_err(|_| Error::RandomnessUnavailable)
+        getrandom::fill(destination).map_err(|_| Error::RandomnessUnavailable)
     }
 }
 
@@ -317,7 +314,7 @@ fn encrypt_bytes(
     let mut encrypted = Zeroizing::new(Vec::with_capacity(capacity));
     encrypted.extend_from_slice(plaintext);
     let tag = cipher
-        .encrypt_in_place_detached(Nonce::from_slice(nonce), aad, &mut encrypted)
+        .encrypt_inout_detached(nonce.into(), aad, encrypted.as_mut_slice().into())
         .map_err(|_| Error::CryptographicFailure)?;
     encrypted.extend_from_slice(&tag);
     Ok(std::mem::take(&mut *encrypted))
@@ -337,11 +334,11 @@ fn decrypt_bytes(
     let cipher = cipher(key)?;
     let mut plaintext = Zeroizing::new(ciphertext.to_vec());
     cipher
-        .decrypt_in_place_detached(
-            Nonce::from_slice(nonce),
+        .decrypt_inout_detached(
+            nonce.into(),
             aad,
-            &mut plaintext,
-            Tag::from_slice(tag),
+            plaintext.as_mut_slice().into(),
+            tag.try_into().map_err(|_| Error::AuthenticationFailed)?,
         )
         .map_err(|_| Error::AuthenticationFailed)?;
     Ok(plaintext)
@@ -364,7 +361,7 @@ fn encrypt_data_key(
     let (body, tag_slot) = wrapped.split_at_mut(SECRET_KEY_BYTES);
     body.copy_from_slice(data_key);
     let tag = cipher
-        .encrypt_in_place_detached(Nonce::from_slice(nonce), aad, body)
+        .encrypt_inout_detached(nonce.into(), aad, body.into())
         .map_err(|_| Error::CryptographicFailure)?;
     tag_slot.copy_from_slice(&tag);
     Ok(*wrapped)
@@ -386,11 +383,11 @@ fn decrypt_data_key(
     let mut data_key = Zeroizing::new([0_u8; SECRET_KEY_BYTES]);
     data_key.copy_from_slice(ciphertext);
     cipher
-        .decrypt_in_place_detached(
-            Nonce::from_slice(nonce),
+        .decrypt_inout_detached(
+            nonce.into(),
             aad,
-            &mut data_key[..],
-            Tag::from_slice(tag),
+            (&mut data_key[..]).into(),
+            tag.try_into().map_err(|_| Error::AuthenticationFailed)?,
         )
         .map_err(|_| Error::AuthenticationFailed)?;
     Ok(data_key)

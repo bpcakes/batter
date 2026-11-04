@@ -1,5 +1,10 @@
 # batter-at-rest envelope format version 1
 
+Dependency upgrades preserve these bytes. The RustCrypto 0.11 AES-GCM / 0.13
+HKDF and HMAC implementation is checked against the same independent version-1
+fixture. System randomness comes from `getrandom::fill`; any error, including
+one after a partial buffer fill, fails the operation without returning an envelope.
+
 This document normatively defines version 1. All integers are unsigned and big-endian. Every length counts bytes, not characters. Decoders reject truncation, noncanonical fixed lengths, values above the documented limits, unknown versions, inconsistent nested lengths, and trailing data.
 
 Version 1 fixes AES-256-GCM, HKDF-SHA256, 32-byte master and data keys, 12-byte nonces, and 16-byte authentication tags. A future algorithm or incompatible encoding requires a new format version; version 1 has no algorithm selector.
