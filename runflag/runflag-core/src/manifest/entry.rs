@@ -1,6 +1,6 @@
 //! One declaration in a manifest, and the records it carries.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::{kind_names, sorted};
 use crate::{
@@ -13,9 +13,17 @@ use crate::{
     value::ValueType,
 };
 
-/// One declaration in a [`Manifest`](super::Manifest). Decoded only as part of one, which
-/// validates it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// One declaration in a [`Manifest`](super::Manifest).
+///
+/// It has no decoder of its own: only decoding a whole manifest constructs
+/// it, after validating it against the rest of that manifest. The same holds
+/// for [`ManifestOwners`], [`ManifestRequiredSettings`], [`ManifestInvariant`]
+/// and [`ManifestRetired`].
+///
+/// ```compile_fail,E0277
+/// let _entry: runflag_core::ManifestEntry = serde_json::from_str("{}").unwrap();
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ManifestEntry {
     pub(in crate::manifest) key: FlagKey,
     pub(in crate::manifest) setting_name: SettingName,
@@ -214,7 +222,7 @@ impl ManifestEntry {
 
 /// The owners of a manifest entry: `"all"`, or `{"only": [...]}` with sorted
 /// kind names.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ManifestOwners {
     /// Every process kind owns the declaration.
@@ -224,7 +232,7 @@ pub enum ManifestOwners {
 }
 
 /// The settings one enabling variant requires.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ManifestRequiredSettings {
     pub(in crate::manifest) variant: String,
     pub(in crate::manifest) settings: Vec<SettingName>,
@@ -243,7 +251,7 @@ impl ManifestRequiredSettings {
 }
 
 /// One invariant declared on a manifest entry.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ManifestInvariant {
     pub(in crate::manifest) rule: InvariantRule,
     pub(in crate::manifest) variant: String,
@@ -274,7 +282,7 @@ impl ManifestInvariant {
 }
 
 /// A retired name and its migration note.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ManifestRetired {
     pub(in crate::manifest) name: SettingName,
     pub(in crate::manifest) migration_note: String,

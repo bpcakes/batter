@@ -11,7 +11,7 @@ use crate::{
     declaration::{Absence, FlipDiscipline, InvariantRule, Kind, Owners, SafeState, StaleRule},
     error::BuildError,
     handle::{Flag, KillSwitch, ModeFlag, ReleaseFlag},
-    value::{FlagValue, Toggle, ValueType, check_variants},
+    value::{FlagValue, Toggle, ValueType, check_variants, is_aliased},
     vocabulary::{EnvironmentClass, ProcessKind},
 };
 
@@ -24,14 +24,16 @@ macro_rules! common_setters {
         /// Ownership governs where a value may be presented, which
         /// control-plane entries apply and where the declaration is read live.
         /// `Owners::Only` needs a non-empty, duplicate-free list of this
-        /// catalog's kinds.
+        /// catalog's kinds. [`Absence::Required`] applies only in owning kinds.
         pub fn owners(mut self, owners: Owners<'_>) -> Self {
             self.draft.owners(owners);
             self
         }
 
         /// Sets what an absent setting means; the default is
-        /// [`Absence::Default`].
+        /// [`Absence::Default`]. [`Absence::Required`] is judged only where a
+        /// value may be presented: in an owning kind and, for an `only_in`
+        /// flag, inside its class.
         pub fn absence(mut self, absence: Absence) -> Self {
             self.draft.absence(absence);
             self
@@ -63,6 +65,7 @@ macro_rules! flag_setters {
         ///
         /// Such a flag is declared-only: a setting for it outside the class
         /// fails startup, and the control plane never supplies it.
+        /// [`Absence::Required`] applies only inside the class.
         pub fn only_in(mut self, class: &EnvironmentClass) -> Self {
             self.draft.only_in(class);
             self
@@ -94,6 +97,14 @@ macro_rules! flag_setters {
         /// reported. The code default cannot require settings, and each
         /// variant takes one call with a non-empty, duplicate-free list.
         pub fn requires_settings(mut self, variant: T, names: &[&'static str]) -> Self {
+            if is_aliased(variant) {
+                self.draft.fail(|key| BuildError::AliasedValue {
+                    flag: key.clone(),
+                    key,
+                    variant: variant.variant(),
+                });
+                return self;
+            }
             self.draft
                 .requires_settings(variant.variant(), self.default.variant(), names);
             self
@@ -106,6 +117,20 @@ macro_rules! flag_setters {
             other: &F,
             variant: F::Value,
         ) {
+            if is_aliased(when) {
+                return self.draft.fail(|key| BuildError::AliasedValue {
+                    flag: key.clone(),
+                    key,
+                    variant: when.variant(),
+                });
+            }
+            if is_aliased(variant) {
+                return self.draft.fail(|key| BuildError::AliasedValue {
+                    key,
+                    flag: other.key().clone(),
+                    variant: variant.variant(),
+                });
+            }
             self.draft.invariant(
                 rule,
                 (when.variant(), self.default.variant()),

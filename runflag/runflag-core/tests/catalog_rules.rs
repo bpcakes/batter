@@ -325,3 +325,113 @@ fn flag_value_types_are_checked_at_declaration() {
         })
     ));
 }
+
+/// Two values that share the variant name `first`, as a copy-pasted match
+/// arm would produce. Every listed name round-trips, so only a supplied
+/// value's identity can be wrong.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum Shadowed {
+    First,
+    Second,
+    Shadow,
+}
+
+impl FlagValue for Shadowed {
+    const VARIANTS: &'static [&'static str] = &["first", "second"];
+
+    fn variant(self) -> &'static str {
+        match self {
+            Self::First | Self::Shadow => "first",
+            Self::Second => "second",
+        }
+    }
+
+    fn from_variant(variant: &str) -> Option<Self> {
+        match variant {
+            "first" => Some(Self::First),
+            "second" => Some(Self::Second),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn typed_values_keep_their_identity() {
+    let mut builder = vocabulary_builder();
+    // A default that shares a listed name with another value is refused.
+    let default = builder.mode_flag("a", Shadowed::Shadow).declare();
+    assert_eq!(
+        cause(default),
+        VariantsError::AliasedDefault {
+            variant: "first".into()
+        }
+    );
+    let shadowed = builder
+        .mode_flag("shadowed", Shadowed::First)
+        .declare()
+        .unwrap();
+    let toggle = builder.mode_flag("toggle", Toggle::Off).declare().unwrap();
+    // So are aliased values on either side of an invariant and in required settings.
+    let when = builder
+        .mode_flag("a", Shadowed::First)
+        .requires(Shadowed::Shadow, &toggle, Toggle::On)
+        .declare();
+    assert!(matches!(
+        when,
+        Err(BuildError::AliasedValue { key, flag, variant: "first" })
+            if key.as_str() == "a" && flag.as_str() == "a"
+    ));
+    let other = builder
+        .mode_flag("a", Toggle::Off)
+        .conflicts(Toggle::On, &shadowed, Shadowed::Shadow)
+        .declare();
+    assert!(matches!(
+        other,
+        Err(BuildError::AliasedValue { flag, variant: "first", .. }) if flag.as_str() == "shadowed"
+    ));
+    let settings = builder
+        .mode_flag("a", Shadowed::Second)
+        .requires_settings(Shadowed::Shadow, &["PAYMENT_URL"])
+        .declare();
+    assert!(matches!(
+        settings,
+        Err(BuildError::AliasedValue {
+            variant: "first",
+            ..
+        })
+    ));
+    // The value that owns the name is accepted in each position.
+    builder
+        .mode_flag("a", Shadowed::Second)
+        .requires(Shadowed::First, &toggle, Toggle::Off)
+        .requires_settings(Shadowed::First, &["PAYMENT_URL"])
+        .declare()
+        .unwrap();
+}
+
+#[test]
+fn required_absence_combines_with_ownership_and_class_restrictions() {
+    let mut builder = fixtures::builder();
+    let serving = builder.process_kind("serving").unwrap();
+    builder.process_kind("worker").unwrap();
+    let development = builder.environment_class("development").unwrap();
+    builder.environment_class("hosted").unwrap();
+    builder
+        .mode_flag("debug_panel", Toggle::Off)
+        .only_in(&development)
+        .absence(runflag_core::Absence::Required)
+        .declare()
+        .unwrap();
+    builder
+        .mode_flag("serving_mode", Toggle::Off)
+        .owners(runflag_core::Owners::Only(std::slice::from_ref(&serving)))
+        .absence(runflag_core::Absence::Required)
+        .declare()
+        .unwrap();
+    let catalog = builder.build().unwrap();
+    let required = catalog
+        .declarations()
+        .filter(|declared| declared.absence() == runflag_core::Absence::Required)
+        .count();
+    assert_eq!(required, 2);
+}

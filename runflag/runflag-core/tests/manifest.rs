@@ -106,7 +106,7 @@ fn only_version_one_decodes() {
 #[test]
 fn decoding_refuses_inconsistent_declarations() {
     type Tamper = fn(&mut Value);
-    let cases: [(&str, Tamper); 13] = [
+    let cases: [(&str, Tamper); 16] = [
         ("the fingerprint does not match", |v| {
             flag_mut(v, "fast_path")["fingerprint"] = json!("00".repeat(32));
         }),
@@ -147,6 +147,22 @@ fn decoding_refuses_inconsistent_declarations() {
         ("is listed twice", |v| {
             let first = v["flags"][0].clone();
             v["flags"].as_array_mut().unwrap().push(first);
+        }),
+        ("a pinned_by kind is listed twice", |v| {
+            flag_mut(v, "new_checkout")["pinned_by"] = json!(["worker", "worker"]);
+        }),
+        ("requires settings for one variant twice", |v| {
+            let entry = flag_mut(v, "new_checkout");
+            let required = entry["requires_settings"][0].clone();
+            entry["requires_settings"]
+                .as_array_mut()
+                .unwrap()
+                .push(required);
+        }),
+        ("an invariant is listed twice", |v| {
+            let entry = flag_mut(v, "checkout_style");
+            let invariant = entry["invariants"][0].clone();
+            entry["invariants"].as_array_mut().unwrap().push(invariant);
         }),
     ];
     for (expected, tamper) in cases {

@@ -194,6 +194,21 @@ pub enum BuildError {
         /// The undeclared variant name.
         variant: &'static str,
     },
+    /// A value named in an invariant or `requires_settings` shares its
+    /// variant name with another value of its type, so `from_variant` cannot
+    /// return it and the declaration would silently apply to that other value.
+    #[error(
+        "flag {key}: a value of {flag} names variant {variant:?}, which from_variant maps to a \
+         different value"
+    )]
+    AliasedValue {
+        /// The declaration being built.
+        key: FlagKey,
+        /// The flag whose value type aliases the name.
+        flag: FlagKey,
+        /// The shared variant name.
+        variant: &'static str,
+    },
     /// A required setting name broke the setting-name grammar.
     #[error("flag {key}: required setting {name:?}: {cause}")]
     InvalidRequiredSetting {

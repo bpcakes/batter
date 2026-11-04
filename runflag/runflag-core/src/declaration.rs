@@ -1,5 +1,4 @@
-//! Declaration kinds, per-declaration policy and the read-only view of a
-//! built declaration.
+//! Declaration kinds, per-declaration policy and the view of a declaration.
 
 use std::{fmt, sync::Arc};
 
@@ -38,7 +37,10 @@ impl Kind {
     }
 }
 
-/// What an absent setting means for a declaration in declared mode.
+/// What an absent setting means in declared mode, judged only where a value
+/// may be presented: in an owning process kind and, for an `only_in` flag,
+/// inside its class. Elsewhere the setting must be absent and its absence is
+/// never an error, so `Owners::Only` and `only_in` combine with either variant.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -48,7 +50,7 @@ impl Kind {
 pub enum Absence {
     /// Absence resolves to the code default, or a switch's safe state.
     Default,
-    /// Absence fails startup: the setting must be present.
+    /// Absence fails startup: where a value may be presented, it must be.
     Required,
 }
 

@@ -4,7 +4,10 @@ use std::{collections::BTreeSet, fmt};
 
 use serde::Deserialize;
 
-use super::{Manifest, ManifestEntry, ManifestInvariant, ManifestOwners, ManifestRetired, Version};
+use super::{
+    Manifest, ManifestEntry, ManifestInvariant, ManifestOwners, Version,
+    wire::{WireEntry, WireRetired},
+};
 use crate::{
     declaration::{InvariantRule, Kind},
     digest::{CatalogDigest, DeclarationFingerprint},
@@ -21,8 +24,8 @@ pub struct WireManifest {
     catalog_digest: CatalogDigest,
     process_kinds: Vec<String>,
     environment_classes: Vec<String>,
-    flags: Vec<ManifestEntry>,
-    retired: Vec<ManifestRetired>,
+    flags: Vec<WireEntry>,
+    retired: Vec<WireRetired>,
 }
 
 /// Why a decoded manifest was refused; surfaced through the decoder's error.
@@ -52,8 +55,8 @@ impl TryFrom<WireManifest> for Manifest {
             catalog_digest: wire.catalog_digest,
             process_kinds: wire.process_kinds,
             environment_classes: wire.environment_classes,
-            flags: wire.flags,
-            retired: wire.retired,
+            flags: wire.flags.into_iter().map(ManifestEntry::from).collect(),
+            retired: wire.retired.into_iter().map(Into::into).collect(),
         };
         normalize(&mut manifest);
         check_names("process kind", &manifest.process_kinds)?;
@@ -191,6 +194,16 @@ fn check_flag(manifest: &Manifest, entry: &ManifestEntry) -> Result<(), Invalid>
             refuse!("flag {key}: only a release flag is governed, and only by a kill switch");
         }
     }
+    if entry
+        .requires_settings
+        .windows(2)
+        .any(|pair| pair[0].variant == pair[1].variant)
+    {
+        refuse!("flag {key}: requires settings for one variant twice");
+    }
+    if entry.invariants.windows(2).any(|pair| pair[0] == pair[1]) {
+        refuse!("flag {key}: an invariant is listed twice");
+    }
     let variants: BTreeSet<&str> = entry.variants.iter().map(String::as_str).collect();
     for required in &entry.requires_settings {
         if !variants.contains(required.variant.as_str())
@@ -273,6 +286,9 @@ fn check_vocabulary(manifest: &Manifest, entry: &ManifestEntry) -> Result<(), In
             kinds
         }
     };
+    if entry.pinned_by.windows(2).any(|pair| pair[0] == pair[1]) {
+        refuse!("flag {key}: a pinned_by kind is listed twice");
+    }
     if !owners.iter().chain(&entry.pinned_by).all(known) {
         refuse!("flag {key}: an owner or pinned_by kind is not declared");
     }

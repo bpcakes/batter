@@ -3,6 +3,7 @@
 mod diff;
 mod entry;
 mod validate;
+mod wire;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 

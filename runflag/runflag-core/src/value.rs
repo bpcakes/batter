@@ -220,6 +220,13 @@ pub enum VariantsError {
         /// The default's variant name.
         variant: Box<str>,
     },
+    /// The default value names a listed variant that `from_variant` maps to
+    /// a different value, so two values share that name.
+    #[error("the default names variant {variant:?}, which from_variant maps to a different value")]
+    AliasedDefault {
+        /// The shared variant name.
+        variant: Box<str>,
+    },
 }
 
 /// Checks a flag value type's variant list and returns the index of
@@ -247,12 +254,26 @@ pub(crate) fn check_variants<T: FlagValue>(default: T) -> Result<usize, Variants
         }
     }
     let name = default.variant();
-    T::VARIANTS
+    let index = T::VARIANTS
         .iter()
         .position(|variant| *variant == name)
         .ok_or_else(|| VariantsError::DefaultUndeclared {
             variant: Box::from(name),
-        })
+        })?;
+    if is_aliased(default) {
+        return Err(VariantsError::AliasedDefault {
+            variant: Box::from(name),
+        });
+    }
+    Ok(index)
+}
+
+/// Whether `value` names a listed variant that `from_variant` maps to a
+/// different value. A name the type does not list is reported separately as
+/// undeclared.
+pub(crate) fn is_aliased<T: FlagValue>(value: T) -> bool {
+    let name = value.variant();
+    T::VARIANTS.contains(&name) && T::from_variant(name) != Some(value)
 }
 
 #[cfg(test)]
