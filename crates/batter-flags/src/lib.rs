@@ -14,16 +14,25 @@
 //! exposes `jobs` for job-handler gates and pinned decisions. [`core`] is
 //! always the catalog crate itself.
 //!
-//! Experimental: this crate is the scaffold of the flags delivery. Its module
-//! and feature shape is settled; the items arrive with the declared-mode and
-//! control-plane tasks.
+//! Experimental. Declared mode, the startup report and the test flags are
+//! implemented; the protected gates and the control-plane registration arrive
+//! with later delivery tasks of the flags epic, and `periodic` is still a
+//! scaffold.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod declared;
+mod flags;
+mod gate_error;
 pub mod low_level;
 pub mod periodic;
+mod reader;
+mod report;
 pub mod test;
+
+pub use flags::Flags;
+pub use gate_error::GateError;
+pub use report::{ReportEntry, StartupReport, ValueSource};
 
 #[cfg(feature = "postgres")]
 pub mod control_plane;

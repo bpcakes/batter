@@ -94,7 +94,7 @@ fn ownership_is_queried_per_kind() {
         .unwrap();
     builder
         .mode_flag("serving_only", Toggle::Off)
-        .owners(Owners::Only(std::slice::from_ref(&serving)))
+        .owned_only_by(&serving)
         .declare()
         .unwrap();
     let catalog = builder.build().unwrap();

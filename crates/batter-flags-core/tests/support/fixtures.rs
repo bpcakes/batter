@@ -2,9 +2,8 @@
 #![allow(dead_code, reason = "shared support; each test crate uses part of it")]
 
 use batter_flags_core::{
-    Absence, Catalog, CatalogBuilder, CivilDate, EnvironmentClass, Expiry, FlagValue,
-    FlipDiscipline, KillSwitch, Owners, ProcessKind, ReleaseFlag, SafeState, SettingsPrefix,
-    StaleRule, Toggle,
+    Catalog, CatalogBuilder, CivilDate, EnvironmentClass, Expiry, FlagValue, KillSwitch,
+    ProcessKind, ReleaseDeclaration, ReleaseFlag, SafeState, SettingsPrefix, StaleRule, Toggle,
 };
 
 /// A two-variant application enum.
@@ -208,12 +207,28 @@ fn export_halt(builder: &mut CatalogBuilder, worker: &ProcessKind, change: Chang
     };
     let mut export_halt = builder
         .kill_switch("export_halt", safe_state, stale_rule)
-        .owners(Owners::Only(std::slice::from_ref(worker)))
-        .flip_discipline(FlipDiscipline::Coordinated);
+        .owned_only_by(worker)
+        .coordinated();
     if change != Change::ExportHaltAbsenceDefault {
-        export_halt = export_halt.absence(Absence::Required);
+        export_halt = export_halt.required();
     }
     export_halt.declare().unwrap();
+}
+
+/// Applies what every variant of the reference `new_checkout` shares, whichever
+/// ownership state its declaration is in.
+fn finish_new_checkout<O>(
+    mut flag: ReleaseDeclaration<'_, Toggle, O>,
+    checkout_halt: &KillSwitch,
+    change: Change,
+) -> ReleaseFlag<Toggle> {
+    if change != Change::NewCheckoutUngoverned {
+        flag = flag.governed_by(checkout_halt);
+    }
+    if change != Change::WithoutRequiresSettings {
+        flag = flag.requires_settings(Toggle::On, &["PAYMENT_API_URL", "PAYMENT_API_KEY"]);
+    }
+    flag.declare().unwrap()
 }
 
 fn new_checkout(
@@ -226,33 +241,28 @@ fn new_checkout(
         Change::NewCheckoutExpiry(day) => day,
         _ => date(2027, 3, 31),
     };
-    let mut flag = builder.release_flag("new_checkout", Toggle::Off, Expiry::on(last_valid_day));
+    let flag = builder.release_flag("new_checkout", Toggle::Off, Expiry::on(last_valid_day));
     if change == Change::NewCheckoutOwnedByAll {
-        flag = flag.owners(Owners::All);
+        return finish_new_checkout(flag, checkout_halt, change);
+    }
+    let owned = flag.owned_only_by(serving);
+    if change == Change::NewCheckoutUnpinned {
+        finish_new_checkout(owned, checkout_halt, change)
     } else {
-        flag = flag.owners(Owners::Only(std::slice::from_ref(serving)));
-        if change != Change::NewCheckoutUnpinned {
-            flag = flag.pinned_by(std::slice::from_ref(worker));
-        }
+        finish_new_checkout(owned.pinned_by(worker), checkout_halt, change)
     }
-    if change != Change::NewCheckoutUngoverned {
-        flag = flag.governed_by(checkout_halt);
-    }
-    if change != Change::WithoutRequiresSettings {
-        flag = flag.requires_settings(Toggle::On, &["PAYMENT_API_URL", "PAYMENT_API_KEY"]);
-    }
-    flag.declare().unwrap()
 }
 
 fn fast_path(
     builder: &mut CatalogBuilder,
     new_checkout: &ReleaseFlag<Toggle>,
 ) -> ReleaseFlag<Toggle> {
-    builder
+    let flag = builder
         .release_flag("fast_path", Toggle::Off, Expiry::on(date(2026, 12, 31)))
-        .both_or_none(new_checkout)
         .declare()
-        .unwrap()
+        .unwrap();
+    builder.both_or_none(&flag, new_checkout).unwrap();
+    flag
 }
 
 fn checkout_style(
@@ -264,15 +274,19 @@ fn checkout_style(
         Change::ExpressDefaultWithoutInvariant => Checkout::Express,
         _ => Checkout::Classic,
     };
-    let mut flag = builder.mode_flag("checkout_style", default);
+    let flag = builder
+        .mode_flag("checkout_style", default)
+        .declare()
+        .unwrap();
     let without = [
         Change::WithoutInvariant,
         Change::ExpressDefaultWithoutInvariant,
     ];
     if !without.contains(&change) {
-        flag = flag.requires(Checkout::Express, new_checkout, Toggle::On);
+        builder
+            .requires(&flag, Checkout::Express, new_checkout, Toggle::On)
+            .unwrap();
     }
-    flag.declare().unwrap();
 }
 
 fn debug_panel(
@@ -281,15 +295,15 @@ fn debug_panel(
     development: &EnvironmentClass,
     change: Change,
 ) {
-    let mut flag =
-        builder
-            .mode_flag("debug_panel", Toggle::Off)
-            .conflicts(Toggle::On, fast_path, Toggle::On);
+    let mut flag = builder.mode_flag("debug_panel", Toggle::Off);
     if change != Change::DebugPanelEverywhere {
         flag = flag.only_in(development);
     }
     if change != Change::DebugPanelRolling {
-        flag = flag.flip_discipline(FlipDiscipline::Coordinated);
+        flag = flag.coordinated();
     }
-    flag.declare().unwrap();
+    let flag = flag.declare().unwrap();
+    builder
+        .conflicts(&flag, Toggle::On, fast_path, Toggle::On)
+        .unwrap();
 }

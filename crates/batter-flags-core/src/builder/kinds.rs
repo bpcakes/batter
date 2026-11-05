@@ -1,6 +1,12 @@
 //! The three declaration builders: release flags, mode flags and kill switches.
+//!
+//! Ownership is the one choice whose valid values depend on another: only a
+//! declaration restricted to some kinds can name kinds that may resolve its
+//! pins. Each declaration therefore carries its ownership as a type, [`Everyone`]
+//! until `owned_only_by` restricts it to [`Restricted`], so the combinations
+//! that make no sense are not methods and do not compile.
 
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
 use super::{
     CatalogBuilder,
@@ -8,40 +14,43 @@ use super::{
 };
 use crate::{
     date::Expiry,
-    declaration::{Absence, FlipDiscipline, InvariantRule, Kind, Owners, SafeState, StaleRule},
+    declaration::{Kind, SafeState, StaleRule},
     error::BuildError,
-    handle::{Flag, KillSwitch, ModeFlag, ReleaseFlag},
-    value::{FlagValue, Toggle, ValueType, check_variants, is_aliased},
+    handle::{KillSwitch, ModeFlag, ReleaseFlag},
+    value::{FlagValue, ValueType, check_variants, is_aliased},
     vocabulary::{EnvironmentClass, ProcessKind},
 };
+
+/// A declaration every process kind owns, which is every declaration until
+/// `owned_only_by` restricts it.
+///
+/// It only names a state and has no values.
+pub enum Everyone {}
+
+/// A declaration restricted to some process kinds by `owned_only_by`.
+///
+/// Only a restricted release or mode flag can name kinds that may resolve its
+/// pins without owning it, so `pinned_by` exists only here.
+pub enum Restricted {}
 
 /// The setters every declaration kind has.
 macro_rules! common_setters {
     () => {
-        /// Sets the process kinds that own the declaration; the default is
-        /// [`Owners::All`].
-        ///
-        /// Ownership governs where a value may be presented, which
-        /// control-plane entries apply and where the declaration is read live.
-        /// `Owners::Only` needs a non-empty, duplicate-free list of this
-        /// catalog's kinds. [`Absence::Required`] applies only in owning kinds.
-        pub fn owners(mut self, owners: Owners<'_>) -> Self {
-            self.draft.owners(owners);
+        /// Makes an absent setting a startup failure where a value may be
+        /// presented: in an owning kind and, for an `only_in` flag, inside its
+        /// class. Without it an absent setting resolves to the code default, or
+        /// a switch's safe state. Calling it again changes nothing.
+        pub fn required(mut self) -> Self {
+            self.draft.require_absence();
             self
         }
 
-        /// Sets what an absent setting means; the default is
-        /// [`Absence::Default`]. [`Absence::Required`] is judged only where a
-        /// value may be presented: in an owning kind and, for an `only_in`
-        /// flag, inside its class.
-        pub fn absence(mut self, absence: Absence) -> Self {
-            self.draft.absence(absence);
-            self
-        }
-
-        /// Sets the flip discipline; the default is [`FlipDiscipline::Rolling`].
-        pub fn flip_discipline(mut self, discipline: FlipDiscipline) -> Self {
-            self.draft.flip_discipline(discipline);
+        /// Marks the declaration as one whose processes must change together,
+        /// which deployment tooling reads; without it processes change one at
+        /// a time. See [`FlipDiscipline::Coordinated`](crate::FlipDiscipline::Coordinated).
+        /// Calling it again changes nothing.
+        pub fn coordinated(mut self) -> Self {
+            self.draft.coordinate();
             self
         }
     };
@@ -50,42 +59,13 @@ macro_rules! common_setters {
 /// The setters release and mode flags share.
 macro_rules! flag_setters {
     () => {
-        /// Lists the process kinds that may resolve pins of this flag without
-        /// owning it. They never evaluate it live, and their settings for it
-        /// are refused like any non-owner's.
-        ///
-        /// The list must be non-empty, duplicate-free, disjoint from the
-        /// owners, and is refused when every kind owns the flag.
-        pub fn pinned_by(mut self, kinds: &[ProcessKind]) -> Self {
-            self.draft.pinned_by(kinds);
-            self
-        }
-
         /// Restricts the flag to one environment class, such as development.
         ///
         /// Such a flag is declared-only: a setting for it outside the class
         /// fails startup, and the control plane never supplies it.
-        /// [`Absence::Required`] applies only inside the class.
+        /// [`required`](Self::required) applies only inside the class.
         pub fn only_in(mut self, class: &EnvironmentClass) -> Self {
             self.draft.only_in(class);
-            self
-        }
-
-        /// While this flag is `when`, `other` must be `variant`.
-        ///
-        /// Declared mode checks it once at startup. The build refuses an
-        /// invariant the two code defaults already break.
-        pub fn requires<F: Flag>(mut self, when: T, other: &F, variant: F::Value) -> Self {
-            self.invariant(InvariantRule::Requires, when, other, variant);
-            self
-        }
-
-        /// This flag at `when` and `other` at `variant` must not both hold.
-        ///
-        /// Declared mode checks it once at startup. The build refuses an
-        /// invariant the two code defaults already break.
-        pub fn conflicts<F: Flag>(mut self, when: T, other: &F, variant: F::Value) -> Self {
-            self.invariant(InvariantRule::Conflicts, when, other, variant);
             self
         }
 
@@ -110,35 +90,6 @@ macro_rules! flag_setters {
             self
         }
 
-        fn invariant<F: Flag>(
-            &mut self,
-            rule: InvariantRule,
-            when: T,
-            other: &F,
-            variant: F::Value,
-        ) {
-            if is_aliased(when) {
-                return self.draft.fail(|key| BuildError::AliasedValue {
-                    flag: key.clone(),
-                    key,
-                    variant: when.variant(),
-                });
-            }
-            if is_aliased(variant) {
-                return self.draft.fail(|key| BuildError::AliasedValue {
-                    key,
-                    flag: other.key().clone(),
-                    variant: variant.variant(),
-                });
-            }
-            self.draft.invariant(
-                rule,
-                (when.variant(), self.default.variant()),
-                other.handle(),
-                variant.variant(),
-            );
-        }
-
         fn shape(&self, kind: Kind, expiry: Option<Expiry>) -> Shape {
             Shape {
                 kind,
@@ -149,22 +100,6 @@ macro_rules! flag_setters {
                 safe_state: None,
                 stale_rule: None,
             }
-        }
-    };
-}
-
-/// The toggle-only setter release and mode flags share.
-macro_rules! toggle_setters {
-    () => {
-        /// Either this toggle and `other` are both `on`, or neither is.
-        ///
-        /// Declared mode checks it once at startup. The build refuses the
-        /// invariant when the two code defaults already break it. It exists
-        /// only between toggles; for enum flags state each direction with
-        /// [`requires`](Self::requires).
-        pub fn both_or_none<F: Flag<Value = Toggle>>(mut self, other: &F) -> Self {
-            self.invariant(InvariantRule::BothOrNone, Toggle::On, other, Toggle::On);
-            self
         }
     };
 }
@@ -193,30 +128,14 @@ fn checked_draft<'b, T: FlagValue>(
 /// let _flag = builder.release_flag("new_checkout", Toggle::Off).declare();
 /// ```
 ///
-/// `both_or_none` relates two toggles only, so an enum flag has none:
-///
-/// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, FlagValue, SettingsPrefix, Toggle};
-/// # #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-/// # enum Checkout { Classic, Express }
-/// # impl FlagValue for Checkout {
-/// #     const VARIANTS: &'static [&'static str] = &["classic", "express"];
-/// #     fn variant(self) -> &'static str { match self { Self::Classic => "classic", Self::Express => "express" } }
-/// #     fn from_variant(v: &str) -> Option<Self> { match v { "classic" => Some(Self::Classic), "express" => Some(Self::Express), _ => None } }
-/// # }
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-/// # let expiry = Expiry::on(CivilDate::new(2027, 1, 1).unwrap());
-/// let toggle = builder.release_flag("toggle", Toggle::Off, expiry).declare().unwrap();
-/// let _checkout = builder
-///     .release_flag("checkout", Checkout::Classic, expiry)
-///     .both_or_none(&toggle);
-/// ```
+/// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts
+/// it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-pub struct ReleaseDeclaration<'b, T: FlagValue> {
+pub struct ReleaseDeclaration<'b, T: FlagValue, O = Everyone> {
     draft: Draft<'b>,
     default: T,
     expiry: Expiry,
+    ownership: PhantomData<fn() -> O>,
 }
 
 impl<'b, T: FlagValue> ReleaseDeclaration<'b, T> {
@@ -230,9 +149,39 @@ impl<'b, T: FlagValue> ReleaseDeclaration<'b, T> {
             draft: checked_draft(builder, key, default),
             default,
             expiry,
+            ownership: PhantomData,
         }
     }
 
+    /// Restricts ownership to `kind`, which starts the list of owners. See
+    /// [`ModeDeclaration::owned_only_by`].
+    pub fn owned_only_by(mut self, kind: &ProcessKind) -> ReleaseDeclaration<'b, T, Restricted> {
+        self.draft.owned_only_by(kind);
+        ReleaseDeclaration {
+            draft: self.draft,
+            default: self.default,
+            expiry: self.expiry,
+            ownership: PhantomData,
+        }
+    }
+}
+
+impl<T: FlagValue> ReleaseDeclaration<'_, T, Restricted> {
+    /// Adds an owner. See [`ModeDeclaration::and_owned_by`].
+    pub fn and_owned_by(mut self, kind: &ProcessKind) -> Self {
+        self.draft.add_owner(kind);
+        self
+    }
+
+    /// Adds a kind that may resolve this flag's pins without owning it. See
+    /// [`ModeDeclaration::pinned_by`].
+    pub fn pinned_by(mut self, kind: &ProcessKind) -> Self {
+        self.draft.add_pin_reader(kind);
+        self
+    }
+}
+
+impl<T: FlagValue, O> ReleaseDeclaration<'_, T, O> {
     common_setters!();
     flag_setters!();
 
@@ -257,12 +206,11 @@ impl<'b, T: FlagValue> ReleaseDeclaration<'b, T> {
     /// governing switch an owning or `pinned_by` kind does not own.
     pub fn declare(self) -> Result<ReleaseFlag<T>, BuildError> {
         let shape = self.shape(Kind::Release, Some(self.expiry));
-        self.draft.finish(&shape).map(ReleaseFlag::mint)
+        let default = self.default;
+        self.draft
+            .finish(&shape)
+            .map(|handle| ReleaseFlag::mint(handle, default))
     }
-}
-
-impl ReleaseDeclaration<'_, Toggle> {
-    toggle_setters!();
 }
 
 /// A mode flag being declared; [`declare`](Self::declare) mints its handle.
@@ -271,7 +219,7 @@ impl ReleaseDeclaration<'_, Toggle> {
 /// is permanent: it has no expiry and no governing switch.
 ///
 /// ```
-/// use batter_flags_core::{Absence, CatalogBuilder, FlipDiscipline, SettingsPrefix, Toggle};
+/// use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
@@ -281,24 +229,26 @@ impl ReleaseDeclaration<'_, Toggle> {
 ///
 /// let ledger_v2 = builder
 ///     .mode_flag("ledger_v2", Toggle::Off)
-///     .absence(Absence::Required)
-///     .flip_discipline(FlipDiscipline::Coordinated)
+///     .required()
+///     .coordinated()
 ///     .declare()?;
-/// let ledger_audit = builder
-///     .mode_flag("ledger_audit", Toggle::Off)
-///     .both_or_none(&ledger_v2)
-///     .declare()?;
-/// builder
+/// let ledger_audit = builder.mode_flag("ledger_audit", Toggle::Off).declare()?;
+/// let debug_panel = builder
 ///     .mode_flag("debug_panel", Toggle::Off)
 ///     .only_in(&development)
-///     .requires(Toggle::On, &ledger_audit, Toggle::On)
-///     .conflicts(Toggle::On, &ledger_v2, Toggle::Off)
 ///     .declare()?;
+///
+/// // Relationships need both handles, so the catalog states them.
+/// builder.both_or_none(&ledger_audit, &ledger_v2)?;
+/// builder.requires(&debug_panel, Toggle::On, &ledger_audit, Toggle::On)?;
+/// builder.conflicts(&debug_panel, Toggle::On, &ledger_v2, Toggle::Off)?;
 /// let catalog = builder.build()?;
 /// assert_eq!(catalog.declaration("debug_panel").unwrap().invariants().len(), 2);
 /// # Ok(())
 /// # }
 /// ```
+///
+/// A mode flag has no governing switch:
 ///
 /// ```compile_fail,E0599
 /// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, Toggle};
@@ -310,10 +260,14 @@ impl ReleaseDeclaration<'_, Toggle> {
 ///     .unwrap();
 /// let _mode = builder.mode_flag("strict_mode", Toggle::Off).governed_by(&halt);
 /// ```
+///
+/// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts
+/// it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-pub struct ModeDeclaration<'b, T: FlagValue> {
+pub struct ModeDeclaration<'b, T: FlagValue, O = Everyone> {
     draft: Draft<'b>,
     default: T,
+    ownership: PhantomData<fn() -> O>,
 }
 
 impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
@@ -321,9 +275,73 @@ impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
         Self {
             draft: checked_draft(builder, key, default),
             default,
+            ownership: PhantomData,
         }
     }
 
+    /// Restricts ownership to `kind`, which starts the list of owners; without
+    /// this every process kind owns the declaration.
+    ///
+    /// Ownership governs where a value may be presented, which control-plane
+    /// entries apply and where the declaration is read live. The kind must
+    /// belong to this catalog. The list always has an owner, because this is
+    /// how it starts, and this is offered once:
+    ///
+    /// ```compile_fail,E0599
+    /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
+    /// # let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+    /// # let serving = builder.process_kind("serving").unwrap();
+    /// # let worker = builder.process_kind("worker").unwrap();
+    /// let _ = builder
+    ///     .mode_flag("strict_mode", Toggle::Off)
+    ///     .owned_only_by(&serving)
+    ///     .owned_only_by(&worker);
+    /// ```
+    ///
+    /// [`and_owned_by`](ModeDeclaration::and_owned_by) adds an owner afterwards.
+    pub fn owned_only_by(mut self, kind: &ProcessKind) -> ModeDeclaration<'b, T, Restricted> {
+        self.draft.owned_only_by(kind);
+        ModeDeclaration {
+            draft: self.draft,
+            default: self.default,
+            ownership: PhantomData,
+        }
+    }
+}
+
+impl<T: FlagValue> ModeDeclaration<'_, T, Restricted> {
+    /// Adds an owner. Adding a kind already listed changes nothing.
+    pub fn and_owned_by(mut self, kind: &ProcessKind) -> Self {
+        self.draft.add_owner(kind);
+        self
+    }
+
+    /// Adds a kind that may resolve this flag's pins without owning it. It
+    /// never evaluates the flag live, and its settings for the flag are refused
+    /// like any non-owner's. Adding a kind already listed changes nothing.
+    ///
+    /// A kind cannot both own the flag and be listed here: the build refuses it,
+    /// because an owner already resolves pins and the list would not say which
+    /// was meant.
+    ///
+    /// This exists only once ownership is restricted, because a flag every kind
+    /// owns has no kind left to list:
+    ///
+    /// ```compile_fail,E0599
+    /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
+    /// # let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+    /// # let worker = builder.process_kind("worker").unwrap();
+    /// let _ = builder
+    ///     .mode_flag("strict_mode", Toggle::Off)
+    ///     .pinned_by(&worker);
+    /// ```
+    pub fn pinned_by(mut self, kind: &ProcessKind) -> Self {
+        self.draft.add_pin_reader(kind);
+        self
+    }
+}
+
+impl<T: FlagValue, O> ModeDeclaration<'_, T, O> {
     common_setters!();
     flag_setters!();
 
@@ -335,12 +353,11 @@ impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
     /// catalog so far: a duplicate key or a retired setting name.
     pub fn declare(self) -> Result<ModeFlag<T>, BuildError> {
         let shape = self.shape(Kind::Mode, None);
-        self.draft.finish(&shape).map(ModeFlag::mint)
+        let default = self.default;
+        self.draft
+            .finish(&shape)
+            .map(|handle| ModeFlag::mint(handle, default))
     }
-}
-
-impl ModeDeclaration<'_, Toggle> {
-    toggle_setters!();
 }
 
 /// A kill switch being declared; [`declare`](Self::declare) mints its handle.
@@ -366,7 +383,8 @@ impl ModeDeclaration<'_, Toggle> {
 /// # let worker = builder.process_kind("worker").unwrap();
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
-///     .pinned_by(&[worker])
+///     .owned_only_by(&worker)
+///     .pinned_by(&worker)
 ///     .declare();
 /// ```
 ///
@@ -380,11 +398,14 @@ impl ModeDeclaration<'_, Toggle> {
 ///     .only_in(&development)
 ///     .declare();
 /// ```
+///
+/// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-pub struct SwitchDeclaration<'b> {
+pub struct SwitchDeclaration<'b, O = Everyone> {
     draft: Draft<'b>,
     safe_state: SafeState,
     stale_rule: StaleRule,
+    ownership: PhantomData<fn() -> O>,
 }
 
 impl<'b> SwitchDeclaration<'b> {
@@ -398,9 +419,32 @@ impl<'b> SwitchDeclaration<'b> {
             draft: Draft::new(builder, key, &[]),
             safe_state,
             stale_rule,
+            ownership: PhantomData,
         }
     }
 
+    /// Restricts ownership to `kind`, which starts the list of owners. See
+    /// [`ModeDeclaration::owned_only_by`].
+    pub fn owned_only_by(mut self, kind: &ProcessKind) -> SwitchDeclaration<'b, Restricted> {
+        self.draft.owned_only_by(kind);
+        SwitchDeclaration {
+            draft: self.draft,
+            safe_state: self.safe_state,
+            stale_rule: self.stale_rule,
+            ownership: PhantomData,
+        }
+    }
+}
+
+impl SwitchDeclaration<'_, Restricted> {
+    /// Adds an owner. See [`ModeDeclaration::and_owned_by`].
+    pub fn and_owned_by(mut self, kind: &ProcessKind) -> Self {
+        self.draft.add_owner(kind);
+        self
+    }
+}
+
+impl<O> SwitchDeclaration<'_, O> {
     common_setters!();
 
     /// Validates the declaration and mints its handle.
@@ -419,23 +463,26 @@ impl<'b> SwitchDeclaration<'b> {
             safe_state: Some(self.safe_state),
             stale_rule: Some(self.stale_rule),
         };
-        self.draft.finish(&shape).map(KillSwitch::mint)
+        let safe_state = self.safe_state;
+        self.draft
+            .finish(&shape)
+            .map(|handle| KillSwitch::mint(handle, safe_state))
     }
 }
 
-impl<T: FlagValue> fmt::Debug for ReleaseDeclaration<'_, T> {
+impl<T: FlagValue, O> fmt::Debug for ReleaseDeclaration<'_, T, O> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         debug_draft(formatter, "ReleaseDeclaration", &self.draft)
     }
 }
 
-impl<T: FlagValue> fmt::Debug for ModeDeclaration<'_, T> {
+impl<T: FlagValue, O> fmt::Debug for ModeDeclaration<'_, T, O> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         debug_draft(formatter, "ModeDeclaration", &self.draft)
     }
 }
 
-impl fmt::Debug for SwitchDeclaration<'_> {
+impl<O> fmt::Debug for SwitchDeclaration<'_, O> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         debug_draft(formatter, "SwitchDeclaration", &self.draft)
     }

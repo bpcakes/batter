@@ -20,6 +20,14 @@
 //! invariants with each rule tag, variant, other key and other variant,
 //! sorted by those four texts in that order (so `both_or_none` < `conflicts` <
 //! `requires`). Expiry, flip discipline and migration notes are not framed.
+//!
+//! The revision digest, `batter.flags.revision.v1`, frames the count of
+//! declarations and, in key order, each key and the variant it resolved to (a
+//! kill switch's variant is `engaged` or `released`). The snapshot digest,
+//! `batter.flags.snapshot.v1`, frames the candidate's version as eight
+//! big-endian bytes, the count of rows and, in key order, each row's key, kind
+//! tag, value-type tag, updated version as eight big-endian bytes and state
+//! text, exactly as read.
 
 use std::fmt;
 
@@ -28,10 +36,13 @@ use sha2::{Digest, Sha256};
 use crate::{
     declaration::{Absence, InvariantRule, Kind, SafeState, StaleRule},
     value::ValueType,
+    version::Version,
 };
 
 pub(crate) const CATALOG_LABEL: &str = "batter.flags.catalog.v1";
 pub(crate) const DECLARATION_LABEL: &str = "batter.flags.declaration.v1";
+pub(crate) const REVISION_LABEL: &str = "batter.flags.revision.v1";
+pub(crate) const SNAPSHOT_LABEL: &str = "batter.flags.snapshot.v1";
 #[cfg(feature = "serde")]
 pub(crate) const MANIFEST_LABEL: &str = "batter.flags.manifest.v1";
 
@@ -193,6 +204,16 @@ digest_type!(
     "batter.flags.declaration.v1",
     "The digest of one declaration's key, kind, value-type tag and sorted variants, carried by its handle."
 );
+digest_type!(
+    Revision,
+    "batter.flags.revision.v1",
+    "The stable, order-insensitive revision of what a process resolved: the digest of every declaration's key and resolved variant."
+);
+digest_type!(
+    SnapshotDigest,
+    "batter.flags.snapshot.v1",
+    "The digest of a candidate exactly as read, held rows included: its version and every row's key, kind, value type, updated version and state text."
+);
 #[cfg(feature = "serde")]
 digest_type!(
     ManifestDigest,
@@ -295,6 +316,47 @@ fn frame_entry(framing: &mut Framing, mut entry: EntryView<'_>) {
         framing.field(variant.as_bytes());
         framing.field(other.as_bytes());
         framing.field(other_variant.as_bytes());
+    }
+}
+
+impl Revision {
+    /// The revision of `(key, resolved variant)` pairs in any order.
+    pub(crate) fn compute(mut pairs: Vec<(&str, &str)>) -> Self {
+        pairs.sort_unstable();
+        let mut framing = Framing::new(REVISION_LABEL);
+        framing.count(pairs.len());
+        for (key, variant) in pairs {
+            framing.field(key.as_bytes());
+            framing.field(variant.as_bytes());
+        }
+        Self::from_framing(framing)
+    }
+}
+
+/// One candidate row as the snapshot digest frames it.
+pub(crate) struct DigestRow<'a> {
+    pub(crate) key: &'a str,
+    pub(crate) kind: &'a str,
+    pub(crate) value_type: &'a str,
+    pub(crate) updated: Version,
+    pub(crate) state: &'a str,
+}
+
+impl SnapshotDigest {
+    /// The digest of a candidate at `version` with `rows` in any order.
+    pub(crate) fn compute(version: Version, mut rows: Vec<DigestRow<'_>>) -> Self {
+        rows.sort_unstable_by(|left, right| left.key.cmp(right.key));
+        let mut framing = Framing::new(SNAPSHOT_LABEL);
+        framing.field(&version.get().to_be_bytes());
+        framing.count(rows.len());
+        for row in rows {
+            framing.field(row.key.as_bytes());
+            framing.field(row.kind.as_bytes());
+            framing.field(row.value_type.as_bytes());
+            framing.field(&row.updated.get().to_be_bytes());
+            framing.field(row.state.as_bytes());
+        }
+        Self::from_framing(framing)
     }
 }
 

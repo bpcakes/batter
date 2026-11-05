@@ -65,6 +65,17 @@ impl AsRef<str> for FlagKey {
     }
 }
 
+/// `text` when it is a valid name, otherwise a placeholder: stored or decoded
+/// text is the application's and may be anything, so diagnostics show it only
+/// when it cannot be more than a name.
+pub(crate) fn name_or_placeholder(text: &str) -> String {
+    if FlagKey::new(text).is_ok() {
+        text.to_owned()
+    } else {
+        String::from("<not a name>")
+    }
+}
+
 fn validate_key(key: &str) -> Result<(), KeyError> {
     let mut characters = key.chars();
     let Some(first) = characters.next() else {
