@@ -23,6 +23,12 @@ terminal native result when finishing. The HTTP adapter transfers its writer
 without paired optional owners. Authentication and quota-before-body ordering,
 interrupted consumption uncertainty and public APIs remain unchanged.
 
+R09 has a targeted safety repair in `batter-mpub`: caught main-handler panics
+become fixed-text failures and settlement diagnostics before downstream storage
+or logging, preserving the existing code, kind and outcome precedence. This
+addresses panic-payload disclosure during the handler-result transition; the
+broader execution and heartbeat protocol remains unchanged.
+
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease
 protocols, and outcome retention. Many are private

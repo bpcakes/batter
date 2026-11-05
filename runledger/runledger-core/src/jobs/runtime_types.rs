@@ -627,6 +627,11 @@ pub enum JobRetryTiming {
 
 /// A handler failure and optional retry not-before request.
 ///
+/// Messages are persisted verbatim in queue, attempt, dead-letter and event
+/// records, and may be logged or displayed. Use a deliberately non-sensitive
+/// message; never interpolate error `Display`/`Debug` output or credentials.
+/// Caught main-handler panics are redacted; application-created failures are not.
+///
 /// Construct failures with [`Self::new`] or the kind-specific constructors.
 /// Retry timing is deliberately private because it is a lower bound combined
 /// with persistence policy, not an exact schedule override.
@@ -634,12 +639,18 @@ pub enum JobRetryTiming {
 pub struct JobFailure {
     pub kind: JobFailureKind,
     pub code: &'static str,
+    /// Persisted verbatim; see the [message policy](Self).
     pub message: Cow<'static, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     retry_timing: Option<JobRetryTiming>,
 }
 
 impl JobFailure {
+    /// Constructs a failure whose message is persisted verbatim.
+    ///
+    /// Do not include error `Display`/`Debug` output or credentials. For example,
+    /// use `JobFailure::new(JobFailureKind::Terminal, "job.invalid_input",
+    /// "Job input did not pass validation.")` rather than formatting the error.
     #[must_use]
     pub fn new(
         kind: JobFailureKind,
@@ -654,26 +665,31 @@ impl JobFailure {
         }
     }
 
+    /// Constructs a retryable failure; the [message policy](Self::new) applies.
     #[must_use]
     pub fn retryable(code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
         Self::new(JobFailureKind::Retryable, code, message)
     }
 
+    /// Constructs a terminal failure; the [message policy](Self::new) applies.
     #[must_use]
     pub fn terminal(code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
         Self::new(JobFailureKind::Terminal, code, message)
     }
 
+    /// Constructs a timeout failure; the [message policy](Self::new) applies.
     #[must_use]
     pub fn timeout(code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
         Self::new(JobFailureKind::Timeout, code, message)
     }
 
+    /// Constructs a lease-expired failure; the [message policy](Self::new) applies.
     #[must_use]
     pub fn lease_expired(code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
         Self::new(JobFailureKind::LeaseExpired, code, message)
     }
 
+    /// Constructs a panic failure; the [message policy](Self::new) applies.
     #[must_use]
     pub fn panicked(code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
         Self::new(JobFailureKind::Panicked, code, message)

@@ -1,4 +1,5 @@
 use runledger_core::jobs::JobDeadLetterOrigin;
+use tracing::instrument::WithSubscriber;
 
 use super::*;
 
@@ -380,6 +381,9 @@ async fn process_claimed_job_persists_handler_failure_with_reserved_lease_code()
 #[tokio::test]
 async fn process_claimed_job_catches_main_handler_panic() {
     let (pool, database) = setup_ephemeral_pool("jobs_worker_handler_panic", 8).await;
+    record_postgres_server_version(&pool, "handler panic redaction").await;
+    let expected_message = "Job handler panicked.";
+    let secret = "handler-panic-secret";
 
     let mut tx = pool.begin().await.expect("begin tx");
     upsert_job_definition_tx(
@@ -387,7 +391,7 @@ async fn process_claimed_job_catches_main_handler_panic() {
         &JobDefinitionUpsert {
             job_type: JobType::new("jobs.test.handler_panic"),
             version: 1,
-            max_attempts: 1,
+            max_attempts: 3,
             default_timeout_seconds: 30,
             default_priority: 100,
             is_enabled: true,
@@ -420,11 +424,62 @@ async fn process_claimed_job_catches_main_handler_panic() {
     let mut registry = JobRegistry::new();
     registry.register(PanickingHandler { runs: runs.clone() });
 
-    process_claimed_job(pool.clone(), Arc::new(registry), claimed_job, 30).await;
+    let logs = PanicTestLogs::default();
+    let log_writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || log_writer.clone())
+        .finish();
+    let (shutdown, _) = crate::shutdown::ShutdownSignal::channel();
+    let settlement = crate::settlement::TaskRegistry::supervised(shutdown.clone());
+    // A panic in an already admitted handler during drain also retains a
+    // callback diagnostic. Inspect that path independently of durable policy.
+    shutdown.request();
+    super::super::process_claimed_job_with_terminal_observers(
+        pool.clone(),
+        Arc::new(registry),
+        claimed_job,
+        30,
+        JobLifecycleObservers::empty(),
+        TerminalObserverTasks::with_registry(settlement.clone()),
+    )
+    .with_subscriber(subscriber)
+    .await;
+    settlement.wait().await;
 
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 
-    let persisted = get_job_by_id(&pool, None, job_id)
+    assert_handler_panic_records(&pool, job_id, expected_message, secret).await;
+
+    let logs = String::from_utf8(logs.0.lock().expect("log lock").clone()).expect("UTF-8 logs");
+    let dead_letter_log = logs
+        .lines()
+        .find(|line| line.contains("job dead lettered after handler failure"))
+        .expect("dead-letter warning was captured");
+    assert!(dead_letter_log.contains("WARN"));
+    assert!(dead_letter_log.contains("failure_kind=Panicked"));
+    assert!(dead_letter_log.contains("failure_code=\"job.handler_panic\""));
+    assert!(dead_letter_log.contains(expected_message));
+    assert!(!logs.contains(secret));
+
+    let (callbacks, prior_interruptions) = settlement.callback_snapshot();
+    assert_eq!(prior_interruptions, 0);
+    assert!(
+        matches!(callbacks.as_slice(), [crate::RuntimeCallbackFailure::Panicked { callback: "job_handler", message }]
+        if message == expected_message)
+    );
+
+    teardown_ephemeral_pool(pool, database).await;
+}
+
+async fn assert_handler_panic_records(
+    pool: &PgPool,
+    job_id: uuid::Uuid,
+    expected_message: &str,
+    secret: &str,
+) {
+    let persisted = get_job_by_id(pool, None, job_id)
         .await
         .expect("load job")
         .expect("job exists");
@@ -435,20 +490,48 @@ async fn process_claimed_job_catches_main_handler_panic() {
         Some("job.handler_panic")
     );
 
-    let outcome = sqlx::query_scalar::<_, String>(
-        "SELECT outcome::text
+    assert_eq!(
+        persisted.last_error_message.as_deref(),
+        Some(expected_message)
+    );
+    assert_eq!(
+        persisted.max_attempts, 3,
+        "panic is terminal even with attempts left"
+    );
+
+    let attempt = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT outcome::text, error_code, error_message
          FROM job_attempts
          WHERE job_id = $1
            AND run_number = 1
            AND attempt = 1",
     )
     .bind(job_id)
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .expect("fetch attempt outcome");
-    assert_eq!(outcome, "PANICKED");
+    assert_eq!(
+        attempt,
+        (
+            "PANICKED".into(),
+            "job.handler_panic".into(),
+            expected_message.into()
+        )
+    );
 
-    let events = list_job_events(&pool, None, job_id, 50, None)
+    let dead_letter = sqlx::query_as::<_, (String, String)>(
+        "SELECT error_code, error_message FROM job_dead_letters WHERE job_id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(pool)
+    .await
+    .expect("fetch dead letter");
+    assert_eq!(
+        dead_letter,
+        ("job.handler_panic".into(), expected_message.into())
+    );
+
+    let events = list_job_events(pool, None, job_id, 50, None)
         .await
         .expect("list job events");
     let failed = events
@@ -466,7 +549,17 @@ async fn process_claimed_job_catches_main_handler_panic() {
         .expect("dead-lettered event should exist");
     assert_eq!(dead_lettered.payload.get("kind"), Some(&json!("PANICKED")));
 
-    teardown_ephemeral_pool(pool, database).await;
+    for event in &events {
+        assert!(!event.payload.to_string().contains(secret));
+    }
+    assert_eq!(
+        failed.payload.get("error_message"),
+        Some(&json!(expected_message))
+    );
+    assert_eq!(
+        dead_lettered.payload.get("error_code"),
+        Some(&json!("job.handler_panic"))
+    );
 }
 
 #[tokio::test]
@@ -580,4 +673,18 @@ async fn run_worker_loop_continues_processing_after_handler_panic() {
         .expect("worker loop should shut down cleanly");
 
     teardown_ephemeral_pool(pool, database).await;
+}
+
+#[derive(Clone, Default)]
+struct PanicTestLogs(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for PanicTestLogs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("log lock").extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

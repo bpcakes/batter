@@ -2910,6 +2910,22 @@ formatting includes separate redacted driver-joined and driver-failure flags,
 so successful driver completion with pending admin closure remains distinguishable.
 
 
+## Native Runledger handler panic records
+
+When Runledger catches a main-handler panic, its failure conversion discards
+payload text and uses `Job handler panicked.` for the `job.handler_panic`
+failure and the `job_handler` settlement diagnostic. The persisted outcome is
+still `PANICKED` and nonretryable, even when attempts remain. Deadline and lease
+fencing retain precedence over durable outcome classification. The worker can
+continue to subsequent jobs. Application-created `JobFailure` messages remain
+verbatim; this conversion does not sanitize other callback diagnostics or
+process panic-hook output.
+
+The PostgreSQL-backed `process_claimed_job_catches_main_handler_panic` regression
+checks a formatted synthetic secret against queue, attempt, dead-letter and
+event records, the actual dead-letter warning, and settlement diagnostics.
+`run_worker_loop_continues_processing_after_handler_panic` checks continuation.
+
 ## Application-installed redacting panic hook
 
 `batter::redacting_panic_hook()` (also `batter_core::redacting_panic_hook`)

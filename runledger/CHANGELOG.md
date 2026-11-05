@@ -188,6 +188,13 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Caught main-handler panics now use the fixed message `Job handler panicked.`
+  in durable failures and native settlement diagnostics. Panic payloads no
+  longer reach queue, attempt, dead-letter or event records, dead-letter logs,
+  or the TUI through this conversion. The `job.handler_panic` code, `PANICKED`
+  classification and nonretryable behavior are unchanged. Application-created
+  `JobFailure` messages remain verbatim and must not contain sensitive details.
+
 - Raise the minimum supported Rust version from 1.94 to 1.98.1, the Batter
   workspace's pinned toolchain. No public item changes.
 - When migration or preparation fails and advisory-lock release also fails,
