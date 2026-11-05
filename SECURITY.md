@@ -25,9 +25,10 @@ certificate verifier; validated HTTPS origins; an ALPN list of `http/1.1` only; 
 `ResponseLimit` on every response body. The application still owns the trust
 store and its environment, such as `SSL_CERT_FILE` and `SSL_CERT_DIR` on Linux,
 any process-default crypto provider that other crates in its graph need,
-certificate pinning, which the package does not offer, and every egress or
-destination policy: `Origin::https` accepts any HTTPS host the application
-passes, IP literals included. The package adds no instrumentation of its own,
+certificate pinning, which the package does not offer, and hostname allowlists and network egress policy. `Origin::https` accepts any
+HTTPS host the application passes, IP literals included. Opt-in
+`Origin::public_https` rejects non-public literals and filters the exact DNS
+dial candidates; it does not establish remote trust or control OS routing. The package adds no instrumentation of its own,
 but rustls-platform-verifier may log certificate failures and names. When the
 application graph enables rustls's `logging` feature, rustls may also log server
 names, ClientHellos and certificate chains. Application logger configuration

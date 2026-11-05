@@ -1172,6 +1172,11 @@ and [primary sources](references.md#reference-metrics-export).
 
 ## Outbound provider exchange: experimental transport evidence
 
+`Origin::public_https` retains a public-address policy on the origin and filters
+DNS candidates before the existing bounded dialer; no preflight/re-resolution
+gap exists. Ordinary `Origin::https` still supports private services. See the
+[public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
+
 The experimental `batter-outbound-http` package (`batter-3s1a`) owns one question
 about an outbound HTTP request: could this attempt have reached the peer?
 [ADR-015](adr/015-outbound-transport-evidence.md) records the decision. It is

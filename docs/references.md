@@ -6475,3 +6475,15 @@ the Cargo registry; no dependency version changed.
 Local dependency remains SQLx 0.9.0; live validation server is PostgreSQL 18.6.
 This change adds no dependency. Application revision numbers are not derived from
 SQLx migration history.
+
+## Public HTTPS address policy (2026-11-05)
+
+The conservative exclusions were checked against the IANA
+[IPv4 special-purpose registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+and [IPv6 special-purpose registry](https://www.iana.org/assignments/iana-ipv6-special-registry/).
+The implementation intentionally excludes some globally reachable special-use
+ranges as well. The registry does not guarantee routing in a local network;
+the API makes no such claim. Enforcement uses the inspected Tokio lookup
+result directly, followed by the existing bounded dialer, with no second DNS
+lookup. Literal and real localhost tests cover refusal before TCP; mixed-answer
+tests observe dialer calls rather than issuing traffic to public addresses.

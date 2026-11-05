@@ -1957,6 +1957,16 @@ of every binary and mode, no hook chains to the default hook, no log formats
 `PanicHookInfo` or the payload, no wrapper code can panic inside the hook, and
 no test or shared helper installs it.
 
+### Public-origin invalid-state review (`batter-321j`)
+
+The new constructor stores an immutable policy in the opaque origin; cloning
+or preparing requests cannot drop it. The dialer filters the exact addresses
+it receives before any TCP attempt, including every fallback candidate. There
+is no resolver override or public setter that can remove the policy. A caller
+can deliberately construct an ordinary `Origin::https` for private services;
+choosing which hostnames and service classes are authorized remains application
+policy. Address classification cannot establish OS routing or remote trust.
+
 ### Outbound exchange assessment (`batter-3s1a`)
 
 Amended 2026-11-04, `batter-u387`. The original extraction removed repeated

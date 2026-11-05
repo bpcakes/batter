@@ -335,6 +335,11 @@ protocol. Choose one retry owner so nested budgets do not multiply attempts.
 
 ## Outbound provider exchange
 
+`Origin::public_https` retains a public-address policy on the origin and filters
+DNS candidates before the existing bounded dialer; no preflight/re-resolution
+gap exists. Ordinary `Origin::https` still supports private services. See the
+[public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
+
 `batter-outbound-http` (facade `batter::outbound_http`, feature `outbound-http`) is
 experimental. [ADR-015](adr/015-outbound-transport-evidence.md) records the
 transport decision and [references](references.md#owned-outbound-http1-connections-2026-11-04)

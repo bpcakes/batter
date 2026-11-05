@@ -20,6 +20,7 @@ async fn a_stalled_family_cannot_starve_a_healthy_alternative() {
             let attempts = RefCell::new(Vec::new());
             let attempts_ref = &attempts;
             let result = connect(
+                &crate::Origin::https("https://provider.example").unwrap(),
                 candidates.to_vec(),
                 started + budget,
                 |address| async move {
@@ -52,6 +53,7 @@ async fn outright_failure_starts_the_other_family_without_waiting() {
     let candidates = addresses();
     let started = Instant::now();
     let result = connect(
+        &crate::Origin::https("https://provider.example").unwrap(),
         candidates.to_vec(),
         started + Duration::from_secs(2),
         |address| async move {
@@ -81,6 +83,7 @@ async fn a_stalled_address_cannot_starve_later_addresses_of_the_same_family() {
     let attempts = RefCell::new(Vec::new());
     let attempts_ref = &attempts;
     let result = connect(
+        &crate::Origin::https("https://provider.example").unwrap(),
         candidates.clone(),
         started + Duration::from_secs(3),
         |address| async move {
@@ -127,6 +130,7 @@ async fn either_family_can_win_and_losing_candidates_are_dropped_before_return()
         let candidates = addresses();
         let closed = Rc::new(RefCell::new(Vec::new()));
         let result = connect(
+            &crate::Origin::https("https://provider.example").unwrap(),
             candidates.to_vec(),
             Instant::now() + Duration::from_secs(2),
             |address| {
@@ -173,16 +177,21 @@ async fn all_stalled_candidates_end_at_the_shared_deadline() {
     let candidates = addresses();
     let closed = Rc::new(RefCell::new(Vec::new()));
     let deadline = Instant::now() + Duration::from_secs(1);
-    let error = connect(candidates.to_vec(), deadline, |address| {
-        let candidate = Candidate {
-            address,
-            closed: closed.clone(),
-        };
-        async move {
-            let _held = candidate;
-            pending::<io::Result<Candidate>>().await
-        }
-    })
+    let error = connect(
+        &crate::Origin::https("https://provider.example").unwrap(),
+        candidates.to_vec(),
+        deadline,
+        |address| {
+            let candidate = Candidate {
+                address,
+                closed: closed.clone(),
+            };
+            async move {
+                let _held = candidate;
+                pending::<io::Result<Candidate>>().await
+            }
+        },
+    )
     .await
     .unwrap_err();
     assert_eq!(

@@ -50,6 +50,25 @@ its `operation` variant. Through the facade, select feature `outbound-http` and 
 `batter::outbound_http`; the facade's `outbound_exchange` example runs a complete
 consumer against a local fixture.
 
+## Public destinations
+
+Use `Origin::public_https("https://provider.example")` when a client must not
+connect to private or local addresses. The origin retains the policy through
+cloning and request preparation. Non-public literal IPs fail construction;
+DNS answers are filtered immediately before TCP setup, and only those same
+addresses are dialed. An answer with no allowed addresses fails as
+`NotDispatched(ConnectFailure::Failed)`. Mixed answers retain allowed addresses
+in their original order and use the existing bounded fallback.
+
+The conservative filter excludes local, private, shared, documentation,
+benchmarking, multicast, reserved and translation ranges. IPv6 is restricted
+to ordinary 2000::/3 unicast, excluding 2001::/23, 2001:db8::/32, 2002::/16,
+and 3fff::/20. Some globally reachable special-purpose ranges are intentionally
+excluded. This is an address policy, not a guarantee about OS routing, NAT,
+remote ownership, or trust. Applications still choose permitted hostnames and
+control their network and trust store. `Origin::https` remains available for
+intentionally private HTTPS services; `Origin::loopback` is unchanged.
+
 ## Outcomes
 
 | Outcome | Reasons and `label()` | What this attempt established |

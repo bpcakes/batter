@@ -47,19 +47,18 @@ pub(crate) async fn connect<'a, F: Fn() -> bool + Sync>(
     let port = url
         .port_or_known_default()
         .ok_or(io::ErrorKind::InvalidInput)?;
-    let tcp = match url.host().ok_or(io::ErrorKind::InvalidInput)? {
-        url::Host::Ipv4(ip) => TcpStream::connect(SocketAddr::new(ip.into(), port)).await?,
-        url::Host::Ipv6(ip) => TcpStream::connect(SocketAddr::new(ip.into(), port)).await?,
-        url::Host::Domain(host) => {
-            let addresses = tokio::net::lookup_host((host, port)).await?.collect();
-            dial::connect(
-                addresses,
-                connect_deadline.min(gate.deadline),
-                TcpStream::connect,
-            )
-            .await?
-        }
+    let addresses = match url.host().ok_or(io::ErrorKind::InvalidInput)? {
+        url::Host::Ipv4(ip) => vec![SocketAddr::new(ip.into(), port)],
+        url::Host::Ipv6(ip) => vec![SocketAddr::new(ip.into(), port)],
+        url::Host::Domain(host) => tokio::net::lookup_host((host, port)).await?.collect(),
     };
+    let tcp = dial::connect(
+        &client.origin,
+        addresses,
+        connect_deadline.min(gate.deadline),
+        TcpStream::connect,
+    )
+    .await?;
     tcp.set_nodelay(true)?;
     match client.origin.scheme() {
         Scheme::LoopbackHttp => Ok(Box::new(Guarded { inner: tcp, gate })),

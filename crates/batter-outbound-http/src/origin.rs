@@ -3,6 +3,8 @@
 use std::{fmt, net::SocketAddr};
 use url::Url;
 
+mod public_address;
+
 /// One provider's scheme, host and port.
 ///
 /// Requests built from a [`crate::Client`] can only target paths below its
@@ -15,6 +17,7 @@ use url::Url;
 pub struct Origin {
     url: Url,
     scheme: Scheme,
+    public_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +47,38 @@ impl Origin {
         Ok(Self {
             url,
             scheme: Scheme::Https,
+            public_only: false,
         })
+    }
+
+    /// Accept an HTTPS origin restricted to public unicast destinations.
+    ///
+    /// Rejects non-public literal IPs now and filters DNS answers immediately
+    /// before dialing, using those same addresses without a second lookup.
+    /// Local, private, shared, documentation, benchmarking, multicast and
+    /// reserved IPv4 ranges are excluded. IPv6 is limited to 2000::/3 excluding
+    /// special-use 2001::/23, documentation and 6to4 ranges; mapped and NAT64
+    /// addresses are excluded. This conservative policy does not prove that a
+    /// remote host is trustworthy or publicly routed by the operating system.
+    /// Use [`Self::https`] for deliberately private HTTPS services.
+    ///
+    /// ```
+    /// use batter_outbound_http::{Origin, OriginError};
+    /// assert!(Origin::public_https("https://provider.example").is_ok());
+    /// assert_eq!(Origin::public_https("https://127.0.0.1"), Err(OriginError::NonPublicAddress));
+    /// ```
+    pub fn public_https(origin: &str) -> Result<Self, OriginError> {
+        let mut origin = Self::https(origin)?;
+        origin.public_only = true;
+        let literal = match origin.url.host() {
+            Some(url::Host::Ipv4(ip)) => Some(ip.into()),
+            Some(url::Host::Ipv6(ip)) => Some(ip.into()),
+            Some(url::Host::Domain(_)) | None => None,
+        };
+        if literal.is_some_and(|ip| !origin.permits_address(ip)) {
+            return Err(OriginError::NonPublicAddress);
+        }
+        Ok(origin)
     }
 
     /// Accept plain HTTP to a literal loopback address, such as a local fixture.
@@ -71,6 +105,7 @@ impl Origin {
         Ok(Self {
             url,
             scheme: Scheme::LoopbackHttp,
+            public_only: false,
         })
     }
 
@@ -80,6 +115,10 @@ impl Origin {
 
     pub(crate) fn scheme(&self) -> Scheme {
         self.scheme
+    }
+
+    pub(crate) fn permits_address(&self, address: std::net::IpAddr) -> bool {
+        !self.public_only || public_address::is_public(address)
     }
 }
 
@@ -122,6 +161,9 @@ impl fmt::Debug for Origin {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum OriginError {
+    /// A public-only HTTPS origin named a non-public literal address.
+    #[error("the origin address is not public unicast")]
+    NonPublicAddress,
     /// The value is not an absolute URL that an HTTP request can target.
     #[error("the origin is not an absolute HTTP URL")]
     Unparseable,
