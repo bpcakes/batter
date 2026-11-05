@@ -5,6 +5,8 @@
 mod dispatch_and_concurrency;
 #[path = "http/multi_policy.rs"]
 mod multi_policy;
+#[path = "http/observation_ownership.rs"]
+mod observation_ownership;
 #[path = "http/response_contract.rs"]
 mod response_contract;
 mod support;

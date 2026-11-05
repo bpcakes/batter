@@ -1,6 +1,6 @@
 //! Protected authenticated HTTP admission with native atomic quotas.
 
-use crate::quota::{Checks, ConsumptionError, Quota, RunResult, Snapshot};
+use crate::quota::{Checks, ConsumptionError, Quota, RunResult, observation::CheckObservation};
 use axum::{
     Json, Router,
     body::Body,
@@ -19,16 +19,13 @@ use batter_axum::{
     // checking has to sit between admission and body extraction, which
     // `HttpBoundary` does not express. See ADR-012 and the crate guide.
     low_level::{operational_http_with_quota, request_admission},
-    quota_observation::{QuotaConsumption, QuotaRecorder, QuotaTerminalFacts},
+    quota_observation::QuotaRecorder,
 };
 use batter_core::{
     operation::{OperationContext, OperationError},
     registration::RegistrationTarget,
 };
-use runlimit_core::{
-    BatchDecisionView, Check, ConsumptionStatus, Denial, Limiter, QuotaMode, RateLimitPolicy,
-    SubjectKey,
-};
+use runlimit_core::{Check, Denial, Limiter, QuotaMode, RateLimitPolicy, SubjectKey};
 use std::{
     convert::Infallible,
     future::Future,
@@ -490,8 +487,6 @@ where
     let Some(record) = QuotaRecorder::take(&mut request) else {
         return rejection(BoundaryRejection::MissingObserver);
     };
-    let mut unstarted = Some(record);
-    let mut started = None;
     let principal = match (boundary.authenticate)(AuthInput {
         headers: request.headers().clone(),
         peer,
@@ -517,17 +512,7 @@ where
         .run_recorded(
             &context,
             Checks::new(&checks).expect("construction rejects an empty policy list"),
-            |snapshot| match snapshot {
-                Snapshot::Started => {
-                    started = Some(unstarted.take().expect("one quota check").start());
-                }
-                Snapshot::Decided(_) | Snapshot::Failed(_) => {
-                    started
-                        .take()
-                        .expect("started quota check")
-                        .finish(project_terminal(snapshot));
-                }
-            },
+            CheckObservation::Http(record),
             |_| async move { Ok::<_, Infallible>(next.run(request).await) },
         )
         .await
@@ -567,25 +552,6 @@ where
             }
             response
         }
-    }
-}
-
-fn project_terminal(snapshot: &Snapshot) -> QuotaTerminalFacts {
-    match snapshot {
-        Snapshot::Failed(consumption) => QuotaTerminalFacts::BackendFailed(match consumption {
-            ConsumptionStatus::Consumed => QuotaConsumption::Consumed,
-            ConsumptionStatus::NotConsumed => QuotaConsumption::NotConsumed,
-            ConsumptionStatus::PossiblyConsumed => QuotaConsumption::Unknown,
-        }),
-        Snapshot::Decided(decision) => match decision.view() {
-            BatchDecisionView::Allowed { .. } => QuotaTerminalFacts::Allowed,
-            BatchDecisionView::ShadowDenied { .. } => QuotaTerminalFacts::ShadowDenied,
-            BatchDecisionView::Denied { denial, .. } => match denial {
-                Denial::QuotaExceeded(_) => QuotaTerminalFacts::QuotaDenied,
-                Denial::StorageCapacity { .. } => QuotaTerminalFacts::StorageCapacity,
-            },
-        },
-        Snapshot::Started => unreachable!("only completed quota results"),
     }
 }
 

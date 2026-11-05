@@ -2327,6 +2327,12 @@ unknown; a backend failure retains its native certainty; the other outcomes mean
 not consumed. These facts are independent of final HTTP status, including a
 timeout after admission. The pinned native Runlimit adapter does not emit
 `other_denial`; that value remains available to manual observation writers.
+On the protected quota path, the runner owns the observation writer. Starting a
+native check consumes the unstarted writer; publishing its native result consumes
+the started writer before work can begin. Only terminal native results enter that
+publication path. Dropping or unwinding a pending check leaves unknown consumption;
+a later handler panic, timeout or cancellation cannot erase an already recorded
+grant. Authentication failure leaves the record unstarted and the body unpolled.
 The quota wrapper publishes its fresh record into the outer observer's shared
 state in either supported operational-wrapper order.
 Ordinary `operational_http` allocates no quota record
