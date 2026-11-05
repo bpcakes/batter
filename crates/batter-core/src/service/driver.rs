@@ -130,10 +130,10 @@ where
     }))
     .map(|future| tokio::spawn(scoped_dispatch::scope(future.in_current_span())))
     .map_err(PanicPayload::new);
-    let mut starting = startup.start();
+    let starting = startup.start();
     let service = tokio::spawn(scoped_dispatch::scope(
         async move {
-            match starting.wait().await {
+            match starting.finish().await {
                 Err(error) => ServiceOutcome::StartupFailed(error),
                 Ok(running) => ServiceOutcome::Shutdown(running.wait_checked().await),
             }

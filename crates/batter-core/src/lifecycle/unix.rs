@@ -384,7 +384,7 @@ mod tests {
         let cleanup = CleanupBudget::new(second, second, second).unwrap();
         let supervisor =
             Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
-        let mut starting = Startup::new(
+        let starting = Startup::new(
             supervisor,
             crate::operation::OperationOwner::new(second)
                 .unwrap()
@@ -403,7 +403,7 @@ mod tests {
             },
         )
         .start();
-        let Err(StartupError::Failed(report)) = starting.wait().await else {
+        let Err(StartupError::Failed(report)) = starting.finish().await else {
             panic!("expected failure")
         };
         let StartupCause::Failed(SignalRegistrationError::Install(error)) = &report.cause else {

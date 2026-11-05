@@ -355,14 +355,20 @@ use that clone for the query and for other bounded initialization work, as the
 reference root does for native worker preparation.
 
 The initializer's `Ok` value is typed output, such as a bound listener address.
-Await `starting.wait_with_output()` to receive `(RunningSupervisor, output)`
+Await `starting.finish_with_output()` to receive `(RunningSupervisor, output)`
 together; observers never receive the output, and a failed startup never yields
 it. Output returned while a drain, cancellation or deadline is observed is
-destroyed before cleanup, not handed off. With unit output, `starting.wait()`
-returns only the running owner; a typed output does not offer `wait()`, so the
+destroyed before cleanup, not handed off. With unit output, `starting.finish()`
+returns only the running owner; a typed output does not offer `finish()`, so the
 value cannot be skipped by accident. `service::start` does not deliver typed
 output yet and accepts only unit output. To name the specification in a helper's
 return type, use `ScopedStartup<impl Initializer<E, Output = T>>`.
+
+Both finish methods consume the startup owner. To resume after a timeout, create
+the finish future once, pin it with `tokio::pin!`, and pass `&mut finish` to
+`timeout` or `select!`. Await that same future after a timeout; dropping it
+requests drain, even before its first poll. Clone any startup observer before
+calling the finish method. See the method rustdocs for a complete example.
 
 Keep `E` concrete when callers match on it; startup retains it unchanged in
 `InitializationError::Application`. An initializer that combines unrelated

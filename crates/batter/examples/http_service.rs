@@ -167,7 +167,7 @@ async fn run() -> Result<(), BoxError> {
     let admission = supervisor.operation_admission();
     // The initializer borrows the protected scope across awaits; `?` combines
     // unrelated errors into `ApplicationError` and the bound address is returned.
-    let mut starting = Startup::protected(
+    let starting = Startup::protected(
         supervisor,
         batter::operation::OperationOwner::new(Duration::from_secs(15))?.into_context(),
         support::cleanup_budget(),
@@ -191,7 +191,7 @@ async fn run() -> Result<(), BoxError> {
     )
     .with_unix_signals("signals")
     .start();
-    let (running, address) = starting.wait_with_output().await?;
+    let (running, address) = starting.finish_with_output().await?;
     tracing::info!(%address, "HTTP listener bound");
     running.wait_checked().await?;
     Ok(())

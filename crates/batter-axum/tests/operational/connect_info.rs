@@ -68,7 +68,7 @@ async fn protected_startup_supplies_each_socket_peer_to_admission_and_handler() 
     let handle = supervisor.handle();
     let (address_tx, address_rx) = oneshot::channel();
     let (cleanup_tx, cleanup_rx) = oneshot::channel();
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor,
         batter_core::operation::OperationOwner::new(WAIT)
             .unwrap()
@@ -102,7 +102,7 @@ async fn protected_startup_supplies_each_socket_peer_to_admission_and_handler() 
         },
     )
     .start();
-    let running = timeout(WAIT, starting.wait()).await.unwrap().unwrap();
+    let running = timeout(WAIT, starting.finish()).await.unwrap().unwrap();
     timeout(WAIT, handle.status().wait_ready())
         .await
         .unwrap()

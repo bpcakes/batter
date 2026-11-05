@@ -165,7 +165,7 @@ async fn assembled_boundary_over_tls_acknowledges_serves_the_peer_and_drains_an_
     let (address_tx, address_rx) = oneshot::channel();
     let (cleanup_tx, mut cleanup_rx) = oneshot::channel();
     let (release_tx, release) = oneshot::channel();
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor,
         request_context(),
         cleanup_budget(),
@@ -199,7 +199,7 @@ async fn assembled_boundary_over_tls_acknowledges_serves_the_peer_and_drains_an_
         },
     )
     .start();
-    let running = timeout(WAIT, starting.wait()).await.unwrap().unwrap();
+    let running = timeout(WAIT, starting.finish()).await.unwrap().unwrap();
     timeout(WAIT, handle.status().wait_ready())
         .await
         .unwrap()

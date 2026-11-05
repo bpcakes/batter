@@ -1100,7 +1100,7 @@ box as its `source()`. `ApplicationError` itself deliberately does not implement
 Formatting of both stays fixed text.
 
 Typed initializer output travels only in the one-shot handoff:
-`StartingSupervisor::wait_with_output` returns it with the running (or
+`StartingSupervisor::finish_with_output` returns it with the running (or
 unapproved) owner, observers receive only the supervisor observer, and every
 failure carries no output. Output returned in the same poll that observes drain,
 cancellation or deadline, or followed by a destruction panic or a failed final
@@ -1110,7 +1110,7 @@ occupies that field. The later payload is then released only when it is a
 `String` or `&'static str`; any other payload is intentionally leaked, because its
 destructor could panic again inside the coordinator before cleanup. Dropping the
 starting owner instead of waiting destroys the queued owner and output together,
-on the dropping task or the monitor task, and requests drain. `wait` exists only for unit output. `service::start` accepts only unit
+on the dropping task or the monitor task, and requests drain. `finish` exists only for unit output. `service::start` accepts only unit
 output and does not deliver typed output.
 
 `Startup::new` remains the explicitly lower-level compatibility path and invokes
@@ -1118,8 +1118,12 @@ no initializer. `start` launches the owner on a live Tokio
 runtime. Dropping the inert builder only abandons its unstarted supervisor;
 no asynchronous cleanup is implied. Once started, dropping `StartingSupervisor`
 requests drain while the coordinator drives registered cleanup independently.
-Cancelling `wait(&mut self)` leaves ownership and the pending handoff intact.
-After its first completed result, that one-shot waiter must not be polled again.
+`finish(self)` and `finish_with_output(self)` consume that owner, so another
+handoff call on the same value cannot compile. Their returned future owns the
+pending handoff even before its first poll. Dropping it requests drain; cancelling
+a borrowed wait on the retained, pinned future leaves initialization and handoff
+owned. Resume that same future rather than creating a new handoff call. The
+ordinary Rust future contract still forbids polling after completion.
 `StartupObserver` retains a startup failure or a shutdown observer, never a
 running owner. Dropping an unclaimed handoff requests running-driver drain.
 
@@ -2695,7 +2699,7 @@ retain their source compatibility and TCP function-pointer signatures.
 The factory does no work before supervision starts and
 acknowledges on its task's first poll; application approval and a running driver
 remain necessary. Invalid or duplicate registration releases only the rejected
-listener. Cancelling a borrowed StartingSupervisor waiter leaves the listener
+listener. Cancelling a borrowed wait on a retained startup finish future leaves the listener
 owned. Dropping the startup owner requests drain, releases registered listener
 captures before dependent cleanup, and lets observers await the completed report
 on a live runtime. Dropping an unstarted Supervisor releases captures without

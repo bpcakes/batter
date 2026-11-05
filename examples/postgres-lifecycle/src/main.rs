@@ -127,8 +127,8 @@ where
         + Send
         + 'static,
 {
-    let mut starting = startup.start();
-    let running = starting.wait().await?;
+    let starting = startup.start();
+    let running = starting.finish().await?;
     if running.status().wait_ready().await.is_ok() {
         tracing::info!("PostgreSQL lifecycle ready");
     }

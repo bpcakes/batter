@@ -89,7 +89,7 @@ async-closure initializer receives a `ProtectedStartupScope` exposing stage
 metadata, direct cleanup reservation and sealed registration authority without
 process start or cleanup extraction. The library boxes the initializer future;
 its typed output, such as a bound address, arrives with the running owner from
-`StartingSupervisor::wait_with_output`. Use `startup::ApplicationError` when `?`
+`StartingSupervisor::finish_with_output`. Use `startup::ApplicationError` when `?`
 combines unrelated errors. `Startup::scoped` keeps the lower-level caller-boxed
 `StartupFuture` form.
 Select `.with_unix_signals("signals")` when the startup owner should install

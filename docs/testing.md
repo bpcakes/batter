@@ -513,6 +513,13 @@ awaits shutdown/resource release. The protected example reserves cleanup and
 registers a critical component without supervisor access. `tests/protected_startup.rs`
 checks typed error retention before destructor panic, observer identity, direct
 reservation across await, real request handling and join-before-finalization.
+`tests/typed_startup/handoff.rs` checks consuming handoff ownership: dropping an
+unpolled finish skips initialization and drives registered cleanup; dropping a
+pending finish retains cleanup failures; cancelling a borrowed timeout preserves
+the pinned finish future and its typed output. The handoff rustdocs reject second
+calls on consumed owners. Existing startup, signal and HTTP tests exercise the
+same retained-future cancellation pattern.
+
 `tests/typed_startup.rs` drives `Startup::protected` async closures: typed output
 arrives only with the running or unapproved owner while the observer sees the
 plain handoff; output returned in the poll that observes drain or cancellation
@@ -528,7 +535,7 @@ completes through `service::start`. The facade's
 anyhow, std and Batter errors inside the initializer and to the startup failure
 at an `anyhow::Result` boundary, returning the bound address without adapters,
 and pins anyhow's wrapping of its head error. Rustdoc compile-fail cases reject a
-non-`Send` initializer future, output borrowing the scope, `wait` on typed output
+non-`Send` initializer future, output borrowing the scope, `finish` on typed output
 and typed output through `service::start`.
 `tests/registration.rs` checks sealed reborrowing plus invalid/duplicate ordinary
 and managed rejection without factory invocation. `tests/startup_composition.rs` independently
