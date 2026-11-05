@@ -332,3 +332,24 @@ fn retained<T, E, U, F>(result: Checked<T, E, U, F>) -> FailedPhasedReport<T, E,
         Err(error) => panic!("unexpected coordinator failure: {error:?}"),
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn successful_work_context_is_cancelled_before_finalization_begins() {
+    let parent = parent();
+    let running = PhasedOperation::new(
+        parent.context(),
+        reserve(),
+        async |work| Ok::<_, Infallible>(work.clone()),
+        async |scope| {
+            let retained_work = scope.work().classify().unwrap();
+            assert_eq!(retained_work.check(), Err(Interruption::Cancelled));
+            assert!(scope.context().check().is_ok(), "sibling remains live");
+            Ok::<_, Infallible>(())
+        },
+    )
+    .unwrap()
+    .start();
+    let result = running.wait().await.unwrap();
+    assert_eq!(result.work().check(), Err(Interruption::Cancelled));
+    assert!(parent.context().check().is_ok());
+}

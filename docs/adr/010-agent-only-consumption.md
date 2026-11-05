@@ -2029,6 +2029,25 @@ Now `PhaseOutcome` privately stores accepted success or opaque `PhaseFailure`;
 both phase outcomes. Constructors are private. No mutable access, general-report
 conversion to failure, or repeated consumer success check is needed.
 
+**Publication ownership (`batter-w8fr`).** The subsequent panel reproduced a
+library ownership gap: the publisher claimed `ScopedOutput` before storing the
+checked result in watch. A receiver outliving the publisher could destroy unread
+evidence under an unrelated subscriber. Execution wrappers could not protect
+that later destruction. Publication now requires a private `SharedOutput` built
+from guarded output, with no raw accessor. Sharing observers only shares this
+guard; completed `wait` synchronously claims the checked result. Its internal
+one-way atomic observation state supports concurrent observers without requiring
+domain Clone or adding a paired consumer operation. Static ownership protects
+the handoff; actual observation remains a runtime event. Tests synchronize on
+publisher closure, then abandon success/error evidence, and verify both orders
+of caller-owned destruction after observation. Public signatures are unchanged.
+
+The two accompanying lifecycle gaps were evidence/documentation gaps: successful
+work already cancelled its context before finalization, and handler destruction
+already preceded native invocation exit. Controlled tests now exercise both.
+Changing native ordering or treating cancellation as remote write authority would
+change the wrong owner; application/native fencing remains outside this proof.
+
 **Acquisition ownership.** A factory yielding `Acquired` cannot prove when its
 inner native resource was acquired. Cancellation after native success but before
 pair construction, and a nested native future's destruction panic, both left no

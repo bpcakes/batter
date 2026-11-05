@@ -13,7 +13,7 @@ pub use report::{FailedPhasedReport, PhasedFailure, PhasedReport, PhasedSuccess}
 use super::{OperationContext, OperationPhases};
 use crate::{
     ConfigurationError, command,
-    scoped_dispatch::{self, ScopedOutput},
+    scoped_dispatch::{self, ScopedOutput, SharedOutput},
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -130,6 +130,9 @@ impl<W, F> PhasedOperation<W, F> {
     /// Reuses the command driver's phase polling, panic handling and destruction
     /// rules. The runtime must remain alive through completion. A borrowed
     /// waiter may be cancelled freely; dropping the owner cancels work only.
+    /// Work completion cancels its context and descendants before finalization,
+    /// whose sibling context stays live unless its parent or deadline ends it.
+    /// Cancellation does not join arbitrary tasks using those contexts.
     ///
     /// # Panics
     /// Panics outside a Tokio runtime. Its time driver must be enabled.
@@ -145,15 +148,18 @@ impl<W, F> PhasedOperation<W, F> {
         let context = self.phases.work.clone();
         let (publication, completion) = watch::channel(None);
         let coordinator = tokio::spawn(scoped_dispatch::scope(
-            async move { ScopedOutput::capture(self.drive().await) }.in_current_span(),
+            async move { ScopedOutput::capture(self.drive().await.into_checked()) }
+                .in_current_span(),
         ));
         drop(tokio::spawn(scoped_dispatch::scope(
             async move {
-                let result = coordinator
-                    .await
-                    .map_err(|error| PhasedFailure::Coordinator(Arc::new(error)))
-                    .and_then(|report| report.into_inner().into_checked());
-                publication.send_replace(Some(result));
+                let output = match coordinator.await {
+                    Ok(output) => output,
+                    Err(error) => {
+                        ScopedOutput::capture(Err(PhasedFailure::Coordinator(Arc::new(error))))
+                    }
+                };
+                publication.send_replace(Some(SharedOutput::new(output)));
             }
             .in_current_span(),
         )));

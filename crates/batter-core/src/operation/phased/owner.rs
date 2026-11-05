@@ -1,9 +1,11 @@
 use super::{PhasedFailure, PhasedSuccess};
-use crate::{completion::wait_published, operation::OperationContext};
+use crate::{
+    completion::wait_published, operation::OperationContext, scoped_dispatch::SharedOutput,
+};
 use tokio::sync::watch;
 
 type Completion<T, E, U, F> = Result<PhasedSuccess<T, U>, PhasedFailure<T, E, U, F>>;
-type Receiver<T, E, U, F> = watch::Receiver<Option<Completion<T, E, U, F>>>;
+type Receiver<T, E, U, F> = watch::Receiver<Option<SharedOutput<Completion<T, E, U, F>>>>;
 
 /// Sole work-cancellation owner of a phased operation. Drop cancels work only.
 ///
@@ -75,6 +77,9 @@ impl<T, E, U, F> PhasedObserver<T, E, U, F> {
     /// # Errors
     /// Returns the complete failed report or a coordinator join failure.
     /// `Ok` is returned only when both phases succeeded.
+    /// Unread completion retains its producer tracing context for destruction.
+    /// Returning from this wait transfers shared result destruction to the caller;
+    /// cloning an observer or cancelling a pending waiter does not.
     /// Migration: `PhasedObserver::wait` now returns [`PhasedSuccess`].
     /// # Panics
     /// Panics if runtime death destroys publication before it completes.
@@ -82,5 +87,10 @@ impl<T, E, U, F> PhasedObserver<T, E, U, F> {
         wait_published(self.completion.clone())
             .await
             .expect("owned phase monitor retains publication")
+            .claim()
     }
 }
+
+#[cfg(test)]
+#[path = "owner_tests.rs"]
+mod tests;

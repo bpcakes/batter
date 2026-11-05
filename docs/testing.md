@@ -143,6 +143,12 @@ work/finalization results. Drop markers and finalizer events must reach the
 submitter's dispatcher and span, never the ambient subscriber (`batter-17fe`).
 Separately removing the coordinator's and publisher's span attachment made their
 corresponding focused test fail; both mutations were restored before verification.
+Private phase owner tests also wait for publisher closure before dropping unread
+success/error evidence under a different subscriber. They cover cancelled and
+unpolled waiters, observer clones, and claimed result/receiver destruction in
+both orders without requiring domain Clone. Public phase tests prove successful
+work context cancellation before sibling finalization; the native bridge test
+explicitly holds open the owner-drop-before-invocation-exit window (`batter-w8fr`).
 Rustdoc tests reject early finalization access, owner cloning, non-Send callbacks
 extraction of the opaque acquired handle, forged success/failure evidence and
 application callbacks at the native acquisition boundary. The facade operation-budget and

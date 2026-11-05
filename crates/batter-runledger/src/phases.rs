@@ -48,6 +48,12 @@ use std::{fmt, time::Duration};
 /// capture the borrowed `JobExecution`; retain manual phase access when native
 /// progress/checkpoint operations must borrow it, and own that sequencing.
 ///
+/// Handler destruction can drop the owner before invocation exit is signalled.
+/// The coordinator may start finalization in that window, including on another
+/// runtime thread. Cancellation is cooperative and is not authority for a remote
+/// final-state write; application/native fencing and reconciliation remain required
+/// where such writes need current invocation authority.
+///
 /// Direct `work()`/`finalization()` access is the lower-level manual path.
 /// Await final-state work after work ends. Run it under `finalization()` when
 /// it uses Batter boundaries such as admission, retries, child operations or

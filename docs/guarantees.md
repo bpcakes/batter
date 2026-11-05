@@ -213,7 +213,10 @@ clock. Both specifications are inert until `start`. The work callback receives
 only its shortened context. The finalization callback receives its context and
 read-only `PhaseOutcome` only after the work future is destroyed. The driver
 retains the original value/error, boundary interruption and destruction panic
-before entering finalization; finalization failure cannot replace them.
+before entering finalization; finalization failure cannot replace them. Work
+completion cancels its context and descendants before finalization starts, even
+on success. The sibling finalization context remains live within its own bounds;
+this cancellation does not join arbitrary spawned tasks.
 
 The driver shares command phase polling and panic containment. Cancellation and
 deadline are checked before each factory and before polling; a result produced
@@ -224,7 +227,10 @@ to finalization when its context permits. Finalization stops at the original
 total deadline and inherits parent cancellation. Work cancellation never travels
 upward or into its sibling. Both the phase coordinator and result publisher
 retain the originating tracing dispatcher and span through execution and
-captured-value destruction, including skipped work and unclaimed reports.
+captured-value destruction, including skipped work and unclaimed reports. A
+private guarded publication retains that protection after the publisher exits.
+Only a completed `wait` claims the shared result and transfers its destruction
+to caller context; observer clones and cancelled pending waiters do not claim it.
 
 `RunningPhasedOperation` owns work cancellation. Dropping it, even before first
 poll, requests work cancellation but leaves the coordinator to attempt

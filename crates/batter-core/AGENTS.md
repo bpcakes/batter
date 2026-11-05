@@ -77,6 +77,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation and the
   `ScopedOutput` guard that destroys unclaimed task output under its producer.
+  Its private `SharedOutput` keeps that protection through publication storage;
+  only completed phase observation claims the result.
 
 ## Edit here for X
 

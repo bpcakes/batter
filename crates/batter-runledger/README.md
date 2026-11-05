@@ -43,6 +43,12 @@ and cannot survive runtime death or extend the native deadline. Callbacks must
 own their captures: a borrowed `JobExecution` cannot move into them. Native
 progress/checkpoint calls that borrow the invocation retain manual sequencing.
 
+Handler destruction can drop the owner before invocation exit is signalled.
+The coordinator may start finalization in that window, including on another
+runtime thread. Cancellation is cooperative and is not authority for a remote
+final-state write; application/native fencing and reconciliation remain required
+where such writes need current invocation authority.
+
 The invocation's own exit cancels both phases and every context derived from
 them: success, continuation, failure, panic, timeout, lease loss, failed lease
 maintenance and task abort, but not a graceful stop that lets it finish. The

@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Keep unread phased-operation results under their producer tracing context even
+  after publication ends. Only a completed wait transfers shared result
+  destruction to caller ownership; observer cloning and waiter cancellation do not.
+
 - Add `operation::PhasedOperation` and `OperationPhases::into_operation` for
   library-owned work/finalization sequencing, independent typed evidence and
   work-only owner cancellation (`batter-jxj2`). Native invocation clocks and

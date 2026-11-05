@@ -5,6 +5,9 @@
 //! Drop events or nested span destruction. Wrap the entire owning future,
 //! outside its `Instrumented` wrapper, rather than only a borrowed inner body.
 
+mod shared_output;
+pub(crate) use shared_output::SharedOutput;
+
 use std::{
     future::Future,
     pin::Pin,
@@ -256,6 +259,37 @@ mod tests {
         assert_eq!(lines.len(), 1, "{}", text(&claimed));
         assert!(lines[0].contains("output.claimant"), "{}", lines[0]);
         assert!(!lines[0].contains("output.producer"), "{}", lines[0]);
+    }
+
+    #[test]
+    fn failed_shared_claim_keeps_unread_output_protected() {
+        struct Uncloneable {
+            _evidence: Announced,
+        }
+        impl Clone for Uncloneable {
+            fn clone(&self) -> Self {
+                panic!("claim clone failed")
+            }
+        }
+        let (produced, producer) = capturing();
+        let (ambient, fallback) = capturing();
+        let output = tracing::dispatcher::with_default(&producer, || {
+            let span = tracing::info_span!("output.producer");
+            let _entered = span.enter();
+            super::SharedOutput::new(ScopedOutput::capture(Uncloneable {
+                _evidence: Announced,
+            }))
+        });
+        tracing::dispatcher::with_default(&fallback, || {
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| output.claim())).is_err()
+            );
+            drop(output);
+        });
+        let lines = drop_lines(&produced);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("output.producer"));
+        assert!(drop_lines(&ambient).is_empty());
     }
 
     /// Records span closes in the producer's registry.
