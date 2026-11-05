@@ -14,6 +14,19 @@ while `anyhow` chain formatting can reveal it. They do
 not establish compatibility of a pinned downstream application graph; that
 requires a separate candidate rehearsal with Cargo metadata and locked tests.
 
+Tracked operation evidence (`batter-2hqe`) is exercised in
+`crates/batter-core/tests/tracked_operation.rs`: pre-cancelled/pre-expired
+refusal without factory invocation, interrupted invocation, simultaneous
+completion/deadline/cancellation, concrete borrowed non-Send values and errors,
+resumable borrowed waits, unpolled and active drop, panic propagation, and
+absolute child deadline/cancellation lineage. Compile-fail rustdocs reject
+forged `NotStarted` values and automatic error conversions. The scoped-dispatch
+suite checks refusal and abort destruction with one observation per call.
+Reference provider contract tests compare refused dispatch (no connection) with
+cancellation after a server receives bytes (still uncertain), and require both
+to release capacity. These are local and loopback tests, not evidence about an
+external provider or a fresh-agent usability evaluation.
+
 Canonical adapter future bounds (`batter-3q3`) run in
 `crates/batter-sqlx/tests/future_size.rs` and
 `crates/batter-runlimit/tests/future_size.rs`: unoptimized with the workspace

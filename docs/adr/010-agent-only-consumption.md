@@ -83,6 +83,30 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### Tracked operation invocation assessment (`batter-2hqe`)
+
+Consumers reconstructed a start marker because `run` projects both refusal and
+post-invocation interruption into one error. `run_tracked` records invocation
+inside the same library-owned boundary and returns exhaustive failure variants.
+`NotStarted` has a private constructor and no conversion from an interruption;
+only a boundary that did not invoke its factory creates that evidence. Callers
+need no paired marker update. The result is a historical observation for this
+call, not authority to replay or a witness tied to arbitrary later work. Copying
+an existing witness does not establish anything about another invocation.
+Started does not prove remote effects; earlier work and capture destructors are
+outside the non-invocation guarantee. Applications retain remote reconciliation
+and retry policy. No blanket `From` conversion silently discards the distinction.
+
+`child_until` constructs only parent-clamped children and returns the existing
+non-cloneable cancellation owner. Past instants create expired children, avoiding
+consumer deadline-to-duration reconstruction or accidental independent roots.
+The existing `run` remains supported for applications that need no invocation
+certainty, preserving its precedence and error shape. Shared execution and
+regression tests prevent the two paths from drifting. Tests include refusal,
+started interruption, same-poll precedence, panic/drop and scoped destruction;
+the reference provider adopts tracked dispatch without changing its remote
+protocol. Fresh-agent evaluation is not executed by these tests.
+
 ### Startup handoff assessment (`batter-r4ir`)
 
 The F08 inventory found that `StartingSupervisor::wait(&mut self)` and

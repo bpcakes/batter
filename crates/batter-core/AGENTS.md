@@ -30,6 +30,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
   mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
+  `operation/tracked.rs` owns opaque non-invocation evidence and the tracked
+  public entrypoint; all run variants share the boundary in `operation.rs`.
+  Keep the invocation marker immediately before the factory call, and preserve
+  cancellation/deadline precedence for both tracked and legacy callers.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
