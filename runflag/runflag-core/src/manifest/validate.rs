@@ -323,6 +323,13 @@ fn check_invariant(
             invariant.other
         );
     }
+    let both_on = invariant.variant == "on" && invariant.other_variant == "on";
+    if invariant.rule == InvariantRule::BothOrNone && !both_on {
+        refuse!(
+            "flag {key}: the both_or_none invariant on {} must relate both toggles at on",
+            invariant.other
+        );
+    }
     let defaults = (
         entry.default.as_deref().unwrap_or_default(),
         invariant.variant.as_str(),

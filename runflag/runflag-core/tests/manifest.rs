@@ -191,7 +191,7 @@ fn decoding_refuses_inconsistent_declarations() {
 
 #[test]
 fn decoding_refuses_manifests_no_builder_could_produce() {
-    let cases: [(&str, Tamper); 7] = [
+    let cases: [(&str, Tamper); 9] = [
         ("needs at least one process kind", |v| {
             v["process_kinds"] = json!([]);
         }),
@@ -225,6 +225,20 @@ fn decoding_refuses_manifests_no_builder_could_produce() {
                 let entry = flag_mut(v, "new_checkout");
                 entry["owners"] = json!("all");
                 entry["pinned_by"] = json!([]);
+            },
+        ),
+        (
+            "both_or_none invariant on new_checkout must relate both toggles at on",
+            |v| {
+                flag_mut(v, "fast_path")["invariants"][0]["variant"] = json!("off");
+            },
+        ),
+        (
+            "both_or_none invariant on new_checkout must relate both toggles at on",
+            |v| {
+                let invariant = &mut flag_mut(v, "fast_path")["invariants"][0];
+                invariant["variant"] = json!("off");
+                invariant["other_variant"] = json!("off");
             },
         ),
         (
