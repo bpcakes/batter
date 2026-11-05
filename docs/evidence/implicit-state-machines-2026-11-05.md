@@ -6,6 +6,9 @@ Source snapshot: `316e721bd52b58219d5ef213da9000532a0df520`, inspected on
 Follow-up: F08 is addressed by the consuming startup handoff in `batter-r4ir`;
 see its [implementation and API evidence](startup-handoff-2026-11-05.md). The
 inventory below describes the original snapshot, not a list of unresolved defects.
+F19's capability/deadline representation is addressed by `batter-u4lj`: a private
+`ComponentState` owns either initializing or running authority. The serial run
+loop and its outcome handling remain explicit control-flow protocols.
 
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease
