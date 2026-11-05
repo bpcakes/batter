@@ -22,6 +22,48 @@ use tokio::time::{Instant, sleep_until};
 #[cfg(test)]
 mod tests;
 
+/// The one capability owned by the loop, with an allowance only before startup.
+enum ComponentState {
+    Initializing {
+        startup: ComponentStartup,
+        deadline: Instant,
+    },
+    Running(RunningComponent),
+}
+
+impl ComponentState {
+    fn running(
+        startup: ComponentStartup,
+        history: &History,
+        obligation: &SupportObligation,
+    ) -> Self {
+        history.acknowledged();
+        obligation.assume();
+        Self::Running(startup.acknowledge_started())
+    }
+
+    fn phase(&self) -> StartupPhase {
+        match self {
+            Self::Initializing { .. } => StartupPhase::Initializing,
+            Self::Running(_) => StartupPhase::Running,
+        }
+    }
+
+    fn initialization_deadline(&self) -> Option<Instant> {
+        match self {
+            Self::Initializing { deadline, .. } => Some(*deadline),
+            Self::Running(_) => None,
+        }
+    }
+
+    fn acknowledge(self, history: &History, obligation: &SupportObligation) -> Self {
+        match self {
+            Self::Initializing { startup, .. } => Self::running(startup, history, obligation),
+            Self::Running(running) => Self::Running(running),
+        }
+    }
+}
+
 /// Why the loop stopped admitting further runs.
 enum Ending {
     /// Drain was observed while initialization was still pending.
@@ -84,36 +126,22 @@ where
     // The allowance is measured from this first live execution onward and
     // covers failed runs and the interval waits between them. Registration
     // already rejected an unrepresentable allowance.
-    let initialization = policy
-        .startup()
-        .initialization_allowance()
-        .map(|allowance| {
-            Instant::now()
+    let mut component = match policy.startup().initialization_allowance() {
+        Some(allowance) => ComponentState::Initializing {
+            startup,
+            deadline: Instant::now()
                 .checked_add(allowance)
-                .unwrap_or_else(Instant::now)
-        });
-    let mut pending = Some(startup);
-    let mut running: Option<RunningComponent> = None;
-    if initialization.is_none() {
+                .unwrap_or_else(Instant::now),
+        },
         // Immediate acknowledgement states that the loop is initialized, not
         // that any maintenance has succeeded.
-        history.acknowledged();
-        obligation.assume();
-        running = Some(
-            pending
-                .take()
-                .expect("startup is pending before acknowledgement")
-                .acknowledge_started(),
-        );
-    }
+        None => ComponentState::running(startup, &history, &obligation),
+    };
     let mut ticker = Schedule::new(policy.interval());
     let mut invocation = 0u64;
     let ending = loop {
-        let phase = if pending.is_some() {
-            StartupPhase::Initializing
-        } else {
-            StartupPhase::Running
-        };
+        let phase = component.phase();
+        let initialization = component.initialization_deadline();
         let initializing = phase == StartupPhase::Initializing;
         match next_due(&mut ticker, &admission, phase, initialization).await {
             Due::Run => {}
@@ -135,11 +163,7 @@ where
         };
         invocation = invocation.saturating_add(1);
         history.admitted();
-        let deadline = run_deadline(
-            policy.run_budget(),
-            grant.forced_at,
-            initialization.filter(|_| initializing),
-        );
+        let deadline = run_deadline(policy.run_budget(), grant.forced_at, initialization);
         // `execute` destroys its owned work future before returning, so no
         // application code is live while the evidence below is published.
         let retention = Retention {
@@ -148,7 +172,7 @@ where
         };
         match execute(name, &mut work, deadline, &admission, phase, retention).await {
             Run::Succeeded => {
-                if pending.is_some() {
+                if initializing {
                     // The run boundary is cooperative: it neither rereads its
                     // clock nor rechecks drain after the work's own poll
                     // returns, so a blocking poll or destructor can cross
@@ -167,14 +191,7 @@ where
                     // A qualifying success acknowledges exactly once. Later
                     // run failures never revoke it, and it establishes no
                     // continuing lease, renewal or dependency health.
-                    history.acknowledged();
-                    obligation.assume();
-                    running = Some(
-                        pending
-                            .take()
-                            .expect("initialization is pending before acknowledgement")
-                            .acknowledge_started(),
-                    );
+                    component = component.acknowledge(&history, &obligation);
                 }
             }
             // Already retained while its run future was alive.
@@ -193,7 +210,7 @@ where
     };
     // The factory and its application captures are destroyed when this future
     // returns, so the ending's concrete cause is retained before that.
-    finish(name, &history, invocation, ending, pending, running)
+    finish(name, &history, invocation, ending, component)
 }
 
 /// Await one run without consuming its future, retaining everything that run
@@ -275,8 +292,7 @@ fn finish(
     history: &History,
     invocation: u64,
     ending: Ending,
-    pending: Option<ComponentStartup>,
-    running: Option<RunningComponent>,
+    component: ComponentState,
 ) -> Result<ComponentExit, BoxError> {
     match ending {
         Ending::InitializationExpired => {
@@ -291,16 +307,14 @@ fn finish(
             history.finished(PeriodicCompletion::Fatal);
             Err(Box::new(SharedTerminal(error)) as BoxError)
         }
-        Ending::Abandoned | Ending::Stopped => match running {
-            Some(running) => {
+        Ending::Abandoned | Ending::Stopped => match component {
+            ComponentState::Running(running) => {
                 history.finished(PeriodicCompletion::Stopped);
                 Ok(running.stopped())
             }
-            None => {
+            ComponentState::Initializing { startup, .. } => {
                 history.finished(PeriodicCompletion::AbandonedDuringStartup);
-                Ok(pending
-                    .expect("an unacknowledged component still owns its startup")
-                    .abandon())
+                Ok(startup.abandon())
             }
         },
     }
