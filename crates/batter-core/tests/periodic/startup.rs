@@ -107,7 +107,18 @@ async fn first_success_acknowledges_only_after_a_run_succeeds() {
     assert_eq!(summary.recoverable_failures, 2);
     assert_eq!(summary.deadline_exceeded, 1);
     assert_eq!(summary.invocations, 4);
-    drop(running.shutdown_checked().await.unwrap());
+    // Repeated successes use the running capability, not the consumed startup
+    // capability or its original initialization deadline.
+    sleep(SECOND * 10).await;
+    assert_eq!(running.status().readiness(), Readiness::Ready);
+    let summary = reader.snapshot();
+    assert!(summary.acknowledged);
+    assert!(summary.succeeded >= 10);
+    let stopped = running.shutdown_checked().await.unwrap();
+    assert_eq!(
+        stopped.report().periodic[0].summary.completion,
+        PeriodicCompletion::Stopped
+    );
 }
 
 #[tokio::test(start_paused = true)]

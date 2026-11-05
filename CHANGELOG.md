@@ -115,6 +115,21 @@ contracts, capability facts and validation history.
   The finite-command example now records socket-reference release separately
   from its application completion hook, preserving independent failure scenarios.
 
+- Represent fixture-run ownership with one private state (`batter-vrp6`, T01 in
+  the implicit-state inventory). A run holds either its live driver or the
+  retained completion result, never independent optional copies. Repeated
+  observation, timeout/resume, cached task errors and consuming report extraction
+  retain their public contracts. Offline Tokio-task regressions cover those
+  transitions and waiter loss; database provisioning and cleanup are unchanged.
+
+- Represent periodic component ownership with one private state (`batter-u4lj`,
+  F19 in the implicit-state inventory). Initializing holds the startup capability
+  and its absolute deadline; running holds the acknowledged capability. Consuming
+  acknowledgement and exit replace the paired optional owners and their runtime
+  assertions. Scheduling, stopping classes, retained evidence and public APIs are
+  unchanged. The first-success regression now continues past the original
+  initialization deadline before checking readiness and clean shutdown.
+
 - **Breaking:** consume startup handoff ownership (`batter-r4ir`, F08 in the
   implicit-state inventory). `StartingSupervisor::wait(&mut self)` becomes
   `finish(self)` and `wait_with_output(&mut self)` becomes

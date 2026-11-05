@@ -1284,6 +1284,11 @@ original initialization deadline and is destroyed when it expires under either
 stopping class; a preceding failed run and cadence wait do not restart the
 allowance. A qualifying success acknowledges exactly once, and later run failures
 never revoke it or establish continuing lease, renewal or dependency health.
+The driver owns one explicit state: initialization carries its startup capability
+and absolute allowance deadline; running carries only the acknowledged capability.
+The transition consumes the startup capability and removes its deadline, so there
+is no empty or doubly owned capability state and later runs cannot reuse the
+initialization allowance. Normal exit consumes whichever capability remains.
 Because the run boundary is cooperative and rechecks neither its clock nor
 drain after the work's own poll returns, a success that only arrived after the
 allowance had expired, or after drain began, is still counted as a successful
@@ -2766,6 +2771,9 @@ shared native capacity for waiting acquisitions to progress. Run completion does
 not shut down a shared server. Caller-owned shutdown follows all runs and leases;
 shared deferred drain covers prior accepted submissions, including other owners'.
 
+`FixtureRun` holds one private state: the live driver or its retained completion
+result. A completed driver is never polled again; repeated observation borrows
+the same report or join error, and `into_report` moves the retained result out.
 Cancelling `FixtureRun::wait` permits resumed observation. Dropping the waiter
 loses the report but detaches the driver. Application operations/checkouts and
 initializer-created pools still require explicit join/release/close. Detached
