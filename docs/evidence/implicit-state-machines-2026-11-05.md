@@ -17,6 +17,11 @@ consuming exits distinguish readiness, interrupted ownership and failure.
 `Guarded` records pending versus observed completion, prevents repeated inner
 polling and retains the future for separately caught destruction. Public outcome
 facts, stop-clock tightening and independently driven settlement remain unchanged.
+H04's ordered observation callback is addressed by `batter-jnjj`: the quota
+runner consumes private unstarted/started observation owners and accepts only a
+terminal native result when finishing. The HTTP adapter transfers its writer
+without paired optional owners. Authentication and quota-before-body ordering,
+interrupted consumption uncertainty and public APIs remain unchanged.
 
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease

@@ -12,6 +12,8 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 - `src/lib.rs`: public quota exports, optional HTTP module selection, and the
   `native`/`memory`/`postgres`/`native_transport` reexports of the native packages.
 - `src/quota.rs`: nonempty native checks, typed consumption bridge and factory execution.
+- `src/quota/observation.rs`: private consuming unstarted/started observation owners;
+  the runner publishes native terminal facts before invoking work.
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
 - `src/attempts.rs`: native pre-authentication reserve, verification, receipt claim,
   transactional final decision and native completion; no limiter persistence here.

@@ -68,6 +68,7 @@ pub enum Mode {
     Return(BatchDecision),
     Fail(ConsumptionStatus),
     Pending,
+    Panic,
     Delay(Duration),
     CancelThenAllow(Arc<OperationOwner>),
     RequestDrainThenAllow(ShutdownHandle),
@@ -114,6 +115,7 @@ impl Limiter for Backend {
             Mode::Return(value) => Ok(value.clone()),
             Mode::Fail(consumption) => Err(BackendFailure(*consumption)),
             Mode::Pending => std::future::pending().await,
+            Mode::Panic => panic!("secret native check panic"),
             Mode::Delay(duration) => {
                 tokio::time::sleep(*duration).await;
                 Ok(allowed())
