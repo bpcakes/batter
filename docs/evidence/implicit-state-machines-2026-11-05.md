@@ -9,6 +9,8 @@ inventory below describes the original snapshot, not a list of unresolved defect
 F19's capability/deadline representation is addressed by `batter-u4lj`: a private
 `ComponentState` owns either initializing or running authority. The serial run
 loop and its outcome handling remain explicit control-flow protocols.
+T01 is addressed by `batter-vrp6`: private `RunState` owns either the live fixture
+driver or its retained completion result, while preserving repeated observation.
 
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease

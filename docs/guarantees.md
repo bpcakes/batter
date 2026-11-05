@@ -2707,6 +2707,9 @@ shared native capacity for waiting acquisitions to progress. Run completion does
 not shut down a shared server. Caller-owned shutdown follows all runs and leases;
 shared deferred drain covers prior accepted submissions, including other owners'.
 
+`FixtureRun` holds one private state: the live driver or its retained completion
+result. A completed driver is never polled again; repeated observation borrows
+the same report or join error, and `into_report` moves the retained result out.
 Cancelling `FixtureRun::wait` permits resumed observation. Dropping the waiter
 loses the report but detaches the driver. Application operations/checkouts and
 initializer-created pools still require explicit join/release/close. Detached

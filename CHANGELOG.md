@@ -8,6 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Represent fixture-run ownership with one private state (`batter-vrp6`, T01 in
+  the implicit-state inventory). A run holds either its live driver or the
+  retained completion result, never independent optional copies. Repeated
+  observation, timeout/resume, cached task errors and consuming report extraction
+  retain their public contracts. Offline Tokio-task regressions cover those
+  transitions and waiter loss; database provisioning and cleanup are unchanged.
+
 - Represent periodic component ownership with one private state (`batter-u4lj`,
   F19 in the implicit-state inventory). Initializing holds the startup capability
   and its absolute deadline; running holds the acknowledged capability. Consuming
