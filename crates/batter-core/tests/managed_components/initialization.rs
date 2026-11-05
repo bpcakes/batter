@@ -242,3 +242,61 @@ async fn native_settlement_before_initialization_has_its_own_state() {
 async fn process_drain_before_initialization_keeps_draining_state() {
     early_exit_before_initialization(EarlyExit::ProcessDrain).await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn interrupted_initializer_is_destroyed_after_native_stop_and_before_settlement() {
+    use std::sync::Mutex;
+    struct InitializationDrop(Arc<Mutex<Vec<&'static str>>>);
+    impl Drop for InitializationDrop {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("destroyed");
+        }
+    }
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let initialization_drop = InitializationDrop(events.clone());
+    let stop_events = events.clone();
+    let settlement_events = events.clone();
+    let (entered, entering) = oneshot::channel();
+    let (stop, stopped) = oneshot::channel();
+    let mut stop = Some(stop);
+    let mut process = supervisor();
+    process
+        .register_managed("native", context(), move |_| {
+            Ok(ManagedComponent::new(
+                async move {
+                    let _retained = initialization_drop;
+                    entered.send(()).unwrap();
+                    pending().await
+                },
+                pending(),
+                move |started| {
+                    stop_events.lock().unwrap().push("stop");
+                    if let Some(stop) = stop.take() {
+                        stop.send(()).unwrap();
+                    }
+                    started
+                },
+                async move {
+                    stopped.await.unwrap();
+                    settlement_events.lock().unwrap().push("settled");
+                    NativeReport {
+                        joined: true,
+                        detail: "ordered settlement",
+                    }
+                },
+            ))
+        })
+        .unwrap();
+    let running = process.start();
+    entering.await.unwrap();
+    let report = running.shutdown().await.unwrap();
+    assert_eq!(*events.lock().unwrap(), ["stop", "destroyed", "settled"]);
+    let outcome = &report.managed[0].outcome;
+    assert!(matches!(
+        outcome.initialization,
+        ManagedInitialization::Draining
+    ));
+    assert!(outcome.finished);
+    assert!(outcome.failures.is_empty());
+    assert!(outcome.allows_dependency_cleanup());
+}

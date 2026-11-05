@@ -148,3 +148,76 @@ async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
         .expect("payload inspection is uncontended");
     assert_eq!(eventual.failures.len(), 1);
 }
+
+struct ObservedFuture {
+    polls: Arc<std::sync::atomic::AtomicUsize>,
+    panic_in_poll: bool,
+}
+
+impl Future for ObservedFuture {
+    type Output = u32;
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<u32> {
+        self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(!self.panic_in_poll, "original poll failure");
+        Poll::Ready(42)
+    }
+}
+
+impl Drop for ObservedFuture {
+    fn drop(&mut self) {
+        panic!("separate destruction failure");
+    }
+}
+
+fn observed_future_is_retained_without_repolling(panic_in_poll: bool) {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        task::Waker,
+    };
+    let polls = Arc::new(AtomicUsize::new(0));
+    let mut future = Guarded::new(Box::pin(ObservedFuture {
+        polls: polls.clone(),
+        panic_in_poll,
+    }));
+    let mut cx = Context::from_waker(Waker::noop());
+    let result = Pin::new(&mut future).poll(&mut cx);
+    if panic_in_poll {
+        let Poll::Ready(Err(ManagedFailure::Panicked(payload))) = result else {
+            panic!("poll panic must be retained");
+        };
+        payload
+            .try_inspect(|value| {
+                assert_eq!(value.downcast_ref::<&str>(), Some(&"original poll failure"));
+            })
+            .unwrap();
+    } else {
+        assert!(matches!(result, Poll::Ready(Ok(42))));
+    }
+    assert!(!future.is_pending());
+    assert!(Pin::new(&mut future).poll(&mut cx).is_pending());
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
+    let mut outcome = ManagedOutcome::default();
+    future.destroy(&mut outcome);
+    let [ManagedFailure::Panicked(payload)] = outcome.failures.as_slice() else {
+        panic!("destruction failure must be retained separately");
+    };
+    payload
+        .try_inspect(|value| {
+            assert_eq!(
+                value.downcast_ref::<&str>(),
+                Some(&"separate destruction failure")
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn successful_future_is_never_repolled_and_retains_destruction_failure() {
+    observed_future_is_retained_without_repolling(false);
+}
+
+#[test]
+fn panicked_future_is_never_repolled_and_retains_destruction_failure() {
+    observed_future_is_retained_without_repolling(true);
+}

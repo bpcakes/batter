@@ -20,7 +20,10 @@ Windows support and non-Unix fallbacks are out of scope.
   its public path remains `batter::lifecycle::ShutdownReport`.
 - `src/lifecycle/managed.rs` and `managed/` own adapter-facing inert native factories,
   library initialization acknowledgement and independently retained native settlement.
-  Application composition uses the native adapter; descendant accounting stays native.
+  `managed/drive/initialization.rs` couples the initializer and sole readiness
+  acknowledgement; guarded observers retain completed futures for separate destruction
+  without polling them again. Application composition uses the native adapter;
+  descendant accounting stays native.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
 - `src/periodic.rs` and `periodic/` own the one serial schedule, per-run budget,
