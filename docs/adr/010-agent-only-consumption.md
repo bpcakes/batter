@@ -2245,3 +2245,22 @@ The deadline does not bound shutdown/diagnostics or preempt non-yielding work.
 Application approval policy, remote effects and runtime survival remain outside
 this local protocol. A typed output transferred to the caller has normal Rust
 ownership; holding it cannot be claimed to prove resource cleanup or quiescence.
+
+## Intent reconciliation assessment (batter-hw3k)
+
+D03's caller-assembled intent/job/definition correlation now belongs to native
+Runledger's atomic scope. One query eliminates inter-query promotion/retention
+races; private evidence fields and a job-carrying promoted variant prevent
+fabricated or incomplete successful correlations. Exact `JobScope` excludes an
+accidental administrative wildcard. Both old single-intent pool readers are
+removed without shims because their full-row, owner-free shape restores the gap.
+Queue reads cannot regain intent recording. Existing Q02/Q03 owners retain
+continuity checks, savepoint cleanup and commit uncertainty.
+
+Absence cannot locally prove a remote rollback, and an observation cannot freeze
+future remote state. These remain explicit limitations, not new retry authority.
+Application scope authorization and arbitrary SQL/admin-list escape hatches remain
+application policy. Column grants constrain this reader's access, not all
+capabilities of a role granted additional operations. Executable evidence covers
+restricted roles, actual lost COMMIT acknowledgement and concurrent remote
+transitions; no fresh-agent usability evaluation is claimed.

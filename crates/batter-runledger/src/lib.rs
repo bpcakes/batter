@@ -83,10 +83,11 @@ use std::{
 pub use runledger_postgres::grants;
 
 pub use runledger_postgres::{
-    AcceptedIntentOutcome, AcceptedIntentState, PgAtomicError, PgAtomicUncertainty,
+    AcceptedIntentOutcome, AcceptedIntentState, CorrelatedDefinition, CorrelatedJob,
+    IntentCorrelationState, IntentReconciliation, PgAtomicError, PgAtomicUncertainty,
     PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
     PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgSessionProfile, PgTransactionError,
-    RequiredIntentError, RunledgerDatabase, SchemaCompatibilitySnapshot,
+    RequiredIntentError, RetainedIntent, RunledgerDatabase, SchemaCompatibilitySnapshot,
     ensure_schema_compatible_after_idempotency_cutover as verify_schema, run_atomic,
     run_atomic_fail_fast_with, run_atomic_with,
 };
