@@ -11,6 +11,12 @@ F19's capability/deadline representation is addressed by `batter-u4lj`: a privat
 loop and its outcome handling remain explicit control-flow protocols.
 T01 is addressed by `batter-vrp6`: private `RunState` owns either the live fixture
 driver or its retained completion result, while preserving repeated observation.
+F06's initialization and settlement ownership is addressed by `batter-fbxh`:
+private `Initializing` owns the future and sole readiness acknowledgement;
+consuming exits distinguish readiness, interrupted ownership and failure.
+`Guarded` records pending versus observed completion, prevents repeated inner
+polling and retains the future for separately caught destruction. Public outcome
+facts, stop-clock tightening and independently driven settlement remain unchanged.
 
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease

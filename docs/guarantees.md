@@ -668,6 +668,12 @@ the direct waiter. A successful initialization poll is acknowledged only after
 its future is destroyed and the startup context is rechecked; a returned error
 remains intact if cancellation also occurs. Application readiness approval and dependency health remain
 separate. No durable startup job is required by this protocol.
+The private initializer owns the sole readiness acknowledgement and consumes it
+only on live, successfully destroyed initialization. Drain or an early native
+exit retains the interrupted initializer until the native stop callback has run.
+Each guarded observer records pending versus observed completion: after returning
+or panicking it cannot poll its inner future again, but retains that future for
+separately caught destruction. Settlement is recorded before its future is destroyed.
 
 Before initialization, observed native stopping or settlement records
 `ManagedInitialization::Stopped`; process drain records `Draining`. Native
