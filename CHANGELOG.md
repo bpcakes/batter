@@ -265,6 +265,14 @@ contracts, capability facts and validation history.
   repeated handoff. The ordinary Rust rule against polling a completed future
   still applies. See the [API surface check](docs/evidence/startup-handoff-2026-11-05.md).
 
+- Add `Origin::public_https` (`batter-321j`), retaining an immutable public
+  destination policy through clients and requests. Reject special-use literal
+  IPs and filter the exact DNS dial candidates without a second lookup.
+  Include globally reachable AS112/AMT special-purpose blocks; regressions
+  cover excluded range endpoints, adjacent public addresses and zero dial
+  attempts for wholly disallowed answers.
+  Existing HTTPS and loopback constructors retain their behavior.
+
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates
   and one shared setup budget; drop losing sockets before TLS/HTTP. Preserve

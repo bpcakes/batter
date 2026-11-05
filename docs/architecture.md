@@ -521,6 +521,11 @@ resource ownership and partial-failure behavior.
 
 ## Outbound provider exchange ownership
 
+`Origin::public_https` retains a public-address policy on the origin and filters
+DNS candidates before the existing bounded dialer; no preflight/re-resolution
+gap exists. Ordinary `Origin::https` still supports private services. See the
+[public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
+
 `batter-outbound-http` owns each outbound exchange's TCP/TLS connection and
 low-level hyper HTTP/1 driver inside the exchange future. No pool or spawned
 writer can advance a request while that future is unpolled. The final

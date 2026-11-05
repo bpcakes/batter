@@ -6475,6 +6475,22 @@ Local dependency remains SQLx 0.9.0; live validation server is PostgreSQL 18.6.
 This change adds no dependency. Application revision numbers are not derived from
 SQLx migration history.
 
+## Public HTTPS address policy (2026-11-05)
+
+The conservative exclusions were checked against the IANA
+[IPv4 special-purpose registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+and [IPv6 special-purpose registry](https://www.iana.org/assignments/iana-ipv6-special-registry/).
+The implementation also excludes globally reachable special-use ranges,
+including AS112 192.31.196.0/24, 192.175.48.0/24 and 2620:4f:8000::/48, and
+AMT 192.52.193.0/24. Literal boundary tests cover the first/last excluded
+addresses and their permitted neighbors; dialer tests cover these blocks in
+mixed and wholly disallowed answers. The registry does not guarantee routing
+in a local network;
+the API makes no such claim. Enforcement uses the inspected Tokio lookup
+result directly, followed by the existing bounded dialer, with no second DNS
+lookup. Literal and real localhost tests cover refusal before TCP; mixed-answer
+tests observe dialer calls rather than issuing traffic to public addresses.
+
 ## Intent reconciliation snapshot and grants (2026-11-05)
 
 - PostgreSQL 18 [transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html):
