@@ -190,6 +190,18 @@ fn setters_may_be_called_once() {
             .map(drop),
         "governed_by",
     );
+    let mut pins = fixtures::builder();
+    let serving = pins.process_kind("serving").unwrap();
+    let worker = pins.process_kind("worker").unwrap();
+    twice(
+        pins.mode_flag("a", Toggle::Off)
+            .owners(Owners::Only(std::slice::from_ref(&serving)))
+            .pinned_by(std::slice::from_ref(&worker))
+            .pinned_by(std::slice::from_ref(&worker))
+            .declare()
+            .map(drop),
+        "pinned_by",
+    );
     let mut classes = vocabulary_builder();
     let development = classes.environment_class("staging").unwrap();
     twice(
@@ -220,6 +232,13 @@ fn owners_and_pinned_by_are_validated() {
         .declare();
     assert!(
         matches!(duplicate, Err(BuildError::DuplicateKind { kind, .. }) if &*kind == "serving")
+    );
+    let duplicate_pins = strict_mode(&mut builder)
+        .owners(Owners::Only(std::slice::from_ref(&serving)))
+        .pinned_by(&[worker.clone(), worker.clone()])
+        .declare();
+    assert!(
+        matches!(duplicate_pins, Err(BuildError::DuplicateKind { kind, .. }) if &*kind == "worker")
     );
     let empty_pins = strict_mode(&mut builder)
         .owners(Owners::Only(std::slice::from_ref(&serving)))
