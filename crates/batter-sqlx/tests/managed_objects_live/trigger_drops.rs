@@ -279,6 +279,8 @@ async fn managed_triggers_converge_over_any_concurrent_holder() -> Result {
             (&plain, "trigger", "AFTER INSERT OR UPDATE"),
         ] {
             for holder_kind in [Some(true), Some(false), None] {
+                let install = fixture.next_release(&install.manifest)?;
+                let declared = fixture.next_release(&declared.manifest)?;
                 let _ = fixture
                     .apply(&pools.applying, &install.manifest)
                     .await

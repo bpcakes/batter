@@ -142,7 +142,7 @@ pub(super) async fn inspect(
                 .push(UnsupportedSurface::UnprotectedManagedObjectLedger);
             return Ok(fragment);
         }
-        LedgerShape::Mismatch => {
+        LedgerShape::Legacy | LedgerShape::Mismatch => {
             fragment
                 .findings
                 .push(ledger_finding(FindingKind::ManagedObjectLedgerShape));
@@ -287,6 +287,20 @@ pub(super) fn compare_rows(
     if !set_recorded {
         findings.push(Finding::new(
             FindingKind::ManagedObjectSetDigest,
+            Some(manifest.ledger().quoted()),
+            None::<String>,
+            None,
+        ));
+    }
+    if !recorded
+        .get(SET_ROW)
+        .is_some_and(|row| row.release_revision == manifest.revision().get())
+        || rows
+            .iter()
+            .any(|row| row.identity != SET_ROW && row.release_revision != 0)
+    {
+        findings.push(Finding::new(
+            FindingKind::ManagedObjectRevisionMismatch,
             Some(manifest.ledger().quoted()),
             None::<String>,
             None,

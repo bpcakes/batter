@@ -58,7 +58,7 @@ the SQLx ledger: Batter never reads or writes migration history for it.
 
 ### Shape
 
-- `managed::ManagedObjectManifest::new(ledger, public_execute, objects,
+- `managed::ManagedObjectManifest::new(revision, ledger, public_execute, objects,
   retirements)` is pure and bounded: at most 10,000 entries plus retirements,
   1 MiB per source and 64 MiB in total. Entries are
   `ManagedObject::{function, procedure, trigger}`; retirements are
@@ -114,7 +114,7 @@ One transaction (pinned to READ COMMITTED since 2026-10-16; see "Trigger drops
 decided under the table lock" below) creates the ledger when absent, locks it
 `ACCESS EXCLUSIVE` and requires its exact shape (`identity text PRIMARY KEY`, `kind text`,
 `source_checksum bytea`, `rendered_checksum bytea`, `applied_at timestamptz`,
-all `NOT NULL`, no row security, no inheritance). Any other relation of that
+`release_revision bigint`, all `NOT NULL`, no row security, no inheritance). Any other relation of that
 name, such as a SQLx ledger, is refused before anything is written. Then:
 retired triggers that still exist are dropped, then retired routines that still
 exist (never `CASCADE`), each only when the live object is of the retired kind,
@@ -532,12 +532,8 @@ library statements under the canonical settings, and raising the catalog row
 bound to 100,000 so undeclared overloads of declared names cannot exhaust it at
 the manifest bound.
 
-Remaining obligations are explicit and not claimed as local guarantees. (5)
-Which release's manifest is installed is last-writer-wins: an older release
-that applies after a newer one reverts objects, unless the newer release added
-a migration and the older migrator does not ignore missing versions, in which
-case it fails with `VersionMissing` before apply; verification on the newer
-replicas then reports the digest mismatch. A routine whose return type, `OUT` parameters or input parameter
+Release ordering is now enforced by the 2026-11-05 amendment below. Remaining
+application and migration obligations are not claimed as local guarantees. A routine whose return type, `OUT` parameters or input parameter
 names change, or whose defaults are removed, cannot be replaced in place: a
 versioned migration drops it, and the next apply creates it. Because
 retirements precede creation, an object that still depends on a retired
@@ -752,3 +748,62 @@ and cancellation with observed backend exit. Existing atomic live COMMIT-loss
 controls remain applicable to native commit uncertainty; this increment does
 not claim a new independent wire-level commit fault harness. Final execution
 results belong to the owning task and source-bound handoff.
+
+
+## Release ordering and legacy adoption — 2026-11-05
+
+Decision (`batter-ofom`): require a validated `ManagedRevision` on every manifest.
+Its positive bigint value is assigned by the application; the content digest
+continues to exclude release ordering and the ledger name. A SQLx migration
+high-water mark was rejected because managed source can change without a new
+migration. A process-local check cannot coordinate replicas, and an optional
+revision/default would preserve the unsafe canonical path.
+
+The existing session advisory lock still spans migrations and apply. Within the
+managed transaction, the ledger lock precedes release authorization. A new
+ledger accepts its first revision. A versioned ledger rejects missing or invalid
+release evidence, lower revisions, and equal revisions with a different content
+digest. Higher revisions and identical reapplications are authorized; reapply
+still repairs catalog drift. An internal `AuthorizedRelease` binds the checked
+manifest and is required by object mutation and ledger publication. The manifest
+row's revision is committed with all object changes. Object rows carry zero in
+the release column. Read-only verification compares the expected revision, and
+the application callback guard includes release metadata in its before/after
+comparison. No error or interrupted wait authorizes replay.
+
+A five-column ledger contains no ordering evidence. It can only be upgraded by
+applying its currently recorded manifest digest with a declared baseline
+revision. The transaction adds `release_revision bigint NOT NULL DEFAULT 0`,
+sets the manifest revision and performs the usual apply checks. Refusal, failure
+or cancellation before commit rolls back the shape upgrade and managed changes.
+Existing exact-shape checks in pre-fence binaries reject the sixth column before
+managed DDL, including an old writer that was waiting on the same lock. An
+additional metadata table alone was rejected because old binaries would ignore
+it. Existing SQLx migrations are not rewritten.
+
+Rollout: adopt the unchanged recorded manifest with the new library first, then
+ship changed manifests at higher revisions. Old replicas can keep serving under
+the application's compatibility policy but cannot reapply after adoption.
+Rollback is a new higher revision carrying the selected older source; removing
+the column or resetting the ledger disables protection and is unsupported.
+The gate does not stop arbitrary administrative SQL, ledger deletion, or SQLx
+migration bodies. Those migrations execute before the managed gate and may have
+committed even on a refused apply. It does not prove remote rollback after an
+unconfirmed commit. First adoption relies on the application assigning its
+baseline revision correctly, not on inferred release semantics.
+
+ADR-010 review: the public manifest cannot omit ordering; its constructor
+requires an opaque validated revision. Both apply variants own authorization,
+mutation and publication. Callers cannot opt out or forget a paired comparison.
+No compatibility shim supplies an implicit revision because it would restore
+that invalid composition. Version-conflict and downgrade failures are typed;
+applications retain responsibility for choosing revision values and source.
+The public constructor cut and exhaustive-enum additions ship with migration
+examples in CHANGELOG. Fresh-agent usability evaluation is unexecuted.
+
+Validation scope: live PostgreSQL controls cover downgrade and conflict refusal,
+same-release reapply, revision-only advance, explicit rollback, waiting older
+writers, atomic legacy adoption and corrupt/missing metadata. Existing callback
+integrity and cancellation cases now also cover revision state. Executed results
+and pre-fence binary evidence are recorded in `batter-ofom` and the accompanying
+release-fence evidence document.

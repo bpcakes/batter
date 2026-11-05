@@ -3300,6 +3300,24 @@ effects, detached-task quiescence, runtime survival, or preemption of non-yieldi
 code. Existing unit-output `service::start` remains supported without an added
 readiness deadline.
 
+## Managed-object release ordering
+
+`ManagedObjectManifest` requires a positive `ManagedRevision`. Under the ledger
+lock, apply refuses older revisions and equal revisions with different content.
+Revision advancement commits with the managed objects; equal revision/content
+reapplication remains idempotent and can repair drift. Verification checks the
+revision too. Malformed or missing release evidence in an existing versioned
+ledger cannot reset the fence. Application SQL cannot alter retained revision
+metadata and still obtain a successful managed receipt.
+
+Legacy five-column ledgers require a matching recorded manifest for baseline
+adoption. The transactional sixth-column upgrade causes pre-fence exact-shape
+readers to refuse apply. There is no default revision or unfenced apply alias.
+Applications own revision ordering, baseline selection and cross-release source
+compatibility. SQLx migrations precede the gate and can already have committed;
+arbitrary migrations, administrative SQL and ledger deletion are outside it.
+See [ADR-013](adr/013-managed-database-objects.md#release-ordering-and-legacy-adoption--2026-11-05).
+
 ## Retained enqueue-intent reconciliation
 
 Runledger's owned atomic scopes expose `reconcile_job_enqueue_intent` for an

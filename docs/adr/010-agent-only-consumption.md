@@ -1245,9 +1245,11 @@ expressible (compile-fail rustdocs), and the one `ManagedObjectManifest` value
 drives both apply and `VerificationPlan::with_managed_objects`. The `PUBLIC`
 policy is a required exhaustive argument, retirements are explicit, and every
 executed statement must write exactly its declared identity. The per-item
-review, the recorded deviation and the remaining obligations (last-writer-wins
-releases, migration-only return-type changes, two-release trigger rebinding and
-ownership transfer) are in [ADR-013](013-managed-database-objects.md).
+review and the obligations at that time (unordered releases, migration-only
+return-type changes, two-release trigger rebinding and ownership transfer) are
+in [ADR-013](013-managed-database-objects.md). Its 2026-11-05 release-ordering
+amendment (`batter-ofom`) now enforces revisions and matching legacy adoption;
+application release numbering and administrative SQL remain outside that proof.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
 2026-10-16 (`batter-n2s1`): constraint triggers had stayed in migrations,

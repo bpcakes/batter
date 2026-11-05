@@ -217,7 +217,9 @@ async fn managed_verifier_rejects_ledger_created_after_lock_attempt() -> Result 
         }
         bounded(sqlx::raw_sql(AssertSqlSafe(format!(
             "CREATE TABLE {schema}.late_objects (LIKE {schema}.managed_objects INCLUDING ALL);
-             INSERT INTO {schema}.late_objects SELECT * FROM {schema}.managed_objects"
+             INSERT INTO {schema}.late_objects SELECT * FROM {schema}.managed_objects;
+             UPDATE {schema}.late_objects SET release_revision={} WHERE identity='manifest'",
+             late.manifest.revision().get()
         ))).execute(&migrator)).await??;
         gate.commit().await?;
         let report = verification.await?;
