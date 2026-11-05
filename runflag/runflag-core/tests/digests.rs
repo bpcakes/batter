@@ -17,6 +17,9 @@ const EMPTY_CATALOG: &str = "4660ffe3fe354fcf603405ab46cb03c6ffa104c6f423bf39d3f
 const NEW_CHECKOUT: &str = "fd837dee0537fff88c2184db298d51c6c3c1ee36a7824f029d05f72ed46863cc";
 const CHECKOUT_STYLE: &str = "01cb5d85b06a6d1eef15b58cc57b50b9950e62cf5c92b21aee5eb4312d0774ca";
 const EXPORT_HALT: &str = "6673004015e8b807fca5c846ddfb24c3ae497e13990a66f1d95a69c8c83f3235";
+/// A catalog with one flag carrying a `requires`, a `conflicts` and a
+/// `both_or_none` invariant, framed with invariants sorted by rule tag text.
+const MIXED_INVARIANTS: &str = "95f7769144d3b1b606466c4607d478b302854cd1fb0f3e7ad7c4023bd9f527bc";
 
 fn digest(change: Change) -> CatalogDigest {
     reference(change).digest()
@@ -170,4 +173,43 @@ fn the_manifest_digest_covers_what_the_catalog_digest_leaves_out() {
         base,
         "declaration order changes the manifest digest"
     );
+}
+
+/// Builds the mixed-invariant catalog, declaring the three invariants in the
+/// order `order` lists them.
+fn mixed_invariants(order: [runflag_core::InvariantRule; 3]) -> runflag_core::Catalog {
+    use runflag_core::InvariantRule;
+    let mut builder = fixtures::builder();
+    builder.process_kind("serving").unwrap();
+    builder.environment_class("hosted").unwrap();
+    let base = builder.mode_flag("base", Toggle::Off).declare().unwrap();
+    let other = builder.mode_flag("other", Toggle::Off).declare().unwrap();
+    let mut subject = builder.mode_flag("subject", Toggle::Off);
+    for rule in order {
+        subject = match rule {
+            InvariantRule::Requires => subject.requires(Toggle::On, &base, Toggle::On),
+            InvariantRule::Conflicts => subject.conflicts(Toggle::On, &other, Toggle::On),
+            InvariantRule::BothOrNone => subject.both_or_none(&base),
+        };
+    }
+    subject.declare().unwrap();
+    builder.build().unwrap()
+}
+
+#[test]
+fn invariants_of_different_rules_sort_by_rule_tag_text() {
+    use runflag_core::InvariantRule::{BothOrNone, Conflicts, Requires};
+    let catalog = mixed_invariants([Requires, Conflicts, BothOrNone]);
+    assert_eq!(catalog.digest().to_hex(), MIXED_INVARIANTS);
+    let reordered = mixed_invariants([BothOrNone, Requires, Conflicts]);
+    assert_eq!(reordered.digest().to_hex(), MIXED_INVARIANTS);
+    let rules: Vec<&str> = catalog
+        .declaration("subject")
+        .unwrap()
+        .invariants()
+        .iter()
+        .map(|invariant| invariant.rule().as_str())
+        .collect();
+    assert_eq!(rules, ["both_or_none", "conflicts", "requires"]);
+    assert!(BothOrNone < Conflicts && Conflicts < Requires);
 }

@@ -218,15 +218,17 @@ fn invariants_name_this_catalog_and_hold_at_the_defaults() {
     let catalog = builder.build().unwrap();
     let invariants = catalog.declaration("checkout_style").unwrap().invariants();
     assert_eq!(invariants.len(), 2);
-    assert_eq!(invariants[0].rule(), InvariantRule::Requires);
+    // Invariants sort by rule tag text: conflicts before requires.
+    assert_eq!(invariants[0].rule(), InvariantRule::Conflicts);
+    assert_eq!(invariants[1].rule(), InvariantRule::Requires);
     assert_eq!(
-        (invariants[0].variant(), invariants[0].other().as_str()),
+        (invariants[1].variant(), invariants[1].other().as_str()),
         ("express", "payments_v2")
     );
-    assert!(invariants[0].holds("classic", "off"));
-    assert!(invariants[0].holds("express", "on"));
-    assert!(!invariants[0].holds("express", "off"));
-    assert!(!invariants[1].holds("express", "on"));
+    assert!(invariants[1].holds("classic", "off"));
+    assert!(invariants[1].holds("express", "on"));
+    assert!(!invariants[1].holds("express", "off"));
+    assert!(!invariants[0].holds("express", "on"));
 }
 
 #[test]

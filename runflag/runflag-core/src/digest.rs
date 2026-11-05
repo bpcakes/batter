@@ -5,7 +5,8 @@
 //! by its element count as a big-endian `u64`; an optional field is the count
 //! 0, or the count 1 followed by the field. Two inputs that differ only in how
 //! their bytes split into fields therefore digest differently, which the
-//! golden vectors in the tests pin.
+//! golden vectors in the tests pin. Every sorted list is ordered by the bytes
+//! of its text fields, so an independent implementation can reproduce it.
 //!
 //! The catalog digest frames, in order: the label `runflag.catalog.v1`; the
 //! settings prefix; the toggle-literals tag; the sorted process-kind names; the
@@ -16,8 +17,9 @@
 //! optional `only_in` class, optional safe-state tag, optional stale-rule tag,
 //! optional governing-switch key, the count of `requires_settings` entries with
 //! each variant and its sorted names in variant order, and the count of
-//! invariants with each rule tag, variant, other key and other variant in
-//! sorted order. Expiry, flip discipline and migration notes are not framed.
+//! invariants with each rule tag, variant, other key and other variant,
+//! sorted by those four texts in that order (so `both_or_none` < `conflicts` <
+//! `requires`). Expiry, flip discipline and migration notes are not framed.
 
 use std::fmt;
 

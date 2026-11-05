@@ -400,8 +400,9 @@ impl fmt::Debug for Declared<'_> {
     }
 }
 
-/// The relation a cross-flag invariant states.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// The relation a cross-flag invariant states. Rules order by their tag text
+/// (`both_or_none` < `conflicts` < `requires`), as digests and manifests list them.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -435,6 +436,18 @@ impl InvariantRule {
             Self::Conflicts => !(this && that),
             Self::BothOrNone => this == that,
         }
+    }
+}
+
+impl Ord for InvariantRule {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for InvariantRule {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
