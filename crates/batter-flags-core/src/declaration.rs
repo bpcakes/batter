@@ -311,8 +311,8 @@ impl<'a> Declared<'a> {
     }
 
     /// The wire variant names in the value type's declaration order; empty
-    /// for a switch. A toggle's are `off` and `on`, whatever the catalog's
-    /// [`ToggleLiterals`](crate::ToggleLiterals).
+    /// for a switch. A toggle's are `off` and `on`, whatever spelling its
+    /// setting used ([`Toggle::from_setting`](crate::Toggle::from_setting)).
     pub fn variants(&self) -> &'static [&'static str] {
         self.entry.variants
     }

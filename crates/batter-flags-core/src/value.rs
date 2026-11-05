@@ -9,7 +9,7 @@ use crate::key::KeyError;
 ///
 /// Every value is a non-secret declared name. There are no strings, numbers or
 /// JSON values, and `bool` is deliberately not a `FlagValue`: a toggle is
-/// [`Toggle`], whose spelling each catalog fixes once with [`ToggleLiterals`].
+/// [`Toggle`].
 ///
 /// Implement it for an application enum by listing the variant names in
 /// declaration order and mapping both ways. The catalog checks at build time
@@ -49,27 +49,21 @@ use crate::key::KeyError;
 /// A string is not a flag value, so a flag of strings does not compile:
 ///
 /// ```compile_fail,E0277
-/// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix, ToggleLiterals};
+/// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix};
 ///
-/// let mut builder = CatalogBuilder::new(
-///     SettingsPrefix::new("FLAG_").unwrap(),
-///     ToggleLiterals::TrueFalse,
-/// );
+/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// let expiry = Expiry::on(CivilDate::new(2027, 1, 1).unwrap());
 /// let _flag = builder
 ///     .release_flag::<String>("greeting", String::from("hello"), expiry)
 ///     .declare();
 /// ```
 ///
-/// Nor is `bool`: a toggle is [`Toggle`], spelled once per catalog.
+/// Nor is `bool`: a toggle is [`Toggle`].
 ///
 /// ```compile_fail,E0277
-/// use batter_flags_core::{CatalogBuilder, SettingsPrefix, ToggleLiterals};
+/// use batter_flags_core::{CatalogBuilder, SettingsPrefix};
 ///
-/// let mut builder = CatalogBuilder::new(
-///     SettingsPrefix::new("FLAG_").unwrap(),
-///     ToggleLiterals::TrueFalse,
-/// );
+/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// let _flag = builder.mode_flag("strict_mode", false).declare();
 /// ```
 pub trait FlagValue: Copy + Eq + Hash + fmt::Debug + Send + Sync + 'static {
@@ -85,14 +79,44 @@ pub trait FlagValue: Copy + Eq + Hash + fmt::Debug + Send + Sync + 'static {
 
 /// The two-state value of a toggle flag.
 ///
-/// Its Rust variants are fixed; the literal each catalog reads and reports
-/// for them (`true`/`false` or `on`/`off`) is the catalog's [`ToggleLiterals`].
+/// Its variants are `off` and `on`, the names digests, manifests and stored
+/// entries carry. A setting may spell a toggle as `true`/`false` or `on`/`off`
+/// in any ASCII letter case; [`from_setting`](Self::from_setting) is that one
+/// rule.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Toggle {
     /// The closed state.
     Off,
     /// The open state.
     On,
+}
+
+impl Toggle {
+    /// The toggle a setting's text names: `true` or `on` for [`Toggle::On`],
+    /// `false` or `off` for [`Toggle::Off`], in any ASCII letter case.
+    ///
+    /// Anything else, including a blank value, surrounding whitespace, `1`,
+    /// `yes` or a non-ASCII case variant, is `None`, so a mistyped value is
+    /// never read as a toggle.
+    ///
+    /// ```
+    /// use batter_flags_core::Toggle;
+    ///
+    /// assert_eq!(Toggle::from_setting("TRUE"), Some(Toggle::On));
+    /// assert_eq!(Toggle::from_setting("off"), Some(Toggle::Off));
+    /// assert_eq!(Toggle::from_setting("On"), Some(Toggle::On));
+    /// assert_eq!(Toggle::from_setting(" true"), None);
+    /// assert_eq!(Toggle::from_setting("1"), None);
+    /// ```
+    pub fn from_setting(text: &str) -> Option<Self> {
+        if text.eq_ignore_ascii_case("true") || text.eq_ignore_ascii_case("on") {
+            Some(Self::On)
+        } else if text.eq_ignore_ascii_case("false") || text.eq_ignore_ascii_case("off") {
+            Some(Self::Off)
+        } else {
+            None
+        }
+    }
 }
 
 impl FlagValue for Toggle {
@@ -110,41 +134,6 @@ impl FlagValue for Toggle {
             "off" => Some(Self::Off),
             "on" => Some(Self::On),
             _ => None,
-        }
-    }
-}
-
-/// The spelling of every [`Toggle`] in one catalog.
-///
-/// Fixed once per catalog: every toggle setting is read, every toggle variant
-/// reported and every toggle entry stored with this spelling.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "snake_case")
-)]
-pub enum ToggleLiterals {
-    /// `false` for [`Toggle::Off`] and `true` for [`Toggle::On`].
-    TrueFalse,
-    /// `off` for [`Toggle::Off`] and `on` for [`Toggle::On`].
-    OnOff,
-}
-
-impl ToggleLiterals {
-    /// The literals in [`Toggle::VARIANTS`] order: the closed state first.
-    pub fn literals(self) -> [&'static str; 2] {
-        match self {
-            Self::TrueFalse => ["false", "true"],
-            Self::OnOff => ["off", "on"],
-        }
-    }
-
-    /// The stable tag the digest and manifest carry.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::TrueFalse => "true_false",
-            Self::OnOff => "on_off",
         }
     }
 }
@@ -301,10 +290,25 @@ mod tests {
     fn toggle_tags_and_literals_are_fixed() {
         assert_eq!(ValueType::of::<Toggle>(), ValueType::Toggle);
         assert_eq!(ValueType::of::<Broken>(), ValueType::Enum);
-        assert_eq!(ToggleLiterals::TrueFalse.literals(), ["false", "true"]);
-        assert_eq!(ToggleLiterals::OnOff.literals(), ["off", "on"]);
         assert_eq!(check_variants(Toggle::On), Ok(1));
         assert_eq!(check_variants(Toggle::Off), Ok(0));
+    }
+
+    #[test]
+    fn toggles_accept_both_spellings_in_any_case_and_nothing_else() {
+        for on in ["true", "TRUE", "True", "on", "ON", "oN"] {
+            assert_eq!(Toggle::from_setting(on), Some(Toggle::On), "{on}");
+        }
+        for off in ["false", "FALSE", "False", "off", "OFF", "oFf"] {
+            assert_eq!(Toggle::from_setting(off), Some(Toggle::Off), "{off}");
+        }
+        for refused in [
+            "", " ", "1", "0", "yes", "no", "enabled", " true", "true ", "ture", "on\n", "t", "of",
+        ] {
+            assert_eq!(Toggle::from_setting(refused), None, "{refused:?}");
+        }
+        // Only ASCII case folds: a dotted capital I is not an ASCII "i".
+        assert_eq!(Toggle::from_setting("\u{130}"), None);
     }
 
     #[test]

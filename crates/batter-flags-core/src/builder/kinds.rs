@@ -187,17 +187,16 @@ fn checked_draft<'b, T: FlagValue>(
 /// mandatory [`Expiry`]. A release flag without an expiry does not compile:
 ///
 /// ```compile_fail,E0061
-/// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle, ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// let _flag = builder.release_flag("new_checkout", Toggle::Off).declare();
 /// ```
 ///
 /// `both_or_none` relates two toggles only, so an enum flag has none:
 ///
 /// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, FlagValue, SettingsPrefix, Toggle,
-/// #     ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, FlagValue, SettingsPrefix, Toggle};
 /// # #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 /// # enum Checkout { Classic, Express }
 /// # impl FlagValue for Checkout {
@@ -206,7 +205,7 @@ fn checked_draft<'b, T: FlagValue>(
 /// #     fn from_variant(v: &str) -> Option<Self> { match v { "classic" => Some(Self::Classic), "express" => Some(Self::Express), _ => None } }
 /// # }
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// # let expiry = Expiry::on(CivilDate::new(2027, 1, 1).unwrap());
 /// let toggle = builder.release_flag("toggle", Toggle::Off, expiry).declare().unwrap();
 /// let _checkout = builder
@@ -272,10 +271,10 @@ impl ReleaseDeclaration<'_, Toggle> {
 /// is permanent: it has no expiry and no governing switch.
 ///
 /// ```
-/// use batter_flags_core::{Absence, CatalogBuilder, FlipDiscipline, SettingsPrefix, Toggle, ToggleLiterals};
+/// use batter_flags_core::{Absence, CatalogBuilder, FlipDiscipline, SettingsPrefix, Toggle};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, ToggleLiterals::OnOff);
+/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
 /// builder.process_kind("serving")?;
 /// let development = builder.environment_class("development")?;
 /// builder.environment_class("hosted")?;
@@ -302,9 +301,9 @@ impl ReleaseDeclaration<'_, Toggle> {
 /// ```
 ///
 /// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, Toggle, ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, Toggle};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// let halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 ///     .declare()
@@ -351,9 +350,9 @@ impl ModeDeclaration<'_, Toggle> {
 /// percentage, no subject targeting, no pins and no environment restriction.
 ///
 /// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 ///     .percentage(50)
@@ -361,9 +360,9 @@ impl ModeDeclaration<'_, Toggle> {
 /// ```
 ///
 /// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// # let worker = builder.process_kind("worker").unwrap();
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
@@ -372,9 +371,9 @@ impl ModeDeclaration<'_, Toggle> {
 /// ```
 ///
 /// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// # let development = builder.environment_class("development").unwrap();
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)

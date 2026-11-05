@@ -9,7 +9,6 @@ use crate::{
     digest::{CatalogDigest, DigestInput},
     error::ForeignKind,
     key::{FlagKey, SettingName, SettingsPrefix},
-    value::ToggleLiterals,
     vocabulary::{CatalogId, EnvironmentClass, ProcessKind},
 };
 
@@ -21,9 +20,9 @@ use crate::{
 /// cannot exist.
 ///
 /// ```compile_fail,E0599
-/// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, ToggleLiterals};
+/// # use batter_flags_core::{CatalogBuilder, SettingsPrefix};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// # builder.process_kind("serving").unwrap();
 /// # builder.environment_class("hosted").unwrap();
 /// let catalog = builder.build().unwrap();
@@ -33,9 +32,9 @@ use crate::{
 /// A consumer that takes the catalog leaves nothing to reuse:
 ///
 /// ```compile_fail,E0382
-/// # use batter_flags_core::{Catalog, CatalogBuilder, SettingsPrefix, ToggleLiterals};
+/// # use batter_flags_core::{Catalog, CatalogBuilder, SettingsPrefix};
 /// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), ToggleLiterals::TrueFalse);
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
 /// # builder.process_kind("serving").unwrap();
 /// # builder.environment_class("hosted").unwrap();
 /// fn consume(_catalog: Catalog) {}
@@ -47,7 +46,6 @@ use crate::{
 pub struct Catalog {
     pub(crate) id: CatalogId,
     pub(crate) prefix: SettingsPrefix,
-    pub(crate) toggle_literals: ToggleLiterals,
     pub(crate) process_kinds: Box<[ProcessKind]>,
     pub(crate) environment_classes: Box<[EnvironmentClass]>,
     /// Declaration order; a handle's index points here.
@@ -63,7 +61,6 @@ impl Catalog {
         let CatalogBuilder {
             id,
             prefix,
-            toggle_literals,
             process_kinds,
             environment_classes,
             entries,
@@ -73,7 +70,6 @@ impl Catalog {
         let retired: Box<[Retired]> = retired.into_values().collect();
         let digest = CatalogDigest::compute(DigestInput {
             prefix: prefix.as_str(),
-            toggle_literals,
             process_kinds: process_kinds.iter().map(ProcessKind::name).collect(),
             environment_classes: environment_classes
                 .iter()
@@ -88,7 +84,6 @@ impl Catalog {
         Self {
             id,
             prefix,
-            toggle_literals,
             process_kinds: process_kinds.into_boxed_slice(),
             environment_classes: environment_classes.into_boxed_slice(),
             entries: entries.into_boxed_slice(),
@@ -103,15 +98,10 @@ impl Catalog {
         &self.prefix
     }
 
-    /// The spelling of every toggle in this catalog.
-    pub fn toggle_literals(&self) -> ToggleLiterals {
-        self.toggle_literals
-    }
-
     /// The digest of everything resolution and evaluation depend on.
     ///
-    /// It changes with the prefix, the toggle literals, the vocabularies, the
-    /// retired names and every declaration's behaviour-bearing fields, and
+    /// It changes with the prefix, the vocabularies, the retired names and
+    /// every declaration's behaviour-bearing fields, and
     /// not with expiry, flip discipline, migration notes or declaration order.
     pub fn digest(&self) -> CatalogDigest {
         self.digest
@@ -179,10 +169,10 @@ impl Catalog {
     /// date it reads.
     ///
     /// ```
-    /// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix, Toggle, ToggleLiterals};
+    /// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix, Toggle};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, ToggleLiterals::TrueFalse);
+    /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
     /// builder.process_kind("serving")?;
     /// builder.environment_class("hosted")?;
     /// let expiry = Expiry::on(CivilDate::new(2026, 12, 31)?);

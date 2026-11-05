@@ -8,18 +8,18 @@
 mod fixtures;
 
 use batter_flags_core::{
-    CatalogDigest, DeclarationFingerprint, Flag as _, SafeState, StaleRule, Toggle, ToggleLiterals,
+    CatalogDigest, DeclarationFingerprint, Flag as _, SafeState, StaleRule, Toggle,
 };
 use fixtures::{Change, Checkout, CheckoutWide, date, reference, vocabulary_builder};
 
-const REFERENCE_CATALOG: &str = "8b78ff2a3c0ce7572c2e8c2f6964674f4cb5951c9e87c60e1cd5973029fce8db";
-const EMPTY_CATALOG: &str = "ccec4ecfaf692ae86d21dd01324e9604c07481641385da7830b7498382425c6a";
+const REFERENCE_CATALOG: &str = "91273cefd375d79a5354aecc95deaf12ab64161b173581c83bd51d151262462a";
+const EMPTY_CATALOG: &str = "de50b852503f2d1d423cd1803ef68064c72953a678180f6e16af5c7ec062d42f";
 const NEW_CHECKOUT: &str = "f5ca7c0886c361c1912c690e531f4ae0ebbe9507d319f45a61bc44dc432f6ae9";
 const CHECKOUT_STYLE: &str = "4d95da13ae9ae1dc5596496d003e37592a303391c62b84e818f373212facaad5";
 const EXPORT_HALT: &str = "5fb458956635fe76022fde1448107348d7bcf32e94107e7a474739168d064233";
 /// A catalog with one flag carrying a `requires`, a `conflicts` and a
 /// `both_or_none` invariant, framed with invariants sorted by rule tag text.
-const MIXED_INVARIANTS: &str = "592cc6263c63f842508864b4ce23fa1e6898adf6057eef2a1877b15b22926e0e";
+const MIXED_INVARIANTS: &str = "78c1f51f6fcbd7ce1ce608ef7b83214c37a21ae11ca51183c4d898fa2f8cc898";
 
 fn digest(change: Change) -> CatalogDigest {
     reference(change).digest()
@@ -106,10 +106,6 @@ fn the_catalog_digest_covers_every_behaviour_bearing_field() {
     let base = digest(Change::None);
     let cases = [
         ("prefix", Change::Prefix("APP_FLAGS_")),
-        (
-            "toggle literals",
-            Change::ToggleLiterals(ToggleLiterals::OnOff),
-        ),
         ("process kinds", Change::ExtraKind),
         ("environment classes", Change::ExtraClass),
         ("retired names", Change::ExtraRetired),

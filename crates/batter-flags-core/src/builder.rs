@@ -13,7 +13,7 @@ use crate::{
     declaration::{Entry, SafeState, StaleRule},
     error::BuildError,
     key::{FlagKey, KeyError, SettingName, SettingsPrefix},
-    value::{FlagValue, ToggleLiterals},
+    value::FlagValue,
     vocabulary::{CatalogId, EnvironmentClass, ProcessKind},
 };
 
@@ -27,11 +27,10 @@ use crate::{
 /// ```
 /// use batter_flags_core::{
 ///     CatalogBuilder, CivilDate, Expiry, Owners, SafeState, SettingsPrefix, StaleRule, Toggle,
-///     ToggleLiterals,
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, ToggleLiterals::TrueFalse);
+/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
 /// let serving = builder.process_kind("serving")?;
 /// let worker = builder.process_kind("worker")?;
 /// let _hosted = builder.environment_class("hosted")?;
@@ -58,7 +57,6 @@ use crate::{
 pub struct CatalogBuilder {
     pub(crate) id: CatalogId,
     pub(crate) prefix: SettingsPrefix,
-    pub(crate) toggle_literals: ToggleLiterals,
     pub(crate) process_kinds: Vec<ProcessKind>,
     pub(crate) environment_classes: Vec<EnvironmentClass>,
     /// Declaration order; a handle's index points here.
@@ -68,16 +66,14 @@ pub struct CatalogBuilder {
 }
 
 impl CatalogBuilder {
-    /// Starts a catalog whose flags read settings under `prefix` and spell
-    /// every [`Toggle`](crate::Toggle) with `toggle_literals`.
+    /// Starts a catalog whose flags read settings under `prefix`.
     ///
-    /// Both are part of the catalog digest and the manifest. Declared mode
+    /// The prefix is part of the catalog digest and the manifest. Declared mode
     /// refuses every name under the prefix that the catalog does not declare.
-    pub fn new(prefix: SettingsPrefix, toggle_literals: ToggleLiterals) -> Self {
+    pub fn new(prefix: SettingsPrefix) -> Self {
         Self {
             id: CatalogId::mint(),
             prefix,
-            toggle_literals,
             process_kinds: Vec::new(),
             environment_classes: Vec::new(),
             entries: Vec::new(),
@@ -235,7 +231,6 @@ impl fmt::Debug for CatalogBuilder {
         formatter
             .debug_struct("CatalogBuilder")
             .field("prefix", &self.prefix)
-            .field("toggle_literals", &self.toggle_literals)
             .field("declarations", &self.entries.len())
             .finish_non_exhaustive()
     }

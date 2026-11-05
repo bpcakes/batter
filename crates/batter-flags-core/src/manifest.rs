@@ -16,7 +16,6 @@ use crate::{
     catalog::Catalog,
     digest::{CatalogDigest, DigestInput, ManifestDigest},
     key::SettingsPrefix,
-    value::ToggleLiterals,
     vocabulary::{EnvironmentClass, ProcessKind},
 };
 
@@ -39,11 +38,10 @@ use crate::{
 /// about Rust values, such as variant round-trips, are left to the builder.
 ///
 /// ```
-/// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, Manifest, SettingsPrefix, Toggle,
-///     ToggleLiterals};
+/// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, Manifest, SettingsPrefix, Toggle};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, ToggleLiterals::TrueFalse);
+/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
 /// builder.process_kind("serving")?;
 /// builder.environment_class("hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
@@ -64,7 +62,6 @@ use crate::{
 pub struct Manifest {
     v: Version,
     prefix: SettingsPrefix,
-    toggle_literals: ToggleLiterals,
     catalog_digest: CatalogDigest,
     process_kinds: Vec<String>,
     environment_classes: Vec<String>,
@@ -103,11 +100,6 @@ impl Manifest {
     /// The settings prefix.
     pub fn prefix(&self) -> &SettingsPrefix {
         &self.prefix
-    }
-
-    /// The catalog's toggle spelling.
-    pub fn toggle_literals(&self) -> ToggleLiterals {
-        self.toggle_literals
     }
 
     /// The catalog digest of the exported catalog.
@@ -162,7 +154,6 @@ impl Manifest {
     fn digest_input(&self) -> DigestInput<'_> {
         DigestInput {
             prefix: self.prefix.as_str(),
-            toggle_literals: self.toggle_literals,
             process_kinds: self.process_kinds.iter().map(String::as_str).collect(),
             environment_classes: self
                 .environment_classes
@@ -185,7 +176,6 @@ impl Catalog {
         Manifest {
             v: Version,
             prefix: self.prefix.clone(),
-            toggle_literals: self.toggle_literals,
             catalog_digest: self.digest,
             process_kinds: kind_names(&self.process_kinds),
             environment_classes: sorted(

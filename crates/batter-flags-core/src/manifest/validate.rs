@@ -12,7 +12,7 @@ use crate::{
     declaration::{InvariantRule, Kind},
     digest::{CatalogDigest, DeclarationFingerprint},
     key::{FlagKey, SettingsPrefix},
-    value::{ToggleLiterals, ValueType},
+    value::ValueType,
 };
 
 /// The manifest as decoded, before validation.
@@ -20,7 +20,6 @@ use crate::{
 pub struct WireManifest {
     v: Version,
     prefix: SettingsPrefix,
-    toggle_literals: ToggleLiterals,
     catalog_digest: CatalogDigest,
     process_kinds: Vec<String>,
     environment_classes: Vec<String>,
@@ -51,7 +50,6 @@ impl TryFrom<WireManifest> for Manifest {
         let mut manifest = Self {
             v: wire.v,
             prefix: wire.prefix,
-            toggle_literals: wire.toggle_literals,
             catalog_digest: wire.catalog_digest,
             process_kinds: wire.process_kinds,
             environment_classes: wire.environment_classes,

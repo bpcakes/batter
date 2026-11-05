@@ -18,11 +18,10 @@
 //! ```
 //! use batter_flags_core::{
 //!     CatalogBuilder, CivilDate, Expiry, Owners, SafeState, SettingsPrefix, StaleRule, Toggle,
-//!     ToggleLiterals,
 //! };
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, ToggleLiterals::TrueFalse);
+//! let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
 //! let serving = builder.process_kind("serving")?;
 //! builder.environment_class("hosted")?;
 //! let halt = builder
@@ -91,5 +90,5 @@ pub use manifest::{
     Manifest, ManifestDiff, ManifestDiffError, ManifestEntry, ManifestInvariant, ManifestOwners,
     ManifestRequiredSettings, ManifestRetired, Retype, manifest_diff,
 };
-pub use value::{FlagValue, Toggle, ToggleLiterals, ValueType, VariantsError};
+pub use value::{FlagValue, Toggle, ValueType, VariantsError};
 pub use vocabulary::{EnvironmentClass, ProcessKind};

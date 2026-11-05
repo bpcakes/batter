@@ -15,7 +15,7 @@ use serde_json::json;
 
 /// Computed independently over [`REFERENCE_MANIFEST`] in the documented framing.
 const REFERENCE_MANIFEST_DIGEST: &str =
-    "6b090f006a55272a5c3e3eacb9bbf4ec4a22bfe3a8dfdbc259a54a393446e484";
+    "8db7fc16f32be7147da10236408c28e370286204b22407097956c94b8ad21380";
 
 #[test]
 fn the_reference_manifest_bytes_and_digest_are_pinned() {

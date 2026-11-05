@@ -13,12 +13,12 @@ use crate::{declaration::Kind, key::FlagKey, value::ValueType};
 ///
 /// ```
 /// use batter_flags_core::{
-///     CatalogBuilder, CivilDate, Expiry, SettingsPrefix, Toggle, ToggleLiterals, manifest_diff,
+///     CatalogBuilder, CivilDate, Expiry, SettingsPrefix, Toggle, manifest_diff,
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// fn catalog(release: bool) -> Result<batter_flags_core::Catalog, Box<dyn std::error::Error>> {
-///     let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, ToggleLiterals::TrueFalse);
+///     let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
 ///     builder.process_kind("serving")?;
 ///     builder.environment_class("hosted")?;
 ///     if release {

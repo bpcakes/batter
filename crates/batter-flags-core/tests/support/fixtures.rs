@@ -4,7 +4,7 @@
 use batter_flags_core::{
     Absence, Catalog, CatalogBuilder, CivilDate, EnvironmentClass, Expiry, FlagValue,
     FlipDiscipline, KillSwitch, Owners, ProcessKind, ReleaseFlag, SafeState, SettingsPrefix,
-    StaleRule, Toggle, ToggleLiterals,
+    StaleRule, Toggle,
 };
 
 /// A two-variant application enum.
@@ -70,12 +70,9 @@ pub fn expiry() -> Expiry {
     Expiry::on(date(2027, 3, 31))
 }
 
-/// A builder under `FLAG_` with `true`/`false` toggles and no vocabulary.
+/// A builder under `FLAG_` with no vocabulary.
 pub fn builder() -> CatalogBuilder {
-    CatalogBuilder::new(
-        SettingsPrefix::new("FLAG_").unwrap(),
-        ToggleLiterals::TrueFalse,
-    )
+    CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap())
 }
 
 /// A builder with the process kinds `serving` and `worker` and the
@@ -95,7 +92,6 @@ pub enum Change {
     /// The reference itself.
     None,
     Prefix(&'static str),
-    ToggleLiterals(ToggleLiterals),
     ExtraKind,
     ExtraClass,
     ExtraRetired,
@@ -132,11 +128,7 @@ pub fn reference(change: Change) -> Catalog {
         _ => "FLAG_",
     };
     let prefix = SettingsPrefix::new(prefix).unwrap();
-    let literals = match change {
-        Change::ToggleLiterals(literals) => literals,
-        _ => ToggleLiterals::TrueFalse,
-    };
-    let mut builder = CatalogBuilder::new(prefix, literals);
+    let mut builder = CatalogBuilder::new(prefix);
     let reversed = change == Change::ReversedOrder;
     let (serving, worker, development);
     if reversed {

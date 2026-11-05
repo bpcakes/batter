@@ -9,7 +9,7 @@
 //! of its text fields, so an independent implementation can reproduce it.
 //!
 //! The catalog digest frames, in order: the label `batter.flags.catalog.v1`; the
-//! settings prefix; the toggle-literals tag; the sorted process-kind names; the
+//! settings prefix; the sorted process-kind names; the
 //! sorted environment-class names; the sorted retired names; then the count of
 //! declarations and, for each in key order, its key, kind tag, value-type tag,
 //! sorted variants, optional default variant, absence tag, owners (`all`, or
@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     declaration::{Absence, InvariantRule, Kind, SafeState, StaleRule},
-    value::{ToggleLiterals, ValueType},
+    value::ValueType,
 };
 
 pub(crate) const CATALOG_LABEL: &str = "batter.flags.catalog.v1";
@@ -219,7 +219,6 @@ impl DeclarationFingerprint {
 /// every list itself, so callers may pass them in any order.
 pub(crate) struct DigestInput<'a> {
     pub(crate) prefix: &'a str,
-    pub(crate) toggle_literals: ToggleLiterals,
     pub(crate) process_kinds: Vec<&'a str>,
     pub(crate) environment_classes: Vec<&'a str>,
     pub(crate) retired: Vec<&'a str>,
@@ -250,7 +249,6 @@ impl CatalogDigest {
     pub(crate) fn compute(mut input: DigestInput<'_>) -> Self {
         let mut framing = Framing::new(CATALOG_LABEL);
         framing.field(input.prefix.as_bytes());
-        framing.field(input.toggle_literals.as_str().as_bytes());
         framing.sorted_list(input.process_kinds.into_iter());
         framing.sorted_list(input.environment_classes.into_iter());
         framing.sorted_list(input.retired.into_iter());
