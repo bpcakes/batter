@@ -141,6 +141,15 @@ that panic. A binary without the hook, a later or wrapping hook that formats
 print payloads. Never put credentials in panic messages and do not claim library
 span hygiene sanitizes the whole process.
 
+Native Runledger separately redacts caught main-handler panics before turning
+them into failures: `job.handler_panic` / `PANICKED` uses the fixed message
+`Job handler panicked.` in queue, attempt, dead-letter and event records,
+dead-letter logs and the main-handler settlement diagnostic. Panics remain
+nonretryable. This does not redact output from the process panic hook, other
+callback diagnostics, or application-created `JobFailure` messages. Those
+messages are persisted verbatim and may be logged or displayed; use deliberate
+non-sensitive text, never interpolated error `Display`/`Debug` or credentials.
+
 Keep user/account/job/request IDs out of metric labels. Trace correlation and
 metric cardinality are different concerns. Persist only validated/versioned
 correlation metadata across durable job boundaries; never serialize execution

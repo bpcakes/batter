@@ -3,7 +3,7 @@ use super::{RuntimeTaskRecord, UnsettledRuntimeTask};
 /// A handler, observer or hook interrupted by native timeout, panic or lease
 /// maintenance handling. A completed handler result rejected by deadline or
 /// lease fencing is not an interruption. Payload access is explicit; automatic
-/// formatting does not reveal panic contents.
+/// formatting does not reveal panic contents. Main-handler messages are redacted.
 #[derive(Clone)]
 pub enum RuntimeCallbackFailure {
     TimedOut {

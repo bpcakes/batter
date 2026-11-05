@@ -572,7 +572,7 @@ impl JobHandler for PanickingHandler {
         _payload: Value,
     ) -> Result<JobCompletion, JobFailure> {
         self.runs.fetch_add(1, Ordering::SeqCst);
-        panic!("panic from main job handler");
+        panic!("provider token: {:?}", "handler-panic-secret");
     }
 }
 
