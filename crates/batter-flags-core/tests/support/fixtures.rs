@@ -1,5 +1,5 @@
 //! Fixtures shared by the batter-flags-core integration tests.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "shared support; each test crate uses part of it")]
 
 use batter_flags_core::{
     Absence, Catalog, CatalogBuilder, CivilDate, EnvironmentClass, Expiry, FlagValue,

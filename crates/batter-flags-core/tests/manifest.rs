@@ -1,4 +1,6 @@
 //! The manifest: pinned canonical bytes, decoding round trips and the diff rule.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #![cfg(feature = "serde")]
 
 #[path = "support/fixtures.rs"]

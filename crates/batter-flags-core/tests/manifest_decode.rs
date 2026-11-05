@@ -1,5 +1,7 @@
 //! Manifest decoding: every tampered reference manifest is refused with the
 //! message of the rule it breaks.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #![cfg(feature = "serde")]
 
 #[path = "support/manifest_json.rs"]

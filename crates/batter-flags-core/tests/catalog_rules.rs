@@ -1,5 +1,7 @@
 //! Catalog build rules: required settings, retired names, invariants and
 //! flag value types.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "support/fixtures.rs"]
 mod fixtures;

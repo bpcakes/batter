@@ -3,6 +3,8 @@
 //! The pinned values were computed independently of this crate, from the
 //! framing the `digest` module documents, so they check the specification
 //! rather than echo the implementation.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "support/fixtures.rs"]
 mod fixtures;

@@ -1,5 +1,5 @@
 //! The reference manifest as JSON, and helpers for decoding a tampered copy.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "shared support; each test crate uses part of it")]
 
 use batter_flags_core::Manifest;
 use serde_json::Value;
