@@ -746,3 +746,6 @@ async fn receive_process(
         None => std::future::pending().await,
     }
 }
+
+// Internal service observation shares the lifecycle transition lock.
+pub(crate) use state::ReadinessProgress;

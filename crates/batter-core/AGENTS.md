@@ -57,7 +57,7 @@ Windows support and non-Unix fallbacks are out of scope.
   `command/signals.rs` owns the private `WorkSignals` seam and SIGTERM/SIGINT
   listeners; `command/driver.rs` owns both coordinators; injected-source unit
   tests live in `command/tests.rs` and `command/tests/`.
-- `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
+- `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. `service/readiness.rs` owns single-use typed output and readiness observation; `lifecycle/state/readiness.rs` keeps the deadline gate under the existing lifecycle lock. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
 - `src/completion.rs` privately owns the snapshot-before-wait mechanism shared by
   command, startup and process completion observers; their public policies stay separate.
 - `tests/component_ownership.rs` compares acknowledged initialization and joined

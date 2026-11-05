@@ -1111,7 +1111,7 @@ occupies that field. The later payload is then released only when it is a
 destructor could panic again inside the coordinator before cleanup. Dropping the
 starting owner instead of waiting destroys the queued owner and output together,
 on the dropping task or the monitor task, and requests drain. `finish` exists only for unit output. `service::start` accepts only unit
-output and does not deliver typed output.
+output; `service::start_with_readiness` delivers typed output after readiness.
 
 `Startup::new` remains the explicitly lower-level compatibility path and invokes
 no initializer. `start` launches the owner on a live Tokio
@@ -3225,3 +3225,26 @@ ownership; imported SQL/license digests detect accidental changes. This does not
 change quota semantics, authorize replay after uncertain commit, or make local
 storage a fleet-wide limit. Persisted migrations and key/lock protocols remain
 compatible with the imported revision. See [provenance](../runlimit/IMPORT.md).
+
+### Protected service readiness and output
+
+`service::start_with_readiness` owns the first-readiness deadline and typed
+startup handoff. The deadline is absolute and installed before diagnostics or
+initialization run. Readiness requires application approval, driver execution,
+and every component acknowledgement. A transition at or after the deadline
+cannot publish Ready; an owned timer requests drain and records deadline expiry.
+A pre-deadline Ready transition is retained even if an observer runs later or
+shutdown has begun. Current lifecycle status remains a separate read-only view.
+
+Only consuming `StartingService::into_ready` transfers startup output. Observers
+cannot claim it, and no domain Clone bound is imposed. Failed delivery returns
+full service/diagnostic completion; rejected-output destruction failure has its
+own retained field and does not bypass running-driver settlement. A cancelled
+borrow of a retained handoff future does not cancel it. Dropping the owner or
+owning handoff future requests drain, including before first poll.
+
+This readiness deadline does not bound shutdown or diagnostic settlement; their
+existing budgets remain in force. It does not prove continuing readiness, remote
+effects, detached-task quiescence, runtime survival, or preemption of non-yielding
+code. Existing unit-output `service::start` remains supported without an added
+readiness deadline.

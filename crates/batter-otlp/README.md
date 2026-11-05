@@ -66,3 +66,10 @@ Run `cargo test -p batter-otlp --locked` and the workspace verification script.
 The adapter tests rerun affected cases in clean child processes when the invoking
 shell has `OTEL_*` settings; a separate child proves public preparation still
 rejects those settings.
+
+Services returning typed startup output use
+`service::start_with_readiness(startup, prepared, Some(absolute_deadline))` and
+consume `into_ready().await` before using that output. Core owns the deadline,
+readiness observation, drain and output handoff; the exporter keeps its existing
+completion witness and final-export ordering. The facade HTTP example selects
+this adapter with the `otlp` feature and `BATTER_OTLP_ENDPOINT`.

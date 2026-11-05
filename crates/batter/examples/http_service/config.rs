@@ -10,6 +10,7 @@ const NAMES: &[&str] = &[
     "BATTER_REQUEST_TIMEOUT_MS",
     "BATTER_BULKHEAD_CAPACITY",
     "RUST_LOG",
+    "BATTER_OTLP_ENDPOINT",
 ];
 
 // Application names, defaults and precedence live at this root.
@@ -18,6 +19,7 @@ pub(super) struct Config {
     pub request_budget: ResponseConstructionBudget,
     pub bulkhead_capacity: BulkheadCapacity,
     pub log_filter: Option<String>,
+    pub otlp_endpoint: Option<String>,
 }
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -76,6 +78,7 @@ impl Config {
             request_budget,
             bulkhead_capacity,
             log_filter: values.text("RUST_LOG")?.map(str::to_owned),
+            otlp_endpoint: values.text("BATTER_OTLP_ENDPOINT")?.map(str::to_owned),
         })
     }
 }

@@ -59,6 +59,14 @@ pub struct ShutdownHandle {
 }
 
 impl ShutdownHandle {
+    pub(crate) fn readiness_deadline(&self, deadline: tokio::time::Instant) {
+        self.shared.set_readiness_deadline(deadline);
+    }
+
+    pub(crate) fn expire_readiness(&self) {
+        self.shared.expire_readiness();
+    }
+
     /// Create an independent lifecycle that deliberately has no readiness
     /// approval capability and therefore remains Starting until shutdown.
     ///
@@ -161,6 +169,14 @@ pub struct LifecycleStatus {
 }
 
 impl LifecycleStatus {
+    pub(crate) fn startup_progress(&self) -> super::ReadinessProgress {
+        self.shared.startup_progress()
+    }
+
+    pub(crate) async fn wait_startup(&self) -> super::ReadinessProgress {
+        self.shared.wait_startup().await
+    }
+
     /// Current process readiness state.
     pub fn readiness(&self) -> Readiness {
         self.shared.readiness()

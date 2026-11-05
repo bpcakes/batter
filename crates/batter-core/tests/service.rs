@@ -382,3 +382,6 @@ async fn uncertain_native_settlement_remains_incomplete_after_service_completion
         }
     );
 }
+
+#[path = "service/readiness.rs"]
+mod readiness;

@@ -104,3 +104,10 @@ tests use `start_without_signals`. Its failure/interruption modes and
 ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 
 Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed.
+
+For typed initialization output and a readiness deadline, use
+`service::start_with_readiness(startup, diagnostics, Some(absolute_deadline))`.
+Its consuming `into_ready()` delivers `(ServiceOwner, output)` once, after all
+readiness gates pass; failure retains full service/diagnostic completion.
+`wait_ready()` on an owner or observer reports first-readiness history; use
+`status().readiness()` for current state. Unit-output `service::start` is unchanged.

@@ -8,6 +8,14 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `service::start_with_readiness` for an optional absolute readiness deadline
+  and single-use typed startup-output delivery. The lifecycle refuses late Ready
+  transitions; deadline expiry requests drain without a consumer timer. Owners
+  and observers expose current status and retained first-readiness evidence.
+  Failed output delivery retains full service/diagnostic completion, including
+  rejected-output destruction failures. Existing `service::start` callers keep
+  their unit-output API (`batter-m9rp`).
+
 - Keep unread phased-operation results under their producer tracing context even
   after publication ends. Only a completed wait transfers shared result
   destruction to caller ownership; observer cloning and waiter cancellation do not.
