@@ -5,9 +5,8 @@ use super::{
 };
 use batter_core::operation::{Interruption, OperationError, OperationOwner};
 use batter_sqlx::{
-    PgAtomicUncertainty, PgFailurePolicy, PgPolicyScope, PgProfiledPool, PgScopeFailure,
-    PgScopeLoss, PgSessionProfile, PgTransactionError, run_atomic_profiled_with_in,
-    run_atomic_with_in,
+    PgAtomicUncertainty, PgFailurePolicy, PgPolicyScope, PgScopeFailure, PgScopeLoss,
+    PgSessionProfile, PgTransactionError, run_atomic_profiled_with_in, run_atomic_with_in,
 };
 use std::time::Duration;
 
@@ -51,7 +50,7 @@ async fn policy_commit_uncertainty_survives_completion_poll_cancellation() -> Re
         Duration::ZERO,
         Duration::ZERO,
     )?;
-    let database = PgProfiledPool::connect_lazy(
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         (*options).clone(),
         profile,
         sqlx::postgres::PgPoolOptions::new().max_connections(1),

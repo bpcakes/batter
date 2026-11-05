@@ -25,7 +25,7 @@ fn relayed_database(harness: &Harness, relay: &Relay, bound: Duration) -> Runled
         .expect("profile");
     // The eager constructor probes and closes a separate connection first;
     // this one-session relay targets the lazy pool's actual migration session.
-    RunledgerDatabase::connect_lazy(
+    runledger_postgres::low_level::connect_database_lazy(
         relay.options.clone(),
         profile,
         sqlx::postgres::PgPoolOptions::new().max_connections(1),

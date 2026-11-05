@@ -6,6 +6,25 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Shared pool construction
+
+**Breaking:** `RunledgerDatabase::connect` and `connect_lazy` moved to explicitly
+caller-owned `low_level` functions. Protected consumers share an already registered
+`PgProfiledPool` instead. No deprecated shim: it would retain the unregistered
+canonical construction path. No persisted schema change or deployment ordering.
+
+```rust,ignore
+// Before:
+let db = RunledgerDatabase::connect(options, profile, 4).await?;
+let db = RunledgerDatabase::connect_lazy(options, profile, pool_options)?;
+// After, protected startup:
+let shared = batter_sqlx::pool_in(slot, pool_options, options, profile)?;
+let db = RunledgerDatabase::from_profiled(shared.clone())?;
+// After, standalone native owner retaining explicit cleanup obligations:
+let db = runledger_postgres::low_level::connect_database(options, profile, 4).await?;
+let db = runledger_postgres::low_level::connect_database_lazy(options, profile, pool_options)?;
+```
+
 ### Added
 
 - **Breaking:** replace both single-intent pool readers with

@@ -10,7 +10,7 @@ use batter_sqlx::verification::{
     QualifiedName, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationPlan,
     verify, verify_exact_role, verify_sqlx_migrations,
 };
-use batter_sqlx::{FailureClass, PgLease, SqlxFailure, pool_in, probe, register_pool_close};
+use batter_sqlx::{FailureClass, PgLease, SqlxFailure, probe};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{error::Error, time::Duration};
 
@@ -203,3 +203,6 @@ fn legacy_registration_signature_remains_exact() {
         &sqlx::PgPool,
     ) -> Result<(), batter_core::RegistrationError> = register_pool_close;
 }
+
+use batter_sqlx::low_level::pool_in;
+use batter_sqlx::low_level::register_pool_close;

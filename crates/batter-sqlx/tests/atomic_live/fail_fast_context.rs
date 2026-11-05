@@ -5,7 +5,7 @@ use super::{
 };
 use batter_core::operation::{OperationError, OperationOwner};
 use batter_sqlx::{
-    PgPolicyScope, PgProfiledPool, PgSessionProfile, run_atomic_fail_fast_with_in,
+    PgPolicyScope, PgSessionProfile, run_atomic_fail_fast_with_in,
     run_atomic_profiled_fail_fast_with_in,
 };
 use std::time::Duration;
@@ -24,7 +24,7 @@ async fn fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellat
             Duration::ZERO,
             Duration::ZERO,
         )?;
-        let database = PgProfiledPool::connect_lazy(
+        let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
             (*options).clone(),
             profile,
             sqlx::postgres::PgPoolOptions::new().max_connections(1),

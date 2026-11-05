@@ -42,6 +42,14 @@ under the existing Q02/Q03 continuity and uncertainty owners. This does not
 replace the broader promotion/retention protocol or prove remote rollback.
 See [implementation evidence](intent-reconciliation-2026-11-05.md).
 
+F07/F17 and Q01/Q02 have a protected pool-construction seam in `batter-nhu5`:
+`pool_in` consumes a pre-reserved cleanup slot and publishes closure before
+returning a profiled pool; Runledger validates and shares that pool instead of
+constructing separate capacity. Standalone constructors move to `low_level`.
+This addresses acquisition/cleanup publication and shared session-policy ownership,
+not all transitions in those four families. See
+[implementation evidence](owned-profiled-pool-2026-11-05.md).
+
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease
 protocols, and outcome retention. Many are private

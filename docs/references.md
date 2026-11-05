@@ -6503,3 +6503,18 @@ tests observe dialer calls rather than issuing traffic to public addresses.
 - Integration uses the workspace-locked SQLx 0.9.0 API and existing owned atomic
   runner; live failure evidence records PostgreSQL 18.6. No SQLx transaction or
   wire protocol implementation was added to production code.
+
+## Shared profiled pool ownership (2026-11-05)
+
+For `batter-nhu5`, rechecked the resolved SQLx 0.9.0 registry sources:
+`sqlx-core/src/pool/options.rs` (`connect_lazy_with`, lines 574–582),
+`sqlx-core/src/pool/mod.rs` (`close`, lines 420–443), and the shared `PoolInner`
+implementation. The upstream source locations are
+[pool options](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/options.rs)
+and [pool closure](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/mod.rs).
+Lazy construction can launch minimum-connection maintenance. Pool clones share
+capacity and closure; awaited close drains pool-accounted connections and waits
+for outstanding checkouts. It does not prove detached server sessions ended.
+The adapter's existing three profile hooks are unchanged. Local source inspection,
+plus the native PostgreSQL shared-pool test, is the executed evidence; the web
+retrieval of versioned docs.rs pages was unavailable during this check.

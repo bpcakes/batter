@@ -8,6 +8,59 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** protected PostgreSQL construction now requires an explicit session
+  profile and returns a `PgProfiledPool`. Runledger consumes a clone of that pool
+  through `RunledgerDatabase::from_profiled`; it no longer constructs a second
+  canonical pool. One reserved finalizer closes every view (`batter-nhu5`).
+
+  ```rust,ignore
+  // Before: unprofiled pool, or independently constructed profiled owners.
+  let pool = pool_in(slot, options, connection);
+  let app = PgProfiledPool::connect(connection, profile, 4).await?;
+  let app = PgProfiledPool::connect_lazy(connection, profile, options)?;
+  let jobs = RunledgerDatabase::connect(connection, profile, 4).await?;
+  let jobs = RunledgerDatabase::connect_lazy(connection, profile, options)?;
+  register_pool_close(&mut supervisor, "postgres.pool", &pool)?;
+
+  // After: acquire inside protected startup/command, before any await.
+  let app = pool_in(scope.reserve_cleanup("postgres.pool")?,
+      options, connection, profile)?;
+  let jobs = RunledgerDatabase::from_profiled(app.clone())?;
+  // app.pool() and jobs.pool() share capacity, policy and registered closure.
+
+  // Reference example helper, before -> after:
+  let db = database::configured(connection, options)?;
+  let db = database::configured(scope.reserve_cleanup("postgres.pool")?, connection, options)?;
+  // Caller-owned fixtures explicitly use database::low_level_configured(connection, options).
+  ```
+
+  Explicit standalone native ownership remains available with the same argument
+  and result shapes under deliberately weaker names:
+
+  ```rust,ignore
+  // Before -> after (caller still owns cancellation and awaited cleanup):
+  PgProfiledPool::connect(connection, profile, capacity).await?;
+  batter_sqlx::low_level::connect_profiled_pool(connection, profile, capacity).await?;
+  PgProfiledPool::connect_lazy(connection, profile, options)?;
+  batter_sqlx::low_level::connect_profiled_pool_lazy(connection, profile, options)?;
+  RunledgerDatabase::connect(connection, profile, capacity).await?;
+  runledger_postgres::low_level::connect_database(connection, profile, capacity).await?;
+  RunledgerDatabase::connect_lazy(connection, profile, options)?;
+  runledger_postgres::low_level::connect_database_lazy(connection, profile, options)?;
+  pool_in(slot, options, connection);
+  batter_sqlx::low_level::pool_in(slot, options, connection);
+  register_pool_close(&mut supervisor, "pool", &pool)?;
+  batter_sqlx::low_level::register_pool_close(&mut supervisor, "pool", &pool)?;
+  ```
+
+  No deprecated shims: the old canonical constructors/paired registration permit
+  use before cleanup publication, and the old `pool_in` lacks mandatory session
+  policy. The native-hook escape path preserves arbitrary callbacks. Profiled
+  hooks replace them; declare authority in the profile. Runledger still rejects
+  fallback schemas. Separate roles require separate pools. This is a source-only
+  migration: no database migration, baseline deployment or staged rollout.
+
+
 - **Breaking:** managed-object manifests require an explicit positive
   `ManagedRevision` (`batter-ofom`). A locked ledger rejects lower revisions and
   equal revisions with different content; identical reapplication remains allowed.

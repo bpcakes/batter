@@ -763,7 +763,8 @@ superuser connection on a dedicated disposable cluster, run
 configuration and case-inventory mismatches, then executes the two-case native
 migration target, the fifty-two-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
-disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
+disposition target, fourteen-case `low_level::pool_in` pool-ownership target
+and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
 The identity controls compare cross-schema multirange grants with native
 has_type_privilege and retain exact alias policies. The notice control runs all
@@ -3251,7 +3252,7 @@ The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
 an exact 185-case inventory across eight targets: two function-ACL profile
 cases, sixty-four owned atomic/snapshot cases, two migration cases, forty-three
 managed-object cases, eleven PostgreSQL lease/disposition and
-read-only-verification cases, fourteen owned-pool cases, thirteen facade
+read-only-verification cases, fourteen `low_level::pool_in` owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-
 and-protected-verification cases. Its verification controls use committed uniquely named
 fixture objects, exercise an explicitly allowed later migration,
@@ -3261,8 +3262,31 @@ PUBLIC authority, two policies and required unsupported coverage. It does not
 claim SECURITY DEFINER body behavior, durable application history, provisioning,
 or profile-grant equivalence; those remain in the consuming suite.
 
-Three live tests are explicitly ignored during ordinary runs, because database
-provisioning is external. With `DATABASE_URL` configured for a test database:
+Canonical profiled acquisition has separate coverage in
+`crates/batter-runledger/tests/shared_pool.rs`: six offline cases cover one
+registered finalizer after dependent drain, fallback-schema rejection without
+losing cleanup, zero capacity and duplicate reservation, initializer failure,
+startup-owner loss, and inert construction. With `test-support`, its seventh
+case (`shared_pool/live.rs`) provisions PostgreSQL through native Runledger test
+support and proves shared physical session/capacity, close waiting for a worker
+checkout, zero remaining pool size and subsequent `PoolClosed`. It is not
+ignored, so the workspace all-feature matrix executes it with Docker.
+The canonical SQLx live `atomic_live/profiled_pool.rs` case additionally checks
+replacement of arbitrary hooks, session restoration, fast acquisition and atomic
+policy through `pool_in`. The fourteen older `pool_ownership_live` cases retain
+native-hook and unprofiled protocol coverage through the explicit `low_level`
+path; their results are not canonical profile-hook evidence.
+
+```sh
+cargo test -p batter-runledger --all-features --test shared_pool --locked
+# External disposable DATABASE_URL required for this selected SQLx case:
+cargo test -p batter-sqlx --test atomic_live --locked \
+  profiled_pool::owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_policy \
+  -- --ignored --exact
+```
+
+Four lifecycle example live tests are explicitly ignored during ordinary runs,
+because database provisioning is external. With `DATABASE_URL` configured for a test database:
 
 ```sh
 cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked tests::live:: -- --ignored

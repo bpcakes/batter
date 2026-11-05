@@ -3,7 +3,6 @@ use super::{
     profile_timeouts::complete,
     support::{OBSERVE, Result, bounded, require},
 };
-use batter_sqlx::PgProfiledPool;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
@@ -18,8 +17,11 @@ async fn expiration(idle: TimeoutKind) -> Result {
         if idle { Duration::ZERO } else { limit },
     );
     bounded(fixture.pool.close()).await?;
-    let database =
-        PgProfiledPool::connect_lazy(options, profile, PgPoolOptions::new().max_connections(1))?;
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
+        options,
+        profile,
+        PgPoolOptions::new().max_connections(1),
+    )?;
     fixture.pool = database.pool().clone();
     let body = async {
         let mut connection = bounded(database.pool().acquire()).await??;

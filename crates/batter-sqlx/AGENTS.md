@@ -10,7 +10,9 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
 
 - `src/lib.rs`: default-retiring lease, consuming native migration execution
   (`migrate`, and `migrate_and_apply` for managed objects), bounded probe, pool
-  cleanup registration.
+  cleanup registration. `pool_in` requires a session profile and returns a
+  `PgProfiledPool` only after registering closure; caller-owned construction and
+  native-hook composition live in `low_level`.
 - `src/managed.rs` and `src/managed/`: the pure `ManagedObjectManifest`
   (`source.rs` lexer and header validation), the migrate-then-apply transaction
   (`apply.rs`) and the catalog resolution, ledger shape and canonical rendering

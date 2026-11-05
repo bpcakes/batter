@@ -19,7 +19,7 @@ async fn shared_contract_transaction_and_worker_round_trip() {
         Duration::ZERO,
     )
     .expect("test policy");
-    let profiled = runledger_postgres::RunledgerDatabase::connect((*options).clone(), profile, 1)
+    let profiled = runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
         .await
         .expect("test database");
     let version: String = sqlx::query_scalar("SHOW server_version")

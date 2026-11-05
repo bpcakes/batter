@@ -3,7 +3,7 @@ use super::{
     support::{Result, bounded, combine},
     validation::counted,
 };
-use batter_sqlx::{PgProfiledPool, PgSessionProfile};
+use batter_sqlx::PgSessionProfile;
 use sqlx::{Row, postgres::PgPoolOptions};
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ async fn idle_acquisition_statement_count_is_bounded_with_custom_settings() -> R
             for i in 0..setting_count {
                 profile = profile.with_setting(format!("batch.value_{i}"), "retained")?;
             }
-            let database = PgProfiledPool::connect_lazy(
+            let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
                 options.as_ref().clone(),
                 profile,
                 PgPoolOptions::new().max_connections(1),

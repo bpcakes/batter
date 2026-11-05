@@ -2,7 +2,7 @@
 use super::fixture::*;
 use runledger_core::jobs::JobType;
 use runledger_postgres::jobs::{JobEnqueueIntent, JobEnqueueIntentDisposition, JobScope};
-use runledger_postgres::{PgAtomicError, PgAtomicUncertainty, RunledgerDatabase, run_atomic};
+use runledger_postgres::{PgAtomicError, PgAtomicUncertainty, run_atomic};
 use sqlx::postgres::{PgPoolOptions, PgSslMode};
 use std::{
     sync::{
@@ -56,7 +56,7 @@ async fn unconfirmed_commit_recovers_the_same_intent_without_duplicate_submissio
             tokio::select! { result = response => result, result = request => result.map(|_| false) }
         }).await.expect("bounded commit proxy")
     });
-    let proxied = RunledgerDatabase::connect_lazy(
+    let proxied = runledger_postgres::low_level::connect_database_lazy(
         (*source)
             .clone()
             .host("127.0.0.1")

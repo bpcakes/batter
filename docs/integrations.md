@@ -481,14 +481,21 @@ then independently observe every retired backend disappear.
 remains `OperationError::Interrupted`, separate from native pool timeout or commit
 errors. Trusted source-chain inspection and SQLx's own logging can expose native
 contents. This adapter adds no database provisioning or retry policy.
-`register_pool_close` retains caller ownership on
+`low_level::register_pool_close` retains caller ownership on
 registration failure; the caller must explicitly close that pool.
 
 For a pool created inside a Batter owner, reserve its cleanup name first and call
-`pool_in(slot, PgPoolOptions, PgConnectOptions)`. The synchronous return means the
-awaited close hook has already been published; it does not mean the database was
-contacted. Perform a bounded query or `probe` before readiness. SQLx can begin
-minimum-connection maintenance during lazy construction, and pool close waits for
+`pool_in(slot, PgPoolOptions, PgConnectOptions, profile)?`. The synchronous return
+means the awaited close hook has already been published; it does not mean the database was
+contacted. Perform a bounded query or `probe` before readiness.
+The returned `PgProfiledPool` shares its immutable policy and physical pool with
+`RunledgerDatabase::from_profiled(pool.clone())?`, which rejects fallback schemas
+and registers no second finalizer. Construct it inside the protected initializer;
+return the database as typed startup output when the running caller needs it.
+Different roles still require different pools. Standalone native owners explicitly
+use `low_level` constructors and retain their cleanup obligations.
+
+SQLx can begin minimum-connection maintenance during lazy construction, and pool close waits for
 accounted checkouts, so join dependent work and release leases before cleanup.
 The adapter-owned `owned_pool` example demonstrates this finite `Command` path;
 its root calls `start_with_unix_signals()?`, so SIGINT or SIGTERM cancels the
@@ -499,14 +506,15 @@ The [service example](../examples/postgres-lifecycle/src/main.rs), packaged as
 .with_unix_signals("signals")`, which installs listeners before the owner is
 returned and removes any initializer reception/handoff obligation. Its
 initializer parses `DATABASE_URL` into native `PgConnectOptions`, reserves
-`postgres.pool`, calls `pool_in` with native PgPoolOptions, and then runs the
-bounded `probe` under a child of the root startup context; construction alone is
+`postgres.pool`, calls `pool_in` with native PgPoolOptions and an explicit profile,
+and then runs the bounded `probe` under a child of the root startup context; construction alone is
 not connectivity. The reference root shares the `pool_in` ownership path but
 establishes connectivity by directly acquiring a connection and then initializing
 its schema under the overall startup context. The finite retirement command passes
-its `CommandScope` slot and native `after_connect` guard to `pool_in` unchanged.
-`register_pool_close` and
-`register_signals` remain lower-level compatibility helpers. Pool sizing,
+its `CommandScope` slot and native `after_connect` guard to `low_level::pool_in`
+unchanged.
+`low_level::register_pool_close` and
+`register_signals` remain lower-level helpers. Pool sizing,
 probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain after `wait_checked().await?`. No database abstraction or generic

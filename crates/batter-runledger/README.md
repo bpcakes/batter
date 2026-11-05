@@ -163,3 +163,11 @@ neither depends on the facade or this adapter. Publishing remains a separate dec
 Runledger qualifies and checks authoritative objects, returning a
 `SchemaCompatibilitySnapshot` after rollback. It never borrows caller session
 state. The snapshot records one compatible observation, not future validity.
+
+Protected database construction uses `batter_sqlx::pool_in(slot, options,
+connection, profile)?` followed by `RunledgerDatabase::from_profiled(pool.clone())?`.
+Application SQL and Runledger then share one physical pool and one registered
+finalizer. Runledger requires exactly one trusted schema, as before. Create the
+pool inside protected startup and return it as typed output if the running caller
+needs it; native standalone constructors live under `native::postgres::low_level`
+and retain caller-owned cleanup. Distinct session authority needs distinct pools.

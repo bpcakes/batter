@@ -42,14 +42,15 @@
 //!
 //! ```rust,no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-//! use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+//! use runledger_postgres::PgSessionProfile;
 //! use std::time::Duration;
 //! let options = "postgres://login@localhost/runledger".parse()?;
 //! let profile = PgSessionProfile::new("login", "serving", vec!["application".into()],
 //!     Duration::from_secs(30), Duration::from_secs(5))?;
-//! let database = RunledgerDatabase::connect(options, profile, 8).await?;
+//! let database = runledger_postgres::low_level::connect_database(options, profile, 8).await?;
 //! runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
 //! let pool = database.pool(); // ordinary APIs and runtime use the same policy
+//! pool.close().await; // standalone native caller owns cleanup
 //! # Ok(())
 //! # }
 //! ```
@@ -546,3 +547,7 @@ impl Error {
         Self::CommitUnconfirmed(CommitUnconfirmed::new(operation, error))
     }
 }
+
+/// Standalone native database construction with caller-owned cleanup.
+/// Protected services use `batter_sqlx::pool_in` and [`RunledgerDatabase::from_profiled`].
+pub mod low_level;

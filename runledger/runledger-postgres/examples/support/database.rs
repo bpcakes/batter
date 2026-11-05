@@ -15,5 +15,5 @@ pub async fn connect(url: &str) -> Result<RunledgerDatabase, Box<dyn std::error:
         Duration::from_secs(30),
         Duration::from_secs(5),
     )?;
-    Ok(RunledgerDatabase::connect(options, profile, 5).await?)
+    Ok(runledger_postgres::low_level::connect_database(options, profile, 5).await?)
 }

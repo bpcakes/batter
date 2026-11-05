@@ -72,11 +72,9 @@ pub use atomic_policy::{
 pub use atomic_runner::{
     PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic, run_atomic_profiled,
 };
-/// Exceptional consuming composition. Outputs are provisional and completion
-/// must be paired by the caller. Prefer [`run_atomic`] on the canonical path.
-pub mod low_level {
-    pub use crate::atomic::PgAtomicTransaction;
-}
+/// Caller-owned transactions and pools. These entry points require explicit
+/// completion/cleanup and are not equivalent to the protected runners or [`pool_in`].
+pub mod low_level;
 pub use failure::{FailureClass, SqlxFailure};
 pub use native_query::PgNativeQuery;
 pub use pooled_query::PgQueryHandle;
@@ -87,9 +85,7 @@ pub use session::{PgExecutor, PgSession};
 pub use snapshot::{PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError};
 
 use batter_core::{
-    RegistrationError,
     cleanup::CleanupSlot,
-    lifecycle::Supervisor,
     operation::{OperationContext, OperationError},
 };
 use sqlx::{
@@ -524,70 +520,54 @@ pub async fn probe(
         .await
 }
 
-/// Construct a native lazy PostgreSQL pool and publish its close finalizer.
+/// Construct one lazy profiled pool and register closure before returning it.
 ///
-/// `slot` must be reserved before this call. Successful native construction is
-/// followed immediately by infallible cleanup registration, before the pool is
-/// returned. Return does not establish connectivity, authentication, query or
-/// schema readiness: use a native operation or [`probe`] explicitly afterward.
-/// Native pool options and callbacks are preserved without modification.
+/// Migration: `pool_in(slot, options, connection)` now also requires `profile`
+/// and returns `Result<PgProfiledPool, sqlx::Error>`. Replace
+/// `PgProfiledPool::connect`/`PgProfiledPool::connect_lazy` plus manual close
+/// registration with this function. Native-hook construction is deliberately
+/// confined to [`low_level::pool_in`]. No deprecated shim preserves that gap.
 ///
-/// SQLx may start maintenance work during lazy construction, including minimum
-/// connection work, so call this on a compatible live Tokio runtime. Native
-/// constructor panics are not converted and no runtime-death cleanup is implied.
-/// The finalizer awaits [`PgPool::close`]; callers must first join dependent work
-/// and release checked-out connections. Local closure does not prove remote
-/// cancellation, transaction rollback, or detached server-session termination.
+/// The pre-reserved slot cannot reject registration. Positive capacity is
+/// validated before SQLx construction; construction and registration never yield.
+/// All three session hooks are library-owned; other native pool options remain.
+/// Return proves neither connectivity nor schema readiness: probe explicitly.
+/// Call within a live Tokio runtime; native construction panics are not converted.
+/// The registered finalizer awaits native close after dependent work stops.
+/// Clones share both capacity and closure; closing one closes all views. This
+/// does not prove remote cancellation or detached server-session termination.
 ///
 /// ```no_run
 /// use batter_core::cleanup::{CleanupBudget, CleanupStack};
-/// use batter_sqlx::pool_in;
+/// use batter_sqlx::{PgSessionProfile, pool_in};
 /// use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 /// use std::time::Duration;
-/// # async fn example() -> Result<(), batter_core::RegistrationError> {
+/// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// let mut cleanup = CleanupStack::new();
-/// let pool = pool_in(
-///     cleanup.reserve("postgres.pool")?,
-///     PgPoolOptions::new(),
-///     PgConnectOptions::new(),
-/// );
-/// // Perform an explicit query or `batter_sqlx::probe` before readiness.
-/// # drop(pool);
-/// # let second = Duration::from_secs(1);
-/// # let budget = CleanupBudget::new(second, second, second).unwrap();
-/// # assert!(cleanup.close(budget).await.is_success());
+/// let profile = PgSessionProfile::new("service", "service", vec!["public".into()],
+///     Duration::ZERO, Duration::ZERO)?;
+/// let database = pool_in(cleanup.reserve("postgres.pool")?,
+///     PgPoolOptions::new(), PgConnectOptions::new(), profile)?;
+/// // Probe database.pool() before readiness. Stop dependents before cleanup.
+/// let second = Duration::from_secs(1);
+/// let report = cleanup.close(CleanupBudget::new(second, second, second)?).await;
+/// assert!(report.is_success());
+/// assert!(database.pool().is_closed());
 /// # Ok(()) }
 /// ```
 pub fn pool_in(
     slot: CleanupSlot<'_>,
     pool_options: PgPoolOptions,
     connect_options: PgConnectOptions,
-) -> PgPool {
-    let pool = pool_options.connect_lazy_with(connect_options);
-    let closing = pool.clone();
+    profile: PgSessionProfile,
+) -> Result<PgProfiledPool, sqlx::Error> {
+    let database = PgProfiledPool::connect_lazy(connect_options, profile, pool_options)?;
+    let closing = database.pool().clone();
     slot.register(move || async move {
         closing.close().await;
         Ok(())
     });
-    pool
-}
-
-/// Register native pool close in the supervisor's explicit LIFO cleanup stack.
-///
-/// Register after acquisition, before dependents. On registration failure the
-/// caller still owns `pool` and must close it explicitly. Cleanup is awaited
-/// through the supervisor or extracted stack and bounded by its cleanup budget.
-/// Closure waits for pool-accounted connections, not detached server sessions.
-pub fn register_pool_close(
-    supervisor: &mut Supervisor,
-    name: &'static str,
-    pool: &PgPool,
-) -> Result<(), RegistrationError> {
-    let pool = pool.clone();
-    supervisor.on_cleanup(name, move || async move {
-        pool.close().await;
-        Ok(())
-    })
+    Ok(database)
 }
 
 #[cfg(feature = "test-support")]

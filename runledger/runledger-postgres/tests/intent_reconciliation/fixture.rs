@@ -69,7 +69,7 @@ impl Fixture {
             Duration::from_secs(2),
         )
         .expect("construct validated fixture input");
-        let service = RunledgerDatabase::connect(options, profile, 3)
+        let service = runledger_postgres::low_level::connect_database(options, profile, 3)
             .await
             .expect("complete fixture database operation");
         Self {
