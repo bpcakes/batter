@@ -88,6 +88,21 @@ it into a context when they do not need request cancellation authority.
 `run` creates a child token and cancels it on return or drop. The original parent
 remains reusable until cancelled or expired.
 
+`child_until(Instant)` returns an owned child at the earlier of the requested
+instant and the parent deadline. Elapsed instants are valid expired children;
+this never creates a fresh independent root or grants cancellation over a parent.
+
+`run_tracked` uses the same execution boundary as `run`, and distinguishes an
+opaque `NotStarted` (this call never invoked its factory) from `Interrupted`
+after invocation and a concrete returned `Failed` error. It supplies no `From`
+conversions that erase these distinctions. Invocation may itself perform work;
+started does not mean a request was sent, and `NotStarted` says nothing about
+earlier calls, capture destruction or independently running work. It grants no
+replay authority. The reference provider dispatch handles this call's
+`NotStarted` as known non-dispatch; after-start interruption still requires its
+existing reconciliation protocol. Dropping an unpolled or pending run produces
+no result evidence. Legacy `run` deliberately reports both phases as interruption.
+
 Preflight checks prevent starting a factory that is already cancelled/expired.
 When branches are simultaneously ready, cancellation precedes deadline, which
 precedes future completion. A just-completed side effect can therefore have an

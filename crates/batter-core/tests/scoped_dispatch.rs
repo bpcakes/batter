@@ -217,3 +217,6 @@ async fn operation_still_accepts_borrowed_non_send_work() {
     assert_eq!(result, "borrowed value");
     assert_eq!(count.get(), 1);
 }
+
+#[path = "scoped_dispatch/tracked.rs"]
+mod tracked;

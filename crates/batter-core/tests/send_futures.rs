@@ -114,6 +114,7 @@ fn operation_retry_and_admission_futures_are_send() {
     let classify = |_: &io::Error| RetryDecision::Stop;
     let _ = |context: &OperationContext| {
         send(context.cancelled());
+        send(context.run_tracked("send.check", work));
         send(context.run("send.check", work));
         send(context.run_resolved("send.check", work, |result| result));
     };

@@ -8,6 +8,14 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `OperationContext::run_tracked`, whose exhaustive `TrackedOperationError`
+  separates opaque `NotStarted` evidence from interruption after factory
+  invocation. Add `child_until(Instant)` for a parent-clamped absolute child
+  deadline, including already elapsed instants. Existing `run` and
+  `run_resolved` behavior and precedence remain unchanged. Reference provider
+  dispatch uses the evidence to classify a refused call as known non-dispatch
+  (`batter-2hqe`).
+
 - Add `service::start_with_readiness` for an optional absolute readiness deadline
   and single-use typed startup-output delivery. The lifecycle refuses late Ready
   transitions; deadline expiry requests drain without a consumer timer. Owners

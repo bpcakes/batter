@@ -1,0 +1,40 @@
+Tracked operation invocation (batter-2hqe)
+
+Baseline: merged master f665e8328de7a08ecc76d3c9a63e5a0396328b6c.
+Baseline JSON generated from c7d57b5 (PR #88 head, same core source as merge).
+Candidate: feat/tracked-operation implementation, 2026-11-05.
+Method: cargo +nightly rustdoc -p batter-core --lib --all-features --locked --
+        -Zunstable-options --output-format json
+        surface.py <before> <after> batter-core
+Inspection toolchain: rustc/rustdoc 1.101.0-nightly (32dba69d6 2026-10-09).
+Build and behavioral validation use the pinned Rust 1.98.1, not this nightly.
+
+Existing public signatures and bounds are unchanged on manual source review.
+All new enum variants belong to the new TrackedOperationError; NotStarted's
+field is not public. No public item was removed, renamed or moved. No hard cut,
+migration shim or deprecation is needed. The facade reexports the core module.
+The name-based inventory below does not prove behavioral compatibility;
+existing operation, resolver, scheduling and adapter tests cover that separately.
+
+## batter-core: 1277 -> 1298 entries; 0 removed, 21 added
++ ADDED   enum batter_core::operation::TrackedOperationError
++ ADDED   impl batter_core::operation::NotStarted: Clone
++ ADDED   impl batter_core::operation::NotStarted: Copy
++ ADDED   impl batter_core::operation::NotStarted: Debug
++ ADDED   impl batter_core::operation::NotStarted: Display
++ ADDED   impl batter_core::operation::NotStarted: Eq
++ ADDED   impl batter_core::operation::NotStarted: Error
++ ADDED   impl batter_core::operation::NotStarted: PartialEq
++ ADDED   impl batter_core::operation::NotStarted: StructuralPartialEq
++ ADDED   impl batter_core::operation::TrackedOperationError: Debug
++ ADDED   impl batter_core::operation::TrackedOperationError: Display
++ ADDED   impl batter_core::operation::TrackedOperationError: Error
++ ADDED   method batter_core::operation::NotStarted::reason
++ ADDED   method batter_core::operation::OperationContext::child_until
++ ADDED   method batter_core::operation::OperationContext::run_tracked
++ ADDED   struct batter_core::operation::NotStarted
++ ADDED   use batter_core::operation::NotStarted <- tracked::NotStarted
++ ADDED   use batter_core::operation::TrackedOperationError <- tracked::TrackedOperationError
++ ADDED   variant batter_core::operation::TrackedOperationError::Failed
++ ADDED   variant batter_core::operation::TrackedOperationError::Interrupted
++ ADDED   variant batter_core::operation::TrackedOperationError::NotStarted

@@ -2,6 +2,7 @@ use super::*;
 use serde_json::json;
 
 mod http2;
+mod tracked;
 
 #[path = "../../../../crates/batter-otlp/tests/support/client.rs"]
 mod tls_fixture;

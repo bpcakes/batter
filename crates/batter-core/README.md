@@ -111,3 +111,9 @@ Its consuming `into_ready()` delivers `(ServiceOwner, output)` once, after all
 readiness gates pass; failure retains full service/diagnostic completion.
 `wait_ready()` on an owner or observer reports first-readiness history; use
 `status().readiness()` for current state. Unit-output `service::start` is unchanged.
+
+`OperationContext::run_tracked` returns opaque `NotStarted` evidence when its
+factory was not invoked, keeping that distinct from an interrupted invocation.
+Use `child_until` for an absolute child deadline clamped to the parent; past
+instants yield expired children. See their rustdoc examples for exhaustive
+handling. Existing `run` retains its original error shape and precedence.
