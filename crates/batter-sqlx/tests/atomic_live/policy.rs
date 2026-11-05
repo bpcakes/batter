@@ -144,7 +144,7 @@ async fn policy_caught_loss_cannot_run_more_work_or_commit() -> Result {
             let later = scope
                 .sql(async |_| {
                     panic!("poison must prevent subsequent invocation");
-                    #[allow(unreachable_code)]
+                    #[expect(unreachable_code, reason = "names the return type")]
                     Ok(())
                 })
                 .await
@@ -254,7 +254,7 @@ async fn policy_begin_failure_does_not_invoke_body() -> Result {
     fixture.pool.close().await;
     let result = run_atomic_with(&fixture.pool, &Policy, async |_| {
         panic!("begin failure must prevent body invocation");
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code, reason = "names the return type")]
         Ok(1)
     })
     .await;

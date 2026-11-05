@@ -7,7 +7,13 @@
 use crate::cleanup::CleanupOutcome;
 
 /// How a registered cleanup hook ended.
-#[cfg_attr(not(feature = "metrics"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "metrics"),
+    expect(
+        dead_code,
+        reason = "only metric recording reads cleanup hook outcomes"
+    )
+)]
 pub(crate) enum CleanupHook {
     Observed(CleanupOutcome),
     Skipped,

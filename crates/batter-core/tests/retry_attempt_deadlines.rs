@@ -1,3 +1,6 @@
+//! Per-attempt retry deadlines and the legacy retry outcome codes.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     ConfigurationError,
     operation::Interruption,

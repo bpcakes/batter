@@ -1,12 +1,14 @@
-#![cfg(feature = "operation")]
 //! `send_in` under an `OperationContext`'s deadline and cancellation.
 //!
 //! Cancellation before the start proves nothing was sent; cancellation after
 //! the start never claims more than the peer's evidence supports. Each test
 //! prepares its request before its context's budget starts, so client
 //! construction time under load cannot use up the budget.
+#![cfg(feature = "operation")]
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 
@@ -272,4 +274,26 @@ async fn child_context_cancelled_through_its_parent_is_unknown() {
         "{outcome:?}"
     );
     peer.single_request().await;
+}
+
+#[tokio::test]
+async fn cancellation_during_tls_setup_is_not_started() {
+    let peer = Peer::start([Step::Sniff, Step::Hold]).await;
+    let request = peer
+        .tls_client(Duration::from_secs(5))
+        .request(Method::POST, ["v1", "effects"])
+        .prepare()
+        .unwrap();
+    let operation = owner(Duration::from_secs(5));
+    let (outcome, ()) = tokio::join!(request.send_in(operation.context(), limit(1024)), async {
+        peer.wait_sniffed(1).await;
+        operation.cancel();
+    });
+    assert!(
+        matches!(&outcome, Exchange::NotStarted(reason) if reason.reason() == StartRefusal::Cancelled),
+        "{outcome:?}"
+    );
+    assert!(outcome.proves_unsent());
+    assert_eq!(peer.connections(), 1);
+    assert!(peer.requests().is_empty());
 }

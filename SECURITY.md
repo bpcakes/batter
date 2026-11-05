@@ -21,28 +21,23 @@ decompression. The reference provider uses the same TLS policy. The experimental
 exchange (`batter-outbound-http`, also `batter::outbound_http`) builds its own client
 too: the package fixes its rustls configuration, with the *ring* provider passed explicitly,
 TLS 1.3 and 1.2 only and, for an HTTPS origin, the operating system's
-certificate verifier; `https_only` for an HTTPS origin, as defence in depth
-behind `Origin::https`; an ALPN list of `http/1.1` only; and a required
+certificate verifier; validated HTTPS origins; an ALPN list of `http/1.1` only; and a required
 `ResponseLimit` on every response body. The application still owns the trust
 store and its environment, such as `SSL_CERT_FILE` and `SSL_CERT_DIR` on Linux,
 any process-default crypto provider that other crates in its graph need,
 certificate pinning, which the package does not offer, and every egress or
 destination policy: `Origin::https` accepts any HTTPS host the application
 passes, IP literals included. The package adds no instrumentation of its own,
-but its dependencies log destination identities (source-inspected): reqwest the
-host at debug level, hyper-util the origin's authority and the socket addresses
-it connects to at debug and trace level, and rustls-platform-verifier a failed
-certificate verification at error level, with the expected and presented names
-for a name mismatch. When another crate in the application's graph enables
-rustls's `logging` feature, a default of rustls, tokio-rustls and
-hyper-rustls, rustls also logs the server name at debug level and the
-ClientHello and the server certificate chain at trace level. None of them
-carries an exchange's path, query, header value or body. The application's
-logger or subscriber configuration owns filtering the `reqwest`,
-`hyper_util`, `rustls_platform_verifier` and `rustls` targets. No outbound-exchange
-test verifies a certificate. Its local macOS checks in `batter-8e8r` cover
-transport behavior; the separate OTLP/reference migration in `batter-7oob`
-tests self-signed certificate rejection and an explicitly trusting control.
+but rustls-platform-verifier may log certificate failures and names. When the
+application graph enables rustls's `logging` feature, rustls may also log server
+names, ClientHellos and certificate chains. Application logger configuration
+owns filtering `rustls_platform_verifier` and `rustls`. This transport no longer
+calls reqwest or hyper-util's legacy client. Each exchange owns its TCP/TLS
+connection and driver, with deadline/cancellation gates at handoff and each
+write/flush, including below TLS. No background writer can outlive its future;
+bytes already accepted by the kernel remain remotely uncertain. The new
+transport's macOS behavior has not been executed; earlier local macOS evidence
+in `batter-8e8r` predates it. See [references](docs/references.md#owned-outbound-http1-connections-2026-11-04).
 
 Bulkhead does not bound its waiter count or request memory. HTTP deadlines stop
 at response construction and do not protect streaming sessions or every slow

@@ -1,5 +1,7 @@
 //! External-style completion controls shared with the temporary facade consumer.
 #![deny(unused_must_use)]
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter::{
     BoxError,
@@ -19,7 +21,10 @@ use std::{
     time::Duration,
 };
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "typechecked through the constant below; shared with the temporary facade consumer"
+)]
 fn direct_success(_: batter_core::lifecycle::ShutdownSuccess) {}
 const _: fn(ShutdownSuccess) = direct_success;
 

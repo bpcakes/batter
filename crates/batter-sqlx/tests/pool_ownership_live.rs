@@ -1,4 +1,6 @@
 //! Ignored in ordinary gates; scripts/test_sqlx_live.sh requires every case.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     BoxError, RegistrationError,
@@ -435,7 +437,7 @@ async fn application_panic_keeps_pool_cleanup() -> Result {
                 .await
                 .unwrap();
             panic!("pool-application-panic-marker");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok::<(), RegistrationError>(())
         })
     })

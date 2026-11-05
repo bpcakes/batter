@@ -55,7 +55,7 @@ pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
     let mut process = process(Duration::from_millis(20), Duration::from_millis(20));
     process.on_cleanup("dependency", || async {
         panic!("unjoined native callback must prevent dependency cleanup");
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code, reason = "names the return type")]
         Ok(())
     })?;
     let native_pool = pool.clone();

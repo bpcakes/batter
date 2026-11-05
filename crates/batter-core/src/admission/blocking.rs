@@ -321,7 +321,10 @@ fn join_failure(error: JoinError) -> BlockingError {
             BlockingError::Panicked(PanicPayload::new(payload))
         }
         Err(error) => {
-            debug_assert!(error.is_cancelled());
+            debug_assert!(
+                error.is_cancelled(),
+                "a join error without a panic payload is a cancellation"
+            );
             BlockingError::NotStarted
         }
     }

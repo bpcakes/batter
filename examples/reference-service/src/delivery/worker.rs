@@ -228,7 +228,10 @@ impl DeliveryWorker {
         payload: &DeliveryJobPayload,
         snapshot: &EffectSnapshot,
     ) -> Result<ReconcileAction, JobFailure> {
-        debug_assert!(snapshot.retention_active);
+        debug_assert!(
+            snapshot.retention_active,
+            "reconciliation is planned only while provider retention is active"
+        );
         let permit = match self.admission.enter(operation, Admission::Wait).await {
             Ok(permit) => permit,
             Err(error) => {

@@ -122,7 +122,91 @@ a marker over the held connection to detect unexpected HTTP bytes or closure.
 This prevents accidental ephemeral allocation, not deliberate explicit
 `SO_REUSEADDR`/`SO_REUSEPORT` rebinding by another process.
 
+## Owned outbound HTTP/1 connections, 2026-11-04
+
+`batter-u387` removes reqwest from the leaf's normal dependency graph. Cargo
+resolves hyper 1.11.1, hyper-util 0.1.20, Tokio 1.54.1, tokio-rustls 0.26.6,
+rustls 0.23.46, rustls-platform-verifier 0.7.1 and http-body-util 0.1.5.
+The exact downloaded registry sources were inspected; the web renderer could
+not retrieve the pinned documentation URLs.
+
+- [hyper HTTP/1 handshake](https://docs.rs/hyper/1.11.1/hyper/client/conn/http1/fn.handshake.html)
+  returns a SendRequest and a Connection. In `src/client/conn/http1.rs`,
+  handshake constructs these without spawning a task. Connection must be
+  polled by its owner; Batter polls it alongside the response/body receiver.
+- [SendRequest::send_request](https://docs.rs/hyper/1.11.1/hyper/client/conn/http1/struct.SendRequest.html#method.send_request)
+  synchronously calls dispatch.send before returning the response future. Its
+  documented request contract requires Host and sends the URI as supplied.
+  Batter builds Host and an origin-form path/query at preparation. The final
+  gate directly precedes this synchronous handoff.
+- [Connection](https://docs.rs/hyper/1.11.1/hyper/client/conn/http1/struct.Connection.html)
+  performs HTTP/1 I/O when polled. `src/proto/h1/dispatch.rs` polls reading,
+  writing and flushing inside its loop. Batter owns this driver and never
+  spawns it. Read-side progress after expiry is permitted only through I/O
+  wrappers that block new writes/flushes; unsent proof is based on no handoff,
+  not on a hyper error kind or the driver's internal loop order.
+- [TokioIo](https://docs.rs/hyper-util/0.1.20/hyper_util/rt/struct.TokioIo.html)
+  adapts Tokio read/write traits to hyper. Only hyper-util's tokio feature is
+  required by the leaf. The legacy client/pool code is not invoked.
+- [TlsConnector::connect](https://docs.rs/tokio-rustls/0.26.6/tokio_rustls/struct.TlsConnector.html#method.connect)
+  returns a handshake future over the supplied stream and uses the supplied
+  Arc<ClientConfig>. `src/common/mod.rs` can write TLS records while servicing
+  a read, including an alert after packet processing fails. Therefore Batter
+  guards TCP below TLS as well as plaintext writes above it. No detached TLS
+  writer is created by this path.
+- [Incoming](https://docs.rs/hyper/1.11.1/hyper/body/struct.Incoming.html) exposes
+  framed response data and a body size hint. Batter uses its exact size hint,
+  rather than a raw Content-Length header, so HEAD/bodyless replies remain
+  empty even when the header describes a representation. BodyExt::frame reads
+  data/trailers; trailers are consumed without becoming message-body bytes.
+- Tokio's [TcpStream::connect](https://docs.rs/tokio/1.54.1/tokio/net/struct.TcpStream.html#method.connect)
+  awaits resolved addresses serially (`src/net/tcp/stream.rs:121-137`). The
+  earlier reqwest 0.13.5 connector used hyper-util's
+  [300 ms family fallback](https://docs.rs/hyper-util/0.1.20/hyper_util/client/legacy/connect/struct.HttpConnector.html#method.set_happy_eyeballs_timeout)
+  and [shared address timeouts](https://docs.rs/hyper-util/0.1.20/hyper_util/client/legacy/connect/struct.HttpConnector.html#method.set_connect_timeout).
+  `batter-4p4a` therefore resolves through Tokio's
+  [lookup_host](https://docs.rs/tokio/1.54.1/tokio/net/fn.lookup_host.html) and
+  runs its own bounded TCP candidate futures. The other family starts after
+  at most 300 ms or half the remaining setup budget; each family's remaining
+  addresses share its remaining time. Losing candidates drop before TLS/HTTP.
+  DNS can use blocking work, but it owns no HTTP request or connection writer.
+- reqwest 0.13.5 `src/async_impl/client.rs:284-285` supplies default
+  `Accept: */*`. The direct request assembler preserves it only when the caller
+  supplied no Accept. The omission has equivalent negotiation meaning under
+  [RFC 9110 section 12.4.1](https://httpwg.org/specs/rfc9110.html#section-12.4.1),
+  but preserving the previous wire shape avoids an unrelated policy change.
+
+The TLS failure-path test calls the production TLS assembly and HTTP driver
+over controlled raw I/O. It leaves encrypted HTTP records buffered, then
+injects an invalid TLS record while the writer becomes writable. Exact
+tokio-rustls 0.26.6 `common/mod.rs:109-115` calls write_io on a packet-processing
+error; rustls 0.23.46 `common_state.rs:633-644` queues its alert without clearing
+pending records, and `conn.rs:812-813` drains that queue. Temporarily removing
+the raw guard made the regression fail with request ciphertext written after
+expiry. A second ablation removed the direct setup clock recheck and made the
+late-ready setup test dispatch instead of returning an unsent timeout. Both
+protections were restored and the unit suite passed. These focused Linux
+experiments belong to `batter-4p4a`; they do not establish live dual-stack routing
+or new macOS evidence.
+
+TLS construction retains explicit ring, TLS 1.3/1.2, http/1.1 ALPN, the platform
+verifier for HTTPS and empty roots for loopback. The earlier verifier/rustls
+source observations below still apply: macOS verification may block a poll,
+Linux roots follow SSL_CERT_FILE/SSL_CERT_DIR, and verifier/rustls logs can
+contain certificate/destination identities. reqwest and legacy hyper-util
+pool/destination logs no longer arise from this transport path. The
+application still owns logger filtering and any default provider needed by
+other dependencies. These are source observations, not claims of new macOS
+execution. Exact performed verification is recorded in `batter-u387` and
+the panel follow-up `batter-4p4a`.
+
 ## reqwest 0.13.5 and hyper-util 0.1.20 for the outbound exchange, 2026-11-02
+
+Historical pooled implementation, superseded by `batter-u387` and the
+[owned connection contract](#owned-outbound-http1-connections-2026-11-04).
+Its error-kind classification, idle pool, silent resend and destination logs
+no longer describe the outbound transport. The source observations below are
+retained as the evidence behind the original decision.
 
 For `batter-3s1a`, `Cargo.lock` resolves reqwest 0.13.5 (default features off,
 `rustls-no-provider`), rustls 0.23.46 (`ring`, `std`, `tls12`),

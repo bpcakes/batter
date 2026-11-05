@@ -1,3 +1,4 @@
+//! Scripted outcomes and teardown failure combination keep every failure distinct.
 use batter_test_support::{Script, ScriptError, TestFailure, finish};
 
 #[test]

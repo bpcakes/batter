@@ -101,7 +101,7 @@ async fn work_poll_and_future_destruction_panics_both_survive_finalization() {
             });
         Box::pin(DropPanic::new(async {
             panic!("secret polling payload");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok::<_, Original>(())
         }))
     })
@@ -133,7 +133,7 @@ async fn factory_panic_still_finalizes_registered_resources() {
                 Ok(())
             });
         panic!("secret factory payload");
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code, reason = "names the return type")]
         Box::pin(async { Ok::<_, Original>(()) })
     })
     .start();

@@ -1,16 +1,16 @@
 //! Fresh processes keep sibling tests from pre-registering cleanup callsites.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/capture.rs"]
 mod capture;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/evidence.rs"]
 mod evidence;
 #[path = "../../../../test-support/process/launch.rs"]
 mod launch;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/timing.rs"]
 mod timing;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../../test-support/process/watchdog.rs"]
 mod watchdog;
 

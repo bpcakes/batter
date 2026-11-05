@@ -237,7 +237,10 @@ pub async fn unjoined_finite(case: Case) {
             loop {
                 std::thread::park();
             }
-            #[allow(unreachable_code)]
+            #[expect(
+                unreachable_code,
+                reason = "names the task's return type after the endless park loop"
+            )]
             Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();

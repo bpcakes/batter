@@ -123,7 +123,7 @@ async fn fail_fast_rejection_rolls_back_prior_writes_and_refuses_caught_success(
                         let refusal = scope
                             .sql(async |_| {
                                 panic!("closed scope must not invoke SQL work");
-                                #[allow(unreachable_code)]
+                                #[expect(unreachable_code, reason = "names the return type")]
                                 Ok(())
                             })
                             .await
@@ -132,7 +132,7 @@ async fn fail_fast_rejection_rolls_back_prior_writes_and_refuses_caught_success(
                         let refusal = scope
                             .recoverable_sql(async |_| {
                                 panic!("recovery cannot resurrect a closed scope");
-                                #[allow(unreachable_code)]
+                                #[expect(unreachable_code, reason = "names the return type")]
                                 Ok(())
                             })
                             .await

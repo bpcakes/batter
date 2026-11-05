@@ -75,7 +75,10 @@ pub(super) fn run(scenario: &str) {
                     emit("task-entered");
                     entered.send(()).unwrap();
                     block_forever();
-                    #[allow(unreachable_code)]
+                    #[expect(
+                        unreachable_code,
+                        reason = "names the task's return type after a call that never returns"
+                    )]
                     Ok::<_, Fatal<std::io::Error>>(())
                 })
                 .unwrap();

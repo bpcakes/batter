@@ -6,7 +6,7 @@
 //! explicitly supplied superuser `BATTER_SQLX_ADMIN_URL`. Cases are ignored by
 //! ordinary gates and selected by `scripts/test_sqlx_live.sh`.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 mod support;
 
 mod managed_objects_fixture;

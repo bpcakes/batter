@@ -24,7 +24,7 @@ async fn policy_abandoned_operation_cannot_be_caught_into_success() -> Result {
             drop(operation);
             let later = scope.sql(async |_| {
                 panic!("abandoned scope must not invoke more work");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok(())
             }).await.unwrap_err();
             assert!(matches!(later, Failure::Scope(failure) if matches!(*failure, PgScopeFailure::OperationAbandoned)));

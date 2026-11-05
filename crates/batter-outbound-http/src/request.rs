@@ -1,14 +1,15 @@
 //! Request preparation: every construction failure happens here.
 
-use crate::{exchange::Exchange, limits::ResponseLimit, send};
+use crate::{client::Client, exchange::Exchange, limits::ResponseLimit, send};
 use bytes::Bytes;
 use http::{
     HeaderMap, HeaderName, HeaderValue, Method,
     header::{
-        CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, EXPECT, HOST, PROXY_AUTHORIZATION, TE, TRAILER,
-        TRANSFER_ENCODING, UPGRADE,
+        ACCEPT, CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, EXPECT, HOST, PROXY_AUTHORIZATION, TE,
+        TRAILER, TRANSFER_ENCODING, UPGRADE,
     },
 };
+use http_body_util::Full;
 use std::fmt;
 use tokio::time::Instant;
 use url::Url;
@@ -40,7 +41,7 @@ fn reserved(name: &HeaderName) -> bool {
 /// `Debug` shows nothing about the method, path, query, headers or body.
 #[must_use = "a draft sends nothing until it is prepared and sent"]
 pub struct RequestDraft {
-    http: reqwest::Client,
+    client: Client,
     url: Url,
     method: Method,
     segments: Vec<String>,
@@ -51,14 +52,9 @@ pub struct RequestDraft {
 }
 
 impl RequestDraft {
-    pub(crate) fn new(
-        http: reqwest::Client,
-        url: Url,
-        method: Method,
-        segments: Vec<String>,
-    ) -> Self {
+    pub(crate) fn new(client: Client, url: Url, method: Method, segments: Vec<String>) -> Self {
         Self {
-            http,
+            client,
             url,
             method,
             segments,
@@ -77,6 +73,8 @@ impl RequestDraft {
     /// `Proxy-Authorization` and `Content-Type` are refused with
     /// [`PrepareError::ReservedHeader`]. Set the content type with
     /// [`RequestDraft::body`] or [`RequestDraft::json`].
+    /// `Accept` remains caller-owned; preparation supplies `*/*` only when
+    /// no `Accept` value was supplied.
     pub fn header(mut self, name: HeaderName, mut value: HeaderValue) -> Self {
         if reserved(&name) {
             self.fail(PrepareError::ReservedHeader);
@@ -145,7 +143,7 @@ impl RequestDraft {
             return Err(PrepareError::ConnectMethod);
         }
         let Self {
-            http,
+            client,
             mut url,
             method,
             segments,
@@ -185,21 +183,29 @@ impl RequestDraft {
         if !query.is_empty() {
             url.query_pairs_mut().extend_pairs(&query);
         }
-        // reqwest converts the URL to an HTTP URI only when the request is
-        // executed and refuses it there; refuse it here, before an exchange exists.
-        if http::Uri::try_from(url.as_str()).is_err() {
-            return Err(PrepareError::InvalidUri);
-        }
-        let mut builder = http.request(method, url);
-        if let Some((content_type, bytes)) = body {
+        let uri = http::Uri::try_from(url.as_str()).map_err(|_| PrepareError::InvalidUri)?;
+        let authority = uri.authority().ok_or(PrepareError::Build)?;
+        headers
+            .entry(ACCEPT)
+            .or_insert(HeaderValue::from_static("*/*"));
+        headers.insert(
+            HOST,
+            HeaderValue::from_str(authority.as_str()).map_err(|_| PrepareError::Build)?,
+        );
+        let bytes = if let Some((content_type, bytes)) = body {
             headers.insert(CONTENT_TYPE, content_type);
-            builder = builder.body(bytes);
-        }
-        let request = builder
-            .headers(headers)
-            .build()
+            headers.insert(CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+            bytes
+        } else {
+            Bytes::new()
+        };
+        let mut request = http::Request::builder()
+            .method(method)
+            .uri(uri.path_and_query().map_or("/", |path| path.as_str()))
+            .body(Full::new(bytes))
             .map_err(|_| PrepareError::Build)?;
-        Ok(PreparedRequest { http, request })
+        *request.headers_mut() = headers;
+        Ok(PreparedRequest { client, request })
     }
 
     fn fail(&mut self, error: PrepareError) {
@@ -236,8 +242,8 @@ impl fmt::Debug for RequestDraft {
 /// `Debug` shows nothing about the request.
 #[must_use = "a prepared request sends nothing until it is sent"]
 pub struct PreparedRequest {
-    pub(crate) http: reqwest::Client,
-    pub(crate) request: reqwest::Request,
+    pub(crate) client: Client,
+    pub(crate) request: http::Request<Full<Bytes>>,
 }
 
 impl PreparedRequest {
@@ -248,17 +254,21 @@ impl PreparedRequest {
     /// Limits). It does not start when less than `RESERVE + MINIMUM_ATTEMPT`
     /// remains. `RESERVE` only lets the classification arrive before the
     /// deadline; recording a durable outcome needs its own budget, such as a
-    /// reserved finalization phase. Dropping this future after the request was
-    /// handed to the client produces no outcome; treat that as
+    /// reserved finalization phase. Each exchange owns a fresh connection and
+    /// drives it in this future, with deadline checks at handoff and writes.
+    /// Expiry during setup returns [`Exchange::NotStarted`].
+    /// Dropping this future after the request was
+    /// handed to the connection produces no outcome; treat that as
     /// [`Exchange::Unknown`]. Must run inside a Tokio runtime with its time
     /// driver enabled.
     pub async fn send(self, deadline: Instant, limit: ResponseLimit) -> Exchange {
         send::run(
-            self.http,
+            self.client,
             self.request,
             deadline,
             limit,
             std::future::pending(),
+            || false,
         )
         .await
     }
@@ -332,11 +342,15 @@ mod tests {
                 HeaderName::from_static("x-api-key"),
                 HeaderValue::from_static("key"),
             )
+            .header(
+                http::header::ACCEPT,
+                HeaderValue::from_static("application/json"),
+            )
             .json(&1)
             .prepare()
             .unwrap();
         let headers = prepared.request.headers();
-        for name in ["authorization", "x-api-key", "content-type"] {
+        for name in ["authorization", "x-api-key", "accept", "content-type"] {
             let value = headers.get(name).expect("header present");
             assert_eq!(value.is_sensitive(), name != "content-type", "{name}");
         }

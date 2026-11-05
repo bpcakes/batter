@@ -1174,13 +1174,13 @@ not a provider adapter: ADR-014's rejection of provider adapters and of a
 generic provider interface stands, because provider failure contracts differ,
 and the shared part is only the transport rule that every surveyed application
 root hand-wrote. The contract is in [guarantees](guarantees.md#outbound-provider-exchange)
-and the upstream evidence in [references](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02).
+and the upstream evidence in [references](references.md#owned-outbound-http1-connections-2026-11-04).
 
 Call the exchange in the crate or module that owns the provider protocol: the
 code that already defines the provider's requests, reads its statuses and bodies,
 and owns its idempotency keys or dispatch fence and its reconciliation. Build
 one `Client` per provider origin where that code is constructed and clone it to
-share the pool, and take each request's deadline only after preparing it. Pass
+share TLS configuration, and take each request's deadline only after preparing it. Pass
 a path as separate segments, such as `["v1", "effects"]`. `["v1/effects"]` is
 one segment, sent as `/v1%2Feffects`. HTTP handlers, job handlers and commands
 call that provider code, not the exchange directly. Do not wrap the exchange in
@@ -1278,8 +1278,8 @@ application root passes `context.deadline()` from its own `OperationContext`.
 Either path must run inside a Tokio runtime with its time driver enabled.
 An application on the facade selects feature `outbound-http`, which enables
 `operation`, and calls `send_in(&context, limit)`: a cancelled context returns
-`NotStarted(Cancelled)` before anything starts, and later cancellation returns
-`Unknown(Cancelled)` or `Body::Failed(Cancelled)`. Both paths return one type:
+`NotStarted(Cancelled)` before handoff, including during connection setup;
+after handoff cancellation returns `Unknown(Cancelled)` or `Body::Failed(Cancelled)`. Both paths return one type:
 the facade feature runner compiles the facade's `Exchange`, `PreparedRequest`
 and `http::StatusCode` as the direct package's, compiles `send_in` with the
 `outbound-http` feature alone, and requires `batter::outbound_http` to be absent without
@@ -1287,74 +1287,47 @@ it. A crate whose policy forbids every Batter-named dependency, as Consumer B's
 provider crates do, can adopt neither path; the survey counts it as evidence of
 need, not as an adopter.
 
-The client builds its own rustls configuration with the *ring* provider passed
-explicitly, and reqwest uses it as given. The package therefore neither
-installs nor reads a process-default `CryptoProvider` and adds no aws-lc-rs.
-Two hazards remain in the application's own graph:
+`Client::new(origin, connect_timeout)` is the only constructor. A client fixes
+one validated origin and shares only its TLS configuration when cloned. Every
+exchange opens a fresh TCP connection, performs TLS for HTTPS, and uses hyper's
+low-level HTTP/1 connection API. The exchange future drives that connection
+itself; it never spawns a connection driver or writer. There is no pool,
+connection reuse, resend, redirect, proxy lookup or content decoder. Every call
+therefore pays connection and TLS setup. Feature unification with another
+client's HTTP/2 or gzip support cannot change this transport.
 
-- When the graph compiles both *ring* and aws-lc-rs into rustls, for example
-  because another crate enables reqwest's `rustls` feature, a crate that calls
-  `rustls::ClientConfig::builder()` without a provider panics. To avoid that,
-  the application root calls `rustls::crypto::CryptoProvider::install_default`
-  before any such builder runs.
-- A plain `reqwest::Client::new()` built elsewhere panics without an installed
-  provider when the graph's reqwest 0.13 has only `rustls-no-provider`.
+TLS keeps the explicit *ring* provider, TLS 1.3 and 1.2 only, ALPN `http/1.1`,
+and the operating system verifier for HTTPS. Loopback HTTP clients use an empty
+root store and never read the host certificate store. On Linux, HTTPS client
+construction loads the host store (`SSL_CERT_FILE`/`SSL_CERT_DIR`); an empty
+store returns `ClientError::Build`. On macOS, the platform verifier runs during
+the handshake. No process-default provider is installed or needed here. Other
+crates using default-provider rustls builders still need application-owned
+configuration when their graph enables both providers.
 
-On Linux, an HTTPS client loads the host certificate store when it is built.
-That store follows `SSL_CERT_FILE` and `SSL_CERT_DIR`, and an empty store makes
-`Client::new` return `ClientError::Build`; a loopback client never reads it.
-The Linux-only `an_empty_trust_store_refuses_https_clients_but_not_loopback_ones`
-test shows both. On macOS, certificate verification calls the operating system
-synchronously inside the poll that drives the handshake and may fetch over the
-network, so neither the connect timeout nor the exchange's deadline bounds it
-(source-inspected; certificate verification is untested). Linux execution
-evidence is supplemented by local macOS checks in `batter-8e8r`.
+The normal transport directly requires hyper `^1.11.1` (client/http1),
+hyper-util `^0.1.20` (Tokio I/O adapter only), tokio-rustls `^0.26.4`
+(resolved 0.26.6), rustls `^0.23.46`, rustls-platform-verifier `^0.7.1`,
+http-body-util, Tokio, url, http and bytes. reqwest is dev-only for the proxy
+control and feature-unification tests. Fault tests remain ordinary regression
+checks on dependency upgrades; unsent classification no longer relies on
+undocumented hyper-util error kinds or the exact locked client implementation.
+The facade graph check rejects reqwest and hyper-util's legacy client in the
+shipped example. Low-level HTTP/1 has no redirect, retry or pool resend owner.
 
-External version contract, as the package manifest and the
-[primary sources](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
-record it. The fault tests ran against the locked versions below. The manifest
-constrains reqwest, rustls, rustls-platform-verifier, url, http and bytes, and
-does not constrain hyper or hyper-util:
+Hostname address fallback stays inside the exchange future: it runs at most
+two TCP candidates under the same setup deadline and drops losers before TLS
+or HTTP handoff. A slow first address cannot consume every later address's
+opportunity. The request assembler retains the previous default `Accept: */*`
+only when the caller supplied no Accept; provider-specific values remain the
+provider module's choice.
 
-| Upstream | Version | Relied on for |
-| --- | --- | --- |
-| reqwest | 0.13.5 (`^0.13.5`), default features off, `rustls-no-provider` | The client profile, `tls_backend_preconfigured`, `Error::is_connect` and `is_timeout`, the bounded `chunk` read |
-| rustls | 0.23.46 (`^0.23.46`), default features off, `ring`, `std`, `tls12` | The *ring* provider passed explicitly, TLS 1.3 and 1.2, the `http/1.1` ALPN list; reqwest must resolve the same rustls release to accept the configuration |
-| rustls-platform-verifier | 0.7.1 (`^0.7.1`), with rustls-native-certs 0.8.4 locked | The operating-system verifier for HTTPS origins and, on Linux, the certificate store it loads |
-| hyper-util | 0.1.20 locked; not constrained, and reqwest 0.13.5 admits 0.1.12 and later | The connect error kind, the pool and its resend of a request that was never written |
-| hyper | 1.11.1 locked; not constrained, and reqwest 0.13.5 admits 1.1 and later | HTTP/1.1 connections and requests handed back unsent |
-| url | 2.5.8 | Segment encoding, dot-segment handling and the removal of tab, line feed and carriage return |
-| http, bytes | 1.x, re-exported as `batter_outbound_http::http` and `batter_outbound_http::Bytes` | Method, status, header and body types, and the `http::Uri` check before an exchange exists |
-
-Use the re-exported `http` and `Bytes` so that application and package types
-match. The classification was verified only against the locked versions. An
-application's lockfile may resolve other compatible releases, older or newer,
-that these tests never ran against. Keep the tested versions, or re-run the
-fault tests and recheck the references after any reqwest, hyper or hyper-util
-change, including a lockfile-only patch update.
-
-Test builds compile reqwest's `http2` and `gzip` features through the package's
-dev-dependencies, as an unrelated dependency could through feature unification:
-
-- the ClientHello still offers only `http/1.1`
-  (`client_hello_offers_only_http1_and_modern_tls`);
-- no `Accept-Encoding` is sent
-  (`requests_arrive_as_http1_origin_form_without_referer_or_accept_encoding`),
-  and a gzip-labelled body is returned as received
-  (`encoded_body_is_returned_as_received_bytes`).
-
-The brotli, zstd, deflate and hickory overrides are source-inspected, because
-no build here compiles those features. `retry::never()` is defence in depth
-while HTTP/2 is never negotiated. The shipped feature set, `rustls-no-provider`
-alone, is compile-checked by verification and executed by the facade example's
-tests in the `outbound-shipped-features` matrix batch; the package's own suites
-always run with the dev-only features compiled.
-
-A consumer on reqwest 0.12, as the owner-maintained billing library is, would
-compile a second reqwest line beside this one and share none of its types. The reference service's provider client
-and `batter-otlp`'s private transport also use reqwest 0.13.5 after `batter-7oob`,
-with bundled WebPKI roots and explicit ring TLS; they are not
-adopters.
+No consumer `poll_before` wrapper is needed to prevent late handoff or late
+writer resumption. An outer timeout may still cap the whole operation, but it
+can discard an exchange and therefore cannot produce unsent proof. Bytes the
+kernel accepted before interruption can still arrive later; reconciliation
+retains that remote uncertainty. See the phase and write gates in
+[guarantees](guarantees.md#outbound-provider-exchange).
 
 This is a focused experimental extraction, ADR-014's first track. The bundle is
 justified by coupling: `NotDispatched` is sound only while the same library owns

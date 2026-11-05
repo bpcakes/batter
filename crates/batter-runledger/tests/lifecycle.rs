@@ -1,3 +1,6 @@
+//! Native Runledger initialization under managed process ownership.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{ManagedSettlement, Readiness, ShutdownBudget, Supervisor},

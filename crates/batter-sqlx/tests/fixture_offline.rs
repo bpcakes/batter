@@ -1,3 +1,6 @@
+//! Database fixture plans and capacity rules, checked without a database.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_sqlx::test_support::{ConnectionPlan, MigrationBundle, MigrationInput, template_spec};
 use sqlx::postgres::PgPoolOptions;
 

@@ -40,7 +40,6 @@
 //! # Ok(()) }
 //! ```
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
 
 /// Outcome-aware PostgreSQL attempts under one operation and transaction owner.
 #[cfg(feature = "postgres")]

@@ -1,5 +1,7 @@
 //! Async-closure protected startup: typed output, rejected output destruction
 //! and boxed application failures.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::{
     BoxError, RegistrationError,

@@ -59,7 +59,7 @@ application composition root
   |-- process panic hook installation (application-owned; batter::redacting_panic_hook constructs one)
   |-- native tracing subscriber and exporter selection (application-owned)
   |-- optional batter-otlp -> batter-core protected service completion + native SDK
-  |-- optional batter-outbound-http -> native reqwest profile + its own ring rustls config (no Batter dependency)
+  |-- optional batter-outbound-http -> owned TCP/TLS + low-level hyper HTTP/1 + ring rustls (no Batter dependency)
   |     `-- opt-in operation -> batter-core OperationContext deadline + cancellation
   |-- optional batter-axum -> batter-core + Axum / Tower
   |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
@@ -519,34 +519,28 @@ resource ownership and partial-failure behavior.
 
 ## Outbound provider exchange ownership
 
-`batter-outbound-http` owns the transport part of one outbound provider call: whether
-this attempt could have reached the peer. Its library-built client follows no
-redirects, offers only HTTP/1.1 and requires a connect timeout. It hands reqwest
-a rustls configuration that the package builds itself, with the *ring* provider
-passed explicitly, TLS 1.3 and 1.2 only, the operating system's verifier for
-HTTPS origins and an empty root store for loopback origins, so it never relies
-on a process-default crypto provider and adds no aws-lc-rs to the graph. The
-[guarantees](guarantees.md#outbound-provider-exchange) cite the test behind each
-profile setting and label the ones that no test executes. A prepared request is
-sent once and returns an exhaustive `Exchange`; only `NotStarted` and
-`NotDispatched`, whose evidence values only the package can construct, prove
-that the attempt wrote nothing. `NotDispatched` rests on the connect
-classification of the reqwest and hyper-util versions that this repository's
-lockfile resolves, which is implementation behavior rather than a documented
-upstream contract; the manifest does not constrain hyper or hyper-util, so an
-application's lockfile may resolve releases that the fault tests never ran
-against. A `Responded` status may come from an intermediary, so it never shows
-that the provider processed the request. The package depends on no Batter crate
-by default, so a provider crate that does not use Batter can adopt it; its
-opt-in `operation` feature adds `PreparedRequest::send_in` over an
-`OperationContext`, called with the work phase of `reserve_finalization` so the
-outcome is recorded in the finalization phase rather than inside `RESERVE`, and
-the facade's `outbound-http` feature selects that bridge.
-Provider meaning, replay, idempotency keys, dispatch fences and reconciliation
-stay with the application. Its tests have executed on Linux only. It is a
-focused experimental extraction (track 1 of
-[ADR-014](adr/014-reuse-after-two-consumers.md#stable-adapter-promotion)), not a
-stable promotion or a provider adapter.
+`batter-outbound-http` owns each outbound exchange's TCP/TLS connection and
+low-level hyper HTTP/1 driver inside the exchange future. No pool or spawned
+writer can advance a request while that future is unpolled. The final
+cancellation/deadline gate is immediately before synchronous `send_request`;
+transport writes are gated again, including below TLS. Available responses may
+still be read after stopping without permitting more writes. Each exchange
+pays fresh connection setup. `NotStarted` and `NotDispatched` follow owned
+pre-handoff phases, with no dependency on hyper-util error classification or
+silent resend behavior. See [guarantees](guarantees.md#outbound-provider-exchange).
+
+The same owner drives bounded address fallback before TLS: at most two TCP
+candidates can be active under one setup deadline, and losing candidates are
+dropped before the single selected connection receives an HTTP request.
+
+The fixed rustls configuration keeps explicit *ring*, TLS 1.3/1.2,
+`http/1.1` ALPN and the operating system verifier for HTTPS. Loopback HTTP does
+not load trust roots. Only the optional `operation` bridge depends on
+batter-core; the facade selects that bridge through `outbound-http`. Public
+request signatures and exhaustive outcome variants are unchanged. Application
+code retains provider meaning, replay, idempotency, fences and reconciliation.
+The package remains experimental under ADR-014/015. Execution evidence and
+platform limitations are recorded in `batter-u387`.
 
 ## Native Runlimit workspace ownership
 

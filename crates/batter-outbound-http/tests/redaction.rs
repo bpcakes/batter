@@ -3,8 +3,10 @@
 //! Each place a value can enter carries its own marker. The peer's raw
 //! request shows that the markers were really sent, so their absence from
 //! formatted output is redaction, not loss.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 

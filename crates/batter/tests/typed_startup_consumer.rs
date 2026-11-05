@@ -1,5 +1,7 @@
 //! External-style protected startup with an async initializer, typed output and
 //! anyhow-style errors, through the facade only.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter::{
     cleanup::CleanupBudget,

@@ -1,9 +1,11 @@
-#![cfg(target_os = "linux")]
 //! Client construction against the host certificate store, on Linux.
 //!
 //! The operating system verifier for HTTPS origins reads the host store, which
 //! on Linux follows `SSL_CERT_FILE` and `SSL_CERT_DIR`. The parent runs this
 //! test again in a child whose store is empty, so no other test sees it.
+#![cfg(target_os = "linux")]
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_outbound_http::{Client, ClientError, ConnectTimeout, Origin};
 use std::{net::SocketAddr, process::Command, time::Duration};

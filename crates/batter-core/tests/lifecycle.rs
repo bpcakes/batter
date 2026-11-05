@@ -1,3 +1,6 @@
+//! Supervisor readiness, drain and shutdown ordering across critical components.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::lifecycle::ComponentExit;
 use batter_core::{
     BoxError,
@@ -172,7 +175,7 @@ async fn component_panic_conservatively_skips_resource_finalizers() {
     supervisor
         .on_cleanup("pool", || async {
             panic!("must be skipped");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok(())
         })
         .unwrap();
@@ -226,7 +229,7 @@ async fn noncooperative_async_task_is_aborted_and_reported() {
     supervisor
         .on_cleanup("pool", || async {
             panic!("must skip after abort");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "names the return type")]
             Ok(())
         })
         .unwrap();

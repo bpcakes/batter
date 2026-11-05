@@ -1,3 +1,6 @@
+//! Retry policy validation, replay authorization and backoff budgets.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead},
     operation::{Interruption, OperationContext, OperationOwner},

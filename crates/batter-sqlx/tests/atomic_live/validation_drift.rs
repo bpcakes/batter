@@ -100,7 +100,7 @@ async fn combined_validation_rejects_role_and_schema_privilege_drift() -> Result
         let result = tx
             .application(async |_| {
                 panic!("revoked schema access must be rejected before work");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<(), ()>(())
             })
             .await;

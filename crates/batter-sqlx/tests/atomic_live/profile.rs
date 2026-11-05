@@ -84,7 +84,7 @@ async fn profile_setup_errors_redact_setting_and_role_values() -> Result {
                 .await?;
             let error = run_atomic_profiled(&fixture.pool, &profile, async |_| {
                 panic!("failed complete profile must not invoke atomic work");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<(), ()>(())
             })
             .await
@@ -96,7 +96,7 @@ async fn profile_setup_errors_redact_setting_and_role_values() -> Result {
                 .await?;
             let error = PgReadOnlySnapshot::inspect_profiled(&fixture.pool, &profile, async |_| {
                 panic!("failed complete profile must not invoke inspection");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 Ok::<(), ()>(())
             })
             .await

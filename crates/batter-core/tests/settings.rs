@@ -1,3 +1,6 @@
+//! Settings source precedence, bounded parsing and retained read failures.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "../../../test-support/temp_dir.rs"]
 mod temp_dir;
 use batter_core::settings::{

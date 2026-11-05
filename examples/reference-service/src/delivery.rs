@@ -312,7 +312,10 @@ pub enum SubmitRejection {
     RecordNotObserved,
     /// The record exists for this owner, but its generation changed.
     #[error("target record generation is stale")]
-    StaleGeneration { current_generation: i64 },
+    StaleGeneration {
+        /// The record's generation when the submission was checked.
+        current_generation: i64,
+    },
     /// The same owner/key was retained with different canonical input.
     #[error("idempotency key conflicts with the retained command")]
     IdempotencyConflict,

@@ -19,7 +19,10 @@ use std::{str::FromStr, time::Duration};
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn verification_uses_one_snapshot_for_concurrent_acl_changes() -> Result {
     let fixture = AuthorityFixture::create().await?;
     let names = fixture.names.clone();
@@ -206,7 +209,10 @@ async fn verification_keeps_many_declared_objects_set_oriented() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one live scenario keeps its steps in execution order"
+)]
 async fn verification_cancellation_releases_one_slot_capacity() -> Result {
     let fixture = AuthorityFixture::create().await?;
     let names = fixture.names.clone();

@@ -8,6 +8,10 @@ pub(crate) use compiler::valid_privilege;
 pub use discovery::{
     DiscoveryDefaults, DiscoveryScope, ObjectDefaults, PublicAllowance, RequiredPrivilege,
 };
+pub use privilege::{
+    AllowedPrivilege, ColumnPolicy, DatabasePolicy, ObjectPrivilege, ParameterPolicy,
+    RelationPolicy, RolePolicy, RoutinePolicy, SchemaPolicy, SequencePolicy, TypePolicy,
+};
 pub(crate) use public::PublicDeclarations;
 use std::fmt;
 
@@ -348,134 +352,6 @@ impl MigrationPolicy {
     }
 }
 
-/// Privileges used by the generic object policy.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ObjectPrivilege {
-    Select,
-    Insert,
-    Update,
-    Delete,
-    Truncate,
-    References,
-    Trigger,
-    Maintain,
-    Usage,
-    Create,
-    Connect,
-    Temporary,
-    Execute,
-    Set,
-    AlterSystem,
-}
-
-/// One allowed privilege, optionally including the ability to grant it onward.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AllowedPrivilege {
-    pub privilege: ObjectPrivilege,
-    pub grant_option: bool,
-}
-
-/// Column-level allowances nested inside a relation policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ColumnPolicy {
-    pub column: Identifier,
-    pub privileges: Vec<AllowedPrivilege>,
-}
-
-/// Table, view, materialized-view or foreign-table authority policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationPolicy {
-    pub relation: QualifiedName,
-    pub privileges: Vec<AllowedPrivilege>,
-    pub columns: Vec<ColumnPolicy>,
-    pub allow_owner: bool,
-    /// Explicitly allow the default PUBLIC USAGE on this relation's
-    /// composite row type. PostgreSQL creates that type with PUBLIC USAGE;
-    /// the allowance is kept on the relation policy so ordinary table policy
-    /// does not require a duplicate `TypePolicy` entry.
-    pub allow_row_type_public_usage: bool,
-}
-
-/// Sequence authority policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SequencePolicy {
-    pub sequence: QualifiedName,
-    pub privileges: Vec<AllowedPrivilege>,
-    pub allow_owner: bool,
-}
-
-/// Schema authority policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SchemaPolicy {
-    pub schema: Identifier,
-    pub privileges: Vec<AllowedPrivilege>,
-    pub allow_owner: bool,
-}
-
-/// Routine authority policy. Security-definer bodies and search paths remain
-/// outside this generic ACL checker and are reported as unsupported coverage.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RoutinePolicy {
-    pub routine: RoutineSignature,
-    pub privileges: Vec<AllowedPrivilege>,
-    pub allow_owner: bool,
-    pub allow_security_definer: bool,
-}
-
-/// User-defined type authority policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TypePolicy {
-    pub type_name: QualifiedName,
-    pub privileges: Vec<AllowedPrivilege>,
-    pub allow_owner: bool,
-}
-
-/// Parameter authority policy (`SET` and `ALTER SYSTEM`).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParameterPolicy {
-    pub parameter: ParameterName,
-    pub privileges: Vec<AllowedPrivilege>,
-}
-
-/// Current-database authority policy.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DatabasePolicy {
-    pub privileges: Vec<AllowedPrivilege>,
-    pub allow_owner: bool,
-}
-
-/// Role attributes and predefined capabilities that may be present on roles
-/// reachable by the login.
-///
-/// ```
-/// use batter_sqlx::verification::{Identifier, RolePolicy};
-///
-/// let policy = RolePolicy {
-///     allowed_admin_roles: vec![Identifier::new("tenant_operator")?],
-///     ..RolePolicy::default()
-/// };
-/// assert_eq!(policy.allowed_admin_roles[0].as_str(), "tenant_operator");
-/// # Ok::<(), batter_sqlx::verification::PolicyError>(())
-/// ```
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RolePolicy {
-    pub allow_superuser: bool,
-    pub allow_create_database: bool,
-    pub allow_create_role: bool,
-    pub allow_replication: bool,
-    pub allow_bypass_rls: bool,
-    /// Roles for which reachable `ADMIN` authority is explicitly permitted.
-    ///
-    /// An allowed target is still treated as a role the login can grant back
-    /// to itself. Its attributes, predefined capabilities, ownership and ACL
-    /// authority therefore remain subject to the rest of this policy.
-    pub allowed_admin_roles: Vec<Identifier>,
-    /// Explicitly permitted PostgreSQL predefined roles. Role names with a
-    /// `pg_` prefix are not treated as predefined without this catalog-known
-    /// allowlist entry.
-    pub allowed_predefined_roles: Vec<Identifier>,
-}
-
 /// A PUBLIC grant target. PUBLIC is checked independently from each reachable
 /// login role; a role's inherited privilege does not silently authorize it.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -569,14 +445,23 @@ pub struct AuthorityPolicyBuilder {
     pub discovery: DiscoveryScope,
     /// Allowances for discovered objects without an exact policy entry.
     pub defaults: DiscoveryDefaults,
+    /// Role attributes and administrative authority reachable roles may hold.
     pub roles: RolePolicy,
+    /// Exact relation policies.
     pub relations: Vec<RelationPolicy>,
+    /// Exact sequence policies.
     pub sequences: Vec<SequencePolicy>,
+    /// Exact schema policies.
     pub schemas: Vec<SchemaPolicy>,
+    /// Exact routine policies.
     pub routines: Vec<RoutinePolicy>,
+    /// Exact type policies.
     pub types: Vec<TypePolicy>,
+    /// Configuration-parameter policies.
     pub parameters: Vec<ParameterPolicy>,
+    /// The current-database policy.
     pub database: DatabasePolicy,
+    /// PUBLIC grants allowed on declared objects.
     pub public_grants: Vec<PublicGrant>,
     /// Exact PUBLIC allowances, including an empty list to reject every grant.
     pub public_overrides: Vec<PublicAllowance>,
@@ -656,11 +541,17 @@ pub enum PolicyError {
     ContradictoryRequiredPrivilege,
     /// Parameter name exceeds the 1,024-byte input capacity.
     ParameterNameTooLarge,
+    /// An identifier is empty, longer than 63 bytes or contains NUL.
     InvalidIdentifier,
+    /// A configuration-parameter name is not a valid built-in or custom name.
     InvalidParameterName,
+    /// A routine type is not a valid canonical schema-qualified type.
     InvalidRoutineType,
+    /// Two expected migrations share one version.
     DuplicateMigrationVersion,
+    /// An expected migration checksum exceeds 1,024 bytes.
     MigrationChecksumTooLarge,
+    /// One authority object is declared more than once.
     DuplicateAuthorityObject,
     /// One schema-qualified `pg_class` identity was declared as both a
     /// relation and a sequence.

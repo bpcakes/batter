@@ -270,7 +270,6 @@ async fn verification_rejects_row_security_on_the_migration_ledger() -> Result {
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_checks_real_login_reachability_and_two_fixture_policies() -> Result {
     let fixture = AuthorityFixture::create().await?;
     let names = fixture.names.clone();

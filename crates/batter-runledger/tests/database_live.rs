@@ -1,4 +1,6 @@
 //! Opt-in external PostgreSQL coverage for opaque native database composition.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 use batter_core::operation::OperationContext;
 use batter_runledger::{PgAtomicError, run_atomic, verify_schema};
 use runledger_core::jobs::JobType;

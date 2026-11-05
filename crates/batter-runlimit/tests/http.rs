@@ -1,3 +1,6 @@
+//! The authenticated quota-before-body HTTP boundary.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "http/dispatch_and_concurrency.rs"]
 mod dispatch_and_concurrency;
 #[path = "http/multi_policy.rs"]
@@ -621,7 +624,7 @@ async fn authentication_timeout_never_reaches_quota_or_handler() {
             "/work",
             post(|| async {
                 panic!("handler must not run");
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code, reason = "names the return type")]
                 StatusCode::OK
             }),
         ),

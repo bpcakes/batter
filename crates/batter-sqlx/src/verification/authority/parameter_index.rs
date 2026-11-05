@@ -47,7 +47,11 @@ pub(super) fn index_parameters(parameters: &ParameterCatalog) -> ParameterIndex<
     for parameter in parameters.iter() {
         names.insert(parameter.name.as_str(), parameter);
     }
-    debug_assert_eq!(names.len(), parameters.len());
+    debug_assert_eq!(
+        names.len(),
+        parameters.len(),
+        "catalog parameter names are unique"
+    );
     ParameterIndex { names }
 }
 

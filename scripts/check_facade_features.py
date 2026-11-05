@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prove Batter facade feature isolation and cross-package type identity.
 
-It also checks that the matrix's shipped-feature example build resolves reqwest
-exactly as `batter-outbound-http` ships it.
+It also checks that the outbound leaf and its facade example need no pooled
+HTTP client in their normal transport graph.
 """
 
 from __future__ import annotations
@@ -340,29 +340,25 @@ def shipped_example_tree_command(cargo: list[str]) -> list[str]:
 
 
 def check_shipped_outbound_selection(cargo: list[str]) -> str:
-    """Require the shipped-feature example build to resolve reqwest as batter-outbound-http ships it.
+    """Keep reqwest and hyper-util's legacy client out of the shipped graphs.
 
-    `batter-outbound-http`'s own test builds compile reqwest's dev-only `gzip` and
-    `http2`. The matrix's `outbound-shipped-features` batch claims to execute
-    the shipped selection instead, which holds only while no dev-dependency of
-    package `batter` adds a reqwest feature. Like the consumer cases, it runs
-    offline, so the caller must have resolved the graph online first, as
-    `main()` does.
+    The package's dev-only reqwest enables HTTP/2 and gzip for feature-unification
+    controls. The facade example exercises the transport without that test client.
     """
-    shipped = tree_features(execute(
-        cargo + ["tree", "-p", "batter-outbound-http", "-e", "normal", "--locked"] + TREE_FEATURES, ROOT),
-        "reqwest")
-    if len(shipped) != 1:
-        raise RuntimeError(f"expected one reqwest in batter-outbound-http's normal graph, observed {sorted(shipped)}")
-    [(package, features)] = shipped.items()
-    built = tree_features(execute(shipped_example_tree_command(cargo), ROOT), "reqwest").get(package)
-    if built != features:
-        raise RuntimeError(
-            f"the outbound-shipped-features batch builds {package} with "
-            f"{sorted(built) if built is not None else 'no such package'}, "
-            f"not the shipped {sorted(features)}"
-        )
-    return f"{package} [{', '.join(sorted(features))}]"
+    for command in (
+        cargo + ["tree", "-p", "batter-outbound-http", "-e", "normal", "--locked"] + TREE_FEATURES,
+        shipped_example_tree_command(cargo),
+    ):
+        tree = execute(command, ROOT)
+        if tree_features(tree, "reqwest"):
+            raise RuntimeError("the shipped outbound transport must not depend on reqwest")
+        util = tree_features(tree, "hyper-util")
+        if not util or any("client-legacy" in features for features in util.values()):
+            raise RuntimeError("the shipped outbound transport must use hyper-util only for runtime/server adapters")
+        hyper = tree_features(tree, "hyper")
+        if not hyper or any(not {"client", "http1"} <= features for features in hyper.values()):
+            raise RuntimeError("the shipped outbound transport requires hyper's HTTP/1 connection API")
+    return "owned HTTP/1 connection without reqwest or a legacy client pool"
 
 
 def run_positive_case(cargo: list[str], host: str, root_lock: bytes,

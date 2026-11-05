@@ -1,4 +1,6 @@
 //! Real HTTP/1.1 ownership cases, each bounded outside its Tokio runtime.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "../../../test-support/events.rs"]
 mod events;
@@ -15,7 +17,7 @@ mod scenarios;
 mod server;
 #[path = "http_lifetime/state.rs"]
 mod state;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/capture.rs"]
 mod trace_capture;
 

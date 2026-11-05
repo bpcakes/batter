@@ -15,7 +15,10 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{process::ExitCode, str::FromStr, time::Duration};
 
 #[tokio::main(flavor = "current_thread")]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the complete verification walkthrough reads in execution order"
+)]
 async fn main() -> ExitCode {
     // First statement, unwrapped: prints each panic's location, never its payload.
     std::panic::set_hook(batter::redacting_panic_hook());

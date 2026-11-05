@@ -2,8 +2,10 @@
 //!
 //! These tests read the raw bytes the loopback peer received, so they check
 //! the request as sent rather than as configured.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 
@@ -43,6 +45,7 @@ async fn requests_arrive_as_http1_origin_form_without_referer_or_accept_encoding
     let (peer, request) = sent(|client| client.request(Method::GET, ["v1", "items"])).await;
     assert_eq!(request.request_line(), "GET /v1/items HTTP/1.1");
     assert_eq!(request.header("host"), [peer.address().to_string()]);
+    assert_eq!(request.header("accept"), ["*/*"]);
     for absent in [
         "referer",
         "accept-encoding",
@@ -73,6 +76,21 @@ async fn header_values_reach_the_peer_unchanged() {
     .await;
     assert_eq!(request.header("authorization"), ["Bearer t-1"]);
     assert_eq!(request.header("x-tag"), ["first", "second"]);
+}
+
+#[tokio::test]
+async fn explicit_accept_values_replace_the_default_and_keep_their_order() {
+    let (_peer, request) = sent(|client| {
+        client
+            .request(Method::GET, ["v1"])
+            .header(header::ACCEPT, HeaderValue::from_static("application/json"))
+            .header(header::ACCEPT, HeaderValue::from_static("text/plain;q=0.5"))
+    })
+    .await;
+    assert_eq!(
+        request.header("accept"),
+        ["application/json", "text/plain;q=0.5"]
+    );
 }
 
 #[tokio::test]
@@ -162,7 +180,7 @@ async fn redirect_is_returned_and_never_followed() {
 }
 
 #[tokio::test]
-async fn clones_share_one_connection_pool() {
+async fn clones_open_independent_connections() {
     let peer = Peer::start([Step::Read, write(OK), Step::Read, write(OK)]).await;
     let first = peer.client();
     let second = first.clone();
@@ -172,27 +190,23 @@ async fn clones_share_one_connection_pool() {
             .send(after(Duration::from_secs(2)), limit(1024))
             .await;
         assert_eq!(outcome.label(), "responded");
-        // Let the finished connection return to the idle pool.
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(peer.requests().len(), 2);
-    assert_eq!(peer.connections(), 1);
+    assert_eq!(peer.connections(), 2);
 }
 
 #[tokio::test]
-async fn idle_connections_are_closed_before_common_server_keep_alive_timeouts() {
-    // The peer would serve both requests on one connection, as the test above
-    // shows. After more than the four-second pool idle timeout, the client opens
-    // a new connection instead of writing to one a server may be closing.
-    let peer = Peer::start([Step::Read, write(OK), Step::Read, write(OK)]).await;
+async fn a_closed_previous_connection_is_never_reused() {
+    // This peer closes each stream after its response. A subsequent exchange
+    // must establish its own connection and deliver exactly one request.
+    let peer = Peer::start([Step::Read, write(OK)]).await;
     let client = peer.client();
-    for pause in [Duration::from_millis(4_500), Duration::ZERO] {
+    for _ in 0..2 {
         let prepared = client.request(Method::GET, ["v1"]).prepare().unwrap();
         let outcome = prepared
             .send(after(Duration::from_secs(2)), limit(1024))
             .await;
         assert_eq!(outcome.label(), "responded");
-        tokio::time::sleep(pause).await;
     }
     assert_eq!(peer.requests().len(), 2);
     assert_eq!(peer.connections(), 2);

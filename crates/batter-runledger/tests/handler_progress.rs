@@ -5,6 +5,8 @@
 //! budget, and a claimed context reaches the handler unchanged once its run
 //! and attempt are positive. Exit and dispatch contracts are in
 //! `handler_invocation.rs`.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use batter_core::ConfigurationError;
 use batter_runledger::test_support::{HandlerExit, HandlerInvocation, PersistedProgress};

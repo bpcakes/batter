@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, reason = "shared support; this crate uses part of it")]
 use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{RunningSupervisor, ShutdownBudget, ShutdownHandle, Supervisor},

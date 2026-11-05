@@ -34,7 +34,7 @@ async fn transaction_timeout_drift_poison_retains_cause_and_retires() -> Result 
                 let next = scope
                     .application(async |_| {
                         panic!("poisoned scope must not invoke work");
-                        #[allow(unreachable_code)]
+                        #[expect(unreachable_code, reason = "names the return type")]
                         Ok::<(), ()>(())
                     })
                     .await

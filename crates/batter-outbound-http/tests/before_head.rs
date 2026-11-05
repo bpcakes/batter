@@ -2,8 +2,10 @@
 //!
 //! Every request goes to a loopback fault peer that counts connections and
 //! complete requests, so each outcome is checked against what reached it.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "support/peer.rs"]
 mod peer;
 
@@ -139,18 +141,17 @@ async fn stalled_tls_handshake_times_out_as_not_dispatched() {
 }
 
 #[tokio::test]
-async fn deadline_expiring_while_connecting_is_unknown() {
+async fn deadline_expiring_while_connecting_is_not_started() {
     let peer = Peer::start([Step::Sniff, Step::Hold]).await;
     let prepared = effect(&peer.tls_client(Duration::from_secs(10)));
     let deadline = after(millis(600));
     let outcome = send(prepared, deadline).await;
     assert_within_reserve(deadline, Instant::now());
-    // Conservative: the exchange cannot tell which phase its timer stopped.
     assert!(
-        matches!(outcome, Exchange::Unknown(UnknownReason::Deadline)),
+        matches!(&outcome, Exchange::NotStarted(refusal) if refusal.reason() == StartRefusal::DeadlineTooClose),
         "{outcome:?}"
     );
-    assert!(!outcome.proves_unsent());
+    assert!(outcome.proves_unsent());
     assert_client_hello_only(&peer).await;
 }
 

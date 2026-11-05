@@ -27,7 +27,6 @@ async fn inspect(
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-#[allow(clippy::too_many_lines)]
 async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Result {
     AuthorityFixture::create().await?.run(|fixture| Box::pin(async move {
         let names = fixture.names.clone();

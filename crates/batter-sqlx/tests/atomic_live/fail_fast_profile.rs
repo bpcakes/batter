@@ -75,7 +75,7 @@ async fn fail_fast_profile_checks_before_work_and_restores_rejected_changes() ->
                     1,
                     scope.sql(async |_| {
                         panic!("external profile drift must prevent work");
-                        #[allow(unreachable_code)]
+                        #[expect(unreachable_code, reason = "names the return type")]
                         Ok(())
                     }),
                 )

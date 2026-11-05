@@ -102,8 +102,7 @@ fn validate_components(url: &Url) -> Result<(), OriginError> {
     if url.fragment().is_some() {
         return Err(OriginError::Fragment);
     }
-    // reqwest refuses a URL that is not a valid HTTP URI only when a request is
-    // executed, for example a host with characters the `http` crate rejects.
+    // Refuse hosts that cannot form an HTTP request authority.
     if http::Uri::try_from(url.as_str()).is_err() {
         return Err(OriginError::Unparseable);
     }

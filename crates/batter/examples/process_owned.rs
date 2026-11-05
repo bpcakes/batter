@@ -102,7 +102,10 @@ async fn main() -> Result<(), BoxError> {
         let denied = process.try_spawn("quota.check", |_scope| async {
             Ok::<_, Fatal<Infallible>>(Err::<(), _>(Denial::Quota))
         })?;
-        assert!(matches!(denied.wait().await?, Err(Denial::Quota)));
+        assert!(
+            matches!(denied.wait().await?, Err(Denial::Quota)),
+            "a business denial is a successful task value"
+        );
         Ok::<_, BoxError>(finished_rx)
     }
     .await;
@@ -119,7 +122,11 @@ async fn main() -> Result<(), BoxError> {
         Err(error) => Err(error),
     };
     let success = complete(body, shutdown)?;
-    assert_eq!(success.report().completed_process_tasks, 2);
+    assert_eq!(
+        success.report().completed_process_tasks,
+        2,
+        "both admitted process tasks completed"
+    );
     Ok(())
 }
 

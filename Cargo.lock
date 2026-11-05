@@ -544,6 +544,10 @@ dependencies = [
  "batter-core",
  "bytes",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rcgen",
  "reqwest",
  "rustls",
  "rustls-platform-verifier",
@@ -551,6 +555,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "url",
 ]
 

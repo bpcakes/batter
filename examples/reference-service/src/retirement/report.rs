@@ -90,29 +90,45 @@ impl std::error::Error for CancellationFailure {
 /// Explicit refusal or failure; formatting never includes native error contents.
 #[derive(thiserror::Error)]
 pub enum RetirementError {
+    /// The expected database identity was zero, so no target can match it.
     #[error("nonzero expected database identity required")]
     InvalidIdentity,
+    /// The maintenance session reached a different database.
     #[error("maintenance target identity does not match")]
-    WrongDatabase { actual: DatabaseIdentity },
+    WrongDatabase {
+        /// Identity the maintenance session actually observed.
+        actual: DatabaseIdentity,
+    },
+    /// Other clients or prepared transactions remained after cancellation.
     #[error("database is not quiescent for offline retirement")]
     NotOffline {
+        /// Target-database backends outside the maintenance session.
         other_backends: i64,
+        /// Prepared transactions still held in the target database.
         prepared_transactions: i64,
+        /// Jobs this invocation had already cancelled.
         cancelled: u64,
     },
+    /// The legacy definition was enabled again before verification finished.
     #[error("legacy definition was enabled during retirement")]
     DefinitionEnabled,
+    /// The pool replaced its single maintenance session during the command.
     #[error("maintenance session replacement refused")]
     SessionReplaced {
+        /// The command's own failure, when it failed before the replacement was seen.
         #[source]
         original: Option<Box<RetirementError>>,
     },
+    /// The retirement command could not be registered with its process.
     #[error("command registration failed")]
     Registration(#[from] batter::RegistrationError),
+    /// A maintenance query failed.
     #[error("retirement database operation failed")]
     Database(#[from] sqlx::Error),
+    /// The native package could not disable the legacy definition.
     #[error("native definition disable failed")]
     Native(#[from] runledger_postgres::Error),
+    /// Native cancellation of one job failed; its original error is retained.
     #[error("native cancellation failed; original cause retained; readback not attempted")]
     Cancellation(#[source] Box<CancellationFailure>),
 }

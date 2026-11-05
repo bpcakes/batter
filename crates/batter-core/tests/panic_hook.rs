@@ -5,13 +5,15 @@
 //! and standard error separately. With the redacting hook installed, standard
 //! error must be exactly the redacted lines, or empty at the descriptor limit;
 //! the default-hook controls must instead print the payloads.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/capture.rs"]
 mod capture;
 #[path = "panic_hook/child.rs"]
 mod child;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared support; this crate uses part of it")]
 #[path = "../../../test-support/process/evidence.rs"]
 mod evidence;
 #[path = "panic_hook/fixture.rs"]

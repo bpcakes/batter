@@ -4,6 +4,8 @@
 //! its own child process with a cleared environment. Children use injected
 //! settings, a local collector and a refused or withheld PostgreSQL endpoint;
 //! no database is required.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 #[path = "support/collector.rs"]
 mod collector;

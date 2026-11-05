@@ -1,3 +1,6 @@
+//! Operation telemetry records outcomes without application error text.
+#![allow(clippy::unwrap_used, reason = "a panic fails the test")]
+#![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #[path = "telemetry/filtered.rs"]
 mod filtered;
 

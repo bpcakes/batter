@@ -3,7 +3,11 @@ use crate::verification_fixture::GrantAuthority;
 use super::{Names, Result, exec, exec_secret, grant, grant_column, literal, object_kind, quote};
 use sqlx::PgConnection;
 
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "one fixture's provisioning statements run in dependency order"
+)]
 pub(super) async fn provision(
     connection: &mut PgConnection,
     names: &Names,

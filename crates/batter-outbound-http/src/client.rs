@@ -9,55 +9,33 @@ use http::Method;
 use rustls_platform_verifier::BuilderVerifierExt;
 use std::{fmt, sync::Arc, time::Duration};
 
-/// The client refuses to reuse a connection that has been idle for longer than
-/// this, which is shorter than common server keep-alive timeouts (five seconds
-/// is a frequent default). A request is then rarely written to a connection the
-/// server is already closing, which would be reported as
-/// [`crate::Exchange::Unknown`].
-const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
-
 /// A client for one provider origin, configured only by this package.
 ///
-/// Every client:
-/// - follows no redirects: a 3xx is returned as a response (tested);
-/// - offers only `http/1.1` in ALPN, even when another crate enables reqwest's
-///   HTTP/2 support (tested);
-/// - turns off reqwest's response decompression, so the body limit counts
-///   message-body bytes as received (tested for gzip; Brotli, zstd and deflate
-///   support is not compiled in this workspace, so those switches are
-///   defence in depth);
-/// - ignores proxy environment variables (tested with `HTTP_PROXY` for a
-///   plain-HTTP origin; `HTTPS_PROXY` and `ALL_PROXY` for HTTPS origins are not
-///   tested);
-/// - never reuses a connection idle for more than four seconds (tested);
-/// - uses rustls with the *ring* provider passed explicitly, TLS 1.3 or 1.2
-///   only, and the operating system's certificate verifier for HTTPS origins
-///   (the offered versions and ALPN are tested). It neither reads nor installs a
-///   process-default crypto provider (tested: none is installed after building
-///   the client and sending a ClientHello; no test completes a handshake) and
-///   adds no aws-lc-rs;
-/// - allows plain HTTP only for [`Origin::loopback`], whose client never reads
-///   the host certificate store (tested on Linux).
+/// Each exchange opens a fresh TCP connection and, for HTTPS, a TLS
+/// handshake. Its HTTP/1 connection is driven inside the exchange future, never
+/// spawned. There is no connection pool, replay, redirect, proxy lookup,
+/// automatic content decoding or HTTP/2 negotiation.
 ///
-/// Using this package compiles rustls's `ring` feature and reqwest 0.13's
-/// `rustls-no-provider` feature into the application. If the application's
-/// graph also compiles aws-lc-rs into rustls, crates that call
-/// `rustls::ClientConfig::builder()` without a provider panic; and a
-/// `reqwest::Client::new()` elsewhere panics without an installed provider when
-/// the graph's reqwest 0.13 has only `rustls-no-provider` (neither its `rustls`
-/// nor its `native-tls` feature). In either case the application root installs
-/// a process default with `rustls::crypto::CryptoProvider::install_default`.
+/// Hostname setup tries the first resolved address family first and starts the
+/// other after at most 300 ms (or half the remaining setup budget when shorter).
+/// Addresses within a family share its remaining budget. At most two TCP
+/// attempts run together, in this future; losing sockets are dropped before TLS.
 ///
-/// Also set as defence in depth, not observable while redirects are off and
-/// ALPN offers only HTTP/1.1: `http1_only()`, `https_only` for an HTTPS origin,
-/// reqwest's own retries disabled and no `Referer`.
+/// TLS uses an explicit *ring* provider, TLS 1.3 and 1.2 only, ALPN `http/1.1`,
+/// and the operating system's certificate verifier for HTTPS. Loopback HTTP
+/// clients use an empty root store and never read the host certificate store.
+/// The ClientHello and empty-store behavior have executable tests.
+/// No process-default crypto provider is read or installed. Applications whose
+/// other dependencies enable both rustls providers must configure those
+/// dependencies or install their chosen default at the application root.
 ///
-/// A built client cannot be reconfigured. Cloning shares one connection pool.
-/// `Debug` shows no configuration.
+/// A built client cannot be reconfigured. Cloning shares TLS configuration,
+/// never connections. `Debug` shows no configuration.
 #[derive(Clone)]
 pub struct Client {
-    http: reqwest::Client,
-    origin: Origin,
+    pub(crate) tls: Arc<rustls::ClientConfig>,
+    pub(crate) connect_timeout: Duration,
+    pub(crate) origin: Origin,
 }
 
 impl Client {
@@ -66,29 +44,15 @@ impl Client {
     /// For an HTTPS origin on Linux, construction loads the host certificate
     /// store, which follows `SSL_CERT_FILE` and `SSL_CERT_DIR`, and returns
     /// [`ClientError::Build`] when it is empty (tested). On macOS the system
-    /// verifier is consulted during each handshake instead (source-inspected). Construction is
-    /// not free (about 28 ms was measured once in a Linux debug build; not a
-    /// contract), so build one client per origin and clone it, and take a
+    /// verifier is consulted during each handshake instead (source-inspected).
+    /// Build one client per origin, clone its configuration, and take a
     /// request's deadline after preparing it.
     pub fn new(origin: Origin, connect_timeout: ConnectTimeout) -> Result<Self, ClientError> {
-        let http = reqwest::Client::builder()
-            .tls_backend_preconfigured(tls_config(origin.scheme())?)
-            .redirect(reqwest::redirect::Policy::none())
-            .referer(false)
-            .retry(reqwest::retry::never())
-            .no_proxy()
-            .http1_only()
-            .no_gzip()
-            .no_brotli()
-            .no_zstd()
-            .no_deflate()
-            .no_hickory_dns()
-            .connect_timeout(connect_timeout.get())
-            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
-            .https_only(origin.scheme() == Scheme::Https)
-            .build()
-            .map_err(|_| ClientError::Build)?;
-        Ok(Self { http, origin })
+        Ok(Self {
+            tls: Arc::new(tls_config(origin.scheme())?),
+            connect_timeout: connect_timeout.get(),
+            origin,
+        })
     }
 
     /// Start a request to the path below this client's origin made of `path`.
@@ -106,7 +70,7 @@ impl Client {
         I: IntoIterator<Item = &'a str>,
     {
         RequestDraft::new(
-            self.http.clone(),
+            self.clone(),
             self.origin.url().clone(),
             method,
             path.into_iter().map(str::to_owned).collect(),
@@ -114,7 +78,7 @@ impl Client {
     }
 }
 
-/// The TLS configuration handed to reqwest, which uses it as given.
+/// The TLS configuration used directly by the owned connection.
 fn tls_config(scheme: Scheme) -> Result<rustls::ClientConfig, ClientError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = rustls::ClientConfig::builder_with_provider(provider)

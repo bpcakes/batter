@@ -225,7 +225,10 @@ impl StartupSignals for NoSignals {
 // Keep the full initialization/destruction/cleanup report until the monitor
 // wraps it in Arc. Its native layout exceeds 128 bytes on macOS; boxing here
 // would add an allocation immediately before that existing shared allocation.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "fires only where the report exceeds 128 bytes, as on macOS; boxing would add an allocation"
+)]
 async fn drive<F, I, E, S, C, M, G>(
     supervisor: crate::lifecycle::Supervisor,
     context: OperationContext,
