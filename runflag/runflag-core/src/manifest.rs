@@ -31,8 +31,12 @@ use crate::{
 ///
 /// Decoding is a validating constructor: it accepts version 1 only, ignores
 /// unknown fields, normalizes list order, and checks the structure each kind
-/// requires, the references between entries, every declaration fingerprint and
-/// the catalog digest. It does not re-run every build rule.
+/// requires, the references between entries, uniqueness, every declaration
+/// fingerprint and the catalog digest. A decoded manifest satisfies every
+/// catalog rule its data can express: non-empty vocabularies, retired names
+/// that no setting uses, governing switches owned by every kind that owns or
+/// pins the flag, and invariants that hold at the code defaults. Only rules
+/// about Rust values, such as variant round-trips, are left to the builder.
 ///
 /// ```
 /// use runflag_core::{CatalogBuilder, CivilDate, Expiry, Manifest, SettingsPrefix, Toggle,

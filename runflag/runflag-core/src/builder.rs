@@ -8,9 +8,9 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 pub use kinds::{ModeDeclaration, ReleaseDeclaration, SwitchDeclaration};
 
 use crate::{
-    catalog::Catalog,
+    catalog::{Catalog, Retired},
     date::Expiry,
-    declaration::{Entry, Retired, SafeState, StaleRule},
+    declaration::{Entry, SafeState, StaleRule},
     error::BuildError,
     key::{FlagKey, KeyError, SettingName, SettingsPrefix},
     value::{FlagValue, ToggleLiterals},

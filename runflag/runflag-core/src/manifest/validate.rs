@@ -59,6 +59,12 @@ impl TryFrom<WireManifest> for Manifest {
             retired: wire.retired.into_iter().map(Into::into).collect(),
         };
         normalize(&mut manifest);
+        if manifest.process_kinds.is_empty() {
+            refuse!("a catalog needs at least one process kind");
+        }
+        if manifest.environment_classes.is_empty() {
+            refuse!("a catalog needs at least one environment class");
+        }
         check_names("process kind", &manifest.process_kinds)?;
         check_names("environment class", &manifest.environment_classes)?;
         check_retired(&manifest)?;
@@ -72,6 +78,7 @@ impl TryFrom<WireManifest> for Manifest {
         for entry in &manifest.flags {
             check_entry(&manifest, entry)?;
         }
+        check_retired_unused(&manifest)?;
         if CatalogDigest::compute(manifest.digest_input()) != manifest.catalog_digest {
             refuse!("the catalog digest does not match the declarations");
         }
@@ -123,6 +130,23 @@ fn check_retired(manifest: &Manifest) -> Result<(), Invalid> {
         }
         if retired.migration_note.trim().is_empty() {
             refuse!("retired name {} has no migration note", retired.name);
+        }
+    }
+    Ok(())
+}
+
+/// A retired name may be neither a declared setting name nor a required setting.
+fn check_retired_unused(manifest: &Manifest) -> Result<(), Invalid> {
+    for entry in &manifest.flags {
+        let required = entry.requires_settings.iter().flat_map(|r| &r.settings);
+        for name in std::iter::once(&entry.setting_name).chain(required) {
+            if manifest
+                .retired
+                .binary_search_by(|retired| retired.name.cmp(name))
+                .is_ok()
+            {
+                refuse!("setting name {name} is retired and also in use");
+            }
         }
     }
     Ok(())
@@ -189,10 +213,13 @@ fn check_flag(manifest: &Manifest, entry: &ManifestEntry) -> Result<(), Invalid>
     }
     check_variants(entry)?;
     if let Some(switch) = &entry.governed_by {
-        let governing = manifest.flag(switch.as_str());
-        if entry.kind != Kind::Release || governing.is_none_or(|g| g.kind != Kind::Switch) {
+        let governing = manifest
+            .flag(switch.as_str())
+            .filter(|governing| governing.kind == Kind::Switch && entry.kind == Kind::Release);
+        let Some(governing) = governing else {
             refuse!("flag {key}: only a release flag is governed, and only by a kill switch");
-        }
+        };
+        check_governing(entry, governing)?;
     }
     if entry
         .requires_settings
@@ -223,6 +250,31 @@ fn check_flag(manifest: &Manifest, entry: &ManifestEntry) -> Result<(), Invalid>
     }
     for invariant in &entry.invariants {
         check_invariant(manifest, entry, &variants, invariant)?;
+    }
+    Ok(())
+}
+
+/// Every kind that owns or pins the flag must own its governing switch.
+fn check_governing(entry: &ManifestEntry, switch: &ManifestEntry) -> Result<(), Invalid> {
+    let key = &entry.key;
+    let ManifestOwners::Only(switch_owners) = &switch.owners else {
+        return Ok(());
+    };
+    let ManifestOwners::Only(owners) = &entry.owners else {
+        refuse!(
+            "flag {key} is owned by every process kind but its governing switch {} is not",
+            switch.key
+        );
+    };
+    let unowned = owners
+        .iter()
+        .chain(&entry.pinned_by)
+        .find(|kind| switch_owners.binary_search(kind).is_err());
+    if let Some(kind) = unowned {
+        refuse!(
+            "flag {key}: process kind {kind:?} owns or pins the flag but not its governing switch {}",
+            switch.key
+        );
     }
     Ok(())
 }
@@ -268,6 +320,20 @@ fn check_invariant(
     if !declared || (invariant.rule == InvariantRule::BothOrNone && !toggles) {
         refuse!(
             "flag {key}: the invariant on {} names an undeclared variant",
+            invariant.other
+        );
+    }
+    let defaults = (
+        entry.default.as_deref().unwrap_or_default(),
+        invariant.variant.as_str(),
+    );
+    let other_defaults = (
+        other.default.as_deref().unwrap_or_default(),
+        invariant.other_variant.as_str(),
+    );
+    if !invariant.rule.admits(defaults, other_defaults) {
+        refuse!(
+            "flag {key}: the code defaults break its invariant on {}",
             invariant.other
         );
     }

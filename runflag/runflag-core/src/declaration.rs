@@ -1,6 +1,6 @@
 //! Declaration kinds, per-declaration policy and the view of a declaration.
 
-use std::{fmt, sync::Arc};
+use std::fmt;
 
 use crate::{
     date::Expiry,
@@ -425,6 +425,17 @@ impl InvariantRule {
             Self::BothOrNone => "both_or_none",
         }
     }
+
+    /// Whether the relation holds between a flag resolved to `variant`, which
+    /// the invariant names as `named`, and the other flag likewise.
+    pub(crate) fn admits(self, (variant, named): (&str, &str), other: (&str, &str)) -> bool {
+        let (this, that) = (variant == named, other.0 == other.1);
+        match self {
+            Self::Requires => !this || that,
+            Self::Conflicts => !(this && that),
+            Self::BothOrNone => this == that,
+        }
+    }
 }
 
 /// A cross-flag invariant, validated once at startup by declared mode.
@@ -469,32 +480,7 @@ impl Invariant {
 
     /// Whether the two resolved variants satisfy the invariant.
     pub fn holds(&self, variant: &str, other_variant: &str) -> bool {
-        let this = variant == self.variant;
-        let that = other_variant == self.other_variant;
-        match self.rule {
-            InvariantRule::Requires => !this || that,
-            InvariantRule::Conflicts => !(this && that),
-            InvariantRule::BothOrNone => this == that,
-        }
-    }
-}
-
-/// A retired setting name that fails startup when present, with the note
-/// that tells an operator how to migrate.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Retired {
-    pub(crate) name: SettingName,
-    pub(crate) migration_note: Arc<str>,
-}
-
-impl Retired {
-    /// The retired setting name.
-    pub fn name(&self) -> &SettingName {
-        &self.name
-    }
-
-    /// The migration note reported when the name is present.
-    pub fn migration_note(&self) -> &str {
-        &self.migration_note
+        let named = (variant, self.variant);
+        self.rule.admits(named, (other_variant, self.other_variant))
     }
 }

@@ -1,14 +1,14 @@
 //! The built catalog: the one validated declaration an application has.
 
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use crate::{
     builder::CatalogBuilder,
     date::CivilDate,
-    declaration::{Declared, Entry, Retired},
+    declaration::{Declared, Entry},
     digest::{CatalogDigest, DigestInput},
     error::ForeignKind,
-    key::{FlagKey, SettingsPrefix},
+    key::{FlagKey, SettingName, SettingsPrefix},
     value::ToggleLiterals,
     vocabulary::{CatalogId, EnvironmentClass, ProcessKind},
 };
@@ -230,5 +230,25 @@ impl fmt::Debug for Catalog {
             .field("digest", &self.digest)
             .field("declarations", &self.entries.len())
             .finish_non_exhaustive()
+    }
+}
+
+/// A retired setting name that fails startup when present, with the note
+/// that tells an operator how to migrate.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Retired {
+    pub(crate) name: SettingName,
+    pub(crate) migration_note: Arc<str>,
+}
+
+impl Retired {
+    /// The retired setting name.
+    pub fn name(&self) -> &SettingName {
+        &self.name
+    }
+
+    /// The migration note reported when the name is present.
+    pub fn migration_note(&self) -> &str {
+        &self.migration_note
     }
 }

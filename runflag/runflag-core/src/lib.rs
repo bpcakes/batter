@@ -68,11 +68,10 @@ mod value;
 mod vocabulary;
 
 pub use builder::{CatalogBuilder, ModeDeclaration, ReleaseDeclaration, SwitchDeclaration};
-pub use catalog::Catalog;
+pub use catalog::{Catalog, Retired};
 pub use date::{CivilDate, CivilDateError, Expiry};
 pub use declaration::{
-    Absence, Declared, FlipDiscipline, Invariant, InvariantRule, Kind, Owners, Retired, SafeState,
-    StaleRule,
+    Absence, Declared, FlipDiscipline, Invariant, InvariantRule, Kind, Owners, SafeState, StaleRule,
 };
 #[cfg(feature = "serde")]
 pub use digest::ManifestDigest;

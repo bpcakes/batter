@@ -103,9 +103,24 @@ fn only_version_one_decodes() {
     assert!(decode(&value).is_err());
 }
 
+type Tamper = fn(&mut Value);
+
+/// Decodes the reference manifest after each tamper and requires the refusal
+/// message that names the broken rule.
+fn assert_refused(cases: &[(&str, Tamper)]) {
+    for (expected, tamper) in cases {
+        let mut value = reference_value();
+        tamper(&mut value);
+        let error = decode(&value).expect_err(expected);
+        assert!(
+            error.contains("invalid manifest") && error.contains(expected),
+            "{expected}: {error}"
+        );
+    }
+}
+
 #[test]
 fn decoding_refuses_inconsistent_declarations() {
-    type Tamper = fn(&mut Value);
     let cases: [(&str, Tamper); 16] = [
         ("the fingerprint does not match", |v| {
             flag_mut(v, "fast_path")["fingerprint"] = json!("00".repeat(32));
@@ -165,21 +180,61 @@ fn decoding_refuses_inconsistent_declarations() {
             entry["invariants"].as_array_mut().unwrap().push(invariant);
         }),
     ];
-    for (expected, tamper) in cases {
-        let mut value = reference_value();
-        tamper(&mut value);
-        let error = decode(&value).expect_err(expected);
-        assert!(
-            error.contains("invalid manifest") && error.contains(expected),
-            "{expected}: {error}"
-        );
-    }
+    assert_refused(&cases);
     let mut value = reference_value();
     flag_mut(&mut value, "fast_path")["key"] = json!("Fast");
     assert!(
         decode(&value).is_err(),
         "names decode through their validating constructors"
     );
+}
+
+#[test]
+fn decoding_refuses_manifests_no_builder_could_produce() {
+    let cases: [(&str, Tamper); 7] = [
+        ("needs at least one process kind", |v| {
+            v["process_kinds"] = json!([]);
+        }),
+        ("needs at least one environment class", |v| {
+            v["environment_classes"] = json!([]);
+        }),
+        (
+            "setting name FLAG_FAST_PATH is retired and also in use",
+            |v| {
+                let retired = json!({ "name": "FLAG_FAST_PATH", "migration_note": "gone" });
+                v["retired"].as_array_mut().unwrap().push(retired);
+            },
+        ),
+        (
+            "setting name PAYMENT_API_URL is retired and also in use",
+            |v| {
+                let retired = json!({ "name": "PAYMENT_API_URL", "migration_note": "gone" });
+                v["retired"].as_array_mut().unwrap().push(retired);
+            },
+        ),
+        (
+            "\"worker\" owns or pins the flag but not its governing switch",
+            |v| {
+                flag_mut(v, "checkout_halt")["owners"] = json!({ "only": ["serving"] });
+            },
+        ),
+        (
+            "owned by every process kind but its governing switch",
+            |v| {
+                flag_mut(v, "checkout_halt")["owners"] = json!({ "only": ["serving", "worker"] });
+                let entry = flag_mut(v, "new_checkout");
+                entry["owners"] = json!("all");
+                entry["pinned_by"] = json!([]);
+            },
+        ),
+        (
+            "the code defaults break its invariant on new_checkout",
+            |v| {
+                flag_mut(v, "checkout_style")["invariants"][0]["variant"] = json!("classic");
+            },
+        ),
+    ];
+    assert_refused(&cases);
 }
 
 fn catalog_with(declare: impl FnOnce(&mut runflag_core::CatalogBuilder)) -> Catalog {
