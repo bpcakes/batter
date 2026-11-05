@@ -10,6 +10,9 @@ use super::plan::{PoolKey, check, construct, lookup};
 use super::report::{BodyFailure, FixtureReport, FixtureReportRef};
 use super::{ConnectionPlan, DatabaseFixture, FixtureError, FixtureSuite};
 
+#[cfg(test)]
+mod tests;
+
 /// A body borrowing its allocation scope; the scope cannot escape into a task.
 pub type FixtureBody<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
@@ -240,9 +243,13 @@ impl FixtureScope {
 /// destruction or internal driver failure has no cleanup-completion guarantee.
 #[must_use = "await the fixture report to observe body and cleanup failures"]
 pub struct FixtureRun<T, E> {
-    driver: Option<JoinHandle<FixtureReport<T, E>>>,
-    result: Option<Result<FixtureReport<T, E>, tokio::task::JoinError>>,
+    state: RunState<T, E>,
     progress: super::sessions::Progress,
+}
+
+enum RunState<T, E> {
+    Running(JoinHandle<FixtureReport<T, E>>),
+    Completed(Result<FixtureReport<T, E>, tokio::task::JoinError>),
 }
 
 impl<T, E> FixtureRun<T, E> {
@@ -273,27 +280,25 @@ impl<T, E> FixtureRun<T, E> {
 
     /// Observe the same driver repeatedly, including after a cancelled wait.
     pub async fn wait(&mut self) -> Result<FixtureReportRef<'_, T, E>, &tokio::task::JoinError> {
-        if self.result.is_none() {
-            let result = self
-                .driver
-                .as_mut()
-                .expect("unobserved driver exists")
-                .await;
-            self.result = Some(result);
-            self.driver = None;
+        loop {
+            match self.state {
+                RunState::Running(ref mut driver) => {
+                    self.state = RunState::Completed(driver.await);
+                }
+                RunState::Completed(ref result) => {
+                    return result.as_ref().map(FixtureReportRef);
+                }
+            }
         }
-        self.result
-            .as_ref()
-            .expect("driver result was recorded")
-            .as_ref()
-            .map(FixtureReportRef)
     }
 
     /// Consume the waiter and return the actual report. Cancelling this convenience
     /// future loses the waiter; use `wait` when observation must be resumable.
-    pub async fn into_report(mut self) -> Result<FixtureReport<T, E>, tokio::task::JoinError> {
-        let _ = self.wait().await;
-        self.result.take().expect("driver result was recorded")
+    pub async fn into_report(self) -> Result<FixtureReport<T, E>, tokio::task::JoinError> {
+        match self.state {
+            RunState::Running(driver) => driver.await,
+            RunState::Completed(result) => result,
+        }
     }
 }
 
@@ -387,8 +392,7 @@ impl FixtureSuite {
             }
         }));
         FixtureRun {
-            driver: Some(driver),
-            result: None,
+            state: RunState::Running(driver),
             progress,
         }
     }
