@@ -1,0 +1,41 @@
+Service readiness and typed output (batter-m9rp)
+
+Compared the integrated PR #84/#85 base 645efa0 with this implementation,
+using the same nightly rustdoc JSON command and surface.py described in README.md.
+Public function signatures and bounds were also inspected: existing signatures
+are unchanged. All variants belong to the new error enum; no existing exhaustive
+enum or public struct field changed. No hard cut or deprecated shim is needed.
+The normal build and behavioral validation use pinned Rust 1.98.1.
+
+## batter-core: 1246 -> 1277 entries; 0 removed, 31 added
++ ADDED   enum batter_core::service::ServiceReadinessError
++ ADDED   function batter_core::service::start_with_readiness
++ ADDED   impl batter_core::service::ServiceReadinessError: Clone
++ ADDED   impl batter_core::service::ServiceReadinessError: Copy
++ ADDED   impl batter_core::service::ServiceReadinessError: Debug
++ ADDED   impl batter_core::service::ServiceReadinessError: Display
++ ADDED   impl batter_core::service::ServiceReadinessError: Eq
++ ADDED   impl batter_core::service::ServiceReadinessError: Error
++ ADDED   impl batter_core::service::ServiceReadinessError: PartialEq
++ ADDED   impl batter_core::service::ServiceReadinessError: StructuralPartialEq
++ ADDED   impl batter_core::service::ServiceStartError: Debug
++ ADDED   impl batter_core::service::ServiceStartError: Display
++ ADDED   impl batter_core::service::ServiceStartError: Error
++ ADDED   method batter_core::service::ServiceCompletion::readiness
++ ADDED   method batter_core::service::ServiceCompletion::startup_output_failure
++ ADDED   method batter_core::service::ServiceObserver::status
++ ADDED   method batter_core::service::ServiceObserver::wait_ready
++ ADDED   method batter_core::service::ServiceOwner::status
++ ADDED   method batter_core::service::ServiceOwner::wait_ready
++ ADDED   method batter_core::service::ServiceStartError::completion
++ ADDED   method batter_core::service::StartingService::into_ready
++ ADDED   method batter_core::service::StartingService::observer
++ ADDED   method batter_core::service::StartingService::request_shutdown
++ ADDED   struct batter_core::service::ServiceStartError
++ ADDED   struct batter_core::service::StartingService
++ ADDED   use batter_core::service::ServiceReadinessError <- readiness::ServiceReadinessError
++ ADDED   use batter_core::service::ServiceStartError <- readiness::ServiceStartError
++ ADDED   use batter_core::service::StartingService <- readiness::StartingService
++ ADDED   use batter_core::service::start_with_readiness <- readiness::start_with_readiness
++ ADDED   variant batter_core::service::ServiceReadinessError::DeadlineExceeded
++ ADDED   variant batter_core::service::ServiceReadinessError::StoppedBeforeReady

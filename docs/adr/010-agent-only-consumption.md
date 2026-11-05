@@ -2169,3 +2169,38 @@ direction, and the existing honest limits: no asynchronous `Drop`, runtime-death
 survival, or detached-task termination guarantee. It does not make unimplemented
 adapters available, redesign APIs, or turn every application root into a
 foundation protocol.
+
+### Protected service readiness and typed output (`batter-m9rp`)
+
+Evidence: `service::start` accepted only unit output and its owner exposed only
+completion and shutdown. Consumer feedback in `batter-m9rp` records application
+channels, readiness timers and shutdown coordination required to adopt OTLP.
+
+`service::start_with_readiness` owns this protocol. One optional absolute
+readiness deadline is installed before initialization. The existing lifecycle
+transition mutex owns first-readiness history and gates Ready at the deadline;
+a service-owned timer requests drain. A late acknowledgement cannot briefly
+publish Ready before the timer is polled. Readiness already reached is retained
+through later shutdown, while current lifecycle status stays separately visible.
+
+`StartingService::into_ready` consumes the sole output capability and yields
+`(ServiceOwner, T)` only after readiness. It cannot be called twice on the same
+owner. Observers cannot obtain output, approve readiness or request shutdown.
+They may cancel and repeat their waits without altering the deadline or owner.
+A failed handoff awaits full completion and retains startup/shutdown, diagnostics
+and any coordinator-side rejected-output destruction panic independently. Output
+queued after readiness remains under its producer dispatch until claimed; no
+Clone bound is imposed on application data. The existing unit-output `start`
+remains valid without a deadline, so no hard cut or deprecation shim is needed.
+
+The invalid-state review checked late acknowledgement before timer polling,
+waiter cancellation, owner loss before first poll, missing readiness, retained
+cleanup/diagnostic failures, and unread versus claimed output destruction. The
+HTTP example and real-collector OTLP test use the protected path. Independent
+consumer-agent implementation/modification evaluation remains unexecuted.
+
+Readiness is historical evidence, not a promise of continuing availability.
+The deadline does not bound shutdown/diagnostics or preempt non-yielding work.
+Application approval policy, remote effects and runtime survival remain outside
+this local protocol. A typed output transferred to the caller has normal Rust
+ownership; holding it cannot be claimed to prove resource cleanup or quiescence.

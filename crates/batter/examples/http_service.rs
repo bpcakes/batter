@@ -3,6 +3,8 @@
 mod config;
 #[path = "http_service/logging.rs"]
 mod logging;
+#[path = "http_service/service.rs"]
+mod service;
 use config::Config;
 #[cfg(test)]
 #[path = "http_service/configuration_tests.rs"]
@@ -162,12 +164,14 @@ async fn run() -> Result<(), BoxError> {
                 .ok_or(std::env::VarError::NotPresent),
         )?)
         .try_init()?;
+    let readiness_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let otlp_endpoint = config.otlp_endpoint.clone();
     let supervisor = Supervisor::new(support::shutdown_budget());
     let lifecycle = supervisor.status();
     let admission = supervisor.operation_admission();
     // The initializer borrows the protected scope across awaits; `?` combines
     // unrelated errors into `ApplicationError` and the bound address is returned.
-    let starting = Startup::protected(
+    let startup = Startup::protected(
         supervisor,
         batter::operation::OperationOwner::new(Duration::from_secs(15))?.into_context(),
         support::cleanup_budget(),
@@ -189,12 +193,27 @@ async fn run() -> Result<(), BoxError> {
             Ok::<_, ApplicationError>(address)
         },
     )
-    .with_unix_signals("signals")
-    .start();
-    let (running, address) = starting.finish_with_output().await?;
-    tracing::info!(%address, "HTTP listener bound");
-    running.wait_checked().await?;
-    Ok(())
+    .with_unix_signals("signals");
+    match otlp_endpoint {
+        Some(endpoint) => {
+            #[cfg(feature = "otlp")]
+            {
+                let schedule = batter::otlp::Schedule::new(
+                    Duration::from_secs(10),
+                    Duration::from_secs(2),
+                    Duration::from_secs(3),
+                )?;
+                let diagnostics = batter::otlp::prepare(&endpoint, "example-http", schedule)?;
+                service::run(startup, diagnostics, readiness_deadline).await
+            }
+            #[cfg(not(feature = "otlp"))]
+            {
+                let _ = endpoint;
+                Err(std::io::Error::other("BATTER_OTLP_ENDPOINT requires the otlp feature").into())
+            }
+        }
+        None => service::run(startup, batter::service::NoDiagnostics, readiness_deadline).await,
+    }
 }
 
 #[test]

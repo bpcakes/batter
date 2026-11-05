@@ -7,6 +7,9 @@
 #[cfg(test)]
 mod tests;
 
+mod readiness;
+pub(crate) use readiness::ReadinessProgress;
+
 use super::{ProcessAdmissionError, Readiness};
 use std::sync::{
     Arc, Mutex, MutexGuard,
@@ -41,6 +44,7 @@ impl PendingComponentStart {
 
 struct AdmissionState {
     readiness: Readiness,
+    progress: ReadinessProgress,
     supervised: bool,
     driver_started: bool,
     ready_requested: bool,
@@ -61,11 +65,16 @@ impl AdmissionState {
             && (!self.supervised || self.driver_started)
             && self.pending_startups == 0
         {
+            if !self.progress.may_become_ready() {
+                return;
+            }
             self.readiness = Readiness::Ready;
+            self.progress = ReadinessProgress::Ready;
         }
     }
 
     fn request_drain(&mut self, started: Instant) {
+        self.progress.stop();
         let started = started.min(Instant::now());
         self.stop_started = Some(self.stop_started.map_or(started, |old| old.min(started)));
         if self.readiness != Readiness::Stopped {
@@ -80,6 +89,7 @@ impl Shared {
         Self {
             admission: Mutex::new(AdmissionState {
                 readiness: Readiness::Starting,
+                progress: ReadinessProgress::Pending(None),
                 supervised,
                 driver_started: false,
                 ready_requested: false,
@@ -176,6 +186,7 @@ impl Shared {
         {
             let mut state = self.lock();
             state.readiness = Readiness::Stopped;
+            state.progress.stop();
             self.publish_readiness(&state);
         }
         self.changed.notify_waiters();

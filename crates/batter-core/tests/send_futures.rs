@@ -13,7 +13,7 @@ use batter_core::{
     },
     operation::{OperationContext, PhasedObserver, RunningPhasedOperation},
     retry::{self, Attempt, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
-    service::{DiagnosticCompletion, ServiceObserver, ServiceOwner},
+    service::{DiagnosticCompletion, ServiceObserver, ServiceOwner, StartingService},
     startup::{StartingSupervisor, StartupObserver},
     telemetry::with_current_dispatch,
 };
@@ -99,6 +99,9 @@ fn startup_command_and_service_waits_are_send() {
     let _ = |owner: CommandOwner<u8, io::Error>| send(owner.finish());
     let _ = |owner: &ServiceOwner<io::Error, u8>| send(owner.wait());
     let _ = |observer: &ServiceObserver<io::Error, u8>| send(observer.wait());
+    let _ = |observer: &ServiceObserver<io::Error, u8>| send(observer.wait_ready());
+    let _ = |owner: &ServiceOwner<io::Error, u8>| send(owner.wait_ready());
+    let _ = |owner: StartingService<io::Error, u8, String>| send(owner.into_ready());
     let _ = |completion: DiagnosticCompletion| send(completion.wait());
 }
 

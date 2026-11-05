@@ -4239,3 +4239,15 @@ only prune unused packages. `python3 -m unittest discover -s scripts -p
 test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
 failure controls. Both commands are part of the bounded root test matrix. The same
 checker can run from an extracted source ZIP; it does not inspect Git history.
+
+### Service readiness and typed output
+
+`crates/batter-core/tests/service/readiness.rs` exercises resumed output waits,
+first-readiness retention, deadlines across initialization and acknowledgement,
+expired/unpolled starts, observer survival, and rejected-output destructor failure.
+The lifecycle unit test refuses late Ready transitions before polling any timer.
+The existing service suite retains diagnostic ordering and independent failures.
+`crates/batter-otlp/tests/service.rs` drives typed output and readiness with a real
+local collector. The facade HTTP example uses the same protected path, including
+optional explicit OTLP selection. Executed results belong to `batter-m9rp`;
+fresh-agent implementation/modification evaluation remains unexecuted.

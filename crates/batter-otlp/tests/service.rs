@@ -39,27 +39,24 @@ async fn owned_worker_exports_after_cleanup_and_second_installation_is_rejected(
     for first in [true, false] {
         let process =
             Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
-        let status = process.status();
         let (cleaned, cleaning) = tokio::sync::oneshot::channel();
-        let startup = Startup::scoped(
+        let startup = Startup::protected(
             process,
             OperationOwner::new(second).unwrap().into_context(),
             cleanup,
-            move |scope| {
-                Box::pin(async move {
-                    scope.reserve_cleanup("resource")?.register(move || async {
-                        cleaned.send(()).unwrap();
-                        Ok(())
-                    });
-                    scope
-                        .registration()
-                        .register("worker", |startup| async move {
-                            let running = startup.acknowledge_started();
-                            running.draining().await;
-                            Ok(running.stopped())
-                        })?;
-                    Ok::<_, batter_core::RegistrationError>(())
-                })
+            async move |scope| {
+                scope.reserve_cleanup("resource")?.register(move || async {
+                    cleaned.send(()).unwrap();
+                    Ok(())
+                });
+                scope
+                    .registration()
+                    .register("worker", |startup| async move {
+                        let running = startup.acknowledge_started();
+                        running.draining().await;
+                        Ok(running.stopped())
+                    })?;
+                Ok::<_, batter_core::RegistrationError>(41_u8)
             },
         );
         let prepared = prepare(
@@ -68,8 +65,14 @@ async fn owned_worker_exports_after_cleanup_and_second_installation_is_rejected(
             Schedule::new(Duration::from_millis(50), second * 2, second).unwrap(),
         )
         .unwrap();
-        let owner = service::start(startup, prepared);
-        status.wait_ready().await.unwrap();
+        let starting = service::start_with_readiness(
+            startup,
+            prepared,
+            Some(tokio::time::Instant::now() + second),
+        );
+        let (owner, output) = starting.into_ready().await.unwrap();
+        assert_eq!(output, 41);
+        assert_eq!(owner.wait_ready().await, Ok(()));
         if first {
             OperationOwner::new(second)
                 .unwrap()

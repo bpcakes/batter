@@ -1,5 +1,11 @@
 //! Protected startup through shutdown and independent diagnostic finalization.
 //!
+//! [`start_with_readiness`] also owns an optional absolute readiness deadline
+//! and transfers typed initialization output once, after readiness. Its
+//! [`StartingService::into_ready`] retains full completion on failure. Existing
+//! unit-output consumers may use [`start`]. Owners and observers expose current
+//! lifecycle status and a retained first-readiness outcome.
+//!
 //! [`start`] consumes an inert [`crate::startup::ScopedStartup`], installs explicitly supplied
 //! diagnostics, and owns both until completion. It accepts no arbitrary service
 //! future: only the protected startup/driver path can release diagnostics for
@@ -31,10 +37,14 @@
 
 mod coverage;
 mod driver;
+mod readiness;
 mod report;
 
 pub use coverage::{CompletionCoverage, IncompleteCoverage, RetainedCompletion};
 pub use driver::{ServiceObserver, ServiceOwner, start};
+pub use readiness::{
+    ServiceReadinessError, ServiceStartError, StartingService, start_with_readiness,
+};
 pub use report::{DiagnosticOutcome, ServiceCompletion, ServiceOutcome};
 
 use crate::completion::wait_published;

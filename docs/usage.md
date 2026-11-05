@@ -360,8 +360,9 @@ together; observers never receive the output, and a failed startup never yields
 it. Output returned while a drain, cancellation or deadline is observed is
 destroyed before cleanup, not handed off. With unit output, `starting.finish()`
 returns only the running owner; a typed output does not offer `finish()`, so the
-value cannot be skipped by accident. `service::start` does not deliver typed
-output yet and accepts only unit output. To name the specification in a helper's
+value cannot be skipped by accident. `service::start` retains its unit-output API. Use
+`service::start_with_readiness` and its consuming `into_ready()` for typed output
+and an optional readiness deadline. To name the specification in a helper's
 return type, use `ScopedStartup<impl Initializer<E, Output = T>>`.
 
 Both finish methods consume the startup owner. To resume after a timeout, create
@@ -1066,3 +1067,29 @@ loss without extra probes. Actual dependency work must remain in the supplied
 future; dropping that future does not establish remote cancellation or cleanup
 of unregistered resources. Health does not automatically change business-route
 admission policy or process readiness approval.
+
+### Service readiness, output, and diagnostics
+
+Use `service::start_with_readiness(startup, diagnostics, Some(deadline))` when
+startup returns a bound address or other typed value. `deadline` is one absolute
+Tokio `Instant`, covering initialization and component acknowledgements. `None`
+selects no additional readiness deadline; initialization keeps its own budget.
+Call `let (owner, output) = starting.into_ready().await?` to receive the value
+once after readiness. On failure, the error retains complete shutdown and
+diagnostic evidence through `completion()`.
+
+`owner.observer()` has no shutdown or approval authority. Its `wait_ready()`
+reports whether readiness was ever reached; `status().readiness()` gives the
+current state. Cancelling either borrowed wait does not change execution.
+To time out a borrowed startup-output wait and resume it, pin one `into_ready()`
+future and retain it. Dropping that owning future requests drain.
+
+The HTTP example exercises this path. To select its optional exporter explicitly:
+
+```sh
+BATTER_OTLP_ENDPOINT=http://127.0.0.1:4318/v1/metrics \
+  cargo run -p batter --features axum,otlp --example http_service
+```
+
+The application logs the typed bound address only after readiness. The endpoint
+is application configuration; a collector must be provided separately.
