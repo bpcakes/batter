@@ -994,7 +994,9 @@ still require explicit close/join.
 Harness clones share native admission; other owners must release leases for
 waiting acquisitions to progress. The caller owns server shutdown after all runs
 finish. Owned reports and borrowed wait views are must-use; driver join alone
-is not fixture success. `FixtureRun::wait` can be cancelled and resumed; dropping it loses report
+is not fixture success. Internally, each run owns either the live driver or its
+retained result; repeated observations borrow that same completed report or task
+error, and consuming extraction moves it out. `FixtureRun::wait` can be cancelled and resumed; dropping it loses report
 observation, and runtime death has no completion guarantee. `PoolAcquire` means
 cleanup is pending; low-level `Connect` reports attempted cleanup. The low-level
 fixture owner is must-use and still requires explicit finish. Provisioning and
