@@ -337,8 +337,6 @@ dependencies = [
  "batter-sqlx",
  "batter-test-support",
  "chrono",
- "runflag-core",
- "runflag-postgres",
  "runlimit-axum",
  "runlimit-core",
  "runlimit-http",

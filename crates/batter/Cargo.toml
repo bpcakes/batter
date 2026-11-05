@@ -63,8 +63,6 @@ runlimit-core = { workspace = true }
 runlimit-memory = { workspace = true }
 runlimit-http = { workspace = true }
 runlimit-axum = { workspace = true }
-runflag-core = { workspace = true }
-runflag-postgres = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 serde_json = "1"
 sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono"] }

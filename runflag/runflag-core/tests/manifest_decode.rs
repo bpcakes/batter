@@ -250,3 +250,97 @@ fn decoding_refuses_malformed_flag_fields_and_invariants() {
     ];
     assert_refused(&cases);
 }
+
+/// Every field only release and mode flags carry is refused on a kill switch,
+/// one clause at a time.
+#[test]
+fn decoding_refuses_each_flag_only_field_on_a_kill_switch() {
+    let cases: [(&str, Tamper); 8] = [
+        ("needs a safe state and a stale rule", |v| {
+            flag_mut(v, "checkout_halt")["safe_state"] = Value::Null;
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["default"] = json!("on");
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["expiry"] = json!("2027-01-01");
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["governed_by"] = json!("export_halt");
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["pinned_by"] = json!(["worker"]);
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["only_in"] = json!("development");
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["requires_settings"] =
+                json!([{ "variant": "on", "settings": ["HALT_URL"] }]);
+        }),
+        ("a kill switch carries a field", |v| {
+            flag_mut(v, "checkout_halt")["invariants"] = json!([{
+                "rule": "requires", "variant": "on", "other": "fast_path", "other_variant": "on"
+            }]);
+        }),
+    ];
+    assert_refused(&cases);
+}
+
+/// The remaining clauses of compound refusal conditions on flags, names and
+/// references, each reached by its own case.
+#[test]
+fn decoding_refuses_each_remaining_clause() {
+    let cases: [(&str, Tamper); 10] = [
+        ("only a kill switch has a safe state or a stale rule", |v| {
+            flag_mut(v, "fast_path")["stale_rule"] = json!("hold_last_known");
+        }),
+        ("the default is not a declared variant", |v| {
+            flag_mut(v, "fast_path")["default"] = Value::Null;
+        }),
+        (
+            "only a release flag is governed, and only by a kill switch",
+            |v| {
+                flag_mut(v, "checkout_style")["governed_by"] = json!("checkout_halt");
+            },
+        ),
+        (
+            "only a release flag is governed, and only by a kill switch",
+            |v| {
+                flag_mut(v, "new_checkout")["governed_by"] = json!("missing_switch");
+            },
+        ),
+        (
+            "required settings must be distinct names outside the prefix",
+            |v| {
+                flag_mut(v, "new_checkout")["requires_settings"][0]["settings"] = json!([]);
+            },
+        ),
+        (
+            "required settings must be distinct names outside the prefix",
+            |v| {
+                flag_mut(v, "new_checkout")["requires_settings"][0]["settings"] =
+                    json!(["PAYMENT_API_KEY", "PAYMENT_API_KEY"]);
+            },
+        ),
+        (
+            "an invariant names missing_flag which is not another flag",
+            |v| {
+                flag_mut(v, "checkout_style")["invariants"][0]["other"] = json!("missing_flag");
+            },
+        ),
+        (
+            "both_or_none invariant on new_checkout must relate both toggles at on",
+            |v| {
+                flag_mut(v, "fast_path")["invariants"][0]["other_variant"] = json!("off");
+            },
+        ),
+        ("environment class \"Hosted\"", |v| {
+            v["environment_classes"] = json!(["Hosted", "development"]);
+        }),
+        ("is not declared", |v| {
+            flag_mut(v, "export_halt")["owners"] = json!({ "only": ["reporting"] });
+        }),
+    ];
+    assert_refused(&cases);
+}
