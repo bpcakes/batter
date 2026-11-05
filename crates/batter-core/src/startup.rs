@@ -3,7 +3,7 @@
 //! [`Startup::protected`] is the canonical constructor: its initializer is an
 //! ordinary owned async closure over [`ProtectedStartupScope`] that may return
 //! typed output, delivered with the running owner by
-//! [`StartingSupervisor::wait_with_output`]. Errors stay concrete; an
+//! [`StartingSupervisor::finish_with_output`]. Errors stay concrete; an
 //! initializer that combines unrelated errors with `?` returns
 //! [`ApplicationError`]. Boxed [`StartupFuture`] closures through
 //! [`Startup::scoped`] remain the lower-level form.
@@ -80,7 +80,7 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 /// let capacity = Arc::new(Semaphore::new(1));
 /// let acquiring = capacity.clone();
 /// let (requests, mut inbox) = mpsc::channel::<(u32, oneshot::Sender<u32>)>(1);
-/// let mut starting = Startup::scoped(supervisor, context, cleanup, move |scope| Box::pin(async move {
+/// let starting = Startup::scoped(supervisor, context, cleanup, move |scope| Box::pin(async move {
 ///     scope.stage("service.capacity")?;
 ///     let slot = scope.reserve_cleanup("service.capacity")?;
 ///     let permit = acquiring.acquire_owned().await.expect("capacity remains open");
@@ -102,7 +102,7 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 ///     })?;
 ///     Ok::<_, batter_core::RegistrationError>(())
 /// })).with_unix_signals("signals").start();
-/// let running = starting.wait().await?;
+/// let running = starting.finish().await?;
 /// // Keep requests alive until shutdown: an early critical task exit is a failure.
 /// let response = request_context.run("service.request", |_| async {
 ///     running.status().wait_ready().await
@@ -175,7 +175,7 @@ impl<F> Startup<F> {
     ///     shutdown.draining().await;
     ///     Ok(shutdown.stopped())
     /// })?;
-    /// let mut starting = Startup::new(
+    /// let starting = Startup::new(
     ///     supervisor,
     ///     batter_core::operation::OperationOwner::new(second)?.into_context(),
     ///     cleanup,
@@ -183,7 +183,7 @@ impl<F> Startup<F> {
     /// )
     /// .without_readiness_approval()
     /// .start();
-    /// let pending = starting.wait().await?;
+    /// let pending = starting.finish().await?;
     /// assert_eq!(pending.status().readiness(), Readiness::Starting);
     /// let running = pending.approve_readiness();
     /// running.status().wait_ready().await.unwrap();
@@ -236,7 +236,7 @@ impl Startup<()> {
     /// finalization before acquisition and lend sealed registration authority
     /// to supported adapters, borrowing the scope across awaits. The library
     /// boxes its future. Its `Ok` value is delivered with the running owner by
-    /// [`StartingSupervisor::wait_with_output`], never to observers; a failed
+    /// [`StartingSupervisor::finish_with_output`], never to observers; a failed
     /// startup never yields it. `E` stays concrete: use a concrete error type,
     /// or [`ApplicationError`] when `?` combines unrelated errors. Construction
     /// is inert; [`ScopedStartup::start`] uses the owned coordinator shared with
@@ -254,7 +254,7 @@ impl Startup<()> {
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
     /// let context = OperationOwner::new(second)?.into_context();
-    /// let mut starting = Startup::protected(process, context, cleanup, async |scope| {
+    /// let starting = Startup::protected(process, context, cleanup, async |scope| {
     ///     scope.stage("listener.bind")?;
     ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     ///     let address = listener.local_addr()?;
@@ -273,7 +273,7 @@ impl Startup<()> {
     /// })
     /// .start();
     /// // Startup failure propagates with `?`; the address arrives with the owner.
-    /// let (running, address) = starting.wait_with_output().await?;
+    /// let (running, address) = starting.finish_with_output().await?;
     /// assert!(address.ip().is_loopback());
     /// running.status().wait_ready().await.unwrap();
     /// running.shutdown_checked().await?;
@@ -314,7 +314,7 @@ impl Startup<()> {
     /// let second = Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
-    /// let mut starting = Startup::scoped(process, batter_core::operation::OperationOwner::new(second)?.into_context(), cleanup,
+    /// let starting = Startup::scoped(process, batter_core::operation::OperationOwner::new(second)?.into_context(), cleanup,
     ///     |scope| Box::pin(async move {
     ///         scope.reserve_cleanup("dependency")?.register(|| async { Ok(()) });
     ///         scope.registration().register("worker", |startup| async move {
@@ -324,7 +324,7 @@ impl Startup<()> {
     ///         })?;
     ///         Ok::<_, batter_core::RegistrationError>(())
     ///     })).start();
-    /// let running = starting.wait().await?;
+    /// let running = starting.finish().await?;
     /// running.status().wait_ready().await.unwrap();
     /// running.shutdown_checked().await?;
     /// # Ok(()) }
@@ -404,9 +404,9 @@ impl<F> ScopedStartup<F> {
     ///
     /// Application failures are retained as
     /// [`InitializationError::Application`] without strengthening `E`'s bounds.
-    /// Typed output is delivered by [`StartingSupervisor::wait_with_output`];
+    /// Typed output is delivered by [`StartingSupervisor::finish_with_output`];
     /// a boxed [`StartupFuture`] initializer has unit output and can use
-    /// [`StartingSupervisor::wait`].
+    /// [`StartingSupervisor::finish`].
     pub fn start<E>(
         self,
     ) -> StartingSupervisor<InitializationError<E>, crate::lifecycle::RunningSupervisor, F::Output>
@@ -440,7 +440,7 @@ impl<F> DeferredScopedStartup<F> {
     }
 
     /// Launch protected startup and return an unapproved running owner on
-    /// success, with any typed output from [`StartingSupervisor::wait_with_output`].
+    /// success, with any typed output from [`StartingSupervisor::finish_with_output`].
     pub fn start<E>(
         self,
     ) -> StartingSupervisor<InitializationError<E>, crate::lifecycle::UnapprovedSupervisor, F::Output>

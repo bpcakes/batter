@@ -60,7 +60,7 @@ async fn protected_channel_component_joins_before_reserved_resource_cleanup() {
     let component_events = events.clone();
     let cleanup_events = events.clone();
     let (requests, mut inbox) = mpsc::channel::<(u32, oneshot::Sender<u32>)>(1);
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(2))
             .unwrap()
@@ -98,7 +98,7 @@ async fn protected_channel_component_joins_before_reserved_resource_cleanup() {
     )
     .start();
 
-    let running = starting.wait().await.unwrap();
+    let running = starting.finish().await.unwrap();
     running.status().wait_ready().await.unwrap();
     assert_eq!(running.status().readiness(), Readiness::Ready);
     let (reply, response) = oneshot::channel();
@@ -128,7 +128,7 @@ impl Drop for ReturnedThenPanics {
 
 #[tokio::test]
 async fn protected_application_error_survives_future_destruction_panic_and_cleanup() {
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -143,7 +143,7 @@ async fn protected_application_error_survives_future_destruction_panic_and_clean
         },
     )
     .start();
-    let error = match starting.wait().await {
+    let error = match starting.finish().await {
         Ok(running) => {
             drop(running);
             panic!("protected startup unexpectedly succeeded")
@@ -177,7 +177,7 @@ async fn protected_application_error_survives_future_destruction_panic_and_clean
 async fn protected_failure_retains_stage_lifo_cleanup_errors_and_observer_identity() {
     let order = Arc::new(Mutex::new(Vec::new()));
     let captured = order.clone();
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -200,7 +200,7 @@ async fn protected_failure_retains_stage_lifo_cleanup_errors_and_observer_identi
     )
     .start();
     let observer = starting.observer();
-    let error = match starting.wait().await {
+    let error = match starting.finish().await {
         Ok(running) => {
             drop(running);
             panic!("protected startup unexpectedly succeeded")
@@ -237,7 +237,7 @@ async fn protected_failure_retains_stage_lifo_cleanup_errors_and_observer_identi
 async fn cancelling_a_protected_borrowed_waiter_leaves_initialization_owned() {
     let (entered_tx, entered_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(2))
             .unwrap()
@@ -260,15 +260,14 @@ async fn cancelling_a_protected_borrowed_waiter_leaves_initialization_owned() {
     )
     .start();
     entered_rx.await.unwrap();
-    let mut waiter = Box::pin(starting.wait());
+    let mut waiter = Box::pin(starting.finish());
     assert!(
         std::future::poll_fn(|cx| Poll::Ready(waiter.as_mut().poll(cx)))
             .await
             .is_pending()
     );
-    drop(waiter);
     release_tx.send(()).unwrap();
-    let running = starting.wait().await.unwrap();
+    let running = waiter.await.unwrap();
     assert!(running.shutdown().await.unwrap().is_success());
 }
 
@@ -345,7 +344,7 @@ async fn dropping_protected_owner_before_first_poll_skips_factory_and_cleans_pri
 
 #[tokio::test]
 async fn protected_factory_panic_still_closes_registered_resources() {
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -360,7 +359,7 @@ async fn protected_factory_panic_still_closes_registered_resources() {
         },
     )
     .start::<Failure>();
-    let error = match starting.wait().await {
+    let error = match starting.finish().await {
         Ok(running) => {
             drop(running);
             panic!("protected startup unexpectedly succeeded")
@@ -394,10 +393,10 @@ async fn protected_owner_and_observer_keep_the_stable_error_type() {
         cleanup_budget(),
         |_scope| Box::pin(async { Err::<(), _>(Failure) }),
     );
-    let mut owner: batter_core::startup::StartingSupervisor<InitializationError<Failure>> =
+    let owner: batter_core::startup::StartingSupervisor<InitializationError<Failure>> =
         startup.start();
     let observer: StartupObserver<InitializationError<Failure>> = owner.observer();
-    let waited = match owner.wait().await {
+    let waited = match owner.finish().await {
         Ok(running) => {
             drop(running);
             panic!("protected startup unexpectedly succeeded")

@@ -8,6 +8,55 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** consume startup handoff ownership (`batter-r4ir`, F08 in the
+  implicit-state inventory). `StartingSupervisor::wait(&mut self)` becomes
+  `finish(self)` and `wait_with_output(&mut self)` becomes
+  `finish_with_output(self)`. A second handoff call now fails to compile instead
+  of panicking after a completed wait. Result types, typed output, deferred
+  readiness and observer behavior are unchanged. Update both call shapes:
+
+  ```rust,ignore
+  // Before: unit output
+  let mut starting = startup.start();
+  let running = starting.wait().await?;
+  // After
+  let starting = startup.start();
+  let running = starting.finish().await?;
+
+  // Before: typed output
+  let mut starting = startup.start();
+  let (running, address) = starting.wait_with_output().await?;
+  // After
+  let starting = startup.start();
+  let (running, address) = starting.finish_with_output().await?;
+  ```
+
+  For either method, move the owner into helpers instead of passing
+  `&mut StartingSupervisor`. Clone any observer before calling `finish`.
+  A finish future owns the pending handoff even before its first poll; dropping
+  it requests drain. For cancellation and resumption, retain one pinned future:
+
+  ```rust,ignore
+  // Before: a timed-out borrowed wait left `starting` available.
+  let running = match timeout(limit, starting.wait()).await {
+      Ok(result) => result?,
+      Err(_) => starting.wait().await?,
+  };
+  // After: a timed-out borrow leaves the same future available.
+  let finish = starting.finish();
+  tokio::pin!(finish);
+  let running = match timeout(limit, &mut finish).await {
+      Ok(result) => result?,
+      Err(_) => finish.await?,
+  };
+  // Typed output uses the same pattern with `finish_with_output()` and
+  // destructures the returned `(running, output)` pair.
+  ```
+
+  No deprecated borrowed shim is retained: it would restore the known-invalid
+  repeated handoff. The ordinary Rust rule against polling a completed future
+  still applies. See the [API surface check](docs/evidence/startup-handoff-2026-11-05.md).
+
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates
   and one shared setup budget; drop losing sockets before TLS/HTTP. Preserve

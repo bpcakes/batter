@@ -169,7 +169,7 @@ async fn startup_query_joins_before_pool_close() -> Result {
     let published = observed.clone();
     let stopped = events.clone();
     let finalized = events.clone();
-    let mut starting = Startup::new(supervisor(), operation(), cleanup_budget(), move |scope| {
+    let starting = Startup::new(supervisor(), operation(), cleanup_budget(), move |scope| {
         Box::pin(async move {
             let pool = pool_in(
                 scope.supervisor().reserve_cleanup("postgres.pool")?,
@@ -200,7 +200,7 @@ async fn startup_query_joins_before_pool_close() -> Result {
         })
     })
     .start();
-    let running = starting.wait().await.unwrap();
+    let running = starting.finish().await.unwrap();
     running.status().wait_ready().await.unwrap();
     running.handle().request();
     let report = running.wait().await.unwrap();

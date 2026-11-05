@@ -83,6 +83,27 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### Startup handoff assessment (`batter-r4ir`)
+
+The F08 inventory found that `StartingSupervisor::wait(&mut self)` and
+`wait_with_output(&mut self)` permit a second completed handoff call, which
+panics. This is local library-owned single-use authority, not application policy
+or a remote-effect ambiguity. `finish(self)` and `finish_with_output(self)` now
+consume that authority into one native future. Rust rejects another handoff call
+on the moved owner; unit output alone exposes the unit convenience method.
+No borrowed compatibility shim remains because it would preserve the defect.
+
+Cancellation and resumption use a borrow of the same pinned future. Dropping the
+future, including before first poll, requests drain just as dropping the original
+owner does. The existing coordinator still owns initialization and cleanup;
+observers still cannot prolong running ownership or receive typed output. No new
+task, channel, state enum, or allocation is added. Polling an already completed
+future remains the standard Rust `Future` caller obligation, not a second Batter
+handoff operation. Regression scenarios cover pending-borrow cancellation,
+unpolled and pending owner abandonment, queued output destruction, and retained
+cleanup failures; compile-fail examples cover repeated handoffs and skipped typed
+output. Fresh-agent usability evaluation remains unexecuted.
+
 ### Native online-index repair assessment (`batter-fnj8.10`)
 
 Catalog identity checks alone did not protect a later name-based DROP: a real

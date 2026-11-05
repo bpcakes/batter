@@ -318,7 +318,7 @@ async fn run_worker(database: RunledgerDatabase, payload: &Value, subject: &str)
     let (executed, mut observed) = unbounded_channel();
     let (ended, mut endings) = unbounded_channel();
     let initializing = database.clone();
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         Supervisor::new(budget()?),
         context(60)?,
         cleanup_budget()?,
@@ -344,7 +344,7 @@ async fn run_worker(database: RunledgerDatabase, payload: &Value, subject: &str)
         },
     )
     .start();
-    let running = starting.wait().await?;
+    let running = starting.finish().await?;
     let status = running.status();
     single_facade_completion::complete(running, async {
         status
