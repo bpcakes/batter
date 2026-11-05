@@ -8,8 +8,12 @@ async fn mixed_dns_answers_only_dial_allowed_candidates_in_order() {
     let addresses = [
         "127.0.0.1:443",
         "[::1]:443",
+        "[2620:4f:8000::1]:443",
+        "192.31.196.1:443",
         "1.1.1.1:443",
         "10.0.0.1:443",
+        "192.52.193.1:443",
+        "192.175.48.1:443",
         "8.8.8.8:443",
     ];
     let attempts = RefCell::new(Vec::new());
@@ -33,17 +37,21 @@ async fn mixed_dns_answers_only_dial_allowed_candidates_in_order() {
 }
 
 #[tokio::test]
-async fn all_private_answers_never_invoke_the_dialer() {
+async fn all_disallowed_answers_never_invoke_the_dialer() {
     let origin = Origin::public_https("https://provider.example").unwrap();
     let result = connect::<(), _, _>(
         &origin,
         vec![
             "127.0.0.1:443".parse().unwrap(),
             "[::1]:443".parse().unwrap(),
+            "192.31.196.1:443".parse().unwrap(),
+            "192.52.193.1:443".parse().unwrap(),
+            "192.175.48.1:443".parse().unwrap(),
+            "[2620:4f:8000::1]:443".parse().unwrap(),
         ],
         Instant::now() + Duration::from_secs(1),
         |_| async {
-            panic!("private destination reached the dialer");
+            panic!("disallowed destination reached the dialer");
         },
     )
     .await;

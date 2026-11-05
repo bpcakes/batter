@@ -61,10 +61,12 @@ addresses are dialed. An answer with no allowed addresses fails as
 in their original order and use the existing bounded fallback.
 
 The conservative filter excludes local, private, shared, documentation,
-benchmarking, multicast, reserved and translation ranges. IPv6 is restricted
-to ordinary 2000::/3 unicast, excluding 2001::/23, 2001:db8::/32, 2002::/16,
-and 3fff::/20. Some globally reachable special-purpose ranges are intentionally
-excluded. This is an address policy, not a guarantee about OS routing, NAT,
+benchmarking, multicast, reserved and translation ranges. Special-purpose
+AS112 and AMT blocks are also excluded: 192.31.196.0/24, 192.52.193.0/24 and
+192.175.48.0/24. IPv6 is restricted to ordinary 2000::/3 unicast, excluding
+2001::/23, 2001:db8::/32, 2002::/16, AS112 2620:4f:8000::/48 and 3fff::/20.
+These exclusions include globally reachable special-purpose ranges.
+This is an address policy, not a guarantee about OS routing, NAT,
 remote ownership, or trust. Applications still choose permitted hostnames and
 control their network and trust store. `Origin::https` remains available for
 intentionally private HTTPS services; `Origin::loopback` is unchanged.

@@ -56,8 +56,9 @@ impl Origin {
     /// Rejects non-public literal IPs now and filters DNS answers immediately
     /// before dialing, using those same addresses without a second lookup.
     /// Local, private, shared, documentation, benchmarking, multicast and
-    /// reserved IPv4 ranges are excluded. IPv6 is limited to 2000::/3 excluding
-    /// special-use 2001::/23, documentation and 6to4 ranges; mapped and NAT64
+    /// reserved IPv4 ranges are excluded, as are special-purpose AS112 and AMT
+    /// blocks. IPv6 is limited to 2000::/3 excluding special-use 2001::/23,
+    /// documentation, 6to4 and AS112 2620:4f:8000::/48; mapped and NAT64
     /// addresses are excluded. This conservative policy does not prove that a
     /// remote host is trustworthy or publicly routed by the operating system.
     /// Use [`Self::https`] for deliberately private HTTPS services.

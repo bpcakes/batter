@@ -1966,6 +1966,11 @@ is no resolver override or public setter that can remove the policy. A caller
 can deliberately construct an ordinary `Origin::https` for private services;
 choosing which hostnames and service classes are authorized remains application
 policy. Address classification cannot establish OS routing or remote trust.
+The public policy also rejects the globally reachable AS112 and AMT
+special-purpose blocks. One shared classifier enforces the literal and resolved
+address rules; endpoint/neighbor tests cover its range boundaries, and dialer
+tests reject these blocks before any connection attempt. This corrects the
+classification data without adding a caller obligation or a new API state.
 
 ### Outbound exchange assessment (`batter-3s1a`)
 

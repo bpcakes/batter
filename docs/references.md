@@ -6481,8 +6481,12 @@ SQLx migration history.
 The conservative exclusions were checked against the IANA
 [IPv4 special-purpose registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
 and [IPv6 special-purpose registry](https://www.iana.org/assignments/iana-ipv6-special-registry/).
-The implementation intentionally excludes some globally reachable special-use
-ranges as well. The registry does not guarantee routing in a local network;
+The implementation also excludes globally reachable special-use ranges,
+including AS112 192.31.196.0/24, 192.175.48.0/24 and 2620:4f:8000::/48, and
+AMT 192.52.193.0/24. Literal boundary tests cover the first/last excluded
+addresses and their permitted neighbors; dialer tests cover these blocks in
+mixed and wholly disallowed answers. The registry does not guarantee routing
+in a local network;
 the API makes no such claim. Enforcement uses the inspected Tokio lookup
 result directly, followed by the existing bounded dialer, with no second DNS
 lookup. Literal and real localhost tests cover refusal before TCP; mixed-answer

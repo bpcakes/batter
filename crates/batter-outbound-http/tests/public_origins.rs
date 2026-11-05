@@ -20,7 +20,10 @@ fn literal_policy_rejects_special_ranges_and_keeps_existing_origins_compatible()
         "192.168.1.1",
         "192.0.0.1",
         "192.0.2.1",
+        "192.31.196.1",
+        "192.52.193.1",
         "192.88.99.1",
+        "192.175.48.1",
         "198.18.0.1",
         "198.51.100.1",
         "203.0.113.1",
@@ -35,6 +38,7 @@ fn literal_policy_rejects_special_ranges_and_keeps_existing_origins_compatible()
         "[2001:db8::1]",
         "[2001::1]",
         "[2002:7f00:1::]",
+        "[2620:4f:8000::1]",
         "[3fff::1]",
     ] {
         let url = format!("https://{address}");

@@ -337,7 +337,9 @@ protocol. Choose one retry owner so nested budgets do not multiply attempts.
 
 `Origin::public_https` retains a public-address policy on the origin and filters
 DNS candidates before the existing bounded dialer; no preflight/re-resolution
-gap exists. Ordinary `Origin::https` still supports private services. See the
+gap exists. The exclusions include globally reachable AS112 and AMT
+special-purpose blocks; public reachability does not exempt them from the
+address policy. Ordinary `Origin::https` still supports private services. See the
 [public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
 
 `batter-outbound-http` (facade `batter::outbound_http`, feature `outbound-http`) is
