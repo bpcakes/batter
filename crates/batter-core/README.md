@@ -9,6 +9,17 @@ Application futures and errors stay concrete. HTTP support is a separate
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
 
+`operation::PhasedOperation` owns work followed by outcome-aware finalization;
+its callbacks cannot obtain the later context before the transition. Results
+and failures are classified into opaque success or failed-report proofs.
+`PhaseOutcome::classify` includes late interruption and destruction evidence.
+Owner loss cancels work only; parent cancellation still interrupts both.
+`CleanupSlot::acquire_semaphore` and `bind_udp` own native acquisition through
+registration, without application async glue. Generic handle/finalizer pairing
+belongs to `cleanup::low_level::acquire_pair`, whose caller owns that glue.
+See the facade's `operation_budget` and `finite_command` examples. Manual
+`OperationPhases` access and `CleanupSlot::register` remain lower-level paths.
+
 `health` provides an ordinary supervised monitor with explicit timing policy and
 cloneable read-only observations. Readers do no probes; stale or stopped writers
 are unready. `readiness` exhaustively classifies those observations and combines

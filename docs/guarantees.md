@@ -204,6 +204,52 @@ cancelled early. Both forms require positive work time when called, and
 shielding, remote cancellation acknowledgement, transaction rollback proof,
 commit certainty, or exactly-once effects.
 
+## Owned work and finalization
+
+`operation::PhasedOperation::new` derives work and finalization from one parent
+and a positive reserve. `OperationPhases::into_operation` transfers an existing
+pair, including invocation-derived and zero-reserve pairs, without resetting its
+clock. Both specifications are inert until `start`. The work callback receives
+only its shortened context. The finalization callback receives its context and
+read-only `PhaseOutcome` only after the work future is destroyed. The driver
+retains the original value/error, boundary interruption and destruction panic
+before entering finalization; finalization failure cannot replace them. Work
+completion cancels its context and descendants before finalization starts, even
+on success. The sibling finalization context remains live within its own bounds;
+this cancellation does not join arbitrary spawned tasks.
+
+The driver shares command phase polling and panic containment. Cancellation and
+deadline are checked before each factory and before polling; a result produced
+by a synchronous overrun is retained together with its late interruption. A
+phase whose parent is already cancelled or deadline has expired does not invoke
+its factory. Work panic, returned error or work-only interruption still proceeds
+to finalization when its context permits. Finalization stops at the original
+total deadline and inherits parent cancellation. Work cancellation never travels
+upward or into its sibling. Both the phase coordinator and result publisher
+retain the originating tracing dispatcher and span through execution and
+captured-value destruction, including skipped work and unclaimed reports. A
+private guarded publication retains that protection after the publisher exits.
+Only a completed `wait` claims the shared result and transfers its destruction
+to caller context; observer clones and cancelled pending waiters do not claim it.
+
+`RunningPhasedOperation` owns work cancellation. Dropping it, even before first
+poll, requests work cancellation but leaves the coordinator to attempt
+finalization. Its borrowed waiters and cloneable `PhasedObserver` are read-only;
+dropping a waiter changes no execution. `PhaseOutcome::classify` returns an
+accepted value only without late interruption or destruction panic; otherwise an
+opaque `PhaseFailure` retains all raw evidence, including a returned value.
+`wait` returns an opaque `PhasedSuccess` containing both accepted values, or
+`PhasedFailure::Report` containing an opaque `FailedPhasedReport` with both
+outcomes. Success and failed-report proofs cannot be constructed or interchanged
+by consumers. Neither value extraction nor observer cloning requires domain Clone. Default formatting
+omits application values and causes. A coordinator join failure is separate. Publication and
+finalization require a live runtime; this does not join arbitrary spawned work
+or prove remote rollback. Application work placed inside a finalizer, captured
+root authority and independently constructed roots remain application policy.
+
+Manual `OperationPhases::{work,finalization}` access remains lower-level: it
+requires caller sequencing and does not retain results or drive finalization.
+
 ## Retry contract
 
 Each attempt invokes a fresh factory. The initial call is attempt 1 and consumes
@@ -1527,10 +1573,28 @@ Dropping close mid-flight aborts its local task but cannot await completion or
 return a report. Shutdown/readiness, resource acquisition, and cleanup are not
 interruptibility-masked like a full managed effect runtime.
 
-Register cleanup immediately after successful acquisition, but do not confuse
-this convention with an atomic acquisition/registration guarantee. The caller
-must handle partial acquisition and initialization according to native resource
-contracts. Resource values must not require an unavailable runtime after shutdown.
+Supported acquisition uses `CleanupSlot::acquire_semaphore` and `bind_udp`, or
+an adapter-owned operation such as SQLx `pool_in`. The core native methods poll
+the actual native acquisition future, retain its returned resource, register the
+library's cleanup action, and destroy the completed native future before returning.
+There is no caller callback, projection or await between these steps. A native
+future destructor panic leaves the finalizer installed and releases the undelivered
+caller reference during unwinding. Native acquisition errors add no finalizer;
+never-polled calls do no acquisition. Pending semaphore cancellation retains
+Tokio's queue-position policy. These methods do not bound the number of waiters.
+
+Semaphore permits remain owned exclusively by cleanup until release. UDP returns
+an Arc of the native socket; cleanup releases its own reference, and the socket
+closes only when all caller references are dropped too. This does not join tasks,
+close arbitrary retained handles, or establish remote effects. Cleanup still
+requires its owning driver and a live runtime.
+
+`cleanup::low_level::acquire_pair` registers an opaque `low_level::Acquired` pair
+before delivering its handle or destroying the pair-producing future. Its caller
+still owns the earlier native acquisition-to-pair transition, including any await
+or destructor panic inside that future. This is deliberately not equivalent to
+supported native acquisition. `CleanupSlot::register` is the manual handoff;
+resource-specific protocols without a supported adapter retain that obligation.
 
 ## PostgreSQL client disposition
 

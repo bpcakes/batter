@@ -1,0 +1,67 @@
+Phased proof and native acquisition API diff (batter-rtxb)
+
+Baseline: 297d0861f42b6ac5abac38b081f8d08c4dadfa0d (PR #84 before redesign).
+Target: working tree implementing batter-rtxb; the owning commit records it.
+Toolchain: repository-pinned Rust 1.98.1, same for both captures.
+Command: RUSTC_BOOTSTRAP=1 cargo rustdoc -p batter-core --lib --all-features --locked -- -Zunstable-options --output-format json
+The environment override is scoped only to rustdoc JSON inspection; supported
+builds and scripts/verify.sh use the unmodified pinned stable toolchain.
+Method: surface.py baseline-doc target-doc batter-core, plus manual signatures.
+All-features inventories include metrics, unlike earlier default-feature counts.
+The public facade reexports this implementation unchanged.
+
+Manual signature changes not detected by surface.py:
+- RunningPhasedOperation::wait and PhasedObserver::wait: Ok is now
+  PhasedSuccess<T,U>, not SharedPhasedReport<T,E,U,F>.
+- PhasedFailure::Report: payload now FailedPhasedReport<T,E,U,F>.
+- All removed getters, report identity and generic pairing paths have Breaking
+  before/after examples, Migration rustdoc and explicit shim decisions.
+- Acquired::new keeps its signature at the new low_level path.
+- Command driver behavior/signatures and native job_phases signatures unchanged.
+- Tokio net is explicitly enabled in core for supported numeric UDP binding.
+  No dependency version or Cargo.lock changes.
+
+No deprecated shims: general report interchange/raw canonical success access
+restore invalid classifications; generic pair aliases on the protected path
+blur the boundary that the redesign establishes. The explicit low_level API
+preserves intentional caller-owned protocols without an equivalent-path claim.
+
+## batter-core: 1234 -> 1246 entries; 13 removed, 25 added
+- REMOVED impl batter_core::operation::SharedPhasedReport: Clone
+- REMOVED impl batter_core::operation::SharedPhasedReport: Debug
+- REMOVED impl batter_core::operation::SharedPhasedReport: Deref
+- REMOVED method batter_core::cleanup::Acquired::new
+- REMOVED method batter_core::cleanup::CleanupSlot::acquire
+- REMOVED method batter_core::operation::PhaseOutcome::destruction_panic
+- REMOVED method batter_core::operation::PhaseOutcome::interruption_after_return
+- REMOVED method batter_core::operation::PhaseOutcome::result
+- REMOVED method batter_core::operation::PhasedReport::is_success
+- REMOVED struct batter_core::cleanup::Acquired
+- REMOVED struct batter_core::operation::SharedPhasedReport
+- REMOVED use batter_core::cleanup::Acquired <- acquisition::Acquired
+- REMOVED use batter_core::operation::SharedPhasedReport <- phased::SharedPhasedReport
++ ADDED   function batter_core::cleanup::low_level::acquire_pair
++ ADDED   impl batter_core::operation::FailedPhasedReport: Clone
++ ADDED   impl batter_core::operation::FailedPhasedReport: Debug
++ ADDED   impl batter_core::operation::FailedPhasedReport: Deref
++ ADDED   impl batter_core::operation::PhaseFailure: Debug
++ ADDED   impl batter_core::operation::PhasedFailure: Clone
++ ADDED   impl batter_core::operation::PhasedSuccess: Clone
++ ADDED   impl batter_core::operation::PhasedSuccess: Debug
++ ADDED   method batter_core::cleanup::CleanupSlot::acquire_semaphore
++ ADDED   method batter_core::cleanup::CleanupSlot::bind_udp
++ ADDED   method batter_core::cleanup::low_level::Acquired::new
++ ADDED   method batter_core::operation::PhaseFailure::destruction_panic
++ ADDED   method batter_core::operation::PhaseFailure::interruption_after_return
++ ADDED   method batter_core::operation::PhaseFailure::returned_result
++ ADDED   method batter_core::operation::PhaseOutcome::classify
++ ADDED   method batter_core::operation::PhasedSuccess::finalization
++ ADDED   method batter_core::operation::PhasedSuccess::work
++ ADDED   mod batter_core::cleanup::low_level
++ ADDED   struct batter_core::cleanup::low_level::Acquired
++ ADDED   struct batter_core::operation::FailedPhasedReport
++ ADDED   struct batter_core::operation::PhaseFailure
++ ADDED   struct batter_core::operation::PhasedSuccess
++ ADDED   use batter_core::operation::FailedPhasedReport <- phased::FailedPhasedReport
++ ADDED   use batter_core::operation::PhaseFailure <- phased::PhaseFailure
++ ADDED   use batter_core::operation::PhasedSuccess <- phased::PhasedSuccess

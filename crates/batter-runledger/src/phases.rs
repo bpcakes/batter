@@ -9,8 +9,11 @@ use std::{fmt, time::Duration};
 
 /// Derive work and finalization contexts from one native handler invocation.
 ///
-/// Call this once inside a `JobExecutionHandler` and run application work under
-/// the returned [`OperationPhases`]. Both phases come from one root whose
+/// Call this once inside a `JobExecutionHandler`. For owned `Send + 'static`
+/// callbacks, consume the pair with [`OperationPhases::into_operation`] and
+/// retain its started owner while awaiting checked completion. The library
+/// retains work evidence and runs finalization after work ends, including an
+/// early work error or panic. Both phases come from one root whose
 /// deadline is exactly [`JobExecution::deadline`], the instant the Runledger
 /// worker enforces, converted to Tokio's view of the same monotonic clock. It
 /// is never rebuilt from the remaining budget, so deriving late does not move
@@ -37,6 +40,21 @@ use std::{fmt, time::Duration};
 /// of a phase, or a child derived from it. A `run` boundary's own scope is
 /// also cancelled as soon as that boundary ends.
 ///
+/// `into_operation(...).start()` spawns a coordinator. Dropping a borrowed
+/// waiter does not cancel it; dropping the owner requests work cancellation.
+/// If the handler itself is destroyed, native invocation exit still cancels
+/// both phases: retained ownership does not shield finalization from that exit,
+/// join it into the handler, or extend the native deadline. Callbacks cannot
+/// capture the borrowed `JobExecution`; retain manual phase access when native
+/// progress/checkpoint operations must borrow it, and own that sequencing.
+///
+/// Handler destruction can drop the owner before invocation exit is signalled.
+/// The coordinator may start finalization in that window, including on another
+/// runtime thread. Cancellation is cooperative and is not authority for a remote
+/// final-state write; application/native fencing and reconciliation remain required
+/// where such writes need current invocation authority.
+///
+/// Direct `work()`/`finalization()` access is the lower-level manual path.
 /// Await final-state work after work ends. Run it under `finalization()` when
 /// it uses Batter boundaries such as admission, retries, child operations or
 /// spawned tasks; a plain write awaited in the handler is bounded by the native
@@ -69,6 +87,39 @@ use std::{fmt, time::Duration};
 /// Facade consumers reach the same items as `batter::runledger::job_phases`
 /// and `batter::runledger::native::core::jobs`; the facade's `runledger`
 /// module shows the handler with those paths.
+///
+/// Owned callbacks use the protected transition (the store here is illustrative):
+///
+/// ```
+/// use batter_core::BoxError;
+/// use batter_runledger::job_phases;
+/// use runledger_core::jobs::JobExecution;
+/// use std::time::Duration;
+///
+/// async fn deliver(execution: JobExecution<'_>) -> Result<(), BoxError> {
+///     let running = job_phases(execution, Duration::from_millis(500))?
+///         .into_operation(
+///             async |_work| {
+///                 // Await a native provider call using owned application state.
+///                 Ok::<_, std::io::Error>("receipt")
+///             },
+///             async |finalization| {
+///                 // Inspect finalization.work() to record the full work outcome,
+///                 // including interruption or panic, using owned store state.
+///                 finalization.context().run("example.record", |_scope| async {
+///                     Ok::<_, std::io::Error>(())
+///                 }).await
+///             },
+///         ).start();
+///     let report = running.wait().await?; // Both phases must succeed.
+///     assert_eq!(*report.work(), "receipt");
+///     Ok(())
+/// }
+/// ```
+///
+/// The longer handler below illustrates lower-level manual sequencing and an
+/// explicit application mapping to `JobFailure`. It is not the protected path:
+/// returning with `?` on work before finalization would skip the record.
 ///
 /// ```
 /// use batter_core::operation::OperationError;

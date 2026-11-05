@@ -4,6 +4,9 @@
 //! future aborts its directly owned cleanup task but cannot await completion.
 //! Hooks must not detach work or block runtime threads.
 
+mod acquisition;
+pub mod low_level;
+
 use crate::{BoxError, ConfigurationError, RegistrationError, scoped_dispatch, validation};
 use std::{future::Future, pin::Pin, time::Duration};
 use tokio::{
@@ -194,6 +197,8 @@ pub struct CleanupStack {
 
 /// A validated name and exclusive registration slot, reserved before acquisition.
 ///
+/// Prefer [`Self::acquire_semaphore`] or [`Self::bind_udp`] for supported native
+/// resources; use adapter-owned acquisition such as SQLx `pool_in` for others. The following manual handoff is a lower-level escape hatch.
 /// Dropping an unused slot registers nothing. After acquisition succeeds, call
 /// [`Self::register`] without an intervening await. It cannot reject the name.
 /// This does not own an acquisition future or finalize an unregistered resource.
@@ -216,7 +221,8 @@ pub struct CleanupSlot<'a> {
 }
 
 impl CleanupSlot<'_> {
-    /// Register an owned finalizer under the already validated name.
+    /// Lower-level manual registration under the already validated name.
+    /// Prefer native acquisition methods when acquiring a supported resource.
     pub fn register<F, Fut>(self, action: F)
     where
         F: FnOnce() -> Fut + Send + 'static,

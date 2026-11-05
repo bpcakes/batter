@@ -4,6 +4,9 @@
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
+#[path = "job_phases/owned.rs"]
+mod owned;
+
 use batter_core::{
     ConfigurationError,
     operation::{Interruption, OperationContext, OperationError, OperationPhases},

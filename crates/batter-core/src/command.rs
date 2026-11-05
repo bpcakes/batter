@@ -17,6 +17,8 @@
 //! descendants. Runtime death and non-yielding code cannot be repaired by Drop.
 
 mod driver;
+pub(crate) use driver::run_work;
+pub(crate) use signals::NoSignals;
 mod owner;
 mod report;
 mod signals;
@@ -61,7 +63,7 @@ pub type CommandFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + S
 /// let releasing = released.clone();
 /// let command = Command::new(OperationOwner::new(second)?.into_context(), cleanup, move |scope| {
 ///     Box::pin(async move {
-///         // Reserve before acquisition, register immediately afterward.
+///         // Application reporting hook; this does not acquire a resource.
 ///         scope.reserve_cleanup("summary.source")?.register(move || async move {
 ///             releasing.store(true, Ordering::SeqCst);
 ///             Ok(())
@@ -264,8 +266,7 @@ impl<F> Command<F> {
     /// let command = Command::new(batter_core::operation::OperationOwner::new(second)?.into_context(), cleanup, move |scope| {
     ///     Box::pin(async move {
     ///         let slot = scope.reserve_cleanup("capacity")?;
-    ///         let permit = acquiring.acquire_owned().await.expect("capacity stays open");
-    ///         slot.register(move || async move { drop(permit); Ok(()) });
+    ///         slot.acquire_semaphore(acquiring).await.expect("capacity stays open");
     ///         // A ? here returns to the owner, which still finalizes the permit.
     ///         Ok::<_, batter_core::RegistrationError>(42)
     ///     })
@@ -286,8 +287,9 @@ impl<F> Command<F> {
 }
 
 /// Work context and exclusive cleanup registration. The stack cannot be taken
-/// out of this owner; reserve names before acquisition and register immediately
-/// afterward, before another await. No resource registry or task spawner is hidden here.
+/// out of this owner. Reserve names, then use [`CleanupSlot::acquire_semaphore`]
+/// for native permits or [`CleanupSlot::bind_udp`] for sockets. No resource
+/// registry or task spawner is hidden here.
 pub struct CommandScope {
     context: OperationContext,
     cleanup: CleanupStack,
@@ -314,9 +316,9 @@ impl CommandScope {
         Ok(())
     }
 
-    /// Validate and reserve before native acquisition. Register the acquired
-    /// resource in the slot immediately after success. Cancellation of acquisition
-    /// retains the native acquisition contract; no async Drop guarantee is implied.
+    /// Validate and reserve before native acquisition. Supported native methods
+    /// such as [`CleanupSlot::acquire_semaphore`] install cleanup before returning.
+    /// Cancellation retains the native acquisition contract; no async Drop is implied.
     pub fn reserve_cleanup(
         &mut self,
         name: &'static str,

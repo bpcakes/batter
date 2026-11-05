@@ -1,6 +1,12 @@
 //! Total deadlines and cancellation without a universal application error.
 
 mod owner;
+mod phased;
+
+pub use phased::{
+    FailedPhasedReport, FinalizationScope, PhaseAction, PhaseFailure, PhaseOutcome, PhasedFailure,
+    PhasedObserver, PhasedOperation, PhasedReport, PhasedSuccess, RunningPhasedOperation,
+};
 
 pub use owner::{OperationOwner, RootDeadline};
 
@@ -70,7 +76,10 @@ pub struct OperationContext {
     cancellation: CancellationToken,
 }
 
-/// Work and finalization contexts sharing one original total deadline.
+/// Lower-level manual work and finalization contexts sharing one deadline.
+///
+/// Prefer [`PhasedOperation`] for library-owned sequencing and retained outcomes.
+/// This escape hatch exposes both contexts and leaves ordering with the caller.
 ///
 /// Work stops before the reserved finalization interval. Finalization can use
 /// all time remaining until the original deadline, including time saved by
@@ -174,7 +183,8 @@ impl OperationContext {
         })
     }
 
-    /// Reserve a positive interval before this context's total deadline.
+    /// Lower-level manual reservation before this context's total deadline.
+    /// Prefer [`PhasedOperation`] to own work/finalization order and outcomes.
     ///
     /// The reserve must leave positive work time when this method is called.
     /// The work deadline is the original deadline minus `reserve`; the

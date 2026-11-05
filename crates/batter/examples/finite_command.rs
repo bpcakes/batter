@@ -19,10 +19,8 @@ use std::{
     future::pending,
     io::{self, Write},
     process::ExitCode,
-    sync::Arc,
     time::Duration,
 };
-use tokio::net::UdpSocket;
 
 /// The native reply. It derives no `Clone`: the command owner moves it out.
 struct EchoReply {
@@ -85,18 +83,20 @@ fn command(
     Ok(Command::new(context, cleanup, move |scope| {
         Box::pin(async move {
             scope.stage("command.echo")?;
-            let slot = scope.reserve_cleanup("socket")?;
-            let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-            let closing = socket.clone();
-            // Register immediately after acquisition, before another await.
-            slot.register(move || async move {
-                // Native pool/exporter close or flush would be awaited here.
-                drop(closing);
-                match cleanup_result {
-                    CleanupResult::Success => Ok(()),
-                    CleanupResult::Failure => Err(CommandError::Cleanup.into()),
-                }
-            });
+            // This is application-specific reporting, not resource acquisition.
+            // Register first so it runs after the native socket reference is released.
+            scope
+                .reserve_cleanup("completion")?
+                .register(move || async move {
+                    match cleanup_result {
+                        CleanupResult::Success => Ok(()),
+                        CleanupResult::Failure => Err(CommandError::Cleanup.into()),
+                    }
+                });
+            let socket = scope
+                .reserve_cleanup("socket")?
+                .bind_udp(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+                .await?;
             match work {
                 Work::Fail => return Err(CommandError::Work),
                 Work::Cancel => {

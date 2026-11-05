@@ -6,6 +6,24 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Native cleanup acquisition, 2026-11-05
+
+`batter-rtxb` checked Cargo.lock's Tokio 1.54.1 against its downloaded source
+(`src/sync/semaphore.rs`, `src/net/udp.rs`). The pinned primary references are
+[Semaphore::acquire_owned](https://docs.rs/tokio/1.54.1/tokio/sync/struct.Semaphore.html#method.acquire_owned)
+and [UdpSocket::bind](https://docs.rs/tokio/1.54.1/tokio/net/struct.UdpSocket.html#method.bind).
+The web fetch was unavailable; the resolved package source supplied the evidence.
+
+An owned semaphore acquisition yields `OwnedSemaphorePermit`; dropping it returns
+the permit. Cancelling a queued acquisition loses its queue position. Batter
+retains the permit exclusively in registered cleanup and makes no waiter-bound
+claim. UDP binding receives a concrete SocketAddr, avoiding caller address
+resolution and DNS. Tokio's bind constructs the socket before returning it;
+Batter polls that native future directly. An Arc clone retains socket ownership,
+so dropping the cleanup reference alone cannot close a socket retained elsewhere.
+Tests establish local reference lifetime and native error behavior, not remote
+network effects or arbitrary descendant termination.
+
 ## Reqwest consolidation, 2026-11-04
 
 `batter-7oob` migrates the OTLP adapter and reference provider from reqwest

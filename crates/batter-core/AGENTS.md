@@ -40,7 +40,12 @@ Windows support and non-Unix fallbacks are out of scope.
   and the exhaustive observation-to-dependency-readiness projection.
 - `src/readiness.rs` owns sampling order and the pure lifecycle, dependency and
   application-condition decision; adapters translate its valid result.
+- `src/operation/phased.rs` and `phased/` own inert work/finalization assembly,
+  typed success/failure proofs and work-only owner cancellation. Reuse command phase
+  polling; finalization inherits the parent and original total deadline.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
+  `cleanup/acquisition.rs` owns native semaphore/UDP acquisition through registration
+  and native-future destruction. `cleanup/low_level.rs` owns caller-assembled pairs.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
   `startup/initializer.rs` owns the sealed `Initializer` bound that boxes async-closure
   futures; `startup/application.rs` owns `ApplicationError`, which must never implement
@@ -72,6 +77,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation and the
   `ScopedOutput` guard that destroys unclaimed task output under its producer.
+  Its private `SharedOutput` keeps that protection through publication storage;
+  only completed phase observation claims the result.
 
 ## Edit here for X
 
@@ -109,7 +116,9 @@ or failure reports; output rejected after a successful return is destroyed befor
 Finite command scopes expose validated cleanup reservations, never a takeable
 stack or process-task admission. Command cancellation is downward and cleanup
 does not inherit it; callback return/unwinding cannot bypass registered cleanup.
-Reserve cleanup names before acquisition and register immediately after success.
+Reserve cleanup names before supported native/adapter acquisition; the library
+owns registration before release. Manual registration and generic pair factories
+are lower-level boundaries, never equivalent protected acquisition.
 Command signal listeners exist only while work can be cancelled: install them
 synchronously before the owned start returns, poll them only in the coordinator,
 and drop them after work-future destruction and before cleanup. Owned completion

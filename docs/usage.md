@@ -45,6 +45,14 @@ after callback errors, unwinding, work cancellation or a signal. Owner drop
 requests cancellation while finalization continues on the live runtime. `start`
 with `check_command` remains for a report that several observers share.
 
+For supported resources, reserve inside an owned scope and call
+`slot.acquire_semaphore(capacity).await?` or `slot.bind_udp(address).await?`.
+These operations own native acquisition and finalizer registration; no caller
+callback can insert work between them. SQLx pools use the adapter's `pool_in`.
+The generic `cleanup::low_level::acquire_pair(slot, factory)` is a weaker escape
+hatch: its caller still owns the gap between native acquisition and returning
+the pair, including intervening awaits and native-future destruction.
+
 The lower-level APIs remain available where an application needs a different
 ownership boundary, but their caller obligations are explicit: direct
 `run_until` and `CleanupStack::close` driving can be abandoned by cancellation,
@@ -181,7 +189,11 @@ nothing was sent. Build one `Client` per provider origin and clone it. Prepare
 each request, which reports every construction error before anything is sent,
 write the application's dispatch fence durably, and send the request once in
 the work phase of `reserve_finalization`, so the outcome can be recorded in the
-finalization phase unless that phase is interrupted:
+finalization phase unless that phase is interrupted. This provider-specific
+example deliberately uses manual phase access: the send-once exchange owns its
+ready-response precedence, so a generic cancellation-first wrapper could discard
+an available exchange. Its explicit outcome/fence protocol remains application
+policy; it is not the generic owned phase runner:
 
 ```rust
 use batter::{
@@ -331,7 +343,8 @@ select library-owned signals with `.with_unix_signals("signals")`, then call
 `.start()`. The initializer is an ordinary owned async closure: it borrows the
 protected scope across awaits and the library boxes its future, so there is no
 `Box::pin`. Inside it, reserve cleanup before resource acquisition through
-`scope.reserve_cleanup(...)` and register it immediately after success. Pass the
+`scope.reserve_cleanup(...)` and a supported native acquisition method or
+adapter such as SQLx `pool_in`. Manual registration is lower-level. Pass the
 protected scope to adapter `_in` helpers rather than lending the complete
 supervisor. Application helpers that only register work take a concrete
 `batter::registration::Registration<'_>`, passed as `scope.registration()`.
@@ -532,8 +545,8 @@ owner. Do not enable unused capacity or register a dummy service just to avoid
 An executable root builds the inert `Command::new(work_context, cleanup_budget,
 callback)`, or `Command::within(total_context, cleanup_budget, callback)?`, then
 calls `.start_with_unix_signals()?` and `.finish().await`. The callback receives a
-`CommandScope`: reserve a cleanup name before native acquisition and register the
-acquired resource immediately afterward, before another await. Returning an error
+`CommandScope`: reserve a cleanup name, then use its supported native acquisition
+method or an adapter-owned operation. Registration precedes handle release. Returning an error
 with `?` still transfers control to owned finalization. The scope exposes a work
 context for nested native operations; its cancellation cannot travel upward to
 the parent context.
@@ -682,12 +695,20 @@ effects retain their actual contracts; this API does not prove they stopped.
 ## Reserve work and finalization budgets
 
 The [operation-budget example](../crates/batter/examples/operation_budget.rs) uses
-`reserve_finalization` before work, runs under `phases.work()`, then explicitly
-awaits `phases.finalization()` and retains both outcomes. The latter has the
-original total deadline, not a fresh timeout. Work and finalization have sibling
-tokens: parent cancellation reaches both, but finishing work does not cancel
-finalization. This is budget separation, not an interruption mask or guarantee
-that a database/provider effect was rolled back.
+`PhasedOperation::new` to reserve finalization before work and provide both
+callbacks up front. Only the work callback receives the work context. After
+work and its future destruction, the finalizer receives its own context and the
+retained work outcome. `start().wait().await` checks both phases: failure returns
+`PhasedFailure::Report(FailedPhasedReport)` with both outcomes. Success returns
+`PhasedSuccess` with direct `work()` and `finalization()` values, requiring no
+recheck or unwrap. In the finalizer, `work().classify()` checks returned evidence,
+late interruption and destruction together; only failed evidence exposes the
+raw `returned_result()` that can retain an unaccepted value. Keep the running owner bound while borrowing its waiter; dropping
+the owner requests work cancellation, while dropping a borrowed waiter does not.
+Finalization retains the original total deadline and inherits parent cancellation.
+Use `OperationPhases::into_operation` for an existing native invocation pair.
+Manual phase access remains a lower-level path, not equivalent owned execution.
+Neither path proves rollback or joins arbitrary spawned descendants.
 
 The same example supplies a per-execution sample stream through
 `RetryOptions::with_jitter`, composing equal jitter with its per-attempt maximum.
@@ -884,8 +905,10 @@ See [operations](operations.md#loading-example-settings) and the
 
 ## Resource acquisition and partial startup
 
-Register a cleanup factory immediately after acquiring an owned resource. A
-resource dependency closes after its dependents, so register it before them.
+Acquire supported resources through a reserved slot's native methods or an
+adapter-owned operation. The library registers their finalizer before returning.
+Manual registration is an explicit lower-level protocol. A resource dependency
+closes after its dependents, so acquire/register it before them.
 With a direct supervisor, if later startup fails, call
 supervisor.take_cleanup().close(budget).await and retain both the startup failure
 and the complete cleanup report. That extraction is a lower-level escape path. The

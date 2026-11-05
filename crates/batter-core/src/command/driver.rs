@@ -169,8 +169,8 @@ where
     }
 }
 
-async fn run_work<F, T, E, S>(
-    scope: &mut CommandScope,
+pub(crate) async fn run_work<F, T, E, S, Scope>(
+    scope: &mut Scope,
     context: &OperationContext,
     work: F,
     signals: &mut S,
@@ -180,7 +180,7 @@ async fn run_work<F, T, E, S>(
     Option<PanicPayload>,
 )
 where
-    F: for<'a> FnOnce(&'a mut CommandScope) -> CommandFuture<'a, T, E>,
+    F: for<'a> FnOnce(&'a mut Scope) -> CommandFuture<'a, T, E>,
     S: WorkSignals,
 {
     // A signal already visible is a cancellation request: no factory runs.
