@@ -1,9 +1,8 @@
-use super::{PhasedFailure, SharedPhasedReport, report::checked};
+use super::{PhasedFailure, PhasedSuccess};
 use crate::{completion::wait_published, operation::OperationContext};
-use std::sync::Arc;
-use tokio::{sync::watch, task::JoinError};
+use tokio::sync::watch;
 
-type Completion<T, E, U, F> = Result<SharedPhasedReport<T, E, U, F>, Arc<JoinError>>;
+type Completion<T, E, U, F> = Result<PhasedSuccess<T, U>, PhasedFailure<T, E, U, F>>;
 type Receiver<T, E, U, F> = watch::Receiver<Option<Completion<T, E, U, F>>>;
 
 /// Sole work-cancellation owner of a phased operation. Drop cancels work only.
@@ -42,10 +41,11 @@ impl<T, E, U, F> RunningPhasedOperation<T, E, U, F> {
     /// # Errors
     /// Returns [`PhasedFailure::Report`] if either phase failed, retaining both
     /// outcomes. A coordinator failure is [`PhasedFailure::Coordinator`].
-    /// An `Ok` report proves both phases succeeded.
+    /// An `Ok` value carries both accepted phase values.
+    /// Migration: `RunningPhasedOperation::wait` now returns [`PhasedSuccess`].
     /// # Panics
     /// Panics if runtime death destroys publication before it completes.
-    pub async fn wait(&self) -> Result<SharedPhasedReport<T, E, U, F>, PhasedFailure<T, E, U, F>> {
+    pub async fn wait(&self) -> Result<PhasedSuccess<T, U>, PhasedFailure<T, E, U, F>> {
         self.observer.wait().await
     }
 }
@@ -75,13 +75,12 @@ impl<T, E, U, F> PhasedObserver<T, E, U, F> {
     /// # Errors
     /// Returns the complete failed report or a coordinator join failure.
     /// `Ok` is returned only when both phases succeeded.
+    /// Migration: `PhasedObserver::wait` now returns [`PhasedSuccess`].
     /// # Panics
     /// Panics if runtime death destroys publication before it completes.
-    pub async fn wait(&self) -> Result<SharedPhasedReport<T, E, U, F>, PhasedFailure<T, E, U, F>> {
-        checked(
-            wait_published(self.completion.clone())
-                .await
-                .expect("owned phase monitor retains publication"),
-        )
+    pub async fn wait(&self) -> Result<PhasedSuccess<T, U>, PhasedFailure<T, E, U, F>> {
+        wait_published(self.completion.clone())
+            .await
+            .expect("owned phase monitor retains publication")
     }
 }

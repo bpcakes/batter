@@ -24,7 +24,7 @@ metrics = ["dep:metrics"]
 [dependencies]
 metrics = { workspace = true, optional = true }
 pin-project-lite.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal", "net"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 thiserror.workspace = true

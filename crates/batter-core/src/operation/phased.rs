@@ -1,12 +1,14 @@
 //! Owned work followed by outcome-aware finalization.
 
 mod action;
+mod outcome;
 mod owner;
 mod report;
 
 pub use action::PhaseAction;
+pub use outcome::{PhaseFailure, PhaseOutcome};
 pub use owner::{PhasedObserver, RunningPhasedOperation};
-pub use report::{PhaseOutcome, PhasedFailure, PhasedReport, SharedPhasedReport};
+pub use report::{FailedPhasedReport, PhasedFailure, PhasedReport, PhasedSuccess};
 
 use super::{OperationContext, OperationPhases};
 use crate::{
@@ -43,14 +45,21 @@ use tracing::Instrument;
 ///     },
 ///     async |finalization| {
 ///         // Record success or failure using finalization.context().
-///         let succeeded = finalization.work().is_success();
+///         let succeeded = match finalization.work().classify() {
+///             Ok(_accepted) => true,
+///             Err(failed) => {
+///                 // Even a returned Ok can be unaccepted after interruption.
+///                 let _raw_evidence = failed.returned_result();
+///                 false
+///             }
+///         };
 ///         Ok::<_, Infallible>(succeeded)
 ///     },
 /// )?;
 /// let running = operation.start();
-/// let report = running.wait().await.expect("coordinator completed");
-/// assert!(report.is_success());
-/// assert_eq!(report.work().result().ok(), Some(&42));
+/// let report = running.wait().await.expect("both phases succeeded");
+/// assert!(*report.finalization());
+/// assert_eq!(*report.work(), 42);
 /// # Ok(()) }
 /// ```
 ///
@@ -142,8 +151,8 @@ impl<W, F> PhasedOperation<W, F> {
             async move {
                 let result = coordinator
                     .await
-                    .map(|report| SharedPhasedReport(Arc::new(report.into_inner())))
-                    .map_err(Arc::new);
+                    .map_err(|error| PhasedFailure::Coordinator(Arc::new(error)))
+                    .and_then(|report| report.into_inner().into_checked());
                 publication.send_replace(Some(result));
             }
             .in_current_span(),
@@ -211,11 +220,7 @@ where
         &mut command::NoSignals,
     )
     .await;
-    PhaseOutcome {
-        result,
-        interruption,
-        destruction,
-    }
+    PhaseOutcome::new(result, interruption, destruction)
 }
 
 impl OperationPhases {

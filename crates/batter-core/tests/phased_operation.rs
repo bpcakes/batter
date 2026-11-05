@@ -4,7 +4,10 @@ mod adversarial;
 
 use batter_core::{
     command::CommandCause,
-    operation::{Interruption, OperationOwner, PhasedFailure, PhasedOperation, SharedPhasedReport},
+    operation::{
+        FailedPhasedReport, Interruption, OperationOwner, PhasedFailure, PhasedOperation,
+        PhasedSuccess,
+    },
 };
 use std::{
     convert::Infallible,
@@ -54,7 +57,7 @@ async fn early_work_error_is_retained_before_fallible_finalization() {
                 "work destroyed before finalization"
             );
             assert!(matches!(
-                scope.work().result(),
+                scope.work().classify().unwrap_err().returned_result(),
                 Err(CommandCause::Failed(Secret("secret-work")))
             ));
             Err::<(), _>(Secret("secret-finalization"))
@@ -68,13 +71,17 @@ async fn early_work_error_is_retained_before_fallible_finalization() {
         "phase failures cannot return Ok"
     );
     let report = retained(outcome);
-    assert!(!report.is_success(), "both failures retained");
+    assert!(report.work().classify().is_err() && report.finalization().classify().is_err());
     assert!(matches!(
-        report.work().result(),
+        report.work().classify().unwrap_err().returned_result(),
         Err(CommandCause::Failed(Secret("secret-work")))
     ));
     assert!(matches!(
-        report.finalization().result(),
+        report
+            .finalization()
+            .classify()
+            .unwrap_err()
+            .returned_result(),
         Err(CommandCause::Failed(Secret("secret-finalization")))
     ));
     let text = format!("{report:?}");
@@ -99,7 +106,7 @@ async fn deadline_stops_work_and_preserves_original_finalization_deadline() {
         async move |scope| {
             assert!(check.load(Ordering::SeqCst), "timed out work destroyed");
             assert!(matches!(
-                scope.work().result(),
+                scope.work().classify().unwrap_err().returned_result(),
                 Err(CommandCause::Interrupted(Interruption::DeadlineExceeded))
             ));
             assert_eq!(scope.context().deadline(), deadline);
@@ -110,7 +117,7 @@ async fn deadline_stops_work_and_preserves_original_finalization_deadline() {
     .unwrap()
     .start();
     let report = retained(running.wait().await);
-    assert_eq!(report.finalization().result().ok(), Some(&42));
+    assert_eq!(report.finalization().classify().ok(), Some(&42));
     assert!(parent.context().check().is_ok(), "no upward cancellation");
 }
 
@@ -128,7 +135,7 @@ async fn lost_owner_before_first_poll_skips_work_but_runs_finalization() {
         },
         async |scope| {
             assert!(matches!(
-                scope.work().result(),
+                scope.work().classify().unwrap_err().returned_result(),
                 Err(CommandCause::Interrupted(Interruption::Cancelled))
             ));
             assert!(
@@ -160,7 +167,7 @@ async fn borrowed_waiter_cancellation_leaves_work_alive_and_reports_are_retained
             assert!(work.check().is_ok(), "dropped waiter did not cancel work");
             Ok::<_, Infallible>(7)
         },
-        async |scope| Ok::<_, Infallible>(*scope.work().result().unwrap()),
+        async |scope| Ok::<_, Infallible>(*scope.work().classify().unwrap()),
     )
     .unwrap()
     .start();
@@ -171,13 +178,16 @@ async fn borrowed_waiter_cancellation_leaves_work_alive_and_reports_are_retained
     }
     drop(waiting);
     release.notify_one();
-    let report = retained(running.wait().await);
+    let report = running.wait().await.unwrap();
     let observer = running.observer();
     drop(running);
-    let retained = retained(observer.wait().await);
-    assert!(std::ptr::eq(&*report, &*retained), "same report allocation");
-    assert_eq!(report.finalization().result().ok(), Some(&7));
-    assert!(report.is_success());
+    let retained = observer.wait().await.unwrap();
+    assert!(
+        std::ptr::eq(report.work(), retained.work()),
+        "same retained value"
+    );
+    assert_eq!(*report.work(), 7);
+    assert_eq!(*report.finalization(), 7);
 }
 
 #[tokio::test(start_paused = true)]
@@ -199,11 +209,15 @@ async fn parent_cancellation_interrupts_both_phases() {
     parent.cancel();
     let report = retained(running.wait().await);
     assert!(matches!(
-        report.work().result(),
+        report.work().classify().unwrap_err().returned_result(),
         Err(CommandCause::Interrupted(Interruption::Cancelled))
     ));
     assert!(matches!(
-        report.finalization().result(),
+        report
+            .finalization()
+            .classify()
+            .unwrap_err()
+            .returned_result(),
         Err(CommandCause::Interrupted(Interruption::Cancelled))
     ));
     assert!(
@@ -225,7 +239,7 @@ async fn work_panic_cannot_bypass_finalization_and_finalization_panic_keeps_work
         },
         async |scope| {
             assert!(matches!(
-                scope.work().result(),
+                scope.work().classify().unwrap_err().returned_result(),
                 Err(CommandCause::Panicked(_))
             ));
             panic!("finalization secret");
@@ -237,11 +251,15 @@ async fn work_panic_cannot_bypass_finalization_and_finalization_panic_keeps_work
     .start();
     let report = retained(running.wait().await);
     assert!(matches!(
-        report.work().result(),
+        report.work().classify().unwrap_err().returned_result(),
         Err(CommandCause::Panicked(_))
     ));
     assert!(matches!(
-        report.finalization().result(),
+        report
+            .finalization()
+            .classify()
+            .unwrap_err()
+            .returned_result(),
         Err(CommandCause::Panicked(_))
     ));
     assert!(
@@ -262,9 +280,13 @@ async fn finalization_timeout_keeps_successful_work() {
     .unwrap()
     .start();
     let report = retained(running.wait().await);
-    assert_eq!(report.work().result().ok(), Some(&7));
+    assert_eq!(report.work().classify().ok(), Some(&7));
     assert!(matches!(
-        report.finalization().result(),
+        report
+            .finalization()
+            .classify()
+            .unwrap_err()
+            .returned_result(),
         Err(CommandCause::Interrupted(Interruption::DeadlineExceeded))
     ));
 }
@@ -301,11 +323,12 @@ async fn unstarted_specification_is_inert_and_invalid_reserve_is_rejected() {
     );
 }
 
-type Checked<T, E, U, F> = Result<SharedPhasedReport<T, E, U, F>, PhasedFailure<T, E, U, F>>;
+type Checked<T, E, U, F> = Result<PhasedSuccess<T, U>, PhasedFailure<T, E, U, F>>;
 
-fn retained<T, E, U, F>(result: Checked<T, E, U, F>) -> SharedPhasedReport<T, E, U, F> {
+fn retained<T, E, U, F>(result: Checked<T, E, U, F>) -> FailedPhasedReport<T, E, U, F> {
     match result {
-        Ok(report) | Err(PhasedFailure::Report(report)) => report,
+        Err(PhasedFailure::Report(report)) => report,
+        Ok(_) => panic!("expected failed report"),
         Err(error) => panic!("unexpected coordinator failure: {error:?}"),
     }
 }

@@ -4,8 +4,8 @@ mod owner;
 mod phased;
 
 pub use phased::{
-    FinalizationScope, PhaseAction, PhaseOutcome, PhasedFailure, PhasedObserver, PhasedOperation,
-    PhasedReport, RunningPhasedOperation, SharedPhasedReport,
+    FailedPhasedReport, FinalizationScope, PhaseAction, PhaseFailure, PhaseOutcome, PhasedFailure,
+    PhasedObserver, PhasedOperation, PhasedReport, PhasedSuccess, RunningPhasedOperation,
 };
 
 pub use owner::{OperationOwner, RootDeadline};

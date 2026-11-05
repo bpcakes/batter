@@ -83,8 +83,7 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 /// let mut starting = Startup::scoped(supervisor, context, cleanup, move |scope| Box::pin(async move {
 ///     scope.stage("service.capacity")?;
 ///     let slot = scope.reserve_cleanup("service.capacity")?;
-///     let permit = acquiring.acquire_owned().await.expect("capacity remains open");
-///     slot.register(move || async move { drop(permit); Ok(()) });
+///     slot.acquire_semaphore(acquiring).await.expect("capacity remains open");
 ///     scope.registration().register("doubler", move |startup| async move {
 ///         // The initialized inbox is now owned by this task.
 ///         let shutdown = startup.acknowledge_started();
@@ -482,7 +481,7 @@ impl ProtectedStartupScope {
         Ok(())
     }
 
-    /// Reserve finalizer ownership directly so the slot can cross an acquisition await.
+    /// Reserve finalizer ownership for supported native acquisition or a lower-level handoff.
     pub fn reserve_cleanup(
         &mut self,
         name: &'static str,
@@ -520,8 +519,9 @@ impl StartupScope {
 
     /// Configure the unstarted supervisor using its existing native APIs.
     ///
-    /// Reserve cleanup names before acquisition and register immediately after
-    /// success. Resources or cleanup explicitly extracted/replaced here leave
+    /// Reserve cleanup names and use supported native acquisition methods or
+    /// adapter-owned acquisition. Manual registration is a lower-level handoff.
+    /// Resources or cleanup explicitly extracted/replaced here leave
     /// this owner's contract. Do not start a replacement driver from this borrow.
     pub fn supervisor(&mut self) -> &mut Supervisor {
         &mut self.supervisor

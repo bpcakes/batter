@@ -229,10 +229,13 @@ captured-value destruction, including skipped work and unclaimed reports.
 `RunningPhasedOperation` owns work cancellation. Dropping it, even before first
 poll, requests work cancellation but leaves the coordinator to attempt
 finalization. Its borrowed waiters and cloneable `PhasedObserver` are read-only;
-dropping a waiter changes no execution. A shared report retains both typed
-outcomes; `is_success` requires both successful with no boundary interruption or
-destruction panic. `wait` returns `Ok` only for that complete success;
-`PhasedFailure::Report` retains both outcomes on failure. Default formatting
+dropping a waiter changes no execution. `PhaseOutcome::classify` returns an
+accepted value only without late interruption or destruction panic; otherwise an
+opaque `PhaseFailure` retains all raw evidence, including a returned value.
+`wait` returns an opaque `PhasedSuccess` containing both accepted values, or
+`PhasedFailure::Report` containing an opaque `FailedPhasedReport` with both
+outcomes. Success and failed-report proofs cannot be constructed or interchanged
+by consumers. Neither value extraction nor observer cloning requires domain Clone. Default formatting
 omits application values and causes. A coordinator join failure is separate. Publication and
 finalization require a live runtime; this does not join arbitrary spawned work
 or prove remote rollback. Application work placed inside a finalizer, captured
@@ -1555,21 +1558,28 @@ Dropping close mid-flight aborts its local task but cannot await completion or
 return a report. Shutdown/readiness, resource acquisition, and cleanup are not
 interruptibility-masked like a full managed effect runtime.
 
-Register cleanup immediately after successful acquisition, but do not confuse
-this convention with an atomic acquisition/registration guarantee. The caller
-must handle partial acquisition and initialization according to native resource
-contracts. Resource values must not require an unavailable runtime after shutdown.
+Supported acquisition uses `CleanupSlot::acquire_semaphore` and `bind_udp`, or
+an adapter-owned operation such as SQLx `pool_in`. The core native methods poll
+the actual native acquisition future, retain its returned resource, register the
+library's cleanup action, and destroy the completed native future before returning.
+There is no caller callback, projection or await between these steps. A native
+future destructor panic leaves the finalizer installed and releases the undelivered
+caller reference during unwinding. Native acquisition errors add no finalizer;
+never-polled calls do no acquisition. Pending semaphore cancellation retains
+Tokio's queue-position policy. These methods do not bound the number of waiters.
 
-`CleanupSlot::acquire` invokes a native factory yielding opaque
-`cleanup::Acquired<T, F>`. On success it installs `F` before exposing `T`, without
-an intervening await or caller callback. The native future remains alive until
-after registration, so its destructor panic cannot skip the installed finalizer.
-Acquisition errors are unchanged and add no finalizer; an unpolled acquisition
-invokes no factory. The enclosing owner still drives LIFO cleanup. Partial
-acquisitions, failure/panic before returning the pair, and whether a finalizer
-actually closes its intended resource remain native/application obligations.
-`CleanupSlot::register` is the lower-level manual handoff and keeps its documented
-no-intervening-await requirement.
+Semaphore permits remain owned exclusively by cleanup until release. UDP returns
+an Arc of the native socket; cleanup releases its own reference, and the socket
+closes only when all caller references are dropped too. This does not join tasks,
+close arbitrary retained handles, or establish remote effects. Cleanup still
+requires its owning driver and a live runtime.
+
+`cleanup::low_level::acquire_pair` registers an opaque `low_level::Acquired` pair
+before delivering its handle or destroying the pair-producing future. Its caller
+still owns the earlier native acquisition-to-pair transition, including any await
+or destructor panic inside that future. This is deliberately not equivalent to
+supported native acquisition. `CleanupSlot::register` is the manual handoff;
+resource-specific protocols without a supported adapter retain that obligation.
 
 ## PostgreSQL client disposition
 

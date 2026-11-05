@@ -10,7 +10,7 @@ mod tests;
 
 use batter::{
     BoxError, ConfigurationError, RegistrationError,
-    cleanup::{Acquired, CleanupBudget, CleanupReport},
+    cleanup::{CleanupBudget, CleanupReport},
     command::{Command, CommandCause, CommandFailure, CommandFuture, CommandScope},
     operation::{OperationContext, OperationOwner},
 };
@@ -19,10 +19,8 @@ use std::{
     future::pending,
     io::{self, Write},
     process::ExitCode,
-    sync::Arc,
     time::Duration,
 };
-use tokio::net::UdpSocket;
 
 /// The native reply. It derives no `Clone`: the command owner moves it out.
 struct EchoReply {
@@ -85,20 +83,19 @@ fn command(
     Ok(Command::new(context, cleanup, move |scope| {
         Box::pin(async move {
             scope.stage("command.echo")?;
+            // This is application-specific reporting, not resource acquisition.
+            // Register first so it runs after the native socket reference is released.
+            scope
+                .reserve_cleanup("completion")?
+                .register(move || async move {
+                    match cleanup_result {
+                        CleanupResult::Success => Ok(()),
+                        CleanupResult::Failure => Err(CommandError::Cleanup.into()),
+                    }
+                });
             let socket = scope
                 .reserve_cleanup("socket")?
-                .acquire(|| async move {
-                    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-                    let closing = socket.clone();
-                    Ok::<_, io::Error>(Acquired::new(socket, move || async move {
-                        // Native pool/exporter close or flush would be awaited here.
-                        drop(closing);
-                        match cleanup_result {
-                            CleanupResult::Success => Ok(()),
-                            CleanupResult::Failure => Err(CommandError::Cleanup.into()),
-                        }
-                    }))
-                })
+                .bind_udp(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
                 .await?;
             match work {
                 Work::Fail => return Err(CommandError::Work),

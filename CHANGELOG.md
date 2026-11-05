@@ -9,16 +9,99 @@ contracts, capability facts and validation history.
 ## Unreleased
 
 - Add `operation::PhasedOperation` and `OperationPhases::into_operation` for
-  library-owned work/finalization sequencing with independent typed outcomes,
-  retained completion observers and work-only cancellation on owner loss.
-  Reuse command phase polling; parent cancellation still interrupts both phases.
-  Add `cleanup::Acquired` and `CleanupSlot::acquire` to register finalization
-  before releasing an acquired handle, including when its native future panics
-  on destruction. Migrate the operation-budget and finite-command examples.
-  Existing manual APIs remain explicit lower-level escape hatches; no public
-  cut or deprecation shim applies (`batter-jxj2`). Runledger guidance now names
-  the owned callback path and native-borrowing limits, and direct dispatch
-  regressions cover both spawned phase-driver paths (`batter-17fe`).
+  library-owned work/finalization sequencing, independent typed evidence and
+  work-only owner cancellation (`batter-jxj2`). Native invocation clocks and
+  parent cancellation are preserved. Scoped-dispatch coverage and Runledger
+  guidance were added in `batter-17fe`; `batter-rtxb` completes the assessed
+  outcome-proof and supported-acquisition redesign below.
+
+- **Breaking:** phased completion now returns opaque success or failed-report
+  proofs (`batter-rtxb`). Both `RunningPhasedOperation::wait` and
+  `PhasedObserver::wait` return `PhasedSuccess<T, U>` on success; it holds the two
+  accepted values directly. `PhasedFailure::Report` now carries
+  `FailedPhasedReport<T, E, U, F>`, replacing `SharedPhasedReport`. Both observers
+  share their retained values without requiring domain `Clone`.
+
+  ```rust,ignore
+  // Before: either owner's or observer's wait returned a general report.
+  let report: SharedPhasedReport<_, _, _, _> = running.wait().await?;
+  assert!(report.is_success());
+  let work = report.work().result().unwrap();
+  let finalized = report.finalization().result().unwrap();
+  // After: checked success needs no repeated classification or unwrap.
+  let success: PhasedSuccess<_, _> = running.wait().await?;
+  let work = success.work();
+  let finalized = success.finalization();
+
+  // Before: a general report could even be wrapped as failure.
+  let failure = PhasedFailure::Report(report);
+  // After: only failed evidence from the runner can occupy this variant.
+  match running.wait().await {
+      Ok(success) => consume_success(success.work(), success.finalization()),
+      Err(PhasedFailure::Report(failed)) => inspect_phases(failed.work(), failed.finalization()),
+      Err(PhasedFailure::Coordinator(error)) => handle_coordinator(error),
+  }
+  ```
+
+  `PhasedReport::is_success` is removed: success values and failed reports have
+  distinct types. `PhaseOutcome::result`, `interruption_after_return` and
+  `destruction_panic` are replaced by complete classification and failed evidence:
+
+  ```rust,ignore
+  // Before: returned Ok could coexist with interruption or destruction failure.
+  let returned = scope.work().result();
+  let interrupted = scope.work().interruption_after_return();
+  let destruction = scope.work().destruction_panic();
+  // After: Ok proves the complete phase succeeded.
+  match scope.work().classify() {
+      Ok(value) => record_accepted(value),
+      Err(failure) => record_failed(
+          failure.returned_result(), // May retain an unaccepted returned value.
+          failure.interruption_after_return(),
+          failure.destruction_panic(),
+      ),
+  }
+  ```
+
+  No deprecated report or getter shims: interchangeable reports restore forged
+  failure evidence, and raw success-shaped access on the canonical outcome
+  restores omission of interruption/destruction. Same-name wait signatures cannot
+  be overloaded by return type. Every old item has a Migration rustdoc pointer.
+
+- **Breaking:** generic `CleanupSlot::acquire` and root `cleanup::Acquired` move
+  to `cleanup::low_level::{acquire_pair, Acquired}`. Generic callbacks retain the
+  native acquisition-to-pair gap and are explicitly weaker. Supported native
+  acquisition now uses `CleanupSlot::acquire_semaphore` and `bind_udp`, with fixed
+  library cleanup and no application callbacks between native success,
+  registration and completed-future destruction. SQLx keeps its existing `pool_in`.
+
+  ```rust,ignore
+  // Before: caller assembles a native permit/finalizer pair.
+  use batter::cleanup::Acquired;
+  slot.acquire(|| async move {
+      let permit = semaphore.acquire_owned().await?;
+      Ok::<_, tokio::sync::AcquireError>(Acquired::new((), move || async move {
+          drop(permit); Ok(())
+      }))
+  }).await?;
+  // After: the native permit never escapes library cleanup ownership.
+  slot.acquire_semaphore(semaphore).await?;
+
+  // Before: socket acquisition and finalizer pairing in caller async glue.
+  let socket = slot.acquire(socket_pair_factory).await?;
+  // After: fixed native bind/release policy; caller clones still retain ownership.
+  let socket = slot.bind_udp(address).await?;
+
+  // For intentionally caller-owned, unsupported acquisition protocols only:
+  use batter::cleanup::low_level::{Acquired, acquire_pair};
+  let handle = acquire_pair(slot, caller_pair_factory).await?;
+  ```
+
+  No deprecated method shim or root alias: they would restore the generic
+  temporal obligation on the protected acquisition path or blur that boundary.
+  Manual `register` remains for explicit application hooks and supported adapters.
+  The finite-command example now records socket-reference release separately
+  from its application completion hook, preserving independent failure scenarios.
 
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates

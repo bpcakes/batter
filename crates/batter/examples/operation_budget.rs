@@ -62,14 +62,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let running = operation.start();
     let report = running.wait().await?;
 
-    println!(
-        "work succeeded: {}; finalization succeeded: {}",
-        report.work().is_success(),
-        report.finalization().is_success()
-    );
-    // Keep both typed results available until the application's reporting step.
-    if !report.is_success() {
-        return Err(std::io::Error::other("operation or finalization failed").into());
-    }
+    println!("work value: {}; finalization completed", report.work());
     Ok(())
 }

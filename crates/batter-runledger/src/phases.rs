@@ -106,7 +106,7 @@ use std::{fmt, time::Duration};
 ///             },
 ///         ).start();
 ///     let report = running.wait().await?; // Both phases must succeed.
-///     assert!(report.is_success());
+///     assert_eq!(*report.work(), "receipt");
 ///     Ok(())
 /// }
 /// ```

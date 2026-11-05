@@ -2004,57 +2004,77 @@ test count alone do not establish agent usability.
 
 ### Owned phase and acquisition handoff assessment (`batter-jxj2`)
 
-Panel follow-up `batter-17fe` updates Runledger's own phase guidance to show the
-protected owned-callback path and explicitly labels native-borrowing manual
-sequencing. The spawned coordinator remains subject to invocation-exit
-cancellation. Direct dispatcher/span regressions now exercise normal completion,
-owner loss, skipped factories and unclaimed results on the new spawn paths.
-This is a direct repair pass, without independent re-review.
+The initial implementation (`batter-jxj2`) owned phase execution and generic
+pair-to-registration handoff. The direct panel follow-up `batter-17fe` added
+Runledger guidance and dispatch regressions. The branch review then exposed
+stale primary examples and missing zero-reserve execution coverage. Root-cause
+assessment `batter-4qvs` found two deeper locally expressible gaps; `batter-rtxb`
+implements the complete bounded correction below.
 
-Source inspection confirmed two locally expressible temporal obligations:
-`OperationPhases` exposed both contexts together and told consumers not to return
-with `?` before finalization; `CleanupSlot` required manual registration after
-successful acquisition with no intervening await. The user authorized removing
-those obligations from a protected path.
+**Phase outcomes.** The coordinator already owned sequencing: work destruction
+precedes finalization, whose callback receives retained work evidence. It reuses
+command polling and existing publication ownership rather than a second runtime.
+Owner loss cancels work only; parent cancellation stops both, and cancelled
+borrowed waiters own no execution. Typed finalization cannot be a command cleanup
+hook because it needs typed work evidence, a typed return, and the original total
+and parent lineage, while command cleanup has an independent cancellation budget.
 
-`PhasedOperation` now receives both callbacks at inert construction, exposes no
-phase accessors, and shares the command driver's polling/destruction boundary.
-Work receives only its context; finalization receives the retained outcome only
-after work destruction. This uses the existing completion-publication primitive,
-not a second runtime. It cannot simply be a command cleanup hook: finalization
-needs typed work evidence, a typed result/error, the original absolute total and
-parent cancellation, whereas command cleanup has independent cancellation and
-an erased cleanup-error boundary. The manual pair can transfer into the runner
-without resetting native invocation clocks. Owner loss cancels only work;
-borrowed waiter loss changes neither phase. `wait` checks both outcomes before
-returning `Ok`, so `?` cannot treat a completed failed phase as success;
-`PhasedFailure::Report` retains both outcomes. Parent cancellation still stops both.
+The former checked wait returned the same general report type on success and
+failure. Consumers could relabel successful evidence as `PhasedFailure::Report`
+and the raw phase result could appear successful despite late interruption.
+Now `PhaseOutcome` privately stores accepted success or opaque `PhaseFailure`;
+`classify` checks the complete contract, while failed evidence explicitly exposes
+`returned_result`, late interruption and destruction. Checked wait returns
+`PhasedSuccess<T,U>` holding both accepted values, or `FailedPhasedReport` holding
+both phase outcomes. Constructors are private. No mutable access, general-report
+conversion to failure, or repeated consumer success check is needed.
 
-`CleanupSlot::acquire` takes a factory producing an opaque `Acquired` pair and
-installs its finalizer before returning the handle. Polling keeps the ready
-native future alive until registration, so even its destructor panic leaves
-cleanup registered. There is no optional caller completion call. A factory that
-panics or is cancelled before producing its pair still owns its partial native
-acquisition; pairing the wrong resource or performing unrelated work during
-finalization is application policy that local types cannot identify.
+**Acquisition ownership.** A factory yielding `Acquired` cannot prove when its
+inner native resource was acquired. Cancellation after native success but before
+pair construction, and a nested native future's destruction panic, both left no
+registered finalizer in executed assessment probes. Calling these only partial
+acquisitions describes the limitation; it does not remove the agent's obligation.
 
-Compatibility is additive. Manual phase access and slot registration retain
-existing signatures for native/application protocols, and are documented as
-weaker paths, not equivalents of owned execution. No removed name or narrowed
-bound exists, so no deprecated shim is needed. The operation-budget and
-finite-command examples use protected sequencing and acquisition respectively.
-The outbound example retains its explicit exchange evidence protocol: its
-send-once exchange has its own response-versus-interruption precedence, and
-wrapping it in the generic cancellation-first poller could discard that result.
-This change does not claim to solve that separate retained-exchange boundary.
+`CleanupSlot::acquire_semaphore` and `bind_udp` now take native configuration, not
+application callbacks. The private kernel polls the actual native future,
+retains its raw output, registers a fixed library cleanup action, destroys the
+completed future, then returns. The resource local lives outside that destruction
+scope: a native destructor panic unwinds the undelivered reference while cleanup
+retains its own. A regression caught and removed the alternative return-expression
+ordering that leaked the undelivered Arc. No caller finalizer-builder or projection
+runs in the handoff. Semaphore permits never escape cleanup; UDP returns shared
+native ownership and explicitly requires all other references to be dropped for
+socket closure. SQLx `pool_in` remains the corresponding adapter-owned operation.
+This is a bounded supported-resource set, not a generic resource registry or DSL.
 
-Failure tests cover independently retained errors, panics/destruction, deadlines,
-parent and owner cancellation, unpolled and cancelled acquisitions, ready-native
-future destruction, LIFO cleanup and report redaction; compile-fail controls
-exercise unavailable capabilities. Fresh-agent adoption tests remain proposed
-and unexecuted. Arbitrary detached children, runtime death, non-yielding polls,
-remote effects and deliberate use of separately captured root authority remain
-outside the local guarantee.
+Generic pair-producing factories moved to `cleanup::low_level::acquire_pair`,
+with `Acquired` in the same namespace. They still own all native acquisition-to-pair
+obligations and are not the canonical path. Manual `register` remains for explicit
+application hooks and supported adapters; arbitrary remote correctness and
+resource/finalizer correspondence cannot be established by local types. No public
+user-implementable trait disguises those obligations as a proof.
+
+**Native clocks and compatibility.** Existing phase pairs transfer without
+recomputing clocks. Zero reserve remains an explicit supported policy: after the
+shared deadline both outcomes are interrupted and the finalization factory does
+not run. Runtime checks own clock passage, not typestate. Paused-time tests cover
+this execution and conversion of Runledger invocation pairs, including native exit.
+
+Public hard cuts and before/after migrations are in CHANGELOG. No deprecated
+same-shape shim restores general success/failure report interchange or generic
+acquisition on the protected slot path. Root aliases for generic pairs would
+blur the explicitly lower-level boundary and are omitted. Primary command/startup
+examples and guides now use supported acquisition; the finite-command example
+keeps its application reporting failure hook separate from native socket release.
+
+Tests cover failures, raw returned values after interruption, native-future
+unwinding, pending acquisition cancellation, LIFO cleanup, type-level forgery
+rejection, zero-reserve execution and tracing through both spawned paths. These
+are executable failure scenarios, not fresh-agent usability measurements; that
+separate methodology remains unexecuted. Runtime death, non-yielding tasks,
+detached children and remote effects retain their explicit existing boundaries.
+The outbound example retains its distinct ready-response precedence, rather than
+wrapping its exchange evidence in the cancellation-first generic runner.
 
 ## Recurring example review defects
 

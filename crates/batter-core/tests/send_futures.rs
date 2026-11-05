@@ -77,6 +77,13 @@ fn lifecycle_signals_and_receipts_are_send() {
     let _ = |monitor: HealthMonitor<Probe, io::Error>, shutdown: ShutdownSignal| {
         send(monitor.run(shutdown));
     };
+    let _ = |slot: batter_core::cleanup::CleanupSlot<'_>,
+             semaphore: std::sync::Arc<tokio::sync::Semaphore>| {
+        send(slot.acquire_semaphore(semaphore))
+    };
+    let _ = |slot: batter_core::cleanup::CleanupSlot<'_>, address: std::net::SocketAddr| {
+        send(slot.bind_udp(address))
+    };
     let _ = |stack: CleanupStack, budget: CleanupBudget| send(stack.close(budget));
 }
 

@@ -1,7 +1,10 @@
-//! Registration occurs before the acquired handle leaves library control.
+//! Lower-level pairing registers only after the caller returns its complete pair.
 use batter_core::{
     BoxError,
-    cleanup::{Acquired, CleanupBudget, CleanupStack},
+    cleanup::{
+        CleanupBudget, CleanupStack,
+        low_level::{Acquired, acquire_pair},
+    },
     command::{Command, CommandCause},
     operation::OperationOwner,
 };
@@ -32,17 +35,14 @@ async fn successful_handoffs_register_before_use_and_close_in_reverse_order() {
     let events = Arc::new(Mutex::new(Vec::new()));
     for name in ["dependency", "dependent"] {
         let closed = events.clone();
-        let value = stack
-            .reserve(name)
-            .unwrap()
-            .acquire(|| async move {
-                Ok::<_, Infallible>(Acquired::new(name, move || async move {
-                    closed.lock().unwrap().push(name);
-                    Ok(())
-                }))
-            })
-            .await
-            .unwrap();
+        let value = acquire_pair(stack.reserve(name).unwrap(), || async move {
+            Ok::<_, Infallible>(Acquired::new(name, move || async move {
+                closed.lock().unwrap().push(name);
+                Ok(())
+            }))
+        })
+        .await
+        .unwrap();
         assert_eq!(value, name);
         assert_eq!(stack.len(), if name == "dependency" { 1 } else { 2 });
     }
@@ -54,27 +54,27 @@ async fn successful_handoffs_register_before_use_and_close_in_reverse_order() {
 #[tokio::test]
 async fn error_unpolled_and_cancelled_acquisitions_register_nothing() {
     let mut stack = CleanupStack::new();
-    let error = stack
-        .reserve("failed")
-        .unwrap()
-        .acquire(|| async {
-            Err::<Acquired<(), fn() -> std::future::Ready<Result<(), BoxError>>>, _>("original")
-        })
-        .await
-        .unwrap_err();
+    let error = acquire_pair(stack.reserve("failed").unwrap(), || async {
+        Err::<Acquired<(), fn() -> std::future::Ready<Result<(), BoxError>>>, _>("original")
+    })
+    .await
+    .unwrap_err();
     assert_eq!(error, "original");
     let invoked = Arc::new(AtomicBool::new(false));
     let check = invoked.clone();
-    let acquisition = stack.reserve("unpolled").unwrap().acquire(move || {
+    let acquisition = acquire_pair(stack.reserve("unpolled").unwrap(), move || {
         check.store(true, Ordering::SeqCst);
         async { Ok::<_, Infallible>(Acquired::new((), || async { Ok(()) })) }
     });
     drop(acquisition);
     assert!(!invoked.load(Ordering::SeqCst), "factory remains inert");
-    let mut acquisition = Box::pin(stack.reserve("cancelled").unwrap().acquire(|| async {
-        pending::<()>().await;
-        Ok::<_, Infallible>(Acquired::new((), || async { Ok(()) }))
-    }));
+    let mut acquisition = Box::pin(acquire_pair(
+        stack.reserve("cancelled").unwrap(),
+        || async {
+            pending::<()>().await;
+            Ok::<_, Infallible>(Acquired::new((), || async { Ok(()) }))
+        },
+    ));
     tokio::select! { biased;
         _ = &mut acquisition => panic!("pending acquisition returned"),
         _ = tokio::task::yield_now() => {}
@@ -94,16 +94,14 @@ async fn command_early_error_still_finalizes_the_acquired_resource() {
         budget(),
         move |scope| {
             Box::pin(async move {
-                let handle = scope
-                    .reserve_cleanup("resource")?
-                    .acquire(|| async move {
-                        Ok::<_, Infallible>(Acquired::new(42, move || async move {
-                            mark.store(true, Ordering::SeqCst);
-                            Ok(())
-                        }))
-                    })
-                    .await
-                    .unwrap();
+                let handle = acquire_pair(scope.reserve_cleanup("resource")?, || async move {
+                    Ok::<_, Infallible>(Acquired::new(42, move || async move {
+                        mark.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }))
+                })
+                .await
+                .unwrap();
                 assert_eq!(handle, 42);
                 Err::<(), BoxError>(std::io::Error::other("after acquisition").into())
             })
@@ -117,7 +115,7 @@ async fn command_early_error_still_finalizes_the_acquired_resource() {
     );
 }
 
-/// A native future can yield a resource and then panic while being destroyed.
+/// A lower-level factory can yield a complete pair, then panic on destruction.
 struct PanicOnDrop<T>(Option<T>);
 impl<T: Unpin> Future for PanicOnDrop<T> {
     type Output = Result<T, Infallible>;
@@ -132,7 +130,7 @@ impl<T> Drop for PanicOnDrop<T> {
 }
 
 #[tokio::test]
-async fn native_future_destruction_after_ready_cannot_skip_registration() {
+async fn pair_future_destruction_after_ready_cannot_skip_registration() {
     let closed = Arc::new(AtomicBool::new(false));
     let mark = closed.clone();
     let command = Command::new(
@@ -142,16 +140,14 @@ async fn native_future_destruction_after_ready_cannot_skip_registration() {
         budget(),
         move |scope| {
             Box::pin(async move {
-                scope
-                    .reserve_cleanup("resource")?
-                    .acquire(|| {
-                        PanicOnDrop(Some(Acquired::new((), move || async move {
-                            mark.store(true, Ordering::SeqCst);
-                            Ok(())
-                        })))
-                    })
-                    .await
-                    .unwrap();
+                acquire_pair(scope.reserve_cleanup("resource")?, || {
+                    PanicOnDrop(Some(Acquired::new((), move || async move {
+                        mark.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })))
+                })
+                .await
+                .unwrap();
                 Ok::<_, batter_core::RegistrationError>(())
             })
         },

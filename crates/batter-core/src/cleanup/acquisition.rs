@@ -1,91 +1,117 @@
 use super::CleanupSlot;
-use crate::BoxError;
 use std::{
     future::{Future, poll_fn},
+    io,
+    net::SocketAddr,
     pin::pin,
+    sync::Arc,
+};
+use tokio::{
+    net::UdpSocket,
+    sync::{AcquireError, Semaphore},
 };
 
-/// A native acquisition's handle paired with its owned finalizer.
-///
-/// Construct this at the successful return boundary of an acquisition factory
-/// passed to [`CleanupSlot::acquire`]. There is no accessor that can release the
-/// handle before its finalizer is registered. The factory still owns partial
-/// acquisitions, cancellation and panic before it returns this pair; this type
-/// does not prove that the finalizer closes the right remote resource.
-///
-/// ```compile_fail,E0616
-/// use batter_core::cleanup::Acquired;
-/// let acquired = Acquired::new(42, || async { Ok(()) });
-/// let handle = acquired.handle;
-/// ```
-#[must_use = "return the acquired pair to CleanupSlot::acquire for registration"]
-pub struct Acquired<T, F> {
-    handle: T,
-    finalizer: F,
-}
-
-impl<T, F, Fut> Acquired<T, F>
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
-{
-    /// Pair the application handle with the owned cleanup operation.
-    /// No finalizer is run on drop. See [`CleanupSlot::acquire`] for execution.
-    pub fn new(handle: T, finalizer: F) -> Self {
-        Self { handle, finalizer }
-    }
-}
-
 impl CleanupSlot<'_> {
-    /// Acquire through an inert factory and register cleanup before exposing its handle.
+    /// Acquire one native semaphore permit and retain it until owned cleanup.
     ///
-    /// On successful factory completion, registration and handle return happen
-    /// in the same poll, with no user callback or await between them. Subsequent
-    /// caller failure or cancellation therefore cannot leave the returned
-    /// handle unregistered. Finalizers still run LIFO under the owning command,
-    /// startup or supervisor, or an explicitly driven cleanup stack.
-    ///
-    /// Dropping this future before completion drops the native acquisition;
-    /// its partial-acquisition contract applies. A never-polled future invokes
-    /// no factory. Use [`Self::register`] only for lower-level manual handoff.
+    /// The permit cannot escape or be forgotten by the caller. No application
+    /// callback runs between native acquisition and registration. Cancellation
+    /// while waiting has Tokio's queue-position semantics and registers nothing.
+    /// Migration: instead of `CleanupSlot::acquire` or manual permit registration,
+    /// pass the semaphore directly to this method.
     ///
     /// # Errors
-    /// Returns the original acquisition error unchanged; no finalizer is added.
-    /// Factory panics propagate into the enclosing execution boundary.
+    /// Returns Tokio's acquisition error if the semaphore is closed.
     ///
     /// ```
-    /// use batter_core::cleanup::{Acquired, CleanupBudget, CleanupStack};
-    /// use std::{convert::Infallible, sync::Arc, time::Duration};
+    /// use batter_core::cleanup::{CleanupStack, CleanupBudget};
+    /// use std::{sync::Arc, time::Duration};
     /// # #[tokio::main(flavor = "current_thread")]
-    /// # async fn main() -> Result<(), batter_core::RegistrationError> {
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let capacity = Arc::new(tokio::sync::Semaphore::new(1));
     /// let mut cleanup = CleanupStack::new();
-    /// let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
-    /// let source = semaphore.clone();
-    /// let handle = cleanup.reserve("capacity")?.acquire(move || async move {
-    ///     let permit = source.acquire_owned().await.expect("semaphore stays open");
-    ///     Ok::<_, Infallible>(Acquired::new(42, move || async move {
-    ///         drop(permit);
-    ///         Ok(())
-    ///     }))
-    /// }).await.expect("infallible acquisition");
-    /// assert_eq!(handle, 42);
-    /// assert_eq!(semaphore.available_permits(), 0);
+    /// cleanup.reserve("capacity")?.acquire_semaphore(capacity.clone()).await?;
+    /// assert_eq!(capacity.available_permits(), 0);
     /// let second = Duration::from_secs(1);
-    /// let report = cleanup.close(CleanupBudget::new(second, second, second).unwrap()).await;
-    /// assert!(report.is_success());
-    /// assert_eq!(semaphore.available_permits(), 1);
+    /// assert!(cleanup.close(CleanupBudget::new(second, second, second)?).await.is_success());
+    /// assert_eq!(capacity.available_permits(), 1);
     /// # Ok(()) }
     /// ```
-    pub async fn acquire<T, E, A, Fut, F, Close>(self, acquire: A) -> Result<T, E>
+    /// Arbitrary acquisition glue is not accepted:
+    /// ```compile_fail,E0308
+    /// use batter_core::cleanup::CleanupSlot;
+    /// async fn invalid(slot: CleanupSlot<'_>) {
+    ///     slot.acquire_semaphore(|| async { tokio::task::yield_now().await }).await;
+    /// }
+    /// ```
+    /// The permit cannot escape or be forgotten:
+    /// ```compile_fail,E0599
+    /// use batter_core::cleanup::CleanupSlot;
+    /// async fn invalid(slot: CleanupSlot<'_>, capacity: std::sync::Arc<tokio::sync::Semaphore>) {
+    ///     let permit = slot.acquire_semaphore(capacity).await.unwrap();
+    ///     permit.forget();
+    /// }
+    /// ```
+    pub async fn acquire_semaphore(self, semaphore: Arc<Semaphore>) -> Result<(), AcquireError> {
+        drop(self.acquire_native(semaphore.acquire_owned()).await?);
+        Ok(())
+    }
+
+    /// Bind one numeric UDP address and register the library's socket reference
+    /// before returning a shared native handle. No DNS or application callbacks.
+    ///
+    /// Cleanup drops its reference; all caller clones must also be dropped to
+    /// close the socket. No detached-task join or remote-effect guarantee follows.
+    /// A cancelled, never-polled call does not bind. The Tokio I/O driver must be enabled.
+    /// Migration: replace UDP-binding `CleanupSlot::acquire` callbacks with this
+    /// operation; generic pairing belongs to [`super::low_level::acquire_pair`].
+    ///
+    /// # Errors
+    /// Returns the native bind error unchanged.
+    ///
+    /// ```
+    /// use batter_core::cleanup::{CleanupStack, CleanupBudget};
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let mut cleanup = CleanupStack::new();
+    /// let socket = cleanup.reserve("socket")?.bind_udp("127.0.0.1:0".parse()?).await?;
+    /// assert!(socket.local_addr()?.port() != 0);
+    /// drop(socket);
+    /// let second = Duration::from_secs(1);
+    /// assert!(cleanup.close(CleanupBudget::new(second, second, second)?).await.is_success());
+    /// # Ok(()) }
+    /// ```
+    pub async fn bind_udp(self, address: SocketAddr) -> io::Result<Arc<UdpSocket>> {
+        self.acquire_native(UdpSocket::bind(address)).await
+    }
+
+    // Only supported native methods may enter this kernel. It polls the actual
+    // native future, retains its output, registers owned cleanup, and only then
+    // destroys the ready future. No user projection or finalizer builder runs.
+    async fn acquire_native<R, E>(
+        self,
+        native: impl Future<Output = Result<R, E>>,
+    ) -> Result<Arc<R>, E>
     where
-        A: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Acquired<T, F>, E>>,
-        F: FnOnce() -> Close + Send + 'static,
-        Close: Future<Output = Result<(), BoxError>> + Send + 'static,
+        R: Send + Sync + 'static,
     {
-        let mut acquiring = pin!(acquire());
-        let Acquired { handle, finalizer } = poll_fn(|cx| acquiring.as_mut().poll(cx)).await?;
-        self.register(finalizer);
-        Ok(handle)
+        let resource;
+        {
+            let mut native = pin!(native);
+            resource = Arc::new(poll_fn(|cx| native.as_mut().poll(cx)).await?);
+            let closing = resource.clone();
+            self.register(move || async move {
+                drop(closing);
+                Ok(())
+            });
+            // Destroy the native future before constructing the return value.
+            // On unwind, the outer local releases its reference; cleanup retains its own.
+        }
+        Ok(resource)
     }
 }
+
+#[cfg(test)]
+#[path = "acquisition_tests.rs"]
+mod tests;

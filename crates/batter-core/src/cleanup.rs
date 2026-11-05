@@ -5,7 +5,7 @@
 //! Hooks must not detach work or block runtime threads.
 
 mod acquisition;
-pub use acquisition::Acquired;
+pub mod low_level;
 
 use crate::{BoxError, ConfigurationError, RegistrationError, scoped_dispatch, validation};
 use std::{future::Future, pin::Pin, time::Duration};
@@ -197,8 +197,8 @@ pub struct CleanupStack {
 
 /// A validated name and exclusive registration slot, reserved before acquisition.
 ///
-/// Prefer [`Self::acquire`] with [`Acquired`] to register before the handle is
-/// exposed. The following manual handoff is a lower-level escape hatch.
+/// Prefer [`Self::acquire_semaphore`] or [`Self::bind_udp`] for supported native
+/// resources; use adapter-owned acquisition such as SQLx `pool_in` for others. The following manual handoff is a lower-level escape hatch.
 /// Dropping an unused slot registers nothing. After acquisition succeeds, call
 /// [`Self::register`] without an intervening await. It cannot reject the name.
 /// This does not own an acquisition future or finalize an unregistered resource.
@@ -222,7 +222,7 @@ pub struct CleanupSlot<'a> {
 
 impl CleanupSlot<'_> {
     /// Lower-level manual registration under the already validated name.
-    /// Prefer [`Self::acquire`] when acquiring a resource.
+    /// Prefer native acquisition methods when acquiring a supported resource.
     pub fn register<F, Fut>(self, action: F)
     where
         F: FnOnce() -> Fut + Send + 'static,

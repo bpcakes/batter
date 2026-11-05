@@ -32,7 +32,7 @@ async fn completed_phases_preserve_the_submitters_dispatch_and_span() {
                     name: "phased.normal.finalization",
                     dropped: None,
                 };
-                assert_eq!(scope.work().result().ok(), Some(&42));
+                assert_eq!(scope.work().classify().ok(), Some(&42));
                 tokio::task::yield_now().await;
                 tracing::info!("phased.normal.recorded");
                 Ok::<_, Infallible>(())
@@ -41,7 +41,7 @@ async fn completed_phases_preserve_the_submitters_dispatch_and_span() {
         .unwrap()
         .start()
     });
-    assert!(running.wait().await.unwrap().is_success());
+    assert_eq!(*running.wait().await.unwrap().work(), 42);
     for event in [
         "phased.normal.work",
         "phased.normal.finalization",
@@ -77,7 +77,7 @@ async fn owner_loss_preserves_dispatch_through_work_and_finalization_destruction
                     dropped: None,
                 };
                 assert!(matches!(
-                    scope.work().result(),
+                    scope.work().classify().unwrap_err().returned_result(),
                     Err(CommandCause::Interrupted(Interruption::Cancelled))
                 ));
                 tokio::task::yield_now().await;
@@ -137,7 +137,7 @@ async fn skipped_work_factory_is_destroyed_under_its_submitters_dispatch() {
         panic!("expected work cancellation")
     };
     assert!(matches!(
-        report.work().result(),
+        report.work().classify().unwrap_err().returned_result(),
         Err(CommandCause::Interrupted(Interruption::Cancelled))
     ));
     assert!(report.finalization().is_success());
@@ -147,6 +147,16 @@ async fn skipped_work_factory_is_destroyed_under_its_submitters_dispatch() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn unclaimed_phase_results_are_destroyed_under_the_publishers_dispatch() {
+    assert_unclaimed_result_dispatch(CompletionKind::Success).await;
+    assert_unclaimed_result_dispatch(CompletionKind::Failure).await;
+}
+
+enum CompletionKind {
+    Success,
+    Failure,
+}
+
+async fn assert_unclaimed_result_dispatch(completion: CompletionKind) {
     let ambient = Logs::new();
     let _ambient = tracing::dispatcher::set_default(&ambient.dispatch);
     let driver = Logs::new();
@@ -166,10 +176,14 @@ async fn unclaimed_phase_results_are_destroyed_under_the_publishers_dispatch() {
             async move |_scope| {
                 entered.send(()).unwrap();
                 released.await.unwrap();
-                Ok::<_, Infallible>(DropMarker {
+                let evidence = DropMarker {
                     name: "phased.unclaimed.finalization",
                     dropped: None,
-                })
+                };
+                match completion {
+                    CompletionKind::Failure => Err(evidence),
+                    CompletionKind::Success => Ok(evidence),
+                }
             },
         )
         .unwrap()

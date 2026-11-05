@@ -130,10 +130,12 @@ the previous implementation.
 work error/panic, destruction panic, deadlines, original total preservation,
 owner loss before first poll/during work/during finalization, cancelled borrowed
 waiters, shared report identity, parent cancellation, late synchronous results,
-redaction, inert construction and invalid reserves. `cleanup_acquisition.rs`
-covers LIFO registration before handle use, unchanged acquisition errors,
-unpolled and cancelled factories, command early return, and a ready native
-future whose destructor panics. `send_futures.rs` pins the new waiters to `Send`.
+redaction, inert construction, zero-reserve execution and invalid reserves.
+`native_acquisition.rs` covers native semaphore/UDP registration, caller failure,
+pending cancellation, native errors and LIFO cleanup. The private acquisition
+test returns a raw resource from a native future whose destruction panics: cleanup
+must retain it and release it exactly once. `cleanup_acquisition.rs` separately
+covers the weaker pair-producing handoff, including its factory-destruction case. `send_futures.rs` pins the new waiters to `Send`.
 `scoped_owned_tasks/phased.rs` directly checks the new coordinator and publisher
 against a different ambient subscriber: normal completion, owner-loss work
 cancellation followed by finalization, a never-invoked work factory and unclaimed
@@ -142,10 +144,11 @@ submitter's dispatcher and span, never the ambient subscriber (`batter-17fe`).
 Separately removing the coordinator's and publisher's span attachment made their
 corresponding focused test fail; both mutations were restored before verification.
 Rustdoc tests reject early finalization access, owner cloning, non-Send callbacks
-and extraction of the opaque acquired handle. The facade operation-budget and
+extraction of the opaque acquired handle, forged success/failure evidence and
+application callbacks at the native acquisition boundary. The facade operation-budget and
 finite-command examples exercise both new paths. These are executable contracts,
 not fresh-agent usability evaluations. Verification outcomes belong to
-`batter-jxj2` and the direct panel follow-up `batter-17fe`.
+`batter-jxj2`, `batter-17fe` and the outcome/acquisition redesign `batter-rtxb`.
 
 ## Testing a job handler without a worker
 
