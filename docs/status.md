@@ -1,5 +1,10 @@
 # Implementation status
 
+2026-11-05 retained intent reconciliation (`batter-hw3k`): owned Runledger scopes
+now return typed, metadata-only intent/job/definition observations with exact scope.
+Both single-intent pool getters are removed; no persisted schema changes.
+See [evidence and verification](evidence/intent-reconciliation-2026-11-05.md).
+
 2026-11-04 outbound connection ownership (`batter-u387`, experimental):
 `batter-outbound-http` now owns a fresh TCP/TLS connection and low-level hyper
 HTTP/1 driver per exchange. Handoff is gated at `send_request`, and socket

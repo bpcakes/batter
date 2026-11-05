@@ -3299,3 +3299,22 @@ existing budgets remain in force. It does not prove continuing readiness, remote
 effects, detached-task quiescence, runtime survival, or preemption of non-yielding
 code. Existing unit-output `service::start` remains supported without an added
 readiness deadline.
+
+## Retained enqueue-intent reconciliation
+
+Runledger's owned atomic scopes expose `reconcile_job_enqueue_intent` for an
+exact `JobScope`. One SELECT observes the intent, its same-type/same-scope
+promoted job and the current definition, including the transaction's own writes.
+Opaque evidence prevents constructing an observed promoted state without job
+metadata. Invalid retained links fail the query; absent definitions are explicit.
+The reader takes no row locks and preserves the intent-to-queue phase transition.
+Its output remains provisional inside the atomic body and follows the existing
+acknowledged/uncertain transaction outcomes.
+
+`NotFound` means no visible retained intent for that ID and scope. It does not
+prove rollback: retention, another scope or concurrent transactions can explain
+absence. Application authorization, original idempotency inputs and the decision
+to retry remain application-owned. Evidence is a point-in-time observation, not
+a reservation against future promotion or retention. The new reconciliation
+grant reads only selected metadata; adding other operation grants can expose more
+columns, including canonical submitted requests for intent submission.

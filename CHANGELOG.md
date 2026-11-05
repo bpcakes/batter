@@ -8,6 +8,39 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** replace both single-intent pool readers with
+  `PgIntentScope::reconcile_job_enqueue_intent` (also available in queue and
+  policy scopes). The result is exhaustive `IntentReconciliation`, with opaque
+  metadata and a required same-scope job for `Promoted`. Choose an exact
+  `JobScope`; an absent result never proves rollback or permits replay.
+
+  ```rust,ignore
+  // Before: legacy optional organization, or explicit read scope.
+  let row = get_job_enqueue_intent_by_id(pool, Some(org), id).await?;
+  let row = get_job_enqueue_intent_by_id_with_scope(
+      pool, JobReadScope::Organization(org), id).await?;
+  // After: both call shapes use the transaction owner and exact scope.
+  let evidence = run_atomic(database, async |mut tx| {
+      tx.reconcile_job_enqueue_intent(JobScope::Organization(org), id).await
+  }).await?;
+  match evidence {
+      IntentReconciliation::NotFound => { /* retain uncertainty */ }
+      IntentReconciliation::Retained(intent) => match intent.state() {
+          IntentCorrelationState::Pending => { /* await promotion */ }
+          IntentCorrelationState::Conflicted => { /* resolve application conflict */ }
+          IntentCorrelationState::Promoted(job) => { let _ = job.id(); }
+      },
+  }
+  ```
+
+  `None`/`Admin` no longer provides a wildcard single-intent lookup: authorize
+  `JobScope::Global` or `JobScope::Organization(id)` explicitly. Administrative
+  list APIs remain separate. No deprecated shim is supplied: the old pool/full-row
+  form bypasses owned transaction continuity and the restricted metadata contract.
+  Add `RunledgerOperation::IntentReconciliation` to the role's grant selection;
+  it needs only selected metadata columns. No database migration, baseline deploy
+  or staged persisted-data rollout is required (`batter-hw3k`).
+
 - Add `OperationContext::run_tracked`, whose exhaustive `TrackedOperationError`
   separates opaque `NotStarted` evidence from interruption after factory
   invocation. Add `child_until(Instant)` for a parent-clamped absolute child

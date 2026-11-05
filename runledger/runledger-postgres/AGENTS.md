@@ -24,6 +24,10 @@ PostgreSQL persistence for durable execution: queue lifecycle, workflow DAG stat
 - DB error categorization: `src/error.rs`, `src/error/classify/*`.
 
 ## Invariants
+- `atomic/reconciliation.rs` owns single-intent metadata correlation in one SQL
+  snapshot. Require an exact scope and a same-type, same-scope job for promoted
+  evidence; never add payload or diagnostic columns to this reader or its grants.
+  Missing retained evidence cannot prove rollback or authorize resubmission.
 - Prefer direct cutovers only for internal persistence-layer refactors within one coordinated deploy. Changes to persisted queue, workflow, runtime-config, or log/event contracts require backward compatibility or an explicit staged rollout; update dependents in the same change.
 - Preserve audit/event writes when altering queue lifecycle.
 - Keep app/domain logic out of this crate.

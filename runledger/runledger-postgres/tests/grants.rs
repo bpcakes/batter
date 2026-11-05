@@ -16,7 +16,11 @@ use runledger_postgres::grants::{RunledgerGrantError, RunledgerOperation, grant_
 /// The exact migration bundle these requirements were reviewed against.
 const PINNED_BUNDLE: &str = "a4fc356878542c81b29151d3636a7d267141a0b2573c0204257f0813733aac6f";
 
-const EVERY_OPERATION: [(RunledgerOperation, &str); 6] = [
+const EVERY_OPERATION: [(RunledgerOperation, &str); 7] = [
+    (
+        RunledgerOperation::IntentReconciliation,
+        include_str!("grants/intent_reconciliation.sql"),
+    ),
     (
         RunledgerOperation::IntentSubmission,
         include_str!("grants/intent_submission.sql"),

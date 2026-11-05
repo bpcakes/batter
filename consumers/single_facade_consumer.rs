@@ -29,7 +29,7 @@ use batter::runledger::native::core::jobs::{
 };
 use batter::runledger::native::core::prelude::async_trait;
 use batter::runledger::native::postgres::{
-    jobs::{JobEnqueue, JobEnqueueIntent},
+    jobs::{JobEnqueue, JobEnqueueIntent, JobScope},
     migrate_after_idempotency_cutover,
 };
 use batter::runledger::native::runtime::{
@@ -37,8 +37,11 @@ use batter::runledger::native::runtime::{
     catalog::JobCatalog,
     config::{IntentPromoterConfig, JobsConfig},
 };
+use batter::runledger::{
+    IntentCorrelationState, IntentReconciliation, PgSessionProfile, RunledgerDatabase, run_atomic,
+    verify_schema,
+};
 use batter::runledger::{JobPhasesRejection, job_phases};
-use batter::runledger::{PgSessionProfile, RunledgerDatabase, run_atomic, verify_schema};
 use batter::runlimit::native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
 use batter::runlimit::native_transport::http::draft_11;
 use batter::runlimit::postgres::PostgresLimiter;
@@ -255,10 +258,20 @@ async fn submit(database: &RunledgerDatabase, payload: &Value) -> Outcome {
                 })
                 .await
                 .map_err(ApplicationFailure::new)?;
-            scope
+            let accepted = scope
                 .record_required_job_enqueue_intent(&intent)
                 .await
                 .map_err(ApplicationFailure::new)?;
+            let observed = scope
+                .reconcile_job_enqueue_intent(JobScope::Global, accepted.intent_id())
+                .await
+                .map_err(ApplicationFailure::new)?;
+            match observed {
+                IntentReconciliation::Retained(intent) => {
+                    assert!(matches!(intent.state(), IntentCorrelationState::Pending));
+                }
+                IntentReconciliation::NotFound => panic!("own intent must be visible"),
+            }
             scope
                 .queue()
                 .enqueue_job(&request)

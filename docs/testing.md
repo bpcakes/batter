@@ -4264,3 +4264,14 @@ The existing service suite retains diagnostic ordering and independent failures.
 local collector. The facade HTTP example uses the same protected path, including
 optional explicit OTLP selection. Executed results belong to `batter-m9rp`;
 fresh-agent implementation/modification evaluation remains unexecuted.
+
+## Enqueue-intent reconciliation
+
+`cargo test -p runledger-postgres --test intent_reconciliation --test grants
+--locked` uses native PostgreSQL 18 fixtures. It tests restricted grants, own-write
+visibility, rejection rollback, missing definitions, conflicts, exact scope,
+invalid cross-scope links and concurrent promotion/retention. A TCP proxy drops
+an actual COMMIT acknowledgement, then recovery finds the committed identity and
+replaying the original request creates no duplicate. Compile-fail rustdoc checks
+that both removed getters stay unavailable. The external single-facade consumer
+also reads its own intent through the protected owner before queue transition.

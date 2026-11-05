@@ -1,6 +1,7 @@
 //! Acknowledged atomic workflows with a one-way intent-to-queue phase.
 mod intent;
 mod policy;
+mod reconciliation;
 use crate::{
     Error, RunledgerDatabase,
     jobs::{JobEnqueue, JobEnqueueIntent, JobEnqueueIntentOutcome, JobEnqueueOutcome},
@@ -13,6 +14,10 @@ pub use batter_sqlx::{
 pub use intent::{AcceptedIntentOutcome, AcceptedIntentState, IntentConflict, RequiredIntentError};
 pub use policy::{
     PgPolicyIntentScope, PgPolicyQueueScope, run_atomic_fail_fast_with, run_atomic_with,
+};
+pub use reconciliation::{
+    CorrelatedDefinition, CorrelatedJob, IntentCorrelationState, IntentReconciliation,
+    RetainedIntent,
 };
 
 /// Run application writes and Runledger operations in one owned transaction.
@@ -64,6 +69,49 @@ pub struct PgIntentScope<'a> {
 }
 
 impl<'a> PgIntentScope<'a> {
+    /// Read retained intent lineage in this transaction, without payload access.
+    ///
+    /// Migration: replace `get_job_enqueue_intent_by_id` and
+    /// `get_job_enqueue_intent_by_id_with_scope` with this method inside
+    /// `run_atomic`. Select an exact `JobScope`; there is no admin wildcard.
+    /// The result observes one SQL snapshot and is provisional inside the body.
+    /// `NotFound` never proves rollback or authorizes replay. The caller must
+    /// authorize the requested scope; column grants alone are not tenant isolation.
+    ///
+    /// ```no_run
+    /// # async fn example(db: &runledger_postgres::RunledgerDatabase, id: sqlx::types::Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    /// use runledger_postgres::{run_atomic, IntentReconciliation};
+    /// use runledger_postgres::jobs::JobScope;
+    /// let evidence = run_atomic(db, async |mut scope| {
+    ///     scope.reconcile_job_enqueue_intent(JobScope::Global, id).await
+    /// }).await?;
+    /// match evidence {
+    ///     IntentReconciliation::NotFound => { /* retain uncertainty */ }
+    ///     IntentReconciliation::Retained(intent) => { let _ = intent.state(); }
+    /// }
+    /// # Ok(()) }
+    /// ```
+    /// The removed pool readers are not compatibility aliases:
+    /// ```compile_fail,E0432
+    /// use runledger_postgres::jobs::get_job_enqueue_intent_by_id;
+    /// ```
+    /// ```compile_fail,E0432
+    /// use runledger_postgres::jobs::get_job_enqueue_intent_by_id_with_scope;
+    /// ```
+    #[allow(
+        clippy::result_large_err,
+        reason = "retain concrete query and cleanup errors like the other scoped operations"
+    )]
+    pub async fn reconcile_job_enqueue_intent(
+        &mut self,
+        scope: crate::jobs::JobScope,
+        intent_id: sqlx::types::Uuid,
+    ) -> Result<IntentReconciliation, PgScopeError<Error>> {
+        self.inner
+            .application(async |sql| reconciliation::read(sql, scope, intent_id).await)
+            .await
+    }
+
     /// Run application SQL inside a protected savepoint. Returned values remain
     /// provisional inside the runner. Raw SQL must not bypass queue ordering.
     pub async fn application<T, E>(
@@ -140,6 +188,21 @@ pub struct PgQueueScope<'a> {
 }
 
 impl PgQueueScope<'_> {
+    /// Read retained lineage after entering the queue phase. See [`PgIntentScope::reconcile_job_enqueue_intent`].
+    #[allow(
+        clippy::result_large_err,
+        reason = "retain concrete query and cleanup errors like the other scoped operations"
+    )]
+    pub async fn reconcile_job_enqueue_intent(
+        &mut self,
+        scope: crate::jobs::JobScope,
+        intent_id: sqlx::types::Uuid,
+    ) -> Result<IntentReconciliation, PgScopeError<Error>> {
+        self.inner
+            .application(async |sql| reconciliation::read(sql, scope, intent_id).await)
+            .await
+    }
+
     /// Run application SQL inside its own protected savepoint.
     pub async fn application<T, E>(
         &mut self,

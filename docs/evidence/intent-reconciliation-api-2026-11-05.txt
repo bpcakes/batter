@@ -1,0 +1,95 @@
+## runledger-postgres: 3324 -> 3395 entries; 8 removed, 79 added
+- REMOVED function runledger_postgres::jobs::get_job_enqueue_intent_by_id
+- REMOVED function runledger_postgres::jobs::get_job_enqueue_intent_by_id_with_scope
+- REMOVED function runledger_postgres::prelude::get_job_enqueue_intent_by_id
+- REMOVED function runledger_postgres::prelude::get_job_enqueue_intent_by_id_with_scope
+- REMOVED use runledger_postgres::jobs::get_job_enqueue_intent_by_id <- queue::get_job_enqueue_intent_by_id
+- REMOVED use runledger_postgres::jobs::get_job_enqueue_intent_by_id_with_scope <- queue::get_job_enqueue_intent_by_id_with_scope
+- REMOVED use runledger_postgres::prelude::get_job_enqueue_intent_by_id <- crate::jobs::get_job_enqueue_intent_by_id
+- REMOVED use runledger_postgres::prelude::get_job_enqueue_intent_by_id_with_scope <- crate::jobs::get_job_enqueue_intent_by_id_with_scope
++ ADDED   enum runledger_postgres::IntentCorrelationState
++ ADDED   enum runledger_postgres::IntentReconciliation
++ ADDED   enum runledger_postgres::prelude::IntentCorrelationState
++ ADDED   enum runledger_postgres::prelude::IntentReconciliation
++ ADDED   impl runledger_postgres::CorrelatedDefinition: Clone
++ ADDED   impl runledger_postgres::CorrelatedDefinition: Debug
++ ADDED   impl runledger_postgres::CorrelatedJob: Clone
++ ADDED   impl runledger_postgres::CorrelatedJob: Debug
++ ADDED   impl runledger_postgres::IntentCorrelationState: Clone
++ ADDED   impl runledger_postgres::IntentCorrelationState: Debug
++ ADDED   impl runledger_postgres::IntentReconciliation: Clone
++ ADDED   impl runledger_postgres::IntentReconciliation: Debug
++ ADDED   impl runledger_postgres::RetainedIntent: Clone
++ ADDED   impl runledger_postgres::RetainedIntent: Debug
++ ADDED   impl runledger_postgres::prelude::CorrelatedDefinition: Clone
++ ADDED   impl runledger_postgres::prelude::CorrelatedDefinition: Debug
++ ADDED   impl runledger_postgres::prelude::CorrelatedJob: Clone
++ ADDED   impl runledger_postgres::prelude::CorrelatedJob: Debug
++ ADDED   impl runledger_postgres::prelude::IntentCorrelationState: Clone
++ ADDED   impl runledger_postgres::prelude::IntentCorrelationState: Debug
++ ADDED   impl runledger_postgres::prelude::IntentReconciliation: Clone
++ ADDED   impl runledger_postgres::prelude::IntentReconciliation: Debug
++ ADDED   impl runledger_postgres::prelude::RetainedIntent: Clone
++ ADDED   impl runledger_postgres::prelude::RetainedIntent: Debug
++ ADDED   method runledger_postgres::CorrelatedDefinition::is_enabled
++ ADDED   method runledger_postgres::CorrelatedDefinition::version
++ ADDED   method runledger_postgres::CorrelatedJob::id
++ ADDED   method runledger_postgres::CorrelatedJob::run_number
++ ADDED   method runledger_postgres::CorrelatedJob::status
++ ADDED   method runledger_postgres::PgIntentScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::PgPolicyIntentScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::PgPolicyQueueScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::PgQueueScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::RetainedIntent::definition
++ ADDED   method runledger_postgres::RetainedIntent::id
++ ADDED   method runledger_postgres::RetainedIntent::job_type
++ ADDED   method runledger_postgres::RetainedIntent::scope
++ ADDED   method runledger_postgres::RetainedIntent::state
++ ADDED   method runledger_postgres::prelude::CorrelatedDefinition::is_enabled
++ ADDED   method runledger_postgres::prelude::CorrelatedDefinition::version
++ ADDED   method runledger_postgres::prelude::CorrelatedJob::id
++ ADDED   method runledger_postgres::prelude::CorrelatedJob::run_number
++ ADDED   method runledger_postgres::prelude::CorrelatedJob::status
++ ADDED   method runledger_postgres::prelude::PgIntentScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::prelude::PgQueueScope::reconcile_job_enqueue_intent
++ ADDED   method runledger_postgres::prelude::RetainedIntent::definition
++ ADDED   method runledger_postgres::prelude::RetainedIntent::id
++ ADDED   method runledger_postgres::prelude::RetainedIntent::job_type
++ ADDED   method runledger_postgres::prelude::RetainedIntent::scope
++ ADDED   method runledger_postgres::prelude::RetainedIntent::state
++ ADDED   struct runledger_postgres::CorrelatedDefinition
++ ADDED   struct runledger_postgres::CorrelatedJob
++ ADDED   struct runledger_postgres::RetainedIntent
++ ADDED   struct runledger_postgres::prelude::CorrelatedDefinition
++ ADDED   struct runledger_postgres::prelude::CorrelatedJob
++ ADDED   struct runledger_postgres::prelude::RetainedIntent
++ ADDED   use runledger_postgres::CorrelatedDefinition <- atomic::CorrelatedDefinition
++ ADDED   use runledger_postgres::CorrelatedJob <- atomic::CorrelatedJob
++ ADDED   use runledger_postgres::IntentCorrelationState <- atomic::IntentCorrelationState
++ ADDED   use runledger_postgres::IntentReconciliation <- atomic::IntentReconciliation
++ ADDED   use runledger_postgres::RetainedIntent <- atomic::RetainedIntent
++ ADDED   use runledger_postgres::prelude::CorrelatedDefinition <- crate::CorrelatedDefinition
++ ADDED   use runledger_postgres::prelude::CorrelatedJob <- crate::CorrelatedJob
++ ADDED   use runledger_postgres::prelude::IntentCorrelationState <- crate::IntentCorrelationState
++ ADDED   use runledger_postgres::prelude::IntentReconciliation <- crate::IntentReconciliation
++ ADDED   use runledger_postgres::prelude::RetainedIntent <- crate::RetainedIntent
++ ADDED   variant runledger_postgres::IntentCorrelationState::Conflicted
++ ADDED   variant runledger_postgres::IntentCorrelationState::Pending
++ ADDED   variant runledger_postgres::IntentCorrelationState::Promoted
++ ADDED   variant runledger_postgres::IntentReconciliation::NotFound
++ ADDED   variant runledger_postgres::IntentReconciliation::Retained
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::IntentReconciliation
++ ADDED   variant runledger_postgres::prelude::IntentCorrelationState::Conflicted
++ ADDED   variant runledger_postgres::prelude::IntentCorrelationState::Pending
++ ADDED   variant runledger_postgres::prelude::IntentCorrelationState::Promoted
++ ADDED   variant runledger_postgres::prelude::IntentReconciliation::NotFound
++ ADDED   variant runledger_postgres::prelude::IntentReconciliation::Retained
+
+## batter-runledger: 83 -> 88 entries; 0 removed, 5 added
++ ADDED   use batter_runledger::CorrelatedDefinition <- runledger_postgres::CorrelatedDefinition
++ ADDED   use batter_runledger::CorrelatedJob <- runledger_postgres::CorrelatedJob
++ ADDED   use batter_runledger::IntentCorrelationState <- runledger_postgres::IntentCorrelationState
++ ADDED   use batter_runledger::IntentReconciliation <- runledger_postgres::IntentReconciliation
++ ADDED   use batter_runledger::RetainedIntent <- runledger_postgres::RetainedIntent

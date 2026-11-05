@@ -58,7 +58,6 @@ pub use queue::{
     delete_promoted_job_enqueue_intents_for_jobs_tx, enqueue_job, enqueue_job_tx,
     enqueue_job_with_execution_resource, enqueue_job_with_execution_resource_tx,
     enqueue_job_with_outcome, enqueue_job_with_outcome_tx, get_job_definition_by_type,
-    get_job_enqueue_intent_by_id, get_job_enqueue_intent_by_id_with_scope,
     get_job_enqueue_intent_metrics, get_job_enqueue_intent_metrics_with_scope, heartbeat_job,
     heartbeat_job_for_lease, insert_job_definition_if_missing_tx, list_job_definitions,
     list_job_enqueue_intents, list_job_enqueue_intents_with_scope, mark_job_running,

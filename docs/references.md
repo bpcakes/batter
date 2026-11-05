@@ -6458,3 +6458,16 @@ the Cargo registry; no dependency version changed.
   the future and stores `JoinError::cancelled` (or a panic error if that drop
   panicked); an owner awaiting from another runtime receives that error, which
   `finish` returns as `CommandFailure::Coordinator` instead of panicking.
+
+## Intent reconciliation snapshot and grants (2026-11-05)
+
+- PostgreSQL 18 [transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html):
+  an ordinary READ COMMITTED SELECT sees a statement snapshot and its own
+  transaction's changes; separate statements need not see the same committed state.
+  The native reader therefore joins all three metadata sources in one statement.
+- PostgreSQL 18 [GRANT](https://www.postgresql.org/docs/18/sql-grant.html): SELECT
+  can be granted on named columns. The new operation grants only the columns its
+  projection and predicates need. Existing wider grants remain effective.
+- Integration uses the workspace-locked SQLx 0.9.0 API and existing owned atomic
+  runner; live failure evidence records PostgreSQL 18.6. No SQLx transaction or
+  wire protocol implementation was added to production code.
