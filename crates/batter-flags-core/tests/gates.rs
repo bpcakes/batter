@@ -13,8 +13,8 @@ mod test_dispatch;
 mod world;
 
 use batter_flags_core::{
-    Freshness, Layer, PrePublication, Reason, SwitchState,
-    low_level::{GateReading, gate_switch},
+    ErrorCause, Freshness, Layer, PrePublication, Reason, SwitchState,
+    low_level::{GateReading, HandleRefusal, gate_switch},
 };
 use capture::Capture;
 use tracing::Level;
@@ -121,6 +121,37 @@ fn declared_mode_has_no_waiting_window() {
     // Declared mode serves each switch's safe state: released and engaged.
     assert_eq!(name(&gate_switch(&view, &h.checkout_halt)), "open");
     assert_eq!(name(&gate_switch(&view, &h.export_halt)), "tripped");
+}
+
+/// The disclosed obligation of the low-level read: a switch this base cannot
+/// answer for is not refused here. It reads as its safe state, classified like
+/// any other reading, and the decision carries the cause. Gates built by
+/// `batter-flags` check the switch first, so they never reach this.
+#[test]
+fn a_switch_the_base_cannot_answer_for_reads_as_its_safe_state_with_an_error() {
+    let (catalog, h) = world();
+    let (_other_catalog, other) = world();
+    let base = base(catalog, &h.serving, &[]);
+    let view = base.declared_view();
+
+    // `export_halt` belongs to `worker`: its safe state is engaged.
+    let not_owned = gate_switch(&view, &h.export_halt);
+    assert!(matches!(&not_owned, GateReading::Tripped(_)));
+    assert_eq!(not_owned.decision().error(), Some(ErrorCause::NotOwned));
+    // Another catalog's `checkout_halt`: its safe state is released.
+    let foreign = gate_switch(&view, &other.checkout_halt);
+    assert!(matches!(&foreign, GateReading::Open(_)));
+    assert_eq!(foreign.decision().error(), Some(ErrorCause::ForeignCatalog));
+
+    // The check that a gate constructor makes refuses both.
+    assert_eq!(
+        base.check_switch(&h.export_halt),
+        Err(HandleRefusal::NotOwned)
+    );
+    assert_eq!(
+        base.check_switch(&other.checkout_halt),
+        Err(HandleRefusal::ForeignCatalog)
+    );
 }
 
 #[test]

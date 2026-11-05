@@ -93,6 +93,18 @@ impl GateReading {
 /// Every gate, the HTTP gate, a gated job handler and the periodic gate, reads
 /// its switch through this one function, so they agree on the value, on the
 /// reading and on the event.
+///
+/// # Caller obligations
+///
+/// The switch must be one the view's base can answer for: this catalog's, and
+/// owned by the base's process kind, which
+/// [`Base::check_switch`](crate::low_level::Base::check_switch) tests. This
+/// function does not refuse any other. Such a switch reads as its safe state,
+/// classified like any other reading (engaged is
+/// [`Tripped`](GateReading::Tripped), released is
+/// [`Open`](GateReading::Open)), and only the decision's error cause and one
+/// WARN event say that it was never read. A gate is built once, so it should
+/// check its switches when it is built; the gates of `batter-flags` do.
 pub fn gate_switch(view: &SnapshotView, switch: &KillSwitch) -> GateReading {
     let decision = view.switch_decision(switch);
     let surface = if decision.value().is_engaged() {

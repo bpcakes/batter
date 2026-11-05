@@ -7,6 +7,7 @@
 use super::{Control, Loaded, Mode, SnapshotView};
 use crate::{
     base::BaseState,
+    check::{HandleRefusal, Reach},
     decision::{
         Decision, ErrorCause, Freshness, KillSwitchKey, Layer, PrePublication, Reason, SwitchState,
     },
@@ -16,15 +17,6 @@ use crate::{
     snapshot::EntryState,
     value::FlagValue,
 };
-
-/// Who may evaluate or replay a handle.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum Reach {
-    /// Owners only: live evaluation.
-    Owner,
-    /// Owners and the kinds a flag lists in `pinned_by`: pin replay.
-    OwnerOrPinner,
-}
 
 /// What a kill switch's layers add up to, before a decision is assembled.
 pub(super) struct SwitchOutcome {
@@ -51,25 +43,15 @@ impl SnapshotView {
     }
 
     /// Why this view cannot answer for `handle`, if it cannot.
-    pub(super) fn refusal(&self, handle: &Handle, reach: Reach) -> Option<ErrorCause> {
-        if handle.catalog() != self.base.catalog.id {
-            return Some(ErrorCause::ForeignCatalog);
-        }
-        let entry = self.catalog_entry(handle);
-        let reaches = entry.owners.contains(&self.base.kind)
-            || (reach == Reach::OwnerOrPinner && entry.pinned_by.contains(&self.base.kind));
-        if reaches {
-            None
-        } else {
-            Some(ErrorCause::NotOwned)
-        }
+    pub(super) fn refusal(&self, handle: &Handle, reach: Reach) -> Option<HandleRefusal> {
+        self.base.refusal(handle, reach)
     }
 
     pub(super) fn flag_decision<T: FlagValue>(&self, handle: &Handle, default: T) -> Decision<T> {
-        if let Some(cause) = self.refusal(handle, Reach::Owner) {
+        if let Some(refusal) = self.refusal(handle, Reach::Owner) {
             return Decision::failed(
                 (default, default.variant()),
-                cause,
+                refusal.cause(),
                 self.source(),
                 Layer::Base,
             );
@@ -212,9 +194,9 @@ impl SnapshotView {
     pub(super) fn switch_decision(&self, switch: &KillSwitch) -> Decision<SwitchState> {
         let handle = switch.handle();
         let source = self.source();
-        if let Some(cause) = self.refusal(handle, Reach::Owner) {
+        if let Some(refusal) = self.refusal(handle, Reach::Owner) {
             let safe = SwitchState::from(switch.safe_state());
-            return Decision::failed((safe, safe.as_str()), cause, source, Layer::Base);
+            return Decision::failed((safe, safe.as_str()), refusal.cause(), source, Layer::Base);
         }
         let outcome = self.switch_outcome(handle.index());
         let value = (outcome.state, outcome.state.as_str());

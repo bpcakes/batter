@@ -53,9 +53,13 @@
 //! builder, with [`CatalogBuilder::requires`].
 //!
 //! Views are built through the disclosed [`low_level`] path, which asserts a
-//! source and a freshness and is weaker than the protected one. Declared-mode
-//! resolution, the reader that publishes snapshots and every loader belong to
-//! `batter-flags` and arrive with later delivery tasks of the flags epic.
+//! source and a freshness and is weaker than the protected one. A built surface
+//! can refuse a handle once, at construction, instead of answering an error at
+//! every evaluation: [`Base::check_flag`](low_level::Base::check_flag) and
+//! [`Base::check_switch`](low_level::Base::check_switch) apply the rule
+//! evaluation applies. Declared-mode resolution, the reader that publishes
+//! snapshots and the test flags are in `batter-flags`; every loader arrives
+//! with a later delivery task of the flags epic.
 //!
 //! The `serde` feature derives serialization for the manifest and snapshot
 //! types that the store and the operator command exchange; without it the
@@ -71,6 +75,7 @@ mod base;
 mod builder;
 mod candidate;
 mod catalog;
+mod check;
 mod date;
 mod decision;
 mod declaration;

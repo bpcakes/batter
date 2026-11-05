@@ -14,7 +14,7 @@ use thiserror::Error;
 use crate::{
     Catalog,
     decision::{ErrorCause, SwitchState},
-    declaration::{Kind, OwnedOwners},
+    declaration::{Declared, Kind, OwnedOwners},
     digest::Revision,
     events::ErrorTally,
     key::FlagKey,
@@ -116,7 +116,7 @@ impl Base {
     /// What every declaration resolved to, in key order.
     pub fn resolved(&self) -> impl ExactSizeIterator<Item = Resolution<'_>> + '_ {
         let inner = &*self.inner;
-        inner.catalog.by_key.iter().map(move |(key, &index)| {
+        inner.catalog.by_key.values().map(move |&index| {
             let entry = &inner.catalog.entries[index];
             let (variant, source) = match inner.states[index] {
                 BaseState::Flag(Some(variant)) => {
@@ -133,7 +133,7 @@ impl Base {
                 ),
             };
             Resolution {
-                key,
+                declared: Declared::new(&inner.catalog.prefix, entry),
                 variant,
                 source,
             }
@@ -175,7 +175,7 @@ pub enum ResolutionSource {
 /// One declaration's resolved variant and where it came from.
 #[derive(Clone, Copy, Debug)]
 pub struct Resolution<'a> {
-    key: &'a FlagKey,
+    declared: Declared<'a>,
     variant: &'static str,
     source: ResolutionSource,
 }
@@ -183,7 +183,14 @@ pub struct Resolution<'a> {
 impl<'a> Resolution<'a> {
     /// The declaration's key.
     pub fn key(&self) -> &'a FlagKey {
-        self.key
+        self.declared.key()
+    }
+
+    /// The declaration itself, so a reader of what resolved can ask what the
+    /// declaration allows (its owners, its class, its kind) without looking the
+    /// key up again.
+    pub fn declared(&self) -> Declared<'a> {
+        self.declared
     }
 
     /// The resolved variant: a flag value's variant name, or `engaged` or

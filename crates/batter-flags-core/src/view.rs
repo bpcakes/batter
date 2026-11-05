@@ -28,13 +28,12 @@ mod gate;
 
 use std::{fmt, sync::Arc};
 
-use self::decide::Reach;
 pub use self::gate::{GateReading, gate_switch};
 use crate::{
     base::{Base, BaseInner},
+    check::{HandleRefusal, Reach},
     decision::{
-        Decision, ErrorCause, Freshness, KillSwitchKey, Layer, PrePublication, Reason, Source,
-        SwitchState,
+        Decision, Freshness, KillSwitchKey, Layer, PrePublication, Reason, Source, SwitchState,
     },
     events::{self, Evaluation, EventContext, Surface},
     handle::{Flag, Handle, KillSwitch},
@@ -271,10 +270,10 @@ impl SnapshotView {
 
     fn replay<F: Pinnable>(&self, flag: &F, pin: &Pinned<F::Value>) -> Replay<F::Value> {
         let handle = flag.handle();
-        if let Some(cause) = self.refusal(handle, Reach::OwnerOrPinner) {
-            return Replay::Rejected(match cause {
-                ErrorCause::ForeignCatalog => PinRejection::ForeignHandle,
-                _ => PinRejection::NotOwned,
+        if let Some(refusal) = self.refusal(handle, Reach::OwnerOrPinner) {
+            return Replay::Rejected(match refusal {
+                HandleRefusal::ForeignCatalog => PinRejection::ForeignHandle,
+                HandleRefusal::NotOwned => PinRejection::NotOwned,
             });
         }
         let body = match pin.body() {

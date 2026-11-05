@@ -74,6 +74,7 @@ pub use crate::{
     authority::{Authority, Refusal, Standing, Transition},
     base::{Base, BaseBuilder, BaseError, Resolution, ResolutionSource},
     candidate::{Candidate, CandidateRow},
+    check::HandleRefusal,
     published::{Disposition, Published},
     snapshot::{
         CarriedSwitch, ForeignSnapshot, HoldCause, Provenance, Snapshot, SnapshotRejection,

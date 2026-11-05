@@ -20,9 +20,15 @@ cargo test -p batter-flags --no-default-features --locked
 cargo test -p batter-flags --all-features --locked
 ```
 
-Experimental. This crate is the scaffold of the flags delivery: its module and
-feature shape is settled, and the items arrive with the declared-mode and
-control-plane tasks. The catalog grammar and evaluation live in
+Experimental. Declared mode is implemented: `declared::resolve` consumes a
+catalog and the root's captured `SettingsSource` once and returns a `Resolved`
+with strict literals, ownership, retired and unknown names, required settings
+and invariants, a redacted startup report and two revisions; `Resolved::into_flags`
+enters declared mode. `test::TestFlags` is the fixture path, and
+`low_level::capture_now` is the disclosed, non-canonical live read. The
+protected HTTP, job and periodic gates, and the control-plane registration,
+arrive with later delivery tasks of the flags epic; `periodic` is still a
+scaffold. The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).
