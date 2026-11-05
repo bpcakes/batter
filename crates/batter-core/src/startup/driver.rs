@@ -617,13 +617,13 @@ mod tests {
             Box::pin(async { Ok::<_, RegistrationError>(()) })
         })
         .with_unix_signals("signals");
-        let mut owner = start_scoped_with(startup, move |_| {
+        let owner = start_scoped_with(startup, move |_| {
             install_called.fetch_add(1, Ordering::SeqCst);
             Err::<InstalledSignals, _>(SignalRegistrationError::Install(io::Error::other(
                 "must-not-install",
             )))
         });
-        let Err(StartupError::Failed(report)) = owner.wait().await else {
+        let Err(StartupError::Failed(report)) = owner.finish().await else {
             panic!("missing interrupted report")
         };
         assert!(matches!(
@@ -654,14 +654,14 @@ mod tests {
             },
         )
         .with_unix_signals("signals");
-        let mut owner = start_scoped_with(startup, move |_| {
+        let owner = start_scoped_with(startup, move |_| {
             Ok(ReadySignals {
                 state: installed,
                 received: false,
             })
         });
 
-        let Err(StartupError::Failed(report)) = owner.wait().await else {
+        let Err(StartupError::Failed(report)) = owner.finish().await else {
             panic!("missing application failure")
         };
         assert!(matches!(
@@ -698,14 +698,14 @@ mod tests {
             },
         )
         .with_unix_signals("signals");
-        let mut owner = start_scoped_with(startup, move |_| {
+        let owner = start_scoped_with(startup, move |_| {
             Ok(ReadySignals {
                 state: installed,
                 received: false,
             })
         });
 
-        let Err(StartupError::Failed(report)) = owner.wait().await else {
+        let Err(StartupError::Failed(report)) = owner.finish().await else {
             panic!("signal reception incorrectly published a running handoff")
         };
         assert!(matches!(report.cause, StartupCause::Draining));
@@ -741,14 +741,14 @@ mod tests {
             budget(),
             move |_scope| Box::pin(PendingPolls(counted)),
         );
-        let mut owner = start_scoped(startup);
+        let owner = start_scoped(startup);
         while polls.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
         assert_eq!(polls.load(Ordering::SeqCst), 1);
 
         handle.request();
-        let Err(StartupError::Failed(report)) = owner.wait().await else {
+        let Err(StartupError::Failed(report)) = owner.finish().await else {
             panic!("missing drain failure")
         };
         assert!(matches!(report.cause, StartupCause::Draining));

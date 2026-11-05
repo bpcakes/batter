@@ -57,7 +57,7 @@ impl<E> StartupObserver<E> {
 /// `R` is [`RunningSupervisor`] for default startup and
 /// [`UnapprovedSupervisor`] after selecting deferred readiness approval. `T` is
 /// the initializer's typed output, delivered only with that owner by
-/// [`Self::wait_with_output`]; observers never receive it.
+/// [`Self::finish_with_output`]; observers never receive it.
 ///
 /// Discarding the started owner requests drain before initialization can
 /// hand off, so the owner must be retained:
@@ -79,10 +79,10 @@ impl<E> StartupObserver<E> {
 /// use batter_core::{cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext,
 ///     startup::Startup};
 /// async fn skipped(supervisor: Supervisor, context: OperationContext, cleanup: CleanupBudget) {
-///     let mut starting = Startup::protected(supervisor, context, cleanup, async |_scope| {
+///     let starting = Startup::protected(supervisor, context, cleanup, async |_scope| {
 ///         Ok::<_, std::io::Error>(8080_u16)
 ///     }).start();
-///     let _running = starting.wait().await;
+///     let _running = starting.finish().await;
 /// }
 /// ```
 #[must_use = "retain the startup owner; dropping it requests drain"]
@@ -98,15 +98,47 @@ impl<E, R, T> StartingSupervisor<E, R, T> {
         self.observer.clone()
     }
 
-    /// Borrow the handoff waiter and receive the owner with the initializer's
+    /// Consume startup ownership and receive the owner with the initializer's
     /// typed output. A failed startup never yields output: output from an
     /// initializer that startup then rejected was destroyed before cleanup.
-    /// Cancellation leaves this owner and receiver intact. Call only until its
-    /// first completed result; a second completed wait panics, as with the
-    /// underlying one-shot receiver. Dropping this owner instead destroys any
-    /// owner and output it would have received, where that queued value drops,
-    /// and requests drain.
-    pub async fn wait_with_output(&mut self) -> Result<(R, T), StartupError<E>> {
+    /// The returned future owns the handoff, even before its first poll.
+    /// Dropping it requests drain and destroys any queued owner and output.
+    /// Retain and pin that future to resume after cancelling a borrowed wait;
+    /// like any future, it must not be polled again after completion.
+    ///
+    /// Migration: `StartingSupervisor::wait_with_output(&mut self)` is replaced
+    /// by this consuming method. A deprecated borrowed shim is omitted because
+    /// it would restore the repeatable-completed-handoff trap. To resume after
+    /// a timeout, keep one pinned future instead of calling the method again:
+    ///
+    /// ```no_run
+    /// # use batter_core::startup::StartingSupervisor;
+    /// # async fn example(starting: StartingSupervisor<std::io::Error,
+    /// #     batter_core::lifecycle::RunningSupervisor, u16>) {
+    /// let finish = starting.finish_with_output();
+    /// tokio::pin!(finish);
+    /// let result = match tokio::time::timeout(
+    ///     std::time::Duration::from_secs(1), &mut finish,
+    /// ).await {
+    ///     Ok(result) => result,
+    ///     Err(_) => finish.await,
+    /// };
+    /// let (running, port) = result.unwrap();
+    /// # let _ = (running, port);
+    /// # }
+    /// ```
+    ///
+    /// One startup cannot deliver its output twice:
+    ///
+    /// ```compile_fail,E0382
+    /// # use batter_core::startup::StartingSupervisor;
+    /// async fn twice(starting: StartingSupervisor<std::io::Error,
+    ///     batter_core::lifecycle::RunningSupervisor, u16>) {
+    ///     let _ = starting.finish_with_output().await;
+    ///     let _ = starting.finish_with_output().await;
+    /// }
+    /// ```
+    pub async fn finish_with_output(mut self) -> Result<(R, T), StartupError<E>> {
         let result = (&mut self.receiver)
             .await
             .expect("owned startup monitor retains handoff");
@@ -116,13 +148,36 @@ impl<E, R, T> StartingSupervisor<E, R, T> {
 }
 
 impl<E, R> StartingSupervisor<E, R> {
-    /// Borrow the handoff waiter. Cancellation leaves this owner and receiver
-    /// intact. Call only until its first completed result; a second completed
-    /// wait panics, as with the underlying one-shot receiver. Available only
-    /// when the initializer has no typed output; otherwise use
-    /// [`Self::wait_with_output`].
-    pub async fn wait(&mut self) -> Result<R, StartupError<E>> {
-        self.wait_with_output().await.map(|(running, ())| running)
+    /// Consume startup ownership and receive the running or unapproved owner.
+    /// Available only for unit initializer output; otherwise use
+    /// [`Self::finish_with_output`]. The returned future owns the handoff:
+    /// dropping it requests drain, including before its first poll. Retain and
+    /// pin it when cancelling and resuming a borrowed wait.
+    ///
+    /// Migration: `StartingSupervisor::wait(&mut self)` is replaced by
+    /// `finish(self)`. No deprecated borrowed shim is retained: it would permit
+    /// a second completed handoff. Obtain any observer before consuming `self`.
+    ///
+    /// ```no_run
+    /// # use batter_core::startup::StartingSupervisor;
+    /// # async fn example(starting: StartingSupervisor<std::io::Error>) {
+    /// let observer = starting.observer();
+    /// let running = starting.finish().await.unwrap();
+    /// let report = running.shutdown().await.unwrap();
+    /// assert!(report.is_success());
+    /// # let _ = observer;
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail,E0382
+    /// # use batter_core::startup::StartingSupervisor;
+    /// async fn twice(starting: StartingSupervisor<std::io::Error>) {
+    ///     let _ = starting.finish().await;
+    ///     let _ = starting.finish().await;
+    /// }
+    /// ```
+    pub async fn finish(self) -> Result<R, StartupError<E>> {
+        self.finish_with_output().await.map(|(running, ())| running)
     }
 }
 

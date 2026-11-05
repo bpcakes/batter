@@ -82,9 +82,9 @@ fn lifecycle_signals_and_receipts_are_send() {
 
 #[test]
 fn startup_command_and_service_waits_are_send() {
-    let _ = |starting: &mut StartingSupervisor<io::Error>| send(starting.wait());
-    let _ = |starting: &mut StartingSupervisor<io::Error, RunningSupervisor, u8>| {
-        send(starting.wait_with_output());
+    let _ = |starting: StartingSupervisor<io::Error>| send(starting.finish());
+    let _ = |starting: StartingSupervisor<io::Error, RunningSupervisor, u8>| {
+        send(starting.finish_with_output());
     };
     let _ = |observer: &StartupObserver<io::Error>| send(observer.wait());
     let _ = |command: &RunningCommand<u8, io::Error>| send(command.wait());

@@ -88,7 +88,7 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
     let supervisor = supervisor();
     let handle = supervisor.handle();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor,
         batter_core::operation::OperationOwner::new(Duration::from_secs(2))
             .unwrap()
@@ -119,7 +119,7 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
         },
     )
     .start();
-    let running = timeout(Duration::from_secs(3), starting.wait())
+    let running = timeout(Duration::from_secs(3), starting.finish())
         .await
         .unwrap()
         .unwrap();
@@ -330,7 +330,7 @@ async fn startup_abandonment(register: RegisterHttp) {
     let (bound_tx, bound_rx) = oneshot::channel();
     let (cleanup_tx, mut cleanup_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
-    let mut starting = Startup::new(
+    let starting = Startup::new(
         base,
         batter_core::operation::OperationOwner::new(Duration::from_secs(10))
             .unwrap()
@@ -365,13 +365,12 @@ async fn startup_abandonment(register: RegisterHttp) {
         .await
         .unwrap()
         .unwrap();
-    let mut waiter = Box::pin(starting.wait());
+    let mut waiter = Box::pin(starting.finish());
     assert!(
         poll_fn(|cx| Poll::Ready(waiter.as_mut().poll(cx)))
             .await
             .is_pending()
     );
-    drop(waiter);
     tokio::task::yield_now().await;
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(matches!(
@@ -383,7 +382,7 @@ async fn startup_abandonment(register: RegisterHttp) {
         "borrowed waiter cannot release the listener"
     );
 
-    drop(starting);
+    drop(waiter);
     timeout(Duration::from_secs(2), &mut cleanup_rx)
         .await
         .unwrap()

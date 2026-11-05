@@ -80,7 +80,7 @@ fn failed<E>(
 async fn failed_initialization_preserves_concrete_cause_and_lifo_cleanup_errors() {
     let order = Arc::new(Mutex::new(Vec::new()));
     let captured = order.clone();
-    let mut starting = startup(move |scope| {
+    let starting = startup(move |scope| {
         Box::pin(async move {
             scope.stage("second-resource").unwrap();
             for name in ["first", "second"] {
@@ -96,7 +96,7 @@ async fn failed_initialization_preserves_concrete_cause_and_lifo_cleanup_errors(
     })
     .start();
     let observer = starting.observer();
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     assert!(matches!(report.cause, StartupCause::Failed(Failure)));
     assert_eq!(report.stage, "second-resource");
     assert_eq!(*order.lock().unwrap(), ["second", "first"]);
@@ -118,7 +118,7 @@ async fn rejected_reservation_after_prior_acquisition_preserves_registration_and
     let closed = Arc::new(AtomicUsize::new(0));
     let acquisition = acquired.clone();
     let cleanup = closed.clone();
-    let mut starting = Startup::new(
+    let starting = Startup::new(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -139,7 +139,7 @@ async fn rejected_reservation_after_prior_acquisition_preserves_registration_and
         },
     )
     .start();
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     assert!(matches!(
         report.cause,
         StartupCause::Failed(batter_core::RegistrationError::Duplicate("resource"))
@@ -160,7 +160,7 @@ async fn rejected_reservation_after_prior_acquisition_preserves_registration_and
 async fn borrowed_waiter_cancellation_leaves_initializer_and_handoff_owned() {
     let (entered_tx, entered_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
-    let mut starting = startup(move |_| {
+    let starting = startup(move |_| {
         Box::pin(async move {
             entered_tx.send(()).unwrap();
             release_rx.await.unwrap();
@@ -169,14 +169,13 @@ async fn borrowed_waiter_cancellation_leaves_initializer_and_handoff_owned() {
     })
     .start();
     entered_rx.await.unwrap();
-    let mut waiter = Box::pin(starting.wait());
+    let mut waiter = Box::pin(starting.finish());
     assert!(matches!(
         std::future::poll_fn(|cx| Poll::Ready(waiter.as_mut().poll(cx))).await,
         Poll::Pending
     ));
-    drop(waiter);
     release_tx.send(()).unwrap();
-    let running = starting.wait().await.unwrap();
+    let running = waiter.await.unwrap();
     assert!(running.shutdown().await.unwrap().is_success());
 }
 
@@ -258,13 +257,13 @@ async fn never_started_and_already_cancelled_initializers_are_inert() {
     owner.cancel();
     let context = owner.into_context();
     let called = calls.clone();
-    let mut starting = Startup::new(supervisor(), context, cleanup_budget(), move |_| {
+    let starting = Startup::new(supervisor(), context, cleanup_budget(), move |_| {
         called.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok::<_, Failure>(()) })
     })
     .start();
     assert!(matches!(
-        failed(starting.wait().await).cause,
+        failed(starting.finish().await).cause,
         StartupCause::Interrupted(Interruption::Cancelled)
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -275,7 +274,7 @@ async fn drain_at_initializer_completion_cannot_publish_ready() {
     let base = supervisor();
     let handle = base.handle();
     let request = handle.clone();
-    let mut starting = Startup::new(
+    let starting = Startup::new(
         base,
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -290,7 +289,7 @@ async fn drain_at_initializer_completion_cannot_publish_ready() {
     )
     .start();
     assert!(matches!(
-        failed(starting.wait().await).cause,
+        failed(starting.finish().await).cause,
         StartupCause::Draining
     ));
     assert_eq!(handle.status().wait_ready().await, Err(Readiness::Draining));
@@ -330,7 +329,7 @@ impl Drop for SuccessfulDrainDropPanic {
 
 #[tokio::test]
 async fn application_failure_and_future_destruction_panic_both_survive() {
-    let mut starting = startup(|scope| {
+    let starting = startup(|scope| {
         scope
             .supervisor()
             .on_cleanup("resource", || async { Ok(()) })
@@ -338,7 +337,7 @@ async fn application_failure_and_future_destruction_panic_both_survive() {
         Box::pin(DropPanic)
     })
     .start();
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     assert!(matches!(report.cause, StartupCause::Failed(Failure)));
     report
         .destruction_panic
@@ -360,7 +359,7 @@ async fn successful_future_destruction_panic_does_not_replace_a_concurrent_drain
     let process = supervisor();
     let handle = process.handle();
     let future_handle = handle.clone();
-    let mut starting = Startup::new(
+    let starting = Startup::new(
         process,
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -374,7 +373,7 @@ async fn successful_future_destruction_panic_does_not_replace_a_concurrent_drain
     )
     .start();
 
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     assert!(matches!(report.cause, StartupCause::Draining));
     report
         .destruction_panic
@@ -393,7 +392,7 @@ async fn successful_future_destruction_panic_does_not_replace_a_concurrent_drain
 
 #[tokio::test]
 async fn initializer_poll_panic_retains_payload_and_drives_cleanup() {
-    let mut starting = startup(|scope| {
+    let starting = startup(|scope| {
         Box::pin(async move {
             scope
                 .supervisor()
@@ -403,7 +402,7 @@ async fn initializer_poll_panic_retains_payload_and_drives_cleanup() {
         })
     })
     .start();
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     let StartupCause::Panicked(payload) = &report.cause else {
         panic!("expected panic")
     };
@@ -432,7 +431,7 @@ async fn waiter_drop_across_acquisition_and_registration_retains_one_cleanup_own
     let (finish_tx, finish_rx) = oneshot::channel();
     let closed = Arc::new(AtomicUsize::new(0));
     let count = closed.clone();
-    let mut starting = startup(move |scope| {
+    let starting = startup(move |scope| {
         Box::pin(async move {
             let slot = scope.supervisor().reserve_cleanup("resource").unwrap();
             let resource = String::from("acquired");
@@ -455,17 +454,16 @@ async fn waiter_drop_across_acquisition_and_registration_retains_one_cleanup_own
     .start();
     let observer = starting.observer();
     acquired_rx.await.unwrap();
-    let mut waiter = Box::pin(starting.wait());
+    let mut waiter = Box::pin(starting.finish());
     assert!(
         std::future::poll_fn(|cx| Poll::Ready(waiter.as_mut().poll(cx)))
             .await
             .is_pending()
     );
-    drop(waiter);
     register_tx.send(()).unwrap();
     registered_rx.await.unwrap();
     closing_rx.await.unwrap();
-    drop(starting);
+    drop(waiter);
     assert_eq!(closed.load(Ordering::SeqCst), 0);
     finish_tx.send(()).unwrap();
     let StartupOutcome::Failed(StartupError::Failed(report)) = observer.wait().await else {
@@ -480,7 +478,7 @@ async fn waiter_drop_across_acquisition_and_registration_retains_one_cleanup_own
 #[tokio::test(start_paused = true)]
 async fn initialization_deadline_uses_separate_cleanup_budget() {
     let (entered_tx, entered_rx) = oneshot::channel();
-    let mut starting = startup(move |scope| {
+    let starting = startup(move |scope| {
         Box::pin(async move {
             scope
                 .supervisor()
@@ -496,7 +494,7 @@ async fn initialization_deadline_uses_separate_cleanup_budget() {
     .start();
     entered_rx.await.unwrap();
     tokio::time::advance(Duration::from_secs(10)).await;
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     assert!(matches!(
         report.cause,
         StartupCause::Interrupted(Interruption::DeadlineExceeded)
@@ -507,7 +505,7 @@ async fn initialization_deadline_uses_separate_cleanup_budget() {
 
 #[tokio::test]
 async fn factory_construction_panic_still_closes_registered_resources() {
-    let mut starting = startup(|scope| {
+    let starting = startup(|scope| {
         scope
             .supervisor()
             .on_cleanup("resource", || async { Ok(()) })
@@ -515,7 +513,7 @@ async fn factory_construction_panic_still_closes_registered_resources() {
         panic!("constructor-original");
     })
     .start();
-    let report = failed(starting.wait().await);
+    let report = failed(starting.finish().await);
     let StartupCause::Panicked(payload) = &report.cause else {
         panic!("expected panic")
     };
@@ -562,7 +560,7 @@ async fn owner_drop_before_first_poll_skips_factory_and_drives_existing_cleanup(
 #[tokio::test]
 async fn successful_initialization_still_requires_actual_component_acknowledgement() {
     let (release_tx, release_rx) = oneshot::channel();
-    let mut starting = startup(move |scope| {
+    let starting = startup(move |scope| {
         Box::pin(async move {
             scope
                 .supervisor()
@@ -577,7 +575,7 @@ async fn successful_initialization_still_requires_actual_component_acknowledgeme
         })
     })
     .start();
-    let running = starting.wait().await.unwrap();
+    let running = starting.finish().await.unwrap();
     assert_eq!(running.status().readiness(), Readiness::Starting);
     release_tx.send(()).unwrap();
     running.status().wait_ready().await.unwrap();
@@ -588,7 +586,7 @@ async fn successful_initialization_still_requires_actual_component_acknowledgeme
 async fn successful_initialization_can_withhold_application_readiness_approval() {
     let acknowledged = Arc::new(AtomicUsize::new(0));
     let component_acknowledged = acknowledged.clone();
-    let mut starting = startup(move |scope| {
+    let starting = startup(move |scope| {
         Box::pin(async move {
             scope
                 .supervisor()
@@ -604,7 +602,7 @@ async fn successful_initialization_can_withhold_application_readiness_approval()
     })
     .without_readiness_approval()
     .start();
-    let running = starting.wait().await.unwrap();
+    let running = starting.finish().await.unwrap();
     tokio::time::timeout(Duration::from_secs(1), async {
         while acknowledged.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;

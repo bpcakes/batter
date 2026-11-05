@@ -93,7 +93,7 @@ fn startup_report_and_cleanup_tracing_hide_retained_secret_bearing_causes() {
                 let cleanup = CleanupBudget::new(second, second, second).unwrap();
                 let supervisor =
                     Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
-                let mut starting = Startup::new(
+                let starting = Startup::new(
                     supervisor,
                     batter::operation::OperationOwner::new(second)
                         .unwrap()
@@ -113,7 +113,7 @@ fn startup_report_and_cleanup_tracing_hide_retained_secret_bearing_causes() {
                     },
                 )
                 .start();
-                let Err(StartupError::Failed(report)) = starting.wait().await else {
+                let Err(StartupError::Failed(report)) = starting.finish().await else {
                     panic!("expected retained startup failure");
                 };
                 tracing::error!(report = %report, alternate = ?report, "startup rejected");

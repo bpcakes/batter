@@ -20,7 +20,7 @@ async fn evidence_failures_retain_startup_cleanup_and_delivery_causes() {
         let cleanup = CleanupBudget::new(second, second, second).unwrap();
         let supervisor =
             Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
-        let mut starting = Startup::new(
+        let starting = Startup::new(
             supervisor,
             batter::operation::OperationOwner::new(second)
                 .unwrap()
@@ -47,7 +47,7 @@ async fn evidence_failures_retain_startup_cleanup_and_delivery_causes() {
             },
         )
         .start();
-        let Err(StartupError::Failed(report)) = starting.wait().await else {
+        let Err(StartupError::Failed(report)) = starting.finish().await else {
             panic!("expected startup failure report");
         };
         let (send, receive) = tokio::sync::oneshot::channel();

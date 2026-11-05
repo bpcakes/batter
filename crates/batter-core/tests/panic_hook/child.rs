@@ -413,7 +413,7 @@ fn initializer() -> Result<(), ApplicationError> {
 async fn startup_initializer_panics() {
     let second = Duration::from_secs(1);
     let budget = ShutdownBudget::new(second, second, second, cleanup_budget()).unwrap();
-    let mut starting = Startup::protected(
+    let starting = Startup::protected(
         Supervisor::new(budget),
         context(),
         cleanup_budget(),
@@ -421,7 +421,7 @@ async fn startup_initializer_panics() {
     )
     .with_unix_signals("signals")
     .start();
-    let Err(StartupError::Failed(failure)) = starting.wait_with_output().await else {
+    let Err(StartupError::Failed(failure)) = starting.finish_with_output().await else {
         panic!("a panicking initializer did not fail startup");
     };
     assert!(matches!(failure.cause, StartupCause::Panicked(_)));

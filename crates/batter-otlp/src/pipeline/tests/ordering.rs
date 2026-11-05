@@ -104,7 +104,7 @@ fn startup_failure_cleanup_is_exported_without_a_shutdown() {
         let context = batter_core::operation::OperationOwner::new(Duration::from_secs(5))
             .unwrap()
             .into_context();
-        let mut starting = Startup::scoped(supervisor(), context, cleanup_budget(), |scope| {
+        let starting = Startup::scoped(supervisor(), context, cleanup_budget(), |scope| {
             Box::pin(async move {
                 scope
                     .stage("resource.acquire")
@@ -117,7 +117,7 @@ fn startup_failure_cleanup_is_exported_without_a_shutdown() {
             })
         })
         .start();
-        let service = async move { starting.wait().await.map(|_| ()) };
+        let service = async move { starting.finish().await.map(|_| ()) };
         session.around(service, |_| FinalCoverage::Reported).await
     });
     assert_eq!(report.final_export, ExportOutcome::Acknowledged);

@@ -135,15 +135,15 @@ async fn check(
 
 pub async fn waiter_loss_child() {
     let Held {
-        mut starting,
+        starting,
         published,
         dependent_saw_open_pool,
         readiness,
     } = start();
     let observer = starting.observer();
+    let wait = starting.finish();
+    tokio::pin!(wait);
     let pool = {
-        let wait = starting.wait();
-        tokio::pin!(wait);
         tokio::select! {
             biased;
             _ = &mut wait => panic!("startup completed before its held stage"),
@@ -151,7 +151,7 @@ pub async fn waiter_loss_child() {
                 .expect("initializer reached its held stage")
                 .expect("initializer published its pool"),
         }
-        // The borrowed waiter is destroyed here; the owner remains alive.
+        // The select borrow ends here; the pinned handoff future remains alive.
     };
     assert!(
         timeout(Duration::from_millis(100), observer.wait())
@@ -165,10 +165,7 @@ pub async fn waiter_loss_child() {
             .await
             .expect("drain completes"),
     );
-    let resumed = match timeout(BOUND, starting.wait())
-        .await
-        .expect("owner resumes")
-    {
+    let resumed = match timeout(BOUND, wait).await.expect("owner resumes") {
         Err(StartupError::Failed(report)) => report,
         _ => panic!("resumed owner did not retain the failed startup"),
     };

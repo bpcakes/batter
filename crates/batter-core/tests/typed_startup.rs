@@ -26,6 +26,9 @@ use std::{
 type Events = Arc<Mutex<Vec<&'static str>>>;
 type ProtectedFailure = StartupFailure<InitializationError<ApplicationError>>;
 
+#[path = "typed_startup/handoff.rs"]
+mod handoff;
+
 fn cleanup_budget() -> CleanupBudget {
     let second = Duration::from_secs(1);
     CleanupBudget::new(second, second, second).unwrap()
@@ -69,7 +72,7 @@ async fn typed_output_arrives_with_the_running_owner_and_never_with_observers() 
     let events = Events::default();
     let cleanup_events = events.clone();
     let output_events = events.clone();
-    let mut starting = batter_core::startup::Startup::protected(
+    let starting = batter_core::startup::Startup::protected(
         supervisor(),
         context(),
         cleanup_budget(),
@@ -99,7 +102,7 @@ async fn typed_output_arrives_with_the_running_owner_and_never_with_observers() 
     .start();
     let observer = starting.observer();
 
-    let (running, output) = starting.wait_with_output().await.unwrap();
+    let (running, output) = starting.finish_with_output().await.unwrap();
     assert_eq!(output.value, 8080);
     let StartupOutcome::Running(_) = observer.wait().await else {
         panic!("observer must see the running handoff")
@@ -115,7 +118,7 @@ async fn typed_output_arrives_with_the_running_owner_and_never_with_observers() 
 
 #[tokio::test]
 async fn deferred_typed_output_keeps_readiness_with_the_application() {
-    let mut starting = batter_core::startup::Startup::protected(
+    let starting = batter_core::startup::Startup::protected(
         supervisor(),
         context(),
         cleanup_budget(),
@@ -133,7 +136,7 @@ async fn deferred_typed_output_keeps_readiness_with_the_application() {
     .without_readiness_approval()
     .start();
 
-    let (pending, output) = starting.wait_with_output().await.unwrap();
+    let (pending, output) = starting.finish_with_output().await.unwrap();
     assert_eq!(output, "bound");
     assert_eq!(pending.status().readiness(), Readiness::Starting);
     let running = pending.approve_readiness();
@@ -158,7 +161,7 @@ async fn output_returned_with_an_interruption_is_destroyed_before_cleanup_and_ne
         let handle = process.handle();
         let owner = OperationOwner::new(Duration::from_secs(2)).unwrap();
         let context = owner.context().clone();
-        let mut starting = batter_core::startup::Startup::protected(
+        let starting = batter_core::startup::Startup::protected(
             process,
             context,
             cleanup_budget(),
@@ -176,7 +179,7 @@ async fn output_returned_with_an_interruption_is_destroyed_before_cleanup_and_ne
             },
         )
         .start();
-        let Err(StartupError::Failed(report)) = starting.wait_with_output().await else {
+        let Err(StartupError::Failed(report)) = starting.finish_with_output().await else {
             panic!("an interrupted startup must not hand off its output")
         };
         match interruption {
@@ -205,7 +208,7 @@ async fn rejected_output_destructor_panic_is_retained_and_cleanup_still_runs() {
     let scope_events = events.clone();
     let process = supervisor();
     let handle = process.handle();
-    let mut starting = batter_core::startup::Startup::protected(
+    let starting = batter_core::startup::Startup::protected(
         process,
         context(),
         cleanup_budget(),
@@ -216,7 +219,7 @@ async fn rejected_output_destructor_panic_is_retained_and_cleanup_still_runs() {
         },
     )
     .start();
-    let Err(StartupError::Failed(report)) = starting.wait_with_output().await else {
+    let Err(StartupError::Failed(report)) = starting.finish_with_output().await else {
         panic!("a drained startup must not hand off its output")
     };
     assert!(matches!(report.cause, StartupCause::Draining));
@@ -279,7 +282,7 @@ async fn secondary_output_panic_with_a_panicking_payload_cannot_bypass_cleanup()
             cleanup_events.lock().unwrap().push("cleanup");
             Ok(())
         });
-    let mut starting = batter_core::startup::Startup::protected(
+    let starting = batter_core::startup::Startup::protected(
         process,
         context(),
         cleanup_budget(),
@@ -288,7 +291,7 @@ async fn secondary_output_panic_with_a_panicking_payload_cannot_bypass_cleanup()
         },
     )
     .start();
-    let Err(StartupError::Failed(report)) = starting.wait_with_output().await else {
+    let Err(StartupError::Failed(report)) = starting.finish_with_output().await else {
         panic!("the coordinator must retain a report and run cleanup")
     };
     assert!(matches!(report.cause, StartupCause::DestructionPanicked));
@@ -308,7 +311,7 @@ async fn secondary_output_panic_with_a_panicking_payload_cannot_bypass_cleanup()
 }
 
 #[tokio::test]
-async fn dropping_the_starting_owner_after_handoff_destroys_queued_output_and_drains() {
+async fn dropping_unpolled_finish_after_handoff_destroys_queued_output_and_drains() {
     let events = Events::default();
     let output_events = events.clone();
     let starting = batter_core::startup::Startup::protected(
@@ -334,7 +337,7 @@ async fn dropping_the_starting_owner_after_handoff_destroys_queued_output_and_dr
         panic!("startup must hand off before owner loss")
     };
     assert!(events.lock().unwrap().is_empty());
-    drop(starting);
+    drop(starting.finish_with_output());
     assert_eq!(*events.lock().unwrap(), ["output destroyed"]);
     assert!(running.wait_checked().await.unwrap().report().is_success());
 }
@@ -343,7 +346,7 @@ async fn dropping_the_starting_owner_after_handoff_destroys_queued_output_and_dr
 async fn failed_and_panicking_initializers_yield_no_output_and_close_cleanup() {
     let events = Events::default();
     let scope_events = events.clone();
-    let mut failed = batter_core::startup::Startup::protected(
+    let failed = batter_core::startup::Startup::protected(
         supervisor(),
         context(),
         cleanup_budget(),
@@ -354,7 +357,7 @@ async fn failed_and_panicking_initializers_yield_no_output_and_close_cleanup() {
         },
     )
     .start();
-    let Err(StartupError::Failed(report)) = failed.wait_with_output().await else {
+    let Err(StartupError::Failed(report)) = failed.finish_with_output().await else {
         panic!("failed initializer must not yield output")
     };
     assert_eq!(report.stage, "resource.verify");
@@ -368,7 +371,7 @@ async fn failed_and_panicking_initializers_yield_no_output_and_close_cleanup() {
     assert_eq!(*events.lock().unwrap(), ["cleanup"]);
 
     let scope_events = events.clone();
-    let mut panicked = batter_core::startup::Startup::protected(
+    let panicked = batter_core::startup::Startup::protected(
         supervisor(),
         context(),
         cleanup_budget(),
@@ -382,7 +385,7 @@ async fn failed_and_panicking_initializers_yield_no_output_and_close_cleanup() {
         },
     )
     .start();
-    let Err(StartupError::Failed(report)) = panicked.wait_with_output().await else {
+    let Err(StartupError::Failed(report)) = panicked.finish_with_output().await else {
         panic!("panicking initializer must not yield output")
     };
     let StartupCause::Panicked(payload) = &report.cause else {
@@ -401,13 +404,13 @@ async fn failed_and_panicking_initializers_yield_no_output_and_close_cleanup() {
 }
 
 async fn boxed_boundary(
-    starting: &mut batter_core::startup::StartingSupervisor<
+    starting: batter_core::startup::StartingSupervisor<
         InitializationError<ApplicationError>,
         batter_core::lifecycle::RunningSupervisor,
         u16,
     >,
 ) -> Result<u16, BoxError> {
-    let (running, port) = starting.wait_with_output().await?;
+    let (running, port) = starting.finish_with_output().await?;
     running.shutdown_checked().await?;
     Ok(port)
 }
@@ -415,7 +418,7 @@ async fn boxed_boundary(
 #[tokio::test]
 async fn boxed_application_failures_propagate_with_question_mark_and_keep_concrete_causes() {
     let process = supervisor();
-    let mut starting = batter_core::startup::Startup::protected(
+    let starting = batter_core::startup::Startup::protected(
         process,
         context(),
         cleanup_budget(),
@@ -430,7 +433,7 @@ async fn boxed_application_failures_propagate_with_question_mark_and_keep_concre
         },
     )
     .start();
-    let error = boxed_boundary(&mut starting).await.unwrap_err();
+    let error = boxed_boundary(starting).await.unwrap_err();
     let rendered = format!("{error} {error:?}");
     assert!(!rendered.contains("private-bind-marker"), "{rendered}");
 
