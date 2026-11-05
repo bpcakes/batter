@@ -40,7 +40,12 @@ Windows support and non-Unix fallbacks are out of scope.
   and the exhaustive observation-to-dependency-readiness projection.
 - `src/readiness.rs` owns sampling order and the pure lifecycle, dependency and
   application-condition decision; adapters translate its valid result.
+- `src/operation/phased.rs` and `phased/` own inert work/finalization assembly,
+  typed retained outcomes and work-only owner cancellation. Reuse command phase
+  polling; finalization inherits the parent and original total deadline.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
+  `cleanup/acquisition.rs` registers an opaque acquired pair before returning
+  its handle or destroying the ready acquisition future.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
   `startup/initializer.rs` owns the sealed `Initializer` bound that boxes async-closure
   futures; `startup/application.rs` owns `ApplicationError`, which must never implement

@@ -124,6 +124,29 @@ native exit path against PostgreSQL 18, with an advisory-lock gate on the
 outcome write proving that every observer and hook sees the end first. Review closure is tracked separately; older hosted-control sections below describe
 the previous implementation.
 
+## Owned phase and acquisition handoff regression
+
+`crates/batter-core/tests/phased_operation.rs` and its `adversarial` module cover
+work error/panic, destruction panic, deadlines, original total preservation,
+owner loss before first poll/during work/during finalization, cancelled borrowed
+waiters, shared report identity, parent cancellation, late synchronous results,
+redaction, inert construction and invalid reserves. `cleanup_acquisition.rs`
+covers LIFO registration before handle use, unchanged acquisition errors,
+unpolled and cancelled factories, command early return, and a ready native
+future whose destructor panics. `send_futures.rs` pins the new waiters to `Send`.
+`scoped_owned_tasks/phased.rs` directly checks the new coordinator and publisher
+against a different ambient subscriber: normal completion, owner-loss work
+cancellation followed by finalization, a never-invoked work factory and unclaimed
+work/finalization results. Drop markers and finalizer events must reach the
+submitter's dispatcher and span, never the ambient subscriber (`batter-17fe`).
+Separately removing the coordinator's and publisher's span attachment made their
+corresponding focused test fail; both mutations were restored before verification.
+Rustdoc tests reject early finalization access, owner cloning, non-Send callbacks
+and extraction of the opaque acquired handle. The facade operation-budget and
+finite-command examples exercise both new paths. These are executable contracts,
+not fresh-agent usability evaluations. Verification outcomes belong to
+`batter-jxj2` and the direct panel follow-up `batter-17fe`.
+
 ## Testing a job handler without a worker
 
 Select the facade's `runledger-test-support` feature in `[dev-dependencies]`

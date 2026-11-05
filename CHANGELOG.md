@@ -8,6 +8,18 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `operation::PhasedOperation` and `OperationPhases::into_operation` for
+  library-owned work/finalization sequencing with independent typed outcomes,
+  retained completion observers and work-only cancellation on owner loss.
+  Reuse command phase polling; parent cancellation still interrupts both phases.
+  Add `cleanup::Acquired` and `CleanupSlot::acquire` to register finalization
+  before releasing an acquired handle, including when its native future panics
+  on destruction. Migrate the operation-budget and finite-command examples.
+  Existing manual APIs remain explicit lower-level escape hatches; no public
+  cut or deprecation shim applies (`batter-jxj2`). Runledger guidance now names
+  the owned callback path and native-borrowing limits, and direct dispatch
+  regressions cover both spawned phase-driver paths (`batter-17fe`).
+
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates
   and one shared setup budget; drop losing sockets before TLS/HTTP. Preserve

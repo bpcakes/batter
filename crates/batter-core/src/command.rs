@@ -17,6 +17,8 @@
 //! descendants. Runtime death and non-yielding code cannot be repaired by Drop.
 
 mod driver;
+pub(crate) use driver::run_work;
+pub(crate) use signals::NoSignals;
 mod owner;
 mod report;
 mod signals;
@@ -286,8 +288,8 @@ impl<F> Command<F> {
 }
 
 /// Work context and exclusive cleanup registration. The stack cannot be taken
-/// out of this owner; reserve names before acquisition and register immediately
-/// afterward, before another await. No resource registry or task spawner is hidden here.
+/// out of this owner. Reserve names and use [`CleanupSlot::acquire`] to register
+/// before a resource handle is exposed. No resource registry or task spawner is hidden here.
 pub struct CommandScope {
     context: OperationContext,
     cleanup: CleanupStack,
@@ -314,8 +316,8 @@ impl CommandScope {
         Ok(())
     }
 
-    /// Validate and reserve before native acquisition. Register the acquired
-    /// resource in the slot immediately after success. Cancellation of acquisition
+    /// Validate and reserve before native acquisition. Use [`CleanupSlot::acquire`]
+    /// to install cleanup before exposing its handle. Cancellation of acquisition
     /// retains the native acquisition contract; no async Drop guarantee is implied.
     pub fn reserve_cleanup(
         &mut self,

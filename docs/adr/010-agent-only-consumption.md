@@ -2002,6 +2002,60 @@ unexecuted: implement or migrate a provider mutation using a durable fence,
 keep it for Unknown/unusable replies, and record only labels. Clean reviews or
 test count alone do not establish agent usability.
 
+### Owned phase and acquisition handoff assessment (`batter-jxj2`)
+
+Panel follow-up `batter-17fe` updates Runledger's own phase guidance to show the
+protected owned-callback path and explicitly labels native-borrowing manual
+sequencing. The spawned coordinator remains subject to invocation-exit
+cancellation. Direct dispatcher/span regressions now exercise normal completion,
+owner loss, skipped factories and unclaimed results on the new spawn paths.
+This is a direct repair pass, without independent re-review.
+
+Source inspection confirmed two locally expressible temporal obligations:
+`OperationPhases` exposed both contexts together and told consumers not to return
+with `?` before finalization; `CleanupSlot` required manual registration after
+successful acquisition with no intervening await. The user authorized removing
+those obligations from a protected path.
+
+`PhasedOperation` now receives both callbacks at inert construction, exposes no
+phase accessors, and shares the command driver's polling/destruction boundary.
+Work receives only its context; finalization receives the retained outcome only
+after work destruction. This uses the existing completion-publication primitive,
+not a second runtime. It cannot simply be a command cleanup hook: finalization
+needs typed work evidence, a typed result/error, the original absolute total and
+parent cancellation, whereas command cleanup has independent cancellation and
+an erased cleanup-error boundary. The manual pair can transfer into the runner
+without resetting native invocation clocks. Owner loss cancels only work;
+borrowed waiter loss changes neither phase. `wait` checks both outcomes before
+returning `Ok`, so `?` cannot treat a completed failed phase as success;
+`PhasedFailure::Report` retains both outcomes. Parent cancellation still stops both.
+
+`CleanupSlot::acquire` takes a factory producing an opaque `Acquired` pair and
+installs its finalizer before returning the handle. Polling keeps the ready
+native future alive until registration, so even its destructor panic leaves
+cleanup registered. There is no optional caller completion call. A factory that
+panics or is cancelled before producing its pair still owns its partial native
+acquisition; pairing the wrong resource or performing unrelated work during
+finalization is application policy that local types cannot identify.
+
+Compatibility is additive. Manual phase access and slot registration retain
+existing signatures for native/application protocols, and are documented as
+weaker paths, not equivalents of owned execution. No removed name or narrowed
+bound exists, so no deprecated shim is needed. The operation-budget and
+finite-command examples use protected sequencing and acquisition respectively.
+The outbound example retains its explicit exchange evidence protocol: its
+send-once exchange has its own response-versus-interruption precedence, and
+wrapping it in the generic cancellation-first poller could discard that result.
+This change does not claim to solve that separate retained-exchange boundary.
+
+Failure tests cover independently retained errors, panics/destruction, deadlines,
+parent and owner cancellation, unpolled and cancelled acquisitions, ready-native
+future destruction, LIFO cleanup and report redaction; compile-fail controls
+exercise unavailable capabilities. Fresh-agent adoption tests remain proposed
+and unexecuted. Arbitrary detached children, runtime death, non-yielding polls,
+remote effects and deliberate use of separately captured root authority remain
+outside the local guarantee.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

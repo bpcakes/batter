@@ -27,6 +27,8 @@ use tracing::{Instrument, instrument::WithSubscriber};
 mod command;
 #[path = "scoped_owned_tasks/filtered.rs"]
 mod filtered;
+#[path = "scoped_owned_tasks/phased.rs"]
+mod phased;
 
 #[derive(Clone)]
 struct Buffer(Arc<Mutex<Vec<u8>>>);

@@ -204,6 +204,43 @@ cancelled early. Both forms require positive work time when called, and
 shielding, remote cancellation acknowledgement, transaction rollback proof,
 commit certainty, or exactly-once effects.
 
+## Owned work and finalization
+
+`operation::PhasedOperation::new` derives work and finalization from one parent
+and a positive reserve. `OperationPhases::into_operation` transfers an existing
+pair, including invocation-derived and zero-reserve pairs, without resetting its
+clock. Both specifications are inert until `start`. The work callback receives
+only its shortened context. The finalization callback receives its context and
+read-only `PhaseOutcome` only after the work future is destroyed. The driver
+retains the original value/error, boundary interruption and destruction panic
+before entering finalization; finalization failure cannot replace them.
+
+The driver shares command phase polling and panic containment. Cancellation and
+deadline are checked before each factory and before polling; a result produced
+by a synchronous overrun is retained together with its late interruption. A
+phase whose parent is already cancelled or deadline has expired does not invoke
+its factory. Work panic, returned error or work-only interruption still proceeds
+to finalization when its context permits. Finalization stops at the original
+total deadline and inherits parent cancellation. Work cancellation never travels
+upward or into its sibling. Both the phase coordinator and result publisher
+retain the originating tracing dispatcher and span through execution and
+captured-value destruction, including skipped work and unclaimed reports.
+
+`RunningPhasedOperation` owns work cancellation. Dropping it, even before first
+poll, requests work cancellation but leaves the coordinator to attempt
+finalization. Its borrowed waiters and cloneable `PhasedObserver` are read-only;
+dropping a waiter changes no execution. A shared report retains both typed
+outcomes; `is_success` requires both successful with no boundary interruption or
+destruction panic. `wait` returns `Ok` only for that complete success;
+`PhasedFailure::Report` retains both outcomes on failure. Default formatting
+omits application values and causes. A coordinator join failure is separate. Publication and
+finalization require a live runtime; this does not join arbitrary spawned work
+or prove remote rollback. Application work placed inside a finalizer, captured
+root authority and independently constructed roots remain application policy.
+
+Manual `OperationPhases::{work,finalization}` access remains lower-level: it
+requires caller sequencing and does not retain results or drive finalization.
+
 ## Retry contract
 
 Each attempt invokes a fresh factory. The initial call is attempt 1 and consumes
@@ -1522,6 +1559,17 @@ Register cleanup immediately after successful acquisition, but do not confuse
 this convention with an atomic acquisition/registration guarantee. The caller
 must handle partial acquisition and initialization according to native resource
 contracts. Resource values must not require an unavailable runtime after shutdown.
+
+`CleanupSlot::acquire` invokes a native factory yielding opaque
+`cleanup::Acquired<T, F>`. On success it installs `F` before exposing `T`, without
+an intervening await or caller callback. The native future remains alive until
+after registration, so its destructor panic cannot skip the installed finalizer.
+Acquisition errors are unchanged and add no finalizer; an unpolled acquisition
+invokes no factory. The enclosing owner still drives LIFO cleanup. Partial
+acquisitions, failure/panic before returning the pair, and whether a finalizer
+actually closes its intended resource remain native/application obligations.
+`CleanupSlot::register` is the lower-level manual handoff and keeps its documented
+no-intervening-await requirement.
 
 ## PostgreSQL client disposition
 

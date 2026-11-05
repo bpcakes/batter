@@ -10,7 +10,7 @@ mod tests;
 
 use batter::{
     BoxError, ConfigurationError, RegistrationError,
-    cleanup::{CleanupBudget, CleanupReport},
+    cleanup::{Acquired, CleanupBudget, CleanupReport},
     command::{Command, CommandCause, CommandFailure, CommandFuture, CommandScope},
     operation::{OperationContext, OperationOwner},
 };
@@ -85,18 +85,21 @@ fn command(
     Ok(Command::new(context, cleanup, move |scope| {
         Box::pin(async move {
             scope.stage("command.echo")?;
-            let slot = scope.reserve_cleanup("socket")?;
-            let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-            let closing = socket.clone();
-            // Register immediately after acquisition, before another await.
-            slot.register(move || async move {
-                // Native pool/exporter close or flush would be awaited here.
-                drop(closing);
-                match cleanup_result {
-                    CleanupResult::Success => Ok(()),
-                    CleanupResult::Failure => Err(CommandError::Cleanup.into()),
-                }
-            });
+            let socket = scope
+                .reserve_cleanup("socket")?
+                .acquire(|| async move {
+                    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+                    let closing = socket.clone();
+                    Ok::<_, io::Error>(Acquired::new(socket, move || async move {
+                        // Native pool/exporter close or flush would be awaited here.
+                        drop(closing);
+                        match cleanup_result {
+                            CleanupResult::Success => Ok(()),
+                            CleanupResult::Failure => Err(CommandError::Cleanup.into()),
+                        }
+                    }))
+                })
+                .await?;
             match work {
                 Work::Fail => return Err(CommandError::Work),
                 Work::Cancel => {
