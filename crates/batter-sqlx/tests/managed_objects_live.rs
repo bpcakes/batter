@@ -11,6 +11,9 @@ mod support;
 
 mod managed_objects_fixture;
 
+#[path = "managed_objects_live/releases.rs"]
+mod releases;
+
 #[path = "managed_objects_live/application_sql.rs"]
 mod application_sql;
 
@@ -564,6 +567,7 @@ async fn managed_objects_reject_undeclared_identities_and_foreign_ledgers() -> R
         let installed = fixture.objects(PublicExecute::Revoke);
         let _ = fixture.apply(&migrator, &installed.manifest).await?;
         let catalog = catalog_state(&migrator, &schema).await?;
+        let mismatched = fixture.next_release(&mismatched.manifest)?;
         let error = fixture
             .apply(&migrator, &mismatched.manifest)
             .await

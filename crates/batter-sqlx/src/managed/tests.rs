@@ -259,6 +259,7 @@ fn temporary_namespaces_are_rejected_everywhere() {
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             QualifiedName::new("pg_temp", "managed_objects").unwrap(),
             PublicExecute::Revoke,
             [function(TOTAL).unwrap()],
@@ -268,6 +269,7 @@ fn temporary_namespaces_are_rejected_everywhere() {
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [],
@@ -280,11 +282,18 @@ fn temporary_namespaces_are_rejected_everywhere() {
 #[test]
 fn manifests_reject_empty_reserved_duplicate_and_overlapping_sets() {
     assert_eq!(
-        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, [], []),
+        ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
+            ledger(),
+            PublicExecute::Revoke,
+            [],
+            []
+        ),
         Err(ManagedObjectError::EmptyManifest)
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             QualifiedName::new("app", "_sqlx_migrations").unwrap(),
             PublicExecute::Revoke,
             [function(TOTAL).unwrap()],
@@ -295,6 +304,7 @@ fn manifests_reject_empty_reserved_duplicate_and_overlapping_sets() {
     let identity = total().as_str().to_owned();
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [function(TOTAL).unwrap(), function(TOTAL).unwrap()],
@@ -311,6 +321,7 @@ fn manifests_reject_empty_reserved_duplicate_and_overlapping_sets() {
     .unwrap();
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [function(TOTAL).unwrap(), procedure],
@@ -322,6 +333,7 @@ fn manifests_reject_empty_reserved_duplicate_and_overlapping_sets() {
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [],
@@ -333,6 +345,7 @@ fn manifests_reject_empty_reserved_duplicate_and_overlapping_sets() {
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [function(TOTAL).unwrap()],
@@ -342,6 +355,7 @@ fn manifests_reject_empty_reserved_duplicate_and_overlapping_sets() {
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [trigger(TOUCH).unwrap()],
@@ -366,7 +380,13 @@ fn manifests_stop_consuming_at_the_capacity_boundary() {
         )))
     });
     assert_eq!(
-        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, [], retirements),
+        ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
+            ledger(),
+            PublicExecute::Revoke,
+            [],
+            retirements
+        ),
         Err(ManagedObjectError::Capacity)
     );
     assert_eq!(produced, MAX_MANAGED_OBJECTS + 1);
@@ -383,6 +403,7 @@ fn manifests_stop_consuming_at_the_capacity_boundary() {
     });
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [function(TOTAL).unwrap()],
@@ -411,7 +432,13 @@ fn manifests_stop_consuming_at_the_object_count_boundary() {
         panic!("retirements were consumed after objects exceeded their count bound")
     });
     assert_eq!(
-        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, objects, retirements),
+        ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
+            ledger(),
+            PublicExecute::Revoke,
+            objects,
+            retirements
+        ),
         Err(ManagedObjectError::Capacity)
     );
     assert_eq!(produced, MAX_MANAGED_OBJECTS + 1);
@@ -438,7 +465,13 @@ fn manifests_stop_consuming_at_the_total_source_boundary() {
         panic!("retirements were consumed after objects exceeded their byte bound")
     });
     assert_eq!(
-        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, objects, retirements),
+        ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
+            ledger(),
+            PublicExecute::Revoke,
+            objects,
+            retirements
+        ),
         Err(ManagedObjectError::Capacity)
     );
     assert_eq!(produced, allowed + 1);
@@ -544,6 +577,7 @@ fn both_trigger_kinds_share_one_identity_space() {
     assert_ne!(constraint, plain);
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [trigger(TOUCH).unwrap(), constraint_trigger(CHECK).unwrap()],
@@ -555,6 +589,7 @@ fn both_trigger_kinds_share_one_identity_space() {
     );
     assert_eq!(
         ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             ledger(),
             PublicExecute::Revoke,
             [],
@@ -569,7 +604,13 @@ fn both_trigger_kinds_share_one_identity_space() {
         (trigger(TOUCH).unwrap(), constraint),
     ] {
         assert_eq!(
-            ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, [object], [retirement]),
+            ManagedObjectManifest::new(
+                ManagedRevision::new(1).expect("valid revision"),
+                ledger(),
+                PublicExecute::Revoke,
+                [object],
+                [retirement]
+            ),
             Err(ManagedObjectError::RetiredObjectDeclared {
                 identity: identity.clone()
             })
@@ -658,99 +699,14 @@ fn manifest(
     objects: Vec<ManagedObject>,
     retirements: Vec<Retirement>,
 ) -> ManagedObjectManifest {
-    ManagedObjectManifest::new(ledger(), policy, objects, retirements).unwrap()
-}
-
-#[test]
-fn digest_is_order_independent_and_covers_policy_sources_and_retirements() {
-    let touch = trigger(TOUCH).unwrap();
-    let base = manifest(
-        PublicExecute::Revoke,
-        vec![function(TOTAL).unwrap(), touch.clone()],
-        vec![Retirement::function(signature("app", "old", &[]))],
-    );
-    let reordered = manifest(
-        PublicExecute::Revoke,
-        vec![touch.clone(), function(TOTAL).unwrap()],
-        vec![Retirement::function(signature("app", "old", &[]))],
-    );
-    assert_eq!(base.digest(), reordered.digest());
-    assert_eq!(base.objects(), reordered.objects());
-    assert_eq!(base.objects()[0].identity(), total().as_str());
-    assert_eq!(base.objects()[1].kind(), ManagedObjectKind::Trigger);
-
-    let relocated = ManagedObjectManifest::new(
-        QualifiedName::new("audit", "managed_objects").unwrap(),
-        PublicExecute::Revoke,
-        base.objects().to_vec(),
-        base.retirements().to_vec(),
+    ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
+        ledger(),
+        policy,
+        objects,
+        retirements,
     )
-    .unwrap();
-    assert_eq!(base.digest(), relocated.digest());
-    assert_ne!(base.lock_key(), relocated.lock_key());
-
-    for different in [
-        manifest(
-            PublicExecute::Unmanaged,
-            base.objects().to_vec(),
-            base.retirements().to_vec(),
-        ),
-        manifest(PublicExecute::Revoke, base.objects().to_vec(), Vec::new()),
-        manifest(
-            PublicExecute::Revoke,
-            vec![
-                touch.clone(),
-                function(
-                    "CREATE OR REPLACE FUNCTION app.total(amount bigint) RETURNS bigint
-                     LANGUAGE sql IMMUTABLE RETURN amount * 3;",
-                )
-                .unwrap(),
-            ],
-            base.retirements().to_vec(),
-        ),
-        manifest(
-            PublicExecute::Revoke,
-            vec![touch],
-            vec![
-                Retirement::function(signature("app", "old", &[])),
-                Retirement::function(total()),
-            ],
-        ),
-    ] {
-        assert_ne!(base.digest(), different.digest());
-    }
-    assert_eq!(base.digest().to_string().len(), 64);
-    assert!(
-        base.digest()
-            .to_string()
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    );
+    .unwrap()
 }
 
-#[test]
-fn identities_checksums_and_diagnostics_are_canonical() {
-    let object = trigger(TOUCH).unwrap();
-    assert_eq!(
-        object.identity(),
-        "\"records_touch\" ON \"app\".\"records\""
-    );
-    assert_eq!(object.source(), TOUCH);
-    assert_eq!(
-        object.checksum(),
-        &<[u8; 32]>::from(Sha256::digest(TOUCH.as_bytes()))
-    );
-    let debug = format!("{object:?}");
-    assert!(debug.contains("records_touch") && !debug.contains("EXECUTE FUNCTION"));
-    let retirement = Retirement::procedure(signature("app", "settle", &["int4"]));
-    assert_eq!(retirement.kind(), ManagedObjectKind::Procedure);
-    assert_eq!(
-        retirement.identity(),
-        "\"app\".\"settle\"(\"pg_catalog\".\"int4\")"
-    );
-    assert_eq!(ManagedObjectKind::Procedure.as_str(), "procedure");
-    let error = ManagedObjectError::DuplicateObject {
-        identity: "\"app\".\"total\"()".to_owned(),
-    };
-    assert!(error.to_string().contains("\"app\".\"total\"()"));
-}
+mod manifest;

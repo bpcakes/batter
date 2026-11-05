@@ -4,8 +4,8 @@ use super::support::{self, Result, bounded};
 use batter_core::operation::{OperationContext, OperationOwner};
 use batter_sqlx::PgLease;
 use batter_sqlx::managed::{
-    AppliedManagedObjects, ManagedApplyError, ManagedObject, ManagedObjectManifest, PublicExecute,
-    Retirement,
+    AppliedManagedObjects, ManagedApplyError, ManagedObject, ManagedObjectManifest,
+    ManagedRevision, PublicExecute, Retirement,
 };
 use batter_sqlx::verification::{
     Identifier, MigrationExpectation, QualifiedName, RoutineSignature, RoutineType, SqlxLedgerMode,
@@ -34,6 +34,9 @@ pub(crate) enum Role {
 }
 
 pub(crate) struct Fixture {
+    // Distinct test manifests model successive releases; reusing a manifest
+    // preserves its revision for idempotence and drift-repair tests.
+    next_revision: std::sync::atomic::AtomicU64,
     admin: PgConnection,
     url: String,
     password: String,
@@ -80,6 +83,7 @@ impl Fixture {
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() % 1_000_000_000
         );
         let mut fixture = Self {
+            next_revision: std::sync::atomic::AtomicU64::new(1),
             admin,
             url,
             password: random_password()?,
@@ -293,6 +297,11 @@ impl Fixture {
     ) -> Result<Objects> {
         Ok(Objects {
             manifest: ManagedObjectManifest::new(
+                ManagedRevision::new(
+                    self.next_revision
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                )
+                .expect("valid fixture revision"),
                 QualifiedName::new(&self.schema, "managed_objects")?,
                 policy,
                 objects,
@@ -301,9 +310,31 @@ impl Fixture {
         })
     }
 
+    /// Reinstall earlier source as a new release, preserving the ledger identity.
+    pub(crate) fn next_release(&self, manifest: &ManagedObjectManifest) -> Result<Objects> {
+        Ok(Objects {
+            manifest: ManagedObjectManifest::new(
+                ManagedRevision::new(
+                    self.next_revision
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                )
+                .expect("fixture revision"),
+                manifest.ledger().clone(),
+                manifest.public_execute(),
+                manifest.objects().iter().cloned(),
+                manifest.retirements().iter().cloned(),
+            )?,
+        })
+    }
+
     pub(crate) fn objects_in_ledger(&self, policy: PublicExecute, ledger: &str) -> Result<Objects> {
         Ok(Objects {
             manifest: ManagedObjectManifest::new(
+                ManagedRevision::new(
+                    self.next_revision
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                )
+                .expect("valid fixture revision"),
                 QualifiedName::new(&self.schema, ledger)?,
                 policy,
                 self.standard_objects(),

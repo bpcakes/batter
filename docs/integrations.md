@@ -706,9 +706,14 @@ long transaction stalls the table's other readers and writers; Batter sets no
 `lock_timeout`. Declare and retire a partitioned table's trigger on the
 partitioned table, not on its partitions' clones, and retire a constraint
 trigger renamed out of band under its new name. An adopted constraint trigger previously created by a migration is
-re-created on the first apply that declares it. Installation is
-last-writer-wins across releases; verification of newer replicas reports an
-older release's apply as a set-digest mismatch. See
+re-created on the first apply that declares it. Every manifest requires a positive
+`ManagedRevision`. Under the ledger lock, apply rejects lower revisions and an
+equal revision with a different digest; verification checks the revision as well
+as content. Existing five-column ledgers require a matching-content baseline
+release before managed content can advance. Baseline adoption adds the sixth
+column that older library builds reject. SQLx migrations precede this check and
+may already have committed; this fence orders managed objects and the protected
+application callback, not arbitrary migrations. See
 [ADR-013](adr/013-managed-database-objects.md), the
 [adapter README](../crates/batter-sqlx/README.md#managed-routines-and-triggers)
 and the [lifecycle example](../examples/postgres-lifecycle/src/schema.rs).
