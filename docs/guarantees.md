@@ -1284,6 +1284,11 @@ original initialization deadline and is destroyed when it expires under either
 stopping class; a preceding failed run and cadence wait do not restart the
 allowance. A qualifying success acknowledges exactly once, and later run failures
 never revoke it or establish continuing lease, renewal or dependency health.
+The driver owns one explicit state: initialization carries its startup capability
+and absolute allowance deadline; running carries only the acknowledged capability.
+The transition consumes the startup capability and removes its deadline, so there
+is no empty or doubly owned capability state and later runs cannot reuse the
+initialization allowance. Normal exit consumes whichever capability remains.
 Because the run boundary is cooperative and rechecks neither its clock nor
 drain after the work's own poll returns, a success that only arrived after the
 allowance had expired, or after drain began, is still counted as a successful

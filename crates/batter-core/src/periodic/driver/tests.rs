@@ -28,8 +28,10 @@ async fn initialization_expiry_before_admission_retains_a_zero_run_count() {
                 &retained,
                 0,
                 Ending::InitializationExpired,
-                Some(startup),
-                None,
+                ComponentState::Initializing {
+                    startup,
+                    deadline: Instant::now(),
+                },
             )
         })
         .unwrap();
