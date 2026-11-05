@@ -23,7 +23,7 @@ use std::fmt;
 #[must_use = "an exchange records whether the peer may have received the request"]
 #[derive(Debug)]
 pub enum Exchange {
-    /// The request was never handed to the HTTP client.
+    /// The request was never handed to an HTTP connection.
     NotStarted(NotStarted),
     /// Connection establishment failed, so this attempt wrote no request bytes.
     NotDispatched(NotDispatched),
@@ -76,7 +76,7 @@ impl Exchange {
     }
 }
 
-/// Evidence that the request was never handed to the HTTP client.
+/// Evidence that the request was never handed to an HTTP connection.
 ///
 /// Only this package constructs it, and it is not `Clone`.
 #[derive(Debug, PartialEq, Eq)]
@@ -118,9 +118,10 @@ impl NotDispatched {
 /// Why an exchange did not start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartRefusal {
-    /// Less than `RESERVE + MINIMUM_ATTEMPT` remained before the deadline.
+    /// Less than `RESERVE + MINIMUM_ATTEMPT` remained at entry, or the
+    /// exchange deadline expired before handoff to the connection.
     DeadlineTooClose,
-    /// The operation context was already cancelled (`operation` feature).
+    /// The operation context was cancelled before handoff (`operation` feature).
     Cancelled,
 }
 
@@ -132,7 +133,7 @@ pub enum ConnectFailure {
     /// way by source inspection, not by a test.
     TimedOut,
     /// The TCP connection or the TLS handshake failed (both tested). A DNS
-    /// resolution failure and a pool checkout failure are classified the same
+    /// resolution failure and an HTTP/1 setup failure are classified the same
     /// way by source inspection, not by a test.
     Failed,
 }
@@ -140,20 +141,16 @@ pub enum ConnectFailure {
 /// Why a possibly sent request has no response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnknownReason {
-    /// The exchange deadline passed before a response head arrived. This
-    /// includes a deadline that expired while a connection was still being
-    /// established.
+    /// The exchange deadline passed after handoff, before a response head arrived.
     Deadline,
-    /// The operation context was cancelled after the start (`operation` feature).
+    /// The operation context was cancelled after handoff (`operation` feature).
     Cancelled,
     /// The connection failed after the request was handed to it, the peer
     /// closed it without a complete response head, or the HTTP client rejected
     /// the head that arrived (for example a malformed head, which is tested, or
     /// too many headers or a conflicting `Content-Length`, source-inspected). By
-    /// source
-    /// inspection it also covers an HTTP/1 handshake or readiness failure before
-    /// the hand-off and a request hyper-util hands back unwritten on a fresh
-    /// connection: conservative, because nothing may have been written.
+    /// source inspection, even an unwritten request that fails after handoff
+    /// is conservatively unknown. No error-kind inference grants unsent proof.
     Transport,
 }
 

@@ -108,7 +108,7 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
         "reqwest v0.13.5|__rustls,__tls,rustls-no-provider (*)",
         "reqwest-middleware v0.4.2|",
     ])
-    SHIPPED = "reqwest v0.13.5|__rustls,__tls,rustls-no-provider"
+    SHIPPED = "hyper v1.11.1|client,http1\nhyper-util v0.1.20|tokio"
 
     def test_tree_features_map_each_version_and_ignore_other_packages(self):
         self.assertEqual(facade.tree_features(self.TREE, "reqwest"), {
@@ -129,14 +129,17 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
         self.assertNotIn("--example", command)
         self.assertEqual(command[command.index("-e") + 1], "normal,dev")
 
-    def test_an_example_build_with_another_reqwest_selection_is_rejected(self):
-        for built in ("reqwest v0.13.5|__rustls,__tls,gzip,http2,rustls-no-provider",
-                      "reqwest v0.12.28|__rustls,rustls-tls-webpki-roots"):
-            outputs = iter([self.SHIPPED, built])
-            with self.subTest(built=built), \
-                    patch.object(facade, "execute", side_effect=lambda command, cwd, **_: next(outputs)), \
-                    self.assertRaisesRegex(RuntimeError, "not the shipped"):
-                facade.check_shipped_outbound_selection(["cargo"])
+    def test_a_pooled_transport_in_either_graph_is_rejected(self):
+        for graph in (0, 1):
+            for forbidden in ("reqwest v0.13.5|rustls-no-provider",
+                              "hyper-util v0.1.20|client-legacy,tokio"):
+                outputs = [self.SHIPPED, self.SHIPPED]
+                outputs[graph] = (self.SHIPPED + "\n" + forbidden if forbidden.startswith("reqwest")
+                                  else self.SHIPPED.replace("hyper-util v0.1.20|tokio", forbidden))
+                with self.subTest(graph=graph, forbidden=forbidden), \
+                        patch.object(facade, "execute", side_effect=outputs), \
+                        self.assertRaisesRegex(RuntimeError, "must (not depend|use)"):
+                    facade.check_shipped_outbound_selection(["cargo"])
 
     def test_the_real_example_build_matches_and_the_package_test_build_does_not(self):
         toolchain = os.environ.get("RUSTUP_TOOLCHAIN") or facade.execute(
@@ -147,7 +150,7 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
         host = facade.execute(["rustc", "+" + toolchain, "--print", "host-tuple"], facade.ROOT).strip()
         facade.execute(cargo + ["metadata", "--format-version", "1", "--filter-platform", host,
                                 "--all-features", "--locked"], facade.ROOT)
-        self.assertIn("rustls-no-provider", facade.check_shipped_outbound_selection(cargo))
+        self.assertIn("owned HTTP/1", facade.check_shipped_outbound_selection(cargo))
         # Control: batter-outbound-http's own test build compiles the dev-only
         # features, so the comparison distinguishes the two real graphs.
         own = facade.tree_features(facade.execute(

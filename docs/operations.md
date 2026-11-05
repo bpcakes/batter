@@ -117,19 +117,13 @@ is safe in logs and as a metric label; a `Response` still holds the received
 headers and body behind its accessors. The query string still reaches the
 provider and any intermediary, and a reqwest client built by hand outside the
 exchange formats the full URL, query included, into its errors. The exchange's
-dependencies do log destination identities: reqwest the host at debug level,
-hyper-util the origin's authority and the socket addresses it connects to at
-debug and trace level, and rustls-platform-verifier a failed certificate
-verification at error level, with the expected and presented names for a name
-mismatch. When another crate in the application's graph enables rustls's
-`logging` feature, a default of rustls, tokio-rustls and hyper-rustls, rustls
-also logs the server name at debug level and the ClientHello and the server
-certificate chain at trace level. None of them carries an exchange's path,
-query, header value or body. Filter the `reqwest`, `hyper_util`,
-`rustls_platform_verifier` and `rustls` targets in the application's logger or
-subscriber when destination names must stay out of logs; the
-[references](references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02)
-cite each event.
+dependencies may still log certificate failures/names through
+`rustls_platform_verifier`, and names, ClientHellos and certificates through
+`rustls` when its `logging` feature is enabled elsewhere in the graph. Filter
+those targets in the application logger when destination identities must stay
+out of logs. The outbound transport no longer calls reqwest or hyper-util's
+legacy client; their pool/destination logs do not arise on this path. See
+[references](references.md#owned-outbound-http1-connections-2026-11-04).
 
 Batter never installs, takes or replaces the process panic hook; Rust's default
 hook prints every string payload. Each executable installs

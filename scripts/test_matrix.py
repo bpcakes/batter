@@ -16,7 +16,7 @@ OUTBOUND_CHECK = ["cargo", "check", "-p", "batter-outbound-http", "--lib", "--no
 OUTBOUND_TESTS = ["cargo", "test", "-p", "batter-outbound-http", "--no-default-features", "--locked"]
 # Every batter-outbound-http test build also compiles its dev-only reqwest features
 # (gzip, http2). The facade example's tests do not activate those
-# dev-dependencies, so this executes the shipped reqwest feature selection.
+# dev-dependencies, so this executes the transport without that test client.
 OUTBOUND_SHIPPED_EXAMPLE = ["cargo", "test", "-p", "batter", "--no-default-features", "--features",
                             "outbound-http", "--example", "outbound_exchange", "--locked"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
@@ -123,7 +123,7 @@ def parts():
                        [HOSTILE_CONFIGURATION, FUTURE_SIZE_RELEASE])],
         # The outbound leaf's tests assert tight timing, so they run alone in
         # their own batch after its library check compiled with the others. The
-        # shipped-feature example build compiles a different reqwest selection,
+        # shipped-feature example build excludes the dev-only control client,
         # so it also runs alone rather than beside those timing assertions.
         "no-default-features": [(["core-library", "facade-library", "core-tests", "outbound-library"],
                                  [CORE_CHECK, FACADE_CHECK, CORE_TESTS, OUTBOUND_CHECK]),

@@ -258,15 +258,17 @@ dropped when the outer interruption wins, and `retry` discards an `Ok` returned
 in the same poll as a cancellation; a dropped exchange has no outcome, so treat
 it as `Unknown` (no test drops one). The exchange adds no instrumentation of
 its own: record `exchange.label()`, which carries no URL, query, header value or
-body. Its dependencies' log events can name the destination host, socket
-addresses and certificate names; the application's logger filters them (see
+body. The TLS verifier may log certificate failures and names through
+`rustls_platform_verifier`. When the graph enables rustls's `logging` feature,
+`rustls` may also log names, ClientHellos and certificates. The
+application's logger filters those targets (see
 [operations](operations.md#telemetry-and-diagnostics)). A
 provider crate that must not depend on `batter-core` uses `batter_outbound_http`
 directly with `send(deadline, limit)`. The
 [runnable example](../crates/batter/examples/outbound_exchange.rs) compiles this
 composition, and the
 [adoption contract](integrations.md#outbound-provider-exchange-experimental-transport-evidence)
-covers placement, replay and the external version contract.
+covers placement, replay and the transport's dependency policy.
 
 ## Bound concurrent work separately
 

@@ -1788,8 +1788,8 @@ The six test parts retain their existing command selections:
   without that bridge; then, alone in a third batch, the facade
   `outbound_exchange` example tests built with
   `-p batter --no-default-features --features outbound-http`, whose build does not
-  activate `batter-outbound-http`'s dev-only reqwest `gzip` and `http2` features and
-  so executes the shipped reqwest selection. The `workspace` part runs the
+  activate `batter-outbound-http`'s dev-only reqwest control client, so executes
+  the owned transport without that dependency. The `workspace` part runs the
   package tests with the bridge.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.
@@ -2012,10 +2012,11 @@ excludes archived reviews under `.agent/reviews`.
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
 | Outbound refusals before any connection: origin schemes, credentials, paths, queries, fragments, port zero, non-loopback addresses and hosts `http::Uri` rejects; limit bounds; every reserved header; a second body; a JSON failure; the first draft problem reported; `CONNECT`; empty, `.` and `..` segments and segments whose part before a `;` is empty, `.` or `..`, with look-alikes accepted; tab, line feed and carriage return in a segment; URLs `http::Uri` rejects | [preparation.rs](../crates/batter-outbound-http/tests/preparation.rs) |
 | Outbound send-once and value types: header values passed to `header()` marked sensitive and the body's `Content-Type` not; `PreparedRequest` neither cloneable nor sendable twice; a hand-built `NotStarted` does not compile | `every_caller_header_value_is_marked_sensitive` and the `compile_fail,E0599`/`E0382` doctests in [request.rs](../crates/batter-outbound-http/src/request.rs); the `compile_fail,E0451` doctest in [exchange.rs](../crates/batter-outbound-http/src/exchange.rs) |
-| Outbound outcomes before a head: start refusals with no connection and a 350 ms budget sending exactly one request; a refused TCP connection and a failed TLS handshake as `NotDispatched(Failed)` and a stalled handshake as `NotDispatched(TimedOut)`; `Unknown` for a deadline during the TLS handshake; in each TLS case one connection whose first read is a TLS handshake record; `Unknown` also for a silent peer within the reserve, closes before and after reading, a reset and malformed or truncated heads | [before_head.rs](../crates/batter-outbound-http/tests/before_head.rs) |
-| Outbound status kept through every body result: complete with sensitive readable headers, empty, `HEAD`, exactly at the limit (declared and chunked), declared or streamed above it without waiting, short or unterminated then closed, stalled under one deadline for head and body, undelimited and ended by a close as `Complete`, gzip-labelled bytes returned undecoded with gzip compiled, and a ready head with its empty body's end kept over an expired timer | [body.rs](../crates/batter-outbound-http/tests/body.rs) |
-| Outbound `send_in`: cancelled or too-close contexts refused unsent, cancellation over an expired deadline, cancellation after delivery, directly or through a parent, as `Unknown(Cancelled)`, cancellation during a stalled body with the status kept, a ready head kept over cancellation, cancellation reported over an expired timer before a head and during the body, and context deadlines bounding head and body within the reserve | [operation.rs](../crates/batter-outbound-http/tests/operation.rs), feature `operation` |
-| Outbound wire shape: HTTP/1.1 origin form without `Accept-Encoding` (gzip compiled), `Referer`, `Proxy-Authorization`, `TE` or `Upgrade`; header values unchanged; segment, query and body encoding; an empty path at the root; a 307 returned unfollowed; clones sharing one connection; a new connection after more than four seconds idle; `HTTP_PROXY` ignored for a loopback origin against a default-client control in a child process | [wire.rs](../crates/batter-outbound-http/tests/wire.rs) |
+| Outbound outcomes before a head: start refusals with no connection and a 350 ms budget sending exactly one request; a refused TCP connection and a failed TLS handshake as `NotDispatched(Failed)` and a stalled handshake as `NotDispatched(TimedOut)`; `NotStarted` for a deadline during the TLS handshake; in each TLS case one connection whose first read is a TLS handshake record; `Unknown` also for a silent peer within the reserve, closes before and after reading, a reset and malformed or truncated heads | [before_head.rs](../crates/batter-outbound-http/tests/before_head.rs) |
+| Outbound status kept through every body result: complete with sensitive readable headers, empty, `HEAD`, exactly at the limit (declared and chunked), declared or streamed above it without waiting, short or unterminated then closed, stalled under one deadline for head and body, undelimited and ended by a close as `Complete`, gzip-labelled bytes returned undecoded with gzip compiled, and ready heads, empty-body ends and nonempty bodies kept over an expired timer | [body.rs](../crates/batter-outbound-http/tests/body.rs), including `ready_nonempty_body_is_kept_after_the_deadline` |
+| Outbound `send_in`: cancelled or too-close contexts refused unsent, cancellation over an expired deadline, cancellation during TLS setup as `NotStarted`, cancellation after delivery, directly or through a parent, as `Unknown(Cancelled)`, cancellation during a stalled body with the status kept, a ready head kept over cancellation, cancellation reported over an expired timer before a head and during the body, and context deadlines bounding head and body within the reserve | [operation.rs](../crates/batter-outbound-http/tests/operation.rs), feature `operation`, including `cancellation_during_tls_setup_is_not_started` |
+| Outbound owned transport: expired/cancelled handoff refused; queued and partial writers cannot resume after stopping; no background writer; bounded address/family fallback with losing candidates dropped before return; real TLS 1.2/1.3 certificate rejection and trusting/readable-response controls; TLS error reads cannot flush buffered HTTP after deadline/cancellation; late successful setup cannot hand off HTTP | [handoff/writer tests](../crates/batter-outbound-http/src/transport/tests.rs), [dial tests](../crates/batter-outbound-http/src/transport/dial/tests.rs), [TLS tests](../crates/batter-outbound-http/src/transport/tls_tests.rs), [TLS write tests](../crates/batter-outbound-http/src/transport/tls_write_tests.rs), and [setup tests](../crates/batter-outbound-http/src/send/tests.rs) |
+| Outbound wire shape: HTTP/1.1 origin form without `Accept-Encoding` (gzip compiled), `Referer`, `Proxy-Authorization`, `TE` or `Upgrade`; header values unchanged; segment, query and body encoding; an empty path at the root; a 307 returned unfollowed; clones opening independent connections; no reuse after a peer closes; `HTTP_PROXY` ignored for a loopback origin against a default-client control in a child process | [wire.rs](../crates/batter-outbound-http/tests/wire.rs) |
 | Outbound ClientHello with reqwest's `http2` compiled: ALPN exactly `http/1.1` and no version but TLS 1.3 and 1.2, on one connection | [tls_hello.rs](../crates/batter-outbound-http/tests/tls_hello.rs) |
 | Outbound trust store on Linux, in a child process: with an empty host store an HTTPS client fails with the value-free `ClientError::Build`, while a loopback client still builds | [trust_store.rs](../crates/batter-outbound-http/tests/trust_store.rs) |
 | Outbound formatting: markers in the host, a segment, the query, a header, the body and the response appear in no `Debug`, alternate `Debug` or error `Display` output of clients, origins, drafts, prepared requests, errors, outcomes, responses, bodies and header maps, while the peer's raw request carries the request markers and received values stay readable | [redaction.rs](../crates/batter-outbound-http/tests/redaction.rs) |
@@ -2981,6 +2982,27 @@ coverage and real native recovery coverage are distinct evidence.
 
 ## Outbound exchange facade example
 
+The leaf transport's deterministic unit tests stall before handoff and at the
+writer, with both queued and partially written requests. They check deadline
+and cancellation without relying on operating-system scheduling, and ensure
+no background writer runs while the exchange is unpolled. Loopback head/body
+tie tests retain ready responses. Fresh-connection wire tests replace pool idle
+and reuse tests. See [guarantees](guarantees.md#outbound-provider-exchange).
+
+The panel repair (`batter-4p4a`) adds controlled address-family and same-family
+fallback cases under one setup deadline, plus candidate-drop controls. Its TLS
+failure test uses the production assembly/driver with buffered HTTP ciphertext
+and a raw writer that becomes writable after expiry/cancellation; a malformed
+record triggers the real read-side error flush. An unstopped control confirms
+that the fixture reaches it. A separate setup test advances the paused clock
+inside one ready setup poll, checking the post-poll connect-timeout gate.
+Removing each protection temporarily made its test fail, and restoring them
+made the unit suite pass. Full validation outcomes belong to the repair Bead.
+
+The facade graph check requires no reqwest or hyper-util legacy client in the
+normal leaf or shipped-example graph; the leaf's dev-only reqwest remains a
+proxy and feature-unification control.
+
 `crates/batter/examples/outbound_exchange.rs` is the facade's consumer contract
 for `batter::outbound_http`. It writes its dispatch fence in an `example.fence`
 work-phase step before `send_in` and records the settled fence in the reserved
@@ -3264,29 +3286,20 @@ A gate's release sender is dropped when a failed assertion unwinds, so a parked
 closure returns and runtime drop cannot hang; a closure that never signals its
 start would still hang its test until the CI time limit.
 
-The `batter-outbound-http` suites run on loopback against a scripted peer and have
-Linux execution evidence, supplemented by local macOS checks in `batter-8e8r`;
-the macOS CI job only compiles them. Every build of
-them compiles reqwest's `gzip` and `http2` through the package's
-dev-dependencies; the shipped feature set is compile-checked by the
-`outbound-library` command and executed only by the facade example's tests in
-the `outbound-shipped-features` batch, which runs the loopback exchanges of the
-example below without those features. No test completes a TLS
-handshake or verifies a certificate. Unexercised and source-inspected: a DNS
-failure, a connect timeout during DNS or TCP setup, pool-checkout failures and
-hyper-util's `retry_canceled_requests` resend, the stale keep-alive race,
-`HTTPS_PROXY` and `ALL_PROXY` for an HTTPS origin (`HTTP_PROXY` for a loopback
-origin is tested against a discriminating control), a dropped or wrapped send
-future, a ready non-empty body chunk tying with the timer or a cancellation, the
-bounded body-buffer growth and its 1 MiB preallocation cap, an await inserted
-between the start check and the first poll, and the macOS verifier blocking the
-handshake poll. `no_brotli`, `no_zstd`, `no_deflate` and `no_hickory_dns` are
-source-inspected because no build here enables those reqwest features.
-`http1_only()`, `retry::never()`, `referer(false)` and `https_only` are defence
-in depth that no test can observe while ALPN is fixed, redirects are off and
-every URL comes from the validated origin; removing `http1_only()` fails no
-test. The segment-count check behind `PrepareError::Build` is unreachable with
-the locked url 2.5.8, so no test returns `Build`.
+The `batter-outbound-http` suites run on loopback and deterministic controlled
+I/O. The connection-ownership change (`batter-u387`) has no new macOS or hosted
+execution evidence; earlier local macOS results in `batter-8e8r` predate it.
+Production platform TLS rejects a generated self-signed certificate; an explicit
+private verifier control completes TLS 1.2/1.3 handshakes and retains a readable
+body after expiry. The default profile's public-CA acceptance is untested.
+Unexercised cases include DNS failure, a connect timeout during DNS/TCP setup,
+production macOS certificate verification and the verifier blocking a poll,
+HTTPS proxy environment variables (there is no proxy lookup in this transport),
+body-buffer allocation behavior, and dropped/wrapped sends. Controlled writer
+stalls cover queued and partial request resumption after deadline/cancellation;
+loopback tests cover ready heads and nonempty bodies at expiry. The segment-count
+check behind PrepareError::Build remains defense in depth with url 2.5.8.
+
 
 The suite does not establish full real-transport behavior, non-yielding task
 termination, transaction commit/cancellation or upstream worker compatibility, or HTTP handler-panic

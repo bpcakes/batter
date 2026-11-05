@@ -13,8 +13,8 @@ Fast jump index for agent-facing guidance in this repository.
 - [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.98.1 portability, and detached MIT license metadata.
 - [Outbound exchange](./crates/batter-outbound-http/AGENTS.md): standalone send-once
   provider HTTP exchange, the fixed client profile with its own *ring* rustls
-  configuration, transport classification and its upstream evidence for the
-  lockfile-resolved reqwest, hyper and hyper-util versions, and the opt-in
+  configuration, owned TCP/TLS and low-level HTTP/1 driver with handoff/write
+  gates, phase-owned outcomes and upstream evidence, and the opt-in
   `OperationContext` bridge.
 - [Foundation](./crates/batter-core/AGENTS.md): lifecycle, startup, periodic maintenance,
   finite commands, operations, retry, cleanup, admission, dependency health,
