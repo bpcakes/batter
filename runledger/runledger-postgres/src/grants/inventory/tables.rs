@@ -9,6 +9,36 @@ use super::{
 };
 use batter_sqlx::verification::ObjectPrivilege;
 
+pub(super) const INTENT_RECONCILIATION: &[Requirement] = &[
+    Requirement {
+        relation: INTENTS,
+        relation_privileges: &[],
+        select: &[
+            "id",
+            "job_type",
+            "organization_id",
+            "promoted_job_id",
+            "status",
+        ],
+        insert: &[],
+        update: &[],
+    },
+    Requirement {
+        relation: QUEUE,
+        relation_privileges: &[],
+        select: &["id", "job_type", "organization_id", "run_number", "status"],
+        insert: &[],
+        update: &[],
+    },
+    Requirement {
+        relation: DEFINITIONS,
+        relation_privileges: &[],
+        select: &["is_enabled", "job_type", "version"],
+        insert: &[],
+        update: &[],
+    },
+];
+
 pub(super) const INTENT_SUBMISSION: &[Requirement] = &[Requirement {
     relation: INTENTS,
     relation_privileges: &[],

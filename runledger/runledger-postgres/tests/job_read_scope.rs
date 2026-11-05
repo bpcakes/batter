@@ -84,13 +84,6 @@ async fn assert_point_reads(pool: &DbPool, scope: JobReadScope, fixture: &Fixtur
         job.as_ref().map(|row| row.id),
         visible.then_some(fixture.job_id)
     );
-    let intent = get_job_enqueue_intent_by_id_with_scope(pool, scope, fixture.intent_id)
-        .await
-        .expect("read intent");
-    assert_eq!(
-        intent.as_ref().map(|row| row.id),
-        visible.then_some(fixture.intent_id)
-    );
     let events = list_job_events_with_scope(pool, scope, fixture.job_id, 100, None)
         .await
         .expect("read events");
@@ -169,13 +162,6 @@ async fn assert_legacy_point_reads(
             .expect("legacy job")
             .map(|row| row.id),
         visible.then_some(fixture.job_id)
-    );
-    assert_eq!(
-        get_job_enqueue_intent_by_id(pool, organization_id, fixture.intent_id)
-            .await
-            .expect("legacy intent")
-            .map(|row| row.id),
-        visible.then_some(fixture.intent_id)
     );
     assert_eq!(
         list_job_events(pool, organization_id, fixture.job_id, 100, None)

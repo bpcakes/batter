@@ -4265,7 +4265,6 @@ local collector. The facade HTTP example uses the same protected path, including
 optional explicit OTLP selection. Executed results belong to `batter-m9rp`;
 fresh-agent implementation/modification evaluation remains unexecuted.
 
-
 Managed-object release fencing (`batter-ofom`) adds four live cases in
 `managed_objects_live/releases.rs`: ordered upgrade/reapply/conflict/rollback,
 a waiting older writer, atomic matching-baseline adoption, and missing/invalid
@@ -4275,3 +4274,14 @@ cases also assert the release column through complete ledger snapshots. Run
 with `BATTER_SQLX_ADMIN_URL` pointing to a disposable PostgreSQL 18 superuser
 endpoint. Provisioning stays outside the crate. The exact live inventory remains
 in `scripts/sqlx_live.py`; normal workspace gates leave these cases ignored.
+
+## Enqueue-intent reconciliation
+
+`cargo test -p runledger-postgres --test intent_reconciliation --test grants
+--locked` uses native PostgreSQL 18 fixtures. It tests restricted grants, own-write
+visibility, rejection rollback, missing definitions, conflicts, exact scope,
+invalid cross-scope links and concurrent promotion/retention. A TCP proxy drops
+an actual COMMIT acknowledgement, then recovery finds the committed identity and
+replaying the original request creates no duplicate. Compile-fail rustdoc checks
+that both removed getters stay unavailable. The external single-facade consumer
+also reads its own intent through the protected owner before queue transition.

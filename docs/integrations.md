@@ -1603,3 +1603,16 @@ The facade optionally selects the integration; SQLx alone never selects Runledge
 adapter derives success and cleanup eligibility from those unforgeable variants,
 not caller-supplied flags. Explicit `CommitUnconfirmed` remains an unknown native
 effect; reference retirement preserves it and never automatically replays it.
+
+## Restricted intent reconciliation
+
+Use `batter::runledger::run_atomic` and the scope's
+`reconcile_job_enqueue_intent(JobScope, intent_id)` for retained intent recovery.
+Both intent and queue phases, including policy scopes, expose this read without
+reopening intent recording. Match `IntentReconciliation` and then
+`IntentCorrelationState`; promoted state carries `CorrelatedJob`, and current
+`CorrelatedDefinition` is optional. Add the native grant selection
+`RunledgerOperation::IntentReconciliation` to the application's exact-role
+manifest. It is metadata-only, but does not authorize a tenant or revoke earlier
+grants. See the [migration](../runledger/CHANGELOG.md) and
+[evidence](evidence/intent-reconciliation-2026-11-05.md).

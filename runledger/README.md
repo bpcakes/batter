@@ -1386,10 +1386,16 @@ the selected scope; the enum only controls row filtering.
 
 Use `get_job_by_id_with_scope`, `list_jobs_with_scope` (with
 `JobReadListFilter`), `list_job_events_with_scope`, and
-`list_job_logs_with_scope` for job inspection. Intent inspection uses
-`get_job_enqueue_intent_by_id_with_scope` and
-`list_job_enqueue_intents_with_scope` (with
-`JobEnqueueIntentReadListFilter::new(scope, limit, offset)`).
+`list_job_logs_with_scope` for job inspection. Single-intent reconciliation uses
+`scope.reconcile_job_enqueue_intent(JobScope::Global, id)` inside `run_atomic`,
+or an exact `JobScope::Organization(id)`. It returns exhaustive metadata-only
+`IntentReconciliation`: `NotFound`, or `Retained` with pending, conflicted or
+promoted state. A promoted observation contains a matching job; current definition
+metadata is optional. This is one query snapshot, including this transaction's
+own writes, not evidence of rollback or authority to replay after `NotFound`.
+Use `RunledgerOperation::IntentReconciliation` for its column-only read grants.
+Administrative inspection uses `list_job_enqueue_intents_with_scope` with
+`JobEnqueueIntentReadListFilter::new(scope, limit, offset)` and broader grants.
 
 For dashboards and recovery scans, `list_job_summaries` accepts a
 `JobSummaryFilter` with an explicit `JobReadScope`, optional status and exact
