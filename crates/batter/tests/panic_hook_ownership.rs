@@ -13,8 +13,8 @@
 //! classified, meaning each workspace member's binaries, examples and
 //! benchmarks and the consumer sources that scripts build outside the
 //! workspace: a root that consumes Batter installs the hook, three named
-//! tooling roots keep the default hook, and native Runledger, Runlimit and
-//! Runflag roots, which name no Batter crate, keep their own panic policy. Programs
+//! tooling roots keep the default hook, and native Runledger and Runlimit
+//! roots, which name no Batter crate, keep their own panic policy. Programs
 //! that scripts generate as compile and identity probes are not checked-in
 //! roots and are not classified.
 
@@ -245,13 +245,7 @@ const EXTERNAL_SOURCES: [&str; 2] = ["consumers", "runlimit/smoke"];
 
 /// Native packages stay independent of the facade; a root there that names no
 /// Batter crate keeps its own panic policy.
-const NATIVE_PREFIXES: [&str; 3] = ["runledger/", "runlimit/", "runflag/"];
-
-/// The native operator root's own payload-free hook, installed first. The
-/// root names no Batter crate, so it is classified native, and this keeps its
-/// panic policy checked in the same place as the consuming roots'.
-const NATIVE_OPERATOR_ROOT: &str = "runflag/runflag-cli/src/main.rs";
-const NATIVE_OPERATOR_INSTALL: &str = "std::panic::set_hook(Box::new(payload_free_hook));";
+const NATIVE_PREFIXES: [&str; 2] = ["runledger/", "runlimit/"];
 
 /// The two accepted spellings, through the facade or the core crate.
 const INSTALL_STATEMENTS: [&str; 2] = [
@@ -413,7 +407,6 @@ fn every_batter_consuming_root_installs_the_redacting_hook_first() {
         "runledger/runledger-tui/src/main.rs",
         "runledger/runledger-runtime/examples/producer_worker/worker.rs",
         "runlimit/smoke/native_consumer.rs",
-        NATIVE_OPERATOR_ROOT,
     ] {
         assert!(
             native.contains(&&root.join(native_root)),
@@ -437,6 +430,7 @@ fn every_batter_consuming_root_installs_the_redacting_hook_first() {
         "examples/postgres-lifecycle/src/main.rs",
         "consumers/single_facade_consumer.rs",
         "runlimit/smoke/facade_consumer.rs",
+        "crates/batter-flags-cli/src/main.rs",
     ] {
         assert!(
             checked.contains(&&root.join(required)),
@@ -444,14 +438,8 @@ fn every_batter_consuming_root_installs_the_redacting_hook_first() {
         );
     }
     // The exact inventory: adding or removing a root updates these counts.
-    assert_eq!(checked.len(), 16, "Batter-consuming roots: {checked:#?}");
-    assert_eq!(native.len(), 13, "native roots: {native:#?}");
-    let operator = fs::read_to_string(root.join(NATIVE_OPERATOR_ROOT)).unwrap();
-    assert_eq!(
-        first_statement_of_main(&operator),
-        Ok(NATIVE_OPERATOR_INSTALL),
-        "{NATIVE_OPERATOR_ROOT}: first statement of main"
-    );
+    assert_eq!(checked.len(), 17, "Batter-consuming roots: {checked:#?}");
+    assert_eq!(native.len(), 12, "native roots: {native:#?}");
     for path in checked {
         let source = fs::read_to_string(path).unwrap();
         let first = first_statement_of_main(&source);

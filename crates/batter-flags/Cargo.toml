@@ -18,7 +18,7 @@ workspace = true
 default = []
 # The audited PostgreSQL control plane: the native store, the owned pool and
 # lease path, time-ordered process identities and the last-good file trailer.
-postgres = ["dep:runflag-postgres", "dep:batter-sqlx", "dep:sqlx", "dep:uuid", "dep:sha2"]
+postgres = ["dep:batter-flags-postgres", "dep:batter-sqlx", "dep:sqlx", "dep:uuid", "dep:sha2"]
 # Route-group gates on the Batter Axum adapter; the extractor needs axum itself.
 axum = ["dep:batter-axum", "dep:axum"]
 # Job-handler gates and pinned decisions over the native Runledger job types.
@@ -26,11 +26,11 @@ runledger = ["dep:runledger-core"]
 
 [dependencies]
 batter-core.workspace = true
-runflag-core = { workspace = true, features = ["serde"] }
+batter-flags-core = { workspace = true, features = ["serde"] }
 serde_json = "1"
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true
-runflag-postgres = { workspace = true, optional = true }
+batter-flags-postgres = { workspace = true, optional = true }
 batter-sqlx = { workspace = true, optional = true }
 sqlx = { workspace = true, features = ["postgres"], optional = true }
 uuid = { version = "1", features = ["v7"], optional = true }

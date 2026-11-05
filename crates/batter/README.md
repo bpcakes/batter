@@ -29,8 +29,8 @@ The default feature set is empty. The available feature/module pairs are:
 | `runlimit-axum` | `batter::runlimit::http` and `batter::axum` |
 | `runlimit-native-http` | `batter::runlimit::native_transport::http`: native response metadata, no transport framework |
 | `runlimit-native-axum` | `batter::runlimit::native_transport::axum`: the native caller-controlled layer, without `batter::axum` |
-| `flags` | `batter::flags` and `batter::flags::native` (experimental scaffold): the namespaces that will hold typed flags and kill switches declared once in code, with declared mode resolved from the application's settings source at startup |
-| `flags-postgres` | `batter::flags::postgres` and `batter::flags::control_plane` (experimental scaffold): the namespaces that will hold the native store and the protected registration of the audited control plane, plus the required `batter::sqlx` capability |
+| `flags` | `batter::flags` and `batter::flags::core` (experimental): typed flags and kill switches declared once in code; `core` holds the catalog today, and declared mode, resolved from the application's settings source at startup, arrives later |
+| `flags-postgres` | `batter::flags::postgres` and `batter::flags::control_plane` (experimental scaffold): the namespaces that will hold the store and the protected registration of the audited control plane, plus the required `batter::sqlx` capability |
 | `flags-axum` | `batter::flags::http` (experimental scaffold): the namespace that will hold route-group gates and per-request views, plus `batter::axum` |
 | `flags-runledger` | `batter::flags::jobs` (experimental scaffold): the namespace that will hold job-handler gates and pinned decisions, plus `batter::runledger` |
 | `test-support` | `batter::test_support` |

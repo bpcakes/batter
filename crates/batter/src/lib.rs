@@ -455,9 +455,9 @@ pub mod runlimit {
 /// Typed flags and kill switches: declared mode and the optional control plane.
 ///
 /// Enabled by the `flags` feature, which is experimental. The implementation
-/// remains [`batter_flags`]; `flags::native` is the native catalog package
-/// itself, so handles, decisions and views keep one type identity through the
-/// direct and facade paths. `flags-postgres` adds `flags::postgres` and the
+/// remains [`batter_flags`]; `flags::core` is the `batter-flags-core` catalog
+/// crate itself, so handles, decisions and views keep one type identity through
+/// the direct and facade paths. `flags-postgres` adds `flags::postgres` and the
 /// protected `flags::control_plane` registration and selects `sqlx`;
 /// `flags-axum` adds `flags::http` and selects `axum`; `flags-runledger` adds
 /// `flags::jobs` and selects `runledger`. The crate is a scaffold until the

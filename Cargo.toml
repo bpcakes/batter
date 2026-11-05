@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/batter-otlp", "crates/batter", "crates/batter-at-rest", "crates/batter-outbound-http", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service", "runledger/runledger-core", "runledger/runledger-postgres", "runledger/runledger-runtime", "runledger/runledger-test-support", "runledger/runledger-tui", "runlimit/runlimit-axum", "runlimit/runlimit-core", "runlimit/runlimit-http", "runlimit/runlimit-memory", "runlimit/runlimit-postgres", "crates/batter-flags", "runflag/runflag-core", "runflag/runflag-postgres", "runflag/runflag-cli"]
+members = ["crates/batter-otlp", "crates/batter", "crates/batter-at-rest", "crates/batter-outbound-http", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service", "runledger/runledger-core", "runledger/runledger-postgres", "runledger/runledger-runtime", "runledger/runledger-test-support", "runledger/runledger-tui", "runlimit/runlimit-axum", "runlimit/runlimit-core", "runlimit/runlimit-http", "runlimit/runlimit-memory", "runlimit/runlimit-postgres", "crates/batter-flags", "crates/batter-flags-core", "crates/batter-flags-postgres", "crates/batter-flags-cli"]
 default-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
@@ -36,6 +36,8 @@ batter-otlp = { path = "crates/batter-otlp", version = "0.0.1", default-features
 batter = { path = "crates/batter", version = "0.0.1", default-features = false }
 batter-at-rest = { path = "crates/batter-at-rest", version = "0.0.1", default-features = false }
 batter-flags = { path = "crates/batter-flags", version = "0.0.1", default-features = false }
+batter-flags-core = { path = "crates/batter-flags-core", version = "0.0.1", default-features = false }
+batter-flags-postgres = { path = "crates/batter-flags-postgres", version = "0.0.1", default-features = false }
 batter-outbound-http = { path = "crates/batter-outbound-http", version = "0.0.1", default-features = false }
 batter-axum = { path = "crates/batter-axum", version = "0.0.1", default-features = false }
 batter-core = { path = "crates/batter-core", version = "0.0.1" }
@@ -71,6 +73,3 @@ runlimit-core = { path = "runlimit/runlimit-core", version = "0.4.0" }
 runlimit-http = { path = "runlimit/runlimit-http", version = "0.4.0" }
 runlimit-memory = { path = "runlimit/runlimit-memory", version = "0.4.0" }
 runlimit-postgres = { path = "runlimit/runlimit-postgres", version = "0.4.0" }
-
-runflag-core = { path = "runflag/runflag-core", version = "0.1.0" }
-runflag-postgres = { path = "runflag/runflag-postgres", version = "0.1.0" }
