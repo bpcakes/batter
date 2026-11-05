@@ -2,7 +2,7 @@
 #[allow(dead_code, reason = "shared support; this crate uses part of it")]
 mod support;
 
-use batter_sqlx::{PgProfiledPool, PgSessionProfile};
+use batter_sqlx::PgSessionProfile;
 use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
 use std::time::Duration;
 use support::{Result, bounded, combine, require};
@@ -171,7 +171,7 @@ async fn check_profiles(
             .await
             .and_then(|result| result.map_err(Into::into));
         combine(apply, close)?;
-        let database = PgProfiledPool::connect_lazy(
+        let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
             options.clone(),
             profile,
             PgPoolOptions::new().max_connections(1),

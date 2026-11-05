@@ -10,7 +10,7 @@ both session-profile constructors; older servers are unsupported.
 
 With an existing operation budget, prefer
 `run_atomic_in(&pool, &context, "operation.name", async |scope| ...)`.
-For declared database authority, construct `PgProfiledPool` and use
+For declared database authority, construct `PgProfiledPool` with `pool_in` and use
 `run_atomic_profiled_in(&database, &context, "operation.name", ...)` instead.
 Its pool and atomic work share the owner's immutable profile. All three native
 pool hooks are owned by the foundation, including normalization before idle
@@ -295,13 +295,20 @@ return is SQLx's asynchronous health-check path, not an immediate reuse promise.
 
 `probe(&pool, &context)` performs SELECT 1 with acquisition and query sharing the
 total budget. Reserve cleanup first, then use
-`pool_in(slot, PgPoolOptions, PgConnectOptions)` to construct a native lazy pool
+`pool_in(slot, PgPoolOptions, PgConnectOptions, profile)?` to construct a lazy
+`PgProfiledPool` with mandatory reset hooks
 whose awaited close hook is registered before the pool is returned. This return
 does not establish connectivity or readiness, and native minimum-connection
 maintenance may begin during construction. Release checkouts and join dependent
 work before cleanup expects `Pool::close` to complete.
+`RunledgerDatabase::from_profiled(database.clone())?` shares this pool without
+another connection budget or finalizer. It rejects fallback schemas; application
+SQL and Runledger must use the same role/profile to share. Native standalone
+construction lives in `low_level::{connect_profiled_pool, connect_profiled_pool_lazy}`
+and requires caller-owned teardown. No canonical unregistered constructor remains.
 
-`register_pool_close(&mut supervisor, name, &pool)` remains the lower-level path
+
+`low_level::register_pool_close(&mut supervisor, name, &pool)` remains the lower-level path
 for externally owned pools and registers native closure in existing explicit
 LIFO cleanup. It does not close on registration failure; the caller retains the
 pool and must await teardown. The facade-owned
@@ -309,7 +316,8 @@ pool and must await teardown. The facade-owned
 `Command`; the runnable [PostgreSQL lifecycle
 example](../../examples/postgres-lifecycle/README.md) and the reference root use
 `pool_in` inside protected service startup, and the reference retirement command
-uses it on a finite `CommandScope` slot.
+uses `low_level::pool_in` on a finite `CommandScope` slot to preserve its
+application-owned physical-session guard.
 
 `SqlxFailure` retains the original SQLx cause with fixed Debug/Display.
 `FailureClass` classifies native variants, never error strings, and grants no

@@ -54,9 +54,10 @@ impl Fixture {
             Duration::from_secs(20),
         )
         .expect("restricted verifier profile");
-        let verifier = RunledgerDatabase::connect((*options).clone(), profile, 1)
-            .await
-            .expect("public verifier database");
+        let verifier =
+            runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
+                .await
+                .expect("public verifier database");
         let mut gates = PgConnection::connect(harness.database.url())
             .await
             .expect("gate connection");

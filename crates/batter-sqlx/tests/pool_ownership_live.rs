@@ -10,7 +10,7 @@ use batter_core::{
     operation::{Interruption, OperationContext},
     startup::Startup,
 };
-use batter_sqlx::{SqlxFailure, pool_in, probe};
+use batter_sqlx::{SqlxFailure, probe};
 use sqlx::{
     PgPool,
     postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
@@ -662,3 +662,5 @@ pub(crate) enum CheckoutRelease {
     BeforeTimeout,
     AfterTimeout,
 }
+
+use batter_sqlx::low_level::pool_in;

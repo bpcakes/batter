@@ -96,7 +96,7 @@ async fn quoted_schema_delimiters_and_keywords_preserve_canonical_definitions() 
             "quote_all_identifiers",
             if quote_all { "on" } else { "off" },
         )]);
-        let database = RunledgerDatabase::connect(options, profile, 1)
+        let database = runledger_postgres::low_level::connect_database(options, profile, 1)
             .await
             .expect("profiled schema");
         assert_quoting(database.pool(), quote_all).await;

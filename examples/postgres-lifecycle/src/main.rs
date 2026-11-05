@@ -118,7 +118,17 @@ fn database_pool(
     let options = PgPoolOptions::new()
         .max_connections(8)
         .acquire_timeout(Duration::from_secs(3));
-    Ok(batter::sqlx::pool_in(slot, options, connection))
+    let login = connection.get_username();
+    let profile = batter::sqlx::PgSessionProfile::new(
+        login,
+        login,
+        vec!["public".into()],
+        Duration::ZERO,
+        Duration::ZERO,
+    )?;
+    Ok(batter::sqlx::pool_in(slot, options, connection, profile)?
+        .pool()
+        .clone())
 }
 
 async fn serve<F>(startup: ScopedStartup<F>) -> Result<(), BoxError>

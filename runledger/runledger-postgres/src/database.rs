@@ -30,6 +30,32 @@ impl std::fmt::Debug for RunledgerDatabase {
 }
 
 impl RunledgerDatabase {
+    /// Share an existing profiled pool without creating capacity or a finalizer.
+    /// Migration: replace `RunledgerDatabase::connect` and
+    /// `RunledgerDatabase::connect_lazy` with `batter_sqlx::pool_in` followed by
+    /// `RunledgerDatabase::from_profiled(pool.clone())`. Standalone native owners
+    /// can explicitly select [`crate::low_level`], retaining cleanup obligations.
+    ///
+    /// The profile must name exactly one authoritative schema: Runledger's
+    /// unqualified queries must never fall back into another schema. Rejection
+    /// creates no Runledger capability and leaves registered pool cleanup intact.
+    /// Application SQL and Runledger now share the same capacity, immutable
+    /// profile and closure. Distinct authority still requires distinct pools.
+    ///
+    /// ```no_run
+    /// # fn example(pool: batter_sqlx::PgProfiledPool) -> Result<(), sqlx::Error> {
+    /// let database = runledger_postgres::RunledgerDatabase::from_profiled(pool.clone())?;
+    /// assert!(std::ptr::eq(database.profile(), pool.profile()));
+    /// # Ok(()) }
+    /// ```
+    pub fn from_profiled(database: PgProfiledPool) -> Result<Self, sqlx::Error> {
+        Self::validate(
+            database.profile(),
+            database.pool().options().get_max_connections(),
+        )?;
+        Ok(Self { database })
+    }
+
     /// Connect under explicit policy. Schemas/roles must already exist; this does
     /// not provision them. A direct probe preserves configuration errors rather
     /// than reducing them to a pool retry timeout. Zero capacity is rejected.
@@ -41,14 +67,19 @@ impl RunledgerDatabase {
     /// the original error retained inside a `batter_sqlx::SqlxFailure` payload
     /// of `sqlx::Error::Configuration`. Connection-establishment errors remain
     /// native SQLx errors; this is not a blanket log-redaction guarantee.
-    pub async fn connect(
+    pub(crate) async fn connect(
         options: PgConnectOptions,
         profile: PgSessionProfile,
         max_connections: u32,
     ) -> Result<Self, sqlx::Error> {
         Self::validate(&profile, max_connections)?;
         Ok(Self {
-            database: PgProfiledPool::connect(options, profile, max_connections).await?,
+            database: batter_sqlx::low_level::connect_profiled_pool(
+                options,
+                profile,
+                max_connections,
+            )
+            .await?,
         })
     }
 
@@ -65,14 +96,18 @@ impl RunledgerDatabase {
     /// Setup errors reach SQLx's hook logging with redacted default formatting.
     /// Deliberate source inspection, independent query/notice logging and server
     /// logs remain application/operator responsibilities.
-    pub fn connect_lazy(
+    pub(crate) fn connect_lazy(
         options: PgConnectOptions,
         profile: PgSessionProfile,
         pool_options: PgPoolOptions,
     ) -> Result<Self, sqlx::Error> {
         Self::validate(&profile, pool_options.get_max_connections())?;
         Ok(Self {
-            database: PgProfiledPool::connect_lazy(options, profile, pool_options)?,
+            database: batter_sqlx::low_level::connect_profiled_pool_lazy(
+                options,
+                profile,
+                pool_options,
+            )?,
         })
     }
 

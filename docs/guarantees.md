@@ -1637,10 +1637,13 @@ callback path retires its session; success has no await after acknowledged COMMI
 The compatible no-callback method retains its earlier disposition contract.
 
 
-The optional `batter-sqlx` package owns only checked-out client disposition.
-`pool_in` synchronously consumes a prevalidated cleanup slot, constructs a native
-lazy pool from the supplied options, and registers awaited `Pool::close` before
-returning the pool. It does not establish connectivity or readiness. SQLx may
+The optional `batter-sqlx` package owns checked-out client disposition and protected
+pool acquisition. `pool_in` synchronously consumes a prevalidated cleanup slot,
+constructs a lazy `PgProfiledPool` from native options and an explicit profile,
+and registers awaited `Pool::close` before returning the pool. All three session
+hooks are library-owned. `RunledgerDatabase::from_profiled` checks the existing
+one-schema rule and shares capacity, profile and closure without another finalizer.
+This establishes neither connectivity nor readiness. SQLx may
 start native minimum-connection maintenance during construction; constructor
 panics and runtime death remain native limits. Dependent work must be joined and
 checked-out connections released before successful cleanup can be expected.
@@ -1648,9 +1651,11 @@ Local completion evidence requires the named successful cleanup record, zero
 remaining pool size and `PoolClosed` from a later acquisition; `is_closed()` alone
 only witnesses that close began. These facts still say nothing about detached
 server sessions.
-`register_pool_close` remains a lower-level compatibility path for pools acquired
+`low_level::register_pool_close` remains a lower-level path for pools acquired
 elsewhere, with caller-owned cleanup if registration fails. The workspace's
-canonical service roots and finite retirement command use `pool_in`.
+canonical service roots use `pool_in`; the finite retirement command deliberately
+uses `low_level::pool_in` to retain its physical-session guard. Standalone native
+constructors are also confined to `low_level` and retain caller-owned cleanup.
 
 `run_atomic` owns the complete READ COMMITTED workflow. Body outputs are withheld
 until acknowledged commit, and rejections until acknowledged rollback; uncertainty

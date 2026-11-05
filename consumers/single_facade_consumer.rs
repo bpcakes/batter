@@ -197,7 +197,7 @@ fn context(seconds: u64) -> Outcome<OperationContext> {
 }
 
 /// Connect through the facade's profiled native database owner.
-fn database(url: &str) -> Outcome<RunledgerDatabase> {
+fn database(slot: batter::cleanup::CleanupSlot<'_>, url: &str) -> Outcome<RunledgerDatabase> {
     let options: sqlx::postgres::PgConnectOptions = url.parse()?;
     let login = options.get_username();
     let profile = PgSessionProfile::new(
@@ -207,11 +207,13 @@ fn database(url: &str) -> Outcome<RunledgerDatabase> {
         Duration::ZERO,
         Duration::ZERO,
     )?;
-    Ok(RunledgerDatabase::connect_lazy(
+    let pool = batter::sqlx::pool_in(
+        slot,
+        sqlx::postgres::PgPoolOptions::new().max_connections(6),
         options,
         profile,
-        sqlx::postgres::PgPoolOptions::new().max_connections(6),
-    )?)
+    )?;
+    Ok(RunledgerDatabase::from_profiled(pool)?)
 }
 
 /// Apply the Runledger history first, then Runlimit's history: Runlimit's
@@ -327,37 +329,28 @@ async fn prepare_worker(
 /// Startup owns the pool finalizer before the first database operation. Running
 /// work always awaits checked shutdown; only the lifecycle driver may authorize
 /// dependency cleanup, including after a readiness, submission or receive error.
-async fn run_worker(database: RunledgerDatabase, payload: &Value, subject: &str) -> Outcome {
+async fn run_worker(url: String, payload: &Value, subject: &str) -> Outcome {
     let (executed, mut observed) = unbounded_channel();
     let (ended, mut endings) = unbounded_channel();
-    let initializing = database.clone();
-    let starting = Startup::scoped(
+    let starting = Startup::protected(
         Supervisor::new(budget()?),
         context(60)?,
         cleanup_budget()?,
-        move |scope| {
-            Box::pin(async move {
-                let result: Outcome = async {
-                    let pool = initializing.pool().clone();
-                    scope
-                        .reserve_cleanup("postgres.pool")?
-                        .register(move || async move {
-                            pool.close().await;
-                            Ok(())
-                        });
-                    let limiter = PostgresLimiter::new(initializing.pool().clone());
-                    migrate(&initializing, &limiter).await?;
-                    let prepared = prepare_worker(&initializing, executed, ended).await?;
-                    batter::runledger::register_in(scope, "worker", context(5)?, prepared)?;
-                    Ok(())
-                }
-                .await;
-                result.map_err(ApplicationFailure)
-            })
+        async move |scope| {
+            let result: Outcome<RunledgerDatabase> = async {
+                let database = database(scope.reserve_cleanup("postgres.pool")?, &url)?;
+                let limiter = PostgresLimiter::new(database.pool().clone());
+                migrate(&database, &limiter).await?;
+                let prepared = prepare_worker(&database, executed, ended).await?;
+                batter::runledger::register_in(scope, "worker", context(5)?, prepared)?;
+                Ok(database)
+            }
+            .await;
+            result.map_err(ApplicationFailure)
         },
     )
     .start();
-    let running = starting.finish().await?;
+    let (running, database) = starting.finish_with_output().await?;
     let status = running.status();
     single_facade_completion::complete(running, async {
         status
@@ -441,9 +434,8 @@ async fn main() -> Outcome {
     std::panic::set_hook(batter::redacting_panic_hook());
     let url = std::env::var("DATABASE_URL")?;
     let subject = std::env::var("FACADE_CONSUMER_SUBJECT")?;
-    let database = database(&url)?;
     let payload = json!({"name": "facade"});
-    run_worker(database, &payload, &subject).await?;
+    run_worker(url, &payload, &subject).await?;
     println!("single batter dependency reached runledger and runlimit");
     Ok(())
 }

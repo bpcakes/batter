@@ -44,7 +44,9 @@ impl Fixture {
             Duration::ZERO,
         )
         .unwrap();
-        let database = PgProfiledPool::connect(options, profile, 8).await.unwrap();
+        let database = batter_sqlx::low_level::connect_profiled_pool(options, profile, 8)
+            .await
+            .unwrap();
         let pool = database.pool().clone();
         let native = PostgresAttemptLimiter::new(pool.clone());
         INITIALIZED.get_or_init(|| async {

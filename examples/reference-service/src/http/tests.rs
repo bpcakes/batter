@@ -77,7 +77,7 @@ fn unpublished_health() -> HealthReader<Infallible> {
 
 async fn production_app_with(handle: &ShutdownHandle) -> InProcessClient {
     let settings = settings();
-    let pool = crate::database::configured(
+    let pool = crate::database::low_level_configured(
         settings.connect_options_from_process().unwrap(),
         settings.pool_options(),
     )
@@ -292,7 +292,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
 async fn canonical_registration_supplies_native_peer_to_the_business_boundary() {
     let settings = settings();
     let prepared = settings.prepare_http();
-    let pool = crate::database::configured(
+    let pool = crate::database::low_level_configured(
         settings.connect_options_from_process().unwrap(),
         settings.pool_options(),
     )

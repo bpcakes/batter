@@ -89,14 +89,16 @@ pub(crate) fn runledger_database(
         Duration::ZERO,
         Duration::ZERO,
     )?;
-    Ok(RunledgerDatabase::connect_lazy(
-        fixture.options(role)?,
-        profile,
-        sqlx::postgres::PgPoolOptions::new()
-            .max_connections(connections)
-            .min_connections(0)
-            .acquire_timeout(Duration::from_secs(20)),
-    )?)
+    Ok(
+        batter::runledger::native::postgres::low_level::connect_database_lazy(
+            fixture.options(role)?,
+            profile,
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(connections)
+                .min_connections(0)
+                .acquire_timeout(Duration::from_secs(20)),
+        )?,
+    )
 }
 
 /// Grant the application's explicitly permitted PUBLIC delivery.

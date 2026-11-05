@@ -63,6 +63,12 @@ PostgreSQL persistence for durable execution: queue lifecycle, workflow DAG stat
   `SchemaCompatibilitySnapshot` after rollback acknowledgement. Caller session
   state cannot influence compatibility. The witness says nothing about later DDL.
 
+
+Protected hosts construct one `batter_sqlx::PgProfiledPool` through `pool_in` and
+share it with `RunledgerDatabase::from_profiled`, which validates one schema and
+adds neither capacity nor a finalizer. Standalone native constructors are in
+`low_level`; their callers own awaited closure and failure cleanup.
+
 ## Common commands
 - `cargo check -p runledger-postgres`
 - `cargo test -p runledger-postgres`

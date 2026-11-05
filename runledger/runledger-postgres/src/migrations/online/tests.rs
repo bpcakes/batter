@@ -194,7 +194,7 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
         Duration::from_secs(4),
     )
     .expect("short-timeout profile");
-    let database = crate::RunledgerDatabase::connect((*options).clone(), profile, 1)
+    let database = crate::low_level::connect_database((*options).clone(), profile, 1)
         .await
         .expect("profiled database");
     let mut conn = database.pool().acquire().await.expect("session");

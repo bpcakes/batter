@@ -347,12 +347,7 @@ fn register_pool(
     connect_options: sqlx::postgres::PgConnectOptions,
 ) -> Result<runledger_postgres::RunledgerDatabase, BoxError> {
     let slot = scope.reserve_cleanup("postgres.pool")?;
-    let database = crate::database::configured(connect_options, pool_options)?;
-    let closing = database.pool().clone();
-    slot.register(move || async move {
-        closing.close().await;
-        Ok(())
-    });
+    let database = crate::database::configured(slot, connect_options, pool_options)?;
     Ok(database)
 }
 

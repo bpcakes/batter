@@ -144,7 +144,7 @@ async fn wrong_login_profile_prevents_both_factories() {
         Duration::ZERO,
     )
     .unwrap();
-    let database = PgProfiledPool::connect_lazy(
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         (*f.base.pool.connect_options()).clone(),
         profile,
         PgPoolOptions::new()

@@ -237,7 +237,7 @@ mod tests {
             Duration::ZERO,
         )
         .unwrap();
-        let database = PgProfiledPool::connect_lazy(
+        let database = crate::low_level::connect_profiled_pool_lazy(
             "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
             profile,
             sqlx::postgres::PgPoolOptions::new().min_connections(0),

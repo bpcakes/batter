@@ -18,9 +18,11 @@ async fn with_profiled<T, E>(
     pool: &PgPool,
     work: impl AsyncFnOnce(&runledger_postgres::RunledgerDatabase) -> Result<T, E>,
 ) -> Result<T, E> {
-    let database =
-        crate::database::configured((*pool.connect_options()).clone(), pool.options().clone())
-            .expect("test profile");
+    let database = crate::database::low_level_configured(
+        (*pool.connect_options()).clone(),
+        pool.options().clone(),
+    )
+    .expect("test profile");
     let result = work(&database).await;
     database.pool().close().await;
     result

@@ -30,7 +30,7 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
         Duration::ZERO,
         Duration::ZERO,
     )?;
-    let database = batter_runledger::RunledgerDatabase::connect_lazy(
+    let database = runledger_postgres::low_level::connect_database_lazy(
         options,
         profile,
         sqlx::postgres::PgPoolOptions::new().max_connections(1),

@@ -21,7 +21,7 @@ use batter_runlimit::{
     attempts::{AttemptRunner, Authentication},
     maintenance::{ExpiryMaintenance, MaintainedLimiter, register_in},
 };
-use batter_sqlx::{PgProfiledPool, PgQueryHandle, PgSessionProfile};
+use batter_sqlx::{PgQueryHandle, PgSessionProfile};
 use runlimit_core::{
     Check, FixedWindowPolicy, KeyHasher, PolicyId, QuotaPeriod, ScopeId, attempts::AttemptPolicy,
 };
@@ -165,7 +165,7 @@ async fn attempt_runner_future_erases_native_admission_and_completion() {
         Duration::ZERO,
     )
     .unwrap();
-    let database = PgProfiledPool::connect_lazy(
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
         profile,
         sqlx::postgres::PgPoolOptions::new().min_connections(0),

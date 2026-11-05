@@ -2,7 +2,7 @@ use super::{
     fixture,
     support::{Result, bounded, require},
 };
-use batter_sqlx::{PgProfiledPool, PgSessionProfile, run_atomic_profiled_in};
+use batter_sqlx::{PgSessionProfile, run_atomic_profiled_in};
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
@@ -16,11 +16,13 @@ async fn owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_poli
         let profile = PgSessionProfile::new(login, login, vec!["public".into()],
             Duration::from_secs(2), Duration::from_millis(250))?
             .with_setting("app.tenant", "expected")?;
-        let database = PgProfiledPool::connect_lazy((*options).clone(), profile,
+        let mut cleanup = batter_core::cleanup::CleanupStack::new();
+        let database = batter_sqlx::pool_in(cleanup.reserve("pool")?,
             PgPoolOptions::new().max_connections(1)
                 .after_connect(|_, _| Box::pin(async { panic!("replaced connect hook") }))
                 .before_acquire(|_, _| Box::pin(async { panic!("replaced acquire hook") }))
-                .after_release(|_, _| Box::pin(async { panic!("replaced release hook") })))?;
+                .after_release(|_, _| Box::pin(async { panic!("replaced release hook") })),
+            (*options).clone(), profile)?;
         let mut connection = bounded(database.pool().acquire()).await??;
         let original: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *connection).await?;
@@ -78,7 +80,10 @@ async fn owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_poli
             }).await
         }).await?;
         assert_eq!(observed, (login.into(), "public".into(), "expected".into()));
-        database.pool().close().await;
+        let budget = batter_core::cleanup::CleanupBudget::new(
+            Duration::from_secs(3), Duration::from_secs(3), Duration::from_secs(1))?;
+        assert!(cleanup.close(budget).await.is_success());
+        assert!(database.pool().is_closed());
         Ok(())
     }.await;
     fixture.finish(body).await

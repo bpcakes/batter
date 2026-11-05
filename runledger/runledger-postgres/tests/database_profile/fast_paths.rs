@@ -41,7 +41,7 @@ impl Fixture {
         .expect("profile")
         .with_setting("app.tenant", "tenant-one")
         .expect("tenant");
-        let database = RunledgerDatabase::connect_lazy(
+        let database = runledger_postgres::low_level::connect_database_lazy(
             (*options).clone(),
             profile,
             PgPoolOptions::new()

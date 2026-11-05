@@ -22,8 +22,8 @@ Unix-only application is not a reusable database framework.
   installation in Unix children. The shared collector lives in
   `crates/batter-otlp/tests/support/collector.rs` at the workspace root.
 - `src/runtime.rs` uses protected startup with library-owned signals, reserves a
-  cleanup slot before constructing the profiled database, and registers pool
-  close before yielding. `src/database.rs` declares direct-login/public policy;
+  cleanup slot before `database::configured` calls protected `pool_in`, which
+  registers close before returning the shared profiled database. `src/database.rs` declares direct-login/public policy;
   native preparation and `batter::runledger` registration share that pool. It owns PostgreSQL
   health sampling, installs the delivery handler and approves ordinary readiness
   after registered components acknowledge initialization. Its startup failures downcast to

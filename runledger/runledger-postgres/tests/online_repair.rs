@@ -80,7 +80,7 @@ fn relayed_database(pool: &PgPool, relay: &Relay) -> RunledgerDatabase {
         Duration::from_secs(5),
     )
     .expect("profile");
-    RunledgerDatabase::connect_lazy(
+    runledger_postgres::low_level::connect_database_lazy(
         relay.options.clone(),
         profile,
         sqlx::postgres::PgPoolOptions::new().max_connections(1),

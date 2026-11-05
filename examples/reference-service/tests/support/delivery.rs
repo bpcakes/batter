@@ -523,7 +523,7 @@ async fn assert_pool_timeout(options: PgConnectOptions, missing: &str) -> TestRe
             ("BATTER_REQUEST_TIMEOUT_MS", "1500"),
         ],
     );
-    let database = batter_example_reference_service::database::configured(
+    let database = batter_example_reference_service::database::low_level_configured(
         options,
         pool_timeout_settings.pool_options(),
     )?;
@@ -553,7 +553,7 @@ async fn assert_request_deadline(options: PgConnectOptions, missing: &str) -> Te
             ("BATTER_REQUEST_TIMEOUT_MS", "30"),
         ],
     );
-    let database = batter_example_reference_service::database::configured(
+    let database = batter_example_reference_service::database::low_level_configured(
         options,
         deadline_settings.pool_options(),
     )?;
@@ -584,7 +584,7 @@ async fn assert_bulkhead(options: PgConnectOptions, missing: &str) -> TestResult
             ("BATTER_BULKHEAD_CAPACITY", "1"),
         ],
     );
-    let database = batter_example_reference_service::database::configured(
+    let database = batter_example_reference_service::database::low_level_configured(
         options,
         bulkhead_settings.pool_options(),
     )?;

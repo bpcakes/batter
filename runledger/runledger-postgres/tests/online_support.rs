@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use runledger_postgres::{
-    MIGRATOR, MigrationTimeoutSetting, PgSessionProfile, RunledgerDatabase,
-    SchemaCompatibilityError,
+    MIGRATOR, MigrationTimeoutSetting, PgSessionProfile, SchemaCompatibilityError,
 };
 use runledger_test_support::{
     EphemeralDatabase, setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool,
@@ -191,7 +190,7 @@ async fn migrate_through_profile(
     profile: PgSessionProfile,
 ) -> Result<(), SchemaCompatibilityError> {
     let options = pool.connect_options();
-    let database = RunledgerDatabase::connect((*options).clone(), profile, 1)
+    let database = runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
         .await
         .expect("profiled database");
     let result = runledger_postgres::migrate_after_idempotency_cutover(&database).await;
