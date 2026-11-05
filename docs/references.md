@@ -6458,3 +6458,20 @@ the Cargo registry; no dependency version changed.
   the future and stores `JoinError::cancelled` (or a panic error if that drop
   panicked); an owner awaiting from another runtime receives that error, which
   `finish` returns as `CommandFailure::Coordinator` instead of panicking.
+
+
+## Managed-object release fence — 2026-11-05
+
+- PostgreSQL 18 [ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html):
+  adding the nonvolatile constant-default column under the already-held
+  `ACCESS EXCLUSIVE` lock changes the ledger shape transactionally.
+- PostgreSQL 18 [transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html):
+  apply uses READ COMMITTED after acquiring the shared session advisory lock;
+  each waiting applier sees the prior committed revision.
+- PostgreSQL 18 [explicit locking](https://www.postgresql.org/docs/18/explicit-locking.html):
+  session advisory locking spans migration and managed transaction boundaries;
+  transaction-held relation locks serialize verification and shape adoption.
+
+Local dependency remains SQLx 0.9.0; live validation server is PostgreSQL 18.6.
+This change adds no dependency. Application revision numbers are not derived from
+SQLx migration history.

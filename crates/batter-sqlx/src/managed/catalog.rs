@@ -110,6 +110,8 @@ async fn set_local(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LedgerShape {
     Exact,
+    /// The pre-release-fence, five-column ledger. Apply requires baseline adoption.
+    Legacy,
     /// Row-level security could hide or filter ledger rows.
     RowSecurity,
     /// The relation is an inheritance parent or child.
@@ -118,12 +120,13 @@ pub(crate) enum LedgerShape {
     Mismatch,
 }
 
-pub(crate) const LEDGER_COLUMNS: [(&str, &str); 5] = [
+pub(crate) const LEDGER_COLUMNS: [(&str, &str); 6] = [
     ("identity", "text"),
     ("kind", "text"),
     ("source_checksum", "bytea"),
     ("rendered_checksum", "bytea"),
     ("applied_at", "timestamptz"),
+    ("release_revision", "int8"),
 ];
 
 pub(crate) fn create_ledger_sql(ledger: &QualifiedName) -> String {
@@ -133,7 +136,8 @@ pub(crate) fn create_ledger_sql(ledger: &QualifiedName) -> String {
              kind pg_catalog.text NOT NULL,
              source_checksum pg_catalog.bytea NOT NULL,
              rendered_checksum pg_catalog.bytea NOT NULL,
-             applied_at pg_catalog.timestamptz NOT NULL)",
+             applied_at pg_catalog.timestamptz NOT NULL,
+             release_revision pg_catalog.int8 NOT NULL DEFAULT 0)",
         ledger.quoted()
     )
 }
@@ -188,7 +192,7 @@ pub(crate) async fn inspect_ledger_shape(
          JOIN pg_catalog.pg_type AS t ON t.oid = a.atttypid
          JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
          WHERE a.attrelid = $1::bigint::oid AND a.attnum > 0 AND NOT a.attisdropped
-         LIMIT 6",
+         LIMIT 7",
     )
     .bind(oid)
     .fetch_all(&mut *connection)
@@ -209,6 +213,8 @@ pub(crate) async fn inspect_ledger_shape(
     .await?;
     Ok(if shape_matches(&columns, &primary_keys) {
         LedgerShape::Exact
+    } else if shape_matches_columns(&columns, &primary_keys, &LEDGER_COLUMNS[..5]) {
+        LedgerShape::Legacy
     } else {
         LedgerShape::Mismatch
     })
@@ -218,8 +224,16 @@ pub(crate) fn shape_matches(
     columns: &[(String, String, String, bool)],
     primary_keys: &[Vec<String>],
 ) -> bool {
-    columns.len() == LEDGER_COLUMNS.len()
-        && LEDGER_COLUMNS.iter().all(|(name, ty)| {
+    shape_matches_columns(columns, primary_keys, &LEDGER_COLUMNS)
+}
+
+fn shape_matches_columns(
+    columns: &[(String, String, String, bool)],
+    primary_keys: &[Vec<String>],
+    expected: &[(&str, &str)],
+) -> bool {
+    columns.len() == expected.len()
+        && expected.iter().all(|(name, ty)| {
             columns.iter().any(|(column, schema, actual, not_null)| {
                 column == name && schema == "pg_catalog" && actual == ty && *not_null
             })
@@ -234,6 +248,7 @@ pub(crate) struct LedgerRow {
     pub(crate) kind: String,
     pub(crate) source_checksum: Vec<u8>,
     pub(crate) rendered_checksum: Vec<u8>,
+    pub(crate) release_revision: i64,
 }
 
 /// Read every ledger row, bounded by the manifest capacity plus the set row.
@@ -243,8 +258,8 @@ pub(crate) async fn load_ledger_rows(
 ) -> Result<Vec<LedgerRow>, CatalogError> {
     let limit = MAX_MANAGED_OBJECTS + 1;
     let rows =
-        sqlx::query_as::<_, (String, String, Vec<u8>, Vec<u8>)>(sqlx::AssertSqlSafe(format!(
-            "SELECT identity, kind, source_checksum, rendered_checksum
+        sqlx::query_as::<_, (String, String, Vec<u8>, Vec<u8>, i64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT identity, kind, source_checksum, rendered_checksum, release_revision
              FROM ONLY {} LIMIT {}",
             ledger.quoted(),
             limit + 1
@@ -258,11 +273,12 @@ pub(crate) async fn load_ledger_rows(
     Ok(rows
         .into_iter()
         .map(
-            |(identity, kind, source_checksum, rendered_checksum)| LedgerRow {
+            |(identity, kind, source_checksum, rendered_checksum, release_revision)| LedgerRow {
                 identity,
                 kind,
                 source_checksum,
                 rendered_checksum,
+                release_revision,
             },
         )
         .collect())

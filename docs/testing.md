@@ -761,7 +761,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the forty-eight-case [managed-object](#managed-routines-and-triggers)
+migration target, the fifty-two-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -4264,3 +4264,14 @@ The existing service suite retains diagnostic ordering and independent failures.
 local collector. The facade HTTP example uses the same protected path, including
 optional explicit OTLP selection. Executed results belong to `batter-m9rp`;
 fresh-agent implementation/modification evaluation remains unexecuted.
+
+
+Managed-object release fencing (`batter-ofom`) adds four live cases in
+`managed_objects_live/releases.rs`: ordered upgrade/reapply/conflict/rollback,
+a waiting older writer, atomic matching-baseline adoption, and missing/invalid
+release metadata. The existing application-cancellation and callback-integrity
+cases also assert the release column through complete ledger snapshots. Run
+`cargo test -p batter-sqlx --test managed_objects_live --locked -- --ignored --test-threads=1`
+with `BATTER_SQLX_ADMIN_URL` pointing to a disposable PostgreSQL 18 superuser
+endpoint. Provisioning stays outside the crate. The exact live inventory remains
+in `scripts/sqlx_live.py`; normal workspace gates leave these cases ignored.

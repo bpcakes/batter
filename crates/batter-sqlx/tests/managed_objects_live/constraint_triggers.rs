@@ -537,6 +537,7 @@ async fn managed_trigger_kind_changes_converge_in_both_directions() -> Result {
             (&constraint, true, "constraint_trigger"),
             (&plain, false, "trigger"),
         ] {
+            let objects = fixture.next_release(&objects.manifest)?;
             let applied = fixture.apply(&migrator, &objects.manifest).await?;
             require!(
                 applied.created_or_replaced() == 1 && applied.unchanged() == 1,

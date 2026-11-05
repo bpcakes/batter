@@ -29,6 +29,13 @@ or logging, preserving the existing code, kind and outcome precedence. This
 addresses panic-payload disclosure during the handler-result transition; the
 broader execution and heartbeat protocol remains unchanged.
 
+Q05/Q07 gain a protected release transition in `batter-ofom`: every manifest
+requires a validated revision; the locked managed owner refuses downgrades and
+conflicting same-revision content, then commits revision and objects together.
+Matching legacy baseline adoption fences older exact-shape readers. Verification
+checks revision and content. The broader installation/reconciliation protocols
+remain; this does not mark either entire family resolved.
+
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease
 protocols, and outcome retention. Many are private

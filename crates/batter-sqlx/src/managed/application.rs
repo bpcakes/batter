@@ -154,7 +154,7 @@ fn native(error: sqlx::Error) -> ManagedApplyError {
 #[derive(PartialEq, Eq)]
 struct State {
     ledger: i64,
-    rows: BTreeMap<String, (String, Vec<u8>, Vec<u8>)>,
+    rows: BTreeMap<String, (String, Vec<u8>, Vec<u8>, i64)>,
     times: BTreeMap<String, String>,
     live: BTreeMap<String, catalog::LiveObject>,
     definitions: Vec<(String, i64, [u8; 32])>,
@@ -183,7 +183,12 @@ impl State {
             .map(|row| {
                 (
                     row.identity,
-                    (row.kind, row.source_checksum, row.rendered_checksum),
+                    (
+                        row.kind,
+                        row.source_checksum,
+                        row.rendered_checksum,
+                        row.release_revision,
+                    ),
                 )
             })
             .collect();
@@ -261,6 +266,7 @@ async fn public_policy_holds(
 mod tests {
     use super::super::ManagedObject;
     use super::*;
+    use crate::managed::ManagedRevision;
     use crate::verification::{QualifiedName, RoutineSignature};
     use std::error::Error;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -296,6 +302,7 @@ mod tests {
     #[test]
     fn unpolled_application_work_is_small_send_and_inert() {
         let manifest = ManagedObjectManifest::new(
+            ManagedRevision::new(1).expect("valid revision"),
             QualifiedName::new("app", "objects").unwrap(),
             PublicExecute::Revoke,
             [ManagedObject::function(

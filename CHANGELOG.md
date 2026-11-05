@@ -8,6 +8,52 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** managed-object manifests require an explicit positive
+  `ManagedRevision` (`batter-ofom`). A locked ledger rejects lower revisions and
+  equal revisions with different content; identical reapplication remains allowed.
+  Receipts expose the committed revision and verification checks it separately
+  from the content digest.
+
+  ```rust,ignore
+  // Before:
+  let manifest = ManagedObjectManifest::new(ledger, policy, objects, retirements)?;
+  // After: choose a monotonically increasing application release number.
+  let revision = ManagedRevision::new(42).expect("positive signed-bigint revision");
+  let manifest = ManagedObjectManifest::new(revision, ledger, policy, objects, retirements)?;
+  ```
+
+  Existing five-column ledgers require a baseline release with the same manifest
+  digest. Its transaction adds `release_revision`; older library builds then
+  refuse the six-column shape. Deploy the baseline before changing managed
+  content. Rolling back content requires a new, higher revision. SQLx migrations
+  run before this guard and may already have committed when apply is refused.
+  No deprecated constructor shim is retained: inferring a revision would restore
+  unordered writes, and Rust cannot overload `new` by arity.
+
+  `ManagedApplyError::Release(ManagedReleaseError)` and
+  `FindingKind::ManagedObjectRevisionMismatch` add exhaustive outcomes. Extend
+  existing exhaustive matches (their other arms remain unchanged):
+
+  ```rust,ignore
+  // Before:
+  match error { /* all previous ManagedApplyError arms */ }
+  match finding.kind { /* all previous FindingKind arms */ }
+  // After:
+  match error {
+      ManagedApplyError::Release(reason) => handle_release_refusal(reason),
+      /* all previous ManagedApplyError arms */
+  }
+  match finding.kind {
+      FindingKind::ManagedObjectRevisionMismatch => reject_stale_release(),
+      /* all previous FindingKind arms */
+  }
+  ```
+
+  No shim can preserve an old exhaustive match while exposing these new states;
+  mapping them to an unrelated error would hide the release decision. See
+  [the release-fence evidence](docs/evidence/managed-release-fence-2026-11-05.md).
+
+
 - Add `OperationContext::run_tracked`, whose exhaustive `TrackedOperationError`
   separates opaque `NotStarted` evidence from interruption after factory
   invocation. Add `child_until(Instant)` for a parent-clamped absolute child

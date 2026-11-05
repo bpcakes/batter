@@ -20,8 +20,12 @@ pub enum VerificationStatus {
 /// managed-object variants, from `MissingManagedObjectLedger` through
 /// `ManagedObjectPublicExecute`; they occur only when a plan selects a
 /// managed-object manifest.
+/// Migration: exhaustive matches on `FindingKind` must also handle
+/// `ManagedObjectRevisionMismatch` for release-fenced managed manifests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FindingKind {
+    /// The installed managed release revision differs or has invalid metadata.
+    ManagedObjectRevisionMismatch,
     /// A required migration version has no ledger row.
     MissingMigration,
     /// A required migration's ledger checksum differs from the expected one.

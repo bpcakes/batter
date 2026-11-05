@@ -732,6 +732,25 @@ and session advisory locks. Provisioning stays external.
 
 ## Managed routines and triggers
 
+Every manifest declares a positive `ManagedRevision` (at most `i64::MAX`).
+The application assigns its ordering; it is independent of SQLx migration
+versions and of the content digest. Apply rejects a lower revision and rejects
+the same revision with different content before managed DDL or application SQL.
+The same revision/content can repair drift; a higher revision can install new
+content or explicitly restore older source. Verification requires the expected
+revision as well as the expected content.
+
+Existing five-column ledgers require a baseline rollout: first deploy this
+library with the **currently recorded manifest**, unchanged, and its declared
+revision. Successful apply adds the release column in the same transaction;
+pre-fence library versions then reject that ledger's shape. A mismatching
+baseline returns `ManagedReleaseError::LegacyBaselineRequired` and changes no
+managed objects. Deploy changed content only after baseline adoption. Do not
+remove the release column to roll back; ship the desired source at a higher
+revision. SQLx migrations run before this gate and may already have committed
+when apply is refused. Direct administrative SQL and arbitrary application
+migration code are outside the managed release fence.
+
 A routine body kept as a copy inside append-only migrations hides every change
 in a restated whole definition, and two branches that restate one routine race
 silently. `batter_sqlx::managed` keeps routines and the triggers and
@@ -742,7 +761,7 @@ Migrations keep tables, columns, constraints, policies and data changes. See
 
 ```rust,no_run
 use batter_core::operation::OperationContext;
-use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, PublicExecute}};
+use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute}};
 use batter_sqlx::verification::{
     Identifier, QualifiedName, RoutineSignature, SqlxMigrationManifest, VerificationPlan,
     VerificationStatus, verify,
@@ -751,6 +770,7 @@ use batter_sqlx::verification::{
 #     migrator: &sqlx::migrate::Migrator, migrations: &SqlxMigrationManifest)
 #     -> Result<(), Box<dyn std::error::Error>> {
 let objects = ManagedObjectManifest::new(
+    ManagedRevision::new(1).expect("positive release revision"),
     QualifiedName::new("app", "managed_objects")?,
     PublicExecute::Revoke,
     [
@@ -834,7 +854,7 @@ keyed by the ledger spans the migrator and one apply transaction, which:
 creates the ledger when absent and locks it `ACCESS EXCLUSIVE`, refusing any
 relation that is not exactly `identity text PRIMARY KEY`, `kind text`,
 `source_checksum bytea`, `rendered_checksum bytea` and
-`applied_at timestamptz`, all `NOT NULL`, without row security or inheritance;
+`applied_at timestamptz` and `release_revision bigint`, all `NOT NULL`, without row security or inheritance;
 drops retired triggers of both kinds, then retired routines, that still exist
 as the retired kind (never `CASCADE`); executes each entry that is new, changed
 or drifted, routines before triggers of both kinds, under
@@ -974,9 +994,9 @@ declared trigger onto every partition. Only the declared table's own definition
 and enabled state are hashed, so a clone disabled on one partition is not
 drift. The drop's lock covers every partition until commit. A clone cannot be
 declared or retired on a partition; declare and retire it on the partitioned
-table. Installation
-is last-writer-wins across releases, and a PostgreSQL upgrade that changes
-deparsed text reports drift until the next apply. Lexical validation does not
+table. Installation enforces the manifest release revision under the ledger
+lock. A PostgreSQL upgrade that changes deparsed text reports drift until the
+next apply. Lexical validation does not
 prove a body correct. The runnable consumer is
 [`examples/postgres-lifecycle`](../../examples/postgres-lifecycle/src/schema.rs).
 
