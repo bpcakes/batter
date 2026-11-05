@@ -149,9 +149,15 @@ async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
     assert_eq!(eventual.failures.len(), 1);
 }
 
+#[derive(Clone, Copy)]
+enum PollOutcome {
+    Return,
+    Panic,
+}
+
 struct ObservedFuture {
     polls: Arc<std::sync::atomic::AtomicUsize>,
-    panic_in_poll: bool,
+    outcome: PollOutcome,
 }
 
 impl Future for ObservedFuture {
@@ -159,7 +165,10 @@ impl Future for ObservedFuture {
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<u32> {
         self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        assert!(!self.panic_in_poll, "original poll failure");
+        assert!(
+            !matches!(self.outcome, PollOutcome::Panic),
+            "original poll failure"
+        );
         Poll::Ready(42)
     }
 }
@@ -170,7 +179,7 @@ impl Drop for ObservedFuture {
     }
 }
 
-fn observed_future_is_retained_without_repolling(panic_in_poll: bool) {
+fn observed_future_is_retained_without_repolling(outcome: PollOutcome) {
     use std::{
         sync::atomic::{AtomicUsize, Ordering},
         task::Waker,
@@ -178,11 +187,11 @@ fn observed_future_is_retained_without_repolling(panic_in_poll: bool) {
     let polls = Arc::new(AtomicUsize::new(0));
     let mut future = Guarded::new(Box::pin(ObservedFuture {
         polls: polls.clone(),
-        panic_in_poll,
+        outcome,
     }));
     let mut cx = Context::from_waker(Waker::noop());
     let result = Pin::new(&mut future).poll(&mut cx);
-    if panic_in_poll {
+    if matches!(outcome, PollOutcome::Panic) {
         let Poll::Ready(Err(ManagedFailure::Panicked(payload))) = result else {
             panic!("poll panic must be retained");
         };
@@ -214,10 +223,10 @@ fn observed_future_is_retained_without_repolling(panic_in_poll: bool) {
 
 #[test]
 fn successful_future_is_never_repolled_and_retains_destruction_failure() {
-    observed_future_is_retained_without_repolling(false);
+    observed_future_is_retained_without_repolling(PollOutcome::Return);
 }
 
 #[test]
 fn panicked_future_is_never_repolled_and_retains_destruction_failure() {
-    observed_future_is_retained_without_repolling(true);
+    observed_future_is_retained_without_repolling(PollOutcome::Panic);
 }
