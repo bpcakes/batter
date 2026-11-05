@@ -60,6 +60,40 @@ Executed locally on Linux with pinned Rust 1.98.1:
   real worker execution. Its log is `/tmp/batter-nhu5-verify.log`; the owning Bead
   records the delivered commit. Only verification prose changed after that run.
 
+The original verification at `52a9a52634f51a90fd925031a7ae9b09826a25da`
+did **not** execute the migrated lifecycle example's ignored live tests and real
+PostgreSQL executable smokes, grants maintenance cases, or reference startup
+waiter/owner-loss live tests. Compilation and the HTTP smokes are not evidence
+for those paths. The post-panel repair requires the existing targets below on
+a disposable PostgreSQL 18 cluster; execution results, server version, delivered
+commit and controller receipts are recorded in the owning `batter-nhu5` Bead.
+The lifecycle tests and smokes use separate disposable databases, and the grants
+and reference harnesses retain their own fixture ownership.
+
+```sh
+# DATABASE_URL selects a disposable database for each lifecycle invocation.
+cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked \
+  tests::live:: -- --ignored --test-threads=1
+cargo build -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked
+python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle
+python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --signal SIGINT
+# BATTER_SQLX_ADMIN_URL selects a disposable PostgreSQL 18 superuser endpoint.
+cargo test -p batter --features runledger,runlimit-postgres --test grants_live --locked \
+  maintenance_cases:: -- --ignored --test-threads=1
+# POSTGRES_TEST_ADMIN_URL selects a disposable local endpoint with sslmode=disable.
+cargo test -p batter-example-reference-service --test reference_live --locked \
+  protected_startup_waiter_loss -- --ignored --exact --test-threads=1
+cargo test -p batter-example-reference-service --test reference_live --locked \
+  protected_startup_owner_loss -- --ignored --exact --test-threads=1
+```
+
+Expected execution is four lifecycle tests, two signal smokes, two restricted
+maintenance tests (both limiter families), and two reference startup-loss tests.
+Adjust the smoke binary path when using an external `CARGO_TARGET_DIR`. The
+[testing inventory](../testing.md) distinguishes canonical profiled coverage from
+the older native escape-path suite. Documentation-only follow-ups reuse the
+successful full matrix above; a source change requires a new full run.
+
 No macOS or fresh-agent consumer evaluation is claimed. Hosted CI is separate.
 
 ## Public API comparison
