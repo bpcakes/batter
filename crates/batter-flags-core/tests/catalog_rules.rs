@@ -146,13 +146,16 @@ fn retired_names_are_validated_and_never_in_use() {
     assert_eq!(catalog.retired()[0].migration_note(), "set FLAG_X instead");
 }
 
-#[test]
-fn invariants_name_this_catalog_and_hold_at_the_defaults() {
-    let mut other = vocabulary_builder();
-    let foreign = other
-        .mode_flag("payments_v2", Toggle::Off)
-        .declare()
-        .unwrap();
+/// A catalog with the flags the relationship tests relate.
+struct Related {
+    builder: CatalogBuilder,
+    payments: batter_flags_core::ModeFlag<Toggle>,
+    on_by_default: batter_flags_core::ModeFlag<Toggle>,
+    fast_path: batter_flags_core::ModeFlag<Toggle>,
+    checkout: batter_flags_core::ModeFlag<Checkout>,
+}
+
+fn related() -> Related {
     let mut builder = vocabulary_builder();
     let payments = builder
         .mode_flag("payments_v2", Toggle::Off)
@@ -162,17 +165,62 @@ fn invariants_name_this_catalog_and_hold_at_the_defaults() {
         .mode_flag("legacy_api", Toggle::On)
         .declare()
         .unwrap();
+    let fast_path = builder
+        .mode_flag("fast_path", Toggle::Off)
+        .declare()
+        .unwrap();
+    let checkout = style(&mut builder).declare().unwrap();
+    Related {
+        builder,
+        payments,
+        on_by_default,
+        fast_path,
+        checkout,
+    }
+}
 
-    let foreign = style(&mut builder)
-        .requires(Checkout::Express, &foreign, Toggle::On)
-        .declare();
+#[test]
+fn a_relationship_names_this_catalog_and_two_different_flags() {
+    let mut other = vocabulary_builder();
+    let foreign = other
+        .mode_flag("payments_v2", Toggle::Off)
+        .declare()
+        .unwrap();
+    let Related {
+        mut builder,
+        checkout,
+        ..
+    } = related();
+
+    // A handle of another catalog, on either side.
+    let foreign_other = builder.requires(&checkout, Checkout::Express, &foreign, Toggle::On);
     assert!(
-        matches!(foreign, Err(BuildError::ForeignHandle { handle, .. }) if handle.as_str() == "payments_v2")
+        matches!(foreign_other, Err(BuildError::ForeignHandle { handle, .. }) if handle.as_str() == "payments_v2")
     );
-    let duplicate = style(&mut builder)
-        .requires(Checkout::Express, &payments, Toggle::On)
-        .requires(Checkout::Express, &payments, Toggle::On)
-        .declare();
+    let foreign_flag = builder.requires(&foreign, Toggle::On, &checkout, Checkout::Express);
+    assert!(
+        matches!(foreign_flag, Err(BuildError::ForeignHandle { key, .. }) if key.as_str() == "payments_v2")
+    );
+    // A flag cannot be related to itself.
+    let itself = builder.requires(&checkout, Checkout::Express, &checkout, Checkout::Express);
+    assert!(
+        matches!(itself, Err(BuildError::SelfInvariant { key }) if key.as_str() == "checkout_style")
+    );
+}
+
+#[test]
+fn a_relationship_must_hold_at_the_code_defaults_and_be_stated_once() {
+    let Related {
+        mut builder,
+        payments,
+        on_by_default,
+        fast_path,
+        checkout,
+    } = related();
+    builder
+        .requires(&checkout, Checkout::Express, &payments, Toggle::On)
+        .unwrap();
+    let duplicate = builder.requires(&checkout, Checkout::Express, &payments, Toggle::On);
     assert!(matches!(
         duplicate,
         Err(BuildError::DuplicateInvariant {
@@ -180,9 +228,7 @@ fn invariants_name_this_catalog_and_hold_at_the_defaults() {
             ..
         })
     ));
-    let requires = style(&mut builder)
-        .requires(Checkout::Classic, &payments, Toggle::On)
-        .declare();
+    let requires = builder.requires(&checkout, Checkout::Classic, &payments, Toggle::On);
     assert!(matches!(
         requires,
         Err(BuildError::DefaultsViolateInvariant {
@@ -190,9 +236,7 @@ fn invariants_name_this_catalog_and_hold_at_the_defaults() {
             ..
         })
     ));
-    let conflicts = style(&mut builder)
-        .conflicts(Checkout::Classic, &on_by_default, Toggle::On)
-        .declare();
+    let conflicts = builder.conflicts(&checkout, Checkout::Classic, &on_by_default, Toggle::On);
     assert!(matches!(
         conflicts,
         Err(BuildError::DefaultsViolateInvariant {
@@ -200,10 +244,7 @@ fn invariants_name_this_catalog_and_hold_at_the_defaults() {
             ..
         })
     ));
-    let both = builder
-        .mode_flag("fast_path", Toggle::Off)
-        .both_or_none(&on_by_default)
-        .declare();
+    let both = builder.both_or_none(&fast_path, &on_by_default);
     assert!(matches!(
         both,
         Err(BuildError::DefaultsViolateInvariant {
@@ -211,11 +252,22 @@ fn invariants_name_this_catalog_and_hold_at_the_defaults() {
             ..
         })
     ));
+}
 
-    style(&mut builder)
-        .requires(Checkout::Express, &payments, Toggle::On)
-        .conflicts(Checkout::Express, &on_by_default, Toggle::On)
-        .declare()
+#[test]
+fn relationships_are_stored_sorted_on_the_flag_they_were_stated_on() {
+    let Related {
+        mut builder,
+        payments,
+        on_by_default,
+        checkout,
+        ..
+    } = related();
+    builder
+        .requires(&checkout, Checkout::Express, &payments, Toggle::On)
+        .unwrap();
+    builder
+        .conflicts(&checkout, Checkout::Express, &on_by_default, Toggle::On)
         .unwrap();
     let catalog = builder.build().unwrap();
     let invariants = catalog.declaration("checkout_style").unwrap().invariants();
@@ -299,10 +351,7 @@ fn flag_value_types_are_checked_at_declaration() {
         .declare()
         .unwrap();
     let toggle = builder.mode_flag("toggle", Toggle::Off).declare().unwrap();
-    let when = builder
-        .mode_flag("a", Partial::Listed)
-        .requires(Partial::Unlisted, &toggle, Toggle::On)
-        .declare();
+    let when = builder.requires(&partial, Partial::Unlisted, &toggle, Toggle::On);
     assert!(matches!(
         when,
         Err(BuildError::UndeclaredVariant {
@@ -310,10 +359,7 @@ fn flag_value_types_are_checked_at_declaration() {
             ..
         })
     ));
-    let other = builder
-        .mode_flag("a", Toggle::Off)
-        .requires(Toggle::On, &partial, Partial::Unlisted)
-        .declare();
+    let other = builder.requires(&toggle, Toggle::On, &partial, Partial::Unlisted);
     assert!(
         matches!(other, Err(BuildError::UndeclaredVariant { flag, variant: "unlisted", .. }) if flag.as_str() == "partial")
     );
@@ -376,19 +422,17 @@ fn typed_values_keep_their_identity() {
         .unwrap();
     let toggle = builder.mode_flag("toggle", Toggle::Off).declare().unwrap();
     // So are aliased values on either side of an invariant and in required settings.
-    let when = builder
-        .mode_flag("a", Shadowed::First)
-        .requires(Shadowed::Shadow, &toggle, Toggle::On)
-        .declare();
+    let subject = builder
+        .mode_flag("subject", Shadowed::First)
+        .declare()
+        .unwrap();
+    let when = builder.requires(&subject, Shadowed::Shadow, &toggle, Toggle::On);
     assert!(matches!(
         when,
         Err(BuildError::AliasedValue { key, flag, variant: "first" })
-            if key.as_str() == "a" && flag.as_str() == "a"
+            if key.as_str() == "subject" && flag.as_str() == "subject"
     ));
-    let other = builder
-        .mode_flag("a", Toggle::Off)
-        .conflicts(Toggle::On, &shadowed, Shadowed::Shadow)
-        .declare();
+    let other = builder.conflicts(&toggle, Toggle::On, &shadowed, Shadowed::Shadow);
     assert!(matches!(
         other,
         Err(BuildError::AliasedValue { flag, variant: "first", .. }) if flag.as_str() == "shadowed"
@@ -405,11 +449,13 @@ fn typed_values_keep_their_identity() {
         })
     ));
     // The value that owns the name is accepted in each position.
-    builder
-        .mode_flag("a", Shadowed::Second)
-        .requires(Shadowed::First, &toggle, Toggle::Off)
+    let accepted = builder
+        .mode_flag("accepted", Shadowed::Second)
         .requires_settings(Shadowed::First, &["PAYMENT_URL"])
         .declare()
+        .unwrap();
+    builder
+        .requires(&accepted, Shadowed::First, &toggle, Toggle::Off)
         .unwrap();
 }
 
@@ -423,15 +469,13 @@ fn required_absence_combines_with_ownership_and_class_restrictions() {
     builder
         .mode_flag("debug_panel", Toggle::Off)
         .only_in(&development)
-        .absence(batter_flags_core::Absence::Required)
+        .required()
         .declare()
         .unwrap();
     builder
         .mode_flag("serving_mode", Toggle::Off)
-        .owners(batter_flags_core::Owners::Only(std::slice::from_ref(
-            &serving,
-        )))
-        .absence(batter_flags_core::Absence::Required)
+        .owned_only_by(&serving)
+        .required()
         .declare()
         .unwrap();
     let catalog = builder.build().unwrap();

@@ -4,8 +4,8 @@ use crate::{
     builder::CatalogBuilder,
     date::Expiry,
     declaration::{
-        Absence, Entry, FlipDiscipline, GoverningSwitch, Invariant, InvariantRule, Kind,
-        OwnedOwners, Owners, RequiredSettings, SafeState, StaleRule,
+        Absence, Entry, FlipDiscipline, GoverningSwitch, Kind, OwnedOwners, RequiredSettings,
+        SafeState, StaleRule,
     },
     digest::DeclarationFingerprint,
     error::BuildError,
@@ -35,13 +35,12 @@ pub(super) struct Draft<'b> {
     variants: &'static [&'static str],
     error: Option<BuildError>,
     owners: Option<OwnedOwners>,
-    pinned_by: Option<Box<[ProcessKind]>>,
+    pinned_by: Vec<ProcessKind>,
     only_in: Option<EnvironmentClass>,
-    absence: Option<Absence>,
-    flip_discipline: Option<FlipDiscipline>,
+    absence: Absence,
+    flip_discipline: FlipDiscipline,
     governed_by: Option<GoverningSwitch>,
     requires_settings: Vec<RequiredSettings>,
-    invariants: Vec<Invariant>,
 }
 
 impl<'b> Draft<'b> {
@@ -60,13 +59,12 @@ impl<'b> Draft<'b> {
             variants,
             error: None,
             owners: None,
-            pinned_by: None,
+            pinned_by: Vec::new(),
             only_in: None,
-            absence: None,
-            flip_discipline: None,
+            absence: Absence::Default,
+            flip_discipline: FlipDiscipline::Rolling,
             governed_by: None,
             requires_settings: Vec::new(),
-            invariants: Vec::new(),
         }
     }
 
@@ -87,30 +85,37 @@ impl<'b> Draft<'b> {
         self.fail(|key| BuildError::RepeatedCall { key, method });
     }
 
-    pub(super) fn owners(&mut self, owners: Owners<'_>) {
-        if self.owners.is_some() {
-            return self.repeated("owners");
+    /// Restricts ownership to `kind`. The typed builder offers this once, so
+    /// there is no earlier choice to replace, and it can never be empty.
+    pub(super) fn owned_only_by(&mut self, kind: &ProcessKind) {
+        if !self.foreign(kind) {
+            self.owners = Some(OwnedOwners::Only(Box::new([kind.clone()])));
         }
-        let owned = match owners {
-            Owners::All => OwnedOwners::All,
-            Owners::Only([]) => return self.fail(|key| BuildError::EmptyOwners { key }),
-            Owners::Only(kinds) => match self.checked_kinds(kinds) {
-                Some(kinds) => OwnedOwners::Only(kinds),
-                None => return,
-            },
-        };
-        self.owners = Some(owned);
     }
 
-    pub(super) fn pinned_by(&mut self, kinds: &[ProcessKind]) {
-        if self.pinned_by.is_some() {
-            return self.repeated("pinned_by");
+    /// Adds an owner to a restricted declaration. Adding one already listed
+    /// changes nothing.
+    pub(super) fn add_owner(&mut self, kind: &ProcessKind) {
+        if self.foreign(kind) {
+            return;
         }
-        if kinds.is_empty() {
-            return self.fail(|key| BuildError::EmptyPinnedBy { key });
+        if let Some(OwnedOwners::Only(owners)) = &mut self.owners
+            && !owners.contains(kind)
+        {
+            let mut listed = std::mem::take(owners).into_vec();
+            listed.push(kind.clone());
+            listed.sort_unstable_by(|left, right| left.name().cmp(right.name()));
+            *owners = listed.into_boxed_slice();
         }
-        if let Some(kinds) = self.checked_kinds(kinds) {
-            self.pinned_by = Some(kinds);
+    }
+
+    /// Adds a kind that may resolve pins without owning. Adding one already
+    /// listed changes nothing.
+    pub(super) fn add_pin_reader(&mut self, kind: &ProcessKind) {
+        if !self.foreign(kind) && !self.pinned_by.contains(kind) {
+            self.pinned_by.push(kind.clone());
+            self.pinned_by
+                .sort_unstable_by(|left, right| left.name().cmp(right.name()));
         }
     }
 
@@ -127,18 +132,12 @@ impl<'b> Draft<'b> {
         self.only_in = Some(class.clone());
     }
 
-    pub(super) fn absence(&mut self, absence: Absence) {
-        if self.absence.is_some() {
-            return self.repeated("absence");
-        }
-        self.absence = Some(absence);
+    pub(super) fn require_absence(&mut self) {
+        self.absence = Absence::Required;
     }
 
-    pub(super) fn flip_discipline(&mut self, discipline: FlipDiscipline) {
-        if self.flip_discipline.is_some() {
-            return self.repeated("flip_discipline");
-        }
-        self.flip_discipline = Some(discipline);
+    pub(super) fn coordinate(&mut self) {
+        self.flip_discipline = FlipDiscipline::Coordinated;
     }
 
     pub(super) fn governed_by(&mut self, switch: &KillSwitch) {
@@ -210,66 +209,6 @@ impl<'b> Draft<'b> {
         });
     }
 
-    pub(super) fn invariant(
-        &mut self,
-        rule: InvariantRule,
-        (variant, default): (&'static str, &'static str),
-        other: &Handle,
-        other_variant: &'static str,
-    ) {
-        if other.catalog() != self.builder.id {
-            return self.fail(|key| BuildError::ForeignHandle {
-                key,
-                handle: other.key().clone(),
-            });
-        }
-        let Some(key) = self.key().cloned() else {
-            return;
-        };
-        if !self.variants.contains(&variant) {
-            return self.fail(|key| BuildError::UndeclaredVariant {
-                flag: key.clone(),
-                key,
-                variant,
-            });
-        }
-        if !self.builder.entries[other.index()]
-            .variants
-            .contains(&other_variant)
-        {
-            return self.fail(|key| BuildError::UndeclaredVariant {
-                key,
-                flag: other.key().clone(),
-                variant: other_variant,
-            });
-        }
-        let invariant = Invariant {
-            rule,
-            flag: key,
-            variant,
-            other: other.key().clone(),
-            other_variant,
-        };
-        if self.invariants.contains(&invariant) {
-            return self.fail(|key| BuildError::DuplicateInvariant {
-                key,
-                rule,
-                other: other.key().clone(),
-            });
-        }
-        let other_default = self.builder.entries[other.index()]
-            .default_variant
-            .unwrap_or_default();
-        if !invariant.holds(default, other_default) {
-            return self.fail(|key| BuildError::DefaultsViolateInvariant {
-                key,
-                rule,
-                other: other.key().clone(),
-            });
-        }
-        self.invariants.push(invariant);
-    }
-
     /// Validates the declaration against the catalog so far, records it and
     /// returns its handle.
     pub(super) fn finish(self, shape: &Shape) -> Result<Handle, BuildError> {
@@ -286,7 +225,7 @@ impl<'b> Draft<'b> {
             return Err(BuildError::RetiredNameInUse { name: setting_name });
         }
         let owners = self.owners.unwrap_or(OwnedOwners::All);
-        let pinned_by = self.pinned_by.unwrap_or_default();
+        let pinned_by = self.pinned_by.into_boxed_slice();
         check_pinned_by(&key, &owners, &pinned_by)?;
         if let Some(switch) = &self.governed_by {
             let switch_owners = &builder.entries[switch.index].owners;
@@ -294,8 +233,6 @@ impl<'b> Draft<'b> {
         }
         let mut requires_settings = self.requires_settings;
         requires_settings.sort_unstable_by_key(|required| required.variant);
-        let mut invariants = self.invariants;
-        invariants.sort_unstable();
         let fingerprint = DeclarationFingerprint::compute(
             key.as_str(),
             shape.kind.as_str(),
@@ -309,57 +246,53 @@ impl<'b> Draft<'b> {
             value_type: shape.value_type,
             variants: shape.variants,
             default_variant: shape.default_variant,
-            absence: self.absence.unwrap_or(Absence::Default),
+            absence: self.absence,
             owners,
             pinned_by,
             only_in: self.only_in,
             expiry: shape.expiry,
-            flip_discipline: self.flip_discipline.unwrap_or(FlipDiscipline::Rolling),
+            flip_discipline: self.flip_discipline,
             safe_state: shape.safe_state,
             stale_rule: shape.stale_rule,
             governed_by: self.governed_by,
             requires_settings: requires_settings.into_boxed_slice(),
-            invariants: invariants.into_boxed_slice(),
+            invariants: Box::default(),
             fingerprint,
         });
         builder.keys.insert(key.clone(), index);
-        Ok(Handle::new(builder.id, index, key, fingerprint))
+        Ok(Handle::new(
+            builder.id,
+            index,
+            key,
+            fingerprint,
+            (shape.kind, shape.value_type),
+        ))
     }
 
-    fn checked_kinds(&mut self, kinds: &[ProcessKind]) -> Option<Box<[ProcessKind]>> {
-        for (index, kind) in kinds.iter().enumerate() {
-            if kind.catalog() != self.builder.id {
-                self.fail(|key| BuildError::ForeignProcessKind {
-                    key,
-                    kind: Box::from(kind.name()),
-                });
-                return None;
-            }
-            if kinds[..index].contains(kind) {
-                self.fail(|key| BuildError::DuplicateKind {
-                    key,
-                    kind: Box::from(kind.name()),
-                });
-                return None;
-            }
+    /// Records a kind of another catalog as this declaration's error.
+    fn foreign(&mut self, kind: &ProcessKind) -> bool {
+        let foreign = kind.catalog() != self.builder.id;
+        if foreign {
+            self.fail(|key| BuildError::ForeignProcessKind {
+                key,
+                kind: Box::from(kind.name()),
+            });
         }
-        let mut sorted = kinds.to_vec();
-        sorted.sort_unstable_by(|left, right| left.name().cmp(right.name()));
-        Some(sorted.into_boxed_slice())
+        foreign
     }
 }
 
+/// A pin reader that already owns the flag is a likely mistake: an owner can
+/// resolve pins, and listing it again would not say which was meant.
 fn check_pinned_by(
     key: &FlagKey,
     owners: &OwnedOwners,
     pinned_by: &[ProcessKind],
 ) -> Result<(), BuildError> {
-    if pinned_by.is_empty() {
-        return Ok(());
-    }
-    if matches!(owners, OwnedOwners::All) {
-        return Err(BuildError::PinnedByWithAllOwners { key: key.clone() });
-    }
+    debug_assert!(
+        pinned_by.is_empty() || matches!(owners, OwnedOwners::Only(_)),
+        "pin readers exist only on a declaration restricted to some kinds"
+    );
     match pinned_by.iter().find(|kind| owners.contains(kind)) {
         Some(kind) => Err(BuildError::PinnedByOwner {
             key: key.clone(),

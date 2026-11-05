@@ -40,7 +40,8 @@ impl Kind {
 /// What an absent setting means in declared mode, judged only where a value
 /// may be presented: in an owning process kind and, for an `only_in` flag,
 /// inside its class. Elsewhere the setting must be absent and its absence is
-/// never an error, so `Owners::Only` and `only_in` combine with either variant.
+/// never an error, so a restricted owner list and `only_in` combine with either
+/// variant.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -97,9 +98,9 @@ impl FlipDiscipline {
 /// The state a kill switch serves where no entry exists for it.
 ///
 /// In declared mode that is an absent setting. In control-plane mode it is
-/// the state before the first publication, for an absent or archived row and
-/// for a held entry with no last published state, beneath the settings floor
-/// and the stale rule.
+/// the state before the first publication, for an absent row (a store loads an
+/// archived key as absent) and for a held entry with no last published state,
+/// beneath the settings floor and the stale rule.
 ///
 /// Hazard: `Engaged`, whatever the stale rule, engages the switch on every
 /// process that starts during a control-plane outage without a usable
@@ -156,18 +157,17 @@ impl StaleRule {
     }
 }
 
-/// Which process kinds own a declaration.
+/// Which process kinds own a declaration, as [`Declared::owners`] reports it.
 ///
 /// Ownership governs where a value may be presented, which control-plane
 /// entries apply and where the flag evaluates live. A kind that does not own
 /// a flag and is not listed in its `pinned_by` neither evaluates nor resolves
-/// it.
+/// it. A declaration is restricted with `owned_only_by`; this only reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Owners<'a> {
     /// Every process kind owns the declaration.
     All,
-    /// Only the listed kinds own it; the list must be non-empty and
-    /// duplicate-free.
+    /// Only the listed kinds own it: never none, and none twice.
     Only(&'a [ProcessKind]),
 }
 

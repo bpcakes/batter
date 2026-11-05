@@ -65,7 +65,8 @@ pub enum BuildError {
         /// The repeated key.
         key: FlagKey,
     },
-    /// A declaration setter was called twice.
+    /// A setter that can be set once, `only_in` or `governed_by`, was called
+    /// twice. A second value would silently replace the first, so it is refused.
     #[error("flag {key}: {method} was called twice")]
     RepeatedCall {
         /// The declaration being built.
@@ -98,33 +99,13 @@ pub enum BuildError {
         class: Box<str>,
     },
     /// A handle from another catalog was presented as a governing switch or
-    /// the other side of an invariant.
+    /// as a side of an invariant.
     #[error("flag {key}: handle {handle} belongs to another catalog")]
     ForeignHandle {
-        /// The declaration being built.
+        /// The flag being declared, or the one a relationship was stated on.
         key: FlagKey,
         /// The foreign handle's key.
         handle: FlagKey,
-    },
-    /// `Owners::Only` listed no kind.
-    #[error("flag {key}: Owners::Only needs at least one process kind")]
-    EmptyOwners {
-        /// The declaration being built.
-        key: FlagKey,
-    },
-    /// A kind was listed twice among owners or `pinned_by`.
-    #[error("flag {key}: process kind {kind:?} is listed twice")]
-    DuplicateKind {
-        /// The declaration being built.
-        key: FlagKey,
-        /// The repeated kind's name.
-        kind: Box<str>,
-    },
-    /// `pinned_by` listed no kind.
-    #[error("flag {key}: pinned_by needs at least one process kind")]
-    EmptyPinnedBy {
-        /// The declaration being built.
-        key: FlagKey,
     },
     /// A `pinned_by` kind already owns the flag.
     #[error("flag {key}: process kind {kind:?} owns the flag and cannot also be in pinned_by")]
@@ -133,12 +114,6 @@ pub enum BuildError {
         key: FlagKey,
         /// The kind listed twice over.
         kind: Box<str>,
-    },
-    /// `pinned_by` was given while every kind owns the flag.
-    #[error("flag {key}: pinned_by is meaningless when every process kind owns the flag")]
-    PinnedByWithAllOwners {
-        /// The declaration being built.
-        key: FlagKey,
     },
     /// A kind that owns the flag or may resolve its pins does not own the
     /// governing switch, so it could not read the switch.
@@ -162,10 +137,16 @@ pub enum BuildError {
         /// The governing switch.
         switch: FlagKey,
     },
+    /// A flag was related to itself.
+    #[error("flag {key}: a relationship needs two different flags")]
+    SelfInvariant {
+        /// The flag the relationship was stated on.
+        key: FlagKey,
+    },
     /// The same invariant was declared twice.
     #[error("flag {key}: the {rule:?} invariant on {other} is already declared")]
     DuplicateInvariant {
-        /// The declaration being built.
+        /// The flag the relationship was stated on.
         key: FlagKey,
         /// The repeated relation.
         rule: InvariantRule,
@@ -176,7 +157,7 @@ pub enum BuildError {
     /// process with neither setting present could never start.
     #[error("flag {key}: the code defaults break its {rule:?} invariant on {other}")]
     DefaultsViolateInvariant {
-        /// The declaration being built.
+        /// The flag the relationship was stated on.
         key: FlagKey,
         /// The broken relation.
         rule: InvariantRule,
@@ -187,7 +168,7 @@ pub enum BuildError {
     /// named in an invariant or `requires_settings`.
     #[error("flag {key}: variant {variant:?} of {flag} is not declared in its VARIANTS")]
     UndeclaredVariant {
-        /// The declaration being built.
+        /// The flag being declared, or the one a relationship was stated on.
         key: FlagKey,
         /// The flag whose value type lacks the variant.
         flag: FlagKey,
@@ -202,7 +183,7 @@ pub enum BuildError {
          different value"
     )]
     AliasedValue {
-        /// The declaration being built.
+        /// The flag being declared, or the one a relationship was stated on.
         key: FlagKey,
         /// The flag whose value type aliases the name.
         flag: FlagKey,

@@ -1,13 +1,20 @@
 //! Branded handles: the only way to name a declaration at evaluation.
 
-use std::{fmt, hash::Hash, marker::PhantomData};
+use std::{fmt, hash::Hash};
 
-use crate::{digest::DeclarationFingerprint, key::FlagKey, value::FlagValue};
+use crate::{
+    declaration::SafeState, digest::DeclarationFingerprint, key::FlagKey, value::FlagValue,
+};
 
 mod sealed {
-    use crate::{digest::DeclarationFingerprint, key::FlagKey, vocabulary::CatalogId};
+    use crate::{
+        declaration::Kind, digest::DeclarationFingerprint, key::FlagKey, value::ValueType,
+        vocabulary::CatalogId,
+    };
 
-    /// What every handle carries: its catalog, its entry and its fingerprint.
+    /// What every handle carries: its catalog, its entry, its fingerprint and
+    /// the kind and value-type tags of its declaration, so that a view from
+    /// another catalog can still describe the handle it refuses.
     ///
     /// Public only inside this private module, so no other crate can name it.
     #[derive(Clone)]
@@ -16,6 +23,8 @@ mod sealed {
         index: usize,
         key: FlagKey,
         fingerprint: DeclarationFingerprint,
+        kind: Kind,
+        value_type: ValueType,
     }
 
     impl Handle {
@@ -24,13 +33,24 @@ mod sealed {
             index: usize,
             key: FlagKey,
             fingerprint: DeclarationFingerprint,
+            (kind, value_type): (Kind, ValueType),
         ) -> Self {
             Self {
                 catalog,
                 index,
                 key,
                 fingerprint,
+                kind,
+                value_type,
             }
+        }
+
+        pub(crate) fn kind(&self) -> Kind {
+            self.kind
+        }
+
+        pub(crate) fn value_type(&self) -> ValueType {
+            self.value_type
         }
 
         pub(crate) fn catalog(&self) -> CatalogId {
@@ -96,6 +116,10 @@ pub trait Flag: Sealed + Clone + fmt::Debug + Send + Sync + 'static {
 
     /// The fingerprint of the declaration this handle was minted for.
     fn fingerprint(&self) -> DeclarationFingerprint;
+
+    /// The declaration's code default, which a decision serves wherever no
+    /// layer supplies a value.
+    fn code_default(&self) -> Self::Value;
 }
 
 macro_rules! flag_handle {
@@ -109,15 +133,12 @@ macro_rules! flag_handle {
         /// declaration of the same catalog.
         pub struct $name<T: FlagValue> {
             handle: Handle,
-            value: PhantomData<fn() -> T>,
+            default: T,
         }
 
         impl<T: FlagValue> $name<T> {
-            pub(crate) fn mint(handle: Handle) -> Self {
-                Self {
-                    handle,
-                    value: PhantomData,
-                }
+            pub(crate) fn mint(handle: Handle, default: T) -> Self {
+                Self { handle, default }
             }
         }
 
@@ -137,13 +158,17 @@ macro_rules! flag_handle {
             fn fingerprint(&self) -> DeclarationFingerprint {
                 self.handle.fingerprint()
             }
+
+            fn code_default(&self) -> T {
+                self.default
+            }
         }
 
         impl<T: FlagValue> Clone for $name<T> {
             fn clone(&self) -> Self {
                 Self {
                     handle: self.handle.clone(),
-                    value: PhantomData,
+                    default: self.default,
                 }
             }
         }
@@ -191,11 +216,12 @@ flag_handle!(
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub struct KillSwitch {
     handle: Handle,
+    safe_state: SafeState,
 }
 
 impl KillSwitch {
-    pub(crate) fn mint(handle: Handle) -> Self {
-        Self { handle }
+    pub(crate) fn mint(handle: Handle, safe_state: SafeState) -> Self {
+        Self { handle, safe_state }
     }
 
     pub(crate) fn handle(&self) -> &Handle {
@@ -210,6 +236,11 @@ impl KillSwitch {
     /// The fingerprint of the declaration this handle was minted for.
     pub fn fingerprint(&self) -> DeclarationFingerprint {
         self.handle.fingerprint()
+    }
+
+    /// The state the declaration serves where no entry exists for it.
+    pub fn safe_state(&self) -> SafeState {
+        self.safe_state
     }
 }
 

@@ -182,15 +182,15 @@ fn mixed_invariants(order: [batter_flags_core::InvariantRule; 3]) -> batter_flag
     builder.environment_class("hosted").unwrap();
     let base = builder.mode_flag("base", Toggle::Off).declare().unwrap();
     let other = builder.mode_flag("other", Toggle::Off).declare().unwrap();
-    let mut subject = builder.mode_flag("subject", Toggle::Off);
+    let subject = builder.mode_flag("subject", Toggle::Off).declare().unwrap();
     for rule in order {
-        subject = match rule {
-            InvariantRule::Requires => subject.requires(Toggle::On, &base, Toggle::On),
-            InvariantRule::Conflicts => subject.conflicts(Toggle::On, &other, Toggle::On),
-            InvariantRule::BothOrNone => subject.both_or_none(&base),
-        };
+        match rule {
+            InvariantRule::Requires => builder.requires(&subject, Toggle::On, &base, Toggle::On),
+            InvariantRule::Conflicts => builder.conflicts(&subject, Toggle::On, &other, Toggle::On),
+            InvariantRule::BothOrNone => builder.both_or_none(&subject, &base),
+        }
+        .unwrap();
     }
-    subject.declare().unwrap();
     builder.build().unwrap()
 }
 

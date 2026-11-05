@@ -2,10 +2,11 @@
 
 mod draft;
 mod kinds;
+mod relations;
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
-pub use kinds::{ModeDeclaration, ReleaseDeclaration, SwitchDeclaration};
+pub use kinds::{Everyone, ModeDeclaration, ReleaseDeclaration, Restricted, SwitchDeclaration};
 
 use crate::{
     catalog::{Catalog, Retired},
@@ -21,12 +22,15 @@ use crate::{
 /// process kind, environment class and retired name an application has.
 ///
 /// Each declaration method returns a declaration builder whose `declare`
-/// validates it and mints its handle; [`build`](Self::build) validates the
-/// whole catalog and returns it.
+/// validates it and mints its handle. Relationships between two declared flags
+/// are stated on the builder afterwards, with [`requires`](Self::requires),
+/// [`conflicts`](Self::conflicts) and [`both_or_none`](Self::both_or_none),
+/// because they need both handles; [`build`](Self::build) validates the whole
+/// catalog and returns it.
 ///
 /// ```
 /// use batter_flags_core::{
-///     CatalogBuilder, CivilDate, Expiry, Owners, SafeState, SettingsPrefix, StaleRule, Toggle,
+///     CatalogBuilder, CivilDate, Expiry, SafeState, SettingsPrefix, StaleRule, Toggle,
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,8 +44,8 @@ use crate::{
 ///     .declare()?;
 /// let new_checkout = builder
 ///     .release_flag("new_checkout", Toggle::Off, Expiry::on(CivilDate::new(2027, 3, 31)?))
-///     .owners(Owners::Only(&[serving.clone()]))
-///     .pinned_by(&[worker.clone()])
+///     .owned_only_by(&serving)
+///     .pinned_by(&worker)
 ///     .governed_by(&checkout_halt)
 ///     .requires_settings(Toggle::On, &["PAYMENT_API_URL"])
 ///     .declare()?;
