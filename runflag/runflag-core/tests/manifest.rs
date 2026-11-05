@@ -1,35 +1,19 @@
-//! The manifest: pinned canonical bytes, validating decode and the diff rule.
+//! The manifest: pinned canonical bytes, decoding round trips and the diff rule.
 #![cfg(feature = "serde")]
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/manifest_json.rs"]
+mod manifest_json;
 
 use fixtures::{Change, Checkout, CheckoutWide, expiry, reference, vocabulary_builder};
+use manifest_json::{REFERENCE_MANIFEST, decode, flag_mut, reference_value};
 use runflag_core::{Catalog, Kind, Manifest, ManifestOwners, Toggle, ValueType, manifest_diff};
-use serde_json::{Value, json};
+use serde_json::json;
 
-/// The canonical bytes of the reference manifest, reviewed by hand.
-const REFERENCE_MANIFEST: &str = include_str!("support/reference_manifest.json");
 /// Computed independently over [`REFERENCE_MANIFEST`] in the documented framing.
 const REFERENCE_MANIFEST_DIGEST: &str =
     "decc48bf9dbba6699db75daf43682138d9241844b26b70959a3c632b2e6d88df";
-
-fn reference_value() -> Value {
-    serde_json::from_str(REFERENCE_MANIFEST).unwrap()
-}
-
-fn decode(value: &Value) -> Result<Manifest, String> {
-    serde_json::from_value(value.clone()).map_err(|error| error.to_string())
-}
-
-fn flag_mut<'a>(value: &'a mut Value, key: &str) -> &'a mut Value {
-    value["flags"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|entry| entry["key"] == key)
-        .unwrap()
-}
 
 #[test]
 fn the_reference_manifest_bytes_and_digest_are_pinned() {
@@ -101,154 +85,6 @@ fn only_version_one_decodes() {
     );
     value.as_object_mut().unwrap().remove("v");
     assert!(decode(&value).is_err());
-}
-
-type Tamper = fn(&mut Value);
-
-/// Decodes the reference manifest after each tamper and requires the refusal
-/// message that names the broken rule.
-fn assert_refused(cases: &[(&str, Tamper)]) {
-    for (expected, tamper) in cases {
-        let mut value = reference_value();
-        tamper(&mut value);
-        let error = decode(&value).expect_err(expected);
-        assert!(
-            error.contains("invalid manifest") && error.contains(expected),
-            "{expected}: {error}"
-        );
-    }
-}
-
-#[test]
-fn decoding_refuses_inconsistent_declarations() {
-    let cases: [(&str, Tamper); 16] = [
-        ("the fingerprint does not match", |v| {
-            flag_mut(v, "fast_path")["fingerprint"] = json!("00".repeat(32));
-        }),
-        ("the catalog digest does not match", |v| {
-            v["catalog_digest"] = json!("00".repeat(32));
-        }),
-        ("does not derive from the prefix", |v| {
-            flag_mut(v, "fast_path")["setting_name"] = json!("FLAG_OTHER");
-        }),
-        ("a kill switch carries a field", |v| {
-            flag_mut(v, "checkout_halt")["variants"] = json!(["on"]);
-        }),
-        ("needs a safe state and a stale rule", |v| {
-            flag_mut(v, "checkout_halt")["stale_rule"] = Value::Null;
-        }),
-        ("only a release flag, has an expiry", |v| {
-            flag_mut(v, "fast_path")["expiry"] = Value::Null;
-        }),
-        ("only a release flag, has an expiry", |v| {
-            flag_mut(v, "debug_panel")["expiry"] = json!("2027-01-01");
-        }),
-        ("a toggle has exactly the variants", |v| {
-            flag_mut(v, "debug_panel")["variants"] = json!(["off", "on", "auto"]);
-        }),
-        ("the default is not a declared variant", |v| {
-            flag_mut(v, "checkout_style")["default"] = json!("instant");
-        }),
-        ("kind is not declared", |v| {
-            flag_mut(v, "export_halt")["owners"] = json!({ "only": ["reporting"] });
-        }),
-        ("only by a kill switch", |v| {
-            flag_mut(v, "new_checkout")["governed_by"] = json!("fast_path");
-        }),
-        ("names outside the prefix", |v| {
-            flag_mut(v, "new_checkout")["requires_settings"] =
-                json!([{ "variant": "on", "settings": ["FLAG_X"] }]);
-        }),
-        ("is listed twice", |v| {
-            let first = v["flags"][0].clone();
-            v["flags"].as_array_mut().unwrap().push(first);
-        }),
-        ("a pinned_by kind is listed twice", |v| {
-            flag_mut(v, "new_checkout")["pinned_by"] = json!(["worker", "worker"]);
-        }),
-        ("requires settings for one variant twice", |v| {
-            let entry = flag_mut(v, "new_checkout");
-            let required = entry["requires_settings"][0].clone();
-            entry["requires_settings"]
-                .as_array_mut()
-                .unwrap()
-                .push(required);
-        }),
-        ("an invariant is listed twice", |v| {
-            let entry = flag_mut(v, "checkout_style");
-            let invariant = entry["invariants"][0].clone();
-            entry["invariants"].as_array_mut().unwrap().push(invariant);
-        }),
-    ];
-    assert_refused(&cases);
-    let mut value = reference_value();
-    flag_mut(&mut value, "fast_path")["key"] = json!("Fast");
-    assert!(
-        decode(&value).is_err(),
-        "names decode through their validating constructors"
-    );
-}
-
-#[test]
-fn decoding_refuses_manifests_no_builder_could_produce() {
-    let cases: [(&str, Tamper); 9] = [
-        ("needs at least one process kind", |v| {
-            v["process_kinds"] = json!([]);
-        }),
-        ("needs at least one environment class", |v| {
-            v["environment_classes"] = json!([]);
-        }),
-        (
-            "setting name FLAG_FAST_PATH is retired and also in use",
-            |v| {
-                let retired = json!({ "name": "FLAG_FAST_PATH", "migration_note": "gone" });
-                v["retired"].as_array_mut().unwrap().push(retired);
-            },
-        ),
-        (
-            "setting name PAYMENT_API_URL is retired and also in use",
-            |v| {
-                let retired = json!({ "name": "PAYMENT_API_URL", "migration_note": "gone" });
-                v["retired"].as_array_mut().unwrap().push(retired);
-            },
-        ),
-        (
-            "\"worker\" owns or pins the flag but not its governing switch",
-            |v| {
-                flag_mut(v, "checkout_halt")["owners"] = json!({ "only": ["serving"] });
-            },
-        ),
-        (
-            "owned by every process kind but its governing switch",
-            |v| {
-                flag_mut(v, "checkout_halt")["owners"] = json!({ "only": ["serving", "worker"] });
-                let entry = flag_mut(v, "new_checkout");
-                entry["owners"] = json!("all");
-                entry["pinned_by"] = json!([]);
-            },
-        ),
-        (
-            "both_or_none invariant on new_checkout must relate both toggles at on",
-            |v| {
-                flag_mut(v, "fast_path")["invariants"][0]["variant"] = json!("off");
-            },
-        ),
-        (
-            "both_or_none invariant on new_checkout must relate both toggles at on",
-            |v| {
-                let invariant = &mut flag_mut(v, "fast_path")["invariants"][0];
-                invariant["variant"] = json!("off");
-                invariant["other_variant"] = json!("off");
-            },
-        ),
-        (
-            "the code defaults break its invariant on new_checkout",
-            |v| {
-                flag_mut(v, "checkout_style")["invariants"][0]["variant"] = json!("classic");
-            },
-        ),
-    ];
-    assert_refused(&cases);
 }
 
 fn catalog_with(declare: impl FnOnce(&mut runflag_core::CatalogBuilder)) -> Catalog {
