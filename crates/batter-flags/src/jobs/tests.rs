@@ -23,6 +23,7 @@ use std::{
 use tokio::time::Instant;
 
 mod pins;
+mod timing;
 
 fn world() -> (Catalog, ProcessKind, KillSwitch) {
     let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());

@@ -29,13 +29,19 @@ pub async fn continuation_and_release(pool: &PgPool) -> Result {
     let probe = Probe::new(NAME);
     let calls = probe.calls.clone();
     let body_pool = pool.clone();
+    // Native completion schedules from clock_timestamp(), whereas an attempt's
+    // finished_at is transaction-start now(). Bracket the completion clock with
+    // server observations; subtracting finished_at adds transaction elapsed time.
+    let before: String = sqlx::query_scalar("SELECT clock_timestamp()::text")
+        .fetch_one(pool)
+        .await?;
     drive(pool, flags.gated_direct(probe, &halt, policy(DirectWhenTripped::Defer(recheck())))?, async move {
         wait_row(&body_pool, first, "PENDING", 2).await?;
         wait_row(&body_pool, sibling, "PENDING", 2).await?;
         for id in [first, sibling] {
-            let row: (i32, String, f64) = sqlx::query_as("SELECT q.attempt, q.stage, extract(epoch FROM q.next_run_at-a.finished_at)::double precision FROM job_queue q JOIN job_attempts a ON a.job_id=q.id AND a.run_number=1 WHERE q.id=$1").bind(id).fetch_one(&body_pool).await?;
+            let row: (i32, String, bool) = sqlx::query_as("SELECT attempt, stage, next_run_at BETWEEN $2::text::timestamptz + interval '30 seconds' AND clock_timestamp() + interval '37.5 seconds' FROM job_queue WHERE id=$1").bind(id).bind(&before).fetch_one(&body_pool).await?;
             assert_eq!((row.0, row.1.as_str()), (0, "queued"));
-            assert!((30.0..=37.5).contains(&row.2), "spread interval: {}", row.2);
+            assert!(row.2, "continuation outside the observed completion-clock window");
             let claims: i64 = sqlx::query_scalar("SELECT count(*) FROM job_execution_resource_claims WHERE job_id=$1").bind(id).fetch_one(&body_pool).await?;
             assert_eq!(claims, 0);
         }
