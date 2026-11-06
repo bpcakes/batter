@@ -1204,6 +1204,10 @@ count separately, outside core's completion report. These are separate live
 observations, not a coherent pair of counters. A switch change affects the next
 run and does not revoke an active run's frozen view. Work required for native
 settlement during drain must register ungated through core.
+The gate retains its owned application future after it returns, until core has
+recorded the outcome: a subsequent future-destructor panic cannot erase the
+returned error or success count. The panic still makes completion incomplete
+and conservatively skips dependent cleanup.
 
 ### Core schedule and ownership
 

@@ -8,10 +8,12 @@
 
 use std::{
     future::Future,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -242,29 +244,43 @@ impl Flags {
         let count = skipped.clone();
         let periodic = register_periodic_in(target, name, policy.inner, move |context| {
             let entered = gate.enter();
-            let invocation = match entered.reading {
+            match entered.reading {
                 GateReading::AwaitingPublication(_) | GateReading::Tripped(_) => {
                     record_skip(&count);
                     Invocation::Skipped
                 }
-                GateReading::Open(_) => Invocation::Work(work(context, entered.view)),
-            };
-            async move {
-                match invocation {
-                    Invocation::Skipped => Ok(()),
-                    Invocation::Work(future) => future.await,
-                }
+                GateReading::Open(_) => Invocation::Work {
+                    future: work(context, entered.view),
+                },
             }
         })?;
         Ok(GatedPeriodicReader { periodic, skipped })
     }
 }
 
-/// A scheduled invocation either skipped without constructing work or owns
-/// exactly the future admitted under its captured view.
-enum Invocation<F> {
-    Skipped,
-    Work(F),
+pin_project_lite::pin_project! {
+    /// Own the admitted future even after it returns Ready. Core retains its
+    /// outcome before destroying this wrapper; awaiting the future by value
+    /// here would let a destructor panic erase that result before retention.
+    #[project = InvocationProjection]
+    enum Invocation<F> {
+        Skipped,
+        Work { #[pin] future: F },
+    }
+}
+
+impl<F, E> Future for Invocation<F>
+where
+    F: Future<Output = Result<(), PeriodicFailure<E>>>,
+{
+    type Output = Result<(), PeriodicFailure<E>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            InvocationProjection::Skipped => Poll::Ready(Ok(())),
+            InvocationProjection::Work { future } => future.poll(cx),
+        }
+    }
 }
 
 fn record_skip(count: &AtomicU64) {
