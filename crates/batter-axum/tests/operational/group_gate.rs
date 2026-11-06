@@ -383,3 +383,37 @@ fn gate_panics_propagate_with_one_dropped_observation_without_status_or_payload(
     assert!(events[0].contains("http_outcome=\"dropped\""), "{logs}");
     assert!(!events[0].contains("status="), "{logs}");
 }
+
+#[test]
+fn disabled_renderer_panic_retains_gate_fact_without_completing_the_response() {
+    let capture = Capture::new();
+    capture.block_on(async {
+        let control = ready();
+        let request_policy = policy(&control).with_failure_renderer(|failure, _| {
+            assert_eq!(failure, HttpFailure::Disabled);
+            panic!("secret-renderer-payload")
+        });
+        let app = HttpBoundary::new(GroupPolicy::gated(
+            request_policy,
+            disabled().with_disabled_level(Level::ERROR),
+        ))
+        .assemble(GuardedRouter::new().route("/work", get(|| async { "unreachable" })))
+        .await
+        .unwrap()
+        .in_process();
+        let result =
+            tokio::spawn(async move { app.request(request(Method::GET, "/work")).await }).await;
+        assert!(result.unwrap_err().is_panic());
+    });
+    let logs = capture.text();
+    let events: Vec<_> = logs
+        .lines()
+        .filter(|line| line.contains("HTTP response boundary finished"))
+        .collect();
+    assert_eq!(events.len(), 1, "{logs}");
+    assert!(events[0].trim_start().starts_with("WARN"), "{logs}");
+    assert!(events[0].contains("http_outcome=\"dropped\""), "{logs}");
+    assert!(events[0].contains("gate_outcome=\"disabled\""), "{logs}");
+    assert!(!events[0].contains("status="), "{logs}");
+    assert!(!logs.contains("secret-renderer-payload"), "{logs}");
+}
