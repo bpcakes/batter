@@ -6,13 +6,14 @@
 use crate::lifecycle::StartupPhase;
 
 use super::{
-    History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, PeriodicPolicy,
-    history::Cause, schedule::Schedule,
+    History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, history::Cause,
+    schedule::Schedule,
 };
 use crate::{
     BoxError,
     lifecycle::{
-        ComponentExit, ComponentStartup, PeriodicAdmission, RunningComponent, SupportObligation,
+        ComponentExit, ComponentStartup, PeriodicAdmission, PeriodicGrant, RunningComponent,
+        SupportObligation,
     },
     operation::{Interruption, OperationContext, OperationError, OperationOwner, RootDeadline},
 };
@@ -78,7 +79,8 @@ enum Ending {
 
 /// What the schedule produced while waiting for the next invocation.
 enum Due {
-    Run,
+    Run(PeriodicGrant),
+    Rejected,
     Abandon,
     Expired,
     Stopped,
@@ -104,10 +106,7 @@ enum Classified {
 }
 
 pub(super) async fn drive<F, Fut, E>(
-    name: &'static str,
-    policy: PeriodicPolicy,
-    mut work: F,
-    history: Arc<History>,
+    registration: super::Registration<F>,
     startup: ComponentStartup,
     admission: PeriodicAdmission,
     obligation: SupportObligation,
@@ -117,6 +116,13 @@ where
     Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
     E: std::error::Error + Send + Sync + 'static,
 {
+    let super::Registration {
+        name,
+        policy,
+        mut work,
+        history,
+        scheduling,
+    } = registration;
     // Nothing has run yet, so an abandoned or never-polled registration
     // performs no application work at all.
     if startup.shutdown().is_draining() {
@@ -137,33 +143,35 @@ where
         // that any maintenance has succeeded.
         None => ComponentState::running(startup, &history, &obligation),
     };
-    let mut ticker = Schedule::new(policy.interval());
+    let mut ticker = Schedule::new(policy.interval(), scheduling);
     let mut invocation = 0u64;
     let ending = loop {
         let phase = component.phase();
-        let initialization = component.initialization_deadline();
         let initializing = phase == StartupPhase::Initializing;
-        match next_due(&mut ticker, &admission, phase, initialization).await {
-            Due::Run => {}
+        let grant = match next_due(&mut ticker, &admission, &component).await {
+            Due::Run(grant) => grant,
             Due::Abandon => break Ending::Abandoned,
             Due::Expired => break Ending::InitializationExpired,
             Due::Stopped => break Ending::Stopped,
-        }
-        let Some(grant) = admission.admit(phase) else {
-            // No run is admitted after its applicable stopping point. A
-            // rejection can also follow another component's failure before
-            // drain is observable, so wait for the actual stopping point
-            // instead of exiting early as an unexpected success.
-            if initializing {
-                admission.draining().await;
-                break Ending::Abandoned;
+            Due::Rejected => {
+                // A rejection can precede observable drain when another
+                // component fails. Wait for the applicable stopping boundary
+                // rather than reporting an unexpected successful exit.
+                if initializing {
+                    admission.draining().await;
+                    break Ending::Abandoned;
+                }
+                admission.stopping().await;
+                break Ending::Stopped;
             }
-            admission.stopping().await;
-            break Ending::Stopped;
         };
         invocation = invocation.saturating_add(1);
         history.admitted();
-        let deadline = run_deadline(policy.run_budget(), grant.forced_at, initialization);
+        let deadline = run_deadline(
+            policy.run_budget(),
+            grant.forced_at,
+            component.initialization_deadline(),
+        );
         // `execute` destroys its owned work future before returning, so no
         // application code is live while the evidence below is published.
         let retention = Retention {
@@ -172,7 +180,7 @@ where
         };
         match execute(name, &mut work, deadline, &admission, phase, retention).await {
             Run::Succeeded => {
-                if initializing {
+                if let ComponentState::Initializing { deadline, .. } = &component {
                     // The run boundary is cooperative: it neither rereads its
                     // clock nor rechecks drain after the work's own poll
                     // returns, so a blocking poll or destructor can cross
@@ -185,7 +193,7 @@ where
                     if admission.is_draining() {
                         break Ending::Abandoned;
                     }
-                    if initialization.is_some_and(|deadline| Instant::now() >= deadline) {
+                    if Instant::now() >= *deadline {
                         break Ending::InitializationExpired;
                     }
                     // A qualifying success acknowledges exactly once. Later
@@ -210,6 +218,7 @@ where
     };
     // The factory and its application captures are destroyed when this future
     // returns, so the ending's concrete cause is retained before that.
+    drop(ticker);
     finish(name, &history, invocation, ending, component)
 }
 
@@ -323,12 +332,12 @@ fn finish(
 async fn next_due(
     ticker: &mut Schedule,
     admission: &PeriodicAdmission,
-    initializing: StartupPhase,
-    initialization: Option<Instant>,
+    component: &ComponentState,
 ) -> Due {
-    let initializing = initializing == StartupPhase::Initializing;
+    let phase = component.phase();
+    let initializing = phase == StartupPhase::Initializing;
     let expiry = async {
-        match initialization.filter(|_| initializing) {
+        match component.initialization_deadline() {
             Some(deadline) => sleep_until(deadline).await,
             None => std::future::pending().await,
         }
@@ -339,7 +348,10 @@ async fn next_due(
         _ = admission.draining(), if initializing => Due::Abandon,
         _ = admission.stopping(), if !initializing => Due::Stopped,
         () = expiry => Due::Expired,
-        _ = ticker.tick() => Due::Run,
+        grant = ticker.admit(admission, phase) => match grant {
+            Some(grant) => Due::Run(grant),
+            None => Due::Rejected,
+        },
     }
 }
 

@@ -8,6 +8,8 @@ mod operational {
     mod admitted_request;
     mod connect_info;
     mod correlation;
+    mod group_gate;
+    mod group_gate_order;
     mod lifecycle_readiness;
     mod probe_policy;
     mod readiness;

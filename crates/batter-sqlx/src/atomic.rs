@@ -1,3 +1,4 @@
+mod bounded;
 mod error;
 pub(crate) mod fast;
 pub(crate) mod scope;

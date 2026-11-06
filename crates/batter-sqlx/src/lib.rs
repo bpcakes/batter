@@ -47,7 +47,9 @@ mod atomic;
 mod atomic_context;
 mod atomic_policy;
 mod atomic_runner;
+mod deadline;
 mod failure;
+mod migration;
 mod native_query;
 mod pooled_query;
 mod profile;
@@ -75,7 +77,9 @@ pub use atomic_runner::{
 /// Caller-owned transactions and pools. These entry points require explicit
 /// completion/cleanup and are not equivalent to the protected runners or [`pool_in`].
 pub mod low_level;
+pub use deadline::PgDeadlineError;
 pub use failure::{FailureClass, SqlxFailure};
+pub use migration::{PgMigrationTimeoutError, PgMigrationTimeouts};
 pub use native_query::PgNativeQuery;
 pub use pooled_query::PgQueryHandle;
 pub use profile::{PgProfileError, PgSessionProfile};

@@ -118,6 +118,23 @@ including its authorization boundary. Example code is evidence of consumer
 usability; neither more patches nor more caller instructions establish that the
 cause has been removed.
 
+## Explicit state machines
+
+Implicit state machines are forbidden in repository code, including internal
+implementation code. Represent lifecycle and protocol states and their legal
+transitions explicitly. Use exhaustive enums for runtime state and ownership or
+typestate when Rust can prevent invalid transitions at compile time. Keep state
+and transition logic together; unsupported transitions must be unrepresentable
+or explicitly rejected.
+
+Do not distribute lifecycle state across boolean combinations, unrelated
+`Option` fields, sentinel values, or caller-enforced call ordering. Comments,
+tests and instructions to coordinate those fields or calls do not replace an
+explicit state model. Review all new and materially changed code for hidden
+states and replace implicit machines before delivery. This rule applies
+immediately to in-flight implementations, repairs and reviews; every delegated
+agent must receive and acknowledge it before resuming work.
+
 ## Code map
 
 `crates/batter/src/lib.rs` is the public facade. It re-exports the single

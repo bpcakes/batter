@@ -9,7 +9,8 @@
 //! One registered component owns exactly one serial future: invocations never
 //! overlap, nothing is spawned per run, and there is no second scheduler. The
 //! first invocation is immediate; later ones follow a fixed interval with
-//! missed ticks skipped.
+//! missed ticks skipped. The experimental [`register_wakeable_in`] also accepts
+//! coalesced wake requests under a validated minimum start spacing.
 //!
 //! # Important limits
 //!
@@ -20,7 +21,7 @@
 //! future; it does not undo whatever that run already did remotely. Timers
 //! cannot preempt a factory, poll or destructor that blocks its runtime
 //! thread, and a recoverable failure never triggers an automatic immediate
-//! retry: the next scheduled invocation is the only continuation.
+//! retry: only the cadence or an explicit wake can request another invocation.
 //!
 //! ```no_run
 //! use batter_core::{
@@ -59,12 +60,14 @@ mod failure;
 mod history;
 mod policy;
 mod schedule;
+mod wake;
 
 pub use failure::{PeriodicFailure, PeriodicInitializationExpired, PeriodicRun};
 pub use history::{
     PeriodicCompletion, PeriodicFailureSample, PeriodicReader, PeriodicRecord, PeriodicSummary,
 };
 pub use policy::{PeriodicPolicy, PeriodicShutdown, PeriodicStartup};
+pub use wake::{PeriodicWake, WakeablePolicy};
 
 pub(crate) use history::RetainedHistory;
 
@@ -144,15 +147,87 @@ where
     Fut: Future<Output = Result<(), PeriodicFailure<E>>> + Send + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
-    target.registration().register_periodic(name, policy, work)
+    target
+        .registration()
+        .register_periodic(Registration::new(name, policy, work))
+}
+
+/// Register an experimental wakeable serial periodic component.
+///
+/// This is the same protected execution path as [`register_periodic_in`], with
+/// one coalesced wake request and a minimum start spacing. A cadence tick inside
+/// that spacing window is deferred to its end. Wake runs never reset the
+/// original cadence, and overdue ticks realign without a catch-up queue.
+/// Pending wakes and due ticks coalesce into one invocation; requests arriving
+/// during that invocation remain pending for the next eligible start.
+///
+/// Wakes cannot bypass startup allowance, admission, stopping or per-run budget.
+/// Every admitted run counts in [`PeriodicSummary::invocations`]. No additional
+/// task, cancellation protocol or join is required from the caller. Registration
+/// is inert, and ending or dropping the component makes its wake handles inert.
+///
+/// ```
+/// use batter_core::{
+///     cleanup::CleanupBudget,
+///     lifecycle::{ShutdownBudget, Supervisor},
+///     periodic::{PeriodicPolicy, PeriodicStartup, PeriodicShutdown, WakeablePolicy,
+///         PeriodicFailure, register_wakeable_in},
+/// };
+/// use std::{convert::Infallible, time::Duration};
+/// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+/// # async fn main() -> Result<(), batter_core::BoxError> {
+/// let second = Duration::from_secs(1);
+/// let mut supervisor = Supervisor::new(ShutdownBudget::new(
+///     second, second, second, CleanupBudget::new(second, second, second)?,
+/// )?);
+/// let policy = WakeablePolicy::new(PeriodicPolicy::new(
+///     second * 30, second, PeriodicStartup::immediate(),
+///     PeriodicShutdown::StopAtDrain,
+/// )?, second)?;
+/// assert_eq!(policy.wake_spacing(), second);
+/// assert_eq!(policy.periodic().interval(), second * 30);
+/// let (reader, wake) = register_wakeable_in(
+///     &mut supervisor, "storage.refresh", policy,
+///     |_| async { Ok::<(), PeriodicFailure<Infallible>>(()) },
+/// )?;
+/// let running = supervisor.start();
+/// running.status().wait_ready().await.unwrap();
+/// wake.clone().wake(); // A hint; the library owns spacing and execution.
+/// tokio::time::sleep(second * 2).await;
+/// assert_eq!(reader.snapshot().invocations, 2);
+/// running.shutdown_checked().await?;
+/// wake.wake(); // Inert after completion.
+/// # Ok(()) }
+/// ```
+pub fn register_wakeable_in<T, F, Fut, E>(
+    target: &mut T,
+    name: &'static str,
+    policy: WakeablePolicy,
+    work: F,
+) -> Result<(PeriodicReader, PeriodicWake), RegistrationError>
+where
+    T: RegistrationTarget + ?Sized,
+    F: FnMut(OperationContext) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), PeriodicFailure<E>>> + Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let (owner, wake) = wake::WakeOwner::new();
+    let mut registration = Registration::new(name, policy.periodic(), work);
+    registration.scheduling = schedule::Scheduling::Wakeable {
+        owner,
+        spacing: policy.wake_spacing(),
+    };
+    let reader = target.registration().register_periodic(registration)?;
+    Ok((reader, wake))
 }
 
 /// A validated periodic component awaiting its first live poll.
 pub(crate) struct Registration<F> {
-    name: &'static str,
+    pub(crate) name: &'static str,
     policy: PeriodicPolicy,
     work: F,
     history: Arc<History>,
+    scheduling: schedule::Scheduling,
 }
 
 impl<F> Registration<F> {
@@ -162,6 +237,7 @@ impl<F> Registration<F> {
             policy,
             work,
             history: History::new(),
+            scheduling: schedule::Scheduling::Cadence,
         }
     }
 
@@ -192,12 +268,6 @@ impl<F> Registration<F> {
         Fut: Future<Output = Result<(), PeriodicFailure<E>>> + Send + 'static,
         E: std::error::Error + Send + Sync + 'static,
     {
-        let Self {
-            name,
-            policy,
-            work,
-            history,
-        } = self;
-        driver::drive(name, policy, work, history, startup, admission, obligation)
+        driver::drive(self, startup, admission, obligation)
     }
 }

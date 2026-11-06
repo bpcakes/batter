@@ -23,7 +23,7 @@ use caller_owned::SupervisorOwnership;
 use capability::LifecycleCoordinator;
 use tasks::TaskSet;
 
-pub(crate) use capability::PeriodicAdmission;
+pub(crate) use capability::{PeriodicAdmission, PeriodicGrant};
 
 pub use caller_owned::UnapprovedDriver;
 pub use capability::{
@@ -341,17 +341,15 @@ impl Supervisor {
     /// [`crate::periodic::register_periodic_in`] for the public entry point.
     pub(crate) fn register_periodic<F, Fut, E>(
         &mut self,
-        name: &'static str,
-        policy: crate::periodic::PeriodicPolicy,
-        work: F,
+        registration: crate::periodic::Registration<F>,
     ) -> Result<crate::periodic::PeriodicReader, RegistrationError>
     where
         F: FnMut(crate::operation::OperationContext) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), crate::periodic::PeriodicFailure<E>>> + Send + 'static,
         E: std::error::Error + Send + Sync + 'static,
     {
+        let name = registration.name;
         self.check_component_name(name)?;
-        let registration = crate::periodic::Registration::new(name, policy, work);
         let reader = registration.reader();
         let support = registration.supports_through_drain();
         let obligation = SupportObligation::default();

@@ -35,6 +35,12 @@ runlimit-axum = ["runlimit", "axum", "batter-runlimit/axum"]
 runlimit-native-http = ["runlimit", "batter-runlimit/native-http"]
 runlimit-native-axum = ["runlimit", "batter-runlimit/native-axum"]
 test-support = ["dep:batter-test-support"]
+# Experimental typed flags and kill switches. `flags` alone is declared mode;
+# each bridge also selects the adapter namespace its integration composes with.
+flags = ["dep:batter-flags"]
+flags-postgres = ["flags", "sqlx", "batter-flags/postgres"]
+flags-axum = ["flags", "axum", "batter-flags/axum"]
+flags-runledger = ["flags", "runledger", "batter-flags/runledger"]
 sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 
 [dependencies]
@@ -46,6 +52,7 @@ batter-axum = { workspace = true, optional = true }
 batter-sqlx = { workspace = true, optional = true }
 batter-runledger = { workspace = true, optional = true }
 batter-runlimit = { workspace = true, optional = true }
+batter-flags = { workspace = true, optional = true }
 batter-test-support = { workspace = true, optional = true }
 
 [dev-dependencies]

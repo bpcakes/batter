@@ -2,6 +2,7 @@ use crate::{
     PgLease, PgTransactionError,
     atomic::scope::{ScopeSavepoint, command, normalize},
 };
+mod bounded;
 use sqlx::{Executor, PgConnection, PgPool, Postgres};
 use std::{error::Error, fmt};
 

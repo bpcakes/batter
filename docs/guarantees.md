@@ -1268,6 +1268,27 @@ fixture acceptance is not evidence of a deployment retirement.
 
 ## Periodic maintenance components
 
+### Flags gate (`batter-jkw6.10`)
+
+`batter_flags::Flags::gate_periodic_in` captures one `SnapshotView` per run,
+skips both `AwaitingPublication` and `Tripped` without calling the application
+factory, and passes that same view to work only on `Open`. Switch identity and
+process ownership refusals precede core registration. The opaque
+`GatedPeriodicPolicy` fixes immediate startup and `StopAtDrain`; it cannot
+select first-success startup or support-through-drain. Acknowledgement proves
+loop initialization, not successful maintenance. Core `PeriodicSummary.succeeded`
+includes skipped runs; `GatedPeriodicReader::skipped()` retains their saturating
+count separately, outside core's completion report. These are separate live
+observations, not a coherent pair of counters. A switch change affects the next
+run and does not revoke an active run's frozen view. Work required for native
+settlement during drain must register ungated through core.
+The gate retains its owned application future after it returns, until core has
+recorded the outcome: a subsequent future-destructor panic cannot erase the
+returned error or success count. The panic still makes completion incomplete
+and conservatively skips dependent cleanup.
+
+### Core schedule and ownership
+
 `periodic::register_periodic_in` registers recurring maintenance through the
 same sealed `RegistrationTarget` authority as native adapters, so a component
 can be added without process start, replacement or cleanup-extraction
@@ -1284,9 +1305,10 @@ required because the completion report carries the same evidence.
 One registered component owns exactly one directly polled serial future. There
 is no detached per-run task, no event queue and no second scheduler, so
 invocations cannot overlap. The first invocation is immediate once the
-component can run; later ones follow a fixed interval with missed ticks
-skipped. One overdue invocation may run immediately after an overrun, and the
-schedule then realigns without replaying a burst of missed work, including
+component can run. For `register_periodic_in`, later invocations follow a fixed
+interval with missed ticks skipped; the experimental wakeable path below adds
+a spacing floor and explicit wake requests. One overdue invocation may run
+immediately after an overrun, and the schedule then realigns without replaying a burst of missed work, including
 intervals and overruns shorter than Tokio's five-millisecond missed-tick
 tolerance. The private schedule advances to the first future point on its
 original cadence before admitting that overdue run; this is start-to-start
@@ -1390,8 +1412,9 @@ discards its classification, as the executable helper examples demonstrate.
 Only that explicit escalation escalates a returned application outcome, while a
 native factory, poll or destructor panic, unexpected component termination and
 initialization failure stay terminal. A recoverable failure or an expired run
-deadline permits the next scheduled invocation and never an extra immediate
-retry. Registration authorizes recurrence only: it proves no remote rollback,
+deadline permits the next cadence invocation (or a separately requested wake
+for a wakeable component), never an automatic extra retry. Registration
+authorizes recurrence only: it proves no remote rollback,
 idempotence, successful renewal, fencing or absence of a timed-out effect, and
 lease-loss, freshness and durable witness policy stay application- or
 native-owned.
@@ -1425,8 +1448,8 @@ completion alone does not make this predicate true, but any recorded run failure
 or interruption still does, including a pending initialization run interrupted
 by drain. This predicate does not determine checked shutdown success.
 
-`invocations` includes active work and runs lost before classification through
-panic, abort or an unjoined runner, so it need not equal the classified outcomes
+`invocations` includes cadence- and wake-admitted runs, active work and runs
+lost before classification through panic, abort or an unjoined runner, so it need not equal the classified outcomes
 plus a fatal run. A final completion marker describes how the loop ended; it
 does not promise exact accounting when counters saturated or an interruption
 classification was lost to a destruction panic, as described below.
@@ -1458,6 +1481,43 @@ displaced cause is destroyed outside the publication lock inside the
 component's protected dispatch, and recoverable history alone does not make
 checked lifecycle completion fail. Terminal task failures, unjoined work and
 unsuccessful cleanup keep their existing failure meaning.
+
+### Experimental wakeable periodic registration (`batter-jkw6.18`)
+
+`periodic::register_wakeable_in` adds a `WakeablePolicy` and returns the same
+read-only history plus a cloneable `PeriodicWake`. The policy wraps a validated
+`PeriodicPolicy` and rejects zero or unrepresentable wake spacing before
+registration. Spacing is a floor between **all** admitted starts, including
+cadence starts; selecting spacing longer than the interval is valid. One pending
+request is retained regardless of how many handles call `wake()`. Wakes before
+the first invocation coalesce with that immediate invocation; wakes during work
+remain pending for a later serial run. A pending wake and a due tick coalesce.
+
+A cadence tick within the spacing window is deferred to the window's end,
+not discarded. At delivery, missed ticks realign to the first future point on
+the original cadence, so neither an early wake nor a deferred tick resets its
+phase. The component uses its existing single future; no task or application
+queue is added. Dropping all wake handles leaves the cadence running. Waking an
+ended, panicked or abandoned component does nothing and cannot restart it or
+keep it alive. Waking is a request, not evidence that work ran.
+
+Initialization wakes retain the original total allowance, including waits for
+spacing, and cannot acknowledge readiness without a qualifying success. The
+allowance and applicable stopping boundary win over ready wakes. Every run
+still needs the lifecycle admission grant, receives the same per-run budget and
+downward cancellation, and contributes to `PeriodicSummary.invocations` with
+its existing outcome classification. Initialized support may be woken during
+drain while ordinary work needs it, under the existing forced-cancellation cap;
+closing support interrupts its active work before dependency cleanup. Callers
+neither cancel nor join the wake capability. Remote effect, replay and freshness
+policy remain application-owned, and blocking polls or destructors remain
+cooperative-boundary limitations.
+
+The paused-time contracts are in
+[`wake.rs`](../crates/batter-core/tests/periodic/wake.rs) and
+[`wake_lifecycle.rs`](../crates/batter-core/tests/periodic/wake_lifecycle.rs).
+This API is experimental. New hosted execution and platform certification are
+not claimed here; their records remain with the owning delivery/process tasks.
 
 ## Maintained Runlimit PostgreSQL storage
 
@@ -2077,6 +2137,27 @@ Ordinary successful return retains SQLx's asynchronous health-check policy.
 Neither operation interruption nor native failure classification authorizes replay.
 
 ## HTTP boundary
+
+Route groups can install one flags-agnostic `GroupGate` through
+`GroupPolicy::gated` or `GroupPolicy::browser_gated`. The order is private headers,
+lifecycle/deadline admission, group gate, browser checks, application layers.
+The synchronous gate captures once and either shares its value with every
+`GateView<V>` extraction or drops the body and renders `HttpFailure::Disabled`
+through the group's renderer. A missing or wrong-typed view yields a sanitized
+500. Renderer metadata strips the private type-erased gate record for every `V`.
+An already captured value remains the request's value during later engagement;
+application interior mutability is not an immutable-snapshot guarantee.
+
+The gate covers every method and all guarded fallbacks of its group, including
+unmatched paths of a gated default group. Probes and metadata-rendered fallbacks
+bypass it. A gate panic propagates with the same single WARN `dropped` completion
+as a handler panic, without status or panic payload. Disablement is a permanent
+HTTP failure: default 503, code `disabled`, standard infrastructure message
+`The service is temporarily disabled`, with actual status still renderer-owned.
+Its completion records `gate_outcome="disabled"`. The gate replaces renderer-set
+severity with INFO, or the level selected by `with_disabled_level`; `batter=warn`
+hides the INFO default. See the [usage guide](../crates/batter-axum/README.md#route-group-gates).
+
 
 `HttpBoundary` assembles probes, admission, correlation and the observer in one
 library-owned order, and is the canonical path. The deliberately caller-ordered
@@ -3357,3 +3438,28 @@ to retry remain application-owned. Evidence is a point-in-time observation, not
 a reservation against future promotion or retention. The new reconciliation
 grant reads only selected metadata; adding other operation grants can expose more
 columns, including canonical submitted requests for intent submission.
+
+## Flags store contract (T-12)
+
+Observed application rejections survive bounded native cleanup: the store's
+`RollbackFailure` retains both the operation cause and a cleanup deadline. This
+does not promise result retention after external cancellation of the entire
+future. Migration server budgets cover the native advisory-lock phase as well
+as migration transactions, with unconditional retirement of that configured
+session. Request and lifecycle phases use explicit internal enums; acknowledged
+outcomes require consuming native completion evidence.
+
+`batter-flags-postgres` owns audited, gapless, commit-ordered state changes in a
+dedicated `flags` schema. No-op/refusal rolls back the counter; archived rows are
+absent from coherent primary snapshots. Live and Silent declarers block
+incompatible states and archive. These database guards assume writer logins are
+non-owner, non-superuser and cannot set `session_replication_role`; owners,
+superusers and replica mode are outside the claim. Audit actor/reason are supplied
+text; `recorded_by` independently records the session login.
+
+No automatic retry occurs. A lost COMMIT acknowledgement or commit-phase deadline
+is uncertain, even when the server committed. Native SQLx owners retire sessions;
+retirement does not prove server termination. Full NOTIFY queues can reject all
+mutations, including kill switches. Declared settings floors remain application
+containment. The [store README](../crates/batter-flags-postgres/README.md) records
+validation order, native API limits, authority and test coverage.

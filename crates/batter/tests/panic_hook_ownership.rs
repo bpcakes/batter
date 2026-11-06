@@ -432,6 +432,7 @@ fn every_batter_consuming_root_installs_the_redacting_hook_first() {
         "examples/postgres-lifecycle/src/main.rs",
         "consumers/single_facade_consumer.rs",
         "runlimit/smoke/facade_consumer.rs",
+        "crates/batter-flags-cli/src/main.rs",
     ] {
         assert!(
             checked.contains(&&root.join(required)),
@@ -439,7 +440,7 @@ fn every_batter_consuming_root_installs_the_redacting_hook_first() {
         );
     }
     // The exact inventory: adding or removing a root updates these counts.
-    assert_eq!(checked.len(), 16, "Batter-consuming roots: {checked:#?}");
+    assert_eq!(checked.len(), 17, "Batter-consuming roots: {checked:#?}");
     assert_eq!(native.len(), 12, "native roots: {native:#?}");
     for path in checked {
         let source = fs::read_to_string(path).unwrap();
