@@ -4,8 +4,8 @@
 //! one these flags can answer for, and the reading must come from the same
 //! frozen view the work is then evaluated under. Left as two calls, each surface
 //! (an HTTP route group, a job wrapper, a periodic component) has to remember
-//! both. Here they are one type. A [`SwitchGate`] can only be built by
-//! [`Flags::gate`] or [`Flags::gate_any`], which refuse a switch of another
+//! both. Here they are one type. A [`SwitchGate`] is built by
+//! [`SwitchGate::single`], [`Flags::gate`] or [`Flags::gate_any`], which refuse a switch of another
 //! catalog, a switch this process kind does not own and a switch listed twice;
 //! and it can only be read through [`SwitchGate::enter`], which captures one view
 //! and takes every reading from it. A surface holds a `SwitchGate` and never a
@@ -13,12 +13,12 @@
 
 #![allow(
     dead_code,
-    reason = "the HTTP, job and periodic gates are the only callers and arrive with their tasks, which remove this allowance"
+    reason = "the HTTP and job gate constructors require their optional features"
 )]
 
 use batter_flags_core::{
     KillSwitch, SnapshotView,
-    low_level::{GateReading, gate_switch},
+    low_level::{GateReading, HandleRefusal, gate_switch},
 };
 
 use super::Flags;
@@ -52,7 +52,8 @@ impl Flags {
     /// [`GateError::ForeignHandle`] for a switch of another catalog and
     /// [`GateError::NotOwned`] for one this process kind does not own.
     pub(crate) fn gate(&self, switch: &KillSwitch) -> Result<SwitchGate, GateError> {
-        self.gate_any(switch, &[])
+        SwitchGate::single(self, switch)
+            .map_err(|refusal| GateError::refused(switch.key(), refusal))
     }
 
     /// A gate over several kill switches, tripped while any of them is.
@@ -94,6 +95,17 @@ impl Flags {
 }
 
 impl SwitchGate {
+    /// Check one switch without introducing the multi-switch constructor's
+    /// duplicate refusal into a single-switch surface.
+    pub(crate) fn single(flags: &Flags, switch: &KillSwitch) -> Result<Self, HandleRefusal> {
+        flags.reader.base().check_switch(switch)?;
+        Ok(Self {
+            flags: flags.clone(),
+            first: switch.clone(),
+            rest: Box::new([]),
+        })
+    }
+
     /// Captures one view and reads every switch of the gate from it.
     ///
     /// Each switch is read through core's one gate function, so each read emits

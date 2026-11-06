@@ -457,6 +457,7 @@ dependencies = [
  "batter-runledger",
  "batter-sqlx",
  "batter-test-support",
+ "pin-project-lite",
  "runledger-core",
  "serde_json",
  "sha2 0.11.1",

@@ -1190,6 +1190,27 @@ fixture acceptance is not evidence of a deployment retirement.
 
 ## Periodic maintenance components
 
+### Flags gate (`batter-jkw6.10`)
+
+`batter_flags::Flags::gate_periodic_in` captures one `SnapshotView` per run,
+skips both `AwaitingPublication` and `Tripped` without calling the application
+factory, and passes that same view to work only on `Open`. Switch identity and
+process ownership refusals precede core registration. The opaque
+`GatedPeriodicPolicy` fixes immediate startup and `StopAtDrain`; it cannot
+select first-success startup or support-through-drain. Acknowledgement proves
+loop initialization, not successful maintenance. Core `PeriodicSummary.succeeded`
+includes skipped runs; `GatedPeriodicReader::skipped()` retains their saturating
+count separately, outside core's completion report. These are separate live
+observations, not a coherent pair of counters. A switch change affects the next
+run and does not revoke an active run's frozen view. Work required for native
+settlement during drain must register ungated through core.
+The gate retains its owned application future after it returns, until core has
+recorded the outcome: a subsequent future-destructor panic cannot erase the
+returned error or success count. The panic still makes completion incomplete
+and conservatively skips dependent cleanup.
+
+### Core schedule and ownership
+
 `periodic::register_periodic_in` registers recurring maintenance through the
 same sealed `RegistrationTarget` authority as native adapters, so a component
 can be added without process start, replacement or cleanup-extraction

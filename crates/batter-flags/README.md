@@ -26,13 +26,25 @@ with strict literals, ownership, retired and unknown names, required settings
 and invariants, a redacted startup report and two revisions; `Resolved::into_flags`
 enters declared mode. `test::TestFlags` is the fixture path, and
 `low_level::capture_now` is the disclosed, non-canonical live read. The
-protected HTTP gates are implemented with `axum`. Periodic gates and
-control-plane registration arrive with later delivery tasks; `periodic` is
-still a scaffold. The catalog grammar and evaluation live in
+protected periodic, `axum` HTTP and `runledger` job gates are implemented.
+Control-plane registration arrives with a later delivery task of the flags
+epic. The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).
 
+## Periodic maintenance
+
+`Flags::gate_periodic_in` registers gated maintenance through an existing
+`RegistrationTarget`. Construct `periodic::GatedPeriodicPolicy` from the
+interval and run budget; startup is always immediate and work stops at drain.
+The callback receives an `OperationContext` and the one `SnapshotView` used to
+gate that run. Awaiting publication and tripped switches skip without calling
+the callback. `GatedPeriodicReader::skipped()` counts both; its `snapshot()`
+returns core's periodic evidence, where `succeeded` includes skipped runs.
+A publication during work reaches the next run and does not cancel active work.
+Work needed for native settlement during drain must register ungated through
+core. The method's rustdoc contains an executable registration example.
 
 ## Job handlers (`runledger`)
 
@@ -135,8 +147,8 @@ settings floor or stale rule. `Unready` also disables provider-not-ready decisio
 even with a released safe state. Capture-only groups impose no switch decision.
 The source remains `NotLoaded`; serving is not proof of publication. This choice
 follows the plan's startup-defaults contract and the existing reader/native
-switch resolution. It is deliberately different from jobs' unconditional wait
-before publication. The loader and its first-attempt readiness sequencing are
+switch resolution. Jobs defer an awaiting-publication reading, and periodic
+maintenance skips it. The loader and its first-attempt readiness sequencing are
 not implemented by this HTTP adapter and remain T-14 work.
 
 ```sh
