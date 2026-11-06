@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Preserve callback return values and errors alongside destruction panics in
+  borrowed job phases. Validate finalization reserves before registration with
+  the core-owned `OperationPhases::validate_reserve` check. The reference worker
+  keeps phase panics non-retryable and reloads an interrupted dispatch fence
+  before selecting its final-state transition (`batter-f9kq.3`).
+
 - **Breaking:** remove `Bulkhead::enter`; raw permit acquisition is no longer
   public. Use `run` for async work, `run_resolved` when application-retained
   outcomes must be resolved before telemetry, and `run_blocking` for blocking

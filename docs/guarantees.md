@@ -3275,6 +3275,10 @@ while native invocation authority remains live. The adapter uses the foundation'
 command-phase polling and destruction checks, retains both outcomes, and accepts
 a native completion only after both phases succeed. A required `failed` callback
 maps the complete failure to native policy and cannot return job success.
+The callback future reaches the polling kernel directly: its returned value or
+error remains available when destroying that future separately panics. A panic
+inside an application callback's own awaited subfuture can still prevent that
+callback from returning a value; no unreturned result is reconstructed.
 The entire adapter future belongs to the native worker; there is no independent
 phase waiter to cancel. Native deadline, lease loss and task destruction still
 end the invocation and may interrupt finalization. No async-drop, remote-effect
@@ -3287,7 +3291,9 @@ the former public `job_phases` function is removed. Both phases share one root a
 exactly `JobExecution::deadline()`, converted from the native std instant to
 Tokio's view of the same monotonic clock; deriving late never moves it. Work
 ends `reserve` before that deadline through `reserve_finalization`'s checked
-arithmetic; `PhasedJob` requires a positive reserve. Finalization keeps the
+arithmetic. `PhasedJob` validates a positive, clock-representable reserve of at
+most one year before registration, through core `OperationPhases::validate_reserve`;
+the invocation still checks that its deadline leaves positive work time. Finalization keeps the
 native deadline. Cancelling or exhausting work
 leaves finalization running. Derivation returns `JobPhasesRejection` without
 running application work when the services make no exit claim (`Unsupported`),

@@ -1,4 +1,4 @@
-## batter-core: 1298 -> 1319 entries; 1 removed, 22 added
+## batter-core: 1298 -> 1320 entries; 1 removed, 23 added
 - REMOVED method batter_core::admission::Bulkhead::enter
 + ADDED   enum batter_core::admission::BulkheadError
 + ADDED   function batter_core::operation::low_level::drive_phases
@@ -7,6 +7,7 @@
 + ADDED   impl batter_core::admission::BulkheadError: Error
 + ADDED   method batter_core::admission::Bulkhead::run
 + ADDED   method batter_core::admission::Bulkhead::run_resolved
++ ADDED   method batter_core::operation::OperationPhases::validate_reserve
 + ADDED   mod batter_core::operation::low_level
 + ADDED   trait batter_core::operation::low_level::ScopedPhases
 + ADDED   trait_item batter_core::operation::low_level::ScopedPhases::Final

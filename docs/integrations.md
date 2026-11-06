@@ -823,7 +823,13 @@ Their root deadline is exactly `JobExecution::deadline()`, the instant the worke
 enforces, on Tokio's view of the same monotonic clock; it is never rebuilt as
 now plus the remaining budget. Work ends `reserve` earlier through
 `reserve_finalization`'s checked arithmetic, finalization keeps the invocation
-deadline. The adapter requires a positive reserve.
+deadline. Construction rejects zero, oversized or unrepresentable reserves;
+the current invocation must additionally have positive work time remaining.
+Applications classify both phase outcomes, including construction/polling and
+destruction panics, before choosing retry policy. The reference worker preserves
+native non-retryable `Panicked` classification even if finalization also returns
+a retryable error. A fence interruption reloads retained state under the live
+lease during finalization; cancellation alone proves neither commit nor rollback.
 Runledger's `JobInvocation` ends when the invocation exits for any reason,
 after the handler future is destroyed and before the outcome is persisted:
 success, continuation, returned failure, panic, timeout, lease loss found by

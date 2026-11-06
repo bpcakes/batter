@@ -108,6 +108,21 @@ pub struct OperationPhases {
 }
 
 impl OperationPhases {
+    /// Validate a positive, clock-representable reserve of at most one year.
+    /// Adapters use this before registration, without creating an invocation.
+    /// Creating phases still checks that the current deadline leaves work time.
+    ///
+    /// ```
+    /// use batter_core::operation::OperationPhases;
+    /// use std::time::Duration;
+    /// OperationPhases::validate_reserve(Duration::from_millis(200))?;
+    /// assert!(OperationPhases::validate_reserve(Duration::MAX).is_err());
+    /// # Ok::<(), batter_core::ConfigurationError>(())
+    /// ```
+    pub fn validate_reserve(reserve: Duration) -> Result<(), ConfigurationError> {
+        validation::positive(reserve, "finalization reserve").map(|_| ())
+    }
+
     /// Explicitly cancel the work phase, leaving its finalization sibling active.
     pub fn cancel_work(&self) {
         self.work.cancel();
@@ -233,7 +248,7 @@ impl OperationContext {
         &self,
         reserve: Duration,
     ) -> Result<OperationPhases, ConfigurationError> {
-        validation::positive(reserve, "finalization reserve")?;
+        OperationPhases::validate_reserve(reserve)?;
         self.phases_before(reserve)
     }
 

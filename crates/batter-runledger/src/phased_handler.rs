@@ -3,7 +3,7 @@ use crate::{JobPhasesRejection, job_phases};
 use batter_core::{
     ConfigurationError,
     operation::{
-        OperationContext, PhaseOutcome, PhasedFailure,
+        OperationContext, OperationPhases, PhaseOutcome, PhasedFailure,
         low_level::{ScopedPhases, drive_phases},
     },
 };
@@ -169,12 +169,11 @@ pub struct PhasedJob<H> {
     reserve: Duration,
 }
 impl<H: PhasedJobHandler> PhasedJob<H> {
-    /// Validate a positive reserve before registration. Per-invocation checks
-    /// reject deadlines that leave no work time before any callback runs.
+    /// Validate a positive, clock-representable reserve of at most one year
+    /// before registration. Per-invocation checks reject deadlines that leave
+    /// no work time before any callback runs.
     pub fn new(handler: H, reserve: Duration) -> Result<Self, ConfigurationError> {
-        if reserve.is_zero() {
-            return Err(ConfigurationError::Zero("job finalization reserve"));
-        }
+        OperationPhases::validate_reserve(reserve)?;
         Ok(Self { handler, reserve })
     }
 }
@@ -220,33 +219,33 @@ struct Driver<'a, H> {
     execution: JobExecution<'a>,
     payload: Option<Value>,
 }
-impl<H: PhasedJobHandler> ScopedPhases for Driver<'_, H> {
+impl<'a, H: PhasedJobHandler> ScopedPhases for Driver<'a, H> {
     type Work = H::Output;
     type WorkError = H::Error;
     type Final = JobCompletion;
     type FinalError = H::Error;
-    async fn work(&mut self, context: &OperationContext) -> Result<H::Output, H::Error> {
-        self.handler
-            .work(
-                JobWork {
-                    execution: self.execution,
-                    context,
-                },
-                self.payload.take().expect("phase driver invokes work once"),
-            )
-            .await
-    }
-    async fn finalize(
-        &mut self,
-        context: &OperationContext,
-        work: &PhaseOutcome<H::Output, H::Error>,
-    ) -> Result<JobCompletion, H::Error> {
-        self.handler
-            .finalize(JobFinalization {
+    // Keep callback futures intact for the kernel's separate return/Drop checks.
+    fn work<'s>(
+        &'s mut self,
+        context: &'s OperationContext,
+    ) -> impl std::future::Future<Output = Result<H::Output, H::Error>> + Send + 's {
+        self.handler.work(
+            JobWork {
                 execution: self.execution,
                 context,
-                work,
-            })
-            .await
+            },
+            self.payload.take().expect("phase driver invokes work once"),
+        )
+    }
+    fn finalize<'s>(
+        &'s mut self,
+        context: &'s OperationContext,
+        work: &'s PhaseOutcome<H::Output, H::Error>,
+    ) -> impl std::future::Future<Output = Result<JobCompletion, H::Error>> + Send + 's {
+        self.handler.finalize(JobFinalization {
+            execution: self.execution,
+            context,
+            work,
+        })
     }
 }

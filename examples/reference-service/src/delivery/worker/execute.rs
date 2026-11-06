@@ -199,6 +199,9 @@ impl Invocation<'_> {
             }
             Err(BulkheadError::Operation(OperationError::Failed(error))) => return Err(error),
             Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
+                if matches!(self.current_progress(), Progress::StateChange) {
+                    return Ok(Action::FenceInterrupted);
+                }
                 Err(ProviderCallError::Interrupted(reason))
             }
         };

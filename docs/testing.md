@@ -255,6 +255,15 @@ matching, lease fencing, lookup-before-replay and terminal outcomes against a
 loopback fixture. These protocols do not establish arbitrary provider behavior
 or exactly-once execution. Database-backed cases remain explicit live probes.
 
+The reference worker's `panic_policy` unit regression exercises its production
+failure classifier for construction, polling and destruction panics in either
+phase, including a retryable finalization error. The ignored
+`provider_state_lock_and_retry_boundaries` test also drives production work
+against a blocked dispatch-fence transaction, covering outer and nested deadline
+ordering. It verifies finalization of both an uncommitted fence and a committed
+fence whose work result was withheld. The latter models retained commit
+uncertainty; it does not emulate a lost wire-level COMMIT acknowledgement.
+
 ## Outbound exchange facade example
 
 ```sh

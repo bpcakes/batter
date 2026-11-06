@@ -455,6 +455,7 @@ async fn rejected_derivation_starts_no_state_or_provider_work() -> Result<(), ba
     Ok(())
 }
 
+mod panic_policy;
 mod phase_ownership;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -2,7 +2,7 @@
 use super::*;
 use batter::{
     command::CommandCause,
-    operation::{Interruption, PhasedFailure},
+    operation::{Interruption, PhaseOutcome, PhasedFailure},
 };
 use std::sync::Mutex;
 
@@ -19,6 +19,7 @@ pub(super) enum Action {
         expected: ProviderEffectState,
     },
     Undispatched(Duration),
+    FenceInterrupted,
     Uncertain {
         code: &'static str,
         message: &'static str,
@@ -44,8 +45,20 @@ pub(super) struct Invocation<'a> {
     progress: Mutex<Progress>,
 }
 impl Invocation<'_> {
+    pub fn new<'a>(worker: &'a DeliveryWorker, payload: &'a DeliveryJobPayload) -> Invocation<'a> {
+        Invocation {
+            worker,
+            payload,
+            progress: Mutex::new(Progress::Preparing),
+        }
+    }
+
     pub fn progress(&self, progress: Progress) {
         *self.progress.lock().expect("invocation state") = progress;
+    }
+
+    pub fn current_progress(&self) -> Progress {
+        *self.progress.lock().expect("invocation state")
     }
 
     async fn finish(
@@ -86,6 +99,7 @@ impl Invocation<'_> {
             Action::Undispatched(delay) => Err(worker
                 .record_provider_undispatched(execution, payload, *delay)
                 .await),
+            Action::FenceInterrupted => self.finish_interrupted_fence(execution).await,
             Action::Uncertain { code, message } => {
                 let state = worker
                     .record_uncertain_failure(execution, payload, code)
@@ -99,6 +113,55 @@ impl Invocation<'_> {
                     .await
             }
         }
+    }
+
+    async fn finish_interrupted_fence(
+        &self,
+        execution: JobExecution<'_>,
+    ) -> Result<JobCompletion, JobFailure> {
+        // Cancellation cannot tell us whether the fence committed. Reload
+        // under the live native lease before choosing a legal source state.
+        let snapshot = self.worker.load_retained(execution, self.payload).await?;
+        let state = match snapshot.state {
+            state @ (ProviderEffectState::AwaitingAttempt
+            | ProviderEffectState::RetryableUndispatched) => {
+                self.worker
+                    .record_admission_undispatched(
+                        execution,
+                        self.payload,
+                        CODE_OPERATION_BUDGET_EXHAUSTED,
+                        state,
+                    )
+                    .await
+            }
+            ProviderEffectState::ReconcileNeeded => {
+                self.worker
+                    .record_uncertain_failure(
+                        execution,
+                        self.payload,
+                        CODE_OPERATION_BUDGET_EXHAUSTED,
+                    )
+                    .await
+            }
+            ProviderEffectState::Confirmed
+            | ProviderEffectState::BusinessDenied
+            | ProviderEffectState::ManualResolution
+            | ProviderEffectState::Exhausted => return Ok(JobCompletion::success()),
+        }
+        .map_err(state_failure)?;
+        let message = "Provider dispatch fence ended before acknowledgement.";
+        if state == ProviderEffectState::Exhausted {
+            return Err(retry_or_exhausted(
+                state,
+                CODE_OPERATION_BUDGET_EXHAUSTED,
+                message,
+                None,
+            ));
+        }
+        Err(JobFailure::timeout(
+            CODE_OPERATION_BUDGET_EXHAUSTED,
+            message,
+        ))
     }
 }
 
@@ -114,11 +177,7 @@ impl JobExecutionHandler for DeliveryWorker {
     ) -> Result<JobCompletion, JobFailure> {
         use runledger_core::jobs::JobHandler;
         let payload = decode_payload(execution, value)?;
-        let invocation = Invocation {
-            worker: self,
-            payload: &payload,
-            progress: Mutex::new(Progress::Preparing),
-        };
+        let invocation = Invocation::new(self, &payload);
         PhasedJob::new(invocation, FINAL_STATE_RESERVE)
             .expect("positive final-state reserve")
             .execute_with_services(execution, Value::Null)
@@ -152,7 +211,7 @@ impl PhasedJobHandler for Invocation<'_> {
             Err(CommandCause::Interrupted(reason)) => Some(*reason),
             _ => failure.interruption_after_return(),
         };
-        let progress = *self.progress.lock().expect("invocation state");
+        let progress = self.current_progress();
         let action = match progress {
             Progress::Admission(state) => Action::Admission {
                 state,
@@ -164,9 +223,15 @@ impl PhasedJobHandler for Invocation<'_> {
                 }),
                 message: "Provider work ended without a definitive retained outcome.",
             },
-            // Pending state SQL may have committed. Do not invent non-dispatch
-            // or overwrite a concurrent transition; the next attempt reloads it.
-            Progress::Preparing | Progress::StateChange => return Ok(JobCompletion::success()),
+            Progress::StateChange => {
+                // A returned SQL/policy failure is already classified by work.
+                // In particular, RetryDeferred must not rewrite retained state.
+                if matches!(failure.returned_result(), Err(CommandCause::Failed(_))) {
+                    return Ok(JobCompletion::success());
+                }
+                Action::FenceInterrupted
+            }
+            Progress::Preparing => return Ok(JobCompletion::success()),
         };
         self.finish(scope.execution(), &action).await
     }
@@ -183,6 +248,9 @@ impl PhasedJobHandler for Invocation<'_> {
                 "Provider work phases could not be derived from this invocation.",
             ),
             PhasedJobFailure::Phases(PhasedFailure::Report(report)) => {
+                if phase_panicked(report.work()) || phase_panicked(report.finalization()) {
+                    return JobFailure::panicked("job.handler_panic", "Job handler panicked.");
+                }
                 if let Err(work) = report.work().classify()
                     && let Err(CommandCause::Failed(error)) = work.returned_result()
                 {
@@ -204,4 +272,11 @@ impl PhasedJobHandler for Invocation<'_> {
             ),
         }
     }
+}
+
+fn phase_panicked<T, E>(phase: &PhaseOutcome<T, E>) -> bool {
+    phase.classify().is_err_and(|failure| {
+        matches!(failure.returned_result(), Err(CommandCause::Panicked(_)))
+            || failure.destruction_panic().is_some()
+    })
 }

@@ -27,6 +27,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "phased_handler/destruction.rs"]
+mod destruction;
+
 #[derive(Clone, Copy)]
 enum Mode {
     Success,
@@ -257,7 +260,18 @@ async fn impossible_reserve_refuses_both_callbacks() {
         probe.work_context.clone(),
         probe.failure.clone(),
     );
-    assert!(PhasedJob::new(Probe::new(Mode::Success), Duration::ZERO).is_err());
+    for reserve in [
+        Duration::ZERO,
+        Duration::from_secs(366 * 24 * 60 * 60),
+        Duration::MAX,
+    ] {
+        let invalid = Probe::new(Mode::Success);
+        let work_context = invalid.work_context.clone();
+        let finalized = invalid.finalized.clone();
+        assert!(PhasedJob::new(invalid, reserve).is_err());
+        assert!(work_context.lock().unwrap().is_none());
+        assert!(!finalized.load(Ordering::SeqCst));
+    }
     let handler = PhasedJob::new(probe, Duration::from_secs(4)).unwrap();
     let run = HandlerInvocation::new(Duration::from_secs(3))
         .unwrap()

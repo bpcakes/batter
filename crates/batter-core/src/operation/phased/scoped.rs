@@ -41,18 +41,18 @@ pub trait ScopedPhases: Send {
     type FinalError: Send;
 
     /// Execute work under the shortened context. May borrow host services.
-    fn work(
-        &mut self,
-        context: &OperationContext,
-    ) -> impl Future<Output = Result<Self::Work, Self::WorkError>> + Send;
+    fn work<'a>(
+        &'a mut self,
+        context: &'a OperationContext,
+    ) -> impl Future<Output = Result<Self::Work, Self::WorkError>> + Send + 'a;
 
     /// Execute only after work's future has been destroyed and its context
     /// cancelled. A returned work error or panic cannot skip this call.
-    fn finalize(
-        &mut self,
-        context: &OperationContext,
-        work: &PhaseOutcome<Self::Work, Self::WorkError>,
-    ) -> impl Future<Output = Result<Self::Final, Self::FinalError>> + Send;
+    fn finalize<'a>(
+        &'a mut self,
+        context: &'a OperationContext,
+        work: &'a PhaseOutcome<Self::Work, Self::WorkError>,
+    ) -> impl Future<Output = Result<Self::Final, Self::FinalError>> + Send + 'a;
 }
 
 /// Checked adapter result; success requires both phases to succeed.
@@ -79,10 +79,12 @@ pub async fn drive_phases<P: ScopedPhases>(
         let _cancel_work = phases.work.cancellation.clone().drop_guard();
         let _cancel_finalization = phases.finalization.cancellation.clone().drop_guard();
         let mut work_scope = (&mut *driver, &phases.work);
+        // Forward the callback future itself: an awaiting wrapper would drop
+        // it before run_work can retain its return and separate Drop panic.
         let (result, interruption, destruction) = command::run_work(
             &mut work_scope,
             &phases.work,
-            |scope| Box::pin(async move { scope.0.work(scope.1).await }),
+            |scope| Box::pin(scope.0.work(scope.1)),
             &mut command::NoSignals,
         )
         .await;
@@ -92,7 +94,7 @@ pub async fn drive_phases<P: ScopedPhases>(
         let (result, interruption, destruction) = command::run_work(
             &mut final_scope,
             &phases.finalization,
-            |scope| Box::pin(async move { scope.0.finalize(scope.1, scope.2).await }),
+            |scope| Box::pin(scope.0.finalize(scope.1, scope.2)),
             &mut command::NoSignals,
         )
         .await;

@@ -1,7 +1,7 @@
 # Owned execution cutover
 
 Compared `986d294c24610bbbec8809a76bdf5f78d2031a49` with the PR 106 implementation
-for `batter-f9kq.1` and `batter-f9kq.2`. The complete kind-qualified surface
+for `batter-f9kq.1`, `batter-f9kq.2` and the `batter-f9kq.3` panel repairs. The complete kind-qualified surface
 comparison is [surface.txt](surface.txt).
 
 Rustdoc JSON was generated for `batter-core` and `batter-runledger`, with all
@@ -35,6 +35,12 @@ diff review additionally checked the existing public methods, retained
 signature was cut. The `test-support` feature remains; JSON payload support is
 now an ordinary dependency of the adapter, already present in the locked graph.
 Native Runledger APIs and persisted job payloads are unchanged.
+
+The repair extraction adds only `OperationPhases::validate_reserve` to the
+initial branch comparison. The new adapter seam's `ScopedPhases` callbacks use
+one explicit borrow lifetime so the original callback futures reach the kernel
+without an awaiting wrapper. This trait did not exist at the comparison base;
+its async implementations and existing released signatures are unchanged.
 
 [CHANGELOG](../../../CHANGELOG.md) supplies before/after migrations for raw
 async permits, blocking and process-task handoffs, and both manual and owned
