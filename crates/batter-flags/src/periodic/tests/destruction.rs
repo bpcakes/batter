@@ -10,12 +10,13 @@ use std::{
 use batter_core::{
     cleanup::SkipReason,
     lifecycle::{ShutdownFailure, TaskOutcome},
-    periodic::{PeriodicCompletion, PeriodicFailure, PeriodicRun},
+    periodic::{PeriodicCompletion, PeriodicFailure, PeriodicRun, PeriodicSummary},
 };
 use batter_flags_core::{PrePublication, SwitchState, Toggle};
 use tokio::time::sleep;
 
 use super::{Failed, policy, support::*};
+use crate::periodic::GatedPeriodicReader;
 
 #[derive(Clone, Copy)]
 enum Returned {
@@ -49,7 +50,9 @@ impl Drop for ReturnThenPanic {
     }
 }
 
-async fn retained_despite_destruction(returned: Returned) {
+async fn retained_despite_destruction(
+    returned: Returned,
+) -> (PeriodicSummary, GatedPeriodicReader) {
     let mut fixture = Fixture::new(PrePublication::Unready);
     let mut supervisor = supervisor();
     let reader = fixture
@@ -86,47 +89,40 @@ async fn retained_despite_destruction(returned: Returned) {
     assert_eq!(summary.completion, PeriodicCompletion::Pending);
     assert_eq!(summary.deadline_exceeded, 0);
     assert_eq!(summary.stop_interrupted, 0);
-    match returned {
-        Returned::Success => {
-            assert_eq!(summary.succeeded, 2);
-            assert_eq!(reader.snapshot().succeeded, 2);
-            assert_eq!(summary.recoverable_failures, 0);
-            assert!(summary.first_failure.is_none());
-            assert!(summary.terminal_failure.is_none());
-        }
-        Returned::Recoverable => {
-            assert_eq!(summary.succeeded, 1);
-            assert_eq!(summary.recoverable_failures, 1);
-            assert_eq!(reader.snapshot().recoverable_failures, 1);
-            let sample = summary.first_failure.as_ref().unwrap();
-            assert_eq!(sample.invocation, 2);
-            assert_eq!(sample.error.downcast_ref::<Failed>().unwrap().0, 7);
-            assert!(summary.terminal_failure.is_none());
-        }
-        Returned::Fatal => {
-            assert_eq!(summary.succeeded, 1);
-            assert_eq!(summary.recoverable_failures, 0);
-            assert!(summary.first_failure.is_none());
-            let sample = summary.terminal_failure.as_ref().unwrap();
-            assert_eq!(sample.invocation, 2);
-            assert_eq!(sample.error.downcast_ref::<Failed>().unwrap().0, 9);
-            assert!(reader.snapshot().terminal_failure.is_some());
-        }
-    }
     assert!(!format!("{report:?}").contains("private maintenance failure"));
+    (summary.clone(), reader)
 }
 
 #[tokio::test(start_paused = true)]
 async fn recoverable_error_survives_application_future_drop_panic() {
-    retained_despite_destruction(Returned::Recoverable).await;
+    let (summary, reader) = retained_despite_destruction(Returned::Recoverable).await;
+    assert_eq!(summary.succeeded, 1);
+    assert_eq!(summary.recoverable_failures, 1);
+    assert_eq!(reader.snapshot().recoverable_failures, 1);
+    let sample = summary.first_failure.as_ref().unwrap();
+    assert_eq!(sample.invocation, 2);
+    assert_eq!(sample.error.downcast_ref::<Failed>().unwrap().0, 7);
+    assert!(summary.terminal_failure.is_none());
 }
 
 #[tokio::test(start_paused = true)]
 async fn fatal_error_survives_application_future_drop_panic() {
-    retained_despite_destruction(Returned::Fatal).await;
+    let (summary, reader) = retained_despite_destruction(Returned::Fatal).await;
+    assert_eq!(summary.succeeded, 1);
+    assert_eq!(summary.recoverable_failures, 0);
+    assert!(summary.first_failure.is_none());
+    let sample = summary.terminal_failure.as_ref().unwrap();
+    assert_eq!(sample.invocation, 2);
+    assert_eq!(sample.error.downcast_ref::<Failed>().unwrap().0, 9);
+    assert!(reader.snapshot().terminal_failure.is_some());
 }
 
 #[tokio::test(start_paused = true)]
 async fn success_count_survives_application_future_drop_panic() {
-    retained_despite_destruction(Returned::Success).await;
+    let (summary, reader) = retained_despite_destruction(Returned::Success).await;
+    assert_eq!(summary.succeeded, 2);
+    assert_eq!(reader.snapshot().succeeded, 2);
+    assert_eq!(summary.recoverable_failures, 0);
+    assert!(summary.first_failure.is_none());
+    assert!(summary.terminal_failure.is_none());
 }
