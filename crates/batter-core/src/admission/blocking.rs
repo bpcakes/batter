@@ -37,7 +37,7 @@ use tracing::{Dispatch, Span};
 /// };
 ///
 /// async fn admit(bulkhead: &Bulkhead, context: &OperationContext) -> Result<(), BlockingError> {
-///     let _permit = bulkhead.enter(context, Admission::Reject).await?;
+///     bulkhead.run(context, Admission::Reject, "example.work", |_| async { Ok::<_, ()>(()) }).await?;
 ///     Ok(())
 /// }
 /// ```
@@ -218,7 +218,7 @@ impl Bulkhead {
     /// assert_eq!(value, digest(&[7; 4096]));
     /// // When the value arrives, the closure's permit is already free.
     /// let context = OperationOwner::new(Duration::from_secs(1))?.into_context();
-    /// assert!(runtime.block_on(bulkhead.enter(&context, Admission::Reject)).is_ok());
+    /// assert!(runtime.block_on(bulkhead.run(&context, Admission::Reject, "example.check", |_| async { Ok::<_, ()>(()) })).is_ok());
     /// # Ok::<(), BoxError>(())
     /// ```
     pub async fn run_blocking<T, F>(

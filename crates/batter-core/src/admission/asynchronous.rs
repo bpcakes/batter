@@ -41,6 +41,17 @@ impl Bulkhead {
     /// Admit and run one async factory, retaining capacity through full future
     /// destruction on success, error, panic, interruption or caller cancellation.
     ///
+    /// Migration: `Bulkhead::enter` was removed; move the complete async work
+    /// into this callback. Use `run_blocking` for blocking work. No raw permit
+    /// or deprecated shim is exposed because it restores premature release.
+    ///
+    /// ```compile_fail,E0599
+    /// async fn removed(b: &batter_core::admission::Bulkhead,
+    ///     c: &batter_core::operation::OperationContext) {
+    ///     b.enter(c, batter_core::admission::Admission::Reject).await;
+    /// }
+    /// ```
+    ///
     /// Admission and execution share the original absolute deadline. The context
     /// is rechecked after acquisition and before the factory is invoked. No
     /// permit or task handle escapes; no task is spawned. A never-polled call
@@ -79,6 +90,40 @@ impl Bulkhead {
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
+        self.run_resolved(context, admission, operation, factory, |result| result)
+            .await
+    }
+
+    /// Admit async work and resolve application-retained evidence before telemetry.
+    ///
+    /// Has [`Self::run`]'s permit and deadline ownership. The resolver has
+    /// [`OperationContext::run_resolved`]'s obligations: it must use authoritative
+    /// application evidence, and cannot infer remote outcomes from interruption.
+    /// Admission refusal never invokes the factory or resolver. Dropping the outer
+    /// future still destroys work and releases capacity without invoking a resolver.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use batter_core::{admission::{Admission, Bulkhead, BulkheadCapacity}, operation::OperationOwner};
+    /// let bulkhead = Bulkhead::new(BulkheadCapacity::new(1)?);
+    /// let owner = OperationOwner::new(std::time::Duration::from_secs(1))?;
+    /// bulkhead.run_resolved(owner.context(), Admission::Reject, "example.work",
+    ///     |_| async { Ok::<_, std::io::Error>(()) }, |result| result).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn run_resolved<T, E, U, R, F, Fut, Resolve>(
+        &self,
+        context: &OperationContext,
+        admission: Admission,
+        operation: &'static str,
+        factory: F,
+        resolve: Resolve,
+    ) -> Result<U, BulkheadError<R>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+        Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
+    {
         crate::scoped_dispatch::scope(async move {
             let mut decision = crate::telemetry::record::BulkheadTerminal::new();
             let admitted = self.admit(context, admission).await.and_then(|permit| {
@@ -92,7 +137,7 @@ impl Bulkhead {
             // destruction. Never move it into the callback or its result.
             let _permit = admitted.map_err(BulkheadError::NotAdmitted)?;
             context
-                .run(operation, factory)
+                .run_resolved(operation, factory, resolve)
                 .await
                 .map_err(BulkheadError::Operation)
         })

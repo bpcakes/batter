@@ -2,6 +2,7 @@
 //! unwinds, however its caller stops waiting.
 
 use crate::blocking_support::{Gate, Unrun, bulkhead, fresh, gated, owner, parked};
+use crate::bulkhead_testing::BulkheadTestExt;
 use batter_core::{
     admission::{Admission, AdmissionError, BlockingError, Bulkhead},
     operation::Interruption,
@@ -25,7 +26,7 @@ async fn assert_still_held(bulkhead: &Bulkhead, gate: &Gate) {
     ));
     probe.assert_destroyed_uncalled();
     assert!(matches!(
-        bulkhead.enter(&fresh(), Admission::Reject).await,
+        bulkhead.hold(&fresh(), Admission::Reject).await,
         Err(AdmissionError::Overloaded)
     ));
     assert!(!gate.returned());
@@ -33,7 +34,7 @@ async fn assert_still_held(bulkhead: &Bulkhead, gate: &Gate) {
 
 /// Wait admission succeeds once the abandoned closure frees its permit.
 async fn wait_for_capacity(bulkhead: &Bulkhead) {
-    assert!(bulkhead.enter(&fresh(), Admission::Wait).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Wait).await.is_ok());
 }
 
 /// The closure is a `T: 'static` value, so it moves into the caller task.
@@ -180,7 +181,7 @@ async fn awaiter_held_permit_is_released_while_its_blocking_work_runs() {
     let caller = tokio::spawn({
         let bulkhead = bulkhead.clone();
         async move {
-            let _permit = bulkhead.enter(&fresh(), Admission::Reject).await?;
+            let _permit = bulkhead.hold(&fresh(), Admission::Reject).await?;
             Ok::<_, AdmissionError>(tokio::task::spawn_blocking(work).await)
         }
     });
@@ -188,7 +189,7 @@ async fn awaiter_held_permit_is_released_while_its_blocking_work_runs() {
     caller.abort();
     assert!(caller.await.unwrap_err().is_cancelled());
     // Capacity is free again although the blocking work is still running.
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
     assert!(!gate.returned());
     gate.release();
 }
@@ -227,7 +228,7 @@ async fn closed_bulkhead_admits_nothing_new_while_running_work_keeps_its_permit(
     waiting_probe.assert_destroyed_uncalled();
     assert_closed(&bulkhead, Admission::Reject).await;
     assert!(matches!(
-        bulkhead.enter(&fresh(), Admission::Reject).await,
+        bulkhead.hold(&fresh(), Admission::Reject).await,
         Err(AdmissionError::Closed)
     ));
     assert!(!gate.returned());

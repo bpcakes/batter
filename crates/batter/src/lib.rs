@@ -37,11 +37,11 @@
 //! | Routines, triggers and constraint triggers a release owns | one `sqlx::managed::ManagedObjectManifest` built from in-place source files: `sqlx::PgLease::migrate_and_apply` at setup, then the same manifest in `sqlx::verification::VerificationPlan::with_managed_objects` at readiness (feature `sqlx`) | whole routine bodies restated in new migrations, a constraint trigger created in a migration (it binds the previously installed body), or objects applied by hand before or after `PgLease::migrate` |
 //! | A transaction write | `sqlx::run_atomic_in`, or `sqlx::run_atomic_with_in` for an exhaustive failure policy; use their `run_atomic_profiled_in` / `run_atomic_profiled_with_in` counterparts with a profiled pool. For a durable job in the same transaction, wrap `runledger::run_atomic` in the caller's `context.run` | `sqlx::low_level::PgAtomicTransaction`, which leaves commit confirmation to the caller |
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
-//! | Async work under a concurrency bound | [`admission::Bulkhead::run`] owns admission, execution and permit release | [`admission::Bulkhead::enter`] leaves permit lifetime and context checks with the caller |
-//! | Synchronous CPU work or blocking I/O under a concurrency bound | [`admission::Bulkhead::run_blocking`] with the caller's context, matching its exhaustive [`admission::BlockingError`] in separate arms | [`admission::Bulkhead::enter`] with its permit moved into `tokio::task::spawn_blocking` by hand, a permit held by the awaiting future, or unbounded `spawn_blocking` |
+//! | Async work under a concurrency bound | [`admission::Bulkhead::run`] owns admission, execution and permit release | `Bulkhead::enter` was removed because it left permit lifetime and context checks with the caller |
+//! | Synchronous CPU work or blocking I/O under a concurrency bound | [`admission::Bulkhead::run_blocking`] with the caller's context, matching its exhaustive [`admission::BlockingError`] in separate arms | the removed `Bulkhead::enter` with its permit moved into `tokio::task::spawn_blocking` by hand, a permit held by the awaiting future, or unbounded `spawn_blocking` |
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
 //! | A provider HTTP call | `outbound_http::Client::new` with a validated `outbound_http::Origin` and `outbound_http::ConnectTimeout`, built once and cloned; `client.request(method, path_segments)` with its headers and body, then `prepare()?`, which reports every construction error before anything is sent; `PreparedRequest::send_in` with the work phase of `reserve_finalization` after the application's dispatch fence is written, so the outcome can be recorded in the finalization phase unless the parent is cancelled; then an exhaustive `outbound_http::Exchange` match with no wildcard arm, where only `NotStarted` and `NotDispatched` (`proves_unsent`) show that this attempt wrote nothing and what a `Responded` status means is the application's reading of its provider (feature `outbound-http`) | a hand-built `reqwest` client, whose default redirects and replays make a connect error no proof that nothing was sent; retrying `Unknown` as though nothing was sent; reading `Responded` as processed, accepted or refused by the provider, when a load balancer or proxy may have answered; wrapping `send_in` in `run`, `retry`, `timeout` or `select!`, whose interruption drops the exchange and proves nothing |
-//! | A job handler's budget | `runledger::PhasedJob::new(handler, reserve)?` derives both budgets from the native invocation, whose exit cancels both phases. For lower-level owned callbacks, `runledger::job_phases(execution, reserve)?.into_operation(work, finalize).start()` retains separate operation ownership | a fresh root sized from the remaining budget, which never sees the invocation's exit; returning with `?` from manual work before finalization |
+//! | A job handler's budget | `runledger::PhasedJob::new(handler, reserve)?` derives both budgets from the native invocation, whose exit cancels both phases. `runledger::job_phases` has been removed; phase sequencing belongs to the handler adapter | a fresh root sized from the remaining budget, which never sees the invocation's exit; returning with `?` from manual work before finalization |
 //! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
 //!
 //! Every executable root starts the same way, whatever it goes on to run:
@@ -236,7 +236,7 @@ pub mod sqlx {
 /// and complete failure classification. Handlers join a native `JobCatalog` or
 /// `JobRegistry`; `register_in` registers the prepared worker. Test the same
 /// adapted handler through `runledger::test_support::HandlerInvocation`.
-/// Lower-level `job_phases` remains available for caller-owned composition.
+/// Migration: `job_phases` was removed; use the protected handler adapter.
 ///
 /// ```
 /// use batter::runledger::native::core::jobs::{
@@ -305,92 +305,47 @@ pub mod runledger {
     /// `[dev-dependencies]`; see `native::test_support` for the resolver rule.
     ///
     /// ```
-    /// use batter::operation::OperationError;
     /// use batter::runledger::native::core::jobs::{
-    ///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
+    ///     JobCompletion, JobExecutionError, JobFailure, JobType,
     /// };
     /// use batter::runledger::native::core::prelude::async_trait;
     /// use batter::runledger::test_support::{HandlerExit, HandlerInvocation};
-    /// use batter::runledger::{JobPhasesRejection, job_phases};
-    /// use serde_json::{Value, json};
+    /// use batter::runledger::{
+    ///     JobFinalization, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
+    /// };
+    /// use serde_json::Value;
     /// use std::time::Duration;
     ///
-    /// const RECORD_RESERVE: Duration = Duration::from_millis(300);
-    ///
-    /// struct Notify;
-    ///
+    /// struct Count;
     /// #[async_trait]
-    /// impl JobExecutionHandler for Notify {
-    ///     fn job_type(&self) -> JobType<'static> {
-    ///         JobType::new("example.notify")
+    /// impl PhasedJobHandler for Count {
+    ///     type Output = u64;
+    ///     type Error = JobExecutionError;
+    ///     fn job_type(&self) -> JobType<'static> { JobType::new("example.count") }
+    ///     async fn work(&self, scope: JobWork<'_>, _: Value) -> Result<u64, Self::Error> {
+    ///         scope.execution().save_checkpoint(&1_u64).await?;
+    ///         Ok(2)
     ///     }
-    ///
-    ///     async fn execute(
-    ///         &self,
-    ///         execution: JobExecution<'_>,
-    ///         payload: Value,
-    ///     ) -> Result<JobCompletion, JobFailure> {
-    ///         let phases = job_phases(execution, RECORD_RESERVE).map_err(|rejection| {
-    ///             match rejection {
-    ///                 JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => {
-    ///                     JobFailure::timeout("example.no_work_time", "No work time remained.")
-    ///                 }
-    ///                 JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => {
-    ///                     JobFailure::terminal("example.unsupported", "Invocation phases unavailable.")
-    ///                 }
-    ///             }
-    ///         })?;
-    ///         let accepted = payload.get("recipient").is_some();
-    ///         let sent = phases
-    ///             .work()
-    ///             .run("example.send", |_scope| async move {
-    ///                 accepted.then_some("receipt").ok_or(std::io::ErrorKind::InvalidInput)
-    ///             })
-    ///             .await;
-    ///         let outcome = match sent {
-    ///             Ok(_receipt) => Ok(JobCompletion::success()),
-    ///             Err(OperationError::Failed(_)) => {
-    ///                 Err(JobFailure::terminal("example.invalid_payload", "No recipient."))
-    ///             }
-    ///             Err(OperationError::Interrupted(_)) => {
-    ///                 Err(JobFailure::timeout("example.unknown", "Delivery is unknown."))
-    ///             }
-    ///         };
-    ///         phases
-    ///             .finalization()
-    ///             .run("example.record", |_scope| async { Ok::<_, std::io::Error>(()) })
-    ///             .await
-    ///             .map_err(|_| JobFailure::retryable("example.unrecorded", "Not recorded."))?;
-    ///         outcome
+    ///     async fn finalize(&self, scope: JobFinalization<'_, u64, Self::Error>)
+    ///         -> Result<JobCompletion, Self::Error> {
+    ///         if let Ok(count) = scope.work().classify() {
+    ///             scope.execution().save_checkpoint(count).await?;
+    ///         }
+    ///         Ok(JobCompletion::success())
+    ///     }
+    ///     fn failed(&self, _: PhasedJobFailure<u64, Self::Error>) -> JobFailure {
+    ///         // This example chooses terminal policy for every failed invocation.
+    ///         JobFailure::terminal("example.count_failed", "Count phases failed.")
     ///     }
     /// }
-    ///
-    /// # tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build()?.block_on(async {
-    /// let handler = Notify.into_job_handler();
+    /// # tokio::runtime::Builder::new_current_thread().enable_time().build()?.block_on(async {
+    /// let handler = PhasedJob::new(Count, Duration::from_millis(300))?;
     /// let run = HandlerInvocation::new(Duration::from_secs(5))?
-    ///     .execute(&handler, json!({ "recipient": "a" }))
-    ///     .await;
-    /// assert!(matches!(run.exit, HandlerExit::Returned(Ok(_))), "{:?}", run.exit);
+    ///     .execute(&handler, serde_json::json!({})).await;
+    /// assert!(matches!(run.exit, HandlerExit::Returned(Ok(_))));
+    /// assert_eq!(run.persisted.checkpoint, Some(serde_json::json!(2)));
     /// assert!(run.exit_hook_panics.is_empty());
-    ///
-    /// let run = HandlerInvocation::new(Duration::from_secs(5))?
-    ///     .execute(&handler, json!({}))
-    ///     .await;
-    /// assert!(matches!(
-    ///     run.exit,
-    ///     HandlerExit::Returned(Err(failure)) if failure.code == "example.invalid_payload"
-    /// ));
-    ///
-    /// // Exactly the reserve leaves no work time: the handler's own mapping answers.
-    /// let run = HandlerInvocation::new(RECORD_RESERVE)?
-    ///     .execute(&handler, json!({ "recipient": "a" }))
-    ///     .await;
-    /// assert!(matches!(
-    ///     run.exit,
-    ///     HandlerExit::Returned(Err(failure)) if failure.code == "example.no_work_time"
-    /// ));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// # })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(()) })?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[cfg(feature = "runledger-test-support")]

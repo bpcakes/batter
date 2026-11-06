@@ -74,7 +74,9 @@ but work that observed the context instead of being dropped with the handler was
 never told the invocation had been abandoned. A context that silently never ends
 was the invalid state; the repeated arithmetic was the caller obligation.
 
-The canonical path is now `job_phases(execution, reserve)`. It takes the whole
+At this assessment's delivery, the canonical path was
+`job_phases(execution, reserve)`. The later `batter-f9kq.2` assessment below
+supersedes that public path with `PhasedJob`; derivation is now private. It takes the whole
 `JobExecution`, so its deadline is the worker's own absolute instant rather than
 a value the caller re-derives, and the reserve is a required argument, so no
 default hides the final-state budget. It returns the existing `OperationPhases`:
@@ -418,6 +420,12 @@ panic, work timeout with remaining reserve, simultaneous work/finalization error
 finalization timeout, native invocation destruction and invalid reserve refusal.
 The external single-dependency consumer registers the adapter and persists a
 checkpoint from finalization. Compile-fail rustdocs reject forged scopes and
-work-phase access to finalization. All additions preserve existing public call
-shapes; there is no hard cut or deprecated shim. Fresh-agent usability evaluation
+work-phase access to finalization. The public `job_phases` function is removed;
+no shim exposes the phase pair. All consumers migrate, including the reference
+worker, whose work returns a typed provider outcome for final-state persistence.
+Private bridge and native harness tests remain internal regression tests.
+Breaking migrations are in CHANGELOG. Fresh-agent usability evaluation
 remains unexecuted. Execution results belong to the owning Bead.
+
+The [public API comparison](../public-api-diff-2026-11-06/README.md) records
+the executed surface diff and the no-shim migration decision for this cutover.

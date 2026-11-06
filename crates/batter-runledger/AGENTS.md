@@ -16,16 +16,16 @@ ownership, durable job outcomes, registry/catalog policy and database provisioni
   `runledger-runtime` and, behind `test-support`, `runledger-test-support`.
 - `src/phased_handler.rs`: protected `PhasedJob` registration, phase-scoped
   borrowed native services and complete failure classification.
-- `src/phases.rs`: `job_phases`, the one bridge from a native `JobExecution` to
+- `src/phases.rs`: private `job_phases`, the one bridge from a native `JobExecution` to
   Batter `OperationPhases`, and its typed `JobPhasesRejection`.
 - `src/test_support.rs` (feature `test-support`): `HandlerInvocation`, the
   worker-free drive of one handler to an exhaustive `HandlerExit`, with its
   in-memory `PersistedProgress`, for a fresh job (`new`) or a claimed job's
   context (`for_context`).
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
-- `tests/job_phases.rs`: paused-time bridge arithmetic, rejection, phase,
+- `src/phases/tests.rs`: paused-time bridge arithmetic, rejection, phase,
   observer and isolation contracts through the native invocation owner.
-- `tests/handler_invocation.rs` and `tests/handler_progress.rs`: the drive's
+- `src/test_support/invocation_tests.rs` and `tests/handler_progress.rs`: the drive's
   deadline, acceptance rule, destruction order and dispatch contracts, and its
   progress merge, declared retained progress, deadline refusal and budget
   acceptance, under paused time.
@@ -54,7 +54,7 @@ No raw owner extraction or legacy bridge is supported.
 cancellable scoped runner as the protected path. Work failure cannot bypass
 finalization, and failed finalization cannot publish a successful completion.
 Native invocation termination still ends authority; do not finalize after it.
-`job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the
+Private `job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the
 root from the absolute native deadline, never from the remaining budget; reuse
 core `reserve_finalization`/`split_finalization` rather than new arithmetic.
 Link cancellation only through the native invocation's exit hook, which owns

@@ -348,8 +348,9 @@ context check and the whole factory future. The callback receives a child
 context, never the permit. A local guard retains capacity through future
 destruction on every exit path. Waiting and work share the original deadline;
 refused and unpolled calls never invoke the factory. Errors retain concrete
-application causes without printing them. No public item was removed or renamed;
-`enter` remains compatible and explicitly documents its weaker obligations.
+application causes without printing them. `Bulkhead::enter` is removed with no
+shim because exposing the raw permit restores the invalid lifetime. All consumers
+migrate to owned execution; the breaking call shapes are in CHANGELOG.
 
 Independent regression scenarios cover overlapping factories, cancellation
 and destructor ordering, late semaphore grants with an unfired deadline timer,
@@ -358,4 +359,9 @@ The facade HTTP example exercises the new canonical API. No fresh-agent
 usability evaluation is claimed. A future returned as a value, native detached
 work and remote effects are not locally owned work. Protocols retaining durable
 outcomes must not equate cancellation of an enclosing operation with rollback;
-the existing explicit native-permit seam remains available for those adapters.
+`run_resolved` applies their retained-evidence resolver inside the same owned
+admission boundary. Reference submission uses its existing transaction progress
+resolver here rather than placing another interruptible boundary around it.
+
+The [public API comparison](../public-api-diff-2026-11-06/README.md) records
+the executed surface diff and the no-shim migration decision for this cutover.

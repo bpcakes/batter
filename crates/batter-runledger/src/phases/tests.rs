@@ -4,14 +4,14 @@
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-#[path = "job_phases/owned.rs"]
+#[path = "tests/owned.rs"]
 mod owned;
 
+use crate::{JobPhasesRejection, job_phases};
 use batter_core::{
     ConfigurationError,
     operation::{Interruption, OperationContext, OperationError, OperationPhases},
 };
-use batter_runledger::{JobPhasesRejection, job_phases};
 use runledger_core::jobs::{
     JobCompletion, JobContext, JobContract, JobExecution, JobExecutionError, JobExecutionHandler,
     JobExecutionServices, JobExecutionUpdate, JobFailure, JobHandler, JobInvocation,

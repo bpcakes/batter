@@ -1,8 +1,5 @@
 use super::*;
-use batter::operation::OperationPhases;
-use batter::runledger::native::core::jobs::{
-    JobExecution, JobExecutionHandler, JobFailureKind, JobHandler,
-};
+use batter::runledger::native::core::jobs::{JobFailureKind, JobHandler};
 use batter::runledger::test_support::{HandlerExit, HandlerInvocation};
 use std::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -43,39 +40,6 @@ fn failure(exit: HandlerExit) -> JobFailure {
     }
 }
 
-/// Derives `Greet`'s phases from the invocation and runs one step with them,
-/// so a test can place that step on the invocation's own clock.
-struct Step<F>(Mutex<Option<F>>);
-
-fn step<F, Fut>(body: F) -> impl JobHandler
-where
-    F: FnOnce(OperationPhases) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<JobCompletion, JobFailure>> + Send + 'static,
-{
-    Step(Mutex::new(Some(body))).into_job_handler()
-}
-
-#[async_trait]
-impl<F, Fut> JobExecutionHandler for Step<F>
-where
-    F: FnOnce(OperationPhases) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<JobCompletion, JobFailure>> + Send + 'static,
-{
-    fn job_type(&self) -> JobType<'static> {
-        JOB
-    }
-
-    async fn execute(
-        &self,
-        execution: JobExecution<'_>,
-        _payload: Value,
-    ) -> Result<JobCompletion, JobFailure> {
-        let phases = job_phases(execution, FINAL_STATE_RESERVE).expect("work time remains");
-        let body = self.0.lock().expect("step").take().expect("one invocation");
-        body(phases).await
-    }
-}
-
 #[tokio::test(start_paused = true)]
 async fn a_greeting_is_recorded_and_native_exit_has_a_cancelled_work_scope() {
     let (handler, mut recorded, mut endings) = greet();
@@ -111,60 +75,107 @@ async fn a_budget_inside_the_reserve_leaves_no_work_time() {
     assert!(recorded.recv().await.is_none());
 }
 
+enum Mode {
+    ExpireWork,
+    ExpireFinalization,
+    FinishedWork,
+}
+struct Probe {
+    mode: Mode,
+    work: Mutex<Option<OperationContext>>,
+    finalization: UnboundedSender<OperationContext>,
+}
+#[async_trait]
+impl PhasedJobHandler for Probe {
+    type Output = String;
+    type Error = JobFailure;
+    fn job_type(&self) -> JobType<'static> {
+        JOB
+    }
+    async fn work(&self, scope: JobWork<'_>, _: Value) -> Result<String, JobFailure> {
+        *self.work.lock().unwrap() = Some(scope.context().clone());
+        if matches!(self.mode, Mode::ExpireWork) {
+            advance(INVOCATION_TIME - FINAL_STATE_RESERVE).await;
+        }
+        greeting_name(scope.context(), json!({"name":"valid"})).await
+    }
+    async fn finalize(
+        &self,
+        scope: JobFinalization<'_, String, JobFailure>,
+    ) -> Result<JobCompletion, JobFailure> {
+        assert!(scope.context().check().is_ok());
+        let _ = self.finalization.send(scope.context().clone());
+        match self.mode {
+            Mode::ExpireWork => {
+                assert_eq!(scope.context().remaining(), FINAL_STATE_RESERVE);
+                assert!(!scope.work().is_success());
+            }
+            Mode::ExpireFinalization => std::future::pending().await,
+            Mode::FinishedWork => {
+                let work = self.work.lock().unwrap().clone().unwrap();
+                let error = greeting_name(&work, json!({"name":"valid"}))
+                    .await
+                    .expect_err("finished work is cancelled");
+                return Err(error);
+            }
+        }
+        Ok(JobCompletion::success())
+    }
+    fn failed(&self, failure: PhasedJobFailure<String, JobFailure>) -> JobFailure {
+        let (executed, _) = unbounded_channel();
+        let (ended, _) = unbounded_channel();
+        Greet { executed, ended }.failed(failure)
+    }
+}
+fn probe(mode: Mode) -> (PhasedJob<Probe>, UnboundedReceiver<OperationContext>) {
+    let (finalization, phases) = unbounded_channel();
+    (
+        PhasedJob::new(
+            Probe {
+                mode,
+                work: Mutex::new(None),
+                finalization,
+            },
+            FINAL_STATE_RESERVE,
+        )
+        .unwrap(),
+        phases,
+    )
+}
+
 #[tokio::test(start_paused = true)]
 async fn expired_work_is_interruption_while_finalization_time_remains() {
-    let expired = step(|phases| async move {
-        advance(INVOCATION_TIME - FINAL_STATE_RESERVE).await;
-        assert!(phases.finalization().check().is_ok());
-        greeting_name(phases.work(), json!({"name": "valid"}))
-            .await
-            .map(|_| JobCompletion::success())
-    });
-    let interrupted = failure(drive(INVOCATION_TIME, expired, json!({})).await);
+    let (handler, _) = probe(Mode::ExpireWork);
+    let interrupted = failure(drive(INVOCATION_TIME, handler, json!({})).await);
     assert_eq!(interrupted.kind, JobFailureKind::Timeout);
     assert_eq!(interrupted.code, "facade.consumer.work_interrupted");
 }
 
 #[tokio::test(start_paused = true)]
 async fn recording_at_the_invocation_deadline_is_an_interruption() {
-    let (export, mut exported) = unbounded_channel();
-    let late = step(move |phases| async move {
-        advance(INVOCATION_TIME).await;
-        let (executed, mut recorded) = unbounded_channel();
-        let failure = record_greeting(phases.finalization(), executed, "valid".into())
-            .await
-            .expect_err("finalization expired");
-        // The run itself is late, so the failure leaves through the export.
-        assert!(export.send((failure, recorded.try_recv().is_err())).is_ok());
-        Ok(JobCompletion::success())
-    });
-    let exit = drive(INVOCATION_TIME, late, json!({})).await;
+    let (handler, mut phases) = probe(Mode::ExpireFinalization);
+    let exit = drive(INVOCATION_TIME, handler, json!({})).await;
     assert!(matches!(exit, HandlerExit::TimedOut), "{exit:?}");
-    let (expired, nothing_recorded) = exported.recv().await.expect("exported");
+    let finalization = phases
+        .recv()
+        .await
+        .expect("finalization ran before native cutoff");
+    let (executed, mut recorded) = unbounded_channel();
+    let expired = record_greeting(&finalization, executed, "valid".into())
+        .await
+        .expect_err("native deadline closes recording");
+    assert!(recorded.recv().await.is_none());
     assert_eq!(expired.kind, JobFailureKind::Timeout);
     assert_eq!(expired.code, "facade.consumer.record_interrupted");
-    assert!(nothing_recorded);
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancelled_work_and_recording_after_the_exit_are_interruptions() {
-    let (export, mut exported) = unbounded_channel();
-    let cancelled = step(move |phases| async move {
-        phases.cancel_work();
-        let interrupted = greeting_name(phases.work(), json!({"name": "valid"}))
-            .await
-            .expect_err("work was cancelled");
-        assert!(phases.finalization().check().is_ok());
-        // Recording that outlives the handler keeps the finalization phase.
-        assert!(export.send(phases.finalization().clone()).is_ok());
-        Err(interrupted)
-    });
-    let interrupted = failure(drive(INVOCATION_TIME, cancelled, json!({})).await);
+async fn finished_work_and_recording_after_the_exit_are_interruptions() {
+    let (handler, mut phases) = probe(Mode::FinishedWork);
+    let interrupted = failure(drive(INVOCATION_TIME, handler, json!({})).await);
     assert_eq!(interrupted.kind, JobFailureKind::Timeout);
     assert_eq!(interrupted.code, "facade.consumer.work_interrupted");
-
-    // The invocation's exit ended the finalization phase too.
-    let finalization = exported.recv().await.expect("exported");
+    let finalization = phases.recv().await.expect("exported");
     let (executed, mut received) = unbounded_channel();
     let late = record_greeting(&finalization, executed, "valid".into())
         .await

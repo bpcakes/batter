@@ -41,7 +41,9 @@ Windows support and non-Unix fallbacks are out of scope.
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
 - `src/admission/asynchronous.rs` owns async factory admission, context rechecks,
-  and permit retention through complete work-future destruction.
+  and permit retention through complete work-future destruction. `run_resolved`
+  keeps retained-outcome resolution within that same boundary. Raw `Bulkhead::enter`
+  has been removed; never restore a public permit-transfer path.
 - `src/admission/blocking.rs` owns `Bulkhead::run_blocking` and `BlockingError`:
   admission, a context recheck, one bulkhead decision and a same-poll handoff
   of the permit into the blocking closure.

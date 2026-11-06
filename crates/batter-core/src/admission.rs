@@ -100,32 +100,6 @@ impl Bulkhead {
         self.semaphore.close();
     }
 
-    /// Lower-level native permit acquisition. Prefer [`Self::run`] for async work.
-    /// Hold the returned permit for the work's full lifetime.
-    ///
-    /// The permit is released whenever it is dropped, including when the future
-    /// holding it is cancelled or dropped while work it handed to another thread
-    /// keeps running. Use it for async work, or move it into that work's owner,
-    /// such as a finite process task. For synchronous CPU work or blocking I/O
-    /// use [`Self::run_blocking`], which moves the permit into the blocking
-    /// closure, rechecks the context after admission and maps every join
-    /// outcome; a permit moved into `spawn_blocking` by hand leaves those steps
-    /// to the caller. `Wait` admission can return a permit after the context's
-    /// deadline when its timer has not fired yet, so check the context before
-    /// starting work.
-    pub async fn enter(
-        &self,
-        context: &OperationContext,
-        admission: Admission,
-    ) -> Result<OwnedSemaphorePermit, AdmissionError> {
-        // Record exactly one decision, including `dropped` when a waiting
-        // caller abandons this future before admission completes.
-        let mut decision = crate::telemetry::record::BulkheadTerminal::new();
-        let result = self.admit(context, admission).await;
-        decision.finish(&result);
-        result
-    }
-
     /// Admit under `admission` without recording; each caller records exactly
     /// one decision around it.
     async fn admit(

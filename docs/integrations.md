@@ -776,7 +776,7 @@ This is application-owned failure projection, not a queue transaction or a claim
 that arbitrary database tampering can be repaired.
 
 Provider `Bulkhead` admission then waits inside the provider work phase that
-`batter::runledger::job_phases` derives from the native invocation, using the
+`batter::runledger::PhasedJob` derives from the native invocation, using the
 purpose-specific `BATTER_PROVIDER_CAPACITY`. Runledger has already
 claimed the job and offers no attempt-neutral defer/refund, but its validated
 global handler concurrency also bounds the number of provider waiters. This
@@ -817,14 +817,13 @@ the application. Native deadline, lease loss and task destruction still end
 authority and can interrupt finalization. There is no independently spawned
 coordinator or promise of finalization after invocation death.
 
-For lower-level composition inside a `JobExecutionHandler`,
-`batter_runledger::job_phases(execution, reserve)`
-derives `OperationPhases` from the native invocation instead of a fresh root.
+`PhasedJob` privately derives `OperationPhases` from the native invocation.
+The public `job_phases` function is removed; consumers cannot receive the pair.
 Their root deadline is exactly `JobExecution::deadline()`, the instant the worker
 enforces, on Tokio's view of the same monotonic clock; it is never rebuilt as
 now plus the remaining budget. Work ends `reserve` earlier through
 `reserve_finalization`'s checked arithmetic, finalization keeps the invocation
-deadline, and `Duration::ZERO` selects no reserve through `split_finalization`.
+deadline. The adapter requires a positive reserve.
 Runledger's `JobInvocation` ends when the invocation exits for any reason,
 after the handler future is destroyed and before the outcome is persisted:
 success, continuation, returned failure, panic, timeout, lease loss found by
@@ -836,9 +835,8 @@ invocation finish does not cancel it. Custom `JobExecutionServices` without an
 exit claim keep compiling but are refused with `JobPhasesRejection::Unsupported`;
 derivation also rejects ended invocations and exhausted work before any
 application work. The worker classifies a result or final-state write observed
-at or after its deadline as `job.timeout_exceeded`, so a zero reserve leaves no
-time for final-state work after work expiry; a positive reserve is application
-policy. Notification does not join detached work, shield cleanup, undo remote
+at or after its deadline as `job.timeout_exceeded`; the positive reserve is
+application policy. Notification does not join detached work, shield cleanup, undo remote
 effects or authorize dependency cleanup, and applications keep their explicit
 `OperationError`-to-`JobFailure` mapping; no generic conversion is provided,
 because `JobFailure` keeps only kind, code and message and native policy treats
@@ -869,7 +867,7 @@ Copy correlation metadata into durable payload/envelope fields only through a
 versioned, validated representation. Never persist a CancellationToken or Tokio
 Instant, and never keep a job subordinate to an already-finished HTTP scope.
 Each handler invocation derives its operation contexts from that invocation with
-`batter_runledger::job_phases`: the worker's deadline and the invocation's exit
+`batter_runledger::PhasedJob`: the worker's deadline and the invocation's exit
 bound the job's work, not the enqueuing request. Retry policy stays native and
 application-classified.
 
@@ -1297,7 +1295,7 @@ only after an attempt proved unsent. `Idempotent` and `Deduplicated` would
 overclaim, and `Never` stops after the first failure. Such a request needs a
 hand-written second preparation after a `NotDispatched`, or a durable job.
 Durable retries keep Runledger's policy; a handler passes a context derived
-from `batter_runledger::job_phases` to `send_in`. Neither the retry nor the
+from `batter_runledger::JobWork` to `send_in`. Neither the retry nor the
 Runledger composition is exercised by a test in this repository.
 
 With default features, `batter-outbound-http` has no Batter runtime dependency, so a

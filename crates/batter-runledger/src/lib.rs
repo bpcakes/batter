@@ -12,8 +12,7 @@
 //!
 //! [`PhasedJob`] owns handler work/finalization with borrowed execution services.
 //! Its required failure classifier receives complete phase evidence.
-//! For lower-level composition inside a handler, [`job_phases`] derives Batter
-//! work and finalization contexts
+//! The adapter derives Batter work and finalization contexts internally
 //! from the native invocation: its deadline is the worker's own, and the
 //! invocation's exit cancels both phases without a guard or forwarding task.
 //! A test drives one handler without a worker, queue or database through
@@ -62,7 +61,8 @@ mod phases;
 pub mod test_support;
 
 pub use phased_handler::{JobFinalization, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler};
-pub use phases::{JobPhasesRejection, job_phases};
+pub use phases::JobPhasesRejection;
+use phases::job_phases;
 
 use batter_core::{
     BoxError, RegistrationError,

@@ -8,14 +8,81 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
-- Add `PhasedJob` / `PhasedJobHandler` for library-ordered job work and
-  finalization borrowing native execution services. Preserve both phase outcomes
-  and require native failure classification before returning (`batter-f9kq.2`).
-
-- Add `Bulkhead::run` for async work with library-owned admission, deadline
-  checks and permit lifetime, and redacted `BulkheadError` outcomes. The HTTP
-  example uses it; `enter` remains an explicit lower-level native-permit path
+- **Breaking:** remove `Bulkhead::enter`; raw permit acquisition is no longer
+  public. Use `run` for async work, `run_resolved` when application-retained
+  outcomes must be resolved before telemetry, and `run_blocking` for blocking
+  closures. Every consumer migrates; no deprecated shim is retained because it
+  would restore early permit release and unchecked post-admission work
   (`batter-f9kq.1`).
+
+  ```rust,ignore
+  // Before: callers own the permit lifetime and post-admission checks.
+  let permit = bulkhead.enter(&context, Admission::Wait).await?;
+  let value = work(&context).await?;
+  drop(permit);
+  // After: capacity covers the entire future and its destruction.
+  let value = bulkhead.run(&context, Admission::Wait, "work",
+      |scope| async move { work(&scope).await }).await?;
+
+  // Before: hand off the raw permit to a blocking closure.
+  let permit = bulkhead.enter(&context, Admission::Wait).await?;
+  let value = tokio::task::spawn_blocking(move || {
+      let _permit = permit;
+      calculate()
+  }).await?;
+  // After: the library owns the handoff and its exhaustive outcomes.
+  let value = bulkhead.run_blocking(&context, Admission::Wait, calculate).await?;
+
+  // Before: move a permit acquired by the request into a process task.
+  let permit = bulkhead.enter(&context, Admission::Reject).await?;
+  process.try_spawn("refresh", move |_| async move {
+      let _permit = permit;
+      refresh().await
+  })?;
+  // After: the process task owns the entire bounded run.
+  process.try_spawn("refresh", move |_| async move {
+      Ok::<_, Fatal<MyError>>(bulkhead.run(&context, Admission::Reject,
+          "refresh", |_| refresh()).await)
+  })?;
+  ```
+
+- **Breaking:** remove public `batter_runledger::job_phases` and
+  `batter::runledger::job_phases`. Register `PhasedJob::new(handler, reserve)?`
+  with a `PhasedJobHandler`; the native invocation owns both callbacks and
+  borrowed execution services remain available in each. The required failure
+  classifier receives both outcomes and cannot return success. No deprecated
+  shim is retained because returning a phase pair restores skipped or reordered
+  finalization (`batter-f9kq.2`).
+
+  ```rust,ignore
+  // Before: manual sequencing could skip finalize on the early `?`.
+  let phases = job_phases(execution, reserve)?;
+  let value = work(phases.work(), execution).await?;
+  finalize(phases.finalization(), execution, value).await
+  // Before: owned callbacks required a separately managed operation owner.
+  let running = job_phases(execution, reserve)?
+      .into_operation(work, finalize).start();
+  running.wait().await
+  // After, for both shapes: implement the two callbacks and failure policy.
+  #[async_trait]
+  impl PhasedJobHandler for Handler {
+      type Output = Value;
+      type Error = DomainError;
+      fn job_type(&self) -> JobType<'static> { JOB }
+      async fn work(&self, scope: JobWork<'_>, payload: serde_json::Value)
+          -> Result<Value, DomainError> {
+          work(scope.context(), scope.execution(), payload).await
+      }
+      async fn finalize(&self, scope: JobFinalization<'_, Value, DomainError>)
+          -> Result<JobCompletion, DomainError> {
+          finalize(scope.context(), scope.execution(), scope.work()).await
+      }
+      fn failed(&self, failure: PhasedJobFailure<Value, DomainError>) -> JobFailure {
+          classify_failure(failure)
+      }
+  }
+  let catalog = JobCatalog::new().handler(PhasedJob::new(Handler, reserve)?);
+  ```
 
 - Direct facade consumers to owned work/finalization and supported native acquisition;
   identify manual phase and cleanup registration obligations at the selection points.

@@ -24,8 +24,6 @@ mod single_facade_quota;
 use batter::cleanup::CleanupBudget;
 use batter::lifecycle::{ShutdownBudget, Supervisor};
 use batter::operation::{OperationContext, OperationError, OperationOwner};
-#[cfg(test)]
-use batter::runledger::job_phases;
 use batter::runledger::native::core::jobs::{JobCompletion, JobFailure, JobType};
 use batter::runledger::native::core::prelude::async_trait;
 use batter::runledger::native::postgres::{
@@ -158,6 +156,24 @@ impl PhasedJobHandler for Greet {
                     && let Err(CommandCause::Failed(error)) = finalization.returned_result()
                 {
                     return error.clone();
+                }
+                if let Err(failure) = report.work().classify()
+                    && (matches!(failure.returned_result(), Err(CommandCause::Interrupted(_)))
+                        || failure.interruption_after_return().is_some())
+                {
+                    return JobFailure::timeout(
+                        "facade.consumer.work_interrupted",
+                        "Greeting work was interrupted.",
+                    );
+                }
+                if let Err(failure) = report.finalization().classify()
+                    && (matches!(failure.returned_result(), Err(CommandCause::Interrupted(_)))
+                        || failure.interruption_after_return().is_some())
+                {
+                    return JobFailure::timeout(
+                        "facade.consumer.record_interrupted",
+                        "Greeting recording was interrupted.",
+                    );
                 }
                 JobFailure::terminal(
                     "facade.consumer.phase_failed",

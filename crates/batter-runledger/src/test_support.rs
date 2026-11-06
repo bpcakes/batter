@@ -44,7 +44,7 @@ const WORKER_ID: &str = "test-support";
 ///
 /// [`Self::execute`] is the whole drive. It creates one [`JobInvocationOwner`]
 /// for the invocation, so [`JobExecution::invocation`] is always `Some` and
-/// [`crate::job_phases`] never returns [`crate::JobPhasesRejection::Unsupported`];
+/// [`crate::PhasedJob`] never reports [`crate::JobPhasesRejection::Unsupported`];
 /// it sets the native deadline `budget` after the returned future is first
 /// polled and enforces it as the worker does; it destroys the handler future
 /// before it ends the invocation, on every exit and when the future itself is
@@ -58,95 +58,47 @@ const WORKER_ID: &str = "test-support";
 /// to run without services.
 ///
 /// ```
-/// use batter_core::operation::OperationError;
-/// use batter_runledger::test_support::{HandlerExit, HandlerInvocation};
-/// use batter_runledger::{JobPhasesRejection, job_phases};
 /// use runledger_core::jobs::{
-///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
+///     JobCompletion, JobExecutionError, JobFailure, JobType,
 /// };
 /// use runledger_core::prelude::async_trait;
-/// use serde_json::{Value, json};
+/// use batter_runledger::test_support::{HandlerExit, HandlerInvocation};
+/// use batter_runledger::{
+///     JobFinalization, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
+/// };
+/// use serde_json::Value;
 /// use std::time::Duration;
 ///
-/// const RECORD_RESERVE: Duration = Duration::from_millis(300);
-///
-/// struct Notify;
-///
+/// struct Count;
 /// #[async_trait]
-/// impl JobExecutionHandler for Notify {
-///     fn job_type(&self) -> JobType<'static> {
-///         JobType::new("example.notify")
+/// impl PhasedJobHandler for Count {
+///     type Output = u64;
+///     type Error = JobExecutionError;
+///     fn job_type(&self) -> JobType<'static> { JobType::new("example.count") }
+///     async fn work(&self, scope: JobWork<'_>, _: Value) -> Result<u64, Self::Error> {
+///         scope.execution().save_checkpoint(&1_u64).await?;
+///         Ok(2)
 ///     }
-///
-///     async fn execute(
-///         &self,
-///         execution: JobExecution<'_>,
-///         payload: Value,
-///     ) -> Result<JobCompletion, JobFailure> {
-///         let phases = job_phases(execution, RECORD_RESERVE).map_err(|rejection| {
-///             match rejection {
-///                 JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => {
-///                     JobFailure::timeout("example.no_work_time", "No work time remained.")
-///                 }
-///                 JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => {
-///                     JobFailure::terminal("example.unsupported", "Invocation phases unavailable.")
-///                 }
-///             }
-///         })?;
-///         let accepted = payload.get("recipient").is_some();
-///         let sent = phases
-///             .work()
-///             .run("example.send", |_scope| async move {
-///                 accepted.then_some("receipt").ok_or(std::io::ErrorKind::InvalidInput)
-///             })
-///             .await;
-///         let outcome = match sent {
-///             Ok(receipt) => Ok(JobCompletion::with_output(json!({ "receipt": receipt }))),
-///             Err(OperationError::Failed(_)) => {
-///                 Err(JobFailure::terminal("example.invalid_payload", "No recipient."))
-///             }
-///             Err(OperationError::Interrupted(_)) => {
-///                 Err(JobFailure::timeout("example.unknown", "Delivery is unknown."))
-///             }
-///         };
-///         phases
-///             .finalization()
-///             .run("example.record", |_scope| async { Ok::<_, std::io::Error>(()) })
-///             .await
-///             .map_err(|_| JobFailure::retryable("example.unrecorded", "Not recorded."))?;
-///         outcome
+///     async fn finalize(&self, scope: JobFinalization<'_, u64, Self::Error>)
+///         -> Result<JobCompletion, Self::Error> {
+///         if let Ok(count) = scope.work().classify() {
+///             scope.execution().save_checkpoint(count).await?;
+///         }
+///         Ok(JobCompletion::success())
+///     }
+///     fn failed(&self, _: PhasedJobFailure<u64, Self::Error>) -> JobFailure {
+///         // This example chooses terminal policy for every failed invocation.
+///         JobFailure::terminal("example.count_failed", "Count phases failed.")
 ///     }
 /// }
-///
-/// # tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build()?.block_on(async {
-/// let handler = Notify.into_job_handler();
+/// # tokio::runtime::Builder::new_current_thread().enable_time().build()?.block_on(async {
+/// let handler = PhasedJob::new(Count, Duration::from_millis(300))?;
 /// let run = HandlerInvocation::new(Duration::from_secs(5))?
-///     .execute(&handler, json!({ "recipient": "a" }))
-///     .await;
-/// let HandlerExit::Returned(Ok(completion)) = run.exit else {
-///     panic!("delivered: {:?}", run.exit);
-/// };
-/// assert_eq!(completion.output(), Some(&json!({ "receipt": "receipt" })));
+///     .execute(&handler, serde_json::json!({})).await;
+/// assert!(matches!(run.exit, HandlerExit::Returned(Ok(_))));
+/// assert_eq!(run.persisted.checkpoint, Some(serde_json::json!(2)));
 /// assert!(run.exit_hook_panics.is_empty());
-///
-/// let run = HandlerInvocation::new(Duration::from_secs(5))?
-///     .execute(&handler, json!({}))
-///     .await;
-/// assert!(matches!(
-///     run.exit,
-///     HandlerExit::Returned(Err(failure)) if failure.code == "example.invalid_payload"
-/// ));
-///
-/// // Exactly the reserve leaves no work time: the handler's own mapping answers.
-/// let run = HandlerInvocation::new(RECORD_RESERVE)?
-///     .execute(&handler, json!({ "recipient": "a" }))
-///     .await;
-/// assert!(matches!(
-///     run.exit,
-///     HandlerExit::Returned(Err(failure)) if failure.code == "example.no_work_time"
-/// ));
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// # })?;
+/// # Ok::<(), Box<dyn std::error::Error>>(()) })?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -675,3 +627,6 @@ fn release_panic_payload(payload: Box<dyn Any + Send>) {
         std::mem::forget(payload);
     }
 }
+
+#[cfg(test)]
+mod invocation_tests;

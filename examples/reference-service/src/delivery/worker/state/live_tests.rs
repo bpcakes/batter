@@ -1,3 +1,4 @@
+use super::super::tests::bulkhead_testing::BulkheadTestExt;
 use crate::delivery::worker::state::ProviderAcceptance;
 
 use super::super::tests::{in_invocation, returned_failure};
@@ -284,7 +285,7 @@ async fn final_state_reserve_outlives_provider_work(
     let holder = batter::operation::OperationOwner::new(Duration::from_secs(30))?;
     let held = worker
         .admission
-        .enter(holder.context(), Admission::Wait)
+        .hold(holder.context(), Admission::Wait)
         .await?;
     let run =
         HandlerInvocation::for_context(FINAL_STATE_RESERVE + Duration::from_millis(100), context)?

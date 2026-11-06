@@ -109,6 +109,14 @@ pub trait PhasedJobHandler: Send + Sync {
 /// A native handler whose work/finalization sequence is owned by the adapter.
 /// Register this value directly with the native registry or catalog.
 ///
+/// Migration: `job_phases` was removed. Move work and finalization into
+/// `PhasedJobHandler` and register this adapter. No deprecated shim is kept
+/// because exposing the phase pair restores skipped or reordered finalization.
+///
+/// ```compile_fail,E0432
+/// use batter_runledger::job_phases;
+/// ```
+///
 /// No separately cancellable phase runner is exposed on the consumer path.
 /// The native worker owns the entire invocation. Lease loss, the native deadline
 /// or task destruction ends that authority and may interrupt finalization; this

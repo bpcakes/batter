@@ -28,56 +28,17 @@ coordinator. Native deadline, lease loss or task destruction can end it;
 no finalization after invocation death is promised. The `PhasedJob` rustdoc and
 single-dependency consumer demonstrate registration and checkpoint persistence.
 
-For lower-level composition inside a `JobExecutionHandler`,
-`job_phases(execution, reserve)` derives Batter
-`OperationPhases` from the native invocation. Both phases share one root whose
-deadline is exactly the worker's `JobExecution::deadline()`, converted to Tokio's
-view of the same monotonic clock and never rebuilt from the remaining budget.
-Work ends `reserve` earlier, by the same checked arithmetic as
-`reserve_finalization`; finalization keeps the invocation deadline, and cancelling
-or exhausting work leaves it running. `Duration::ZERO` selects no reserve
-(`split_finalization`): then any result or final-state write after work expiry is
-classified `job.timeout_exceeded` by the worker. A positive reserve is application
-policy and must cover the final-state work done after work expires. The worker
-persists the outcome after the handler returns, outside that budget.
+The public `job_phases` function has been removed. The adapter privately derives
+both phases from the worker's absolute deadline, with a positive reserve for
+finalization. It cancels work after destroying the work future, then runs the
+finalizer under the original native deadline. No separately spawned coordinator
+or application-owned phase pair exists on this path.
 
-For owned `Send + 'static` provider/store callbacks, use the protected path:
-`job_phases(execution, reserve)?.into_operation(work, finalize).start()`. Keep
-its running owner bound and await `running.wait().await`; `Ok` means both phases
-succeeded, and a failed report retains both outcomes. The finalizer receives
-its context and read-only work evidence only after work ends, so early work
-errors cannot skip that transition. See the compiled `job_phases` rustdoc.
+The invocation's exit cancels both phases and all derived contexts. Native
+ownership and fencing remain authoritative; a local phase cannot establish that
+a remote effect rolled back. Each callback receives native execution services
+and its own context. Use `scope.context().child(limit)` for a smaller step budget.
 
-The runner spawns a coordinator. Losing a borrowed waiter does not cancel it;
-owner loss cancels work only, but native invocation exit still cancels both
-phases, including finalization. The coordinator is not joined into the handler,
-and cannot survive runtime death or extend the native deadline. Callbacks must
-own their captures: a borrowed `JobExecution` cannot move into them. Native
-progress/checkpoint calls that borrow the invocation use `PhasedJob` instead.
-
-Handler destruction can drop the owner before invocation exit is signalled.
-The coordinator may start finalization in that window, including on another
-runtime thread. Cancellation is cooperative and is not authority for a remote
-final-state write; application/native fencing and reconciliation remain required
-where such writes need current invocation authority.
-
-The invocation's own exit cancels both phases and every context derived from
-them: success, continuation, failure, panic, timeout, lease loss, failed lease
-maintenance and task abort, but not a graceful stop that lets it finish. The
-native invocation owns the only cancellation authority, so no guard, forwarding
-task or paired call exists to forget, and handlers cannot cancel the invocation.
-The worker destroys the handler future before it ends the invocation, so work
-awaited inside the handler is dropped rather than seeing the cancellation, and
-nothing computed afterwards is stored; the exit reaches spawned work that holds
-a phase or a child derived from it. Direct `work()`/`finalization()` access is
-the lower-level manual path. There, run final-state work under `finalization()`
-when it uses Batter boundaries such as admission, retries, children or spawned
-tasks; a plain write awaited in the handler is bounded by the native deadline
-either way. Limit one step inside work with `phases.work().child(limit)`, which
-ends at the earlier of that limit and the work deadline and stays linked to the
-invocation's exit; a new root built inside a handler is never cancelled by it.
-The facade's `batter::runledger` module documentation shows a complete handler
-using facade paths.
 Derivation rejects with a typed `JobPhasesRejection` before any application work:
 `Unsupported` for custom `JobExecutionServices` that make no exit claim,
 `Ended`, `Exhausted` when no work time remains, or `Reserve` for an invalid
@@ -95,7 +56,7 @@ non-positive run number or attempt as the queue row does. A retried attempt
 declares the progress its row retains with `with_progress`, so its writes are
 validated against it as the worker validates them against the locked row.
 It builds the real `JobExecution`: services that own the invocation's exit, so
-`job_phases` derives, a native deadline `budget` after execution starts, and
+`PhasedJob` derives internally, a native deadline `budget` after execution starts, and
 in-memory progress persistence with the queue row's merge rule. It dispatches
 through `JobHandler::execute_with_services` as the worker does, destroys the
 handler future before it ends the invocation, on every exit and when the future

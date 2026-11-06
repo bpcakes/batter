@@ -1,0 +1,55 @@
+## batter-core: 1298 -> 1319 entries; 1 removed, 22 added
+- REMOVED method batter_core::admission::Bulkhead::enter
++ ADDED   enum batter_core::admission::BulkheadError
++ ADDED   function batter_core::operation::low_level::drive_phases
++ ADDED   impl batter_core::admission::BulkheadError: Debug
++ ADDED   impl batter_core::admission::BulkheadError: Display
++ ADDED   impl batter_core::admission::BulkheadError: Error
++ ADDED   method batter_core::admission::Bulkhead::run
++ ADDED   method batter_core::admission::Bulkhead::run_resolved
++ ADDED   mod batter_core::operation::low_level
++ ADDED   trait batter_core::operation::low_level::ScopedPhases
++ ADDED   trait_item batter_core::operation::low_level::ScopedPhases::Final
++ ADDED   trait_item batter_core::operation::low_level::ScopedPhases::FinalError
++ ADDED   trait_item batter_core::operation::low_level::ScopedPhases::Work
++ ADDED   trait_item batter_core::operation::low_level::ScopedPhases::WorkError
++ ADDED   trait_item batter_core::operation::low_level::ScopedPhases::finalize
++ ADDED   trait_item batter_core::operation::low_level::ScopedPhases::work
++ ADDED   type_alias batter_core::operation::low_level::ScopedPhaseResult
++ ADDED   use batter_core::admission::BulkheadError <- asynchronous::BulkheadError
++ ADDED   use batter_core::operation::low_level::ScopedPhaseResult <- super::phased::scoped::ScopedPhaseResult
++ ADDED   use batter_core::operation::low_level::ScopedPhases <- super::phased::scoped::ScopedPhases
++ ADDED   use batter_core::operation::low_level::drive_phases <- super::phased::scoped::drive_phases
++ ADDED   variant batter_core::admission::BulkheadError::NotAdmitted
++ ADDED   variant batter_core::admission::BulkheadError::Operation
+
+## batter-runledger: 88 -> 113 entries; 2 removed, 27 added
+- REMOVED function batter_runledger::job_phases
+- REMOVED use batter_runledger::job_phases <- phases::job_phases
++ ADDED   enum batter_runledger::PhasedJobFailure
++ ADDED   impl batter_runledger::PhasedJob: JobHandler
++ ADDED   impl batter_runledger::PhasedJobFailure: Debug
++ ADDED   method batter_runledger::JobFinalization::context
++ ADDED   method batter_runledger::JobFinalization::execution
++ ADDED   method batter_runledger::JobFinalization::work
++ ADDED   method batter_runledger::JobWork::context
++ ADDED   method batter_runledger::JobWork::execution
++ ADDED   method batter_runledger::PhasedJob::new
++ ADDED   struct batter_runledger::JobFinalization
++ ADDED   struct batter_runledger::JobWork
++ ADDED   struct batter_runledger::PhasedJob
++ ADDED   trait batter_runledger::PhasedJobHandler
++ ADDED   trait_item batter_runledger::PhasedJobHandler::Error
++ ADDED   trait_item batter_runledger::PhasedJobHandler::Output
++ ADDED   trait_item batter_runledger::PhasedJobHandler::failed
++ ADDED   trait_item batter_runledger::PhasedJobHandler::finalize
++ ADDED   trait_item batter_runledger::PhasedJobHandler::job_type
++ ADDED   trait_item batter_runledger::PhasedJobHandler::on_dead_letter
++ ADDED   trait_item batter_runledger::PhasedJobHandler::work
++ ADDED   use batter_runledger::JobFinalization <- phased_handler::JobFinalization
++ ADDED   use batter_runledger::JobWork <- phased_handler::JobWork
++ ADDED   use batter_runledger::PhasedJob <- phased_handler::PhasedJob
++ ADDED   use batter_runledger::PhasedJobFailure <- phased_handler::PhasedJobFailure
++ ADDED   use batter_runledger::PhasedJobHandler <- phased_handler::PhasedJobHandler
++ ADDED   variant batter_runledger::PhasedJobFailure::Phases
++ ADDED   variant batter_runledger::PhasedJobFailure::Rejected

@@ -16,9 +16,9 @@ exist so the manifests those checks generate stay reviewable source in Git.
   `batter::runledger::test_support::HandlerInvocation`, selected by the same
   `batter` in `[dev-dependencies]` with `runledger-test-support`, which the
   consumer binary never compiles: successful protected execution with a cancelled
-  work scope at native exit, application failures, plus lower-level phase checks
+  work scope at native exit, application failures, plus protected callback checks
   for a budget inside the reserve, work expiry while
-  the reserve remains, recording at the invocation deadline, cancellation, and
+  the reserve remains, recording at the invocation deadline, work-scope cancellation, and
   recording after the invocation ended.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly

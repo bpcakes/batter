@@ -1,8 +1,12 @@
 //! Consumer-facing ownership and refusal contracts for async bulkhead execution.
+use batter_core as bulkhead_foundation;
+#[path = "support/bulkhead.rs"]
+mod bulkhead_testing;
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity, BulkheadError},
     operation::{Interruption, OperationContext, OperationError, OperationOwner},
 };
+use bulkhead_testing::BulkheadTestExt;
 use std::{
     future::{Future, pending},
     pin::pin,
@@ -89,7 +93,7 @@ async fn drop_cancels_child_and_destroys_work_before_releasing_permit() {
             *child.lock().unwrap() = Some(context.clone());
             let _drop = OnDrop(Box::new(move || {
                 let fresh = crate::owner();
-                let enter = b.enter(fresh.context(), Admission::Reject);
+                let enter = b.hold(fresh.context(), Admission::Reject);
                 let result = pin!(enter).poll(&mut Context::from_waker(Waker::noop()));
                 assert!(matches!(
                     result,
@@ -109,7 +113,7 @@ async fn drop_cancels_child_and_destroys_work_before_releasing_permit() {
     );
     assert!(
         bulkhead
-            .enter(owner.context(), Admission::Reject)
+            .hold(owner.context(), Admission::Reject)
             .await
             .is_ok()
     );
@@ -120,7 +124,7 @@ async fn admission_and_execution_share_the_original_deadline() {
     let bulkhead = bulkhead();
     let owner = owner();
     let held = bulkhead
-        .enter(owner.context(), Admission::Reject)
+        .hold(owner.context(), Admission::Reject)
         .await
         .unwrap();
     let mut run = Box::pin(bulkhead.run(
@@ -149,7 +153,7 @@ async fn late_admission_never_invokes_factory() {
     let bulkhead = bulkhead();
     let owner = owner();
     let held = bulkhead
-        .enter(owner.context(), Admission::Reject)
+        .hold(owner.context(), Admission::Reject)
         .await
         .unwrap();
     let waiter = tokio::spawn(async move {
@@ -183,7 +187,7 @@ async fn unpolled_refused_cancelled_and_closed_calls_do_not_invoke_work() {
     };
     drop(bulkhead.run(owner.context(), Admission::Reject, "unpolled", factory));
     let held = bulkhead
-        .enter(owner.context(), Admission::Reject)
+        .hold(owner.context(), Admission::Reject)
         .await
         .unwrap();
     assert!(matches!(
@@ -244,7 +248,50 @@ async fn concrete_failure_is_retained_and_redacted_and_panic_releases_capacity()
     assert!(task.await.unwrap_err().is_panic());
     assert!(
         bulkhead
-            .enter(owner.context(), Admission::Reject)
+            .hold(owner.context(), Admission::Reject)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn retained_outcome_is_resolved_before_capacity_is_released() {
+    use std::cell::Cell;
+    let bulkhead = bulkhead();
+    let owner = owner();
+    let retained = Cell::new(None);
+    let result = bulkhead
+        .run_resolved(
+            owner.context(),
+            Admission::Reject,
+            "retained",
+            |_| async {
+                retained.set(Some("retained failure"));
+                owner.cancel();
+                Ok::<_, std::convert::Infallible>(())
+            },
+            |_| {
+                let fresh = crate::owner();
+                let check = bulkhead.hold(fresh.context(), Admission::Reject);
+                assert!(matches!(
+                    pin!(check).poll(&mut Context::from_waker(Waker::noop())),
+                    std::task::Poll::Ready(Err(AdmissionError::Overloaded))
+                ));
+                Err::<(), _>(OperationError::Failed(
+                    retained.take().expect("retained before cancellation"),
+                ))
+            },
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(BulkheadError::Operation(OperationError::Failed(
+            "retained failure"
+        )))
+    ));
+    assert!(
+        bulkhead
+            .hold(crate::owner().context(), Admission::Reject)
             .await
             .is_ok()
     );

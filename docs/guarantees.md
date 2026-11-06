@@ -530,9 +530,8 @@ not claimed. Actual verification outcomes belong to `batter-u387`.
 `Bulkhead::new` accepts only that validated witness and is then infallible;
 there is no raw-capacity constructor. Bulkhead is a process-local semaphore.
 Reject fails immediately without a free permit. Wait uses the caller's total
-deadline. The returned permit is Tokio's OwnedSemaphorePermit; retain it until
-the bounded work actually finishes. Closing admission wakes waiters but does not
-revoke acquired permits.
+deadline. Permits are private to library-owned execution; `Bulkhead::enter`
+was removed. Closing admission wakes waiters but does not revoke admitted work.
 
 `Bulkhead::run(context, admission, operation, factory)` is the canonical path
 for async work. Admission and execution share the caller's absolute deadline.
@@ -544,11 +543,12 @@ A never-polled call invokes nothing. `BulkheadError` distinguishes admission
 refusal from operation failure/interruption and redacts retained errors.
 Returned streams and detached work are outside the owned future's lifetime;
 this does not join them or prove remote effects. A nested durable protocol still
-needs its own retained-outcome handling; an outer deadline is not commit evidence.
+uses `Bulkhead::run_resolved` to resolve retained evidence inside the admission
+boundary before telemetry; an outer deadline is not commit evidence.
 
 `Bulkhead::run_blocking(context, admission, work)` is the canonical path for
-synchronous CPU work or blocking I/O under a bulkhead. It admits exactly as
-`enter` does, checks the context again after a permit is granted, and records
+synchronous CPU work or blocking I/O under a bulkhead. It checks the context
+again after a permit is granted and records
 one bulkhead decision after that check. A refusal returns
 `BlockingError::NotAdmitted` and destroys `work` uncalled; the closure is never
 handed to Tokio. Otherwise the permit moves, in the same poll and with no
@@ -608,10 +608,8 @@ caller is the caller's to drop.
 This bounds permit holders, **not** waiting callers, request bodies, socket
 buffers, database connections in other components, or global fleet concurrency.
 Context preflight cannot atomically serialize a concurrent cancellation with
-semaphore acquisition; code must still check/run its admitted operation.
-Wait admission can also return a permit after the deadline when its timer has
-not fired yet; `run` and `run_blocking` perform that check themselves, while callers of
-`enter` still must.
+semaphore acquisition. Tokio may grant capacity after the deadline before its
+timer fires; every public execution path rechecks the context after acquisition.
 Rate limiting, concurrency limiting, and retry accounting are separate policies.
 
 ## Process ownership and shutdown
@@ -3284,13 +3282,13 @@ or detached-work guarantee follows. The core `operation::low_level::drive_phases
 is an adapter implementation seam with these host-ownership obligations, not a
 protected borrowing bracket for application code.
 
-`batter_runledger::job_phases(execution, reserve)` is the one bridge from a
-native `JobExecution` to Batter `OperationPhases`. Both phases share one root at
+The adapter privately derives `OperationPhases` from the native `JobExecution`;
+the former public `job_phases` function is removed. Both phases share one root at
 exactly `JobExecution::deadline()`, converted from the native std instant to
 Tokio's view of the same monotonic clock; deriving late never moves it. Work
 ends `reserve` before that deadline through `reserve_finalization`'s checked
-arithmetic, or at it through `split_finalization` when `reserve` is
-`Duration::ZERO`; finalization always keeps it. Cancelling or exhausting work
+arithmetic; `PhasedJob` requires a positive reserve. Finalization keeps the
+native deadline. Cancelling or exhausting work
 leaves finalization running. Derivation returns `JobPhasesRejection` without
 running application work when the services make no exit claim (`Unsupported`),
 the invocation already ended (`Ended`), no positive work time remains
@@ -3326,7 +3324,7 @@ a low-level transfer whose caller owns potentially panicking disposal.
 undoing remote effects, effect fencing, a generic `OperationError` to
 `JobFailure` conversion, or any change to native outcome precedence. A result or
 final-state write observed at or after the native deadline is
-`job.timeout_exceeded`, so a zero reserve leaves nothing after work expiry. The
+`job.timeout_exceeded`. The
 reserve lies inside the handler deadline; native outcome persistence follows the
 handler. Notification never grants dependency-cleanup authority or turns a
 completed, late or fenced result into an interrupted handler.

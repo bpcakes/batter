@@ -45,10 +45,6 @@ tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
 
 [[test]]
-name = "handler_invocation"
-required-features = ["test-support"]
-
-[[test]]
 name = "handler_progress"
 required-features = ["test-support"]
 
