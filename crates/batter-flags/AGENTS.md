@@ -11,6 +11,8 @@ periodic timing, lifecycle and failure retention belong to `batter-core`.
 - `src/declared.rs` resolves captured settings into process flags.
 - `src/reader.rs` owns capture and publication; both remain crate-private.
 - `src/flags/gate.rs` validates switches and binds each reading to one view.
+- `src/http.rs` owns protected route-group views and switch gates with `axum`.
+- `src/jobs.rs` owns native job-handler views and gates with `runledger`.
 - `src/periodic.rs` owns gated registration, its restricted policy and skips.
 - `src/test.rs` supplies public fixtures; `src/low_level.rs` discloses live reads.
 
@@ -24,9 +26,12 @@ change core's lifecycle to implement a flags surface.
 
 Follow the root guide's Explicit state machines rule, including internal code.
 Validate handles before registration. Capture once and exhaustively match
-`GateReading`; only `Open` invokes work with that same view. Awaiting publication
-and tripped readings skip. Immediate startup and stop-at-drain are fixed by the
-gated policy's API. Never gate support work needed during native settlement.
+`GateReading`. Periodic work runs only on `Open` with that same view; awaiting
+publication and tripped readings skip. HTTP may admit released default decisions
+while awaiting publication under `ServeDefaults`; aggregation must preserve any
+withholding decision. Jobs defer awaiting publication and apply their native
+policy to tripped readings. Immediate startup and stop-at-drain are fixed by
+`GatedPeriodicPolicy`. Never gate support work needed during native settlement.
 No protected surface accepts a caller-supplied view. Keep control-plane writer
 injection private to tests; public fixtures use `TestFlags`.
 

@@ -26,9 +26,9 @@ with strict literals, ownership, retired and unknown names, required settings
 and invariants, a redacted startup report and two revisions; `Resolved::into_flags`
 enters declared mode. `test::TestFlags` is the fixture path, and
 `low_level::capture_now` is the disclosed, non-canonical live read. The
-protected periodic and `runledger` job gates are implemented. The protected
-HTTP gates and control-plane registration arrive with later delivery tasks of
-the flags epic. The catalog grammar and evaluation live in
+protected periodic, `axum` HTTP and `runledger` job gates are implemented.
+Control-plane registration arrives with a later delivery task of the flags
+epic. The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).
@@ -105,3 +105,57 @@ external harness or Docker test support; never use a production database.
 ```sh
 cargo test -p batter-flags --all-features --test jobs_live --locked -- --ignored --test-threads=1
 ```
+
+## HTTP route groups (`axum`)
+
+Use `Flags::http_view()` to capture without gating, `Flags::http_gate(&halt)?`
+to check one switch, or `Flags::http_gate_any(&halt, &[&other_halt])?` to disable
+while any listed switch is engaged. The first handle is mandatory; constructors
+reject foreign catalogs, switches not owned by the process kind and duplicates.
+Install the returned `GroupGate` with `GroupPolicy::gated` or `browser_gated`.
+The [HTTP rustdoc example](src/http.rs) assembles a named group and consumes it
+through `AssembledHttp::in_process()`.
+
+Handlers extract `http::AdmittedFlags` and evaluate or pin through `view()`.
+Every extraction shares the one immutable view captured after admission;
+publishing a new snapshot does not change an in-flight request. Neither
+`AdmittedFlags` nor its `RequestFlags` payload has a public constructor or
+implements `Clone`. An absent flags gate, or an application-built gate returning
+a native `SnapshotView` (including `low_level::capture_now`), yields the fixed
+sanitized 500 `internal_error` response. Native evaluation remains owned by
+`batter-flags-core`; the adapter does not reinterpret flag values or store pins.
+
+An engaged gate skips handlers and renders `HttpFailure::Disabled` through the
+group's renderer, 503 `disabled` by default. It covers all group methods and
+fallbacks; use a named group to keep other routes available. Probes and the
+metadata-rendered fallback bypass it. A custom renderer may choose a different
+status if a load balancer would eject a host on 503. The separate disabled HTTP
+completion defaults to INFO at target `batter`; select
+`gate.with_disabled_level(tracing::Level::WARN)` if `batter=warn` must show it.
+
+Capture-only gates emit no flag evaluation. Switch gates read every listed
+switch once, even after finding an engaged one. Each emits one
+`feature_flag.evaluation` at DEBUG while released or INFO while engaged, target
+`batter::flags`; handler evaluations add their own events. Error decisions use
+core's first-occurrence WARN/repeat DEBUG policy. At an INFO filter a released
+single-switch request adds no evaluation event; an engaged request adds one.
+
+Before publication, HTTP follows the reader's existing `PrePublication` policy.
+`ServeDefaults` (the planned `start_on_defaults` loader policy) serves when every
+switch's effective decision is released, and disables for an engaged safe state,
+settings floor or stale rule. `Unready` also disables provider-not-ready decisions,
+even with a released safe state. Capture-only groups impose no switch decision.
+The source remains `NotLoaded`; serving is not proof of publication. This choice
+follows the plan's startup-defaults contract and the existing reader/native
+switch resolution. Jobs defer an awaiting-publication reading, and periodic
+maintenance skips it. The loader and its first-attempt readiness sequencing are
+not implemented by this HTTP adapter and remain T-14 work.
+
+```sh
+cargo test -p batter-flags --features axum --locked
+```
+
+HTTP tests cover refusals, private construction, wrong-view rejection, event
+counts and severity, defaults/unready/stale/floor admission, and publication
+while a request is suspended. They use the sealed in-process transport; they
+do not establish real socket or TLS serving behavior.
