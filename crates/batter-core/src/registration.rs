@@ -72,16 +72,14 @@ impl<'a> Registration<'a> {
     /// [`crate::periodic::register_periodic_in`] for the public entry point.
     pub(crate) fn register_periodic<F, Fut, E>(
         &mut self,
-        name: &'static str,
-        policy: crate::periodic::PeriodicPolicy,
-        work: F,
+        registration: crate::periodic::Registration<F>,
     ) -> Result<crate::periodic::PeriodicReader, RegistrationError>
     where
         F: FnMut(OperationContext) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), crate::periodic::PeriodicFailure<E>>> + Send + 'static,
         E: std::error::Error + Send + Sync + 'static,
     {
-        self.supervisor.register_periodic(name, policy, work)
+        self.supervisor.register_periodic(registration)
     }
 
     /// Reserve a validated finalizer name before acquiring a dependency.

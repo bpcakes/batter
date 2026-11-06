@@ -27,13 +27,17 @@ struct OperationalScope(CorrelationId);
 /// reachable, and a kept admission record would admit the new request. A kept
 /// browser credential record would let the new request present cookies under
 /// the original request's decision; no current renderer runs after a group's
-/// gate records one, so its removal guards future layer orders.
+/// browser gate records one, so its removal guards future layer orders. The
+/// group gate record is also removed, independent of its captured value type.
 /// Keep public correlation and application extensions available for rendering.
 pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
     parts
         .extensions
         .remove::<crate::quota_observation::QuotaObservation>();
     parts.extensions.remove::<ObservationState>();
+    parts
+        .extensions
+        .remove::<crate::boundary::gate::GateRecord>();
     parts.extensions.remove::<OperationalScope>();
     parts.extensions.remove::<crate::admitted::Admission>();
     parts
@@ -234,6 +238,7 @@ pub fn render_infrastructure_failure(failure: HttpFailure, id: Option<&Correlati
         HttpFailure::DeadlineExceeded => "The operation exceeded its time budget",
         HttpFailure::Overloaded => "The service is at capacity",
         HttpFailure::Internal => "An internal error occurred",
+        HttpFailure::Disabled => "The service is temporarily disabled",
     };
     (
         failure.status(),

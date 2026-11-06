@@ -500,8 +500,11 @@ dependencies = [
 name = "batter-flags-postgres"
 version = "0.0.1"
 dependencies = [
+ "batter-core",
  "batter-flags-core",
+ "batter-sqlx",
  "chrono",
+ "postgres-test-harness",
  "serde",
  "serde_json",
  "sha2 0.11.1",
