@@ -1972,6 +1972,27 @@ Neither operation interruption nor native failure classification authorizes repl
 
 ## HTTP boundary
 
+Route groups can install one flags-agnostic `GroupGate` through
+`GroupPolicy::gated` or `GroupPolicy::browser_gated`. The order is private headers,
+lifecycle/deadline admission, group gate, browser checks, application layers.
+The synchronous gate captures once and either shares its value with every
+`GateView<V>` extraction or drops the body and renders `HttpFailure::Disabled`
+through the group's renderer. A missing or wrong-typed view yields a sanitized
+500. Renderer metadata strips the private type-erased gate record for every `V`.
+An already captured value remains the request's value during later engagement;
+application interior mutability is not an immutable-snapshot guarantee.
+
+The gate covers every method and all guarded fallbacks of its group, including
+unmatched paths of a gated default group. Probes and metadata-rendered fallbacks
+bypass it. A gate panic propagates with the same single WARN `dropped` completion
+as a handler panic, without status or panic payload. Disablement is a permanent
+HTTP failure: default 503, code `disabled`, standard infrastructure message
+`The service is temporarily disabled`, with actual status still renderer-owned.
+Its completion records `gate_outcome="disabled"`. The gate replaces renderer-set
+severity with INFO, or the level selected by `with_disabled_level`; `batter=warn`
+hides the INFO default. See the [usage guide](../crates/batter-axum/README.md#route-group-gates).
+
+
 `HttpBoundary` assembles probes, admission, correlation and the observer in one
 library-owned order, and is the canonical path. The deliberately caller-ordered
 middleware and registration helpers live only in `batter_axum::low_level`,

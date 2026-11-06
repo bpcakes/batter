@@ -604,3 +604,56 @@ tests for those. The boundary installs the plain observer, which allocates no
 quota record, so a boundary request carries no quota writer at all; a
 composition that needs an outer quota wrapper belongs entirely in `low_level`,
 as Runlimit's protected assembly does.
+
+## Route-group gates
+
+`GroupGate::new(|| Gated::Serve(value))` captures one application value for each
+request admitted to a group. Returning `Gated::Disabled` drops its unread body
+and renders `HttpFailure::Disabled` through that group's `RequestPolicy`.
+Batter Axum depends on no flags package and owns no source refresh or flag logic.
+
+```rust
+use axum::routing::get;
+use batter_axum::{GateView, Gated, GroupGate, GroupPolicy, GuardedRouter,
+    HttpBoundary, RequestPolicy, RouteGroup};
+
+async fn assemble(request: RequestPolicy) -> Result<(), Box<dyn std::error::Error>> {
+    let gate = GroupGate::new(|| Gated::Serve(42_u64));
+    let routes = GuardedRouter::new().route("/work", get(|view: GateView<u64>| async move {
+        view.value().to_string()
+    }));
+    let client = HttpBoundary::new(request.clone())
+        .with_group(RouteGroup::new("work", GroupPolicy::gated(request, gate), routes))?
+        .assemble(GuardedRouter::new()).await?.in_process();
+    Ok(())
+}
+```
+
+Use `GroupPolicy::browser_gated(request, browser, gate)` for browser routes.
+The fixed order is private response headers, lifecycle/deadline admission,
+group gate, browser mutation checks, application layers and handler. A group
+has at most one gate; there is no gate setter on `RequestPolicy` or `GroupPolicy`.
+The callback must be fast, synchronous, nonblocking and non-panicking. A panic
+propagates and records one WARN `dropped` completion without a status or payload;
+it is not converted into an HTTP response and does not change panic-hook policy.
+
+The gate applies to every method, including OPTIONS and method rejections, and
+to native routes, admitted routers and guarded fallbacks. A gated default group
+therefore returns disablement for unmatched paths too. Prefer named groups when
+that is unwanted. Probes and metadata-rendered fallbacks remain outside gates.
+`GateView<V>` has no constructor and is not `Clone`; repeated extraction shares
+one captured value even while the source changes. Missing or wrong-typed views
+answer a sanitized 500. The value itself need not implement `Clone`. Application
+interior mutability is still application policy; pass an immutable snapshot to
+freeze decisions. Requests captured before an engagement finish with their old
+value. Renderer metadata never carries the private gate record.
+
+`Disabled` is a permanent HTTP failure with default status 503 and code
+`disabled`. The standard infrastructure renderer says `The service is temporarily
+disabled`. Custom renderers own the actual status: deployments whose load
+balancers eject hosts on 5xx can map it to a non-5xx response. Disabled completion
+events carry `gate_outcome="disabled"` with target `batter`. Their INFO default
+replaces any renderer-set `HttpObservationLevel`, so `batter=warn` hides them.
+Select `gate.with_disabled_level(tracing::Level::WARN)` to retain visibility
+under that filter; the gate also overrides the renderer's severity in this case.
+Status and HTTP outcome remain unchanged by severity selection.

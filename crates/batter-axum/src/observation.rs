@@ -29,6 +29,7 @@ pub(super) struct ObservationState(Arc<Mutex<ObservationFacts>>);
 struct ObservationFacts {
     quota: Option<crate::quota_observation::QuotaObservation>,
     correlation: Option<CorrelationId>,
+    gate_disabled: bool,
 }
 
 impl ObservationState {
@@ -39,6 +40,7 @@ impl ObservationState {
         Self(Arc::new(Mutex::new(ObservationFacts {
             quota,
             correlation,
+            gate_disabled: false,
         })))
     }
 
@@ -54,6 +56,13 @@ impl ObservationState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .correlation = Some(correlation);
+    }
+
+    pub(crate) fn record_gate_disabled(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .gate_disabled = true;
     }
 
     fn facts(&self) -> ObservationFacts {
@@ -182,6 +191,7 @@ impl HttpObservation {
                         status = observation.status.map(|status| status.as_u16()),
                         http_outcome = outcome,
                         latency_ms,
+                        gate_outcome = facts.gate_disabled.then_some("disabled"),
                         quota_outcome = quota.map(|facts| facts.outcome()),
                         quota_consumption = quota.map(|facts| facts.consumption().label()),
                         "HTTP response boundary finished"
