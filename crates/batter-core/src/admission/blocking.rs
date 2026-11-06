@@ -106,7 +106,7 @@ impl Bulkhead {
     /// Run synchronous CPU work or blocking I/O on Tokio's blocking pool while
     /// holding one permit of this bulkhead until `work` returns.
     ///
-    /// Admission follows [`Self::enter`]: the same [`Admission`] policy, the
+    /// Admission follows [`Self::run`]: the same [`Admission`] policy, the
     /// same context preflight and the same single bulkhead decision. After a
     /// permit is granted the context is checked again, so a cancellation, or a
     /// deadline that passed before its timer fired, still refuses the call. A
@@ -121,7 +121,7 @@ impl Bulkhead {
     /// it returns: anything returned as `T` that still has work to do, such as
     /// a future from `|| async move { .. }`, a `JoinHandle` or a thread handle,
     /// runs outside the bulkhead, and awaiting a returned future runs it on the
-    /// caller's async thread. Use [`Self::enter`] for async work.
+    /// caller's async thread. Use [`Self::run`] for async work.
     ///
     /// The context bounds only the wait, with [`OperationContext::run`]'s
     /// precedence; a result that becomes ready in the same poll as an
