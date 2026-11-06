@@ -3272,6 +3272,15 @@ completed, late or fenced result into an interrupted handler.
 
 ## Shared Runledger workspace
 
+Native PostgreSQL fixtures use Bollard directly; neither Testcontainers nor
+`astral-tokio-tar` is needed by the optional facade test-support feature.
+Failed starts retain label-checked, awaited removal by immutable ID, including
+anonymous volumes. Successful container handles retain runtime-owned cleanup
+when dropped or when delivery to a cancelled startup waiter fails. This needs a
+live Tokio runtime. The optional CLI process reaper owns shared-container cleanup
+on normal or forced process exit; unavailable CLI support remains a reported
+limitation. `TESTCONTAINERS_COMMAND=keep` deliberately retains owned containers.
+
 The optional adapter and native Runledger packages now resolve from one checkout.
 The package ownership graph remains acyclic: native persistence consumes the
 SQLx foundation, while native runtime supervision and durable policy stay in

@@ -8,6 +8,11 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Remove Testcontainers and `astral-tokio-tar` from Runledger test support and the
+  optional facade test-support graph by using Bollard directly. Preserve the
+  existing PostgreSQL 18 fixture API, Docker cleanup and keep policy
+  (`batter-z6nw`, X286).
+
 - **Breaking:** protected PostgreSQL construction now requires an explicit session
   profile and returns a `PgProfiledPool`. Runledger consumes a clone of that pool
   through `RunledgerDatabase::from_profiled`; it no longer constructs a second

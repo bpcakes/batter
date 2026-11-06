@@ -4033,6 +4033,14 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
+The native fixture calls Bollard 0.21.1 directly; Testcontainers and
+`astral-tokio-tar` are excluded by the facade feature graph checks. Docker API
+version negotiation, Unix socket discovery, `DOCKER_HOST`, TLS configuration,
+registry credentials and an explicit `DOCKER_DEFAULT_PLATFORM` remain native
+client concerns. TLS and private-registry execution are unverified for this change.
+An isolated HTTP Docker fixture verifies that unset, empty and `0` TLS settings
+still negotiate without TLS; only `1` enables TLS for TCP/HTTP daemon URLs.
+The keep/remove compatibility parser rejects unknown commands before startup.
 Native fixtures let Docker allocate the published TCP port, avoiding a local
 reservation that must be released before Docker's create/pull/start sequence.
 Docker binds IPv4 loopback, matching the fixture URL and avoiding all-interface
@@ -4043,7 +4051,8 @@ unique name and label before creation. A returned start failure triggers an
 awaited, 30-second cleanup through the configured Docker API, verifying that
 label and removing by immutable container ID with anonymous volumes. Cleanup
 failure is reported alongside the original start failure; explicit
-`TESTCONTAINERS_COMMAND=keep` retains the container. The optional CLI reaper is
+`TESTCONTAINERS_COMMAND=keep` retains the container as a compatibility setting.
+The optional CLI reaper is
 still used for successfully started process-owned containers. Startup cleanup
 survives waiter cancellation while the Tokio runtime remains alive; runtime
 death or an unreachable Docker daemon cannot guarantee remote cleanup.
@@ -4056,7 +4065,10 @@ after Docker rejects startup and before cleanup; the test observes the created
 container and anonymous volume, aborts and joins the waiter, then releases the
 gate and independently observes both resources disappear. The runtime remains
 alive throughout. A direct-await mutation of the spawned owner must fail this
-control; cleanup on runtime death remains outside the claim.
+control; cleanup on runtime death remains outside the claim. A second control
+pauses after a successful Docker start, cancels the waiter before handle delivery,
+then requires container and anonymous-volume removal through the runtime-owned
+cleanup task. Local test-owned containers can explicitly await that same removal.
 The existing-host-listener and delayed-startup controls retain PostgreSQL 18
 readiness coverage; the former also inspects the actual published mapping and
 requires IPv4 loopback at the port used by SQLx.

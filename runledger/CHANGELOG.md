@@ -6,6 +6,16 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Native PostgreSQL test dependencies
+
+`runledger-test-support` now calls Bollard directly, removing Testcontainers and
+its mandatory unmaintained `astral-tokio-tar` dependency (`batter-z6nw`, X286).
+Public fixture signatures, PostgreSQL 18 provisioning, loopback port allocation,
+failed-start cleanup, the optional process reaper and
+`TESTCONTAINERS_COMMAND=keep` remain supported. Runtime-owned cleanup also
+removes a successfully started container whose startup waiter was cancelled;
+this requires the runtime to remain alive.
+
 ### Shared pool construction
 
 **Breaking:** `RunledgerDatabase::connect` and `connect_lazy` moved to explicitly
