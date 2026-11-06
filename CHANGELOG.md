@@ -8,6 +8,9 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Direct facade consumers to owned work/finalization and supported native acquisition;
+  identify manual phase and cleanup registration obligations at the selection points.
+
 - **Breaking:** protected PostgreSQL construction now requires an explicit session
   profile and returns a `PgProfiledPool`. Runledger consumes a clone of that pool
   through `RunledgerDatabase::from_profiled`; it no longer constructs a second
