@@ -1,4 +1,4 @@
-use crate::{PooledStore, StoreError, StoredState, errors::ErrorKind, store::bounded};
+use crate::{PooledStore, StoreError, StoredState};
 use batter_flags_core::{FlagKey, Version};
 use batter_sqlx::PgReadOnlySnapshot;
 use sqlx::Row;
@@ -46,8 +46,7 @@ impl PooledStore {
             return Ok(Vec::new());
         }
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
-        bounded(deadline, async {
-            PgReadOnlySnapshot::inspect(&self.pool, async |sql| {
+        PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
                 let [statement, lock, idle] = self.timing.settings(deadline)?;
                 sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
                     .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
@@ -60,7 +59,6 @@ impl PooledStore {
                     before: r.try_get::<Option<serde_json::Value>, _>("before_state")?.map(StoredState),
                     after: StoredState(r.try_get("after_state")?),
                 })).collect::<Result<Vec<_>, StoreError>>()
-            }).await.map_err(|e| StoreError(ErrorKind::Snapshot(Box::new(e))))
-        }).await
+            }).await.map_err(crate::load::snapshot_error)
     }
 }

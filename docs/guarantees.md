@@ -3160,6 +3160,14 @@ compatible with the imported revision. See [provenance](../runlimit/IMPORT.md).
 
 ## Flags store contract (T-12)
 
+Observed application rejections survive bounded native cleanup: the store's
+`RollbackFailure` retains both the operation cause and a cleanup deadline. This
+does not promise result retention after external cancellation of the entire
+future. Migration server budgets cover the native advisory-lock phase as well
+as migration transactions, with unconditional retirement of that configured
+session. Request and lifecycle phases use explicit internal enums; acknowledged
+outcomes require consuming native completion evidence.
+
 `batter-flags-postgres` owns audited, gapless, commit-ordered state changes in a
 dedicated `flags` schema. No-op/refusal rolls back the counter; archived rows are
 absent from coherent primary snapshots. Live and Silent declarers block

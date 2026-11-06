@@ -39,6 +39,98 @@ fn host() -> Migrator {
         false,
     )])
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn migration_lock_budget_applies_before_the_first_migration_transaction() {
+    use sqlx::migrate::Migrate;
+    use std::{error::Error, time::Duration};
+    let f = Fixture::new().await;
+    let mut holder = f.pool.acquire().await.unwrap();
+    holder.lock().await.unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(f.lease.database_url())
+        .await
+        .unwrap();
+    let store = PooledStore::new(
+        pool.clone(),
+        StoreTiming::new(
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+            Duration::from_millis(75),
+            Duration::from_secs(2),
+        )
+        .unwrap(),
+    );
+    let started = tokio::time::Instant::now();
+    let error = store.migrate(deadline()).await.unwrap_err();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "lock budget must precede the whole operation deadline"
+    );
+    assert_eq!(pool.size(), 0);
+    let mut cause: &(dyn Error + 'static) = &error;
+    let mut states = Vec::new();
+    loop {
+        if let Some(native) = cause.downcast_ref::<sqlx::Error>()
+            && let Some(db) = native.as_database_error()
+        {
+            states.push(db.code().unwrap().into_owned());
+        }
+        match cause.source() {
+            Some(next) => cause = next,
+            None => break,
+        }
+    }
+    assert!(
+        states.iter().any(|c| c == "55P03"),
+        "retain the actual server lock-timeout error"
+    );
+    holder.unlock().await.unwrap();
+    drop(holder);
+    store.migrate(deadline()).await.unwrap();
+    assert_eq!(
+        pool.size(),
+        0,
+        "migration settings must not leak through pool reuse"
+    );
+    pool.close().await;
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn native_migration_owner_inherits_all_limits_into_native_transactions() {
+    use std::time::Duration;
+    let f = Fixture::new().await;
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(3)).unwrap();
+    let lease = batter_sqlx::PgLease::acquire(&f.pool, owner.context())
+        .await
+        .unwrap();
+    let migrator = Migrator::with_migrations(vec![Migration::new(1, "limits".into(), MigrationType::Simple,
+        "CREATE TABLE public.observed_limits AS SELECT current_setting('statement_timeout') AS statement, current_setting('lock_timeout') AS lock, current_setting('idle_in_transaction_session_timeout') AS idle".into_sql_str(), false)]);
+    let limits = batter_sqlx::PgMigrationTimeouts::new(
+        Duration::from_secs(60),
+        Duration::from_millis(200),
+        Duration::from_millis(300),
+    )
+    .unwrap();
+    lease
+        .migrate_until(
+            &migrator,
+            limits,
+            tokio::time::Instant::now() + Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+    let (statement, lock, idle): (f64, f64, f64) = sqlx::query_as("SELECT extract(epoch FROM statement::interval)::float8, extract(epoch FROM lock::interval)::float8, extract(epoch FROM idle::interval)::float8 FROM public.observed_limits")
+        .fetch_one(&f.pool).await.unwrap();
+    assert!(statement > 0.0 && statement <= 2.0);
+    assert_eq!(lock, 0.2);
+    assert_eq!(idle, 0.3);
+    f.close().await;
+}
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn dedicated_ledger_coexists_in_both_orders_and_strict_host_stays_strict() {

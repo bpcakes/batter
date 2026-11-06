@@ -40,8 +40,8 @@ impl StoreTiming {
 }
 /// Protected pool-backed flags store. Every method owns acquisition, transaction
 /// completion and disposition; no connection or incomplete transaction escapes.
-/// Atomic/read-only transactions retire even after success. Migration success
-/// uses `PgLease`'s acknowledged idle-state pool-return policy.
+/// Atomic/read-only transactions and migrations retire even after success;
+/// migration session timeout settings never return to the pool.
 #[derive(Clone)]
 pub struct PooledStore {
     pub(crate) pool: PgPool,

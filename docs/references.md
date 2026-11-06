@@ -6443,6 +6443,17 @@ the Cargo registry; no dependency version changed.
 
 ## Flags store primary-source recheck (T-12, 2026-11-06)
 
+The installed SQLx 0.9.0 `Migrator::run_direct` calls `Migrate::lock` before
+schema/history work; PostgreSQL's implementation executes `pg_advisory_lock`
+outside migration transactions and starts a transaction per ordinary migration.
+PostgreSQL 18 [SET](https://www.postgresql.org/docs/18/sql-set.html) limits LOCAL
+settings to the current transaction and says they have no effect outside one.
+The [client timeout settings](https://www.postgresql.org/docs/18/runtime-config-client.html)
+distinguish statement, lock-wait and idle-in-transaction limits. The new native
+bounded migration path uses session settings for these phases and retires the
+session so they cannot leak into pool reuse. This is based on installed source
+and the versioned primary docs, rechecked during the T-12 review repair.
+
 Installed SQLx 0.9.0 `sqlx-core/src/migrate/migrator.rs` provides
 `dangerous_set_table_name` and `create_schema`; the flags migrator fixes its own
 ledger at `flags._sqlx_migrations`. The workspace's `batter-sqlx` atomic owner

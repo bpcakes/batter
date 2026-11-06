@@ -95,9 +95,13 @@ pub enum ExplicitValue {
 pub struct Write {
     pub(crate) key: FlagKey,
     pub(crate) change: Change,
-    pub(crate) state: serde_json::Value,
-    pub(crate) explicit: Option<(&'static str, &'static str)>,
-    pub(crate) switch: bool,
+    pub(crate) value: RequestedValue,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum RequestedValue {
+    DeclaredFlag(Variant),
+    DeclaredSwitch(SwitchState),
+    Explicit(ExplicitValue),
 }
 impl Write {
     /// Set a declared flag's canonical variant. The store resolves its declaration.
@@ -105,9 +109,7 @@ impl Write {
         Self {
             key,
             change,
-            state: serde_json::json!({"encoding":1,"variant":variant.0}),
-            explicit: None,
-            switch: false,
+            value: RequestedValue::DeclaredFlag(variant),
         }
     }
     /// Engage or release a declared kill switch.
@@ -115,47 +117,32 @@ impl Write {
         Self {
             key,
             change,
-            state: serde_json::json!({"encoding":1,"switch":state.as_str()}),
-            explicit: None,
-            switch: true,
+            value: RequestedValue::DeclaredSwitch(state),
         }
     }
     /// Write a key without requiring a retained declaration. Fleet compatibility still applies.
     pub fn explicit(key: FlagKey, value: ExplicitValue, change: Change) -> Self {
-        use batter_flags_core::FlagValue;
-        let (kind, value_type, state) = match value {
-            ExplicitValue::ReleaseToggle(v) => (
-                "release",
-                "toggle",
-                serde_json::json!({"encoding":1,"variant":v.variant()}),
-            ),
-            ExplicitValue::ModeToggle(v) => (
-                "mode",
-                "toggle",
-                serde_json::json!({"encoding":1,"variant":v.variant()}),
-            ),
-            ExplicitValue::ReleaseEnum(v) => (
-                "release",
-                "enum",
-                serde_json::json!({"encoding":1,"variant":v.0}),
-            ),
-            ExplicitValue::ModeEnum(v) => (
-                "mode",
-                "enum",
-                serde_json::json!({"encoding":1,"variant":v.0}),
-            ),
-            ExplicitValue::Switch(v) => (
-                "switch",
-                "switch",
-                serde_json::json!({"encoding":1,"switch":v.as_str()}),
-            ),
-        };
         Self {
             key,
             change,
-            state,
-            explicit: Some((kind, value_type)),
-            switch: kind == "switch",
+            value: RequestedValue::Explicit(value),
+        }
+    }
+}
+impl RequestedValue {
+    pub(crate) fn state(&self) -> serde_json::Value {
+        use batter_flags_core::FlagValue;
+        match self {
+            Self::DeclaredFlag(v)
+            | Self::Explicit(ExplicitValue::ReleaseEnum(v) | ExplicitValue::ModeEnum(v)) => {
+                serde_json::json!({"encoding":1,"variant":v.0})
+            }
+            Self::DeclaredSwitch(v) | Self::Explicit(ExplicitValue::Switch(v)) => {
+                serde_json::json!({"encoding":1,"switch":v.as_str()})
+            }
+            Self::Explicit(ExplicitValue::ReleaseToggle(v) | ExplicitValue::ModeToggle(v)) => {
+                serde_json::json!({"encoding":1,"variant":v.variant()})
+            }
         }
     }
 }

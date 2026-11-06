@@ -1,10 +1,10 @@
 use crate::{
     PooledStore, StoreError,
     errors::{ErrorKind, check_server},
-    store::{bounded, remaining},
+    store::remaining,
 };
 use batter_core::operation::OperationOwner;
-use batter_sqlx::{PgLease, PgReadOnlySnapshot};
+use batter_sqlx::{PgDeadlineError, PgLease, PgMigrationTimeouts, PgReadOnlySnapshot};
 use sqlx::migrate::Migrator;
 use std::sync::LazyLock;
 use tokio::time::Instant;
@@ -23,11 +23,13 @@ pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {
 });
 impl PooledStore {
     /// Refuse older servers, then run the flags-only ledger through a retiring
-    /// Batter lease. Allows later flags migrations while validating known checksums.
+    /// Batter lease with server timeouts. Allows later flags migrations while validating known checksums.
     pub async fn migrate(&self, deadline: Instant) -> Result<(), StoreError> {
-        bounded(deadline, async {
-            let version = bounded(deadline.min(Instant::now() + self.timing.acquire), async {
-                PgReadOnlySnapshot::inspect(&self.pool, async |sql| {
+        let preflight_deadline = deadline.min(Instant::now() + self.timing.acquire);
+        let version = PgReadOnlySnapshot::inspect_until(&self.pool, preflight_deadline, async |sql| {
+                    let [statement, lock, idle] = self.timing.settings(preflight_deadline)?;
+                    sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
+                        .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
                     sqlx::query_scalar::<_, i32>(
                         "SELECT current_setting('server_version_num')::integer",
                     )
@@ -36,31 +38,32 @@ impl PooledStore {
                     .map_err(StoreError::from)
                 })
                 .await
-                .map_err(|e| StoreError(ErrorKind::Snapshot(Box::new(e))))
-            })
-            .await?;
-            check_server(version)?;
-            let owner = OperationOwner::new(remaining(deadline)?.min(self.timing.acquire))
+                .map_err(crate::load::snapshot_error)?;
+        check_server(version)?;
+        let owner = OperationOwner::new(remaining(deadline)?.min(self.timing.acquire))
+            .map_err(|e| StoreError(ErrorKind::Other(Box::new(e))))?;
+        let lease = PgLease::acquire(&self.pool, owner.context())
+            .await
+            .map_err(|e| match e {
+                batter_core::operation::OperationError::Failed(e) => StoreError(ErrorKind::Sql(e)),
+                batter_core::operation::OperationError::Interrupted(_) => {
+                    StoreError::classified(crate::ErrorClass::Deadline)
+                }
+            })?;
+        let mut migrator = sqlx::migrate!("./migrations");
+        migrator.dangerous_set_table_name("flags._sqlx_migrations");
+        migrator.create_schema("flags");
+        migrator.set_ignore_missing(true);
+        let limits =
+            PgMigrationTimeouts::new(self.timing.statement, self.timing.lock, self.timing.idle)
                 .map_err(|e| StoreError(ErrorKind::Other(Box::new(e))))?;
-            let lease = PgLease::acquire(&self.pool, owner.context())
-                .await
-                .map_err(|e| match e {
-                    batter_core::operation::OperationError::Failed(e) => {
-                        StoreError(ErrorKind::Sql(e))
-                    }
-                    batter_core::operation::OperationError::Interrupted(_) => {
-                        StoreError::classified(crate::ErrorClass::Deadline)
-                    }
-                })?;
-            let mut migrator = sqlx::migrate!("./migrations");
-            migrator.dangerous_set_table_name("flags._sqlx_migrations");
-            migrator.create_schema("flags");
-            migrator.set_ignore_missing(true);
-            lease
-                .migrate(&migrator)
-                .await
-                .map_err(|e| StoreError(ErrorKind::Sql(e)))
-        })
-        .await
+        lease
+            .migrate_until(&migrator, limits, deadline)
+            .await
+            .map_err(|e| match e {
+                PgDeadlineError::Elapsed => StoreError::classified(crate::ErrorClass::Deadline),
+                PgDeadlineError::Failed(e) => e.into(),
+                PgDeadlineError::RecoveryElapsed(never) => match never {},
+            })
     }
 }

@@ -87,9 +87,21 @@ also has no separately bounded acquisition seam, so load/history and migration
 preflight are wholly capped by the acquire limit as well as the caller deadline.
 Writes cap acquisition/setup separately and bound all subsequent work by the
 caller deadline. Server statement, lock and idle-in-transaction settings are
-transaction-local and capped by the remaining budget. Migration success uses
-`PgLease::migrate`'s acknowledged idle-state pool-return policy; failure/drop
-retires. No caller has to coordinate rollback, pooling or cleanup.
+transaction-local and capped by the remaining budget for store transactions.
+Migration uses `PgLease::migrate_until`: native SQLx locks outside a transaction
+and starts its own migration transactions, so the owner installs session limits
+that inherit into those transactions and retires even on success. Migration
+scripts are trusted and can override settings; migration interruption does not
+prove that no migration committed. No caller coordinates pooling or cleanup.
+
+`operation_until` and `inspect_until` keep an observed application rejection
+outside the bounded native recovery future. If cleanup times out, the store
+retains that rejection plus `ErrorClass::Deadline` through `RollbackFailure`;
+it does not replace an observed SQLSTATE with a cause-free timeout. External
+cancellation of the whole store future still discards its result. Request kinds,
+row/archive and process presence states, and prepared commit/rollback decisions
+are explicit internal enums. Only consuming native completion proofs turn a
+prepared decision into an acknowledged public outcome.
 
 ## Schema and authority
 

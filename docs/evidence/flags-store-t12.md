@@ -1,5 +1,16 @@
 # Flags store T-12 execution evidence
 
+The implementation-run results below are historical. Successor review run
+`05914008-7c9a-41cf-921d-88c51daea984` owns current repair validation and
+acceptance; they must not be inferred from those earlier passes. Repairs add
+kind-aware encoding refusal, explicit internal request/lifecycle/commit states,
+native cleanup-deadline error retention and migration server budgets. New live
+regressions exercise shared opposite-kind vectors, contended native migration
+locking, inherited timeout settings and suppressed recovery acknowledgements
+after real SQLSTATE rejections in write/load/history. The published migration's
+bytes and checksum remain unchanged. Current execution logs and receipts live
+in the registered controller run and its task-local evidence directory.
+
 Task `batter-jkw6.12`, local host / Herdr `default`, action
 `jkw6-12-implement-001`, branch `feat/flags-jkw6-12-orchestrated`, baseline
 `85f2c0d009404552c5c2cc74e5ad66749f24b1a4`. Rust 1.98.1, macOS arm64 client;

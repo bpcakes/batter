@@ -1,6 +1,7 @@
 use crate::{
     Archive, Change, CommitUncertainty, ErrorClass, PooledStore, StoreError, Write, WriteOutcome,
     errors::ErrorKind,
+    prepared::Prepared,
     store::{bounded, remaining},
 };
 use batter_flags_core::FlagKey;
@@ -62,12 +63,22 @@ impl PooledStore {
                 .map_err(StoreError::from)
         })
         .await?;
-        let (tx, result) = bounded(deadline, async {
-            tx.operation(async |sql| self.prepare(sql, &mutation, deadline).await)
-                .await
-                .map_err(|e| StoreError(ErrorKind::Scope(Box::new(e))))
-        })
-        .await?;
+        let (tx, result) = tx
+            .operation_until(deadline, async |sql| {
+                self.prepare(sql, &mutation, deadline).await
+            })
+            .await
+            .map_err(|e| match e {
+                batter_sqlx::PgDeadlineError::Elapsed => {
+                    StoreError::classified(ErrorClass::Deadline)
+                }
+                batter_sqlx::PgDeadlineError::Failed(e) => {
+                    StoreError(ErrorKind::Scope(Box::new(e)))
+                }
+                batter_sqlx::PgDeadlineError::RecoveryElapsed(error) => {
+                    RollbackFailure::deadline(error)
+                }
+            })?;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -85,21 +96,21 @@ impl PooledStore {
                 };
             }
         };
-        let proposed_version = match &outcome {
-            WriteOutcome::Written { version, .. }
-            | WriteOutcome::WrittenUndeclared { version, .. } => *version,
-            _ => {
-                let _ = bounded(deadline, async {
+        let pending = match outcome {
+            Prepared::Commit(pending) => pending,
+            Prepared::Rollback(decision) => {
+                let proof = bounded(deadline, async {
                     tx.rollback().await.map_err(StoreError::from)
                 })
                 .await?;
-                return Ok(outcome);
+                return Ok(decision.completed(proof));
             }
         };
         // Do not poll commit at all after a known pre-commit timeout.
         remaining(deadline)?;
+        let proposed_version = pending.version;
         match tokio::time::timeout_at(deadline, tx.commit()).await {
-            Ok(Ok(_)) => Ok(outcome),
+            Ok(Ok(proof)) => Ok(pending.committed(proof)),
             Ok(Err(cause)) if known_commit_rejection(cause.cause()) => {
                 Err(cause.into_cause().into())
             }
@@ -118,7 +129,7 @@ impl PooledStore {
         sql: &mut PgScopedSql<'_>,
         mutation: &Mutation,
         deadline: Instant,
-    ) -> Result<WriteOutcome, StoreError> {
+    ) -> Result<Prepared, StoreError> {
         let [statement, lock, idle] = self.timing.settings(deadline)?;
         sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true), set_config('batter_flags.actor',$4,true), set_config('batter_flags.reason',$5,true), set_config('batter_flags.guard',$6,true)")
             .bind(statement).bind(lock).bind(idle).bind(mutation.change().actor.as_str())
@@ -170,6 +181,12 @@ pub struct RollbackFailure {
     cleanup: StoreError,
 }
 impl RollbackFailure {
+    pub(crate) fn deadline(error: StoreError) -> StoreError {
+        StoreError(ErrorKind::Other(Box::new(Self {
+            error,
+            cleanup: StoreError::classified(ErrorClass::Deadline),
+        })))
+    }
     /// Original operation failure.
     pub fn operation(&self) -> &StoreError {
         &self.error

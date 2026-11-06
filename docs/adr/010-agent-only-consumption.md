@@ -2058,6 +2058,24 @@ foundation protocol.
 
 ### Flags store assessment (T-12, batter-jkw6.12)
 
+Review exposed an owning-adapter gap: an outer timeout could discard an already
+observed application error while the native savepoint/snapshot owner awaited
+recovery. Additive native deadline-aware methods now retain that error outside
+the cancellable cleanup phase and report `RecoveryElapsed` explicitly. The store
+does not maintain a parallel outcome slot or ask callers to coordinate cleanup.
+Native migration likewise owns session timeout installation and unconditional
+retirement because SQLx's advisory-lock phase precedes its migration transactions.
+The public unbounded methods remain compatible; no shim or hard cut is needed.
+
+The owner-directed explicit-state rule also applies internally. Request variants
+retain their typed payload; stored rows decode to Absent/Active/Archived and
+processes to Live/Silent/Stopped. Prepared decisions carry distinct commit and
+rollback payloads. Their consuming completion methods require native proofs,
+so public acknowledged outcomes are not used as provisional phase markers.
+Wrong-kind JSON is refused before later policy checks, matching core decoding.
+Real server/wire regressions target these causes; execution evidence belongs to
+the registered review run, not this design assessment.
+
 The canonical `PooledStore` accepts complete validated requests and owns all
 transaction phases. Actor/reason limits, nonzero bounded timing and explicit
 kind/state pairing are checked before acquisition. There is no raw-connection

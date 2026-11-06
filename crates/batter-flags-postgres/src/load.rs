@@ -1,7 +1,6 @@
 use crate::{
     ErrorClass, PooledStore, REQUIRED_SCHEMA_REVISION, StoreError,
     errors::{ErrorKind, check_primary},
-    store::bounded,
 };
 use batter_flags_core::{
     Version,
@@ -58,8 +57,7 @@ impl PooledStore {
     /// because the native snapshot owner does not expose a separate acquire phase.
     pub async fn load(&self, deadline: Instant) -> Result<Loaded, StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
-        bounded(deadline, async {
-            PgReadOnlySnapshot::inspect(&self.pool, async |sql| {
+        PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
                 let [statement, lock, idle] = self.timing.settings(deadline)?;
                 sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
                     .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
@@ -77,11 +75,23 @@ impl PooledStore {
                             crate::load::version(r.try_get("updated_version")?)?, r.try_get("state")?))
                     }).collect::<Result<Vec<_>, StoreError>>()?;
                 Ok(Loaded { version, schema_revision, channel: row.try_get("channel")?, rows })
-            }).await.map_err(|e| match e {
-                batter_sqlx::PgSnapshotError::Inspection(e) => e,
-                e => StoreError(ErrorKind::Snapshot(Box::new(e))),
-            })
-        }).await
+            }).await.map_err(snapshot_error)
+    }
+}
+pub(crate) fn snapshot_error(
+    error: batter_sqlx::PgDeadlineError<batter_sqlx::PgSnapshotError<StoreError>, StoreError>,
+) -> StoreError {
+    match error {
+        batter_sqlx::PgDeadlineError::Elapsed => StoreError::classified(ErrorClass::Deadline),
+        batter_sqlx::PgDeadlineError::Failed(batter_sqlx::PgSnapshotError::Inspection(error)) => {
+            error
+        }
+        batter_sqlx::PgDeadlineError::Failed(error) => {
+            StoreError(ErrorKind::Snapshot(Box::new(error)))
+        }
+        batter_sqlx::PgDeadlineError::RecoveryElapsed(error) => {
+            crate::RollbackFailure::deadline(error)
+        }
     }
 }
 pub(crate) fn version(value: i64) -> Result<Version, StoreError> {

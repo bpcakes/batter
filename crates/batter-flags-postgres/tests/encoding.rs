@@ -95,3 +95,122 @@ async fn stored_writer_vectors_validate_against_core_candidate() {
     }
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn opposite_kind_reader_vectors_refuse_every_mutation_before_other_checks() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../batter-flags-core/tests/support/state_encoding_1.json"
+    ))
+    .unwrap();
+    for name in [
+        "a switch state for a flag",
+        "a variant for a switch",
+        "a switch with a variant field too",
+    ] {
+        let vector = vectors["reader"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == name)
+            .unwrap();
+        assert_eq!(vector["reads"]["held"], "unknown_row_encoding");
+        let f = Fixture::migrated().await;
+        let (key_name, kind, value_type, request) = match vector["shape"].as_str().unwrap() {
+            "flag" => (
+                "fast_path",
+                "release",
+                "toggle",
+                set("fast_path", "on", Some(999)),
+            ),
+            "switch" => (
+                "checkout_halt",
+                "switch",
+                "switch",
+                Write::kill(
+                    key("checkout_halt"),
+                    SwitchState::Engaged,
+                    change(Some(999)),
+                ),
+            ),
+            _ => panic!("unexpected shared vector shape"),
+        };
+        f.seed(key_name, kind, value_type, "live").await;
+        let state: serde_json::Value =
+            serde_json::from_str(vector["text"].as_str().unwrap()).unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','reader vector',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
+            .execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) VALUES ($1,$2,$3,$4,1,1)")
+            .bind(key_name).bind(kind).bind(value_type).bind(&state).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_held(&f).await;
+        // Unknown encoding precedes CAS-above-head, live archive refusal and
+        // restore no-op, and remains first even once raw SQL archives the row.
+        for phase in [RowPhase::Active, RowPhase::Archived] {
+            if let RowPhase::Archived = phase {
+                let mut tx = f.pool.begin().await.unwrap();
+                sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','archive vector',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("UPDATE flags.flag_state SET updated_version=2,archived_version=2 WHERE name=$1").bind(key_name).execute(&mut *tx).await.unwrap();
+                tx.commit().await.unwrap();
+            }
+            let before = f.head().await;
+            let audit: i64 = sqlx::query_scalar("SELECT count(*) FROM flags.flag_audit")
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+            let outcomes = [
+                f.store.write(request.clone(), deadline()).await.unwrap(),
+                f.store
+                    .archive(Archive::new(key(key_name), change(Some(999))), deadline())
+                    .await
+                    .unwrap(),
+                f.store
+                    .restore(Archive::new(key(key_name), change(Some(999))), deadline())
+                    .await
+                    .unwrap(),
+            ];
+            for outcome in outcomes {
+                assert!(
+                    matches!(outcome, WriteOutcome::Refused(Refusal::UnknownRowEncoding)),
+                    "{name}: {outcome:?}"
+                );
+            }
+            assert_eq!(f.head().await, before);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM flags.flag_audit")
+                    .fetch_one(&f.pool)
+                    .await
+                    .unwrap(),
+                audit
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, serde_json::Value>(
+                    "SELECT state FROM flags.flag_state WHERE name=$1"
+                )
+                .bind(key_name)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap(),
+                state
+            );
+        }
+        f.close().await;
+    }
+}
+enum RowPhase {
+    Active,
+    Archived,
+}
+async fn assert_held(f: &Fixture) {
+    let (catalog, handles) = world::world();
+    let base = world::base(catalog, &handles.serving, &[]);
+    let scope = base.validation_scope();
+    let snapshot = Snapshot::validate(
+        &scope,
+        f.store.load(deadline()).await.unwrap().candidate(&scope),
+    )
+    .unwrap();
+    assert_eq!(snapshot.held().count(), 1);
+}
