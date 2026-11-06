@@ -1,9 +1,8 @@
-# Preserved design brief: Effect v4 -> a Rust operational foundation
+# Effect v4 rationale for a Rust operational foundation
 
-The [2026-09-08 reconciliation](effect-v4-reconciliation.md) compares the supplied
-eight-priority analysis with current source and tests. It records which proposals
-are implemented and which capabilities or guarantees are absent. Delivery
-work lives only in [Beads](roadmap.md).
+This brief records the design rationale and ownership boundaries. Current
+capabilities live in [status](status.md), contracts in [guarantees](guarantees.md),
+and delivery work in [Beadroll](roadmap.md).
 
 ## The thesis
 
@@ -48,8 +47,8 @@ boundaries can repeat committed side effects. Those are Batter's concerns.
 | Schedule/ExecutionPlan | One execution budget, fresh attempts, replay policy, provider delay, injected jitter, opt-in per-attempt caps, finalization reserve. | Retry, attempt caps and reserves implemented; fallback, retry-token budgets and circuits deferred. |
 | Coordinated observability | Operation/task/cleanup completion and separate HTTP status/outcome/latency. | Useful default tracing and opt-in bounded outcome metrics implemented; an opt-in OTLP adapter uses core-owned protected service completion and ordered flush; durable trace propagation deferred. |
 | Schema/HttpApi coherence | Validated boundary types, explicit errors, generated contracts where useful. | Configurable infrastructure HTTP envelopes; OpenAPI/client generation deferred. |
-| Deterministic test services | Paused runtime time, scripted dependencies, real PostgreSQL integration separately. | Timer/script tests authored; PostgreSQL harness composition deferred. |
-| Durable work infrastructure | Use existing Runledger; never turn durable work into detached tasks. | Ownership contract documented; host/reference integration deferred. |
+| Deterministic test services | Paused runtime time, scripted dependencies, real PostgreSQL integration separately. | Timer/script tests and opt-in SQLx fixtures implemented; provisioning stays in the external harness. Live evidence is scoped in [testing](testing.md). |
+| Durable work infrastructure | Use existing Runledger; never turn durable work into detached tasks. | Native lifecycle adapter, atomic enqueue and reference provider-effect worker implemented; durable correlation remains unimplemented. See [integration contracts](integrations.md#runledger-optional-native-lifecycle-adapter). |
 
 Effect Layer is dependency/resource construction; Tower Layer decorates services.
 They are not the same abstraction. Using Tower where a Service-shaped boundary
@@ -72,8 +71,9 @@ normalization and response policy. Batter should connect—not replace—those
 boundaries and preserve uncertainty about consumption around database commit.
 
 Runledger owns durable queues/workflows, leases, retries, scheduling, recovery,
-transactional submission, and internal worker supervision. A future Batter host
-should coordinate its lifecycle and correlation. Do not build another outbox
+transactional submission, and internal worker supervision. The optional Batter
+adapter coordinates native initialization and settlement; durable correlation
+remains application-owned. Do not build another outbox
 because the term appears in an architecture checklist. Use the upstream
 transactional enqueue or durable-intent API appropriate to the application.
 
@@ -99,8 +99,9 @@ concurrency permits, and retry budgets must also remain distinct.
 A global AppContext, opaque universal error, automatic transaction retry wrapper,
 custom scheduler, and every possible abstraction are not prerequisites for
 reliability. They increase the amount of private framework behavior an agent
-must guess. A small API surface, compile-checked examples, and failure-path
-contracts are the useful response to the "AI era" framing.
+must guess. A protected integration path, compile-checked examples, and
+failure-path contracts support coding-agent consumers; API shape must enforce
+locally expressible invariants as required by [ADR-010](adr/010-agent-only-consumption.md).
 
 ## Delivery ownership
 

@@ -294,6 +294,9 @@ These are API contracts and limitations, not footnotes. Read
 
 ## Documentation
 
+The [documentation index](docs/README.md) maps current guides, design rationale
+and historical evidence.
+
 To use batter: [usage](docs/usage.md), [operations](docs/operations.md),
 [architecture](docs/architecture.md), [guarantees](docs/guarantees.md), and
 [security](SECURITY.md). Crate READMEs in the table above own adapter-level
@@ -302,8 +305,7 @@ detail.
 To work in this repository: [AGENTS.md](AGENTS.md) for reading order,
 verification, and change rules; [status](docs/status.md) and
 [testing](docs/testing.md) for coverage; [Beads](docs/roadmap.md) for delivery tasks. The
-[Effect v4 brief](docs/effect-v4-brief.md) and
-[reconciliation](docs/effect-v4-reconciliation.md) record design rationale.
+[Effect v4 brief](docs/effect-v4-brief.md) records design rationale.
 [Primary references](docs/references.md) record upstream checks.
 
 ```sh

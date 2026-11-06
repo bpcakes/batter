@@ -1176,7 +1176,7 @@ Native builders still read ambient configuration, so preparation rejects `OTEL_*
 and uses explicit empty resources. Applications must not mutate environment during
 preparation. See the [adapter guide](../crates/batter-otlp/README.md),
 [reference configuration](../examples/reference-service/README.md#opt-in-metrics-export)
-and [primary sources](references.md#reference-metrics-export).
+and [primary sources](references/runtime.md#reference-metrics-export-reviewed-2026-09-26).
 
 ## Outbound provider exchange: experimental transport evidence
 

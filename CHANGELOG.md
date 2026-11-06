@@ -572,7 +572,7 @@ contracts, capability facts and validation history.
 
 - Drive one job handler in a test without a worker, queue or database
   (`batter-3upk`, closing gap 7 of the
-  [whole-application baseline](docs/evidence/whole-app-baseline-2026-10-09/README.md);
+  [whole-application baseline](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/evidence/whole-app-baseline-2026-10-09/README.md);
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#handler-test-facility-assessment-batter-3upk)).
   `batter_runledger::test_support::HandlerInvocation`, reachable as
   `batter::runledger::test_support` with the facade's `runledger-test-support`
@@ -750,7 +750,7 @@ contracts, capability facts and validation history.
   -0346, -0347, -0348 and -0349 affect 0.23.44, which the workspace reached
   through `sqlx-core`, `reqwest` and `bollard`; the update is lock-only and
   within every dependent's semver range. The
-  [publication dossier](docs/evidence/publication-dossier-2026-10-17.md)
+  [publication dossier](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/evidence/publication-dossier-2026-10-17.md)
   records the remaining gates; nothing is published.
 - Manage constraint triggers with the routines they bind (`batter-n2s1`,
   [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
@@ -1886,7 +1886,7 @@ contracts, capability facts and validation history.
   rendering/redaction, reserve/jitter regressions; extend local HTTP smoke to
   SIGINT, error envelopes, deadlines, and ordinary INFO telemetry.
 - Upgrade all nine direct Rust dependencies to their latest stable releases and
-  refresh Cargo.lock; see [exact versions](docs/references.md#dependency-refresh-2026-09-07).
+  refresh Cargo.lock; see [exact versions](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/references.md#dependency-refresh-2026-09-07).
 - Pin the default Rust toolchain to 1.98.1. Raise the workspace minimum to 1.94
   for SQLx 0.9.0 and update the CI matrix to 1.94.0, 1.98.1, and stable.
 - Normalize rustfmt output, remove a redundant cleanup-test closure, and escape

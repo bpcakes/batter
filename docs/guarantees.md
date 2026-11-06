@@ -7,12 +7,40 @@ packages, not the foundation or generic test support. Passing tests do not estab
 
 The workspace's platform scope is Unix-only. Windows is unsupported and not
 planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
-macOS arm64 have execution evidence on both supported toolchains, including
+macOS arm64 have historical execution evidence on Rust 1.94.0 and 1.98.1, including
 focused hosted macOS jobs before `batter-f0jz`; regular hosted macOS CI now uses
 the pinned toolchain. Other Unix targets remain unverified. See
 [ADR-007](adr/007-unix-platform-scope.md). `batter-outbound-http` postdates that
 evidence; local macOS checks supplement its Linux evidence in `batter-8e8r`; see
 [its contract](#outbound-provider-exchange).
+
+## Contract sections
+
+- [Native quota execution](#native-quota-execution)
+- [Execution boundary](#execution-boundary)
+- [Owned work and finalization](#owned-work-and-finalization)
+- [Retry contract](#retry-contract)
+- [Outbound provider exchange](#outbound-provider-exchange)
+- [Admission contract](#admission-contract)
+- [Process ownership and shutdown](#process-ownership-and-shutdown)
+- [Owned finite commands](#owned-finite-commands)
+- [Owned startup contract](#owned-startup-contract)
+- [Periodic maintenance components](#periodic-maintenance-components)
+- [Maintained Runlimit PostgreSQL storage](#maintained-runlimit-postgresql-storage)
+- [Dependency health sampling](#dependency-health-sampling)
+- [Cleanup contract](#cleanup-contract)
+- [PostgreSQL client disposition](#postgresql-client-disposition)
+- [HTTP boundary](#http-boundary)
+- [Optional database fixture finish](#optional-database-fixture-finish)
+- [Native Runledger handler panic records](#native-runledger-handler-panic-records)
+- [Application-installed redacting panic hook](#application-installed-redacting-panic-hook)
+- [Explicit settings and redacted diagnostics](#explicit-settings-and-redacted-diagnostics)
+- [Offline legacy retirement](#offline-legacy-retirement)
+- [Runledger invocation phases](#runledger-invocation-phases)
+- [Shared Runledger workspace](#shared-runledger-workspace)
+- [Native Runlimit source identity](#native-runlimit-source-identity)
+- [Managed-object release ordering](#managed-object-release-ordering)
+- [Retained enqueue-intent reconciliation](#retained-enqueue-intent-reconciliation)
 
 ## Native quota execution
 
@@ -925,7 +953,7 @@ retain bounded initial output and separate stdout/stderr tails, marking omitted
 bytes explicitly; retained final diagnostics do not make overflow valid evidence. Its bounded
 process-group settlement retains leader identity until output EOF or termination,
 and never signals after reaping. This is test-runner containment, not a new
-application guarantee for detached descendants. See [testing](testing.md#jig-verification)
+application guarantee for detached descendants. See [testing](testing.md#verification)
 for execution bounds and the final-evidence reuse conditions.
 
 `start` explicitly approves application readiness before it launches an owned

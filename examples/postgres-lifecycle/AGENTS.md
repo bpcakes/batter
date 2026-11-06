@@ -76,4 +76,4 @@ live execution separately from compilation in the owning Bead.
 
 The `serve` function starts the owned initializer, awaits its running handoff,
 and checks the shared shutdown outcome. Keep stages and budgets explicit; see
-[integration contracts](../../docs/integrations.md#sqlx-keep-transactions-visible).
+[integration contracts](../../docs/integrations.md#sqlx-owned-transactions-and-session-operations).
