@@ -3,6 +3,8 @@ use std::sync::Arc;
 use super::*;
 
 const CANCELLATION_CHILD: &str = "container_start::tests::cancellation::cancelled_waiter_child";
+const SUCCESS_CHILD: &str =
+    "container_start::tests::cancellation::cancelled_successful_waiter_child";
 
 #[tokio::test]
 async fn cancelled_start_waiter_retains_failed_start_cleanup() {
@@ -20,11 +22,42 @@ async fn cancelled_start_waiter_retains_failed_start_cleanup() {
 }
 
 #[tokio::test]
+async fn cancelled_start_waiter_releases_a_successfully_started_container() {
+    if external_postgres_is_configured() {
+        return;
+    }
+    let output = run_child(SUCCESS_CHILD, &StartAttempt::new(), false).await;
+    assert!(
+        output.status.success(),
+        "successful-start cancellation failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("cancelled waiter cleanup observed"));
+}
+
+#[tokio::test]
 #[ignore = "helper entrypoint launched explicitly by cancellation parent test"]
 async fn cancelled_waiter_child() {
     if std::env::var_os(CHILD_NAME_ENV).is_none() {
         return;
     }
+    cancelled_waiter(rejected_image(), false).await;
+}
+
+#[tokio::test]
+#[ignore = "helper entrypoint launched explicitly by cancellation parent test"]
+async fn cancelled_successful_waiter_child() {
+    if std::env::var_os(CHILD_NAME_ENV).is_none() {
+        return;
+    }
+    let image =
+        std::env::var("RUNLEDGER_TEST_PG_IMAGE").unwrap_or_else(|_| "postgres:18".to_owned());
+    let (repository, tag) = crate::postgres_container::parse_image_ref(&image);
+    cancelled_waiter(PostgresImage::new(repository, tag), true).await;
+}
+
+async fn cancelled_waiter(image: PostgresImage, running: bool) {
     let docker = docker_client_instance().await.expect("Docker client");
     let (reached, mut observed) = tokio::sync::mpsc::unbounded_channel();
     let gate = Arc::new(CleanupGate {
@@ -33,11 +66,11 @@ async fn cancelled_waiter_child() {
     });
     // Capture this task-local gate in the real start_postgres attempt, before
     // it moves into its owned task. No other fixture attempt sees this gate.
-    let waiter = tokio::spawn(CLEANUP_GATE.scope(gate.clone(), start_postgres(rejected_image())));
+    let waiter = tokio::spawn(CLEANUP_GATE.scope(gate.clone(), start_postgres(image)));
     let name = tokio::time::timeout(Duration::from_secs(60), observed.recv())
         .await
-        .expect("Docker rejects start before cancellation")
-        .expect("attempt reaches failed-start cleanup");
+        .expect("Docker completes start request before cancellation")
+        .expect("attempt reaches cancellation gate");
     let container = docker
         .inspect_container(&name, None)
         .await
@@ -47,7 +80,7 @@ async fn cancelled_waiter_child() {
     assert!(!volumes.is_empty(), "failed start owns an anonymous volume");
     assert_eq!(
         container.state.as_ref().and_then(|state| state.running),
-        Some(false)
+        Some(running)
     );
     assert!(!waiter.is_finished(), "startup waiter is still pending");
 
