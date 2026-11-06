@@ -1185,13 +1185,19 @@ future inspection. Inspection remains synchronous and temporarily excludes other
 inspectors; it does not clone, format or expose the retained payload automatically.
 
 Cleanup has its own budget, independent of the startup operation context.
+Manual `CleanupStack::push` and `CleanupSlot::register` are lower-level paths:
+the caller owns acquisition-to-registration sequencing. Use them for application
+hooks and resource protocols without supported native/adapter acquisition.
+`CleanupStack::push` can also reject the name after acquisition.
+
 `reserve_cleanup` / `CleanupStack::reserve` validate names before acquisition;
 the exclusive `CleanupSlot` registers its finalizer infallibly. An unused slot
 adds no hook. The older `push` still consumes its factory on rejection. Native
 acquisition cancellation may have external effects before yielding ownership;
 resources acquired but not registered have only their native destruction
-semantics. Register immediately after success without another await. No detached
-work, arbitrary destructor, non-yielding initializer, aborting panic, process or
+semantics. For manual registration, register immediately after success without
+another await. No detached work, arbitrary destructor, non-yielding initializer,
+aborting panic, process or
 runtime destruction is covered. The default panic hook may still print secrets;
 an application root that installs the
 [redacting panic hook](#application-installed-redacting-panic-hook) first prints

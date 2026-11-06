@@ -185,7 +185,14 @@ struct Hook {
     action: Box<dyn FnOnce() -> CleanupFuture + Send + 'static>,
 }
 
-/// Finalizers registered immediately after successful acquisition.
+/// A LIFO stack of explicitly awaited finalizers.
+///
+/// For supported resources, reserve a slot before acquisition and use
+/// [`CleanupSlot::acquire_semaphore`], [`CleanupSlot::bind_udp`], or adapter-owned
+/// acquisition such as SQLx `pool_in`. Those operations own registration before
+/// releasing the acquired handle. Manual [`Self::push`] and [`CleanupSlot::register`]
+/// are lower-level paths: the caller owns the acquisition-to-registration gap.
+/// Use them for application hooks and resource protocols without a supported adapter.
 ///
 /// Register dependencies first and their dependents later: close reverses
 /// registration order. No hook is run by Drop. Values captured by hooks must
@@ -241,7 +248,15 @@ impl CleanupStack {
         Self::default()
     }
 
-    /// Register a factory. It is only invoked inside a supervised cleanup task.
+    /// Lower-level manual registration of a finalizer factory.
+    ///
+    /// Prefer [`CleanupSlot::acquire_semaphore`], [`CleanupSlot::bind_udp`], or
+    /// adapter-owned acquisition for supported resources. This method does not
+    /// own acquisition or protect the interval before registration, and can
+    /// reject the name after the caller has acquired a resource. For application
+    /// hooks or unsupported resources, [`Self::reserve`] validates the name first;
+    /// the caller still owns acquisition-to-registration sequencing.
+    /// The factory is only invoked inside a supervised cleanup task.
     pub fn push<F, Fut>(&mut self, name: &'static str, action: F) -> Result<(), RegistrationError>
     where
         F: FnOnce() -> Fut + Send + 'static,

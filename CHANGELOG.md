@@ -8,6 +8,9 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Direct facade consumers to owned work/finalization and supported native acquisition;
+  identify manual phase and cleanup registration obligations at the selection points.
+
 - Remove Testcontainers and `astral-tokio-tar` from Runledger test support and the
   optional facade test-support graph by using Bollard directly. Preserve the
   existing PostgreSQL 18 fixture API, Docker cleanup and keep policy
