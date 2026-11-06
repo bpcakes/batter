@@ -340,3 +340,84 @@ async fn absent_row_cas_and_lower_encoding_declarers_are_refused_without_consumi
     ));
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
+    for presence in [Presence::Live, Presence::Silent] {
+        let f = Fixture::migrated().await;
+        f.seed("archived_flag", "mode", "enum", "stopped").await;
+        assert!(matches!(
+            f.store.write(set("archived_flag", "express", Some(0)), deadline()).await.unwrap(),
+            WriteOutcome::WrittenUndeclared { version, .. } if version.get() == 1
+        ));
+        assert!(matches!(
+            f.store.archive(Archive::new(key("archived_flag"), change(Some(1))), deadline()).await.unwrap(),
+            WriteOutcome::WrittenUndeclared { version, .. } if version.get() == 2
+        ));
+        // A new build declares a narrower catalog after the old build stops.
+        let build = match presence {
+            Presence::Live => "live",
+            Presence::Silent => "silent",
+        };
+        f.seed("new_catalog", "mode", "enum", build).await;
+        sqlx::query("UPDATE flags.flag_catalog_entries SET key='archived_flag', variants=ARRAY['off','on'] WHERE key='new_catalog'")
+            .execute(&f.pool).await.unwrap();
+        let expected = serde_json::json!({"encoding": 1, "variant": "express"});
+        let before = f
+            .store
+            .history(None, Version::new(0), deadline())
+            .await
+            .unwrap();
+        assert_eq!(before.len(), 2);
+        assert!(matches!(
+            f.store.restore(Archive::new(key("archived_flag"), change(Some(2))), deadline()).await.unwrap(),
+            WriteOutcome::Refused(Refusal::UndecodableByLiveDeclaration { builds })
+                if builds.len() == 1 && builds[0].build == build && builds[0].presence == presence
+        ));
+        let archived: (serde_json::Value, i64, i64) = sqlx::query_as(
+            "SELECT state, updated_version, archived_version FROM flags.flag_state WHERE name='archived_flag'",
+        ).fetch_one(&f.pool).await.unwrap();
+        assert_eq!(archived, (expected.clone(), 2, 2));
+        assert_eq!(f.head().await, 2);
+        assert!(f.store.load(deadline()).await.unwrap().rows().is_empty());
+        assert_eq!(
+            f.store
+                .history(None, Version::new(0), deadline())
+                .await
+                .unwrap()
+                .len(),
+            before.len()
+        );
+        // The same incompatible catalog cannot block once its process stops.
+        sqlx::query("UPDATE flags.flag_processes SET stopped_at=clock_timestamp() WHERE build=$1")
+            .bind(build)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            f.store.restore(Archive::new(key("archived_flag"), change(Some(2))), deadline()).await.unwrap(),
+            WriteOutcome::WrittenUndeclared { version, basis: UndeclaredBasis::NoLiveDeclarer }
+                if version.get() == 3
+        ));
+        let restored: (serde_json::Value, i64, Option<i64>) = sqlx::query_as(
+            "SELECT state, updated_version, archived_version FROM flags.flag_state WHERE name='archived_flag'",
+        ).fetch_one(&f.pool).await.unwrap();
+        assert_eq!(restored, (expected, 3, None));
+        assert_eq!(f.head().await, 3);
+        assert_eq!(f.store.load(deadline()).await.unwrap().rows().len(), 1);
+        let after = f
+            .store
+            .history(None, Version::new(0), deadline())
+            .await
+            .unwrap();
+        assert_eq!(
+            after
+                .iter()
+                .map(|r| r.operation.as_str())
+                .collect::<Vec<_>>(),
+            ["create", "archive", "restore"]
+        );
+        f.close().await;
+    }
+}
