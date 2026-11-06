@@ -173,7 +173,7 @@ scheduling, a retry framework or a lease protocol.
 an expiring HTTP cancellation token or serialize a Tokio Instant. Persist safe
 correlation metadata and give each job its own policy. Runledger owns leasing,
 retries, scheduling, recovery, and its own internal supervisor. A handler
-derives its operation phases from its own invocation with `job_phases`: the
+registers `PhasedJob`, which derives its phases from its own invocation: the
 worker's absolute deadline bounds them, and Runledger's invocation exit hook,
 which holds the root's only cancellation authority, cancels them when the
 invocation ends.

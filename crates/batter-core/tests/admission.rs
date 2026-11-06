@@ -1,6 +1,10 @@
 //! Concurrency admission capacity, waiting and closing, and bounded blocking runs.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
+use batter_core as bulkhead_foundation;
+#[path = "support/bulkhead.rs"]
+mod bulkhead_testing;
+use bulkhead_testing::BulkheadTestExt;
 #[path = "admission/blocking_dispatch.rs"]
 mod blocking_dispatch;
 #[path = "admission/blocking_outcomes.rs"]
@@ -38,36 +42,36 @@ fn capacity_must_be_valid() {
 async fn rejecting_admission_enforces_capacity_and_releases_on_drop() {
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let context = context();
-    let permit = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let permit = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     assert!(matches!(
-        bulkhead.enter(&context, Admission::Reject).await,
+        bulkhead.hold(&context, Admission::Reject).await,
         Err(AdmissionError::Overloaded)
     ));
     drop(permit);
-    assert!(bulkhead.enter(&context, Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&context, Admission::Reject).await.is_ok());
 }
 
 #[tokio::test(start_paused = true)]
 async fn waiting_consumes_existing_deadline_without_leaking_a_permit() {
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
-    let permit = bulkhead.enter(&context(), Admission::Reject).await.unwrap();
+    let permit = bulkhead.hold(&context(), Admission::Reject).await.unwrap();
     let short = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
         .unwrap()
         .into_context();
     assert!(matches!(
-        bulkhead.enter(&short, Admission::Wait).await,
+        bulkhead.hold(&short, Admission::Wait).await,
         Err(AdmissionError::Interrupted(Interruption::DeadlineExceeded))
     ));
     drop(permit);
-    assert!(bulkhead.enter(&context(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&context(), Admission::Reject).await.is_ok());
 }
 
 #[tokio::test]
 async fn closing_wakes_waiters() {
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
-    let _permit = bulkhead.enter(&context(), Admission::Reject).await.unwrap();
+    let _permit = bulkhead.hold(&context(), Admission::Reject).await.unwrap();
     let owned = bulkhead.clone();
-    let task = tokio::spawn(async move { owned.enter(&context(), Admission::Wait).await });
+    let task = tokio::spawn(async move { owned.hold(&context(), Admission::Wait).await });
     tokio::task::yield_now().await;
     bulkhead.close();
     assert!(matches!(task.await.unwrap(), Err(AdmissionError::Closed)));
@@ -80,7 +84,7 @@ async fn cancelled_call_is_not_admitted_even_when_capacity_exists() {
     owner.cancel();
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     assert!(matches!(
-        bulkhead.enter(context, Admission::Reject).await,
+        bulkhead.hold(context, Admission::Reject).await,
         Err(AdmissionError::Interrupted(Interruption::Cancelled))
     ));
 }

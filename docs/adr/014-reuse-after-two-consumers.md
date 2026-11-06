@@ -152,9 +152,11 @@ returns, then await the join.
 
 A permit released when the awaiting future is dropped would let cancelled
 callers oversubscribe the blocking pool. The correct ordering is a local
-ownership transfer, so the library can own it. `Bulkhead::enter` returns a
-native permit with the instruction to hold it for the work's full lifetime, and
-nothing on the canonical path performs that hold for blocking work.
+ownership transfer, so the library can own it. At the time of this survey,
+`Bulkhead::enter` returned a native permit with the instruction to hold it for
+work's full lifetime, without a library-owned blocking handoff. The later
+`batter-f9kq.1` cut removes that raw API and requires owned execution for async
+work as well.
 
 `batter-0772` adds a library-owned blocking run that makes the early release
 unrepresentable. It must not claim to cancel blocking work: an abandoned caller

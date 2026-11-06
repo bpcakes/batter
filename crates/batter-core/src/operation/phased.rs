@@ -4,6 +4,7 @@ mod action;
 mod outcome;
 mod owner;
 mod report;
+pub(super) mod scoped;
 
 pub use action::PhaseAction;
 pub use outcome::{PhaseFailure, PhaseOutcome};

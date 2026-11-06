@@ -1,3 +1,4 @@
+use super::super::tests::bulkhead_testing::BulkheadTestExt;
 use crate::delivery::worker::state::ProviderAcceptance;
 
 use super::super::tests::{in_invocation, returned_failure};
@@ -9,7 +10,9 @@ use runledger_core::jobs::JobContext;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 
+mod before_factory;
 mod confirmation;
+mod fence;
 
 /// Native budget of each probe invocation; its lock and lease waits stay well inside it.
 const PROBE_BUDGET: Duration = Duration::from_secs(10);
@@ -138,7 +141,7 @@ async fn terminal_writers_reject_terminal_sources_before_sql_acquisition() -> Re
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
 async fn provider_state_lock_and_retry_boundaries() -> Result<(), Failure> {
     run_boundaries().await.map_err(Failure)
@@ -203,6 +206,8 @@ async fn probes(pool: &PgPool) -> Result<(), BoxError> {
     durable_eligibility(&worker).await?;
     stale_terminal_sources(&worker).await?;
     final_state_reserve_outlives_provider_work(&worker).await?;
+    fence::interruption(&worker).await?;
+    before_factory::interruption(&worker).await?;
     confirmation::ordering(&worker).await?;
     Ok(())
 }
@@ -284,7 +289,7 @@ async fn final_state_reserve_outlives_provider_work(
     let holder = batter::operation::OperationOwner::new(Duration::from_secs(30))?;
     let held = worker
         .admission
-        .enter(holder.context(), Admission::Wait)
+        .hold(holder.context(), Admission::Wait)
         .await?;
     let run =
         HandlerInvocation::for_context(FINAL_STATE_RESERVE + Duration::from_millis(100), context)?

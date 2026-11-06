@@ -4,6 +4,7 @@
 //! are scoped.
 
 use crate::blocking_support::{Logs, bulkhead, fresh, gated, owner};
+use crate::bulkhead_testing::BulkheadTestExt;
 use batter_core::{
     admission::{Admission, BlockingError},
     operation::Interruption,
@@ -29,7 +30,7 @@ async fn blocking_work_runs_under_the_dispatcher_captured_at_first_poll() {
     let first = Logs::new();
     let later = Logs::new();
     let bulkhead = bulkhead(1);
-    let held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&fresh(), Admission::Reject).await.unwrap();
     let context = fresh();
     let mut call = Box::pin(bulkhead.run_blocking(&context, Admission::Wait, || {
         tracing::info!(marker = "blocking.event", "blocking work ran");
@@ -62,7 +63,7 @@ async fn a_call_destroyed_while_waiting_for_admission_destroys_work_under_its_fi
     let first = Logs::new();
     let later = Logs::new();
     let bulkhead = bulkhead(1);
-    let _held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+    let _held = bulkhead.hold(&fresh(), Admission::Reject).await.unwrap();
     let context = fresh();
     let announce = Announce;
     let mut call = Box::pin(bulkhead.run_blocking(&context, Admission::Wait, move || {
@@ -89,7 +90,7 @@ fn a_wait_call_finished_elsewhere_keeps_the_runtime_checked_at_first_poll() {
         .build()
         .unwrap();
     let held = first
-        .block_on(bulkhead.enter(&context, Admission::Reject))
+        .block_on(bulkhead.hold(&context, Admission::Reject))
         .unwrap();
     let mut call = Box::pin(bulkhead.run_blocking(&context, Admission::Wait, || 7_u8));
     // The first poll checks `first` and queues for the held permit.
@@ -105,8 +106,8 @@ fn a_wait_call_finished_elsewhere_keeps_the_runtime_checked_at_first_poll() {
         .unwrap();
     assert_eq!(later.block_on(call).unwrap(), 7);
     assert!(
-        later
-            .block_on(bulkhead.enter(&context, Admission::Reject))
+        first
+            .block_on(bulkhead.hold(&context, Admission::Reject))
             .is_ok()
     );
 }

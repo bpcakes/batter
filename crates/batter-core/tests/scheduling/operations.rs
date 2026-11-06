@@ -1,9 +1,13 @@
+use batter_core as bulkhead_foundation;
+#[path = "../support/bulkhead.rs"]
+mod bulkhead_testing;
 use super::support::{Case, poll_pending, yields};
 use batter_core::lifecycle::Fatal;
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     operation::{Interruption, OperationError},
 };
+use bulkhead_testing::BulkheadTestExt;
 use std::{
     convert::Infallible,
     future::pending,
@@ -145,14 +149,14 @@ pub async fn bulkhead_preflight(case: Case, delay: u64) {
     let fresh = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
         .unwrap()
         .into_context();
-    let permit = bulkhead.enter(&fresh, Admission::Reject).await.unwrap();
+    let permit = bulkhead.hold(&fresh, Admission::Reject).await.unwrap();
     let owner = fresh.child(Duration::from_secs(20)).unwrap();
     let context = owner.context().clone();
     let waiter_context = context.clone();
     let waiting_bulkhead = bulkhead.clone();
     let waiter = tokio::spawn(async move {
         waiting_bulkhead
-            .enter(&waiter_context, Admission::Wait)
+            .hold(&waiter_context, Admission::Wait)
             .await
     });
     let release = tokio::spawn(async move {
@@ -175,7 +179,7 @@ pub async fn bulkhead_preflight(case: Case, delay: u64) {
         result,
         Err(OperationError::Interrupted(Interruption::Cancelled))
     ));
-    assert!(bulkhead.enter(&fresh, Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh, Admission::Reject).await.is_ok());
     assert!(fresh.check().is_ok());
     case.event("bulkhead-race-no-leak");
 }

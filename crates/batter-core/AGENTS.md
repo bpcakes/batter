@@ -40,6 +40,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
+- `src/admission/asynchronous.rs` owns async factory admission, context rechecks,
+  and permit retention through complete work-future destruction. `run_resolved`
+  keeps retained-outcome resolution within that same boundary. Raw `Bulkhead::enter`
+  has been removed; never restore a public permit-transfer path.
 - `src/admission/blocking.rs` owns `Bulkhead::run_blocking` and `BlockingError`:
   admission, a context recheck, one bulkhead decision and a same-poll handoff
   of the permit into the blocking closure.
@@ -50,6 +54,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/operation/phased.rs` and `phased/` own inert work/finalization assembly,
   typed success/failure proofs and work-only owner cancellation. Reuse command phase
   polling; finalization inherits the parent and original total deadline.
+- `operation/phased/scoped.rs` is the lower-level borrowing kernel for adapters
+  whose native host owns the whole invocation; it shares command phase polling.
+  It is not an independently owned application finalizer.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
   `cleanup/acquisition.rs` owns native semaphore/UDP acquisition through registration
   and native-future destruction. `cleanup/low_level.rs` owns caller-assembled pairs.

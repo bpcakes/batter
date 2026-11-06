@@ -74,7 +74,9 @@ but work that observed the context instead of being dropped with the handler was
 never told the invocation had been abandoned. A context that silently never ends
 was the invalid state; the repeated arithmetic was the caller obligation.
 
-The canonical path is now `job_phases(execution, reserve)`. It takes the whole
+At this assessment's delivery, the canonical path was
+`job_phases(execution, reserve)`. The later `batter-f9kq.2` assessment below
+supersedes that public path with `PhasedJob`; derivation is now private. It takes the whole
 `JobExecution`, so its deadline is the worker's own absolute instant rather than
 a value the caller re-derives, and the reserve is a required argument, so no
 default hides the final-state budget. It returns the existing `OperationPhases`:
@@ -390,3 +392,87 @@ The exit is not total in one recorded case: a destructor that panics while the
 drive destroys the handler future is not contained, as it is not in the worker,
 whose unwind boundary also covers polling only; a should-panic test pins this.
 Fresh-agent usability evaluation is proposed and unexecuted.
+
+## Borrowed handler work and finalization (`batter-f9kq.2`)
+
+The frequency-ranked audit found that borrowing native execution services forced
+feature handlers to sequence manual phases. An ordinary `?` after work could
+skip finalization. The protected path is now `PhasedJob<PhasedJobHandler>`:
+the native worker invokes one adapter future that owns work, complete outcome
+capture and finalization. No public phase-running method or separate waiter is
+exposed by that adapter. `JobWork` cannot access finalization; `JobFinalization`
+is constructed only after work-future destruction. Both borrow the invocation's
+existing services. Finalization cannot overwrite work evidence; completion needs
+both phases to succeed, and `failed` can return only a native failure.
+
+The foundation's command polling kernel supplies timing, panic and destruction
+semantics through a deliberately lower-level host-owned driver. Its cancellation
+obligation belongs to the adapter: use it only inside an invocation the host
+already owns. It is not a cancellation-safe borrowing bracket for application
+code. The protected adapter does not expose that driver. Native lease loss,
+deadline or task destruction still revoke invocation authority; running a later
+finalizer would not restore that authority. Native fencing and remote outcome
+reconciliation remain native/application responsibilities. No spawned coordinator,
+second worker engine, service proxy, or new native execution lifetime is added.
+
+Regression scenarios exercise borrowed checkpoint calls, early errors, work
+panic, work timeout with remaining reserve, simultaneous work/finalization errors,
+finalization timeout, native invocation destruction and invalid reserve refusal.
+The external single-dependency consumer registers the adapter and persists a
+checkpoint from finalization. Compile-fail rustdocs reject forged scopes and
+work-phase access to finalization. The public `job_phases` function is removed;
+no shim exposes the phase pair. All consumers migrate, including the reference
+worker, whose work returns a typed provider outcome for final-state persistence.
+Private bridge and native harness tests remain internal regression tests.
+Breaking migrations are in CHANGELOG. Fresh-agent usability evaluation
+remains unexecuted. Execution results belong to the owning Bead.
+
+The [public API comparison](../public-api-diff-2026-11-06/README.md) records
+the executed surface diff and the no-shim migration decision for this cutover.
+
+Panel repair assessment (`batter-f9kq.3`): the callback-await wrappers were an
+implementation error at the adapter/kernel boundary. They destroyed a ready
+callback before retaining its result. Direct future forwarding lets the existing
+kernel retain both return and destruction evidence; regressions cover values and
+errors in both phases through the core seam and the public native adapter.
+`OperationPhases::validate_reserve` shares the existing core configuration rule
+with adapter construction. It creates no execution capability; ignoring its
+result cannot bypass the protected constructor or invocation-time checks.
+
+The other two findings belong to the reference application's provider policy.
+Its classifier must preserve native non-retryable panic semantics after both
+phases settle. Its dispatch fence may commit without acknowledgement, so a
+distinct `FenceInterrupted` action and the finalization reserve reload durable
+state before a lease-fenced legal transition. These rules cannot prove a remote
+rollback. Tests drive the production classifier for construction/poll/destruction
+panics, including a retryable finalization error; live cases interrupt actual
+pending fence SQL with both outer and nested deadline ordering. A separate live
+case commits the real fence then withholds the work result to test retained
+uncertainty; it does not emulate wire-level COMMIT acknowledgement loss.
+The first repair also sent a concrete `RetryDeferred` through that interruption
+fallback, changing retained state that the existing live reconciliation test
+requires unchanged. The corrected policy preserves concrete returned fence
+failures and reloads only interrupted/panicked work or `FenceInterrupted`.
+Core already supplies this distinction in the retained outcome; moving provider
+state policy into the library would put it in the wrong owner. Skipping all
+fence recovery would retain the original race. This coupled-phase assessment
+and its live failure evidence are recorded in the owning Bead.
+These are implementation and application-protocol repairs, without adding a
+native queue, exposing phase cancellation or restoring removed APIs. Fresh-agent
+feature implementation/modification evaluation remains unexecuted. Executed
+verification is recorded in `batter-f9kq.3`.
+
+Recurring example defect assessment: the fence-only nested interruption repair
+missed expiry after bulkhead admission but before the nested operation invokes
+its callback. A live regression reproduced a terminal state-invariant failure
+despite no fence or provider call. The cause was duplicated application progress
+classification: the nested operation assumed interruption meant possible dispatch,
+while the outer finalizer distinguished admission. One exhaustive mapping now
+serves dispatch, reconciliation and finalization. It preserves unstarted work,
+reloads interrupted fences and retains uncertainty only after provider entry;
+concrete returned fence failures remain authoritative. The live probe covers
+awaiting, retryable-undispatched and reconciliation source states at the actual
+preflight boundary. Bulkhead's interruption result does not promise callback
+entry, and provider state transitions belong to this application, so no new
+core capability or native lifecycle is needed. This bounded consumer repair
+and the failed-before/passed-after evidence are recorded in `batter-f9kq.3`.

@@ -338,3 +338,30 @@ separate methodology remains unexecuted. Runtime death, non-yielding tasks,
 detached children and remote effects retain their explicit existing boundaries.
 The outbound example retains its distinct ready-response precedence, rather than
 wrapping its exchange evidence in the cancellation-first generic runner.
+
+## Async bulkhead execution (`batter-f9kq.1`)
+
+The audit reproduced two concurrent workers through capacity one when callers
+used `let _ = enter(...).await?`. The native guard was released before work.
+The canonical async `Bulkhead::run` now owns acquisition, the post-admission
+context check and the whole factory future. The callback receives a child
+context, never the permit. A local guard retains capacity through future
+destruction on every exit path. Waiting and work share the original deadline;
+refused and unpolled calls never invoke the factory. Errors retain concrete
+application causes without printing them. `Bulkhead::enter` is removed with no
+shim because exposing the raw permit restores the invalid lifetime. All consumers
+migrate to owned execution; the breaking call shapes are in CHANGELOG.
+
+Independent regression scenarios cover overlapping factories, cancellation
+and destructor ordering, late semaphore grants with an unfired deadline timer,
+shared waiting/execution budget, refusal, panics and concrete error retention.
+The facade HTTP example exercises the new canonical API. No fresh-agent
+usability evaluation is claimed. A future returned as a value, native detached
+work and remote effects are not locally owned work. Protocols retaining durable
+outcomes must not equate cancellation of an enclosing operation with rollback;
+`run_resolved` applies their retained-evidence resolver inside the same owned
+admission boundary. Reference submission uses its existing transaction progress
+resolver here rather than placing another interruptible boundary around it.
+
+The [public API comparison](../public-api-diff-2026-11-06/README.md) records
+the executed surface diff and the no-shim migration decision for this cutover.
