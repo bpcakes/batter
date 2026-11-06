@@ -8,6 +8,60 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** `batter_axum::HttpFailure` (also `batter::axum::HttpFailure`)
+  gains the permanent, unconditional `Disabled` variant. A group gate first
+  produces it, but the failure remains part of the HTTP contract even if the
+  gate seam is withdrawn. Its defaults are 503, code `disabled`, and standard
+  infrastructure message `The service is temporarily disabled`. The group's
+  renderer may select another status. No `#[deprecated]` shim is provided:
+  the old variant set cannot render this new state. The owner approved this
+  hard cut without a shim (2026-11-05, `batter-jkw6.7`).
+
+  Exhaustive match, before:
+
+  ```rust
+  match failure {
+      HttpFailure::Unavailable => unavailable(),
+      HttpFailure::Cancelled => cancelled(),
+      HttpFailure::DeadlineExceeded => deadline(),
+      HttpFailure::Overloaded => overloaded(),
+      HttpFailure::Internal => internal(),
+  }
+  ```
+
+  After, add the new state explicitly:
+
+  ```rust
+  match failure {
+      HttpFailure::Unavailable => unavailable(),
+      HttpFailure::Cancelled => cancelled(),
+      HttpFailure::DeadlineExceeded => deadline(),
+      HttpFailure::Overloaded => overloaded(),
+      HttpFailure::Internal => internal(),
+      HttpFailure::Disabled => disabled(),
+  }
+  ```
+
+  Wildcard match, before (still compiles, but now conflates disablement):
+
+  ```rust
+  match failure {
+      HttpFailure::Internal => internal(),
+      _ => unavailable(),
+  }
+  ```
+
+  After, choose the intended disablement response explicitly:
+
+  ```rust
+  match failure {
+      HttpFailure::Internal => internal(),
+      HttpFailure::Disabled => disabled(),
+      _ => unavailable(),
+  }
+  ```
+
+
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates
   and one shared setup budget; drop losing sockets before TLS/HTTP. Preserve
