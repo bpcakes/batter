@@ -49,9 +49,10 @@ pub enum GateError {
         /// The switch's key.
         key: FlagKey,
     },
-    /// A job wrapper that defers while its switch is engaged was asked for a
-    /// job type that may run as a workflow step, where a deferral has no
-    /// meaning.
+    /// Legacy scaffold refusal retained for source compatibility. The job
+    /// constructors now accept separate direct/step policy types, so they
+    /// never emit this variant: a step policy cannot express `Defer`.
+    /// Keeping an error value cannot construct an invalid handler.
     #[error("a job that may run as a workflow step cannot defer while its switch is engaged")]
     DeferOnWorkflowStep,
 }
