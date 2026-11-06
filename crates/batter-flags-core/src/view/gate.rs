@@ -11,9 +11,10 @@ use crate::{
 ///
 /// Three readings, because they call for three different actions and two of
 /// them look alike in a bare [`SwitchState`]: a switch nobody has published is
-/// not a switch an operator tripped. A gate matches this exhaustively, so no
-/// surface can drop work, or answer as disabled, on the strength of data it
-/// never received.
+/// not a switch an operator tripped. A gate matches this exhaustively and
+/// chooses its pre-publication policy explicitly. A surface may wait, or use
+/// the decision's startup-default value and error to admit or withhold work;
+/// it must not describe an unpublished default as an observed operator trip.
 ///
 /// ```
 /// use batter_flags_core::{
@@ -45,8 +46,10 @@ pub enum GateReading {
     /// No control-plane or persisted-file snapshot has been published, so no
     /// operator or stored state has been read. A settings floor is the one
     /// exception: it is the operator's explicit setting and reads as
-    /// [`Tripped`](Self::Tripped). Whatever the decision's value, a gate waits
-    /// and rechecks; it never treats this as an operator's decision.
+    /// [`Tripped`](Self::Tripped). The surface decides whether to wait and
+    /// recheck or serve according to the startup-default decision. Neither
+    /// choice turns this into an observed operator decision. The retained
+    /// decision includes safe state, stale rules and any provider-not-ready error.
     AwaitingPublication(Decision<SwitchState>),
     /// The switch is released.
     Open(Decision<SwitchState>),

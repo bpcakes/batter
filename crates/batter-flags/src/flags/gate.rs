@@ -101,7 +101,9 @@ impl SwitchGate {
     /// the one that decides: [`Tripped`](GateReading::Tripped) if any switch is
     /// tripped, else [`AwaitingPublication`](GateReading::AwaitingPublication)
     /// if any is awaiting, else [`Open`](GateReading::Open). Among equal
-    /// readings the earlier switch decides.
+    /// readings the earlier switch decides, except that an awaiting error or
+    /// engaged decision wins over a released default. HTTP may serve defaults
+    /// before publication, so aggregation must retain any reason to withhold it.
     pub(crate) fn enter(&self) -> GatedView {
         let view = self.flags.capture();
         let mut deciding = gate_switch(&view, &self.first);
@@ -118,12 +120,30 @@ impl SwitchGate {
     }
 }
 
-/// Which reading wins when a gate has several: the one that withholds work.
-fn precedence(reading: &GateReading) -> u8 {
+/// Explicit ordering of the evidence that withholds work. Awaiting readings
+/// retain the most restrictive decision for surfaces that may serve defaults.
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+enum GatePriority {
+    Open,
+    AwaitingReleased,
+    AwaitingEngaged,
+    AwaitingError,
+    Tripped,
+}
+
+fn precedence(reading: &GateReading) -> GatePriority {
     match reading {
-        GateReading::Open(_) => 0,
-        GateReading::AwaitingPublication(_) => 1,
-        GateReading::Tripped(_) => 2,
+        GateReading::Open(_) => GatePriority::Open,
+        GateReading::AwaitingPublication(decision) => {
+            if decision.error().is_some() {
+                GatePriority::AwaitingError
+            } else if decision.value().is_engaged() {
+                GatePriority::AwaitingEngaged
+            } else {
+                GatePriority::AwaitingReleased
+            }
+        }
+        GateReading::Tripped(_) => GatePriority::Tripped,
     }
 }
 
