@@ -263,6 +263,11 @@ against a blocked dispatch-fence transaction, covering outer and nested deadline
 ordering. It verifies finalization of both an uncommitted fence and a committed
 fence whose work result was withheld. The latter models retained commit
 uncertainty; it does not emulate a lost wire-level COMMIT acknowledgement.
+The same live test expires work after admission but before callback entry,
+using a scoped tracing subscriber at the nested operation's preflight boundary.
+Awaiting and retryable-undispatched rows remain eligible for retry without a
+dispatch fence; reconciliation retains its existing fence. All three cases
+exercise the production handler and assert the native timeout classification.
 
 ## Outbound exchange facade example
 

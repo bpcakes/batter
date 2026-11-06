@@ -461,3 +461,18 @@ These are implementation and application-protocol repairs, without adding a
 native queue, exposing phase cancellation or restoring removed APIs. Fresh-agent
 feature implementation/modification evaluation remains unexecuted. Executed
 verification is recorded in `batter-f9kq.3`.
+
+Recurring example defect assessment: the fence-only nested interruption repair
+missed expiry after bulkhead admission but before the nested operation invokes
+its callback. A live regression reproduced a terminal state-invariant failure
+despite no fence or provider call. The cause was duplicated application progress
+classification: the nested operation assumed interruption meant possible dispatch,
+while the outer finalizer distinguished admission. One exhaustive mapping now
+serves dispatch, reconciliation and finalization. It preserves unstarted work,
+reloads interrupted fences and retains uncertainty only after provider entry;
+concrete returned fence failures remain authoritative. The live probe covers
+awaiting, retryable-undispatched and reconciliation source states at the actual
+preflight boundary. Bulkhead's interruption result does not promise callback
+entry, and provider state transitions belong to this application, so no new
+core capability or native lifecycle is needed. This bounded consumer repair
+and the failed-before/passed-after evidence are recorded in `batter-f9kq.3`.

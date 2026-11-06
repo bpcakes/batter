@@ -108,7 +108,7 @@ impl Invocation<'_> {
             }
             Err(BulkheadError::Operation(OperationError::Failed(error))) => return Err(error),
             Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
-                Err(ProviderCallError::Interrupted(reason))
+                return Ok(Some(self.interruption_action(Some(reason))));
             }
         };
         Ok(match outcome {
@@ -199,10 +199,7 @@ impl Invocation<'_> {
             }
             Err(BulkheadError::Operation(OperationError::Failed(error))) => return Err(error),
             Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
-                if matches!(self.current_progress(), Progress::StateChange) {
-                    return Ok(Action::FenceInterrupted);
-                }
-                Err(ProviderCallError::Interrupted(reason))
+                return Ok(self.interruption_action(Some(reason)));
             }
         };
         Ok(match outcome {

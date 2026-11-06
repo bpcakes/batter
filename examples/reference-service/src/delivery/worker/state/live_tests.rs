@@ -10,6 +10,7 @@ use runledger_core::jobs::JobContext;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 
+mod before_factory;
 mod confirmation;
 mod fence;
 
@@ -206,6 +207,7 @@ async fn probes(pool: &PgPool) -> Result<(), BoxError> {
     stale_terminal_sources(&worker).await?;
     final_state_reserve_outlives_provider_work(&worker).await?;
     fence::interruption(&worker).await?;
+    before_factory::interruption(&worker).await?;
     confirmation::ordering(&worker).await?;
     Ok(())
 }

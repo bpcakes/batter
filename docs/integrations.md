@@ -830,6 +830,10 @@ destruction panics, before choosing retry policy. The reference worker preserves
 native non-retryable `Panicked` classification even if finalization also returns
 a retryable error. A fence interruption reloads retained state under the live
 lease during finalization; cancellation alone proves neither commit nor rollback.
+Nested operation and outer phase interruptions share one exhaustive mapping
+from application progress. Expiry after admission but before callback entry
+remains an admission interruption; it cannot create dispatch uncertainty or
+authorize a transition requiring a dispatch fence that was never written.
 Runledger's `JobInvocation` ends when the invocation exits for any reason,
 after the handler future is destroyed and before the outcome is persisted:
 success, continuation, returned failure, panic, timeout, lease loss found by

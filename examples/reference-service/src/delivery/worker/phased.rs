@@ -61,6 +61,25 @@ impl Invocation<'_> {
         *self.progress.lock().expect("invocation state")
     }
 
+    pub fn interruption_action(&self, interruption: Option<Interruption>) -> Action {
+        // Nested operation refusal and outer phase interruption must use the
+        // same evidence: admission alone proves neither callback entry nor send.
+        match self.current_progress() {
+            Progress::Preparing => Action::Complete,
+            Progress::Admission(state) => Action::Admission {
+                state,
+                error: AdmissionError::Interrupted(interruption.unwrap_or(Interruption::Cancelled)),
+            },
+            Progress::StateChange => Action::FenceInterrupted,
+            Progress::Reconcile | Progress::Dispatch => Action::Uncertain {
+                code: interruption.map_or(CODE_DISPATCH_INDETERMINATE, |reason| {
+                    crate::provider::ProviderCallError::Interrupted(reason).code()
+                }),
+                message: "Provider work ended without a definitive retained outcome.",
+            },
+        }
+    }
+
     async fn finish(
         &self,
         execution: JobExecution<'_>,
@@ -211,28 +230,14 @@ impl PhasedJobHandler for Invocation<'_> {
             Err(CommandCause::Interrupted(reason)) => Some(*reason),
             _ => failure.interruption_after_return(),
         };
-        let progress = self.current_progress();
-        let action = match progress {
-            Progress::Admission(state) => Action::Admission {
-                state,
-                error: AdmissionError::Interrupted(interruption.unwrap_or(Interruption::Cancelled)),
-            },
-            Progress::Reconcile | Progress::Dispatch => Action::Uncertain {
-                code: interruption.map_or(CODE_DISPATCH_INDETERMINATE, |reason| {
-                    crate::provider::ProviderCallError::Interrupted(reason).code()
-                }),
-                message: "Provider work ended without a definitive retained outcome.",
-            },
-            Progress::StateChange => {
-                // A returned SQL/policy failure is already classified by work.
-                // In particular, RetryDeferred must not rewrite retained state.
-                if matches!(failure.returned_result(), Err(CommandCause::Failed(_))) {
-                    return Ok(JobCompletion::success());
-                }
-                Action::FenceInterrupted
-            }
-            Progress::Preparing => return Ok(JobCompletion::success()),
-        };
+        // A returned SQL/policy failure is already classified by work.
+        // In particular, RetryDeferred must not rewrite retained state.
+        if matches!(self.current_progress(), Progress::StateChange)
+            && matches!(failure.returned_result(), Err(CommandCause::Failed(_)))
+        {
+            return Ok(JobCompletion::success());
+        }
+        let action = self.interruption_action(interruption);
         self.finish(scope.execution(), &action).await
     }
     fn failed(&self, failure: PhasedJobFailure<Action, JobFailure>) -> JobFailure {
