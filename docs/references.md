@@ -467,12 +467,12 @@ rustls 0.23.46:
   the application root installed a default first.
   - bollard 0.21.1 makes that call in its TLS connection
     (`src/docker.rs:542`).
-  - testcontainers 0.28.0 uses that connection for an `https` Docker host, or
+  - Before `batter-z6nw`, testcontainers 0.28.0 used that connection for an `https` Docker host, or
     for `tcp` with TLS verification (`src/core/client/bollard_client.rs:16-22`).
     Its default `ring` feature selects bollard's `ssl` (`Cargo.toml:49`, `66`;
     bollard `Cargo.toml:84-87`).
-  - `runledger-test-support` depends on testcontainers 0.28 with default
-    features.
+  - `runledger-test-support` now selects Bollard 0.21.1 with `ssl` directly
+    (`batter-z6nw`); the same upstream TLS builder concern remains.
 
 rustls-platform-verifier 0.7.1 and rustls-native-certs 0.8.4:
 
@@ -1474,6 +1474,35 @@ OTLP requires HTTP 200 for full and partial success, so the adapter rejects
 other 2xx statuses before decoding. `checked_add` returns `None` if a later
 deadline no longer fits; schedule validation checks representability only at
 construction, so the serial owner clamps an extreme allowance at each use.
+
+## Native PostgreSQL Docker dependency removal: reviewed 2026-11-06
+
+For `batter-z6nw` (external X286), Cargo initially resolved Testcontainers 0.28.0
+and `astral-tokio-tar` 0.6.4. The [upstream manifest](https://github.com/testcontainers/testcontainers-rs/blob/main/testcontainers/Cargo.toml)
+still makes the tar dependency mandatory; feature selection cannot remove it.
+[RUSTSEC-2026-0440](https://rustsec.org/advisories/RUSTSEC-2026-0440.html)
+classifies all versions as unmaintained following Astral's 3 November announcement.
+
+The existing native fixture now calls the already-resolved Bollard 0.21.1
+without its unused BuildKit features. Checked that version's
+[Docker connection and negotiation implementation](https://docs.rs/bollard/0.21.1/src/bollard/docker.rs.html),
+[container API source](https://docs.rs/crate/bollard/0.21.1/source/src/container.rs)
+and [image API source](https://docs.rs/crate/bollard/0.21.1/source/src/image.rs).
+Create uses a unique name and attempt label, IPv4 loopback with Docker-selected
+host port, and the configured platform; start and inspection remain separate.
+Removal uses force plus anonymous-volume deletion by immutable ID. Pull progress
+is consumed and errors retained. Registry lookup uses
+[docker_credential 1.4.0](https://docs.rs/docker_credential/1.4.0/docker_credential/)
+for config/credential helpers or explicit `DOCKER_AUTH_CONFIG`.
+Unix socket discovery retains the previous Docker Desktop locations; Bollard
+selects the explicit `DOCKER_HOST` transport and TLS settings. Remote-daemon TLS,
+private registries, macOS execution and platform emulation remain unverified for
+this change. The fixture preserves Testcontainers' exact `DOCKER_TLS_VERIFY=1`
+rule for TCP/HTTP hosts: Bollard otherwise treats any set value, including `0`,
+as enabling TLS. A subprocess with `DOCKER_TLS_VERIFY=0` verifies plaintext
+negotiation against a local HTTP fixture, without changing parent environment.
+The historical Testcontainers diagnosis below explains the retained
+mapping and failed-start contracts; its implementation is no longer selected.
 
 ## Native PostgreSQL container mapping: reviewed 2026-09-27
 

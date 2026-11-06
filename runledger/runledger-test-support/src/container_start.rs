@@ -1,33 +1,21 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use testcontainers::bollard::{Docker, errors::Error, query_parameters::RemoveContainerOptions};
-use testcontainers::core::{client::docker_client_instance, error::TestcontainersError};
-use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, ContainerRequest, GenericImage, ImageExt};
+use bollard::{
+    Docker,
+    query_parameters::{CreateContainerOptions, RemoveContainerOptions},
+};
 
 use crate::container_lifecycle::should_remove_container;
+use crate::docker::{
+    CLEANUP_TIMEOUT, DockerContainer, PostgresImage, configured_platform, docker_client_instance,
+    is_not_found,
+};
 
 const ATTEMPT_LABEL: &str = "org.runledger.test-start";
-const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 static ATTEMPT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) async fn start_postgres(
-    image: ContainerRequest<GenericImage>,
-) -> ContainerAsync<GenericImage> {
-    let image = image.with_host_config_modifier(|config| {
-        // The fixture URL uses IPv4 loopback. Ask Docker to allocate and bind
-        // there, avoiding an all-interface bind that can collide with unrelated
-        // outbound host sockets on Docker Desktop. No local port reservation.
-        config.publish_all_ports = Some(false);
-        config.port_bindings.get_or_insert_default().insert(
-            "5432/tcp".to_owned(),
-            Some(vec![testcontainers::bollard::models::PortBinding {
-                host_ip: Some("127.0.0.1".to_owned()),
-                host_port: Some(String::new()),
-            }]),
-        );
-    });
+pub(crate) async fn start_postgres(image: PostgresImage) -> DockerContainer {
     let attempt = StartAttempt::new();
     let remove = should_remove_container();
     // Keep start/error cleanup alive if a OnceCell initializer's waiter is
@@ -61,35 +49,56 @@ impl StartAttempt {
         }
     }
 
-    async fn start(
-        self,
-        image: ContainerRequest<GenericImage>,
-        remove: bool,
-    ) -> Result<ContainerAsync<GenericImage>, String> {
-        // Use the same endpoint/configuration as testcontainers, without a CLI
-        // prerequisite. Get it before any request can create a container.
+    async fn start(self, image: PostgresImage, remove: bool) -> Result<DockerContainer, String> {
+        // Get the configured API client before any request can create a container.
         let docker = docker_client_instance()
             .await
             .map_err(|error| error.to_string())?;
         // Docker allocates the published port; no host socket is released ahead
         // of its create/pull/start sequence. Allocation can still fail at Docker.
-        let result = image
-            .with_container_name(&self.name)
-            .with_label(ATTEMPT_LABEL, &self.token)
-            .start()
-            .await;
+        let result = self.create_and_start(&docker, image).await;
         match result {
-            Ok(container) => Ok(container),
+            Ok(id) => {
+                let container = DockerContainer::new(docker, id, remove);
+                #[cfg(test)]
+                if let Some(gate) = &self.cleanup_gate {
+                    gate.pause(&self.name).await;
+                }
+                Ok(container)
+            }
             Err(error) => Err(self.finish_failure(&docker, error, remove).await),
         }
     }
 
-    async fn finish_failure(
+    async fn create_and_start(
         &self,
         docker: &Docker,
-        error: TestcontainersError,
-        remove: bool,
-    ) -> String {
+        image: PostgresImage,
+    ) -> Result<String, String> {
+        image.pull_if_missing(docker).await?;
+        let mut config = image.configuration();
+        config
+            .labels
+            .get_or_insert_default()
+            .insert(ATTEMPT_LABEL.to_owned(), self.token.clone());
+        let created = docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: Some(self.name.clone()),
+                    platform: configured_platform(),
+                }),
+                config,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        docker
+            .start_container(&created.id, None)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(created.id)
+    }
+
+    async fn finish_failure(&self, docker: &Docker, error: String, remove: bool) -> String {
         #[cfg(test)]
         if let Some(gate) = &self.cleanup_gate {
             gate.pause(&self.name).await;
@@ -146,16 +155,6 @@ impl StartAttempt {
             Err(error) => Err(error.to_string()),
         }
     }
-}
-
-fn is_not_found(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::DockerResponseServerError {
-            status_code: 404,
-            ..
-        }
-    )
 }
 
 #[cfg(test)]
