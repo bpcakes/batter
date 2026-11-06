@@ -3157,3 +3157,20 @@ ownership; imported SQL/license digests detect accidental changes. This does not
 change quota semantics, authorize replay after uncertain commit, or make local
 storage a fleet-wide limit. Persisted migrations and key/lock protocols remain
 compatible with the imported revision. See [provenance](../runlimit/IMPORT.md).
+
+## Flags store contract (T-12)
+
+`batter-flags-postgres` owns audited, gapless, commit-ordered state changes in a
+dedicated `flags` schema. No-op/refusal rolls back the counter; archived rows are
+absent from coherent primary snapshots. Live and Silent declarers block
+incompatible states and archive. These database guards assume writer logins are
+non-owner, non-superuser and cannot set `session_replication_role`; owners,
+superusers and replica mode are outside the claim. Audit actor/reason are supplied
+text; `recorded_by` independently records the session login.
+
+No automatic retry occurs. A lost COMMIT acknowledgement or commit-phase deadline
+is uncertain, even when the server committed. Native SQLx owners retire sessions;
+retirement does not prove server termination. Full NOTIFY queues can reject all
+mutations, including kill switches. Declared settings floors remain application
+containment. The [store README](../crates/batter-flags-postgres/README.md) records
+validation order, native API limits, authority and test coverage.

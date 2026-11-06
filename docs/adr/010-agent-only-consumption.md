@@ -2055,3 +2055,30 @@ direction, and the existing honest limits: no asynchronous `Drop`, runtime-death
 survival, or detached-task termination guarantee. It does not make unimplemented
 adapters available, redesign APIs, or turn every application root into a
 foundation protocol.
+
+### Flags store assessment (T-12, batter-jkw6.12)
+
+The canonical `PooledStore` accepts complete validated requests and owns all
+transaction phases. Actor/reason limits, nonzero bounded timing and explicit
+kind/state pairing are checked before acquisition. There is no raw-connection
+store, transaction callback, caller finalization or retry API. `Loaded` exposes
+read-only metadata: callers cannot relabel a database read's version before
+converting it to a core candidate. Outcomes distinguish acknowledged mutation,
+rollback-only no-op/refusal, CAS mismatch and uncertain commit.
+
+Database state still determines declaration/encoding/archive/fleet compatibility;
+those cannot be proved from local request construction. Triggers enforce the
+counter/audit invariant for non-owner non-superuser writers. Authenticated actor
+meaning, privilege provisioning, fleet completeness and remote effects remain
+application/database policy. Explicit never-declared writes are a deliberate
+capability and still pass the same database checks.
+
+The current `batter-sqlx` owners always retire atomic/snapshot sessions, have no
+separate snapshot-acquisition timeout seam, and do not expose the COMMIT send
+point. T-12 retains retirement, caps complete inspections by the acquire budget,
+and classifies commit-phase deadlines conservatively as uncertainty. It adds no
+second native transaction owner and leaves no paired completion obligation to
+consumers. These are deliberate limits; future narrower classifications or pool
+reuse belong in the upstream owner. Live failure scenarios cover deadline/drop,
+commit rejection/lost acknowledgement and concurrent first writes. Fresh-agent
+usability evaluations remain unexecuted.

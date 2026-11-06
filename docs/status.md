@@ -644,3 +644,12 @@ local upstream source; it did not implement or execute the planned integrations.
 See [references](references.md) for those candidate-source limits.
 
 See [Beads](roadmap.md) for delivery work.
+
+## Flags PostgreSQL store (T-12)
+
+| Area | Implemented contract | Evidence |
+| --- | --- | --- |
+| `batter-flags-postgres` | Dedicated schema/ledger; primary snapshots; audited CAS writes, archive/restore/history; native connection ownership and explicit commit uncertainty | Package failure-contract tests, including disposable PostgreSQL 18 execution; [T-12 evidence](evidence/flags-store-t12.md) |
+
+Catalog publication, presence, pruning and loader registration are outside this
+store delivery. The store does not claim a hosted CI run or real standby test.

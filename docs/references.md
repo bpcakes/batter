@@ -6440,3 +6440,25 @@ the Cargo registry; no dependency version changed.
   the future and stores `JoinError::cancelled` (or a panic error if that drop
   panicked); an owner awaiting from another runtime receives that error, which
   `finish` returns as `CommandFailure::Coordinator` instead of panicking.
+
+## Flags store primary-source recheck (T-12, 2026-11-06)
+
+Installed SQLx 0.9.0 `sqlx-core/src/migrate/migrator.rs` provides
+`dangerous_set_table_name` and `create_schema`; the flags migrator fixes its own
+ledger at `flags._sqlx_migrations`. The workspace's `batter-sqlx` atomic owner
+retires on completion and wraps both validation and COMMIT failures in
+`CommitUnconfirmed`; its read-only owner begins REPEATABLE READ READ ONLY and
+retires after rollback. T-12 composes these installed APIs rather than the stale
+plan's plain-SQLx owner.
+
+PostgreSQL 18 [NOTIFY](https://www.postgresql.org/docs/18/sql-notify.html)
+documents transactional delivery, commit ordering, bounded payloads and commit
+failure when the notification queue fills. The version-counter/poller tests
+exercise the store's inference from lock retention through commit.
+[CREATE TRIGGER](https://www.postgresql.org/docs/18/sql-createtrigger.html)
+defines deferred constraint triggers and TRUNCATE statement triggers.
+[CREATE FUNCTION](https://www.postgresql.org/docs/18/sql-createfunction.html)
+documents SECURITY DEFINER search-path protection and revoking PUBLIC execution.
+The migration fixes the definer search path, schema-qualifies relation lookup,
+and revokes PUBLIC execute in the same transaction. Live tests use a fresh
+non-superuser writer login, not owner privilege, for enforcement claims.
