@@ -15,9 +15,9 @@
 //! always the catalog crate itself.
 //!
 //! Experimental. Declared mode, the startup report and the test flags are
-//! implemented; the protected gates and the control-plane registration arrive
-//! with later delivery tasks of the flags epic, and `periodic` is still a
-//! scaffold.
+//! implemented, as is [`Flags::gate_periodic_in`] for protected periodic work.
+//! The HTTP and job gates and the control-plane registration arrive with later
+//! delivery tasks of the flags epic.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
