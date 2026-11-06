@@ -18,6 +18,8 @@ all-features = true
 workspace = true
 
 [dependencies]
+batter-core.workspace = true
+batter-sqlx.workspace = true
 batter-flags-core = { workspace = true, features = ["serde"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -37,6 +39,7 @@ tokio = { workspace = true, features = ["time"] }
 uuid = { version = "1.29.0", features = ["serde"] }
 
 [dev-dependencies]
+postgres-test-harness = { version = "0.2.0", git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
 # Pins the migration checksums the schema tests assert.
 sha2 = "0.11.1"
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "sync"] }
