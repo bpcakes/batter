@@ -88,6 +88,21 @@ it into a context when they do not need request cancellation authority.
 `run` creates a child token and cancels it on return or drop. The original parent
 remains reusable until cancelled or expired.
 
+`child_until(Instant)` returns an owned child at the earlier of the requested
+instant and the parent deadline. Elapsed instants are valid expired children;
+this never creates a fresh independent root or grants cancellation over a parent.
+
+`run_tracked` uses the same execution boundary as `run`, and distinguishes an
+opaque `NotStarted` (this call never invoked its factory) from `Interrupted`
+after invocation and a concrete returned `Failed` error. It supplies no `From`
+conversions that erase these distinctions. Invocation may itself perform work;
+started does not mean a request was sent, and `NotStarted` says nothing about
+earlier calls, capture destruction or independently running work. It grants no
+replay authority. The reference provider dispatch handles this call's
+`NotStarted` as known non-dispatch; after-start interruption still requires its
+existing reconciliation protocol. Dropping an unpolled or pending run produces
+no result evidence. Legacy `run` deliberately reports both phases as interruption.
+
 Preflight checks prevent starting a factory that is already cancelled/expired.
 When branches are simultaneously ready, cancellation precedes deadline, which
 precedes future completion. A just-completed side effect can therefore have an
@@ -204,6 +219,52 @@ cancelled early. Both forms require positive work time when called, and
 shielding, remote cancellation acknowledgement, transaction rollback proof,
 commit certainty, or exactly-once effects.
 
+## Owned work and finalization
+
+`operation::PhasedOperation::new` derives work and finalization from one parent
+and a positive reserve. `OperationPhases::into_operation` transfers an existing
+pair, including invocation-derived and zero-reserve pairs, without resetting its
+clock. Both specifications are inert until `start`. The work callback receives
+only its shortened context. The finalization callback receives its context and
+read-only `PhaseOutcome` only after the work future is destroyed. The driver
+retains the original value/error, boundary interruption and destruction panic
+before entering finalization; finalization failure cannot replace them. Work
+completion cancels its context and descendants before finalization starts, even
+on success. The sibling finalization context remains live within its own bounds;
+this cancellation does not join arbitrary spawned tasks.
+
+The driver shares command phase polling and panic containment. Cancellation and
+deadline are checked before each factory and before polling; a result produced
+by a synchronous overrun is retained together with its late interruption. A
+phase whose parent is already cancelled or deadline has expired does not invoke
+its factory. Work panic, returned error or work-only interruption still proceeds
+to finalization when its context permits. Finalization stops at the original
+total deadline and inherits parent cancellation. Work cancellation never travels
+upward or into its sibling. Both the phase coordinator and result publisher
+retain the originating tracing dispatcher and span through execution and
+captured-value destruction, including skipped work and unclaimed reports. A
+private guarded publication retains that protection after the publisher exits.
+Only a completed `wait` claims the shared result and transfers its destruction
+to caller context; observer clones and cancelled pending waiters do not claim it.
+
+`RunningPhasedOperation` owns work cancellation. Dropping it, even before first
+poll, requests work cancellation but leaves the coordinator to attempt
+finalization. Its borrowed waiters and cloneable `PhasedObserver` are read-only;
+dropping a waiter changes no execution. `PhaseOutcome::classify` returns an
+accepted value only without late interruption or destruction panic; otherwise an
+opaque `PhaseFailure` retains all raw evidence, including a returned value.
+`wait` returns an opaque `PhasedSuccess` containing both accepted values, or
+`PhasedFailure::Report` containing an opaque `FailedPhasedReport` with both
+outcomes. Success and failed-report proofs cannot be constructed or interchanged
+by consumers. Neither value extraction nor observer cloning requires domain Clone. Default formatting
+omits application values and causes. A coordinator join failure is separate. Publication and
+finalization require a live runtime; this does not join arbitrary spawned work
+or prove remote rollback. Application work placed inside a finalizer, captured
+root authority and independently constructed roots remain application policy.
+
+Manual `OperationPhases::{work,finalization}` access remains lower-level: it
+requires caller sequencing and does not retain results or drive finalization.
+
 ## Retry contract
 
 Each attempt invokes a fresh factory. The initial call is attempt 1 and consumes
@@ -273,6 +334,13 @@ isolation, and ambiguous commit handling belong to the application/upstream
 protocol. Choose one retry owner so nested budgets do not multiply attempts.
 
 ## Outbound provider exchange
+
+`Origin::public_https` retains a public-address policy on the origin and filters
+DNS candidates before the existing bounded dialer; no preflight/re-resolution
+gap exists. The exclusions include globally reachable AS112 and AMT
+special-purpose blocks; public reachability does not exempt them from the
+address policy. Ordinary `Origin::https` still supports private services. See the
+[public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
 
 `batter-outbound-http` (facade `batter::outbound_http`, feature `outbound-http`) is
 experimental. [ADR-015](adr/015-outbound-transport-evidence.md) records the
@@ -607,6 +675,12 @@ the direct waiter. A successful initialization poll is acknowledged only after
 its future is destroyed and the startup context is rechecked; a returned error
 remains intact if cancellation also occurs. Application readiness approval and dependency health remain
 separate. No durable startup job is required by this protocol.
+The private initializer owns the sole readiness acknowledgement and consumes it
+only on live, successfully destroyed initialization. Drain or an early native
+exit retains the interrupted initializer until the native stop callback has run.
+Each guarded observer records pending versus observed completion: after returning
+or panicking it cannot poll its inner future again, but retains that future for
+separately caught destruction. Settlement is recorded before its future is destroyed.
 
 Before initialization, observed native stopping or settlement records
 `ManagedInitialization::Stopped`; process drain records `Draining`. Native
@@ -1054,7 +1128,7 @@ box as its `source()`. `ApplicationError` itself deliberately does not implement
 Formatting of both stays fixed text.
 
 Typed initializer output travels only in the one-shot handoff:
-`StartingSupervisor::wait_with_output` returns it with the running (or
+`StartingSupervisor::finish_with_output` returns it with the running (or
 unapproved) owner, observers receive only the supervisor observer, and every
 failure carries no output. Output returned in the same poll that observes drain,
 cancellation or deadline, or followed by a destruction panic or a failed final
@@ -1064,16 +1138,20 @@ occupies that field. The later payload is then released only when it is a
 `String` or `&'static str`; any other payload is intentionally leaked, because its
 destructor could panic again inside the coordinator before cleanup. Dropping the
 starting owner instead of waiting destroys the queued owner and output together,
-on the dropping task or the monitor task, and requests drain. `wait` exists only for unit output. `service::start` accepts only unit
-output and does not deliver typed output.
+on the dropping task or the monitor task, and requests drain. `finish` exists only for unit output. `service::start` accepts only unit
+output; `service::start_with_readiness` delivers typed output after readiness.
 
 `Startup::new` remains the explicitly lower-level compatibility path and invokes
 no initializer. `start` launches the owner on a live Tokio
 runtime. Dropping the inert builder only abandons its unstarted supervisor;
 no asynchronous cleanup is implied. Once started, dropping `StartingSupervisor`
 requests drain while the coordinator drives registered cleanup independently.
-Cancelling `wait(&mut self)` leaves ownership and the pending handoff intact.
-After its first completed result, that one-shot waiter must not be polled again.
+`finish(self)` and `finish_with_output(self)` consume that owner, so another
+handoff call on the same value cannot compile. Their returned future owns the
+pending handoff even before its first poll. Dropping it requests drain; cancelling
+a borrowed wait on the retained, pinned future leaves initialization and handoff
+owned. Resume that same future rather than creating a new handoff call. The
+ordinary Rust future contract still forbids polling after completion.
 `StartupObserver` retains a startup failure or a shutdown observer, never a
 running owner. Dropping an unclaimed handoff requests running-driver drain.
 
@@ -1256,6 +1334,11 @@ original initialization deadline and is destroyed when it expires under either
 stopping class; a preceding failed run and cadence wait do not restart the
 allowance. A qualifying success acknowledges exactly once, and later run failures
 never revoke it or establish continuing lease, renewal or dependency health.
+The driver owns one explicit state: initialization carries its startup capability
+and absolute allowance deadline; running carries only the acknowledged capability.
+The transition consumes the startup capability and removes its deadline, so there
+is no empty or doubly owned capability state and later runs cannot reuse the
+initialization allowance. Normal exit consumes whichever capability remains.
 Because the run boundary is cooperative and rechecks neither its clock nor
 drain after the work's own poll returns, a success that only arrived after the
 allowance had expired, or after drain began, is still counted as a successful
@@ -1578,10 +1661,28 @@ Dropping close mid-flight aborts its local task but cannot await completion or
 return a report. Shutdown/readiness, resource acquisition, and cleanup are not
 interruptibility-masked like a full managed effect runtime.
 
-Register cleanup immediately after successful acquisition, but do not confuse
-this convention with an atomic acquisition/registration guarantee. The caller
-must handle partial acquisition and initialization according to native resource
-contracts. Resource values must not require an unavailable runtime after shutdown.
+Supported acquisition uses `CleanupSlot::acquire_semaphore` and `bind_udp`, or
+an adapter-owned operation such as SQLx `pool_in`. The core native methods poll
+the actual native acquisition future, retain its returned resource, register the
+library's cleanup action, and destroy the completed native future before returning.
+There is no caller callback, projection or await between these steps. A native
+future destructor panic leaves the finalizer installed and releases the undelivered
+caller reference during unwinding. Native acquisition errors add no finalizer;
+never-polled calls do no acquisition. Pending semaphore cancellation retains
+Tokio's queue-position policy. These methods do not bound the number of waiters.
+
+Semaphore permits remain owned exclusively by cleanup until release. UDP returns
+an Arc of the native socket; cleanup releases its own reference, and the socket
+closes only when all caller references are dropped too. This does not join tasks,
+close arbitrary retained handles, or establish remote effects. Cleanup still
+requires its owning driver and a live runtime.
+
+`cleanup::low_level::acquire_pair` registers an opaque `low_level::Acquired` pair
+before delivering its handle or destroying the pair-producing future. Its caller
+still owns the earlier native acquisition-to-pair transition, including any await
+or destructor panic inside that future. This is deliberately not equivalent to
+supported native acquisition. `CleanupSlot::register` is the manual handoff;
+resource-specific protocols without a supported adapter retain that obligation.
 
 ## PostgreSQL client disposition
 
@@ -1596,10 +1697,13 @@ callback path retires its session; success has no await after acknowledged COMMI
 The compatible no-callback method retains its earlier disposition contract.
 
 
-The optional `batter-sqlx` package owns only checked-out client disposition.
-`pool_in` synchronously consumes a prevalidated cleanup slot, constructs a native
-lazy pool from the supplied options, and registers awaited `Pool::close` before
-returning the pool. It does not establish connectivity or readiness. SQLx may
+The optional `batter-sqlx` package owns checked-out client disposition and protected
+pool acquisition. `pool_in` synchronously consumes a prevalidated cleanup slot,
+constructs a lazy `PgProfiledPool` from native options and an explicit profile,
+and registers awaited `Pool::close` before returning the pool. All three session
+hooks are library-owned. `RunledgerDatabase::from_profiled` checks the existing
+one-schema rule and shares capacity, profile and closure without another finalizer.
+This establishes neither connectivity nor readiness. SQLx may
 start native minimum-connection maintenance during construction; constructor
 panics and runtime death remain native limits. Dependent work must be joined and
 checked-out connections released before successful cleanup can be expected.
@@ -1607,9 +1711,11 @@ Local completion evidence requires the named successful cleanup record, zero
 remaining pool size and `PoolClosed` from a later acquisition; `is_closed()` alone
 only witnesses that close began. These facts still say nothing about detached
 server sessions.
-`register_pool_close` remains a lower-level compatibility path for pools acquired
+`low_level::register_pool_close` remains a lower-level path for pools acquired
 elsewhere, with caller-owned cleanup if registration fails. The workspace's
-canonical service roots and finite retirement command use `pool_in`.
+canonical service roots use `pool_in`; the finite retirement command deliberately
+uses `low_level::pool_in` to retain its physical-session guard. Standalone native
+constructors are also confined to `low_level` and retain caller-owned cleanup.
 
 `run_atomic` owns the complete READ COMMITTED workflow. Body outputs are withheld
 until acknowledged commit, and rejections until acknowledged rollback; uncertainty
@@ -2314,6 +2420,12 @@ unknown; a backend failure retains its native certainty; the other outcomes mean
 not consumed. These facts are independent of final HTTP status, including a
 timeout after admission. The pinned native Runlimit adapter does not emit
 `other_denial`; that value remains available to manual observation writers.
+On the protected quota path, the runner owns the observation writer. Starting a
+native check consumes the unstarted writer; publishing its native result consumes
+the started writer before work can begin. Only terminal native results enter that
+publication path. Dropping or unwinding a pending check leaves unknown consumption;
+a later handler panic, timeout or cancellation cannot erase an already recorded
+grant. Authentication failure leaves the record unstarted and the body unpolled.
 The quota wrapper publishes its fresh record into the outer observer's shared
 state in either supported operational-wrapper order.
 Ordinary `operational_http` allocates no quota record
@@ -2712,7 +2824,7 @@ retain their source compatibility and TCP function-pointer signatures.
 The factory does no work before supervision starts and
 acknowledges on its task's first poll; application approval and a running driver
 remain necessary. Invalid or duplicate registration releases only the rejected
-listener. Cancelling a borrowed StartingSupervisor waiter leaves the listener
+listener. Cancelling a borrowed wait on a retained startup finish future leaves the listener
 owned. Dropping the startup owner requests drain, releases registered listener
 captures before dependent cleanup, and lets observers await the completed report
 on a live runtime. Dropping an unstarted Supervisor releases captures without
@@ -2779,6 +2891,9 @@ shared native capacity for waiting acquisitions to progress. Run completion does
 not shut down a shared server. Caller-owned shutdown follows all runs and leases;
 shared deferred drain covers prior accepted submissions, including other owners'.
 
+`FixtureRun` holds one private state: the live driver or its retained completion
+result. A completed driver is never polled again; repeated observation borrows
+the same report or join error, and `into_report` moves the retained result out.
 Cancelling `FixtureRun::wait` permits resumed observation. Dropping the waiter
 loses the report but detaches the driver. Application operations/checkouts and
 initializer-created pools still require explicit join/release/close. Detached
@@ -2887,6 +3002,22 @@ A successful join leaves diagnostics open for the caller's catalog checks. Pendi
 formatting includes separate redacted driver-joined and driver-failure flags,
 so successful driver completion with pending admin closure remains distinguishable.
 
+
+## Native Runledger handler panic records
+
+When Runledger catches a main-handler panic, its failure conversion discards
+payload text and uses `Job handler panicked.` for the `job.handler_panic`
+failure and the `job_handler` settlement diagnostic. The persisted outcome is
+still `PANICKED` and nonretryable, even when attempts remain. Deadline and lease
+fencing retain precedence over durable outcome classification. The worker can
+continue to subsequent jobs. Application-created `JobFailure` messages remain
+verbatim; this conversion does not sanitize other callback diagnostics or
+process panic-hook output.
+
+The PostgreSQL-backed `process_claimed_job_catches_main_handler_panic` regression
+checks a formatted synthetic secret against queue, attempt, dead-letter and
+event records, the actual dead-letter warning, and settlement diagnostics.
+`run_worker_loop_continues_processing_after_handler_panic` checks continuation.
 
 ## Application-installed redacting panic hook
 
@@ -3222,6 +3353,15 @@ completed, late or fenced result into an interrupted handler.
 
 ## Shared Runledger workspace
 
+Native PostgreSQL fixtures use Bollard directly; neither Testcontainers nor
+`astral-tokio-tar` is needed by the optional facade test-support feature.
+Failed starts retain label-checked, awaited removal by immutable ID, including
+anonymous volumes. Successful container handles retain runtime-owned cleanup
+when dropped or when delivery to a cancelled startup waiter fails. This needs a
+live Tokio runtime. The optional CLI process reaper owns shared-container cleanup
+on normal or forced process exit; unavailable CLI support remains a reported
+limitation. `TESTCONTAINERS_COMMAND=keep` deliberately retains owned containers.
+
 The optional adapter and native Runledger packages now resolve from one checkout.
 The package ownership graph remains acyclic: native persistence consumes the
 SQLx foundation, while native runtime supervision and durable policy stay in
@@ -3238,6 +3378,66 @@ ownership; imported SQL/license digests detect accidental changes. This does not
 change quota semantics, authorize replay after uncertain commit, or make local
 storage a fleet-wide limit. Persisted migrations and key/lock protocols remain
 compatible with the imported revision. See [provenance](../runlimit/IMPORT.md).
+
+### Protected service readiness and output
+
+`service::start_with_readiness` owns the first-readiness deadline and typed
+startup handoff. The deadline is absolute and installed before diagnostics or
+initialization run. Readiness requires application approval, driver execution,
+and every component acknowledgement. A transition at or after the deadline
+cannot publish Ready; an owned timer requests drain and records deadline expiry.
+A pre-deadline Ready transition is retained even if an observer runs later or
+shutdown has begun. Current lifecycle status remains a separate read-only view.
+
+Only consuming `StartingService::into_ready` transfers startup output. Observers
+cannot claim it, and no domain Clone bound is imposed. Failed delivery returns
+full service/diagnostic completion; rejected-output destruction failure has its
+own retained field and does not bypass running-driver settlement. A cancelled
+borrow of a retained handoff future does not cancel it. Dropping the owner or
+owning handoff future requests drain, including before first poll.
+
+This readiness deadline does not bound shutdown or diagnostic settlement; their
+existing budgets remain in force. It does not prove continuing readiness, remote
+effects, detached-task quiescence, runtime survival, or preemption of non-yielding
+code. Existing unit-output `service::start` remains supported without an added
+readiness deadline.
+
+## Managed-object release ordering
+
+`ManagedObjectManifest` requires a positive `ManagedRevision`. Under the ledger
+lock, apply refuses older revisions and equal revisions with different content.
+Revision advancement commits with the managed objects; equal revision/content
+reapplication remains idempotent and can repair drift. Verification checks the
+revision too. Malformed or missing release evidence in an existing versioned
+ledger cannot reset the fence. Application SQL cannot alter retained revision
+metadata and still obtain a successful managed receipt.
+
+Legacy five-column ledgers require a matching recorded manifest for baseline
+adoption. The transactional sixth-column upgrade causes pre-fence exact-shape
+readers to refuse apply. There is no default revision or unfenced apply alias.
+Applications own revision ordering, baseline selection and cross-release source
+compatibility. SQLx migrations precede the gate and can already have committed;
+arbitrary migrations, administrative SQL and ledger deletion are outside it.
+See [ADR-013](adr/013-managed-database-objects.md#release-ordering-and-legacy-adoption--2026-11-05).
+
+## Retained enqueue-intent reconciliation
+
+Runledger's owned atomic scopes expose `reconcile_job_enqueue_intent` for an
+exact `JobScope`. One SELECT observes the intent, its same-type/same-scope
+promoted job and the current definition, including the transaction's own writes.
+Opaque evidence prevents constructing an observed promoted state without job
+metadata. Invalid retained links fail the query; absent definitions are explicit.
+The reader takes no row locks and preserves the intent-to-queue phase transition.
+Its output remains provisional inside the atomic body and follows the existing
+acknowledged/uncertain transaction outcomes.
+
+`NotFound` means no visible retained intent for that ID and scope. It does not
+prove rollback: retention, another scope or concurrent transactions can explain
+absence. Application authorization, original idempotency inputs and the decision
+to retry remain application-owned. Evidence is a point-in-time observation, not
+a reservation against future promotion or retention. The new reconciliation
+grant reads only selected metadata; adding other operation grants can expose more
+columns, including canonical submitted requests for intent submission.
 
 ## Flags store contract (T-12)
 

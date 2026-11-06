@@ -101,7 +101,7 @@ fn rejected_registration_drops_the_inert_writer_without_invoking_its_probe() {
 #[tokio::test]
 async fn protected_registration_owns_readiness_sampling_and_reader_shutdown() {
     let (reader_tx, reader_rx) = oneshot::channel();
-    let mut starting = Startup::scoped(
+    let starting = Startup::scoped(
         supervisor(),
         batter_core::operation::OperationOwner::new(Duration::from_secs(2))
             .unwrap()
@@ -123,7 +123,7 @@ async fn protected_registration_owns_readiness_sampling_and_reader_shutdown() {
     )
     .start();
 
-    let running = starting.wait().await.unwrap();
+    let running = starting.finish().await.unwrap();
     let reader = reader_rx.await.unwrap();
     running.status().wait_ready().await.unwrap();
     wait_status(&reader, HealthStatus::Healthy).await;

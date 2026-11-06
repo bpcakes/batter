@@ -95,6 +95,10 @@ TARGETS = {
     },
     # Provisions its own schema and logins through BATTER_SQLX_ADMIN_URL.
     "managed_objects_live": {
+        "managed_release_refuses_downgrades_and_revision_conflicts",
+        "managed_release_waiting_older_writer_cannot_revert_newer_commit",
+        "managed_release_legacy_adoption_requires_matching_baseline_and_is_atomic",
+        "managed_release_missing_or_invalid_metadata_cannot_reset_the_fence",
         "managed_application_sql_publishes_owner_and_grants_atomically",
         "managed_application_refusal_rolls_back_objects_ledger_and_grants",
         "managed_application_cannot_change_definitions_ledger_or_public_policy",

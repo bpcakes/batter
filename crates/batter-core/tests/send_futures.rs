@@ -11,9 +11,9 @@ use batter_core::{
         InstalledSignals, LifecycleStatus, ManagedObserver, ProcessReceipt, RunningComponent,
         RunningSupervisor, ShutdownSignal, Supervisor, SupervisorObserver, UnapprovedSupervisor,
     },
-    operation::OperationContext,
+    operation::{OperationContext, PhasedObserver, RunningPhasedOperation},
     retry::{self, Attempt, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
-    service::{DiagnosticCompletion, ServiceObserver, ServiceOwner},
+    service::{DiagnosticCompletion, ServiceObserver, ServiceOwner, StartingService},
     startup::{StartingSupervisor, StartupObserver},
     telemetry::with_current_dispatch,
 };
@@ -77,14 +77,21 @@ fn lifecycle_signals_and_receipts_are_send() {
     let _ = |monitor: HealthMonitor<Probe, io::Error>, shutdown: ShutdownSignal| {
         send(monitor.run(shutdown));
     };
+    let _ = |slot: batter_core::cleanup::CleanupSlot<'_>,
+             semaphore: std::sync::Arc<tokio::sync::Semaphore>| {
+        send(slot.acquire_semaphore(semaphore))
+    };
+    let _ = |slot: batter_core::cleanup::CleanupSlot<'_>, address: std::net::SocketAddr| {
+        send(slot.bind_udp(address))
+    };
     let _ = |stack: CleanupStack, budget: CleanupBudget| send(stack.close(budget));
 }
 
 #[test]
 fn startup_command_and_service_waits_are_send() {
-    let _ = |starting: &mut StartingSupervisor<io::Error>| send(starting.wait());
-    let _ = |starting: &mut StartingSupervisor<io::Error, RunningSupervisor, u8>| {
-        send(starting.wait_with_output());
+    let _ = |starting: StartingSupervisor<io::Error>| send(starting.finish());
+    let _ = |starting: StartingSupervisor<io::Error, RunningSupervisor, u8>| {
+        send(starting.finish_with_output());
     };
     let _ = |observer: &StartupObserver<io::Error>| send(observer.wait());
     let _ = |command: &RunningCommand<u8, io::Error>| send(command.wait());
@@ -92,16 +99,22 @@ fn startup_command_and_service_waits_are_send() {
     let _ = |owner: CommandOwner<u8, io::Error>| send(owner.finish());
     let _ = |owner: &ServiceOwner<io::Error, u8>| send(owner.wait());
     let _ = |observer: &ServiceObserver<io::Error, u8>| send(observer.wait());
+    let _ = |observer: &ServiceObserver<io::Error, u8>| send(observer.wait_ready());
+    let _ = |owner: &ServiceOwner<io::Error, u8>| send(owner.wait_ready());
+    let _ = |owner: StartingService<io::Error, u8, String>| send(owner.into_ready());
     let _ = |completion: DiagnosticCompletion| send(completion.wait());
 }
 
 #[test]
 fn operation_retry_and_admission_futures_are_send() {
+    let _ = |owner: &RunningPhasedOperation<u8, io::Error, u8, io::Error>| send(owner.wait());
+    let _ = |observer: &PhasedObserver<u8, io::Error, u8, io::Error>| send(observer.wait());
     let work = |_: OperationContext| ready(Ok::<_, io::Error>(1_u8));
     let attempt = |_: Attempt| ready(Ok::<_, io::Error>(1_u8));
     let classify = |_: &io::Error| RetryDecision::Stop;
     let _ = |context: &OperationContext| {
         send(context.cancelled());
+        send(context.run_tracked("send.check", work));
         send(context.run("send.check", work));
         send(context.run_resolved("send.check", work, |result| result));
     };

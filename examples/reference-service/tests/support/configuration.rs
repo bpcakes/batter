@@ -110,7 +110,7 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
     );
     let handle = supervisor.handle();
     let (pool_tx, pool_rx) = tokio::sync::oneshot::channel();
-    let mut starting = Startup::new(
+    let starting = Startup::new(
         supervisor,
         batter::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(),
         cleanup,
@@ -150,7 +150,7 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
         },
     )
     .start();
-    let result = starting.wait().await;
+    let result = starting.finish().await;
     let acquired = pool_rx.await;
     let closed_before_lease = acquired.as_ref().is_ok_and(|pool| pool.is_closed());
     // Preserve the observation before emergency cleanup. A failed test must

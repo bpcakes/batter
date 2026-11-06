@@ -9,12 +9,12 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 
 /// A stop-signal source polled only by the command coordinator while work can
 /// still be cancelled. The coordinator stops polling after the first `Ready`.
-pub(super) trait WorkSignals {
+pub(crate) trait WorkSignals {
     fn poll_received(&mut self, cx: &mut Context<'_>) -> Poll<()>;
 }
 
 /// The unsignalled paths: never ready, registers no waker, installs nothing.
-pub(super) struct NoSignals;
+pub(crate) struct NoSignals;
 
 impl WorkSignals for NoSignals {
     fn poll_received(&mut self, _: &mut Context<'_>) -> Poll<()> {

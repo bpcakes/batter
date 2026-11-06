@@ -1,6 +1,15 @@
 //! Total deadlines and cancellation without a universal application error.
 
 mod owner;
+mod phased;
+mod tracked;
+
+pub use tracked::{NotStarted, TrackedOperationError};
+
+pub use phased::{
+    FailedPhasedReport, FinalizationScope, PhaseAction, PhaseFailure, PhaseOutcome, PhasedFailure,
+    PhasedObserver, PhasedOperation, PhasedReport, PhasedSuccess, RunningPhasedOperation,
+};
 
 pub use owner::{OperationOwner, RootDeadline};
 
@@ -70,7 +79,10 @@ pub struct OperationContext {
     cancellation: CancellationToken,
 }
 
-/// Work and finalization contexts sharing one original total deadline.
+/// Lower-level manual work and finalization contexts sharing one deadline.
+///
+/// Prefer [`PhasedOperation`] for library-owned sequencing and retained outcomes.
+/// This escape hatch exposes both contexts and leaves ordering with the caller.
 ///
 /// Work stops before the reserved finalization interval. Finalization can use
 /// all time remaining until the original deadline, including time saved by
@@ -174,7 +186,30 @@ impl OperationContext {
         })
     }
 
-    /// Reserve a positive interval before this context's total deadline.
+    /// Create a child bounded by the earlier of `deadline` and this deadline.
+    ///
+    /// A past or current instant yields an expired child, not a configuration
+    /// error. Cancellation travels from this context to the child; the returned
+    /// owner can cancel the child without cancelling this context.
+    ///
+    /// ```
+    /// use batter_core::operation::OperationOwner;
+    /// use std::time::Duration;
+    /// use tokio::time::Instant;
+    /// let parent = OperationOwner::new(Duration::from_secs(10))?;
+    /// let deadline = Instant::now() + Duration::from_secs(1);
+    /// let child = parent.context().child_until(deadline);
+    /// assert_eq!(child.context().deadline(), parent.context().deadline().min(deadline));
+    /// # Ok::<(), batter_core::ConfigurationError>(())
+    /// ```
+    pub fn child_until(&self, deadline: Instant) -> OperationOwner {
+        OperationOwner {
+            context: Self::under(self.deadline.min(deadline), &self.cancellation),
+        }
+    }
+
+    /// Lower-level manual reservation before this context's total deadline.
+    /// Prefer [`PhasedOperation`] to own work/finalization order and outcomes.
     ///
     /// The reserve must leave positive work time when this method is called.
     /// The work deadline is the original deadline minus `reserve`; the
@@ -402,11 +437,9 @@ impl OperationContext {
         )
     }
 
-    /// The one observed boundary behind every `run` variant. It captures the
-    /// current dispatcher when called, and the returned future owns the
-    /// factory, work and observation during drop too. The public variants are
-    /// `async fn`s, so for them the call, and the capture, happens on first
-    /// poll; crate-internal callers must await the result immediately.
+    /// Project the shared boundary into the legacy error shape. Capture the
+    /// dispatcher when called and retain it through destruction. Public async
+    /// methods reach this on first poll; internal callers must await immediately.
     fn observed<T, E, U, R, F, Fut, Resolve>(
         &self,
         operation: &'static str,
@@ -420,23 +453,27 @@ impl OperationContext {
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
-        crate::scoped_dispatch::scope(
-            self.run_inner(operation, factory, resolve, outcome, boundary),
-        )
+        crate::scoped_dispatch::scope(self.run_inner(
+            operation,
+            factory,
+            |result| resolve(result.map_err(TrackedOperationError::into_untracked)),
+            outcome,
+            boundary,
+        ))
     }
 
-    async fn run_inner<T, E, U, R, F, Fut, Resolve>(
+    async fn run_inner<T, E, O, F, Fut, Resolve>(
         &self,
         operation: &'static str,
         factory: F,
         resolve: Resolve,
-        outcome: fn(&Result<U, OperationError<R>>) -> Outcome,
+        outcome: fn(&O) -> Outcome,
         boundary: Boundary,
-    ) -> Result<U, OperationError<R>>
+    ) -> O
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
-        Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
+        Resolve: FnOnce(Result<T, TrackedOperationError<E>>) -> O,
     {
         let mut observation = Observation::new(operation, boundary);
         let span = observation.context();
@@ -444,6 +481,7 @@ impl OperationContext {
         let cancellation = scope.cancellation.clone();
         let _cancel_on_exit = cancellation.clone().drop_guard();
         let result = async move {
+            let mut started = false;
             let boundary = async {
                 self.check()?;
                 tokio::select! {
@@ -454,13 +492,22 @@ impl OperationContext {
                     _ = tokio::time::sleep_until(self.deadline) => {
                         Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
                     }
-                    result = async move { factory(scope).await } => {
+                    result = async {
+                        started = true;
+                        factory(scope).await
+                    } => {
                         result.map_err(OperationError::Failed)
                     }
                 }
             }
             .await;
-            resolve(boundary)
+            resolve(boundary.map_err(|error| match error {
+                OperationError::Failed(error) => TrackedOperationError::Failed(error),
+                OperationError::Interrupted(reason) if !started => {
+                    TrackedOperationError::NotStarted(NotStarted { reason })
+                }
+                OperationError::Interrupted(reason) => TrackedOperationError::Interrupted(reason),
+            }))
         }
         .instrument(span)
         .await;

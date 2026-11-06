@@ -1,6 +1,7 @@
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
-use testcontainers::bollard::models::ContainerInspectResponse;
+use bollard::models::ContainerInspectResponse;
 
 use super::*;
 
@@ -143,13 +144,15 @@ async fn failed_start_child() {
     }
 }
 
-fn rejected_image() -> ContainerRequest<GenericImage> {
+fn rejected_image() -> PostgresImage {
     let image =
         std::env::var("RUNLEDGER_TEST_PG_IMAGE").unwrap_or_else(|_| "postgres:18".to_owned());
     let (repository, tag) = crate::postgres_container::parse_image_ref(&image);
-    GenericImage::new(repository, tag)
-        .with_entrypoint("/runledger-deliberately-missing-executable")
-        .into()
+    let mut image = PostgresImage::new(repository, tag);
+    image.entrypoint = Some(vec![
+        "/runledger-deliberately-missing-executable".to_owned(),
+    ]);
+    image
 }
 
 async fn run_failed_start_child(attempt: &StartAttempt, keep: bool) -> String {

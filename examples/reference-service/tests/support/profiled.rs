@@ -22,7 +22,7 @@ pub async fn submit(
 }
 
 pub fn configured(pool: &PgPool) -> RunledgerDatabase {
-    batter_example_reference_service::database::configured(
+    batter_example_reference_service::database::low_level_configured(
         (*pool.connect_options()).clone(),
         pool.options().clone(),
     )

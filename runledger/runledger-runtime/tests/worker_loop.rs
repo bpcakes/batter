@@ -1,3 +1,6 @@
+#[path = "support/intent_inspection.rs"]
+mod intent_inspection;
+use intent_inspection::{inspect_intent, record_postgres_server_version};
 use std::future::pending;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -6,8 +9,7 @@ use std::time::Duration;
 use runledger_core::jobs::{JobCompletion, JobContext, JobFailure, JobStatus, JobType};
 use runledger_postgres::jobs::{
     JobDefinitionUpsert, JobEnqueue, JobEnqueueIntent, JobEnqueueIntentStatus, enqueue_job,
-    get_job_by_id, get_job_enqueue_intent_by_id, record_job_enqueue_intent,
-    upsert_job_definition_tx,
+    get_job_by_id, record_job_enqueue_intent, upsert_job_definition_tx,
 };
 use runledger_runtime::RuntimeLoopExit;
 use runledger_runtime::config::{IntentPromoterConfig, JobsConfig};
@@ -26,21 +28,6 @@ use tokio::time::{Instant, sleep, timeout};
 use runledger_test_support::{
     setup_ephemeral_pool_with_untracked_migrations as setup_ephemeral_pool, teardown_ephemeral_pool,
 };
-
-async fn record_postgres_server_version(pool: &sqlx::PgPool, diagnostic: &str) {
-    let server_version = sqlx::query_scalar::<_, String>("SHOW server_version")
-        .fetch_one(pool)
-        .await
-        .expect("read PostgreSQL server_version");
-    let server_version_num =
-        sqlx::query_scalar::<_, i32>("SELECT current_setting('server_version_num')::int")
-            .fetch_one(pool)
-            .await
-            .expect("read PostgreSQL server_version_num");
-    eprintln!(
-        "{diagnostic} PostgreSQL server_version={server_version}, server_version_num={server_version_num}"
-    );
-}
 
 struct BlockingHandler {
     runs: Arc<AtomicUsize>,
@@ -238,7 +225,7 @@ async fn worker_promotes_registered_intents_and_leaves_unregistered_types_pendin
     );
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 
-    let registered = get_job_enqueue_intent_by_id(&pool, None, registered_intent.intent_id)
+    let registered = inspect_intent(&pool, None, registered_intent.intent_id)
         .await
         .expect("load registered intent")
         .expect("registered intent exists");
@@ -253,7 +240,7 @@ async fn worker_promotes_registered_intents_and_leaves_unregistered_types_pendin
     .expect("promoted job exists");
     assert_eq!(job.status, JobStatus::Succeeded);
 
-    let unregistered = get_job_enqueue_intent_by_id(&pool, None, unregistered_intent.intent_id)
+    let unregistered = inspect_intent(&pool, None, unregistered_intent.intent_id)
         .await
         .expect("load unregistered intent")
         .expect("unregistered intent exists");
@@ -541,7 +528,7 @@ async fn shutdown_cancels_a_lock_blocked_intent_promotion_pass() {
 
     lock_tx.rollback().await.expect("release intent table lock");
     assert_eq!(
-        get_job_enqueue_intent_by_id(&pool, None, recorded.intent_id)
+        inspect_intent(&pool, None, recorded.intent_id)
             .await
             .expect("load intent after canceled promotion")
             .expect("intent must remain durable")
@@ -640,7 +627,7 @@ async fn intent_promoter_runs_while_worker_is_saturated_and_shutdown_interrupts_
 
     let saturated_intent = timeout(Duration::from_secs(10), async {
         loop {
-            let intent = get_job_enqueue_intent_by_id(&pool, None, saturated_intent.intent_id)
+            let intent = inspect_intent(&pool, None, saturated_intent.intent_id)
                 .await
                 .expect("load saturated intent")
                 .expect("saturated intent exists");

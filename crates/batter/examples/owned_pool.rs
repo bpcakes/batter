@@ -3,7 +3,7 @@
 //! The executable root owns SIGINT and SIGTERM: either cancels the query, and
 //! the registered pool close still runs under its own cleanup budget.
 
-use batter::sqlx::{SqlxFailure, pool_in, probe};
+use batter::sqlx::{PgSessionProfile, SqlxFailure, pool_in, probe};
 use batter::{
     BoxError, RegistrationError,
     cleanup::{CleanupBudget, CleanupReport},
@@ -16,6 +16,7 @@ use std::{error::Error, fmt, process::ExitCode, str::FromStr, time::Duration};
 enum ExampleError {
     Registration(RegistrationError),
     Query(OperationError<SqlxFailure>),
+    Pool(SqlxFailure),
 }
 
 impl From<RegistrationError> for ExampleError {
@@ -47,6 +48,7 @@ impl Error for ExampleError {
         match self {
             Self::Registration(error) => Some(error),
             Self::Query(error) => Some(error),
+            Self::Pool(error) => Some(error),
         }
     }
 }
@@ -68,6 +70,14 @@ async fn main() -> Result<ExitCode, BoxError> {
         return Ok(ExitCode::FAILURE);
     };
 
+    let login = connect_options.get_username();
+    let profile = PgSessionProfile::new(
+        login,
+        login,
+        vec!["public".into()],
+        Duration::ZERO,
+        Duration::ZERO,
+    )?;
     let second = Duration::from_secs(1);
     let context = OperationOwner::new(Duration::from_secs(5))?.into_context();
     let cleanup = CleanupBudget::new(second, second, second)?;
@@ -80,9 +90,11 @@ async fn main() -> Result<ExitCode, BoxError> {
                     .max_connections(4)
                     .acquire_timeout(Duration::from_secs(2)),
                 connect_options,
-            );
+                profile,
+            )
+            .map_err(|error| ExampleError::Pool(error.into()))?;
             scope.stage("postgres.query")?;
-            probe(&pool, scope.context()).await?;
+            probe(pool.pool(), scope.context()).await?;
             Ok::<_, ExampleError>(())
         })
     })

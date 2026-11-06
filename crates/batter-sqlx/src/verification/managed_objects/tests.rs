@@ -1,5 +1,5 @@
 use super::*;
-use crate::managed::{ManagedObject, ManagedObjectKind, Retirement};
+use crate::managed::{ManagedObject, ManagedObjectKind, ManagedRevision, Retirement};
 use crate::verification::{
     AuthorityPolicyBuilder, Identifier, MigrationPolicy, PlanError, RoutineSignature,
     SchemaInspectionPolicy, SequencePolicy, SqlxLedgerMode, SqlxMigrationManifest,
@@ -16,6 +16,7 @@ fn total() -> RoutineSignature {
 
 fn manifest(policy: PublicExecute) -> ManagedObjectManifest {
     ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
         ledger(),
         policy,
         [
@@ -46,6 +47,7 @@ fn applied_rows(manifest: &ManagedObjectManifest) -> Vec<LedgerRow> {
         .iter()
         .enumerate()
         .map(|(index, object)| LedgerRow {
+            release_revision: 0,
             identity: object.identity().to_owned(),
             kind: object.kind().as_str().to_owned(),
             source_checksum: object.checksum().to_vec(),
@@ -57,6 +59,7 @@ fn applied_rows(manifest: &ManagedObjectManifest) -> Vec<LedgerRow> {
             .map(|row| (row.identity.as_str(), row.rendered_checksum.as_slice())),
     );
     rows.push(LedgerRow {
+        release_revision: manifest.revision().get(),
         identity: SET_ROW.to_owned(),
         kind: SET_ROW.to_owned(),
         source_checksum: manifest.digest().as_bytes().to_vec(),
@@ -119,6 +122,7 @@ fn row_comparison_reports_missing_mismatched_unexpected_and_set_rows() {
 
     let mut rows = applied_rows(&manifest);
     rows.push(LedgerRow {
+        release_revision: 0,
         identity: "\"app\".\"stale\"()".to_owned(),
         kind: "function".to_owned(),
         source_checksum: vec![0; 32],
@@ -153,6 +157,7 @@ fn row_comparison_reports_missing_mismatched_unexpected_and_set_rows() {
 
     // Another manifest's set digest is a set finding even when rows agree.
     let unmanaged = ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
         ledger(),
         PublicExecute::Unmanaged,
         manifest.objects().to_vec(),
@@ -258,6 +263,7 @@ fn catalog_comparison_detects_drift_absence_kind_and_present_retirements() {
 fn plans_reject_duplicate_and_conflicting_managed_ledgers() {
     let managed = manifest(PublicExecute::Revoke);
     let other = ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
         QualifiedName::new("app", "other_objects").unwrap(),
         PublicExecute::Revoke,
         managed.objects().to_vec(),
@@ -324,6 +330,7 @@ fn plans_reject_duplicate_and_conflicting_managed_ledgers() {
 
 fn with_constraint_trigger(policy: PublicExecute) -> ManagedObjectManifest {
     ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
         ledger(),
         policy,
         [

@@ -26,7 +26,7 @@ async fn profile_setup_failure_is_redacted_but_native_cause_is_inspectable() {
     )
     .expect("valid profile declaration");
     let marker = "runledger-profile-secret-invalid-timezone";
-    let error = RunledgerDatabase::connect(
+    let error = runledger_postgres::low_level::connect_database(
         (*options).clone(),
         profile
             .clone()
@@ -49,7 +49,7 @@ async fn profile_setup_failure_is_redacted_but_native_cause_is_inspectable() {
         .expect("original database error");
     assert_eq!(native.code().as_deref(), Some("22023"));
     assert!(native.message().contains(marker));
-    let database = RunledgerDatabase::connect(
+    let database = runledger_postgres::low_level::connect_database(
         (*options).clone(),
         profile
             .with_setting("TimeZone", "UTC")
@@ -99,9 +99,10 @@ async fn authority_schema_and_timeouts_agree_across_all_paths() {
         .with_setting("app.tenant", "tenant-one")
         .expect("tenant policy")
     };
-    let migration_db = RunledgerDatabase::connect((*options).clone(), profile(login), 2)
-        .await
-        .expect("migration profile");
+    let migration_db =
+        runledger_postgres::low_level::connect_database((*options).clone(), profile(login), 2)
+            .await
+            .expect("migration profile");
     migrate_after_idempotency_cutover(&migration_db)
         .await
         .expect("migrate authoritative custom schema");
@@ -109,9 +110,10 @@ async fn authority_schema_and_timeouts_agree_across_all_paths() {
 
     legacy_hook_control(&options, &role, schema, quoted_schema).await;
 
-    let serving = RunledgerDatabase::connect((*options).clone(), profile(&role), 1)
-        .await
-        .expect("serving profile");
+    let serving =
+        runledger_postgres::low_level::connect_database((*options).clone(), profile(&role), 1)
+            .await
+            .expect("serving profile");
     let expected: Observation = (
         login.into(),
         role.clone(),

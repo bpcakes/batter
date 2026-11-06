@@ -9,6 +9,17 @@ Application futures and errors stay concrete. HTTP support is a separate
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
 
+`operation::PhasedOperation` owns work followed by outcome-aware finalization;
+its callbacks cannot obtain the later context before the transition. Results
+and failures are classified into opaque success or failed-report proofs.
+`PhaseOutcome::classify` includes late interruption and destruction evidence.
+Owner loss cancels work only; parent cancellation still interrupts both.
+`CleanupSlot::acquire_semaphore` and `bind_udp` own native acquisition through
+registration, without application async glue. Generic handle/finalizer pairing
+belongs to `cleanup::low_level::acquire_pair`, whose caller owns that glue.
+See the facade's `operation_budget` and `finite_command` examples. Manual
+`OperationPhases` access and `CleanupSlot::register` remain lower-level paths.
+
 `health` provides an ordinary supervised monitor with explicit timing policy and
 cloneable read-only observations. Readers do no probes; stale or stopped writers
 are unready. `readiness` exhaustively classifies those observations and combines
@@ -78,7 +89,7 @@ async-closure initializer receives a `ProtectedStartupScope` exposing stage
 metadata, direct cleanup reservation and sealed registration authority without
 process start or cleanup extraction. The library boxes the initializer future;
 its typed output, such as a bound address, arrives with the running owner from
-`StartingSupervisor::wait_with_output`. Use `startup::ApplicationError` when `?`
+`StartingSupervisor::finish_with_output`. Use `startup::ApplicationError` when `?`
 combines unrelated errors. `Startup::scoped` keeps the lower-level caller-boxed
 `StartupFuture` form.
 Select `.with_unix_signals("signals")` when the startup owner should install
@@ -93,3 +104,16 @@ tests use `start_without_signals`. Its failure/interruption modes and
 ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 
 Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed.
+
+For typed initialization output and a readiness deadline, use
+`service::start_with_readiness(startup, diagnostics, Some(absolute_deadline))`.
+Its consuming `into_ready()` delivers `(ServiceOwner, output)` once, after all
+readiness gates pass; failure retains full service/diagnostic completion.
+`wait_ready()` on an owner or observer reports first-readiness history; use
+`status().readiness()` for current state. Unit-output `service::start` is unchanged.
+
+`OperationContext::run_tracked` returns opaque `NotStarted` evidence when its
+factory was not invoked, keeping that distinct from an interrupted invocation.
+Use `child_until` for an absolute child deadline clamped to the parent; past
+instants yield expired children. See their rustdoc examples for exhaustive
+handling. Existing `run` retains its original error shape and precedence.

@@ -20,6 +20,7 @@ async fn managed_application_cannot_change_definitions_ledger_or_public_policy()
         let before = catalog_state(&pool,&schema).await?;
         let before_ledger = ledger(&pool,&schema).await?;
         for statement in [
+            format!("UPDATE {schema}.managed_objects SET release_revision=999 WHERE identity='manifest'"),
             format!("CREATE OR REPLACE FUNCTION {schema}.record_total(extra bigint) RETURNS bigint LANGUAGE sql RETURN 99"),
             format!("ALTER TABLE {schema}.records DISABLE TRIGGER records_touch"),
             format!("UPDATE {schema}.managed_objects SET rendered_checksum='\\x00'::bytea"),
@@ -176,7 +177,12 @@ async fn managed_application_cancellation_retires_and_preserves_old_state() -> R
         )))
         .fetch_one(&observer)
         .await?;
-        require!(count == 0, "cancelled callback data committed")
+        require!(count == 0, "cancelled callback data committed")?;
+        require!(
+            fixture.apply(&pool, &original.manifest).await?.revision()
+                == original.manifest.revision(),
+            "cancelled upgrade advanced the revision"
+        )
     })
     .await
 }

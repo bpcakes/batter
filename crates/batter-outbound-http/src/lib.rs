@@ -63,6 +63,10 @@
 //! # }
 //! ```
 //!
+//! [`Origin::public_https`] additionally rejects non-public literal addresses
+//! and filters the exact DNS-resolved dial candidates before TCP setup. The
+//! existing [`Origin::https`] permits deliberately private HTTPS services.
+//!
 //! # Owned connection
 //!
 //! `Client::new(origin, connect_timeout)` is the only constructor. A client fixes

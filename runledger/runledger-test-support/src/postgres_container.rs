@@ -1,17 +1,15 @@
 use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::ContainerPort};
 
-use crate::container_lifecycle::{
-    PROCESS_OWNER_LABEL, ProcessContainer, process_owner_label_value,
-};
+use crate::container_lifecycle::ProcessContainer;
 use crate::container_start::start_postgres;
+use crate::docker::{DockerContainer, PostgresImage};
 
 const DEFAULT_POSTGRES_IMAGE: &str = "postgres:18";
-const POSTGRES_USER: &str = "runledger";
-const POSTGRES_PASSWORD: &str = "runledger";
-const POSTGRES_DB: &str = "postgres";
+pub(crate) const POSTGRES_USER: &str = "runledger";
+pub(crate) const POSTGRES_PASSWORD: &str = "runledger";
+pub(crate) const POSTGRES_DB: &str = "postgres";
 const TEST_ADMIN_DATABASE_URL_ENV: &str = "RUNLEDGER_TEST_ADMIN_DATABASE_URL";
 const TEST_PG_IMAGE_ENV: &str = "RUNLEDGER_TEST_PG_IMAGE";
 const POSTGRES_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -83,12 +81,7 @@ async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
 async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
     let (repository, tag) = parse_image_ref(image_ref);
 
-    let image = GenericImage::new(repository, tag)
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_env_var("POSTGRES_USER", POSTGRES_USER)
-        .with_env_var("POSTGRES_PASSWORD", POSTGRES_PASSWORD)
-        .with_env_var("POSTGRES_DB", POSTGRES_DB)
-        .with_label(PROCESS_OWNER_LABEL, process_owner_label_value());
+    let image = PostgresImage::new(repository, tag);
     let container = start_postgres(image).await;
     let process_container = ProcessContainer::new(container).await;
 
@@ -102,7 +95,7 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
     }
 }
 
-async fn resolve_host_port(container: &ContainerAsync<GenericImage>, internal_port: u16) -> u16 {
+async fn resolve_host_port(container: &DockerContainer, internal_port: u16) -> u16 {
     // Docker can report a started container before its published mapping is visible.
     tokio::time::timeout(POSTGRES_BOOTSTRAP_TIMEOUT, async {
         loop {
@@ -256,12 +249,12 @@ mod tests {
         let (repository, tag) = parse_image_ref(
             &std::env::var(TEST_PG_IMAGE_ENV).unwrap_or_else(|_| DEFAULT_POSTGRES_IMAGE.to_owned()),
         );
-        let image = GenericImage::new(repository, tag)
-            .with_exposed_port(ContainerPort::Tcp(5432))
-            .with_env_var("POSTGRES_USER", POSTGRES_USER)
-            .with_env_var("POSTGRES_PASSWORD", POSTGRES_PASSWORD)
-            .with_env_var("POSTGRES_DB", POSTGRES_DB)
-            .with_cmd(["sh", "-c", "sleep 12; exec docker-entrypoint.sh postgres"]);
+        let mut image = PostgresImage::new(repository, tag);
+        image.command = Some(
+            ["sh", "-c", "sleep 12; exec docker-entrypoint.sh postgres"]
+                .map(str::to_owned)
+                .to_vec(),
+        );
         let container = start_postgres(image).await;
         let port = resolve_host_port(&container, 5432).await;
         let admin_url = postgres_admin_url(port);
@@ -279,6 +272,10 @@ mod tests {
             .expect("read delayed PostgreSQL server version");
         eprintln!("delayed startup: PostgreSQL server_version={server_version}");
         pool.close().await;
+        container
+            .rm()
+            .await
+            .expect("remove delayed startup container");
     }
 
     #[tokio::test]
@@ -300,9 +297,9 @@ mod tests {
             .as_ref()
             .expect("owned PostgreSQL container");
         let port = resolve_host_port(container.container(), 5432).await;
-        let inspection = testcontainers::core::client::docker_client_instance()
-            .await
-            .expect("Docker client")
+        let inspection = container
+            .container()
+            .docker()
             .inspect_container(container.container().id(), None)
             .await
             .expect("inspect actual published mapping");

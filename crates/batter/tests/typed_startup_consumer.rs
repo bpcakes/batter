@@ -34,7 +34,7 @@ fn settings(valid: Validation) -> anyhow::Result<&'static str> {
 async fn serve(valid: Validation) -> anyhow::Result<SocketAddr> {
     let (shutdown, cleanup) = budgets();
     let context = OperationOwner::new(Duration::from_secs(2))?.into_context();
-    let mut starting = Startup::protected(
+    let starting = Startup::protected(
         Supervisor::new(shutdown),
         context,
         cleanup,
@@ -56,7 +56,7 @@ async fn serve(valid: Validation) -> anyhow::Result<SocketAddr> {
         },
     )
     .start();
-    let (running, address) = starting.wait_with_output().await?;
+    let (running, address) = starting.finish_with_output().await?;
     running.status().wait_ready().await.unwrap();
     running.shutdown_checked().await?;
     Ok(address)

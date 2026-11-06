@@ -18,7 +18,6 @@ use super::invocation::InvocationExit;
 use super::observers::{JobRunningNotification, TerminalJobObserverEvent, TerminalObserverTasks};
 use crate::WorkerError;
 use crate::observer::{JobLeaseLostEvent, JobLifecycleObservers, ObservedJob};
-use crate::panic_payload::panic_payload_message;
 use crate::registry::JobRegistry;
 
 // Kept stable for clients that already match this code; it also covers leases
@@ -26,6 +25,7 @@ use crate::registry::JobRegistry;
 const LEASE_OWNER_MISMATCH_CODE: &str = "job.lease_owner_mismatch";
 const LEASE_MAINTENANCE_FAILED_CODE: &str = "job.lease_maintenance_failed";
 const HANDLER_PANIC_CODE: &str = "job.handler_panic";
+const HANDLER_PANIC_MESSAGE: &str = "Job handler panicked.";
 const RUNNING_PROGRESS_PERSIST_FAILED_REASON: &str = "RUNNING_PROGRESS_PERSIST_FAILED";
 const UNSTARTED_CLAIM_RETRY_DELAY_MS: i32 = 1_000;
 const HEARTBEAT_LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
@@ -338,10 +338,10 @@ impl ClaimedJobExecution {
                     // Record execution evidence before applying durable outcome
                     // policy. A returned result can be late or lease-fenced
                     // without its handler having been interrupted.
-                    if let Err(payload) = &result {
+                    if result.is_err() {
                         settlement.record_callback(crate::RuntimeCallbackFailure::Panicked {
                             callback: "job_handler",
-                            message: panic_payload_message(&**payload),
+                            message: HANDLER_PANIC_MESSAGE.to_owned(),
                         });
                     }
                     let result = map_handler_join(result, timeout_deadline);
@@ -583,14 +583,10 @@ fn lease_maintenance_failure() -> JobFailure {
     )
 }
 
-fn handler_panic_failure(panic_payload: Box<dyn Any + Send>) -> JobFailure {
-    JobFailure::panicked(
-        HANDLER_PANIC_CODE,
-        format!(
-            "Job handler panicked: {}",
-            panic_payload_message(&*panic_payload)
-        ),
-    )
+fn handler_panic_failure(_panic_payload: Box<dyn Any + Send>) -> JobFailure {
+    // Panic payloads can contain error Debug output, including credentials.
+    // Never copy them into persisted failures or automatic diagnostics.
+    JobFailure::panicked(HANDLER_PANIC_CODE, HANDLER_PANIC_MESSAGE)
 }
 
 fn has_query_error_kind(error: &runledger_postgres::Error, expected_kind: QueryErrorKind) -> bool {

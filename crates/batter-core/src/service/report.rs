@@ -50,6 +50,8 @@ impl<R> fmt::Debug for DiagnosticOutcome<R> {
 pub(super) struct Completed<E, R> {
     pub(super) service: ServiceOutcome<E>,
     pub(super) diagnostics: DiagnosticOutcome<R>,
+    pub(super) readiness: Result<(), super::ServiceReadinessError>,
+    pub(super) startup_output_failure: Option<PanicPayload>,
 }
 
 /// Shared retained service and diagnostic results. Neither can be substituted
@@ -64,6 +66,17 @@ impl<E, R> Clone for ServiceCompletion<E, R> {
 }
 
 impl<E, R> ServiceCompletion<E, R> {
+    /// Retained first-readiness outcome, independent of shutdown success.
+    pub fn readiness(&self) -> Result<(), super::ServiceReadinessError> {
+        self.0.readiness
+    }
+
+    /// Panic while the coordinator destroyed rejected startup output.
+    /// Process and diagnostic settlement still ran; the payload is explicit.
+    pub fn startup_output_failure(&self) -> Option<&PanicPayload> {
+        self.0.startup_output_failure.as_ref()
+    }
+
     /// Original protected startup/shutdown outcome.
     pub fn service(&self) -> &ServiceOutcome<E> {
         &self.0.service
@@ -77,6 +90,11 @@ impl<E, R> ServiceCompletion<E, R> {
 impl<E, R> fmt::Debug for ServiceCompletion<E, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ServiceCompletion")
+            .field("readiness", &self.readiness())
+            .field(
+                "startup_output_failed",
+                &self.startup_output_failure().is_some(),
+            )
             .field("service", self.service())
             .field("diagnostics", self.diagnostics())
             .finish()

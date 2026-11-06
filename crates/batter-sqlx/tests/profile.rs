@@ -4,7 +4,7 @@
 #[path = "profile/hook_events.rs"]
 mod hook_events;
 
-use batter_sqlx::{PgProfiledPool, PgSessionProfile};
+use batter_sqlx::PgSessionProfile;
 use hook_events::HookEvents;
 use std::time::Duration;
 use tracing_subscriber::prelude::*;
@@ -195,7 +195,12 @@ fn setting_keys_are_case_insensitive_and_duplicates_are_rejected() {
 async fn profiled_pool_rejects_zero_capacity_before_connecting() {
     let options = "postgres://login@127.0.0.1:1/unused".parse().unwrap();
     assert!(matches!(
-        PgProfiledPool::connect(options, profile(vec!["public".into()]).unwrap(), 0).await,
+        batter_sqlx::low_level::connect_profiled_pool(
+            options,
+            profile(vec!["public".into()]).unwrap(),
+            0
+        )
+        .await,
         Err(sqlx::Error::Protocol(_))
     ));
 }

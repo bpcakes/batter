@@ -474,7 +474,9 @@ impl Supervisor {
 
     /// Reserve a validated cleanup name before acquiring a resource.
     /// Registration through the returned slot cannot reject ownership afterward.
-    /// See [`crate::cleanup::CleanupSlot`] for the acquisition pattern and limits.
+    /// Use [`crate::cleanup::CleanupSlot::acquire_semaphore`] or
+    /// [`crate::cleanup::CleanupSlot::bind_udp`] for supported native resources;
+    /// manual registration remains a lower-level path.
     pub fn reserve_cleanup(
         &mut self,
         name: &'static str,
@@ -742,3 +744,6 @@ async fn receive_process(
         None => std::future::pending().await,
     }
 }
+
+// Internal service observation shares the lifecycle transition lock.
+pub(crate) use state::ReadinessProgress;

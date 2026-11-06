@@ -6,6 +6,7 @@ use tokio::time::{Instant, sleep, timeout_at};
 const FAMILY_DELAY: Duration = Duration::from_millis(300);
 
 pub(super) async fn connect<T, D, F>(
+    origin: &crate::Origin,
     addresses: Vec<SocketAddr>,
     deadline: Instant,
     dial: F,
@@ -14,6 +15,10 @@ where
     D: Future<Output = io::Result<T>>,
     F: Fn(SocketAddr) -> D,
 {
+    let addresses: Vec<_> = addresses
+        .into_iter()
+        .filter(|address| origin.permits_address(address.ip()))
+        .collect();
     let Some(first) = addresses.first() else {
         return Err(io::ErrorKind::AddrNotAvailable.into());
     };
@@ -87,3 +92,6 @@ where
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod public_tests;

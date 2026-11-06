@@ -347,12 +347,7 @@ fn register_pool(
     connect_options: sqlx::postgres::PgConnectOptions,
 ) -> Result<runledger_postgres::RunledgerDatabase, BoxError> {
     let slot = scope.reserve_cleanup("postgres.pool")?;
-    let database = crate::database::configured(connect_options, pool_options)?;
-    let closing = database.pool().clone();
-    slot.register(move || async move {
-        closing.close().await;
-        Ok(())
-    });
+    let database = crate::database::configured(slot, connect_options, pool_options)?;
     Ok(database)
 }
 
@@ -428,7 +423,7 @@ mod tests {
     #[tokio::test]
     async fn protected_application_failure_retains_cause_and_cleanup() {
         let supervisor = Supervisor::new(shutdown_budget());
-        let mut starting = Startup::scoped(supervisor, context(), cleanup_budget(), |scope| {
+        let starting = Startup::scoped(supervisor, context(), cleanup_budget(), |scope| {
             Box::pin(async move {
                 scope.stage("postgres.acquire").map_err(initialization)?;
                 scope
@@ -439,7 +434,7 @@ mod tests {
             })
         })
         .start();
-        let Err(error) = starting.wait().await else {
+        let Err(error) = starting.finish().await else {
             panic!("startup must fail")
         };
         let error = startup_failure(error);
@@ -461,7 +456,7 @@ mod tests {
         let invoked = Arc::new(AtomicBool::new(false));
         let flag = invoked.clone();
         // Repeated selection fails before any listener is installed.
-        let mut starting = Startup::scoped(supervisor, context(), cleanup_budget(), move |_| {
+        let starting = Startup::scoped(supervisor, context(), cleanup_budget(), move |_| {
             Box::pin(async move {
                 flag.store(true, Ordering::SeqCst);
                 Ok::<_, InitializationFailure>(())
@@ -470,7 +465,7 @@ mod tests {
         .with_unix_signals("signals")
         .with_unix_signals("signals")
         .start();
-        let Err(error) = starting.wait().await else {
+        let Err(error) = starting.finish().await else {
             panic!("repeated signal policy must fail")
         };
         let error = startup_failure(error);
@@ -489,7 +484,7 @@ mod tests {
         let supervisor = Supervisor::new(shutdown_budget());
         let handle = supervisor.handle();
         let (held, holding) = tokio::sync::oneshot::channel();
-        let mut starting = Startup::scoped(supervisor, context(), cleanup_budget(), |scope| {
+        let starting = Startup::scoped(supervisor, context(), cleanup_budget(), |scope| {
             Box::pin(async move {
                 scope.stage("postgres.acquire").map_err(initialization)?;
                 scope
@@ -504,7 +499,7 @@ mod tests {
         .start();
         holding.await.unwrap();
         handle.request();
-        let Err(error) = starting.wait().await else {
+        let Err(error) = starting.finish().await else {
             panic!("requested drain must fail startup")
         };
         let error = startup_failure(error);

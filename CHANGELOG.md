@@ -8,6 +8,329 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Remove Testcontainers and `astral-tokio-tar` from Runledger test support and the
+  optional facade test-support graph by using Bollard directly. Preserve the
+  existing PostgreSQL 18 fixture API, Docker cleanup and keep policy
+  (`batter-z6nw`, X286).
+
+- **Breaking:** protected PostgreSQL construction now requires an explicit session
+  profile and returns a `PgProfiledPool`. Runledger consumes a clone of that pool
+  through `RunledgerDatabase::from_profiled`; it no longer constructs a second
+  canonical pool. One reserved finalizer closes every view (`batter-nhu5`).
+
+  ```rust,ignore
+  // Before: unprofiled pool, or independently constructed profiled owners.
+  let pool = pool_in(slot, options, connection);
+  let app = PgProfiledPool::connect(connection, profile, 4).await?;
+  let app = PgProfiledPool::connect_lazy(connection, profile, options)?;
+  let jobs = RunledgerDatabase::connect(connection, profile, 4).await?;
+  let jobs = RunledgerDatabase::connect_lazy(connection, profile, options)?;
+  register_pool_close(&mut supervisor, "postgres.pool", &pool)?;
+
+  // After: acquire inside protected startup/command, before any await.
+  let app = pool_in(scope.reserve_cleanup("postgres.pool")?,
+      options, connection, profile)?;
+  let jobs = RunledgerDatabase::from_profiled(app.clone())?;
+  // app.pool() and jobs.pool() share capacity, policy and registered closure.
+
+  // Reference example helper, before -> after:
+  let db = database::configured(connection, options)?;
+  let db = database::configured(scope.reserve_cleanup("postgres.pool")?, connection, options)?;
+  // Caller-owned fixtures explicitly use database::low_level_configured(connection, options).
+  ```
+
+  Explicit standalone native ownership remains available with the same argument
+  and result shapes under deliberately weaker names:
+
+  ```rust,ignore
+  // Before -> after (caller still owns cancellation and awaited cleanup):
+  PgProfiledPool::connect(connection, profile, capacity).await?;
+  batter_sqlx::low_level::connect_profiled_pool(connection, profile, capacity).await?;
+  PgProfiledPool::connect_lazy(connection, profile, options)?;
+  batter_sqlx::low_level::connect_profiled_pool_lazy(connection, profile, options)?;
+  RunledgerDatabase::connect(connection, profile, capacity).await?;
+  runledger_postgres::low_level::connect_database(connection, profile, capacity).await?;
+  RunledgerDatabase::connect_lazy(connection, profile, options)?;
+  runledger_postgres::low_level::connect_database_lazy(connection, profile, options)?;
+  pool_in(slot, options, connection);
+  batter_sqlx::low_level::pool_in(slot, options, connection);
+  register_pool_close(&mut supervisor, "pool", &pool)?;
+  batter_sqlx::low_level::register_pool_close(&mut supervisor, "pool", &pool)?;
+  ```
+
+  No deprecated shims: the old canonical constructors/paired registration permit
+  use before cleanup publication, and the old `pool_in` lacks mandatory session
+  policy. The native-hook escape path preserves arbitrary callbacks. Profiled
+  hooks replace them; declare authority in the profile. Runledger still rejects
+  fallback schemas. Separate roles require separate pools. This is a source-only
+  migration: no database migration, baseline deployment or staged rollout.
+
+
+- **Breaking:** managed-object manifests require an explicit positive
+  `ManagedRevision` (`batter-ofom`). A locked ledger rejects lower revisions and
+  equal revisions with different content; identical reapplication remains allowed.
+  Receipts expose the committed revision and verification checks it separately
+  from the content digest.
+
+  ```rust,ignore
+  // Before:
+  let manifest = ManagedObjectManifest::new(ledger, policy, objects, retirements)?;
+  // After: choose a monotonically increasing application release number.
+  let revision = ManagedRevision::new(42).expect("positive signed-bigint revision");
+  let manifest = ManagedObjectManifest::new(revision, ledger, policy, objects, retirements)?;
+  ```
+
+  Existing five-column ledgers require a baseline release with the same manifest
+  digest. Its transaction adds `release_revision`; older library builds then
+  refuse the six-column shape. Deploy the baseline before changing managed
+  content. Rolling back content requires a new, higher revision. SQLx migrations
+  run before this guard and may already have committed when apply is refused.
+  No deprecated constructor shim is retained: inferring a revision would restore
+  unordered writes, and Rust cannot overload `new` by arity.
+
+  `ManagedApplyError::Release(ManagedReleaseError)` and
+  `FindingKind::ManagedObjectRevisionMismatch` add exhaustive outcomes. Extend
+  existing exhaustive matches (their other arms remain unchanged):
+
+  ```rust,ignore
+  // Before:
+  match error { /* all previous ManagedApplyError arms */ }
+  match finding.kind { /* all previous FindingKind arms */ }
+  // After:
+  match error {
+      ManagedApplyError::Release(reason) => handle_release_refusal(reason),
+      /* all previous ManagedApplyError arms */
+  }
+  match finding.kind {
+      FindingKind::ManagedObjectRevisionMismatch => reject_stale_release(),
+      /* all previous FindingKind arms */
+  }
+  ```
+
+  No shim can preserve an old exhaustive match while exposing these new states;
+  mapping them to an unrelated error would hide the release decision. See
+  [the release-fence evidence](docs/evidence/managed-release-fence-2026-11-05.md).
+
+- **Breaking:** replace both single-intent pool readers with
+  `PgIntentScope::reconcile_job_enqueue_intent` (also available in queue and
+  policy scopes). The result is exhaustive `IntentReconciliation`, with opaque
+  metadata and a required same-scope job for `Promoted`. Choose an exact
+  `JobScope`; an absent result never proves rollback or permits replay.
+
+  ```rust,ignore
+  // Before: legacy optional organization, or explicit read scope.
+  let row = get_job_enqueue_intent_by_id(pool, Some(org), id).await?;
+  let row = get_job_enqueue_intent_by_id_with_scope(
+      pool, JobReadScope::Organization(org), id).await?;
+  // After: both call shapes use the transaction owner and exact scope.
+  let evidence = run_atomic(database, async |mut tx| {
+      tx.reconcile_job_enqueue_intent(JobScope::Organization(org), id).await
+  }).await?;
+  match evidence {
+      IntentReconciliation::NotFound => { /* retain uncertainty */ }
+      IntentReconciliation::Retained(intent) => match intent.state() {
+          IntentCorrelationState::Pending => { /* await promotion */ }
+          IntentCorrelationState::Conflicted => { /* resolve application conflict */ }
+          IntentCorrelationState::Promoted(job) => { let _ = job.id(); }
+      },
+  }
+  ```
+
+  `None`/`Admin` no longer provides a wildcard single-intent lookup: authorize
+  `JobScope::Global` or `JobScope::Organization(id)` explicitly. Administrative
+  list APIs remain separate. No deprecated shim is supplied: the old pool/full-row
+  form bypasses owned transaction continuity and the restricted metadata contract.
+  Add `RunledgerOperation::IntentReconciliation` to the role's grant selection;
+  it needs only selected metadata columns. No database migration, baseline deploy
+  or staged persisted-data rollout is required (`batter-hw3k`).
+
+- Add `OperationContext::run_tracked`, whose exhaustive `TrackedOperationError`
+  separates opaque `NotStarted` evidence from interruption after factory
+  invocation. Add `child_until(Instant)` for a parent-clamped absolute child
+  deadline, including already elapsed instants. Existing `run` and
+  `run_resolved` behavior and precedence remain unchanged. Reference provider
+  dispatch uses the evidence to classify a refused call as known non-dispatch
+  (`batter-2hqe`).
+
+- Add `service::start_with_readiness` for an optional absolute readiness deadline
+  and single-use typed startup-output delivery. The lifecycle refuses late Ready
+  transitions; deadline expiry requests drain without a consumer timer. Owners
+  and observers expose current status and retained first-readiness evidence.
+  Failed output delivery retains full service/diagnostic completion, including
+  rejected-output destruction failures. Existing `service::start` callers keep
+  their unit-output API (`batter-m9rp`).
+
+- Keep unread phased-operation results under their producer tracing context even
+  after publication ends. Only a completed wait transfers shared result
+  destruction to caller ownership; observer cloning and waiter cancellation do not.
+
+- Add `operation::PhasedOperation` and `OperationPhases::into_operation` for
+  library-owned work/finalization sequencing, independent typed evidence and
+  work-only owner cancellation (`batter-jxj2`). Native invocation clocks and
+  parent cancellation are preserved. Scoped-dispatch coverage and Runledger
+  guidance were added in `batter-17fe`; `batter-rtxb` completes the assessed
+  outcome-proof and supported-acquisition redesign below.
+
+- **Breaking:** phased completion now returns opaque success or failed-report
+  proofs (`batter-rtxb`). Both `RunningPhasedOperation::wait` and
+  `PhasedObserver::wait` return `PhasedSuccess<T, U>` on success; it holds the two
+  accepted values directly. `PhasedFailure::Report` now carries
+  `FailedPhasedReport<T, E, U, F>`, replacing `SharedPhasedReport`. Both observers
+  share their retained values without requiring domain `Clone`.
+
+  ```rust,ignore
+  // Before: either owner's or observer's wait returned a general report.
+  let report: SharedPhasedReport<_, _, _, _> = running.wait().await?;
+  assert!(report.is_success());
+  let work = report.work().result().unwrap();
+  let finalized = report.finalization().result().unwrap();
+  // After: checked success needs no repeated classification or unwrap.
+  let success: PhasedSuccess<_, _> = running.wait().await?;
+  let work = success.work();
+  let finalized = success.finalization();
+
+  // Before: a general report could even be wrapped as failure.
+  let failure = PhasedFailure::Report(report);
+  // After: only failed evidence from the runner can occupy this variant.
+  match running.wait().await {
+      Ok(success) => consume_success(success.work(), success.finalization()),
+      Err(PhasedFailure::Report(failed)) => inspect_phases(failed.work(), failed.finalization()),
+      Err(PhasedFailure::Coordinator(error)) => handle_coordinator(error),
+  }
+  ```
+
+  `PhasedReport::is_success` is removed: success values and failed reports have
+  distinct types. `PhaseOutcome::result`, `interruption_after_return` and
+  `destruction_panic` are replaced by complete classification and failed evidence:
+
+  ```rust,ignore
+  // Before: returned Ok could coexist with interruption or destruction failure.
+  let returned = scope.work().result();
+  let interrupted = scope.work().interruption_after_return();
+  let destruction = scope.work().destruction_panic();
+  // After: Ok proves the complete phase succeeded.
+  match scope.work().classify() {
+      Ok(value) => record_accepted(value),
+      Err(failure) => record_failed(
+          failure.returned_result(), // May retain an unaccepted returned value.
+          failure.interruption_after_return(),
+          failure.destruction_panic(),
+      ),
+  }
+  ```
+
+  No deprecated report or getter shims: interchangeable reports restore forged
+  failure evidence, and raw success-shaped access on the canonical outcome
+  restores omission of interruption/destruction. Same-name wait signatures cannot
+  be overloaded by return type. Every old item has a Migration rustdoc pointer.
+
+- **Breaking:** generic `CleanupSlot::acquire` and root `cleanup::Acquired` move
+  to `cleanup::low_level::{acquire_pair, Acquired}`. Generic callbacks retain the
+  native acquisition-to-pair gap and are explicitly weaker. Supported native
+  acquisition now uses `CleanupSlot::acquire_semaphore` and `bind_udp`, with fixed
+  library cleanup and no application callbacks between native success,
+  registration and completed-future destruction. SQLx keeps its existing `pool_in`.
+
+  ```rust,ignore
+  // Before: caller assembles a native permit/finalizer pair.
+  use batter::cleanup::Acquired;
+  slot.acquire(|| async move {
+      let permit = semaphore.acquire_owned().await?;
+      Ok::<_, tokio::sync::AcquireError>(Acquired::new((), move || async move {
+          drop(permit); Ok(())
+      }))
+  }).await?;
+  // After: the native permit never escapes library cleanup ownership.
+  slot.acquire_semaphore(semaphore).await?;
+
+  // Before: socket acquisition and finalizer pairing in caller async glue.
+  let socket = slot.acquire(socket_pair_factory).await?;
+  // After: fixed native bind/release policy; caller clones still retain ownership.
+  let socket = slot.bind_udp(address).await?;
+
+  // For intentionally caller-owned, unsupported acquisition protocols only:
+  use batter::cleanup::low_level::{Acquired, acquire_pair};
+  let handle = acquire_pair(slot, caller_pair_factory).await?;
+  ```
+
+  No deprecated method shim or root alias: they would restore the generic
+  temporal obligation on the protected acquisition path or blur that boundary.
+  Manual `register` remains for explicit application hooks and supported adapters.
+  The finite-command example now records socket-reference release separately
+  from its application completion hook, preserving independent failure scenarios.
+
+- Represent fixture-run ownership with one private state (`batter-vrp6`, T01 in
+  the implicit-state inventory). A run holds either its live driver or the
+  retained completion result, never independent optional copies. Repeated
+  observation, timeout/resume, cached task errors and consuming report extraction
+  retain their public contracts. Offline Tokio-task regressions cover those
+  transitions and waiter loss; database provisioning and cleanup are unchanged.
+
+- Represent periodic component ownership with one private state (`batter-u4lj`,
+  F19 in the implicit-state inventory). Initializing holds the startup capability
+  and its absolute deadline; running holds the acknowledged capability. Consuming
+  acknowledgement and exit replace the paired optional owners and their runtime
+  assertions. Scheduling, stopping classes, retained evidence and public APIs are
+  unchanged. The first-success regression now continues past the original
+  initialization deadline before checking readiness and clean shutdown.
+
+- **Breaking:** consume startup handoff ownership (`batter-r4ir`, F08 in the
+  implicit-state inventory). `StartingSupervisor::wait(&mut self)` becomes
+  `finish(self)` and `wait_with_output(&mut self)` becomes
+  `finish_with_output(self)`. A second handoff call now fails to compile instead
+  of panicking after a completed wait. Result types, typed output, deferred
+  readiness and observer behavior are unchanged. Update both call shapes:
+
+  ```rust,ignore
+  // Before: unit output
+  let mut starting = startup.start();
+  let running = starting.wait().await?;
+  // After
+  let starting = startup.start();
+  let running = starting.finish().await?;
+
+  // Before: typed output
+  let mut starting = startup.start();
+  let (running, address) = starting.wait_with_output().await?;
+  // After
+  let starting = startup.start();
+  let (running, address) = starting.finish_with_output().await?;
+  ```
+
+  For either method, move the owner into helpers instead of passing
+  `&mut StartingSupervisor`. Clone any observer before calling `finish`.
+  A finish future owns the pending handoff even before its first poll; dropping
+  it requests drain. For cancellation and resumption, retain one pinned future:
+
+  ```rust,ignore
+  // Before: a timed-out borrowed wait left `starting` available.
+  let running = match timeout(limit, starting.wait()).await {
+      Ok(result) => result?,
+      Err(_) => starting.wait().await?,
+  };
+  // After: a timed-out borrow leaves the same future available.
+  let finish = starting.finish();
+  tokio::pin!(finish);
+  let running = match timeout(limit, &mut finish).await {
+      Ok(result) => result?,
+      Err(_) => finish.await?,
+  };
+  // Typed output uses the same pattern with `finish_with_output()` and
+  // destructures the returned `(running, output)` pair.
+  ```
+
+  No deprecated borrowed shim is retained: it would restore the known-invalid
+  repeated handoff. The ordinary Rust rule against polling a completed future
+  still applies. See the [API surface check](docs/evidence/startup-handoff-2026-11-05.md).
+
+- Add `Origin::public_https` (`batter-321j`), retaining an immutable public
+  destination policy through clients and requests. Reject special-use literal
+  IPs and filter the exact DNS dial candidates without a second lookup.
+  Include globally reachable AS112/AMT special-purpose blocks; regressions
+  cover excluded range endpoints, adjacent public addresses and zero dial
+  attempts for wholly disallowed answers.
+  Existing HTTPS and loopback constructors retain their behavior.
+
 - **Breaking:** `batter_axum::HttpFailure` (also `batter::axum::HttpFailure`)
   gains the permanent, unconditional `Disabled` variant. A group gate first
   produces it, but the failure remains part of the HTTP contract even if the
@@ -60,7 +383,6 @@ contracts, capability facts and validation history.
       _ => unavailable(),
   }
   ```
-
 
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates

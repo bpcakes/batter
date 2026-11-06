@@ -212,7 +212,9 @@ cookie, mutation-signal and private-response header mechanics, and the
 group's browser policy accepts them, without owning credential meaning,
 authorization, CORS or application error envelopes.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
-bounded probes and pool-close registration; `session.rs` owns opaque SQL execution
+bounded probes and protected profiled-pool construction; `pool_in` registers
+closure before returning `PgProfiledPool`, and native Runledger can share that
+pool through `RunledgerDatabase::from_profiled`; `session.rs` owns opaque SQL execution
 and transaction completion without native replacement; server-session termination remains separate.
 `managed.rs` and `managed/` own the pure managed routine/trigger manifest and
 `PgLease::migrate_and_apply`, which applies it only after the application's

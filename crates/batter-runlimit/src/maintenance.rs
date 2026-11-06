@@ -81,13 +81,17 @@
 //!     scope: &mut ProtectedStartupScope,
 //!     connect: PgConnectOptions,
 //! ) -> Result<Quota<MaintainedLimiter<PostgresLimiter>>, BoxError> {
+//!     let login = connect.get_username();
+//!     let profile = batter_sqlx::PgSessionProfile::new(login, login, vec!["public".into()],
+//!         Duration::ZERO, Duration::ZERO)?;
 //!     // The pool's finalizer runs only after maintenance has stopped.
 //!     let pool = batter_sqlx::pool_in(
 //!         scope.reserve_cleanup("quota.pool")?,
 //!         PgPoolOptions::new().max_connections(4),
 //!         connect,
-//!     );
-//!     let limiter = PostgresLimiter::new(pool);
+//!         profile,
+//!     )?;
+//!     let limiter = PostgresLimiter::new(pool.pool().clone());
 //!     limiter.migrate().await?;
 //!     let limiter = register_in(
 //!         scope,

@@ -14,6 +14,19 @@ while `anyhow` chain formatting can reveal it. They do
 not establish compatibility of a pinned downstream application graph; that
 requires a separate candidate rehearsal with Cargo metadata and locked tests.
 
+Tracked operation evidence (`batter-2hqe`) is exercised in
+`crates/batter-core/tests/tracked_operation.rs`: pre-cancelled/pre-expired
+refusal without factory invocation, interrupted invocation, simultaneous
+completion/deadline/cancellation, concrete borrowed non-Send values and errors,
+resumable borrowed waits, unpolled and active drop, panic propagation, and
+absolute child deadline/cancellation lineage. Compile-fail rustdocs reject
+forged `NotStarted` values and automatic error conversions. The scoped-dispatch
+suite checks refusal and abort destruction with one observation per call.
+Reference provider contract tests compare refused dispatch (no connection) with
+cancellation after a server receives bytes (still uncertain), and require both
+to release capacity. These are local and loopback tests, not evidence about an
+external provider or a fresh-agent usability evaluation.
+
 Canonical adapter future bounds (`batter-3q3`) run in
 `crates/batter-sqlx/tests/future_size.rs` and
 `crates/batter-runlimit/tests/future_size.rs`: unoptimized with the workspace
@@ -123,6 +136,38 @@ Runledger's worker tests cover each
 native exit path against PostgreSQL 18, with an advisory-lock gate on the
 outcome write proving that every observer and hook sees the end first. Review closure is tracked separately; older hosted-control sections below describe
 the previous implementation.
+
+## Owned phase and acquisition handoff regression
+
+`crates/batter-core/tests/phased_operation.rs` and its `adversarial` module cover
+work error/panic, destruction panic, deadlines, original total preservation,
+owner loss before first poll/during work/during finalization, cancelled borrowed
+waiters, shared report identity, parent cancellation, late synchronous results,
+redaction, inert construction, zero-reserve execution and invalid reserves.
+`native_acquisition.rs` covers native semaphore/UDP registration, caller failure,
+pending cancellation, native errors and LIFO cleanup. The private acquisition
+test returns a raw resource from a native future whose destruction panics: cleanup
+must retain it and release it exactly once. `cleanup_acquisition.rs` separately
+covers the weaker pair-producing handoff, including its factory-destruction case. `send_futures.rs` pins the new waiters to `Send`.
+`scoped_owned_tasks/phased.rs` directly checks the new coordinator and publisher
+against a different ambient subscriber: normal completion, owner-loss work
+cancellation followed by finalization, a never-invoked work factory and unclaimed
+work/finalization results. Drop markers and finalizer events must reach the
+submitter's dispatcher and span, never the ambient subscriber (`batter-17fe`).
+Separately removing the coordinator's and publisher's span attachment made their
+corresponding focused test fail; both mutations were restored before verification.
+Private phase owner tests also wait for publisher closure before dropping unread
+success/error evidence under a different subscriber. They cover cancelled and
+unpolled waiters, observer clones, and claimed result/receiver destruction in
+both orders without requiring domain Clone. Public phase tests prove successful
+work context cancellation before sibling finalization; the native bridge test
+explicitly holds open the owner-drop-before-invocation-exit window (`batter-w8fr`).
+Rustdoc tests reject early finalization access, owner cloning, non-Send callbacks
+extraction of the opaque acquired handle, forged success/failure evidence and
+application callbacks at the native acquisition boundary. The facade operation-budget and
+finite-command examples exercise both new paths. These are executable contracts,
+not fresh-agent usability evaluations. Verification outcomes belong to
+`batter-jxj2`, `batter-17fe` and the outcome/acquisition redesign `batter-rtxb`.
 
 ## Testing a job handler without a worker
 
@@ -481,6 +526,13 @@ awaits shutdown/resource release. The protected example reserves cleanup and
 registers a critical component without supervisor access. `tests/protected_startup.rs`
 checks typed error retention before destructor panic, observer identity, direct
 reservation across await, real request handling and join-before-finalization.
+`tests/typed_startup/handoff.rs` checks consuming handoff ownership: dropping an
+unpolled finish skips initialization and drives registered cleanup; dropping a
+pending finish retains cleanup failures; cancelling a borrowed timeout preserves
+the pinned finish future and its typed output. The handoff rustdocs reject second
+calls on consumed owners. Existing startup, signal and HTTP tests exercise the
+same retained-future cancellation pattern.
+
 `tests/typed_startup.rs` drives `Startup::protected` async closures: typed output
 arrives only with the running or unapproved owner while the observer sees the
 plain handoff; output returned in the poll that observes drain or cancellation
@@ -496,7 +548,7 @@ completes through `service::start`. The facade's
 anyhow, std and Batter errors inside the initializer and to the startup failure
 at an `anyhow::Result` boundary, returning the bound address without adapters,
 and pins anyhow's wrapping of its head error. Rustdoc compile-fail cases reject a
-non-`Send` initializer future, output borrowing the scope, `wait` on typed output
+non-`Send` initializer future, output borrowing the scope, `finish` on typed output
 and typed output through `service::start`.
 `tests/registration.rs` checks sealed reborrowing plus invalid/duplicate ordinary
 and managed rejection without factory invocation. `tests/startup_composition.rs` independently
@@ -709,9 +761,10 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the forty-eight-case [managed-object](#managed-routines-and-triggers)
+migration target, the fifty-two-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
-disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
+disposition target, fourteen-case `low_level::pool_in` pool-ownership target
+and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
 The identity controls compare cross-schema multirange grants with native
 has_type_privilege and retain exact alias policies. The notice control runs all
@@ -2011,6 +2064,7 @@ excludes archived reviews under `.agent/reviews`.
 | Assembled boundary served over a generic listener | [tls_serving.rs](../crates/batter-axum/tests/tls_serving.rs): real rustls with a generated certificate; acknowledgement before readiness, probe outside admission, transport peer against a client-owned oracle, drain waiting for a response still streaming, a pending handshake destroyed at drain, and rejected/abandoned listener release. |
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
 | Outbound refusals before any connection: origin schemes, credentials, paths, queries, fragments, port zero, non-loopback addresses and hosts `http::Uri` rejects; limit bounds; every reserved header; a second body; a JSON failure; the first draft problem reported; `CONNECT`; empty, `.` and `..` segments and segments whose part before a `;` is empty, `.` or `..`, with look-alikes accepted; tab, line feed and carriage return in a segment; URLs `http::Uri` rejects | [preparation.rs](../crates/batter-outbound-http/tests/preparation.rs) |
+| Public HTTPS destinations: special-use literal rejection including AS112/AMT; exact range endpoints and adjacent public addresses; mixed answers dial only allowed candidates; wholly disallowed answers never invoke the dialer; cloned/prepared requests reject real localhost resolution while ordinary HTTPS still connects | [public_origins.rs](../crates/batter-outbound-http/tests/public_origins.rs), [public_origin_boundaries.rs](../crates/batter-outbound-http/tests/public_origin_boundaries.rs), and [public dial tests](../crates/batter-outbound-http/src/transport/dial/public_tests.rs) |
 | Outbound send-once and value types: header values passed to `header()` marked sensitive and the body's `Content-Type` not; `PreparedRequest` neither cloneable nor sendable twice; a hand-built `NotStarted` does not compile | `every_caller_header_value_is_marked_sensitive` and the `compile_fail,E0599`/`E0382` doctests in [request.rs](../crates/batter-outbound-http/src/request.rs); the `compile_fail,E0451` doctest in [exchange.rs](../crates/batter-outbound-http/src/exchange.rs) |
 | Outbound outcomes before a head: start refusals with no connection and a 350 ms budget sending exactly one request; a refused TCP connection and a failed TLS handshake as `NotDispatched(Failed)` and a stalled handshake as `NotDispatched(TimedOut)`; `NotStarted` for a deadline during the TLS handshake; in each TLS case one connection whose first read is a TLS handshake record; `Unknown` also for a silent peer within the reserve, closes before and after reading, a reset and malformed or truncated heads | [before_head.rs](../crates/batter-outbound-http/tests/before_head.rs) |
 | Outbound status kept through every body result: complete with sensitive readable headers, empty, `HEAD`, exactly at the limit (declared and chunked), declared or streamed above it without waiting, short or unterminated then closed, stalled under one deadline for head and body, undelimited and ended by a close as `Complete`, gzip-labelled bytes returned undecoded with gzip compiled, and ready heads, empty-body ends and nonempty bodies kept over an expired timer | [body.rs](../crates/batter-outbound-http/tests/body.rs), including `ready_nonempty_body_is_kept_after_the_deadline` |
@@ -3198,7 +3252,7 @@ The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
 an exact 185-case inventory across eight targets: two function-ACL profile
 cases, sixty-four owned atomic/snapshot cases, two migration cases, forty-three
 managed-object cases, eleven PostgreSQL lease/disposition and
-read-only-verification cases, fourteen owned-pool cases, thirteen facade
+read-only-verification cases, fourteen `low_level::pool_in` owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-
 and-protected-verification cases. Its verification controls use committed uniquely named
 fixture objects, exercise an explicitly allowed later migration,
@@ -3208,8 +3262,31 @@ PUBLIC authority, two policies and required unsupported coverage. It does not
 claim SECURITY DEFINER body behavior, durable application history, provisioning,
 or profile-grant equivalence; those remain in the consuming suite.
 
-Three live tests are explicitly ignored during ordinary runs, because database
-provisioning is external. With `DATABASE_URL` configured for a test database:
+Canonical profiled acquisition has separate coverage in
+`crates/batter-runledger/tests/shared_pool.rs`: six offline cases cover one
+registered finalizer after dependent drain, fallback-schema rejection without
+losing cleanup, zero capacity and duplicate reservation, initializer failure,
+startup-owner loss, and inert construction. With `test-support`, its seventh
+case (`shared_pool/live.rs`) provisions PostgreSQL through native Runledger test
+support and proves shared physical session/capacity, close waiting for a worker
+checkout, zero remaining pool size and subsequent `PoolClosed`. It is not
+ignored, so the workspace all-feature matrix executes it with Docker.
+The canonical SQLx live `atomic_live/profiled_pool.rs` case additionally checks
+replacement of arbitrary hooks, session restoration, fast acquisition and atomic
+policy through `pool_in`. The fourteen older `pool_ownership_live` cases retain
+native-hook and unprofiled protocol coverage through the explicit `low_level`
+path; their results are not canonical profile-hook evidence.
+
+```sh
+cargo test -p batter-runledger --all-features --test shared_pool --locked
+# External disposable DATABASE_URL required for this selected SQLx case:
+cargo test -p batter-sqlx --test atomic_live --locked \
+  profiled_pool::owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_policy \
+  -- --ignored --exact
+```
+
+Four lifecycle example live tests are explicitly ignored during ordinary runs,
+because database provisioning is external. With `DATABASE_URL` configured for a test database:
 
 ```sh
 cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked tests::live:: -- --ignored
@@ -3956,6 +4033,14 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
+The native fixture calls Bollard 0.21.1 directly; Testcontainers and
+`astral-tokio-tar` are excluded by the facade feature graph checks. Docker API
+version negotiation, Unix socket discovery, `DOCKER_HOST`, TLS configuration,
+registry credentials and an explicit `DOCKER_DEFAULT_PLATFORM` remain native
+client concerns. TLS and private-registry execution are unverified for this change.
+An isolated HTTP Docker fixture verifies that unset, empty and `0` TLS settings
+still negotiate without TLS; only `1` enables TLS for TCP/HTTP daemon URLs.
+The keep/remove compatibility parser rejects unknown commands before startup.
 Native fixtures let Docker allocate the published TCP port, avoiding a local
 reservation that must be released before Docker's create/pull/start sequence.
 Docker binds IPv4 loopback, matching the fixture URL and avoiding all-interface
@@ -3966,7 +4051,8 @@ unique name and label before creation. A returned start failure triggers an
 awaited, 30-second cleanup through the configured Docker API, verifying that
 label and removing by immutable container ID with anonymous volumes. Cleanup
 failure is reported alongside the original start failure; explicit
-`TESTCONTAINERS_COMMAND=keep` retains the container. The optional CLI reaper is
+`TESTCONTAINERS_COMMAND=keep` retains the container as a compatibility setting.
+The optional CLI reaper is
 still used for successfully started process-owned containers. Startup cleanup
 survives waiter cancellation while the Tokio runtime remains alive; runtime
 death or an unreachable Docker daemon cannot guarantee remote cleanup.
@@ -3979,7 +4065,10 @@ after Docker rejects startup and before cleanup; the test observes the created
 container and anonymous volume, aborts and joins the waiter, then releases the
 gate and independently observes both resources disappear. The runtime remains
 alive throughout. A direct-await mutation of the spawned owner must fail this
-control; cleanup on runtime death remains outside the claim.
+control; cleanup on runtime death remains outside the claim. A second control
+pauses after a successful Docker start, cancels the waiter before handle delivery,
+then requires container and anonymous-volume removal through the runtime-owned
+cleanup task. Local test-owned containers can explicitly await that same removal.
 The existing-host-listener and delayed-startup controls retain PostgreSQL 18
 readiness coverage; the former also inspects the actual published mapping and
 requires IPv4 loopback at the port used by SQLx.
@@ -4200,3 +4289,36 @@ only prune unused packages. `python3 -m unittest discover -s scripts -p
 test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
 failure controls. Both commands are part of the bounded root test matrix. The same
 checker can run from an extracted source ZIP; it does not inspect Git history.
+
+### Service readiness and typed output
+
+`crates/batter-core/tests/service/readiness.rs` exercises resumed output waits,
+first-readiness retention, deadlines across initialization and acknowledgement,
+expired/unpolled starts, observer survival, and rejected-output destructor failure.
+The lifecycle unit test refuses late Ready transitions before polling any timer.
+The existing service suite retains diagnostic ordering and independent failures.
+`crates/batter-otlp/tests/service.rs` drives typed output and readiness with a real
+local collector. The facade HTTP example uses the same protected path, including
+optional explicit OTLP selection. Executed results belong to `batter-m9rp`;
+fresh-agent implementation/modification evaluation remains unexecuted.
+
+Managed-object release fencing (`batter-ofom`) adds four live cases in
+`managed_objects_live/releases.rs`: ordered upgrade/reapply/conflict/rollback,
+a waiting older writer, atomic matching-baseline adoption, and missing/invalid
+release metadata. The existing application-cancellation and callback-integrity
+cases also assert the release column through complete ledger snapshots. Run
+`cargo test -p batter-sqlx --test managed_objects_live --locked -- --ignored --test-threads=1`
+with `BATTER_SQLX_ADMIN_URL` pointing to a disposable PostgreSQL 18 superuser
+endpoint. Provisioning stays outside the crate. The exact live inventory remains
+in `scripts/sqlx_live.py`; normal workspace gates leave these cases ignored.
+
+## Enqueue-intent reconciliation
+
+`cargo test -p runledger-postgres --test intent_reconciliation --test grants
+--locked` uses native PostgreSQL 18 fixtures. It tests restricted grants, own-write
+visibility, rejection rollback, missing definitions, conflicts, exact scope,
+invalid cross-scope links and concurrent promotion/retention. A TCP proxy drops
+an actual COMMIT acknowledgement, then recovery finds the committed identity and
+replaying the original request creates no duplicate. Compile-fail rustdoc checks
+that both removed getters stay unavailable. The external single-facade consumer
+also reads its own intent through the protected owner before queue transition.

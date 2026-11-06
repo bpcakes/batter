@@ -8,7 +8,6 @@ use crate::{
         ComponentStartup, LifecycleCoordinator, ShutdownBudget, ShutdownSignal,
         state::PendingComponentStart,
     },
-    operation::Interruption,
     scoped_dispatch,
 };
 use std::{
@@ -20,6 +19,10 @@ use std::{
 };
 use tokio::sync::watch;
 use tracing::Instrument;
+
+mod initialization;
+
+use initialization::{InitializationExit, Initializing};
 
 #[cfg(test)]
 mod tests;
@@ -82,56 +85,29 @@ async fn drive(
         settlement,
     } = component;
     let mut outcome = publication.borrow().clone();
-    let mut initialized = Some(Guarded::new(initialized));
-    let mut pending_start = Some(pending_start);
     let mut stopping = Guarded::new(stopping);
     let mut settlement = Guarded::new(settlement);
-    let mut settled = false;
-    loop {
+    let initialization = Initializing::new(initialized, pending_start)
+        .run(
+            &context,
+            &signal,
+            &mut stopping,
+            &mut settlement,
+            &mut outcome,
+            &publication,
+        )
+        .await;
+    if matches!(initialization, InitializationExit::Ready) {
         tokio::select! {
             biased;
-            _ = signal.draining() => break,
-            _ = context.cancelled(), if initialized.is_some() => {
-                outcome.initialization = ManagedInitialization::Interrupted(Interruption::Cancelled);
-                break;
-            }
-            _ = tokio::time::sleep_until(context.deadline()), if initialized.is_some() => {
-                outcome.initialization = ManagedInitialization::Interrupted(Interruption::DeadlineExceeded);
-                break;
-            }
+            _ = signal.draining() => {},
             result = &mut stopping => {
                 outcome.unexpected_stop = !signal.is_draining();
                 if let Err(error) = result { outcome.failures.push(error); }
-                break;
             }
             result = &mut settlement => {
                 outcome.unexpected_stop = !signal.is_draining();
                 record_settlement(&mut outcome, result);
-                settled = true;
-                break;
-            }
-            result = async { initialized.as_mut().expect("guarded initialization branch").await }, if initialized.is_some() => {
-                outcome.initialization = match result {
-                    Ok(Ok(())) => ManagedInitialization::Initialized,
-                    Ok(Err(error)) => ManagedInitialization::Failed(error.into()),
-                    Err(error) => ManagedInitialization::Failed(error),
-                };
-                initialized.take().expect("initialization owned").destroy(&mut outcome);
-                // The final poll and destruction can cross the startup boundary.
-                // Preserve a returned failure; acknowledge success only while live.
-                if matches!(outcome.initialization, ManagedInitialization::Initialized)
-                    && let Err(reason) = context.check()
-                {
-                    outcome.initialization = ManagedInitialization::Interrupted(reason);
-                }
-                drop(publication.send_replace(outcome.clone()));
-                if !matches!(outcome.initialization, ManagedInitialization::Initialized) || !outcome.failures.is_empty() {
-                    break;
-                }
-                pending_start
-                    .take()
-                    .expect("managed component acknowledges initialization once")
-                    .acknowledge();
             }
         }
     }
@@ -148,12 +124,10 @@ async fn drive(
         &publication,
     );
     record_initialization_stop(&mut outcome);
-    if let Some(initialized) = initialized.take() {
-        initialized.destroy(&mut outcome);
-    }
+    initialization.destroy_pending(&mut outcome);
     stopping.destroy(&mut outcome);
     drop(publication.send_replace(outcome.clone()));
-    if !settled {
+    if settlement.is_pending() {
         settle_with_clock(
             &mut settlement,
             &mut *stop,
@@ -282,11 +256,24 @@ fn panic_failure(payload: Box<dyn std::any::Any + Send>) -> ManagedFailure {
 // caught and cannot replace a returned failure or drop the native driver.
 struct Guarded<T> {
     future: BoxFuture<T>,
+    observation: Observation,
+}
+
+enum Observation {
+    Pending,
+    Observed,
 }
 
 impl<T> Guarded<T> {
     fn new(future: BoxFuture<T>) -> Self {
-        Self { future }
+        Self {
+            future,
+            observation: Observation::Pending,
+        }
+    }
+
+    fn is_pending(&self) -> bool {
+        matches!(self.observation, Observation::Pending)
     }
 
     fn destroy(self, outcome: &mut ManagedOutcome) {
@@ -300,9 +287,16 @@ impl<T> Future for Guarded<T> {
     type Output = Result<T, ManagedFailure>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match catch_unwind(AssertUnwindSafe(|| self.future.as_mut().poll(cx))) {
+        if !self.is_pending() {
+            return Poll::Pending;
+        }
+        let result = match catch_unwind(AssertUnwindSafe(|| self.future.as_mut().poll(cx))) {
             Ok(poll) => poll.map(Ok),
             Err(payload) => Poll::Ready(Err(panic_failure(payload))),
+        };
+        if result.is_ready() {
+            self.observation = Observation::Observed;
         }
+        result
     }
 }

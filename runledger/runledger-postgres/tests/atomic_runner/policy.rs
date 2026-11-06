@@ -115,8 +115,28 @@ async fn exercise_policy(fast: bool) {
     };
     let work = async |mut scope: runledger_postgres::PgPolicyIntentScope<'_, (), Policy>| {
         check_intent_queries(&mut scope).await?;
-        scope.record_required_job_enqueue_intent(&intent).await?;
+        let accepted = scope.record_required_job_enqueue_intent(&intent).await?;
+        let observed = scope
+            .reconcile_job_enqueue_intent(
+                runledger_postgres::jobs::JobScope::Global,
+                accepted.intent_id(),
+            )
+            .await?;
+        assert!(matches!(
+            observed,
+            runledger_postgres::IntentReconciliation::Retained(_)
+        ));
         let mut queue = scope.queue();
+        let observed = queue
+            .reconcile_job_enqueue_intent(
+                runledger_postgres::jobs::JobScope::Global,
+                accepted.intent_id(),
+            )
+            .await?;
+        assert!(matches!(
+            observed,
+            runledger_postgres::IntentReconciliation::Retained(_)
+        ));
         queue.enqueue_job(&request).await?;
         check_queue_queries(&mut queue).await?;
         Ok(())

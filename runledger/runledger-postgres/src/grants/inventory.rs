@@ -24,8 +24,8 @@ mod tables;
 
 use batter_sqlx::verification::ObjectPrivilege;
 use tables::{
-    CATALOG_SYNC, DIRECT_JOB_EXECUTION, INTENT_PROMOTION, INTENT_SUBMISSION, SCHEDULED_DISPATCH,
-    SCHEMA_SNAPSHOT,
+    CATALOG_SYNC, DIRECT_JOB_EXECUTION, INTENT_PROMOTION, INTENT_RECONCILIATION, INTENT_SUBMISSION,
+    SCHEDULED_DISPATCH, SCHEMA_SNAPSHOT,
 };
 
 /// One independently selectable native Runledger operation group.
@@ -52,6 +52,10 @@ use tables::{
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum RunledgerOperation {
+    /// One snapshot of exact-scope intent, promoted-job and definition metadata
+    /// through the atomic scopes' `reconcile_job_enqueue_intent` methods.
+    /// No payload, checkpoint, diagnostic, row-lock or write privileges.
+    IntentReconciliation,
     /// Protected required-intent recording and its duplicate/conflict
     /// resolution, in global and organization scopes, inside an application
     /// transaction. This reads selected identity, status and request columns and
@@ -158,6 +162,7 @@ pub(super) const fn read_only(relation: &'static str) -> Requirement {
 
 pub(super) const fn requirements(operation: RunledgerOperation) -> &'static [Requirement] {
     match operation {
+        RunledgerOperation::IntentReconciliation => INTENT_RECONCILIATION,
         RunledgerOperation::IntentSubmission => INTENT_SUBMISSION,
         RunledgerOperation::SchemaSnapshot => SCHEMA_SNAPSHOT,
         RunledgerOperation::DirectJobExecution => DIRECT_JOB_EXECUTION,

@@ -7,7 +7,7 @@
 mod tls;
 
 use batter::{
-    operation::{Interruption, OperationContext, OperationError},
+    operation::{Interruption, OperationContext, OperationError, TrackedOperationError},
     settings::SecretString,
 };
 use reqwest::{Request, Response, StatusCode, Url, redirect::Policy};
@@ -152,18 +152,30 @@ impl PreparedDispatch {
             expected,
         } = self;
         let response = match context
-            .run("provider.dispatch", move |_| async move {
+            .run_tracked("provider.dispatch", move |_| async move {
                 execute_bounded(client, request).await
             })
             .await
         {
             Ok(response) => response,
-            Err(OperationError::Failed(ProviderCallError::Send(error))) if error.is_connect() => {
+            Err(TrackedOperationError::NotStarted(_)) => {
+                // The durable dispatch marker preceded this call, but its
+                // factory never ran: this invocation cannot have sent a POST.
                 return Ok(DispatchOutcome::KnownNotDispatched {
                     retry_not_before: Duration::ZERO,
                 });
             }
-            Err(error) => return Err(ProviderCallError::from_operation(error)),
+            Err(TrackedOperationError::Failed(ProviderCallError::Send(error)))
+                if error.is_connect() =>
+            {
+                return Ok(DispatchOutcome::KnownNotDispatched {
+                    retry_not_before: Duration::ZERO,
+                });
+            }
+            Err(TrackedOperationError::Failed(error)) => return Err(error),
+            Err(TrackedOperationError::Interrupted(reason)) => {
+                return Err(ProviderCallError::Interrupted(reason));
+            }
         };
         Ok(classify_dispatch(response, &expected))
     }

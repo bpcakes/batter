@@ -120,8 +120,8 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
                 .with_unix_signals("other-signals"),
             _ => unreachable!(),
         };
-        let mut starting = specification.start();
-        let report = failure(starting.wait().await);
+        let starting = specification.start();
+        let report = failure(starting.finish().await);
         match case {
             "repeated" => assert!(matches!(
                 report.cause,
@@ -158,14 +158,14 @@ async fn repeated_policy_precedes_preexisting_cancellation() {
     let context = owner.into_context();
     let calls = Arc::new(AtomicUsize::new(0));
     let called = calls.clone();
-    let mut starting = Startup::scoped(supervisor(), context, cleanup_budget(), move |_scope| {
+    let starting = Startup::scoped(supervisor(), context, cleanup_budget(), move |_scope| {
         called.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok::<_, RegistrationError>(()) })
     })
     .with_unix_signals("signals")
     .with_unix_signals("signals")
     .start();
-    let report = failure(starting.wait().await);
+    let report = failure(starting.finish().await);
     assert!(matches!(
         report.cause,
         StartupCause::Failed(InitializationError::SignalPolicyAlreadySelected)
@@ -271,7 +271,7 @@ fn run_repeated_cleanup_child() {
         let called = calls.clone();
         let cleanup_started = Arc::new(Mutex::new(None));
         let started = cleanup_started.clone();
-        let mut starting = Startup::scoped(
+        let starting = Startup::scoped(
             supervisor(),
             context(5),
             CleanupBudget::new(
@@ -314,7 +314,7 @@ fn run_repeated_cleanup_child() {
         .with_unix_signals("signals")
         .start();
 
-        let report = failure(starting.wait().await);
+        let report = failure(starting.finish().await);
         assert!(matches!(report.cause, StartupCause::Draining));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(report.cleanup.records.len(), 1);
@@ -336,7 +336,7 @@ fn run_held_child() {
     runtime().block_on(async {
         let process = supervisor();
         let handle = process.handle();
-        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |scope| {
+        let starting = Startup::scoped(process, context(5), cleanup_budget(), |scope| {
             Box::pin(async move {
                 scope.reserve_cleanup("resource")?.register(|| async {
                     println!("held-cleanup");
@@ -349,7 +349,7 @@ fn run_held_child() {
         })
         .with_unix_signals("signals")
         .start();
-        let report = failure(starting.wait().await);
+        let report = failure(starting.finish().await);
         assert!(matches!(report.cause, StartupCause::Draining));
         assert_eq!(handle.status().readiness(), Readiness::Draining);
         assert!(report.cleanup.is_success());
@@ -360,28 +360,29 @@ fn run_held_child() {
 fn run_waiter_child() {
     runtime().block_on(async {
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
-        let mut starting =
-            Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
-                Box::pin(async move {
-                    scope
-                        .reserve_cleanup("resource")?
-                        .register(|| async { Ok(()) });
-                    entered_tx.send(()).unwrap();
-                    std::future::pending::<Result<(), RegistrationError>>().await
-                })
+        let starting = Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
+            Box::pin(async move {
+                scope
+                    .reserve_cleanup("resource")?
+                    .register(|| async { Ok(()) });
+                entered_tx.send(()).unwrap();
+                std::future::pending::<Result<(), RegistrationError>>().await
             })
-            .with_unix_signals("signals")
-            .start();
+        })
+        .with_unix_signals("signals")
+        .start();
         entered_rx.await.unwrap();
+        let finish = starting.finish();
+        tokio::pin!(finish);
         assert!(
-            tokio::time::timeout(Duration::from_millis(1), starting.wait())
+            tokio::time::timeout(Duration::from_millis(1), &mut finish)
                 .await
                 .is_err()
         );
         println!("waiter-cancelled");
         std::io::stdout().flush().unwrap();
         wait_for_parent();
-        let report = failure(starting.wait().await);
+        let report = failure(finish.await);
         assert!(matches!(report.cause, StartupCause::Draining));
         assert!(report.cleanup.is_success());
         println!("waiter-draining");
@@ -410,7 +411,7 @@ fn run_reserved_name_child(managed: ComponentMode) {
             .reserve_cleanup("signals")
             .unwrap()
             .register(|| async { Ok(()) });
-        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), move |scope| {
+        let starting = Startup::scoped(process, context(5), cleanup_budget(), move |scope| {
             Box::pin(async move {
                 if managed {
                     scope.registration().register_managed(
@@ -437,7 +438,7 @@ fn run_reserved_name_child(managed: ComponentMode) {
         })
         .with_unix_signals("signals")
         .start();
-        let report = failure(starting.wait().await);
+        let report = failure(starting.finish().await);
         assert!(matches!(
             report.cause,
             StartupCause::Failed(InitializationError::Application(
@@ -455,29 +456,28 @@ fn run_running_child() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let stopped = events.clone();
         let cleaned = events.clone();
-        let mut starting =
-            Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
-                Box::pin(async move {
-                    scope
-                        .reserve_cleanup("resource")?
-                        .register(move || async move {
-                            cleaned.lock().unwrap().push("cleanup");
-                            Ok(())
-                        });
-                    scope
-                        .registration()
-                        .register("worker", move |shutdown| async move {
-                            let shutdown = shutdown.acknowledge_started();
-                            shutdown.draining().await;
-                            stopped.lock().unwrap().push("worker");
-                            Ok(shutdown.stopped())
-                        })?;
-                    Ok::<_, RegistrationError>(())
-                })
+        let starting = Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
+            Box::pin(async move {
+                scope
+                    .reserve_cleanup("resource")?
+                    .register(move || async move {
+                        cleaned.lock().unwrap().push("cleanup");
+                        Ok(())
+                    });
+                scope
+                    .registration()
+                    .register("worker", move |shutdown| async move {
+                        let shutdown = shutdown.acknowledge_started();
+                        shutdown.draining().await;
+                        stopped.lock().unwrap().push("worker");
+                        Ok(shutdown.stopped())
+                    })?;
+                Ok::<_, RegistrationError>(())
             })
-            .with_unix_signals("signals")
-            .start();
-        let running = starting.wait().await.unwrap();
+        })
+        .with_unix_signals("signals")
+        .start();
+        let running = starting.finish().await.unwrap();
         running.status().wait_ready().await.unwrap();
         println!("running-ready");
         std::io::stdout().flush().unwrap();
@@ -493,7 +493,7 @@ fn run_unapproved_child() {
     runtime().block_on(async {
         let process = supervisor();
         let handle = process.handle();
-        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |scope| {
+        let starting = Startup::scoped(process, context(5), cleanup_budget(), |scope| {
             Box::pin(async move {
                 scope
                     .registration()
@@ -508,7 +508,7 @@ fn run_unapproved_child() {
         .without_readiness_approval()
         .with_unix_signals("signals")
         .start();
-        let running = starting.wait().await.unwrap();
+        let running = starting.finish().await.unwrap();
         assert_eq!(handle.status().readiness(), Readiness::Starting);
         println!("unapproved-running");
         std::io::stdout().flush().unwrap();

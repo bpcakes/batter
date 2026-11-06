@@ -167,9 +167,8 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
     at_rest = "at-rest" in chosen
     # The Batter Axum adapter. Native runlimit-axum deliberately does not select it.
     axum = "axum" in chosen or "runlimit-axum" in chosen
-    # The Axum crate itself. The native transport layer needs it, and Runledger's
-    # test support drags testcontainers' Docker client HTTP stack in with it.
-    axum_crate = axum or bool(chosen & {"runlimit-native-axum", "runledger-test-support"})
+    # The Axum crate itself. Only the native transport layer also needs it.
+    axum_crate = axum or "runlimit-native-axum" in chosen
     runledger = bool(chosen & {"runledger", "runledger-test-support"})
     sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runlimit-postgres"}) or runledger
     batter_sqlx = sqlx
@@ -198,7 +197,9 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "runledger-postgres": runledger,
         "runledger-runtime": runledger,
         "runledger-test-support": "runledger-test-support" in chosen,
-        "testcontainers": "runledger-test-support" in chosen,
+        "bollard": "runledger-test-support" in chosen,
+        "testcontainers": False,
+        "astral-tokio-tar": False,
         "runlimit-core": runlimit,
         "runlimit-memory": "runlimit-memory" in chosen,
         "runlimit-postgres": "runlimit-postgres" in chosen,

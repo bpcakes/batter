@@ -42,7 +42,7 @@ pub async fn connect() -> Result<batter_runledger::RunledgerDatabase> {
         Duration::ZERO,
         Duration::ZERO,
     )?;
-    let database = batter_runledger::RunledgerDatabase::connect_lazy(
+    let database = postgres::low_level::connect_database_lazy(
         options,
         profile,
         PgPoolOptions::new().max_connections(8),
@@ -145,14 +145,14 @@ where
         .prepare()?;
     let cleanup = CleanupBudget::new(SECOND, SECOND, SECOND)?;
     let process = Supervisor::new(ShutdownBudget::new(SECOND, SECOND, SECOND, cleanup)?);
-    let mut starting = Startup::scoped(process, context(), cleanup, move |scope| {
+    let starting = Startup::scoped(process, context(), cleanup, move |scope| {
         Box::pin(async move {
             batter_runledger::register_in(scope, "flags.worker", context(), prepared)?;
             Ok::<_, batter_core::RegistrationError>(())
         })
     })
     .start();
-    let running = starting.wait().await?;
+    let running = starting.finish().await?;
     let status = running.status();
     let ready = timeout(Duration::from_secs(10), status.wait_ready()).await;
     let body = tokio::spawn(async move {

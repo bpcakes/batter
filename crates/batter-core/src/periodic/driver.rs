@@ -23,8 +23,8 @@ use tokio::time::{Instant, sleep_until};
 #[cfg(test)]
 mod tests;
 
-/// Ownership makes acknowledgement and abandonment mutually exclusive.
-enum Stage {
+/// The one capability owned by the loop, with an allowance only before startup.
+enum ComponentState {
     Initializing {
         startup: ComponentStartup,
         deadline: Instant,
@@ -32,7 +32,17 @@ enum Stage {
     Running(RunningComponent),
 }
 
-impl Stage {
+impl ComponentState {
+    fn running(
+        startup: ComponentStartup,
+        history: &History,
+        obligation: &SupportObligation,
+    ) -> Self {
+        history.acknowledged();
+        obligation.assume();
+        Self::Running(startup.acknowledge_started())
+    }
+
     fn phase(&self) -> StartupPhase {
         match self {
             Self::Initializing { .. } => StartupPhase::Initializing,
@@ -40,17 +50,17 @@ impl Stage {
         }
     }
 
-    fn deadline(&self) -> Option<Instant> {
+    fn initialization_deadline(&self) -> Option<Instant> {
         match self {
             Self::Initializing { deadline, .. } => Some(*deadline),
             Self::Running(_) => None,
         }
     }
 
-    fn acknowledge(self) -> Self {
+    fn acknowledge(self, history: &History, obligation: &SupportObligation) -> Self {
         match self {
-            Self::Initializing { startup, .. } => Self::Running(startup.acknowledge_started()),
-            Self::Running(_) => self,
+            Self::Initializing { startup, .. } => Self::running(startup, history, obligation),
+            Self::Running(running) => Self::Running(running),
         }
     }
 }
@@ -122,25 +132,23 @@ where
     // The allowance is measured from this first live execution onward and
     // covers failed runs and the interval waits between them. Registration
     // already rejected an unrepresentable allowance.
-    let mut stage = match policy.startup().initialization_allowance() {
-        Some(allowance) => Stage::Initializing {
+    let mut component = match policy.startup().initialization_allowance() {
+        Some(allowance) => ComponentState::Initializing {
             startup,
             deadline: Instant::now()
                 .checked_add(allowance)
                 .unwrap_or_else(Instant::now),
         },
-        None => {
-            history.acknowledged();
-            obligation.assume();
-            Stage::Running(startup.acknowledge_started())
-        }
+        // Immediate acknowledgement states that the loop is initialized, not
+        // that any maintenance has succeeded.
+        None => ComponentState::running(startup, &history, &obligation),
     };
     let mut ticker = Schedule::new(policy.interval(), scheduling);
     let mut invocation = 0u64;
     let ending = loop {
-        let phase = stage.phase();
+        let phase = component.phase();
         let initializing = phase == StartupPhase::Initializing;
-        let grant = match next_due(&mut ticker, &admission, &stage).await {
+        let grant = match next_due(&mut ticker, &admission, &component).await {
             Due::Run(grant) => grant,
             Due::Abandon => break Ending::Abandoned,
             Due::Expired => break Ending::InitializationExpired,
@@ -159,7 +167,11 @@ where
         };
         invocation = invocation.saturating_add(1);
         history.admitted();
-        let deadline = run_deadline(policy.run_budget(), grant.forced_at, stage.deadline());
+        let deadline = run_deadline(
+            policy.run_budget(),
+            grant.forced_at,
+            component.initialization_deadline(),
+        );
         // `execute` destroys its owned work future before returning, so no
         // application code is live while the evidence below is published.
         let retention = Retention {
@@ -168,7 +180,7 @@ where
         };
         match execute(name, &mut work, deadline, &admission, phase, retention).await {
             Run::Succeeded => {
-                if let Stage::Initializing { deadline, .. } = &stage {
+                if let ComponentState::Initializing { deadline, .. } = &component {
                     // The run boundary is cooperative: it neither rereads its
                     // clock nor rechecks drain after the work's own poll
                     // returns, so a blocking poll or destructor can cross
@@ -187,9 +199,7 @@ where
                     // A qualifying success acknowledges exactly once. Later
                     // run failures never revoke it, and it establishes no
                     // continuing lease, renewal or dependency health.
-                    history.acknowledged();
-                    obligation.assume();
-                    stage = stage.acknowledge();
+                    component = component.acknowledge(&history, &obligation);
                 }
             }
             // Already retained while its run future was alive.
@@ -209,7 +219,7 @@ where
     // The factory and its application captures are destroyed when this future
     // returns, so the ending's concrete cause is retained before that.
     drop(ticker);
-    finish(name, &history, invocation, ending, stage)
+    finish(name, &history, invocation, ending, component)
 }
 
 /// Await one run without consuming its future, retaining everything that run
@@ -291,7 +301,7 @@ fn finish(
     history: &History,
     invocation: u64,
     ending: Ending,
-    stage: Stage,
+    component: ComponentState,
 ) -> Result<ComponentExit, BoxError> {
     match ending {
         Ending::InitializationExpired => {
@@ -306,12 +316,12 @@ fn finish(
             history.finished(PeriodicCompletion::Fatal);
             Err(Box::new(SharedTerminal(error)) as BoxError)
         }
-        Ending::Abandoned | Ending::Stopped => match stage {
-            Stage::Running(running) => {
+        Ending::Abandoned | Ending::Stopped => match component {
+            ComponentState::Running(running) => {
                 history.finished(PeriodicCompletion::Stopped);
                 Ok(running.stopped())
             }
-            Stage::Initializing { startup, .. } => {
+            ComponentState::Initializing { startup, .. } => {
                 history.finished(PeriodicCompletion::AbandonedDuringStartup);
                 Ok(startup.abandon())
             }
@@ -319,11 +329,15 @@ fn finish(
     }
 }
 
-async fn next_due(ticker: &mut Schedule, admission: &PeriodicAdmission, stage: &Stage) -> Due {
-    let phase = stage.phase();
+async fn next_due(
+    ticker: &mut Schedule,
+    admission: &PeriodicAdmission,
+    component: &ComponentState,
+) -> Due {
+    let phase = component.phase();
     let initializing = phase == StartupPhase::Initializing;
     let expiry = async {
-        match stage.deadline() {
+        match component.initialization_deadline() {
             Some(deadline) => sleep_until(deadline).await,
             None => std::future::pending().await,
         }

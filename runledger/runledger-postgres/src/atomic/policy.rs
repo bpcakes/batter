@@ -90,6 +90,22 @@ pub struct PgPolicyIntentScope<'a, T, P: PgFailurePolicy<T>> {
 }
 
 impl<'a, T, P: PgFailurePolicy<T>> PgPolicyIntentScope<'a, T, P> {
+    /// Read one snapshot of intent/job/definition metadata without payload access.
+    /// See [`super::PgIntentScope::reconcile_job_enqueue_intent`] for migration,
+    /// visibility and uncertainty semantics. Failure follows the selected policy.
+    pub async fn reconcile_job_enqueue_intent(
+        &mut self,
+        scope: crate::jobs::JobScope,
+        intent_id: sqlx::types::Uuid,
+    ) -> Result<super::IntentReconciliation, P::Error>
+    where
+        P::Error: From<Error>,
+    {
+        self.inner
+            .sql(async |sql| Ok(super::reconciliation::read(sql, scope, intent_id).await?))
+            .await
+    }
+
     /// Run application SQL with the runner-selected behavior and fixed error type.
     /// Arbitrary SQL must not bypass the named operations' lock ordering.
     pub async fn sql<U>(
@@ -214,6 +230,22 @@ pub struct PgPolicyQueueScope<'a, T, P: PgFailurePolicy<T>> {
 }
 
 impl<T, P: PgFailurePolicy<T>> PgPolicyQueueScope<'_, T, P> {
+    /// Read one snapshot of intent/job/definition metadata without payload access.
+    /// See [`super::PgIntentScope::reconcile_job_enqueue_intent`] for migration,
+    /// visibility and uncertainty semantics. Failure follows the selected policy.
+    pub async fn reconcile_job_enqueue_intent(
+        &mut self,
+        scope: crate::jobs::JobScope,
+        intent_id: sqlx::types::Uuid,
+    ) -> Result<super::IntentReconciliation, P::Error>
+    where
+        P::Error: From<Error>,
+    {
+        self.inner
+            .sql(async |sql| Ok(super::reconciliation::read(sql, scope, intent_id).await?))
+            .await
+    }
+
     /// Run application SQL with the runner-selected behavior and fixed error type.
     pub async fn sql<U>(
         &mut self,

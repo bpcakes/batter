@@ -103,7 +103,7 @@ async fn protected_startup_owns_native_local_initialization_and_settlement() {
         .disable_reaper()
         .prepare()
         .unwrap();
-    let mut starting = batter_core::startup::Startup::scoped(
+    let starting = batter_core::startup::Startup::scoped(
         process(),
         context(),
         CleanupBudget::new(
@@ -120,7 +120,7 @@ async fn protected_startup_owns_native_local_initialization_and_settlement() {
         },
     )
     .start();
-    let running = starting.wait().await.unwrap();
+    let running = starting.finish().await.unwrap();
     running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success(), "{report}");
@@ -184,7 +184,7 @@ async fn native_validation_failure_keeps_original_error_and_runs_dependency_clea
         .unwrap();
     let building = pool.clone();
     let second = Duration::from_secs(1);
-    let mut starting = batter_core::startup::Startup::new(
+    let starting = batter_core::startup::Startup::new(
         process,
         context(),
         CleanupBudget::new(second, second, second).unwrap(),
@@ -198,7 +198,7 @@ async fn native_validation_failure_keeps_original_error_and_runs_dependency_clea
         },
     )
     .start();
-    let error = match starting.wait().await {
+    let error = match starting.finish().await {
         Ok(running) => {
             assert!(running.shutdown().await.unwrap().is_success());
             panic!("invalid native configuration accepted")

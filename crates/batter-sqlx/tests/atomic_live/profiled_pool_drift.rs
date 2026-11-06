@@ -76,7 +76,7 @@ async fn idle_revocation(revocation: Revocation) -> Result {
     if parameter {
         profile = profile.with_setting("auto_explain.log_analyze", "on")?;
     }
-    let database = PgProfiledPool::connect_lazy(
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         options
             .username(&login)
             .password("profile-regression-password"),

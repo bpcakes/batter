@@ -48,9 +48,10 @@ impl RestrictedOwner {
             Duration::ZERO,
         )
         .expect("restricted profile");
-        let database = RunledgerDatabase::connect((*options).clone(), profile, 2)
-            .await
-            .expect("restricted database");
+        let database =
+            runledger_postgres::low_level::connect_database((*options).clone(), profile, 2)
+                .await
+                .expect("restricted database");
         Self {
             harness,
             database,

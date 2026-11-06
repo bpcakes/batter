@@ -495,8 +495,13 @@ async fn invocation_exit_reaches_provider_admission_and_calls() -> Result<(), ba
     let refused = dispatch
         .execute(phases.work(), held)
         .await
-        .expect_err("cancelled provider work");
-    assert_eq!(refused.code(), "delivery.provider_cancelled");
+        .expect("uninvoked dispatch is known not dispatched");
+    assert_eq!(
+        refused,
+        DispatchOutcome::KnownNotDispatched {
+            retry_not_before: Duration::ZERO,
+        }
+    );
     assert!(
         independent.context().check().is_ok(),
         "only linked work stops"

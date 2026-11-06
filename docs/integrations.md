@@ -481,14 +481,21 @@ then independently observe every retired backend disappear.
 remains `OperationError::Interrupted`, separate from native pool timeout or commit
 errors. Trusted source-chain inspection and SQLx's own logging can expose native
 contents. This adapter adds no database provisioning or retry policy.
-`register_pool_close` retains caller ownership on
+`low_level::register_pool_close` retains caller ownership on
 registration failure; the caller must explicitly close that pool.
 
 For a pool created inside a Batter owner, reserve its cleanup name first and call
-`pool_in(slot, PgPoolOptions, PgConnectOptions)`. The synchronous return means the
-awaited close hook has already been published; it does not mean the database was
-contacted. Perform a bounded query or `probe` before readiness. SQLx can begin
-minimum-connection maintenance during lazy construction, and pool close waits for
+`pool_in(slot, PgPoolOptions, PgConnectOptions, profile)?`. The synchronous return
+means the awaited close hook has already been published; it does not mean the database was
+contacted. Perform a bounded query or `probe` before readiness.
+The returned `PgProfiledPool` shares its immutable policy and physical pool with
+`RunledgerDatabase::from_profiled(pool.clone())?`, which rejects fallback schemas
+and registers no second finalizer. Construct it inside the protected initializer;
+return the database as typed startup output when the running caller needs it.
+Different roles still require different pools. Standalone native owners explicitly
+use `low_level` constructors and retain their cleanup obligations.
+
+SQLx can begin minimum-connection maintenance during lazy construction, and pool close waits for
 accounted checkouts, so join dependent work and release leases before cleanup.
 The adapter-owned `owned_pool` example demonstrates this finite `Command` path;
 its root calls `start_with_unix_signals()?`, so SIGINT or SIGTERM cancels the
@@ -499,14 +506,15 @@ The [service example](../examples/postgres-lifecycle/src/main.rs), packaged as
 .with_unix_signals("signals")`, which installs listeners before the owner is
 returned and removes any initializer reception/handoff obligation. Its
 initializer parses `DATABASE_URL` into native `PgConnectOptions`, reserves
-`postgres.pool`, calls `pool_in` with native PgPoolOptions, and then runs the
-bounded `probe` under a child of the root startup context; construction alone is
+`postgres.pool`, calls `pool_in` with native PgPoolOptions and an explicit profile,
+and then runs the bounded `probe` under a child of the root startup context; construction alone is
 not connectivity. The reference root shares the `pool_in` ownership path but
 establishes connectivity by directly acquiring a connection and then initializing
 its schema under the overall startup context. The finite retirement command passes
-its `CommandScope` slot and native `after_connect` guard to `pool_in` unchanged.
-`register_pool_close` and
-`register_signals` remain lower-level compatibility helpers. Pool sizing,
+its `CommandScope` slot and native `after_connect` guard to `low_level::pool_in`
+unchanged.
+`low_level::register_pool_close` and
+`register_signals` remain lower-level helpers. Pool sizing,
 probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain after `wait_checked().await?`. No database abstraction or generic
@@ -706,9 +714,14 @@ long transaction stalls the table's other readers and writers; Batter sets no
 `lock_timeout`. Declare and retire a partitioned table's trigger on the
 partitioned table, not on its partitions' clones, and retire a constraint
 trigger renamed out of band under its new name. An adopted constraint trigger previously created by a migration is
-re-created on the first apply that declares it. Installation is
-last-writer-wins across releases; verification of newer replicas reports an
-older release's apply as a set-digest mismatch. See
+re-created on the first apply that declares it. Every manifest requires a positive
+`ManagedRevision`. Under the ledger lock, apply rejects lower revisions and an
+equal revision with a different digest; verification checks the revision as well
+as content. Existing five-column ledgers require a matching-content baseline
+release before managed content can advance. Baseline adoption adds the sixth
+column that older library builds reject. SQLx migrations precede this check and
+may already have committed; this fence orders managed objects and the protected
+application callback, not arbitrary migrations. See
 [ADR-013](adr/013-managed-database-objects.md), the
 [adapter README](../crates/batter-sqlx/README.md#managed-routines-and-triggers)
 and the [lifecycle example](../examples/postgres-lifecycle/src/schema.rs).
@@ -1167,6 +1180,11 @@ and [primary sources](references.md#reference-metrics-export).
 
 ## Outbound provider exchange: experimental transport evidence
 
+`Origin::public_https` retains a public-address policy on the origin and filters
+DNS candidates before the existing bounded dialer; no preflight/re-resolution
+gap exists. Ordinary `Origin::https` still supports private services. See the
+[public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
+
 The experimental `batter-outbound-http` package (`batter-3s1a`) owns one question
 about an outbound HTTP request: could this attempt have reached the peer?
 [ADR-015](adr/015-outbound-transport-evidence.md) records the decision. It is
@@ -1598,3 +1616,16 @@ The facade optionally selects the integration; SQLx alone never selects Runledge
 adapter derives success and cleanup eligibility from those unforgeable variants,
 not caller-supplied flags. Explicit `CommitUnconfirmed` remains an unknown native
 effect; reference retirement preserves it and never automatically replays it.
+
+## Restricted intent reconciliation
+
+Use `batter::runledger::run_atomic` and the scope's
+`reconcile_job_enqueue_intent(JobScope, intent_id)` for retained intent recovery.
+Both intent and queue phases, including policy scopes, expose this read without
+reopening intent recording. Match `IntentReconciliation` and then
+`IntentCorrelationState`; promoted state carries `CorrelatedJob`, and current
+`CorrelatedDefinition` is optional. Add the native grant selection
+`RunledgerOperation::IntentReconciliation` to the application's exact-role
+manifest. It is metadata-only, but does not authorize a tenant or revoke earlier
+grants. See the [migration](../runledger/CHANGELOG.md) and
+[evidence](evidence/intent-reconciliation-2026-11-05.md).

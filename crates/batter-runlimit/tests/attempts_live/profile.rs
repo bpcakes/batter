@@ -47,9 +47,10 @@ impl ProfileFixture {
             .with_setting("app.tenant", "expected")
             .unwrap()
         };
-        let migration = PgProfiledPool::connect((*options).clone(), profile(login), 2)
-            .await
-            .unwrap();
+        let migration =
+            batter_sqlx::low_level::connect_profiled_pool((*options).clone(), profile(login), 2)
+                .await
+                .unwrap();
         PostgresAttemptLimiter::new(migration.pool().clone())
             .migrate()
             .await
@@ -65,9 +66,10 @@ impl ProfileFixture {
              CREATE TRIGGER observe_admission AFTER INSERT ON runlimit_attempts FOR EACH ROW EXECUTE FUNCTION admission_observation();
              GRANT SELECT, INSERT, UPDATE, DELETE ON runlimit_attempts, events TO {r};"
         ))).execute(migration.pool()).await.unwrap();
-        let database = PgProfiledPool::connect((*options).clone(), profile(&role), 1)
-            .await
-            .unwrap();
+        let database =
+            batter_sqlx::low_level::connect_profiled_pool((*options).clone(), profile(&role), 1)
+                .await
+                .unwrap();
         Self {
             base,
             database,
@@ -117,7 +119,7 @@ async fn fallback_schemas_are_rejected_before_execution() {
         Duration::ZERO,
     )
     .unwrap();
-    let database = PgProfiledPool::connect_lazy(
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
         profile,
         PgPoolOptions::new().min_connections(0),

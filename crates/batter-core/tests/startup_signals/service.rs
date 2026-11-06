@@ -10,7 +10,7 @@ pub(super) fn run_startup_child() {
                 println!("startup-cleanup");
                 Ok(())
             });
-        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |_scope| {
+        let starting = Startup::scoped(process, context(5), cleanup_budget(), |_scope| {
             Box::pin(std::future::pending::<Result<(), RegistrationError>>())
         })
         .with_unix_signals("signals")
@@ -18,7 +18,7 @@ pub(super) fn run_startup_child() {
         println!("start-returned");
         std::io::stdout().flush().unwrap();
         wait_for_parent();
-        let report = failure(starting.wait().await);
+        let report = failure(starting.finish().await);
         assert!(matches!(report.cause, StartupCause::Draining));
         assert!(report.cleanup.is_success());
         println!("startup-draining");

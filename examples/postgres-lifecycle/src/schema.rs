@@ -10,7 +10,10 @@ use batter::{
     operation::OperationContext,
     sqlx::{
         PgLease,
-        managed::{AppliedManagedObjects, ManagedObject, ManagedObjectManifest, PublicExecute},
+        managed::{
+            AppliedManagedObjects, ManagedObject, ManagedObjectManifest, ManagedRevision,
+            PublicExecute,
+        },
         verification::{
             Identifier, MigrationExpectation, QualifiedName, RoutineSignature, SqlxLedgerMode,
             SqlxMigrationManifest, VerificationPlan, VerificationReport, VerificationStatus,
@@ -28,6 +31,7 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 /// deferred constraint trigger that requires a note at commit.
 pub fn managed_objects() -> Result<ManagedObjectManifest, BoxError> {
     Ok(ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
         QualifiedName::new("lifecycle", "managed_objects")?,
         PublicExecute::Revoke,
         [

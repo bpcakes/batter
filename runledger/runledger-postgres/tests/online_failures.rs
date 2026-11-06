@@ -2,8 +2,7 @@ use std::time::Duration;
 
 use runledger_postgres::{
     MigrationTimeoutSetting, OnlineIndexPhase, OnlineIndexProblem, PgSessionProfile,
-    RunledgerDatabase, SchemaCompatibilityError,
-    ensure_schema_compatible_after_idempotency_cutover,
+    SchemaCompatibilityError, ensure_schema_compatible_after_idempotency_cutover,
     prepare_online_indexes_for_external_migrator,
 };
 use sqlx::migrate::Migrate;
@@ -159,7 +158,7 @@ async fn restricted_verifier_recognizes_hidden_build_progress_and_settled_interr
         Duration::ZERO,
     )
     .expect("restricted profile");
-    let verifier = RunledgerDatabase::connect((*options).clone(), profile, 1)
+    let verifier = runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
         .await
         .expect("verifier");
     let holder = hold_writer_lock(&harness.pool).await;
@@ -387,9 +386,10 @@ async fn external_preparation_exposes_the_same_typed_lock_wait_expiry() {
                 Duration::from_millis(250),
             )
             .expect("bounded profile");
-            let database = RunledgerDatabase::connect((*options).clone(), profile, 1)
-                .await
-                .expect("profiled database");
+            let database =
+                runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
+                    .await
+                    .expect("profiled database");
             let result = prepare_online_indexes_for_external_migrator(&database)
                 .await
                 .map(|_| ());

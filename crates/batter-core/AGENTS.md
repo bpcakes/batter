@@ -20,7 +20,10 @@ Windows support and non-Unix fallbacks are out of scope.
   its public path remains `batter::lifecycle::ShutdownReport`.
 - `src/lifecycle/managed.rs` and `managed/` own adapter-facing inert native factories,
   library initialization acknowledgement and independently retained native settlement.
-  Application composition uses the native adapter; descendant accounting stays native.
+  `managed/drive/initialization.rs` couples the initializer and sole readiness
+  acknowledgement; guarded observers retain completed futures for separate destruction
+  without polling them again. Application composition uses the native adapter;
+  descendant accounting stays native.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
 - `src/periodic.rs` and `periodic/` own the one serial schedule, per-run budget,
@@ -30,6 +33,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
   mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
+  `operation/tracked.rs` owns opaque non-invocation evidence and the tracked
+  public entrypoint; all run variants share the boundary in `operation.rs`.
+  Keep the invocation marker immediately before the factory call, and preserve
+  cancellation/deadline precedence for both tracked and legacy callers.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
@@ -40,7 +47,12 @@ Windows support and non-Unix fallbacks are out of scope.
   and the exhaustive observation-to-dependency-readiness projection.
 - `src/readiness.rs` owns sampling order and the pure lifecycle, dependency and
   application-condition decision; adapters translate its valid result.
+- `src/operation/phased.rs` and `phased/` own inert work/finalization assembly,
+  typed success/failure proofs and work-only owner cancellation. Reuse command phase
+  polling; finalization inherits the parent and original total deadline.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
+  `cleanup/acquisition.rs` owns native semaphore/UDP acquisition through registration
+  and native-future destruction. `cleanup/low_level.rs` owns caller-assembled pairs.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
   `startup/initializer.rs` owns the sealed `Initializer` bound that boxes async-closure
   futures; `startup/application.rs` owns `ApplicationError`, which must never implement
@@ -52,7 +64,7 @@ Windows support and non-Unix fallbacks are out of scope.
   `command/signals.rs` owns the private `WorkSignals` seam and SIGTERM/SIGINT
   listeners; `command/driver.rs` owns both coordinators; injected-source unit
   tests live in `command/tests.rs` and `command/tests/`.
-- `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
+- `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. `service/readiness.rs` owns single-use typed output and readiness observation; `lifecycle/state/readiness.rs` keeps the deadline gate under the existing lifecycle lock. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
 - `src/completion.rs` privately owns the snapshot-before-wait mechanism shared by
   command, startup and process completion observers; their public policies stay separate.
 - `tests/component_ownership.rs` compares acknowledged initialization and joined
@@ -72,6 +84,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation and the
   `ScopedOutput` guard that destroys unclaimed task output under its producer.
+  Its private `SharedOutput` keeps that protection through publication storage;
+  only completed phase observation claims the result.
 
 ## Edit here for X
 
@@ -109,7 +123,9 @@ or failure reports; output rejected after a successful return is destroyed befor
 Finite command scopes expose validated cleanup reservations, never a takeable
 stack or process-task admission. Command cancellation is downward and cleanup
 does not inherit it; callback return/unwinding cannot bypass registered cleanup.
-Reserve cleanup names before acquisition and register immediately after success.
+Reserve cleanup names before supported native/adapter acquisition; the library
+owns registration before release. Manual registration and generic pair factories
+are lower-level boundaries, never equivalent protected acquisition.
 Command signal listeners exist only while work can be cancelled: install them
 synchronously before the owned start returns, poll them only in the coordinator,
 and drop them after work-future destruction and before cleanup. Owned completion

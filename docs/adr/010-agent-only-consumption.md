@@ -83,6 +83,51 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### Tracked operation invocation assessment (`batter-2hqe`)
+
+Consumers reconstructed a start marker because `run` projects both refusal and
+post-invocation interruption into one error. `run_tracked` records invocation
+inside the same library-owned boundary and returns exhaustive failure variants.
+`NotStarted` has a private constructor and no conversion from an interruption;
+only a boundary that did not invoke its factory creates that evidence. Callers
+need no paired marker update. The result is a historical observation for this
+call, not authority to replay or a witness tied to arbitrary later work. Copying
+an existing witness does not establish anything about another invocation.
+Started does not prove remote effects; earlier work and capture destructors are
+outside the non-invocation guarantee. Applications retain remote reconciliation
+and retry policy. No blanket `From` conversion silently discards the distinction.
+
+`child_until` constructs only parent-clamped children and returns the existing
+non-cloneable cancellation owner. Past instants create expired children, avoiding
+consumer deadline-to-duration reconstruction or accidental independent roots.
+The existing `run` remains supported for applications that need no invocation
+certainty, preserving its precedence and error shape. Shared execution and
+regression tests prevent the two paths from drifting. Tests include refusal,
+started interruption, same-poll precedence, panic/drop and scoped destruction;
+the reference provider adopts tracked dispatch without changing its remote
+protocol. Fresh-agent evaluation is not executed by these tests.
+
+### Startup handoff assessment (`batter-r4ir`)
+
+The F08 inventory found that `StartingSupervisor::wait(&mut self)` and
+`wait_with_output(&mut self)` permit a second completed handoff call, which
+panics. This is local library-owned single-use authority, not application policy
+or a remote-effect ambiguity. `finish(self)` and `finish_with_output(self)` now
+consume that authority into one native future. Rust rejects another handoff call
+on the moved owner; unit output alone exposes the unit convenience method.
+No borrowed compatibility shim remains because it would preserve the defect.
+
+Cancellation and resumption use a borrow of the same pinned future. Dropping the
+future, including before first poll, requests drain just as dropping the original
+owner does. The existing coordinator still owns initialization and cleanup;
+observers still cannot prolong running ownership or receive typed output. No new
+task, channel, state enum, or allocation is added. Polling an already completed
+future remains the standard Rust `Future` caller obligation, not a second Batter
+handoff operation. Regression scenarios cover pending-borrow cancellation,
+unpolled and pending owner abandonment, queued output destruction, and retained
+cleanup failures; compile-fail examples cover repeated handoffs and skipped typed
+output. Fresh-agent usability evaluation remains unexecuted.
+
 ### Native online-index repair assessment (`batter-fnj8.10`)
 
 Catalog identity checks alone did not protect a later name-based DROP: a real
@@ -1200,9 +1245,11 @@ expressible (compile-fail rustdocs), and the one `ManagedObjectManifest` value
 drives both apply and `VerificationPlan::with_managed_objects`. The `PUBLIC`
 policy is a required exhaustive argument, retirements are explicit, and every
 executed statement must write exactly its declared identity. The per-item
-review, the recorded deviation and the remaining obligations (last-writer-wins
-releases, migration-only return-type changes, two-release trigger rebinding and
-ownership transfer) are in [ADR-013](013-managed-database-objects.md).
+review and the obligations at that time (unordered releases, migration-only
+return-type changes, two-release trigger rebinding and ownership transfer) are
+in [ADR-013](013-managed-database-objects.md). Its 2026-11-05 release-ordering
+amendment (`batter-ofom`) now enforces revisions and matching legacy adoption;
+application release numbering and administrative SQL remain outside that proof.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
 2026-10-16 (`batter-n2s1`): constraint triggers had stayed in migrations,
@@ -1910,6 +1957,21 @@ of every binary and mode, no hook chains to the default hook, no log formats
 `PanicHookInfo` or the payload, no wrapper code can panic inside the hook, and
 no test or shared helper installs it.
 
+### Public-origin invalid-state review (`batter-321j`)
+
+The new constructor stores an immutable policy in the opaque origin; cloning
+or preparing requests cannot drop it. The dialer filters the exact addresses
+it receives before any TCP attempt, including every fallback candidate. There
+is no resolver override or public setter that can remove the policy. A caller
+can deliberately construct an ordinary `Origin::https` for private services;
+choosing which hostnames and service classes are authorized remains application
+policy. Address classification cannot establish OS routing or remote trust.
+The public policy also rejects the globally reachable AS112 and AMT
+special-purpose blocks. One shared classifier enforces the literal and resolved
+address rules; endpoint/neighbor tests cover its range boundaries, and dialer
+tests reject these blocks before any connection attempt. This corrects the
+classification data without adding a caller obligation or a new API state.
+
 ### Outbound exchange assessment (`batter-3s1a`)
 
 Amended 2026-11-04, `batter-u387`. The original extraction removed repeated
@@ -2002,6 +2064,99 @@ unexecuted: implement or migrate a provider mutation using a durable fence,
 keep it for Unknown/unusable replies, and record only labels. Clean reviews or
 test count alone do not establish agent usability.
 
+### Owned phase and acquisition handoff assessment (`batter-jxj2`)
+
+The initial implementation (`batter-jxj2`) owned phase execution and generic
+pair-to-registration handoff. The direct panel follow-up `batter-17fe` added
+Runledger guidance and dispatch regressions. The branch review then exposed
+stale primary examples and missing zero-reserve execution coverage. Root-cause
+assessment `batter-4qvs` found two deeper locally expressible gaps; `batter-rtxb`
+implements the complete bounded correction below.
+
+**Phase outcomes.** The coordinator already owned sequencing: work destruction
+precedes finalization, whose callback receives retained work evidence. It reuses
+command polling and existing publication ownership rather than a second runtime.
+Owner loss cancels work only; parent cancellation stops both, and cancelled
+borrowed waiters own no execution. Typed finalization cannot be a command cleanup
+hook because it needs typed work evidence, a typed return, and the original total
+and parent lineage, while command cleanup has an independent cancellation budget.
+
+The former checked wait returned the same general report type on success and
+failure. Consumers could relabel successful evidence as `PhasedFailure::Report`
+and the raw phase result could appear successful despite late interruption.
+Now `PhaseOutcome` privately stores accepted success or opaque `PhaseFailure`;
+`classify` checks the complete contract, while failed evidence explicitly exposes
+`returned_result`, late interruption and destruction. Checked wait returns
+`PhasedSuccess<T,U>` holding both accepted values, or `FailedPhasedReport` holding
+both phase outcomes. Constructors are private. No mutable access, general-report
+conversion to failure, or repeated consumer success check is needed.
+
+**Publication ownership (`batter-w8fr`).** The subsequent panel reproduced a
+library ownership gap: the publisher claimed `ScopedOutput` before storing the
+checked result in watch. A receiver outliving the publisher could destroy unread
+evidence under an unrelated subscriber. Execution wrappers could not protect
+that later destruction. Publication now requires a private `SharedOutput` built
+from guarded output, with no raw accessor. Sharing observers only shares this
+guard; completed `wait` synchronously claims the checked result. Its internal
+one-way atomic observation state supports concurrent observers without requiring
+domain Clone or adding a paired consumer operation. Static ownership protects
+the handoff; actual observation remains a runtime event. Tests synchronize on
+publisher closure, then abandon success/error evidence, and verify both orders
+of caller-owned destruction after observation. Public signatures are unchanged.
+
+The two accompanying lifecycle gaps were evidence/documentation gaps: successful
+work already cancelled its context before finalization, and handler destruction
+already preceded native invocation exit. Controlled tests now exercise both.
+Changing native ordering or treating cancellation as remote write authority would
+change the wrong owner; application/native fencing remains outside this proof.
+
+**Acquisition ownership.** A factory yielding `Acquired` cannot prove when its
+inner native resource was acquired. Cancellation after native success but before
+pair construction, and a nested native future's destruction panic, both left no
+registered finalizer in executed assessment probes. Calling these only partial
+acquisitions describes the limitation; it does not remove the agent's obligation.
+
+`CleanupSlot::acquire_semaphore` and `bind_udp` now take native configuration, not
+application callbacks. The private kernel polls the actual native future,
+retains its raw output, registers a fixed library cleanup action, destroys the
+completed future, then returns. The resource local lives outside that destruction
+scope: a native destructor panic unwinds the undelivered reference while cleanup
+retains its own. A regression caught and removed the alternative return-expression
+ordering that leaked the undelivered Arc. No caller finalizer-builder or projection
+runs in the handoff. Semaphore permits never escape cleanup; UDP returns shared
+native ownership and explicitly requires all other references to be dropped for
+socket closure. SQLx `pool_in` remains the corresponding adapter-owned operation.
+This is a bounded supported-resource set, not a generic resource registry or DSL.
+
+Generic pair-producing factories moved to `cleanup::low_level::acquire_pair`,
+with `Acquired` in the same namespace. They still own all native acquisition-to-pair
+obligations and are not the canonical path. Manual `register` remains for explicit
+application hooks and supported adapters; arbitrary remote correctness and
+resource/finalizer correspondence cannot be established by local types. No public
+user-implementable trait disguises those obligations as a proof.
+
+**Native clocks and compatibility.** Existing phase pairs transfer without
+recomputing clocks. Zero reserve remains an explicit supported policy: after the
+shared deadline both outcomes are interrupted and the finalization factory does
+not run. Runtime checks own clock passage, not typestate. Paused-time tests cover
+this execution and conversion of Runledger invocation pairs, including native exit.
+
+Public hard cuts and before/after migrations are in CHANGELOG. No deprecated
+same-shape shim restores general success/failure report interchange or generic
+acquisition on the protected slot path. Root aliases for generic pairs would
+blur the explicitly lower-level boundary and are omitted. Primary command/startup
+examples and guides now use supported acquisition; the finite-command example
+keeps its application reporting failure hook separate from native socket release.
+
+Tests cover failures, raw returned values after interruption, native-future
+unwinding, pending acquisition cancellation, LIFO cleanup, type-level forgery
+rejection, zero-reserve execution and tracing through both spawned paths. These
+are executable failure scenarios, not fresh-agent usability measurements; that
+separate methodology remains unexecuted. Runtime death, non-yielding tasks,
+detached children and remote effects retain their explicit existing boundaries.
+The outbound example retains its distinct ready-response precedence, rather than
+wrapping its exchange evidence in the cancellation-first generic runner.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
@@ -2055,6 +2210,60 @@ direction, and the existing honest limits: no asynchronous `Drop`, runtime-death
 survival, or detached-task termination guarantee. It does not make unimplemented
 adapters available, redesign APIs, or turn every application root into a
 foundation protocol.
+
+### Protected service readiness and typed output (`batter-m9rp`)
+
+Evidence: `service::start` accepted only unit output and its owner exposed only
+completion and shutdown. Consumer feedback in `batter-m9rp` records application
+channels, readiness timers and shutdown coordination required to adopt OTLP.
+
+`service::start_with_readiness` owns this protocol. One optional absolute
+readiness deadline is installed before initialization. The existing lifecycle
+transition mutex owns first-readiness history and gates Ready at the deadline;
+a service-owned timer requests drain. A late acknowledgement cannot briefly
+publish Ready before the timer is polled. Readiness already reached is retained
+through later shutdown, while current lifecycle status stays separately visible.
+
+`StartingService::into_ready` consumes the sole output capability and yields
+`(ServiceOwner, T)` only after readiness. It cannot be called twice on the same
+owner. Observers cannot obtain output, approve readiness or request shutdown.
+They may cancel and repeat their waits without altering the deadline or owner.
+A failed handoff awaits full completion and retains startup/shutdown, diagnostics
+and any coordinator-side rejected-output destruction panic independently. Output
+queued after readiness remains under its producer dispatch until claimed; no
+Clone bound is imposed on application data. The existing unit-output `start`
+remains valid without a deadline, so no hard cut or deprecation shim is needed.
+
+The invalid-state review checked late acknowledgement before timer polling,
+waiter cancellation, owner loss before first poll, missing readiness, retained
+cleanup/diagnostic failures, and unread versus claimed output destruction. The
+HTTP example and real-collector OTLP test use the protected path. Independent
+consumer-agent implementation/modification evaluation remains unexecuted.
+
+Readiness is historical evidence, not a promise of continuing availability.
+The deadline does not bound shutdown/diagnostics or preempt non-yielding work.
+Application approval policy, remote effects and runtime survival remain outside
+this local protocol. A typed output transferred to the caller has normal Rust
+ownership; holding it cannot be claimed to prove resource cleanup or quiescence.
+
+## Intent reconciliation assessment (batter-hw3k)
+
+D03's caller-assembled intent/job/definition correlation now belongs to native
+Runledger's atomic scope. One query eliminates inter-query promotion/retention
+races; private evidence fields and a job-carrying promoted variant prevent
+fabricated or incomplete successful correlations. Exact `JobScope` excludes an
+accidental administrative wildcard. Both old single-intent pool readers are
+removed without shims because their full-row, owner-free shape restores the gap.
+Queue reads cannot regain intent recording. Existing Q02/Q03 owners retain
+continuity checks, savepoint cleanup and commit uncertainty.
+
+Absence cannot locally prove a remote rollback, and an observation cannot freeze
+future remote state. These remain explicit limitations, not new retry authority.
+Application scope authorization and arbitrary SQL/admin-list escape hatches remain
+application policy. Column grants constrain this reader's access, not all
+capabilities of a role granted additional operations. Executable evidence covers
+restricted roles, actual lost COMMIT acknowledgement and concurrent remote
+transitions; no fresh-agent usability evaluation is claimed.
 
 ### Flags store assessment (T-12, batter-jkw6.12)
 

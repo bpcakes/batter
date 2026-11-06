@@ -107,6 +107,11 @@ Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a
 trusted sink with redaction.
 
+For `Origin::public_https`, an all-private DNS answer is an unsent connection
+failure, with the existing `not_dispatched.connect_failed` label. Do not fall
+back to an unrestricted origin on that failure. The policy never logs the
+rejected addresses.
+
 The outbound exchange (`batter::outbound_http`) adds no instrumentation of its own.
 Record `Exchange::label()`, one of twelve stable values such as
 `not_dispatched.connect_failed`, `unknown.deadline` or
@@ -140,6 +145,15 @@ that panic. A binary without the hook, a later or wrapping hook that formats
 `std::process::Command` forks, and Tokio `JoinError` `Debug` and `Display` still
 print payloads. Never put credentials in panic messages and do not claim library
 span hygiene sanitizes the whole process.
+
+Native Runledger separately redacts caught main-handler panics before turning
+them into failures: `job.handler_panic` / `PANICKED` uses the fixed message
+`Job handler panicked.` in queue, attempt, dead-letter and event records,
+dead-letter logs and the main-handler settlement diagnostic. Panics remain
+nonretryable. This does not redact output from the process panic hook, other
+callback diagnostics, or application-created `JobFailure` messages. Those
+messages are persisted verbatim and may be logged or displayed; use deliberate
+non-sensitive text, never interpolated error `Display`/`Debug` or credentials.
 
 Keep user/account/job/request IDs out of metric labels. Trace correlation and
 metric cardinality are different concerns. Persist only validated/versioned

@@ -10,7 +10,9 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
 
 - `src/lib.rs`: default-retiring lease, consuming native migration execution
   (`migrate`, and `migrate_and_apply` for managed objects), bounded probe, pool
-  cleanup registration.
+  cleanup registration. `pool_in` requires a session profile and returns a
+  `PgProfiledPool` only after registering closure; caller-owned construction and
+  native-hook composition live in `low_level`.
 - `src/managed.rs` and `src/managed/`: the pure `ManagedObjectManifest`
   (`source.rs` lexer and header validation), the migrate-then-apply transaction
   (`apply.rs`) and the catalog resolution, ledger shape and canonical rendering
@@ -150,7 +152,12 @@ a revoke is re-read because PostgreSQL only warns when it removes nothing;
 trigger hashes include `tgenabled`; it locks the ledger `ACCESS EXCLUSIVE`
 and verification locks it `ACCESS SHARE` before its snapshot, because rendering
 reads catalog caches rather than the snapshot. The ledger is never the SQLx
-ledger and apply never writes migration history.
+ledger and apply never writes migration history. Managed DDL requires a private
+release authorization from the locked ledger: lower revisions and equal revisions
+with a different digest are refused. Existing unversioned ledgers upgrade only
+with a matching baseline digest, adding the sixth `release_revision` column that
+older writers reject. Keep revision publication and application SQL in the same
+transaction; arbitrary migrations still precede that transaction.
 New supported semantics require primary PostgreSQL18 evidence and native tests.
 
 ## Common commands

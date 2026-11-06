@@ -1,0 +1,19 @@
+## batter-sqlx: 1378 -> 1379 entries; 3 removed, 4 added
+- REMOVED function batter_sqlx::register_pool_close
+- REMOVED method batter_sqlx::PgProfiledPool::connect
+- REMOVED method batter_sqlx::PgProfiledPool::connect_lazy
++ ADDED   function batter_sqlx::low_level::connect_profiled_pool
++ ADDED   function batter_sqlx::low_level::connect_profiled_pool_lazy
++ ADDED   function batter_sqlx::low_level::pool_in
++ ADDED   function batter_sqlx::low_level::register_pool_close
+
+## runledger-postgres: 3395 -> 3396 entries; 4 removed, 5 added
+- REMOVED method runledger_postgres::RunledgerDatabase::connect
+- REMOVED method runledger_postgres::RunledgerDatabase::connect_lazy
+- REMOVED method runledger_postgres::prelude::RunledgerDatabase::connect
+- REMOVED method runledger_postgres::prelude::RunledgerDatabase::connect_lazy
++ ADDED   function runledger_postgres::low_level::connect_database
++ ADDED   function runledger_postgres::low_level::connect_database_lazy
++ ADDED   method runledger_postgres::RunledgerDatabase::from_profiled
++ ADDED   method runledger_postgres::prelude::RunledgerDatabase::from_profiled
++ ADDED   mod runledger_postgres::low_level

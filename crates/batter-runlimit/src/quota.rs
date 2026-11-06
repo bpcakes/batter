@@ -1,5 +1,9 @@
 //! Admission owns entry into a work factory, preserving native results.
 
+pub(crate) mod observation;
+
+use observation::CheckObservation;
+
 use batter_core::operation::{Interruption, OperationContext, OperationError};
 use runlimit_core::{
     Allowance, BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Denial, Limiter,
@@ -69,24 +73,6 @@ impl<'a, P: RateLimitPolicy> Checks<'a, P> {
         }
         Ok(Self { checks })
     }
-}
-
-/// Internal observations for the retained HTTP quota recorder.
-#[derive(Clone, Debug)]
-#[cfg_attr(
-    not(feature = "axum"),
-    expect(
-        dead_code,
-        reason = "terminal fields are read only by the HTTP recorder"
-    )
-)]
-pub(crate) enum Snapshot {
-    /// A native check started without an observed result; consumption is unknown.
-    Started,
-    /// An observed native atomic decision.
-    Decided(BatchDecision),
-    /// An observed native failure's consumption certainty.
-    Failed(ConsumptionStatus),
 }
 
 /// Progress known when quota admission was interrupted.
@@ -274,37 +260,33 @@ where
         batter_core::telemetry::with_current_dispatch(self.run_recorded(
             context,
             checks,
-            |_| {},
+            CheckObservation::Unrecorded,
             |scope| -> AdmittedWork<'_, T, E> { Box::pin(work(scope)) },
         ))
         .await
     }
 
     /// Internal HTTP integration seam; callers do not coordinate an external recorder.
-    pub(crate) async fn run_recorded<T, E, F, Fut, Record>(
+    pub(crate) async fn run_recorded<T, E, F, Fut>(
         &self,
         context: &OperationContext,
         checks: Checks<'_, L::Policy>,
-        mut record: Record,
+        observation: CheckObservation,
         work: F,
     ) -> RunResult<T, E, L::CheckAllError>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
-        Record: FnMut(&Snapshot),
     {
         let mut interrupted_check = InterruptedCheck::NotStarted;
         let result = context
             .run("quota.check", |_| async {
                 interrupted_check = InterruptedCheck::InFlight;
-                record(&Snapshot::Started);
+                let observation = observation.start();
                 let check: NativeCheck<'_, L::CheckAllError> =
                     Box::pin(self.limiter.check_all(checks.checks));
                 let result = check.await;
-                match &result {
-                    Ok(decision) => record(&Snapshot::Decided(decision.clone())),
-                    Err(error) => record(&Snapshot::Failed(error.consumption())),
-                }
+                observation.finish(result.as_ref().map_err(ConsumptionError::consumption));
                 result
             })
             .await;

@@ -21,7 +21,7 @@ fn budget() -> ShutdownBudget {
 }
 
 async fn initialize(supervisor: Supervisor, capacity: Arc<Semaphore>) -> RunningSupervisor {
-    let mut starting = Startup::new(
+    let starting = Startup::new(
         supervisor,
         batter_core::operation::OperationOwner::new(Duration::from_secs(1))
             .unwrap()
@@ -40,7 +40,7 @@ async fn initialize(supervisor: Supervisor, capacity: Arc<Semaphore>) -> Running
         },
     )
     .start();
-    starting.wait().await.unwrap()
+    starting.finish().await.unwrap()
 }
 
 #[tokio::test]

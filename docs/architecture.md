@@ -232,8 +232,10 @@ cleanup name before acquisition, then register the finalizer synchronously after
 success. Register dependencies before dependents so teardown reverses the order.
 Application stages and initialization/cleanup budgets remain explicit inputs.
 
-The sole `StartingSupervisor` owns the running handoff. Cancelling its borrowed
-waiter leaves initialization running; dropping it requests drain. The startup
+The sole `StartingSupervisor` owns the running handoff. Its consuming `finish`
+or `finish_with_output` transfers ownership into one future. Cancelling a borrowed
+wait on that retained future leaves initialization running; dropping either the
+original owner or the finish future requests drain. The startup
 coordinator retains registered finalizers through failed-startup cleanup.
 Observers retain outcomes without keeping a running owner alive. Initializer
 construction, polling and destructor unwinds are caught separately; original
@@ -518,6 +520,11 @@ only after repeated real applications demonstrate that it simplifies—not hides
 resource ownership and partial-failure behavior.
 
 ## Outbound provider exchange ownership
+
+`Origin::public_https` retains a public-address policy on the origin and filters
+DNS candidates before the existing bounded dialer; no preflight/re-resolution
+gap exists. Ordinary `Origin::https` still supports private services. See the
+[public-destination contract](../crates/batter-outbound-http/README.md#public-destinations).
 
 `batter-outbound-http` owns each outbound exchange's TCP/TLS connection and
 low-level hyper HTTP/1 driver inside the exchange future. No pool or spawned

@@ -96,8 +96,8 @@ async fn partial_startup_retains_real_failure_and_all_lifo_finalizer_outcomes() 
     let temporary = temp_dir::TempDir::new().unwrap();
     let directory = temporary.path().to_owned();
     let evidence = Arc::new(Evidence::default());
-    let (mut starting, handle) = start(&[], directory.clone(), evidence.clone()).unwrap();
-    let result = starting.wait().await;
+    let (starting, handle) = start(&[], directory.clone(), evidence.clone()).unwrap();
+    let result = starting.finish().await;
     let remaining: Vec<_> = std::fs::read_dir(&directory).unwrap().collect();
     temporary.close().unwrap();
     let Err(StartupError::Failed(report)) = result else {

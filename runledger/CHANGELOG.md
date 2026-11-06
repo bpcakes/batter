@@ -6,7 +6,69 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Native PostgreSQL test dependencies
+
+`runledger-test-support` now calls Bollard directly, removing Testcontainers and
+its mandatory unmaintained `astral-tokio-tar` dependency (`batter-z6nw`, X286).
+Public fixture signatures, PostgreSQL 18 provisioning, loopback port allocation,
+failed-start cleanup, the optional process reaper and
+`TESTCONTAINERS_COMMAND=keep` remain supported. Runtime-owned cleanup also
+removes a successfully started container whose startup waiter was cancelled;
+this requires the runtime to remain alive.
+
+### Shared pool construction
+
+**Breaking:** `RunledgerDatabase::connect` and `connect_lazy` moved to explicitly
+caller-owned `low_level` functions. Protected consumers share an already registered
+`PgProfiledPool` instead. No deprecated shim: it would retain the unregistered
+canonical construction path. No persisted schema change or deployment ordering.
+
+```rust,ignore
+// Before:
+let db = RunledgerDatabase::connect(options, profile, 4).await?;
+let db = RunledgerDatabase::connect_lazy(options, profile, pool_options)?;
+// After, protected startup:
+let shared = batter_sqlx::pool_in(slot, pool_options, options, profile)?;
+let db = RunledgerDatabase::from_profiled(shared.clone())?;
+// After, standalone native owner retaining explicit cleanup obligations:
+let db = runledger_postgres::low_level::connect_database(options, profile, 4).await?;
+let db = runledger_postgres::low_level::connect_database_lazy(options, profile, pool_options)?;
+```
+
 ### Added
+
+- **Breaking:** replace both single-intent pool readers with
+  `PgIntentScope::reconcile_job_enqueue_intent` (also available in queue and
+  policy scopes). The result is exhaustive `IntentReconciliation`, with opaque
+  metadata and a required same-scope job for `Promoted`. Choose an exact
+  `JobScope`; an absent result never proves rollback or permits replay.
+
+  ```rust,ignore
+  // Before: legacy optional organization, or explicit read scope.
+  let row = get_job_enqueue_intent_by_id(pool, Some(org), id).await?;
+  let row = get_job_enqueue_intent_by_id_with_scope(
+      pool, JobReadScope::Organization(org), id).await?;
+  // After: both call shapes use the transaction owner and exact scope.
+  let evidence = run_atomic(database, async |mut tx| {
+      tx.reconcile_job_enqueue_intent(JobScope::Organization(org), id).await
+  }).await?;
+  match evidence {
+      IntentReconciliation::NotFound => { /* retain uncertainty */ }
+      IntentReconciliation::Retained(intent) => match intent.state() {
+          IntentCorrelationState::Pending => { /* await promotion */ }
+          IntentCorrelationState::Conflicted => { /* resolve application conflict */ }
+          IntentCorrelationState::Promoted(job) => { let _ = job.id(); }
+      },
+  }
+  ```
+
+  `None`/`Admin` no longer provides a wildcard single-intent lookup: authorize
+  `JobScope::Global` or `JobScope::Organization(id)` explicitly. Administrative
+  list APIs remain separate. No deprecated shim is supplied: the old pool/full-row
+  form bypasses owned transaction continuity and the restricted metadata contract.
+  Add `RunledgerOperation::IntentReconciliation` to the role's grant selection;
+  it needs only selected metadata columns. No database migration, baseline deploy
+  or staged persisted-data rollout is required (`batter-hw3k`).
 
 - The protected migration runner builds the five bundled `job_queue` and
   `workflow_runs` indexes of `202605220001_enforce_enqueue_request_snapshots`,
@@ -187,6 +249,13 @@ All notable changes to this workspace are documented here.
   ```
 
 ### Changed
+
+- Caught main-handler panics now use the fixed message `Job handler panicked.`
+  in durable failures and native settlement diagnostics. Panic payloads no
+  longer reach queue, attempt, dead-letter or event records, dead-letter logs,
+  or the TUI through this conversion. The `job.handler_panic` code, `PANICKED`
+  classification and nonretryable behavior are unchanged. Application-created
+  `JobFailure` messages remain verbatim and must not contain sensitive details.
 
 - Raise the minimum supported Rust version from 1.94 to 1.98.1, the Batter
   workspace's pinned toolchain. No public item changes.

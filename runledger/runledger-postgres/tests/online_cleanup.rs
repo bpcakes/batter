@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use runledger_postgres::{
-    PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
-    migrate_after_idempotency_cutover, prepare_online_indexes_for_external_migrator,
+    PgSessionProfile, SchemaCompatibilityError, migrate_after_idempotency_cutover,
+    prepare_online_indexes_for_external_migrator,
 };
 use sqlx::{AssertSqlSafe, migrate::MigrateError};
 
@@ -41,9 +41,10 @@ async fn both_entry_points_retain_independent_operation_and_unlock_failures() {
             Duration::ZERO,
         )
         .expect("restricted profile");
-        let database = RunledgerDatabase::connect((*options).clone(), profile, 1)
-            .await
-            .expect("restricted migration database");
+        let database =
+            runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
+                .await
+                .expect("restricted migration database");
         let pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
             .fetch_one(database.pool())
             .await

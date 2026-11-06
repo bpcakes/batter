@@ -183,7 +183,16 @@ async fn maintain<L: Store>(fixture: &mut Fixture, owner: &PgPool, family: Famil
         supervisor.reserve_cleanup("quota.pool")?,
         PgPoolOptions::new().max_connections(2),
         quota_options(fixture, &login, &quotas)?,
-    );
+        batter::sqlx::PgSessionProfile::new(
+            &login,
+            &login,
+            vec![quotas.clone()],
+            Duration::ZERO,
+            Duration::ZERO,
+        )?,
+    )?
+    .pool()
+    .clone();
     fixture.track(pool.clone());
     let limiter = register_in(
         &mut supervisor,
@@ -326,7 +335,16 @@ async fn refused<L: Store>(fixture: &mut Fixture, family: Family) -> Result {
         supervisor.reserve_cleanup("quota.pool")?,
         PgPoolOptions::new().max_connections(2),
         quota_options(fixture, &login, &quotas)?,
-    );
+        batter::sqlx::PgSessionProfile::new(
+            &login,
+            &login,
+            vec![quotas.clone()],
+            Duration::ZERO,
+            Duration::ZERO,
+        )?,
+    )?
+    .pool()
+    .clone();
     fixture.track(pool.clone());
     let limiter = register_in(
         &mut supervisor,

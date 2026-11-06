@@ -24,6 +24,10 @@ PostgreSQL persistence for durable execution: queue lifecycle, workflow DAG stat
 - DB error categorization: `src/error.rs`, `src/error/classify/*`.
 
 ## Invariants
+- `atomic/reconciliation.rs` owns single-intent metadata correlation in one SQL
+  snapshot. Require an exact scope and a same-type, same-scope job for promoted
+  evidence; never add payload or diagnostic columns to this reader or its grants.
+  Missing retained evidence cannot prove rollback or authorize resubmission.
 - Prefer direct cutovers only for internal persistence-layer refactors within one coordinated deploy. Changes to persisted queue, workflow, runtime-config, or log/event contracts require backward compatibility or an explicit staged rollout; update dependents in the same change.
 - Preserve audit/event writes when altering queue lifecycle.
 - Keep app/domain logic out of this crate.
@@ -58,6 +62,12 @@ PostgreSQL persistence for durable execution: queue lifecycle, workflow DAG stat
   pins authoritative objects before the snapshot, qualifies names, and returns
   `SchemaCompatibilitySnapshot` after rollback acknowledgement. Caller session
   state cannot influence compatibility. The witness says nothing about later DDL.
+
+
+Protected hosts construct one `batter_sqlx::PgProfiledPool` through `pool_in` and
+share it with `RunledgerDatabase::from_profiled`, which validates one schema and
+adds neither capacity nor a finalizer. Standalone native constructors are in
+`low_level`; their callers own awaited closure and failure cleanup.
 
 ## Common commands
 - `cargo check -p runledger-postgres`

@@ -1,0 +1,64 @@
+batter-jxj2 public API surface check, 2026-11-05
+
+Before: 316e721bd52b58219d5ef213da9000532a0df520 (git archive)
+After: working tree for batter-jxj2
+Toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+Method: existing surface.py over rustdoc JSON, generated with RUSTC_BOOTSTRAP=1
+and -Zunstable-options --output-format json on both trees. This is a structural
+inspection only; supported verification uses the unmodified pinned toolchain.
+Manual signature review: existing public signatures, fields, bounds and variants
+are unchanged. Command run_work and WorkSignals changes are crate-private.
+New API only; no removed call shape, deprecated shim or hard-cut entry required.
+The path-based surface method does not itself detect signature/bound changes.
+
+## batter-core: 1122 -> 1172 entries; 0 removed, 50 added
++ ADDED   enum batter_core::operation::PhasedFailure
++ ADDED   impl batter_core::operation::PhaseOutcome: Debug
++ ADDED   impl batter_core::operation::PhasedFailure: Debug
++ ADDED   impl batter_core::operation::PhasedFailure: Display
++ ADDED   impl batter_core::operation::PhasedFailure: Error
++ ADDED   impl batter_core::operation::PhasedObserver: Clone
++ ADDED   impl batter_core::operation::PhasedReport: Debug
++ ADDED   impl batter_core::operation::RunningPhasedOperation: Drop
++ ADDED   impl batter_core::operation::SharedPhasedReport: Clone
++ ADDED   impl batter_core::operation::SharedPhasedReport: Debug
++ ADDED   impl batter_core::operation::SharedPhasedReport: Deref
++ ADDED   method batter_core::cleanup::Acquired::new
++ ADDED   method batter_core::cleanup::CleanupSlot::acquire
++ ADDED   method batter_core::operation::FinalizationScope::context
++ ADDED   method batter_core::operation::FinalizationScope::work
++ ADDED   method batter_core::operation::OperationPhases::into_operation
++ ADDED   method batter_core::operation::PhaseOutcome::destruction_panic
++ ADDED   method batter_core::operation::PhaseOutcome::interruption_after_return
++ ADDED   method batter_core::operation::PhaseOutcome::is_success
++ ADDED   method batter_core::operation::PhaseOutcome::result
++ ADDED   method batter_core::operation::PhasedObserver::wait
++ ADDED   method batter_core::operation::PhasedOperation::new
++ ADDED   method batter_core::operation::PhasedOperation::start
++ ADDED   method batter_core::operation::PhasedReport::finalization
++ ADDED   method batter_core::operation::PhasedReport::is_success
++ ADDED   method batter_core::operation::PhasedReport::work
++ ADDED   method batter_core::operation::RunningPhasedOperation::cancel
++ ADDED   method batter_core::operation::RunningPhasedOperation::observer
++ ADDED   method batter_core::operation::RunningPhasedOperation::wait
++ ADDED   struct batter_core::cleanup::Acquired
++ ADDED   struct batter_core::operation::FinalizationScope
++ ADDED   struct batter_core::operation::PhaseOutcome
++ ADDED   struct batter_core::operation::PhasedObserver
++ ADDED   struct batter_core::operation::PhasedOperation
++ ADDED   struct batter_core::operation::PhasedReport
++ ADDED   struct batter_core::operation::RunningPhasedOperation
++ ADDED   struct batter_core::operation::SharedPhasedReport
++ ADDED   trait batter_core::operation::PhaseAction
++ ADDED   use batter_core::cleanup::Acquired <- acquisition::Acquired
++ ADDED   use batter_core::operation::FinalizationScope <- phased::FinalizationScope
++ ADDED   use batter_core::operation::PhaseAction <- phased::PhaseAction
++ ADDED   use batter_core::operation::PhaseOutcome <- phased::PhaseOutcome
++ ADDED   use batter_core::operation::PhasedFailure <- phased::PhasedFailure
++ ADDED   use batter_core::operation::PhasedObserver <- phased::PhasedObserver
++ ADDED   use batter_core::operation::PhasedOperation <- phased::PhasedOperation
++ ADDED   use batter_core::operation::PhasedReport <- phased::PhasedReport
++ ADDED   use batter_core::operation::RunningPhasedOperation <- phased::RunningPhasedOperation
++ ADDED   use batter_core::operation::SharedPhasedReport <- phased::SharedPhasedReport
++ ADDED   variant batter_core::operation::PhasedFailure::Coordinator
++ ADDED   variant batter_core::operation::PhasedFailure::Report

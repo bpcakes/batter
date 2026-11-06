@@ -6,6 +6,24 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Native cleanup acquisition, 2026-11-05
+
+`batter-rtxb` checked Cargo.lock's Tokio 1.54.1 against its downloaded source
+(`src/sync/semaphore.rs`, `src/net/udp.rs`). The pinned primary references are
+[Semaphore::acquire_owned](https://docs.rs/tokio/1.54.1/tokio/sync/struct.Semaphore.html#method.acquire_owned)
+and [UdpSocket::bind](https://docs.rs/tokio/1.54.1/tokio/net/struct.UdpSocket.html#method.bind).
+The web fetch was unavailable; the resolved package source supplied the evidence.
+
+An owned semaphore acquisition yields `OwnedSemaphorePermit`; dropping it returns
+the permit. Cancelling a queued acquisition loses its queue position. Batter
+retains the permit exclusively in registered cleanup and makes no waiter-bound
+claim. UDP binding receives a concrete SocketAddr, avoiding caller address
+resolution and DNS. Tokio's bind constructs the socket before returning it;
+Batter polls that native future directly. An Arc clone retains socket ownership,
+so dropping the cleanup reference alone cannot close a socket retained elsewhere.
+Tests establish local reference lifetime and native error behavior, not remote
+network effects or arbitrary descendant termination.
+
 ## Reqwest consolidation, 2026-11-04
 
 `batter-7oob` migrates the OTLP adapter and reference provider from reqwest
@@ -449,12 +467,12 @@ rustls 0.23.46:
   the application root installed a default first.
   - bollard 0.21.1 makes that call in its TLS connection
     (`src/docker.rs:542`).
-  - testcontainers 0.28.0 uses that connection for an `https` Docker host, or
+  - Before `batter-z6nw`, testcontainers 0.28.0 used that connection for an `https` Docker host, or
     for `tcp` with TLS verification (`src/core/client/bollard_client.rs:16-22`).
     Its default `ring` feature selects bollard's `ssl` (`Cargo.toml:49`, `66`;
     bollard `Cargo.toml:84-87`).
-  - `runledger-test-support` depends on testcontainers 0.28 with default
-    features.
+  - `runledger-test-support` now selects Bollard 0.21.1 with `ssl` directly
+    (`batter-z6nw`); the same upstream TLS builder concern remains.
 
 rustls-platform-verifier 0.7.1 and rustls-native-certs 0.8.4:
 
@@ -1456,6 +1474,35 @@ OTLP requires HTTP 200 for full and partial success, so the adapter rejects
 other 2xx statuses before decoding. `checked_add` returns `None` if a later
 deadline no longer fits; schedule validation checks representability only at
 construction, so the serial owner clamps an extreme allowance at each use.
+
+## Native PostgreSQL Docker dependency removal: reviewed 2026-11-06
+
+For `batter-z6nw` (external X286), Cargo initially resolved Testcontainers 0.28.0
+and `astral-tokio-tar` 0.6.4. The [upstream manifest](https://github.com/testcontainers/testcontainers-rs/blob/main/testcontainers/Cargo.toml)
+still makes the tar dependency mandatory; feature selection cannot remove it.
+[RUSTSEC-2026-0440](https://rustsec.org/advisories/RUSTSEC-2026-0440.html)
+classifies all versions as unmaintained following Astral's 3 November announcement.
+
+The existing native fixture now calls the already-resolved Bollard 0.21.1
+without its unused BuildKit features. Checked that version's
+[Docker connection and negotiation implementation](https://docs.rs/bollard/0.21.1/src/bollard/docker.rs.html),
+[container API source](https://docs.rs/crate/bollard/0.21.1/source/src/container.rs)
+and [image API source](https://docs.rs/crate/bollard/0.21.1/source/src/image.rs).
+Create uses a unique name and attempt label, IPv4 loopback with Docker-selected
+host port, and the configured platform; start and inspection remain separate.
+Removal uses force plus anonymous-volume deletion by immutable ID. Pull progress
+is consumed and errors retained. Registry lookup uses
+[docker_credential 1.4.0](https://docs.rs/docker_credential/1.4.0/docker_credential/)
+for config/credential helpers or explicit `DOCKER_AUTH_CONFIG`.
+Unix socket discovery retains the previous Docker Desktop locations; Bollard
+selects the explicit `DOCKER_HOST` transport and TLS settings. Remote-daemon TLS,
+private registries, macOS execution and platform emulation remain unverified for
+this change. The fixture preserves Testcontainers' exact `DOCKER_TLS_VERIFY=1`
+rule for TCP/HTTP hosts: Bollard otherwise treats any set value, including `0`,
+as enabling TLS. A subprocess with `DOCKER_TLS_VERIFY=0` verifies plaintext
+negotiation against a local HTTP fixture, without changing parent environment.
+The historical Testcontainers diagnosis below explains the retained
+mapping and failed-start contracts; its implementation is no longer selected.
 
 ## Native PostgreSQL container mapping: reviewed 2026-09-27
 
@@ -6440,6 +6487,66 @@ the Cargo registry; no dependency version changed.
   the future and stores `JoinError::cancelled` (or a panic error if that drop
   panicked); an owner awaiting from another runtime receives that error, which
   `finish` returns as `CommandFailure::Coordinator` instead of panicking.
+
+## Managed-object release fence — 2026-11-05
+
+- PostgreSQL 18 [ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html):
+  adding the nonvolatile constant-default column under the already-held
+  `ACCESS EXCLUSIVE` lock changes the ledger shape transactionally.
+- PostgreSQL 18 [transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html):
+  apply uses READ COMMITTED after acquiring the shared session advisory lock;
+  each waiting applier sees the prior committed revision.
+- PostgreSQL 18 [explicit locking](https://www.postgresql.org/docs/18/explicit-locking.html):
+  session advisory locking spans migration and managed transaction boundaries;
+  transaction-held relation locks serialize verification and shape adoption.
+
+Local dependency remains SQLx 0.9.0; live validation server is PostgreSQL 18.6.
+This change adds no dependency. Application revision numbers are not derived from
+SQLx migration history.
+
+## Public HTTPS address policy (2026-11-05)
+
+The conservative exclusions were checked against the IANA
+[IPv4 special-purpose registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+and [IPv6 special-purpose registry](https://www.iana.org/assignments/iana-ipv6-special-registry/).
+The implementation also excludes globally reachable special-use ranges,
+including AS112 192.31.196.0/24, 192.175.48.0/24 and 2620:4f:8000::/48, and
+AMT 192.52.193.0/24. Literal boundary tests cover the first/last excluded
+addresses and their permitted neighbors; dialer tests cover these blocks in
+mixed and wholly disallowed answers. The registry does not guarantee routing
+in a local network;
+the API makes no such claim. Enforcement uses the inspected Tokio lookup
+result directly, followed by the existing bounded dialer, with no second DNS
+lookup. Literal and real localhost tests cover refusal before TCP; mixed-answer
+tests observe dialer calls rather than issuing traffic to public addresses.
+
+## Intent reconciliation snapshot and grants (2026-11-05)
+
+- PostgreSQL 18 [transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html):
+  an ordinary READ COMMITTED SELECT sees a statement snapshot and its own
+  transaction's changes; separate statements need not see the same committed state.
+  The native reader therefore joins all three metadata sources in one statement.
+- PostgreSQL 18 [GRANT](https://www.postgresql.org/docs/18/sql-grant.html): SELECT
+  can be granted on named columns. The new operation grants only the columns its
+  projection and predicates need. Existing wider grants remain effective.
+- Integration uses the workspace-locked SQLx 0.9.0 API and existing owned atomic
+  runner; live failure evidence records PostgreSQL 18.6. No SQLx transaction or
+  wire protocol implementation was added to production code.
+
+## Shared profiled pool ownership (2026-11-05)
+
+For `batter-nhu5`, rechecked the resolved SQLx 0.9.0 registry sources:
+`sqlx-core/src/pool/options.rs` (`connect_lazy_with`, lines 574–582),
+`sqlx-core/src/pool/mod.rs` (`close`, lines 420–443), and the shared `PoolInner`
+implementation. The upstream source locations are
+[pool options](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/options.rs)
+and [pool closure](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/mod.rs).
+Lazy construction can launch minimum-connection maintenance. Pool clones share
+capacity and closure; awaited close drains pool-accounted connections and waits
+for outstanding checkouts. It does not prove detached server sessions ended.
+The adapter's existing three profile hooks are unchanged. Local source inspection,
+plus the native PostgreSQL shared-pool test, is the executed evidence; the web
+retrieval of versioned docs.rs pages was unavailable during this check.
 
 ## Flags store primary-source recheck (T-12, 2026-11-06)
 

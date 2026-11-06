@@ -42,14 +42,15 @@
 //!
 //! ```rust,no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-//! use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+//! use runledger_postgres::PgSessionProfile;
 //! use std::time::Duration;
 //! let options = "postgres://login@localhost/runledger".parse()?;
 //! let profile = PgSessionProfile::new("login", "serving", vec!["application".into()],
 //!     Duration::from_secs(30), Duration::from_secs(5))?;
-//! let database = RunledgerDatabase::connect(options, profile, 8).await?;
+//! let database = runledger_postgres::low_level::connect_database(options, profile, 8).await?;
 //! runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
 //! let pool = database.pool(); // ordinary APIs and runtime use the same policy
+//! pool.close().await; // standalone native caller owns cleanup
 //! # Ok(())
 //! # }
 //! ```
@@ -422,7 +423,6 @@ pub mod prelude {
         enqueue_workflow_run_handle, enqueue_workflow_run_tx, get_job_by_id,
         get_job_by_id_with_scope, get_job_continuation_metrics,
         get_job_continuation_metrics_with_scope, get_job_definition_by_type,
-        get_job_enqueue_intent_by_id, get_job_enqueue_intent_by_id_with_scope,
         get_job_enqueue_intent_metrics, get_job_enqueue_intent_metrics_with_scope, get_job_metrics,
         get_job_metrics_with_scope, get_job_payload_by_idempotency_key,
         get_job_payload_by_idempotency_key_with_scope, get_job_runtime_config_by_type,
@@ -456,13 +456,14 @@ pub mod prelude {
         deactivate_schedules_absent_from_names_tx,
     };
     pub use crate::{
-        AcceptedIntentOutcome, AcceptedIntentState, DbPool, DbTx, FrameworkConstraintSpec,
-        MIGRATOR, MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting,
+        AcceptedIntentOutcome, AcceptedIntentState, CorrelatedDefinition, CorrelatedJob, DbPool,
+        DbTx, FrameworkConstraintSpec, IntentCorrelationState, IntentReconciliation, MIGRATOR,
+        MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting,
         OnlineIndexExecutionError, OnlineIndexPhase, OnlineIndexPreparation, OnlineIndexProblem,
         OnlineIndexRollbackError, PgAtomicError, PgAtomicUncertainty, PgFailurePolicy,
         PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope, PgScopeFailure,
         PgScopeLoss, PgSessionProfile, QueryError, QueryErrorCategory, QueryErrorKind,
-        RequiredIntentError, RunledgerDatabase, SchemaCompatibilityError,
+        RequiredIntentError, RetainedIntent, RunledgerDatabase, SchemaCompatibilityError,
         WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
         ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
         prepare_online_indexes_for_external_migrator, run_atomic, run_atomic_fail_fast_with,
@@ -480,10 +481,12 @@ pub use error::{CommitUnconfirmed, RollbackFailure};
 pub(crate) use transaction_executor::{PgQueryExecutor, PgTransactionalExecutor};
 mod atomic;
 pub use atomic::{
-    AcceptedIntentOutcome, AcceptedIntentState, IntentConflict, PgAtomicError, PgAtomicUncertainty,
-    PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
-    PgScopeError, PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgScopedSql, PgTransactionError,
-    RequiredIntentError, run_atomic, run_atomic_fail_fast_with, run_atomic_with,
+    AcceptedIntentOutcome, AcceptedIntentState, CorrelatedDefinition, CorrelatedJob,
+    IntentConflict, IntentCorrelationState, IntentReconciliation, PgAtomicError,
+    PgAtomicUncertainty, PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope,
+    PgQueueScope, PgScopeError, PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgScopedSql,
+    PgTransactionError, RequiredIntentError, RetainedIntent, run_atomic, run_atomic_fail_fast_with,
+    run_atomic_with,
 };
 pub use migrations::SchemaCompatibilitySnapshot;
 
@@ -544,3 +547,7 @@ impl Error {
         Self::CommitUnconfirmed(CommitUnconfirmed::new(operation, error))
     }
 }
+
+/// Standalone native database construction with caller-owned cleanup.
+/// Protected services use `batter_sqlx::pool_in` and [`RunledgerDatabase::from_profiled`].
+pub mod low_level;

@@ -29,6 +29,26 @@ classified `job.timeout_exceeded` by the worker. A positive reserve is applicati
 policy and must cover the final-state work done after work expires. The worker
 persists the outcome after the handler returns, outside that budget.
 
+For owned `Send + 'static` provider/store callbacks, use the protected path:
+`job_phases(execution, reserve)?.into_operation(work, finalize).start()`. Keep
+its running owner bound and await `running.wait().await`; `Ok` means both phases
+succeeded, and a failed report retains both outcomes. The finalizer receives
+its context and read-only work evidence only after work ends, so early work
+errors cannot skip that transition. See the compiled `job_phases` rustdoc.
+
+The runner spawns a coordinator. Losing a borrowed waiter does not cancel it;
+owner loss cancels work only, but native invocation exit still cancels both
+phases, including finalization. The coordinator is not joined into the handler,
+and cannot survive runtime death or extend the native deadline. Callbacks must
+own their captures: a borrowed `JobExecution` cannot move into them. Native
+progress/checkpoint calls that borrow the invocation retain manual sequencing.
+
+Handler destruction can drop the owner before invocation exit is signalled.
+The coordinator may start finalization in that window, including on another
+runtime thread. Cancellation is cooperative and is not authority for a remote
+final-state write; application/native fencing and reconciliation remain required
+where such writes need current invocation authority.
+
 The invocation's own exit cancels both phases and every context derived from
 them: success, continuation, failure, panic, timeout, lease loss, failed lease
 maintenance and task abort, but not a graceful stop that lets it finish. The
@@ -37,7 +57,8 @@ task or paired call exists to forget, and handlers cannot cancel the invocation.
 The worker destroys the handler future before it ends the invocation, so work
 awaited inside the handler is dropped rather than seeing the cancellation, and
 nothing computed afterwards is stored; the exit reaches spawned work that holds
-a phase or a child derived from it. Run final-state work under `finalization()`
+a phase or a child derived from it. Direct `work()`/`finalization()` access is
+the lower-level manual path. There, run final-state work under `finalization()`
 when it uses Batter boundaries such as admission, retries, children or spawned
 tasks; a plain write awaited in the handler is bounded by the native deadline
 either way. Limit one step inside work with `phases.work().child(limit)`, which
@@ -142,3 +163,11 @@ neither depends on the facade or this adapter. Publishing remains a separate dec
 Runledger qualifies and checks authoritative objects, returning a
 `SchemaCompatibilitySnapshot` after rollback. It never borrows caller session
 state. The snapshot records one compatible observation, not future validity.
+
+Protected database construction uses `batter_sqlx::pool_in(slot, options,
+connection, profile)?` followed by `RunledgerDatabase::from_profiled(pool.clone())?`.
+Application SQL and Runledger then share one physical pool and one registered
+finalizer. Runledger requires exactly one trusted schema, as before. Create the
+pool inside protected startup and return it as typed output if the running caller
+needs it; native standalone constructors live under `native::postgres::low_level`
+and retain caller-owned cleanup. Distinct session authority needs distinct pools.

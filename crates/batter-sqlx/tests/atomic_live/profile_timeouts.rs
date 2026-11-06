@@ -2,7 +2,7 @@ use super::{
     fixture,
     support::{Result, bounded},
 };
-use batter_sqlx::{PgProfiledPool, PgReadOnlySnapshot, PgSessionProfile, run_atomic_profiled};
+use batter_sqlx::{PgReadOnlySnapshot, PgSessionProfile, run_atomic_profiled};
 use sqlx::{PgConnection, postgres::PgPoolOptions};
 use std::time::Duration;
 
@@ -85,7 +85,7 @@ async fn transaction_profiles_cover_pool_hooks_atomic_and_snapshot_work() -> Res
         Duration::from_secs(22),
     );
     bounded(fixture.pool.close()).await?;
-    let database = PgProfiledPool::connect_lazy(
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         options,
         profile,
         PgPoolOptions::new()

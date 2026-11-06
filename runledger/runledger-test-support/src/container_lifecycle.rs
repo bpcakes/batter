@@ -5,7 +5,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use testcontainers::{ContainerAsync, GenericImage};
+use crate::docker::DockerContainer;
 
 pub(crate) const PROCESS_OWNER_LABEL: &str = "org.runledger.test-process";
 
@@ -40,14 +40,14 @@ done
 
 pub(crate) struct ProcessContainer {
     // `SharedPostgres` is static and therefore is not dropped at process exit.
-    // Keeping the handle here prevents early Testcontainers cleanup, while the
+    // Keeping the handle here prevents early API cleanup, while the
     // reaper's liveness pipe provides cleanup when the process disappears.
-    container: ContainerAsync<GenericImage>,
+    container: DockerContainer,
     _reaper: Option<ContainerReaper>,
 }
 
 impl ProcessContainer {
-    pub(crate) async fn new(container: ContainerAsync<GenericImage>) -> Self {
+    pub(crate) async fn new(container: DockerContainer) -> Self {
         let reaper = if should_remove_container() {
             let container_id = container.id().to_owned();
             match tokio::task::spawn_blocking(move || ContainerReaper::spawn(&container_id)).await {
@@ -73,7 +73,7 @@ impl ProcessContainer {
         }
     }
 
-    pub(crate) fn container(&self) -> &ContainerAsync<GenericImage> {
+    pub(crate) fn container(&self) -> &DockerContainer {
         &self.container
     }
 }
@@ -86,7 +86,16 @@ pub(crate) fn process_owner_label_value() -> String {
 }
 
 pub(crate) fn should_remove_container() -> bool {
-    std::env::var(TESTCONTAINERS_COMMAND_ENV).as_deref() != Ok("keep")
+    removes_for_command(std::env::var(TESTCONTAINERS_COMMAND_ENV).ok().as_deref())
+}
+
+fn removes_for_command(command: Option<&str>) -> bool {
+    match command {
+        Some("keep") => false,
+        Some("remove") | None => true,
+        Some(value) if value.trim().is_empty() => true,
+        Some(_) => panic!("invalid TESTCONTAINERS_COMMAND: expected keep or remove"),
+    }
 }
 
 struct ContainerReaper {
@@ -208,4 +217,18 @@ fn reaper_command(docker_cli: &OsString, container_id: &str) -> Command {
         .arg(container_id)
         .process_group(0);
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::removes_for_command;
+
+    #[test]
+    fn container_retention_settings_preserve_rejection_of_unknown_commands() {
+        assert!(!removes_for_command(Some("keep")));
+        for command in [None, Some("remove"), Some(""), Some(" ")] {
+            assert!(removes_for_command(command));
+        }
+        assert!(std::panic::catch_unwind(|| removes_for_command(Some("unknown"))).is_err());
+    }
 }

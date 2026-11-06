@@ -16,6 +16,11 @@ facade module from `batter::outbound`, so the name states that it is HTTP and
 does not suggest an outbox or a retrying delivery layer. No released name
 changed, so no `Breaking:` entry, `Migration:` note or deprecation shim applies.
 
+Public-destination amendment, 2026-11-05 (`batter-321j`): add opt-in
+`Origin::public_https`. Address filtering belongs at the actual dial boundary;
+a separate caller DNS check cannot constrain a later lookup. Existing origin
+constructors and the exchange evidence vocabulary remain compatible.
+
 ## Context
 
 A provider call can fail in a way that leaves the caller unsure whether the

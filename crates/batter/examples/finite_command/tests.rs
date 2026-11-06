@@ -46,9 +46,11 @@ fn failed(finished: Finished) -> SharedCommandReport<EchoReply, CommandError> {
 }
 
 fn assert_closed(cleanup: &CleanupReport) {
-    assert_eq!(cleanup.records.len(), 1);
+    assert_eq!(cleanup.records.len(), 2);
     assert_eq!(cleanup.records[0].name, "socket");
     assert_eq!(cleanup.records[0].outcome, CleanupOutcome::Succeeded);
+    assert_eq!(cleanup.records[1].name, "completion");
+    assert_eq!(cleanup.records[1].outcome, CleanupOutcome::Succeeded);
     assert!(cleanup.skipped.is_empty());
 }
 
@@ -72,13 +74,16 @@ async fn work_and_cleanup_failures_both_remain_inspectable() {
         Err(CommandCause::Failed(CommandError::Work))
     ));
     let cleanup = report.cleanup.as_ref().unwrap();
-    assert_eq!(cleanup.records.len(), 1);
-    let record = &cleanup.records[0];
+    assert_eq!(cleanup.records.len(), 2);
+    assert_eq!(cleanup.records[0].name, "socket");
+    assert_eq!(cleanup.records[0].outcome, CleanupOutcome::Succeeded);
+    let record = &cleanup.records[1];
     assert_eq!(record.outcome, CleanupOutcome::Failed);
     assert!(matches!(
         record.error.as_ref().unwrap().downcast_ref(),
         Some(CommandError::Cleanup)
     ));
+    assert_eq!(cleanup.records[1].name, "completion");
     assert!(cleanup.skipped.is_empty());
 }
 
@@ -91,7 +96,7 @@ async fn cleanup_failure_keeps_the_successful_work_value_by_reference() {
     };
     assert_eq!(reply.bytes, b"prepare");
     assert_eq!(
-        report.cleanup.as_ref().unwrap().records[0].outcome,
+        report.cleanup.as_ref().unwrap().records[1].outcome,
         CleanupOutcome::Failed
     );
 }

@@ -22,8 +22,8 @@ Unix-only application is not a reusable database framework.
   installation in Unix children. The shared collector lives in
   `crates/batter-otlp/tests/support/collector.rs` at the workspace root.
 - `src/runtime.rs` uses protected startup with library-owned signals, reserves a
-  cleanup slot before constructing the profiled database, and registers pool
-  close before yielding. `src/database.rs` declares direct-login/public policy;
+  cleanup slot before `database::configured` calls protected `pool_in`, which
+  registers close before returning the shared profiled database. `src/database.rs` declares direct-login/public policy;
   native preparation and `batter::runledger` registration share that pool. It owns PostgreSQL
   health sampling, installs the delivery handler and approves ordinary readiness
   after registered components acknowledge initialization. Its startup failures downcast to
@@ -163,8 +163,9 @@ or hold the transaction across provider I/O. Cancellation, timeout, lost respons
 process death after dispatch became possible remain uncertain until the selected
 lookup protocol resolves them. Only exact structured response codes may establish
 known non-dispatch or business denial; text does not. POST and GET acceptance
-both require the exact canonical request echo. Only a typed reqwest connector
-failure proves known non-dispatch; timeout and post-connect/body errors remain
+both require the exact canonical request echo. Library-issued non-invocation
+evidence from `run_tracked` or a typed reqwest connector failure also proves
+known non-dispatch for this call; timeout and post-connect/body errors remain
 uncertain. Recheck the authoritative
 owner/record/generation before confirmation. Confirmation locks the record FOR SHARE
 before locking the native job and effect rows, then evaluates generation in a

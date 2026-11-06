@@ -1,0 +1,32 @@
+## batter-sqlx: 1347 -> 1378 entries; 0 removed, 31 added
++ ADDED   enum batter_sqlx::managed::ManagedReleaseError
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Clone
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Copy
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Debug
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Display
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Eq
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Error
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Clone
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Copy
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Debug
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Eq
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Ord
++ ADDED   impl batter_sqlx::managed::ManagedRevision: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedRevision: PartialOrd
++ ADDED   impl batter_sqlx::managed::ManagedRevision: StructuralPartialEq
++ ADDED   method batter_sqlx::managed::AppliedManagedObjects::revision
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::revision
++ ADDED   method batter_sqlx::managed::ManagedRevision::get
++ ADDED   method batter_sqlx::managed::ManagedRevision::new
++ ADDED   struct batter_sqlx::managed::ManagedRevision
++ ADDED   use batter_sqlx::managed::ManagedObjectManifest <- manifest::ManagedObjectManifest
++ ADDED   use batter_sqlx::managed::ManagedReleaseError <- revision::ManagedReleaseError
++ ADDED   use batter_sqlx::managed::ManagedRevision <- revision::ManagedRevision
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::Release
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::Downgrade
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::InvalidLedger
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::LegacyBaselineRequired
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::RevisionConflict
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectRevisionMismatch

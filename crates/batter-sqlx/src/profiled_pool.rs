@@ -20,16 +20,8 @@ use std::sync::Arc;
 /// Native SQL remains an escape hatch, not a sandbox or atomic outcome guarantee.
 /// Use the same owner's [`Self::profile`] for profiled owned transactions.
 ///
-/// ```no_run
-/// # async fn example(options: sqlx::postgres::PgConnectOptions,
-/// # profile: batter_sqlx::PgSessionProfile) -> Result<(), sqlx::Error> {
-/// let database = batter_sqlx::PgProfiledPool::connect(options, profile, 4).await?;
-/// let role: String = sqlx::query_scalar("SELECT current_user::text")
-///     .fetch_one(database.pool()).await?;
-/// # let _ = role;
-/// database.pool().close().await;
-/// # Ok(()) }
-/// ```
+/// Construct with [`crate::pool_in`] to publish pool closure before access.
+/// Standalone native ownership is explicit in [`crate::low_level`].
 #[derive(Clone)]
 pub struct PgProfiledPool {
     pool: PgPool,
@@ -49,7 +41,7 @@ impl PgProfiledPool {
     /// is rejected. Profile setup failures have redacted default formatting;
     /// connection errors remain native SQLx errors. See
     /// [`PgSessionProfile::reset_and_apply`] for logging limits.
-    pub async fn connect(
+    pub(crate) async fn connect(
         options: PgConnectOptions,
         profile: PgSessionProfile,
         max_connections: u32,
@@ -76,7 +68,7 @@ impl PgProfiledPool {
     /// restoration discards the connection; native `try_*` calls may return
     /// `None` while asynchronous release cleanup is running. No session hook
     /// may be used to add application authority outside the explicit profile.
-    pub fn connect_lazy(
+    pub(crate) fn connect_lazy(
         options: PgConnectOptions,
         profile: PgSessionProfile,
         pool_options: PgPoolOptions,

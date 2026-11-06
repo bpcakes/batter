@@ -204,7 +204,7 @@ pub async fn connect(url: &str) -> Result<RunledgerDatabase, Box<dyn std::error:
         Duration::from_secs(30),
         Duration::from_secs(5),
     )?;
-    Ok(RunledgerDatabase::connect(options, profile, 5).await?)
+    Ok(runledger_postgres::low_level::connect_database(options, profile, 5).await?)
 }
 ```
 
@@ -1386,10 +1386,16 @@ the selected scope; the enum only controls row filtering.
 
 Use `get_job_by_id_with_scope`, `list_jobs_with_scope` (with
 `JobReadListFilter`), `list_job_events_with_scope`, and
-`list_job_logs_with_scope` for job inspection. Intent inspection uses
-`get_job_enqueue_intent_by_id_with_scope` and
-`list_job_enqueue_intents_with_scope` (with
-`JobEnqueueIntentReadListFilter::new(scope, limit, offset)`).
+`list_job_logs_with_scope` for job inspection. Single-intent reconciliation uses
+`scope.reconcile_job_enqueue_intent(JobScope::Global, id)` inside `run_atomic`,
+or an exact `JobScope::Organization(id)`. It returns exhaustive metadata-only
+`IntentReconciliation`: `NotFound`, or `Retained` with pending, conflicted or
+promoted state. A promoted observation contains a matching job; current definition
+metadata is optional. This is one query snapshot, including this transaction's
+own writes, not evidence of rollback or authority to replay after `NotFound`.
+Use `RunledgerOperation::IntentReconciliation` for its column-only read grants.
+Administrative inspection uses `list_job_enqueue_intents_with_scope` with
+`JobEnqueueIntentReadListFilter::new(scope, limit, offset)` and broader grants.
 
 For dashboards and recovery scans, `list_job_summaries` accepts a
 `JobSummaryFilter` with an explicit `JobReadScope`, optional status and exact
@@ -2081,7 +2087,7 @@ cargo check -p runledger-tui
 Tests fall into two categories:
 
 - **Pure Rust unit tests** — no PostgreSQL required.
-- **DB-backed tests** — use `runledger-test-support` and `testcontainers`. Each
+- **DB-backed tests** — use `runledger-test-support` and Bollard's Docker API. Each
   Rust test process starts one shared PostgreSQL container, creates an isolated
   ephemeral database per test, and applies the local Runledger migrations.
 
@@ -2090,15 +2096,15 @@ a separate process-liveness reaper and removes the container and its anonymous
 volumes after normal process exit or abrupt test process termination. Set
 `RUNLEDGER_TEST_DOCKER_CLI` to an alternate CLI path when `docker` is not on
 `PATH`. If the optional CLI is unavailable, DB-backed tests still run through
-the configured Testcontainers daemon and emit a warning that the additional
-process-liveness cleanup is disabled. `TESTCONTAINERS_COMMAND=keep`
+the configured Docker daemon and emit a warning that the additional
+process-liveness cleanup is disabled. The compatibility setting `TESTCONTAINERS_COMMAND=keep`
 deliberately disables cleanup for debugging. Supplying
 `RUNLEDGER_TEST_ADMIN_DATABASE_URL` uses that external PostgreSQL instance and
 does not start a container or reaper.
 
 Batter's verification runs these native tests together with adapter and facade
-checks. See the root [testing guide](../docs/testing.md) for the two supported
-Rust toolchains, graph checks and HTTP smoke commands.
+checks. See the root [testing guide](../docs/testing.md) for the supported
+Rust toolchain, graph checks and HTTP smoke commands.
 
 The default test image is `postgres:18`. `RUNLEDGER_TEST_PG_IMAGE` may select a
 different PostgreSQL 18+ image for an explicit environment or compatibility

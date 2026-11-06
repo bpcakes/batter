@@ -3,6 +3,7 @@
 use crate::CompletionStatus;
 
 mod drops;
+mod release;
 
 #[cfg(test)]
 pub(super) use drops::{drop_statement, drops_before_create};
@@ -12,7 +13,7 @@ use super::catalog::{
 };
 use super::{
     Identity, ManagedObject, ManagedObjectDigest, ManagedObjectKind, ManagedObjectManifest,
-    PublicExecute, SET_ROW,
+    ManagedReleaseError, ManagedRevision, PublicExecute, SET_ROW,
 };
 use crate::{PgLease, SqlxFailure};
 use drops::{Retired, drop_holder, lock_trigger_tables, require_covered, retire};
@@ -32,12 +33,18 @@ use std::{collections::HashMap, fmt};
 #[must_use = "an applied manifest is release evidence; log or inspect its digest"]
 pub struct AppliedManagedObjects {
     digest: ManagedObjectDigest,
+    revision: ManagedRevision,
     created_or_replaced: usize,
     unchanged: usize,
     retired: usize,
 }
 
 impl AppliedManagedObjects {
+    /// Return the release revision committed with this manifest.
+    pub const fn revision(&self) -> ManagedRevision {
+        self.revision
+    }
+
     /// Return the set digest recorded in the ledger.
     pub const fn digest(&self) -> ManagedObjectDigest {
         self.digest
@@ -67,7 +74,10 @@ impl AppliedManagedObjects {
 /// [`Self::CommitUnconfirmed`], the managed object transaction never sent
 /// `COMMIT`: its effects were never visible and are discarded when the
 /// retired session ends. Migrations that the migrator committed remain.
+/// Migration: exhaustive matches on `ManagedApplyError` must handle `Release`.
 pub enum ManagedApplyError {
+    /// Release ordering or legacy adoption refused this manifest.
+    Release(ManagedReleaseError),
     /// The session lock or the SQLx migrator failed before any managed-object
     /// statement ran. A migrator error is retained as `sqlx::Error::Migrate`.
     Migration(SqlxFailure),
@@ -116,6 +126,7 @@ pub enum ManagedApplyError {
 impl fmt::Display for ManagedApplyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Release(error) => error.fmt(formatter),
             Self::Migration(_) => formatter.write_str("migration before managed objects failed"),
             Self::Statement(_) => formatter.write_str("managed object statement failed"),
             Self::LedgerShape => {
@@ -140,6 +151,7 @@ impl fmt::Display for ManagedApplyError {
 impl fmt::Debug for ManagedApplyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Release(_) => "ManagedApplyError::Release",
             Self::Migration(_) => "ManagedApplyError::Migration",
             Self::Statement(_) => "ManagedApplyError::Statement",
             Self::LedgerShape => "ManagedApplyError::LedgerShape",
@@ -154,6 +166,7 @@ impl fmt::Debug for ManagedApplyError {
 impl std::error::Error for ManagedApplyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Release(error) => Some(error),
             Self::Migration(error) | Self::Statement(error) | Self::CommitUnconfirmed(error) => {
                 Some(error)
             }
@@ -172,7 +185,8 @@ impl ManagedApplyError {
             Self::Migration(error) | Self::Statement(error) | Self::CommitUnconfirmed(error) => {
                 Some(error)
             }
-            Self::LedgerShape
+            Self::Release(_)
+            | Self::LedgerShape
             | Self::Capacity
             | Self::IdentityMismatch { .. }
             | Self::PublicExecuteRetained { .. } => None,
@@ -275,20 +289,22 @@ async fn apply(
     // Library statements and rendering run under the canonical settings;
     // `create` restores the session's own values around each source.
     let settings = RenderSettings::apply(connection).await.map_err(statement)?;
-    let rows = lock_ledger(connection, manifest).await?;
+    let (rows, origin) = lock_ledger(connection, manifest).await?;
+    let authorized = release::authorize(manifest, &rows, origin)?;
     let recorded = rows
         .iter()
         .map(|row| (row.identity.as_str(), row))
         .collect::<HashMap<_, _>>();
-    let (pending, retired) = execute_changes(connection, &settings, manifest, &recorded).await?;
+    let (pending, retired) = execute_changes(connection, &settings, &authorized, &recorded).await?;
     let installed = installed_objects(connection, manifest).await?;
     if manifest.public_execute() == PublicExecute::Revoke {
         revoke_public_execute(connection, &installed).await?;
     }
-    record(connection, manifest, &pending, &installed).await?;
+    record(connection, authorized, &pending, &installed).await?;
     Ok((
         AppliedManagedObjects {
             digest: manifest.digest(),
+            revision: manifest.revision(),
             created_or_replaced: pending.len(),
             unchanged: manifest.objects().len() - pending.len(),
             retired: retired.triggers + retired.routines,
@@ -302,9 +318,10 @@ async fn apply(
 async fn execute_changes<'m>(
     connection: &mut PgConnection,
     settings: &RenderSettings,
-    manifest: &'m ManagedObjectManifest,
+    authorized: &release::AuthorizedRelease<'m>,
     recorded: &HashMap<&str, &catalog::LedgerRow>,
 ) -> Result<(Vec<&'m ManagedObject>, Retired), ManagedApplyError> {
+    let manifest = authorized.manifest();
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
     let pending = pending_entries(manifest, recorded, &live, &hashes);
@@ -409,12 +426,17 @@ fn live_kinds(
 async fn lock_ledger(
     connection: &mut PgConnection,
     manifest: &ManagedObjectManifest,
-) -> Result<Vec<catalog::LedgerRow>, ManagedApplyError> {
+) -> Result<(Vec<catalog::LedgerRow>, release::LedgerOrigin), ManagedApplyError> {
     let ledger = manifest.ledger();
-    match catalog::named_relation(connection, ledger)
+    let existing = catalog::named_relation(connection, ledger)
         .await
-        .map_err(statement)?
-    {
+        .map_err(statement)?;
+    let origin = if existing.is_none() {
+        release::LedgerOrigin::Created
+    } else {
+        release::LedgerOrigin::Existing
+    };
+    match existing {
         None => execute(connection, AssertSqlSafe(create_ledger_sql(ledger)))
             .await
             .map_err(statement)?,
@@ -438,14 +460,15 @@ async fn lock_ledger(
     else {
         return Err(ManagedApplyError::LedgerShape);
     };
-    if catalog::inspect_ledger_shape(connection, oid)
+    match catalog::inspect_ledger_shape(connection, oid)
         .await
         .map_err(statement)?
-        != LedgerShape::Exact
     {
-        return Err(ManagedApplyError::LedgerShape);
+        LedgerShape::Exact => {}
+        LedgerShape::Legacy => release::upgrade_legacy(connection, manifest).await?,
+        _ => return Err(ManagedApplyError::LedgerShape),
     }
-    Ok(catalog::load_ledger_rows(connection, ledger).await?)
+    Ok((catalog::load_ledger_rows(connection, ledger).await?, origin))
 }
 
 /// Execute one source statement and require that it wrote exactly its
@@ -539,10 +562,11 @@ async fn revoke_public_execute(
 /// record the set row. Rows of unchanged entries keep their original time.
 async fn record(
     connection: &mut PgConnection,
-    manifest: &ManagedObjectManifest,
+    authorized: release::AuthorizedRelease<'_>,
     pending: &[&ManagedObject],
     installed: &[(&ManagedObject, i64, [u8; 32])],
 ) -> Result<(), ManagedApplyError> {
+    let manifest = authorized.manifest();
     let ledger = manifest.ledger().quoted();
     let declared = manifest
         .objects()
@@ -586,22 +610,24 @@ async fn record(
     );
     sqlx::query(AssertSqlSafe(format!(
         "INSERT INTO {ledger} AS ledger
-             (identity, kind, source_checksum, rendered_checksum, applied_at)
+             (identity, kind, source_checksum, rendered_checksum, applied_at, release_revision)
          SELECT row.identity, row.kind, row.source_checksum, row.rendered_checksum,
-                pg_catalog.now()
+                pg_catalog.now(), CASE WHEN row.identity = 'manifest' THEN $5::bigint ELSE 0 END
          FROM unnest($1::text[], $2::text[], $3::bytea[], $4::bytea[])
               AS row(identity, kind, source_checksum, rendered_checksum)
          ON CONFLICT (identity) DO UPDATE SET
              kind = EXCLUDED.kind,
              source_checksum = EXCLUDED.source_checksum,
              rendered_checksum = EXCLUDED.rendered_checksum,
-             applied_at = EXCLUDED.applied_at"
+             applied_at = EXCLUDED.applied_at,
+             release_revision = EXCLUDED.release_revision"
     )))
     .persistent(false)
     .bind(identities)
     .bind(kinds)
     .bind(sources)
     .bind(hashes)
+    .bind(manifest.revision().get())
     .execute(connection)
     .await
     .map(|_| ())

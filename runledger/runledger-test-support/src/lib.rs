@@ -6,6 +6,7 @@
 mod container_lifecycle;
 mod container_start;
 mod db_lifecycle;
+mod docker;
 mod env;
 mod postgres_container;
 
