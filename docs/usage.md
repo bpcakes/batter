@@ -284,6 +284,13 @@ covers placement, replay and the transport's dependency policy.
 
 ## Bound concurrent work separately
 
+For async feature work, use `bulkhead.run(context, Admission::Reject,
+"record.read", |scope| async move { /* await work here */ Ok::<_, Error>(value) })`.
+The factory receives the child operation context, and the library keeps capacity
+until its future is destroyed. Match `BulkheadError::NotAdmitted` separately
+from `BulkheadError::Operation`. `enter` is the lower-level native-permit escape
+hatch for explicit ownership transfer, such as admitting process-owned work.
+
 Create `BulkheadCapacity` from the configured count, then hand that validated
 witness to `Bulkhead::new` once and share clones of the resulting bulkhead. The
 [compiled API example](../crates/batter-core/src/admission.rs) shows the constructor

@@ -1,8 +1,10 @@
 //! Process-local concurrency admission, distinct from Runlimit quota checks,
 //! and bounded blocking work that holds its permit until the closure returns.
 
+mod asynchronous;
 mod blocking;
 
+pub use asynchronous::BulkheadError;
 pub use blocking::BlockingError;
 
 use crate::{
@@ -98,7 +100,8 @@ impl Bulkhead {
         self.semaphore.close();
     }
 
-    /// Obtain a native Tokio permit. Hold it for the work's full lifetime.
+    /// Lower-level native permit acquisition. Prefer [`Self::run`] for async work.
+    /// Hold the returned permit for the work's full lifetime.
     ///
     /// The permit is released whenever it is dropped, including when the future
     /// holding it is cancelled or dropped while work it handed to another thread

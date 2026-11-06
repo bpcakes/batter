@@ -1,0 +1,101 @@
+use super::{Admission, AdmissionError, Bulkhead};
+use crate::operation::{OperationContext, OperationError};
+use std::{fmt, future::Future};
+
+/// Admission refusal or the complete result of admitted async execution.
+/// Formatting never visits the retained application error.
+pub enum BulkheadError<E> {
+    /// The factory was not invoked.
+    NotAdmitted(AdmissionError),
+    /// The admitted operation failed or was interrupted. External effects may
+    /// already have happened; interruption never authorizes replay.
+    Operation(OperationError<E>),
+}
+
+impl<E> fmt::Display for BulkheadError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotAdmitted(error) => write!(f, "async work not admitted: {error}"),
+            Self::Operation(OperationError::Failed(_)) => f.write_str("async work failed"),
+            Self::Operation(OperationError::Interrupted(reason)) => reason.fmt(f),
+        }
+    }
+}
+
+impl<E> fmt::Debug for BulkheadError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for BulkheadError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NotAdmitted(error) => Some(error),
+            Self::Operation(error) => Some(error),
+        }
+    }
+}
+
+impl Bulkhead {
+    /// Admit and run one async factory, retaining capacity through full future
+    /// destruction on success, error, panic, interruption or caller cancellation.
+    ///
+    /// Admission and execution share the original absolute deadline. The context
+    /// is rechecked after acquisition and before the factory is invoked. No
+    /// permit or task handle escapes; no task is spawned. A never-polled call
+    /// does no work. The factory and future may borrow application state.
+    ///
+    /// Uses [`OperationContext::run`]'s cancellation/deadline precedence and
+    /// child cancellation. It owns only the returned future: detached tasks,
+    /// response streams returned as values, and remote effects are outside its
+    /// lifetime. Non-yielding code cannot be preempted. Waiting callers remain
+    /// unbounded; select [`Admission::Reject`] or bound the upstream queue.
+    /// Like any outer operation boundary, this can interrupt nested protocols;
+    /// use their retained-outcome machinery when acknowledging durable effects.
+    ///
+    /// ```
+    /// use batter_core::{admission::{Admission, Bulkhead, BulkheadCapacity},
+    ///     operation::OperationOwner};
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let bulkhead = Bulkhead::new(BulkheadCapacity::new(2)?);
+    /// let owner = OperationOwner::new(Duration::from_secs(1))?;
+    /// let input = String::from("record");
+    /// let size = bulkhead.run(owner.context(), Admission::Reject, "record.read",
+    ///     |_scope| async { Ok::<_, std::io::Error>(input.len()) }).await?;
+    /// assert_eq!(size, 6);
+    /// # Ok(()) }
+    /// ```
+    pub async fn run<T, E, F, Fut>(
+        &self,
+        context: &OperationContext,
+        admission: Admission,
+        operation: &'static str,
+        factory: F,
+    ) -> Result<T, BulkheadError<E>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+    {
+        crate::scoped_dispatch::scope(async move {
+            let mut decision = crate::telemetry::record::BulkheadTerminal::new();
+            let admitted = self.admit(context, admission).await.and_then(|permit| {
+                context
+                    .check()
+                    .map(|()| permit)
+                    .map_err(AdmissionError::Interrupted)
+            });
+            decision.finish(&admitted);
+            // This local outlives the entire operation future, including its
+            // destruction. Never move it into the callback or its result.
+            let _permit = admitted.map_err(BulkheadError::NotAdmitted)?;
+            context
+                .run(operation, factory)
+                .await
+                .map_err(BulkheadError::Operation)
+        })
+        .await
+    }
+}

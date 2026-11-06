@@ -534,6 +534,18 @@ deadline. The returned permit is Tokio's OwnedSemaphorePermit; retain it until
 the bounded work actually finishes. Closing admission wakes waiters but does not
 revoke acquired permits.
 
+`Bulkhead::run(context, admission, operation, factory)` is the canonical path
+for async work. Admission and execution share the caller's absolute deadline.
+The library checks the context after acquiring capacity and runs the factory
+inside an operation boundary. It retains the permit until the entire work
+future has been destroyed, including cancellation, returned errors and unwinding.
+There is no permit handoff, spawned task or separately callable release step.
+A never-polled call invokes nothing. `BulkheadError` distinguishes admission
+refusal from operation failure/interruption and redacts retained errors.
+Returned streams and detached work are outside the owned future's lifetime;
+this does not join them or prove remote effects. A nested durable protocol still
+needs its own retained-outcome handling; an outer deadline is not commit evidence.
+
 `Bulkhead::run_blocking(context, admission, work)` is the canonical path for
 synchronous CPU work or blocking I/O under a bulkhead. It admits exactly as
 `enter` does, checks the context again after a permit is granted, and records
@@ -598,7 +610,7 @@ buffers, database connections in other components, or global fleet concurrency.
 Context preflight cannot atomically serialize a concurrent cancellation with
 semaphore acquisition; code must still check/run its admitted operation.
 Wait admission can also return a permit after the deadline when its timer has
-not fired yet; `run_blocking` performs that check itself, while callers of
+not fired yet; `run` and `run_blocking` perform that check themselves, while callers of
 `enter` still must.
 Rate limiting, concurrency limiting, and retry accounting are separate policies.
 

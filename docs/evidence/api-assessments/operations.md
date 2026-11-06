@@ -338,3 +338,24 @@ separate methodology remains unexecuted. Runtime death, non-yielding tasks,
 detached children and remote effects retain their explicit existing boundaries.
 The outbound example retains its distinct ready-response precedence, rather than
 wrapping its exchange evidence in the cancellation-first generic runner.
+
+## Async bulkhead execution (`batter-f9kq.1`)
+
+The audit reproduced two concurrent workers through capacity one when callers
+used `let _ = enter(...).await?`. The native guard was released before work.
+The canonical async `Bulkhead::run` now owns acquisition, the post-admission
+context check and the whole factory future. The callback receives a child
+context, never the permit. A local guard retains capacity through future
+destruction on every exit path. Waiting and work share the original deadline;
+refused and unpolled calls never invoke the factory. Errors retain concrete
+application causes without printing them. No public item was removed or renamed;
+`enter` remains compatible and explicitly documents its weaker obligations.
+
+Independent regression scenarios cover overlapping factories, cancellation
+and destructor ordering, late semaphore grants with an unfired deadline timer,
+shared waiting/execution budget, refusal, panics and concrete error retention.
+The facade HTTP example exercises the new canonical API. No fresh-agent
+usability evaluation is claimed. A future returned as a value, native detached
+work and remote effects are not locally owned work. Protocols retaining durable
+outcomes must not equate cancellation of an enclosing operation with rollback;
+the existing explicit native-permit seam remains available for those adapters.

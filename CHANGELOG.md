@@ -8,6 +8,11 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `Bulkhead::run` for async work with library-owned admission, deadline
+  checks and permit lifetime, and redacted `BulkheadError` outcomes. The HTTP
+  example uses it; `enter` remains an explicit lower-level native-permit path
+  (`batter-f9kq.1`).
+
 - Direct facade consumers to owned work/finalization and supported native acquisition;
   identify manual phase and cleanup registration obligations at the selection points.
 

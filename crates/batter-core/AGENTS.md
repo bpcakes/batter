@@ -40,6 +40,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
+- `src/admission/asynchronous.rs` owns async factory admission, context rechecks,
+  and permit retention through complete work-future destruction.
 - `src/admission/blocking.rs` owns `Bulkhead::run_blocking` and `BlockingError`:
   admission, a context recheck, one bulkhead decision and a same-poll handoff
   of the permit into the blocking closure.
