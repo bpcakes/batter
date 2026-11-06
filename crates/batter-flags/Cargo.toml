@@ -50,3 +50,7 @@ tracing-subscriber = { workspace = true, features = ["registry"] }
 
 [package.metadata.docs.rs]
 all-features = true
+
+[[test]]
+name = "jobs_live"
+required-features = ["runledger", "postgres"]
