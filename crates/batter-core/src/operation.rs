@@ -4,6 +4,11 @@ mod owner;
 mod phased;
 mod tracked;
 
+/// Adapter-facing execution seams with caller-owned lifetime obligations.
+pub mod low_level {
+    pub use super::phased::scoped::{ScopedPhaseResult, ScopedPhases, drive_phases};
+}
+
 pub use tracked::{NotStarted, TrackedOperationError};
 
 pub use phased::{

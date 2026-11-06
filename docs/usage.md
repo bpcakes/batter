@@ -444,7 +444,17 @@ Native initialization alone does not establish dependency health or
 application readiness, and native joins do not prove arbitrary detached work or
 remote sessions stopped.
 
-Inside a `JobExecutionHandler`, derive the job's operation contexts with
+For handler work followed by finalization, implement
+`batter::runledger::PhasedJobHandler` and register
+`PhasedJob::new(handler, reserve)?` directly. Both callbacks can borrow native
+progress/checkpoint services across awaits. The adapter owns sequencing and
+passes complete failed-phase evidence to the required native-failure classifier;
+an early work error cannot skip finalization while the invocation remains live.
+Native deadline, lease loss or task destruction can still interrupt finalization.
+See the [adapter guide](../crates/batter-runledger/README.md) and its
+[complete handler example](../crates/batter-runledger/src/phased_handler.rs).
+
+For lower-level composition inside a `JobExecutionHandler`, derive contexts with
 `let phases = batter::runledger::job_phases(execution, reserve)` and match
 `JobPhasesRejection` explicitly into the job's `JobFailure`. Run provider calls,
 admission, retries and child operations under `phases.work()`, then await any

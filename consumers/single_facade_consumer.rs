@@ -24,9 +24,9 @@ mod single_facade_quota;
 use batter::cleanup::CleanupBudget;
 use batter::lifecycle::{ShutdownBudget, Supervisor};
 use batter::operation::{OperationContext, OperationError, OperationOwner};
-use batter::runledger::native::core::jobs::{
-    JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
-};
+#[cfg(test)]
+use batter::runledger::job_phases;
+use batter::runledger::native::core::jobs::{JobCompletion, JobFailure, JobType};
 use batter::runledger::native::core::prelude::async_trait;
 use batter::runledger::native::postgres::{
     jobs::{JobEnqueue, JobEnqueueIntent, JobScope},
@@ -41,7 +41,9 @@ use batter::runledger::{
     IntentCorrelationState, IntentReconciliation, PgSessionProfile, RunledgerDatabase, run_atomic,
     verify_schema,
 };
-use batter::runledger::{JobPhasesRejection, job_phases};
+use batter::runledger::{
+    JobFinalization, JobPhasesRejection, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
+};
 use batter::runlimit::native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
 use batter::runlimit::native_transport::http::draft_11;
 use batter::runlimit::postgres::PostgresLimiter;
@@ -86,44 +88,86 @@ const QUOTA_SECRET: [u8; 32] = [23; 32];
 const FINAL_STATE_RESERVE: Duration = Duration::from_secs(1);
 
 /// Records each executed job so the root can witness durable delivery, and each
-/// invocation's end so the root can witness its derived phases being cancelled.
+/// invocation's end so the root can witness its work scope is cancelled by then.
 struct Greet {
     executed: UnboundedSender<String>,
     ended: UnboundedSender<()>,
 }
 
 #[async_trait]
-impl JobExecutionHandler for Greet {
+impl PhasedJobHandler for Greet {
+    type Output = String;
+    type Error = JobFailure;
+
     fn job_type(&self) -> JobType<'static> {
         JOB
     }
 
-    async fn execute(
-        &self,
-        execution: JobExecution<'_>,
-        payload: Value,
-    ) -> Result<JobCompletion, JobFailure> {
-        let phases =
-            job_phases(execution, FINAL_STATE_RESERVE).map_err(|rejection| match rejection {
-                JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => {
-                    JobFailure::timeout("facade.consumer.no_work_time", "No work time remained.")
-                }
-                JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => {
-                    JobFailure::terminal("facade.consumer.phases", "No invocation phases.")
-                }
-            })?;
-        // An independent task learns when the native invocation ends.
-        let observed = phases.work().clone();
+    async fn work(&self, scope: JobWork<'_>, payload: Value) -> Result<String, JobFailure> {
+        // Observe native invocation exit, rather than the shorter work phase.
+        let observed = scope
+            .execution()
+            .invocation()
+            .expect("adapter checked invocation");
         let ended = self.ended.clone();
+        let work_context = scope.context().clone();
         tokio::spawn(async move {
-            observed.cancelled().await;
-            let _ = ended.send(());
+            observed.ended().await;
+            if matches!(
+                work_context.check(),
+                Err(batter::operation::Interruption::Cancelled)
+            ) {
+                let _ = ended.send(());
+            }
         });
-        let name = greeting_name(phases.work(), payload).await?;
-        record_greeting(phases.finalization(), self.executed.clone(), name).await?;
+        greeting_name(scope.context(), payload).await
+    }
+
+    async fn finalize(
+        &self,
+        scope: JobFinalization<'_, String, JobFailure>,
+    ) -> Result<JobCompletion, JobFailure> {
+        if let Ok(name) = scope.work().classify() {
+            // Native services remain borrowed within the worker-owned invocation.
+            scope.execution().save_checkpoint(name).await?;
+            record_greeting(scope.context(), self.executed.clone(), name.clone()).await?;
+        }
         JobCompletion::success()
             .progress(1, 1)
             .map_err(|_| JobFailure::terminal("facade.consumer.progress", "Invalid counts."))
+    }
+
+    fn failed(&self, failure: PhasedJobFailure<String, JobFailure>) -> JobFailure {
+        use batter::{command::CommandCause, operation::PhasedFailure};
+        match failure {
+            PhasedJobFailure::Rejected(
+                JobPhasesRejection::Exhausted | JobPhasesRejection::Ended,
+            ) => JobFailure::timeout("facade.consumer.no_work_time", "No work time remained."),
+            PhasedJobFailure::Rejected(_) => {
+                JobFailure::terminal("facade.consumer.phases", "No invocation phases.")
+            }
+            PhasedJobFailure::Phases(PhasedFailure::Report(report)) => {
+                // This consumer keeps the first ordinary failure's native policy.
+                // Both phase outcomes remain available here for richer policies.
+                if let Err(work) = report.work().classify()
+                    && let Err(CommandCause::Failed(error)) = work.returned_result()
+                {
+                    return error.clone();
+                }
+                if let Err(finalization) = report.finalization().classify()
+                    && let Err(CommandCause::Failed(error)) = finalization.returned_result()
+                {
+                    return error.clone();
+                }
+                JobFailure::terminal(
+                    "facade.consumer.phase_failed",
+                    "A phase was interrupted or panicked.",
+                )
+            }
+            PhasedJobFailure::Phases(PhasedFailure::Coordinator(_)) => {
+                JobFailure::terminal("facade.consumer.phase_driver", "Phase driver failed.")
+            }
+        }
     }
 }
 
@@ -307,7 +351,10 @@ async fn prepare_worker(
     ended: UnboundedSender<()>,
 ) -> Outcome<PreparedSupervisor> {
     let pool = database.pool().clone();
-    let catalog = JobCatalog::new().handler(Greet { executed, ended }.into_job_handler());
+    let catalog = JobCatalog::new().handler(PhasedJob::new(
+        Greet { executed, ended },
+        FINAL_STATE_RESERVE,
+    )?);
     catalog.sync_definitions(&pool).await?;
     // Validated application settings, never native `from_env` discovery.
     let config = JobsConfig {
@@ -372,10 +419,10 @@ async fn run_worker(url: String, payload: &Value, subject: &str) -> Outcome {
         for _ in 0..2 {
             tokio::time::timeout(Duration::from_secs(60), endings.recv())
                 .await
-                .map_err(|_| "an invocation's exit did not cancel its derived phases")?
+                .map_err(|_| "native invocation ended without a cancelled work scope")?
                 .ok_or("worker stopped before both invocations ended")?;
         }
-        println!("facade consumer: invocation exit cancelled each job's derived phases");
+        println!("facade consumer: native invocation exit observed with cancelled work scopes");
         run_limiter(PostgresLimiter::new(database.pool().clone()), subject).await
     })
     .await?;

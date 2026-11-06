@@ -52,6 +52,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/operation/phased.rs` and `phased/` own inert work/finalization assembly,
   typed success/failure proofs and work-only owner cancellation. Reuse command phase
   polling; finalization inherits the parent and original total deadline.
+- `operation/phased/scoped.rs` is the lower-level borrowing kernel for adapters
+  whose native host owns the whole invocation; it shares command phase polling.
+  It is not an independently owned application finalizer.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
   `cleanup/acquisition.rs` owns native semaphore/UDP acquisition through registration
   and native-future destruction. `cleanup/low_level.rs` owns caller-assembled pairs.

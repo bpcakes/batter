@@ -806,7 +806,19 @@ already-active wait. No application termination gate or independent join driver
 is required. In-flight claims can still dispatch after stop; arbitrary detached
 handler descendants and remote server sessions are not covered by native joins.
 
-Inside a `JobExecutionHandler`, `batter_runledger::job_phases(execution, reserve)`
+For work followed by finalization, register
+`batter_runledger::PhasedJob::new(handler, reserve)?` with a `PhasedJobHandler`.
+The native worker owns one adapter invocation. Work and finalization borrow the
+same native execution services; finalization receives the complete work outcome
+after work-future destruction and work-context cancellation. Both phases must
+succeed before a native completion is accepted. The required `failed` callback
+receives both outcomes and returns only `JobFailure`, keeping retry policy with
+the application. Native deadline, lease loss and task destruction still end
+authority and can interrupt finalization. There is no independently spawned
+coordinator or promise of finalization after invocation death.
+
+For lower-level composition inside a `JobExecutionHandler`,
+`batter_runledger::job_phases(execution, reserve)`
 derives `OperationPhases` from the native invocation instead of a fresh root.
 Their root deadline is exactly `JobExecution::deadline()`, the instant the worker
 enforces, on Tokio's view of the same monotonic clock; it is never rebuilt as

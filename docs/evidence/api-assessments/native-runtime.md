@@ -390,3 +390,34 @@ The exit is not total in one recorded case: a destructor that panics while the
 drive destroys the handler future is not contained, as it is not in the worker,
 whose unwind boundary also covers polling only; a should-panic test pins this.
 Fresh-agent usability evaluation is proposed and unexecuted.
+
+## Borrowed handler work and finalization (`batter-f9kq.2`)
+
+The frequency-ranked audit found that borrowing native execution services forced
+feature handlers to sequence manual phases. An ordinary `?` after work could
+skip finalization. The protected path is now `PhasedJob<PhasedJobHandler>`:
+the native worker invokes one adapter future that owns work, complete outcome
+capture and finalization. No public phase-running method or separate waiter is
+exposed by that adapter. `JobWork` cannot access finalization; `JobFinalization`
+is constructed only after work-future destruction. Both borrow the invocation's
+existing services. Finalization cannot overwrite work evidence; completion needs
+both phases to succeed, and `failed` can return only a native failure.
+
+The foundation's command polling kernel supplies timing, panic and destruction
+semantics through a deliberately lower-level host-owned driver. Its cancellation
+obligation belongs to the adapter: use it only inside an invocation the host
+already owns. It is not a cancellation-safe borrowing bracket for application
+code. The protected adapter does not expose that driver. Native lease loss,
+deadline or task destruction still revoke invocation authority; running a later
+finalizer would not restore that authority. Native fencing and remote outcome
+reconciliation remain native/application responsibilities. No spawned coordinator,
+second worker engine, service proxy, or new native execution lifetime is added.
+
+Regression scenarios exercise borrowed checkpoint calls, early errors, work
+panic, work timeout with remaining reserve, simultaneous work/finalization errors,
+finalization timeout, native invocation destruction and invalid reserve refusal.
+The external single-dependency consumer registers the adapter and persists a
+checkpoint from finalization. Compile-fail rustdocs reject forged scopes and
+work-phase access to finalization. All additions preserve existing public call
+shapes; there is no hard cut or deprecated shim. Fresh-agent usability evaluation
+remains unexecuted. Execution results belong to the owning Bead.

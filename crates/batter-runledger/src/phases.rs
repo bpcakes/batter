@@ -9,6 +9,8 @@ use std::{fmt, time::Duration};
 
 /// Derive work and finalization contexts from one native handler invocation.
 ///
+/// Prefer [`crate::PhasedJob`] for handler work/finalization, including borrowed
+/// native services. This function exposes the lower-level phase pair.
 /// Call this once inside a `JobExecutionHandler`. For owned `Send + 'static`
 /// callbacks, consume the pair with [`OperationPhases::into_operation`] and
 /// retain its started owner while awaiting checked completion. The library
@@ -45,8 +47,8 @@ use std::{fmt, time::Duration};
 /// If the handler itself is destroyed, native invocation exit still cancels
 /// both phases: retained ownership does not shield finalization from that exit,
 /// join it into the handler, or extend the native deadline. Callbacks cannot
-/// capture the borrowed `JobExecution`; retain manual phase access when native
-/// progress/checkpoint operations must borrow it, and own that sequencing.
+/// capture the borrowed `JobExecution`; use [`crate::PhasedJob`] when native
+/// progress/checkpoint operations must borrow it.
 ///
 /// Handler destruction can drop the owner before invocation exit is signalled.
 /// The coordinator may start finalization in that window, including on another

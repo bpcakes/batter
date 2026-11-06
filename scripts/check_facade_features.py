@@ -214,7 +214,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if chosen & RUNLEDGER_SELECTORS:
-        lines.insert(1, "use batter::runledger::{JobPhasesRejection, NativeReport, job_phases, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
+        lines.insert(1, "use batter::runledger::{PhasedJob, PhasedJobHandler, PhasedJobFailure, JobWork, JobFinalization, JobPhasesRejection, NativeReport, job_phases, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
         lines.insert(1, "use batter::runledger::native::core::jobs::{JobHandler, JobType};")
         lines.insert(1, "use batter::runledger::native::postgres::jobs::{JobEnqueue, JobEnqueueIntent};")
         lines.insert(1, "use batter::runledger::native::postgres::{MIGRATOR, migrate_after_idempotency_cutover};")

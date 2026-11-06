@@ -27,6 +27,16 @@ impl<T, E, U, F> PhasedReport<T, E, U, F> {
             failed => Err(PhasedFailure::Report(FailedPhasedReport(Arc::new(failed)))),
         }
     }
+
+    pub(super) fn into_owned_checked(self) -> Result<(T, U), PhasedFailure<T, E, U, F>> {
+        match self {
+            Self {
+                work: PhaseOutcome(Ok(work)),
+                finalization: PhaseOutcome(Ok(finalization)),
+            } => Ok((work, finalization)),
+            failed => Err(PhasedFailure::Report(FailedPhasedReport(Arc::new(failed)))),
+        }
+    }
 }
 
 impl<T, E, U, F> fmt::Debug for PhasedReport<T, E, U, F> {

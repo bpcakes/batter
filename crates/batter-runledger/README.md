@@ -17,7 +17,19 @@ success, and `Unsettled` never authorizes dependency cleanup.
 The exact `register(&mut Supervisor, ...)` signature remains available for
 lower-level consumers; both names enter the same native ownership path.
 
-Inside a `JobExecutionHandler`, `job_phases(execution, reserve)` derives Batter
+For feature handlers with work and finalization, implement `PhasedJobHandler`
+and register `PhasedJob::new(handler, reserve)?`. Work receives `JobWork`;
+finalization receives `JobFinalization` with the complete work outcome. Both
+can borrow the handler and the same native `JobExecution` progress/checkpoint
+services across awaits. The adapter owns sequencing and retains both outcomes;
+a failed phase must be mapped to a native `JobFailure` through `failed`.
+The native invocation owns the whole driver, with no independently spawned
+coordinator. Native deadline, lease loss or task destruction can end it;
+no finalization after invocation death is promised. The `PhasedJob` rustdoc and
+single-dependency consumer demonstrate registration and checkpoint persistence.
+
+For lower-level composition inside a `JobExecutionHandler`,
+`job_phases(execution, reserve)` derives Batter
 `OperationPhases` from the native invocation. Both phases share one root whose
 deadline is exactly the worker's `JobExecution::deadline()`, converted to Tokio's
 view of the same monotonic clock and never rebuilt from the remaining budget.
@@ -41,7 +53,7 @@ owner loss cancels work only, but native invocation exit still cancels both
 phases, including finalization. The coordinator is not joined into the handler,
 and cannot survive runtime death or extend the native deadline. Callbacks must
 own their captures: a borrowed `JobExecution` cannot move into them. Native
-progress/checkpoint calls that borrow the invocation retain manual sequencing.
+progress/checkpoint calls that borrow the invocation use `PhasedJob` instead.
 
 Handler destruction can drop the owner before invocation exit is signalled.
 The coordinator may start finalization in that window, including on another

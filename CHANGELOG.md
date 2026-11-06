@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `PhasedJob` / `PhasedJobHandler` for library-ordered job work and
+  finalization borrowing native execution services. Preserve both phase outcomes
+  and require native failure classification before returning (`batter-f9kq.2`).
+
 - Add `Bulkhead::run` for async work with library-owned admission, deadline
   checks and permit lifetime, and redacted `BulkheadError` outcomes. The HTTP
   example uses it; `enter` remains an explicit lower-level native-permit path

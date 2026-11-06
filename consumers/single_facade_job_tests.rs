@@ -1,6 +1,8 @@
 use super::*;
 use batter::operation::OperationPhases;
-use batter::runledger::native::core::jobs::JobFailureKind;
+use batter::runledger::native::core::jobs::{
+    JobExecution, JobExecutionHandler, JobFailureKind, JobHandler,
+};
 use batter::runledger::test_support::{HandlerExit, HandlerInvocation};
 use std::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -10,17 +12,25 @@ const INVOCATION_TIME: Duration = Duration::from_secs(10);
 
 /// The handler the catalog registers, with what it records and each
 /// invocation's end as its observer task sees it.
-fn greet() -> (Greet, UnboundedReceiver<String>, UnboundedReceiver<()>) {
+fn greet() -> (
+    PhasedJob<Greet>,
+    UnboundedReceiver<String>,
+    UnboundedReceiver<()>,
+) {
     let (executed, recorded) = unbounded_channel();
     let (ended, endings) = unbounded_channel();
-    (Greet { executed, ended }, recorded, endings)
+    (
+        PhasedJob::new(Greet { executed, ended }, FINAL_STATE_RESERVE).expect("positive reserve"),
+        recorded,
+        endings,
+    )
 }
 
 /// Drives `handler` once through the worker's own dispatch, without a worker.
-async fn drive(budget: Duration, handler: impl JobExecutionHandler, payload: Value) -> HandlerExit {
+async fn drive(budget: Duration, handler: impl JobHandler, payload: Value) -> HandlerExit {
     let run = HandlerInvocation::new(budget)
         .expect("budget")
-        .execute(&handler.into_job_handler(), payload)
+        .execute(&handler, payload)
         .await;
     assert!(run.exit_hook_panics.is_empty());
     run.exit
@@ -37,12 +47,12 @@ fn failure(exit: HandlerExit) -> JobFailure {
 /// so a test can place that step on the invocation's own clock.
 struct Step<F>(Mutex<Option<F>>);
 
-fn step<F, Fut>(body: F) -> Step<F>
+fn step<F, Fut>(body: F) -> impl JobHandler
 where
     F: FnOnce(OperationPhases) -> Fut + Send + 'static,
     Fut: Future<Output = Result<JobCompletion, JobFailure>> + Send + 'static,
 {
-    Step(Mutex::new(Some(body)))
+    Step(Mutex::new(Some(body))).into_job_handler()
 }
 
 #[async_trait]
@@ -67,12 +77,12 @@ where
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_greeting_is_recorded_and_the_exit_cancels_the_derived_phases() {
+async fn a_greeting_is_recorded_and_native_exit_has_a_cancelled_work_scope() {
     let (handler, mut recorded, mut endings) = greet();
     let exit = drive(INVOCATION_TIME, handler, json!({"name": "valid"})).await;
     assert!(matches!(exit, HandlerExit::Returned(Ok(_))), "{exit:?}");
     assert_eq!(recorded.recv().await.as_deref(), Some("valid"));
-    // The handler's observer task learns of the exit through the work phase.
+    // The observer waits for native exit and checks work-scope cancellation.
     let ended = timeout(INVOCATION_TIME, endings.recv()).await;
     assert!(matches!(ended, Ok(Some(()))), "{ended:?}");
 }

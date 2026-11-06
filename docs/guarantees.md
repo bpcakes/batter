@@ -3269,6 +3269,21 @@ captured data and native inquiries serve as differential test references.
 
 ## Runledger invocation phases
 
+`PhasedJob::new(handler, positive_reserve)` is the protected handler path for
+work followed by outcome-aware finalization. Its `PhasedJobHandler` callbacks
+borrow the same native execution services and receive only their own phase's
+context. Work return, error, panic and work-budget expiry all reach finalization
+while native invocation authority remains live. The adapter uses the foundation's
+command-phase polling and destruction checks, retains both outcomes, and accepts
+a native completion only after both phases succeed. A required `failed` callback
+maps the complete failure to native policy and cannot return job success.
+The entire adapter future belongs to the native worker; there is no independent
+phase waiter to cancel. Native deadline, lease loss and task destruction still
+end the invocation and may interrupt finalization. No async-drop, remote-effect
+or detached-work guarantee follows. The core `operation::low_level::drive_phases`
+is an adapter implementation seam with these host-ownership obligations, not a
+protected borrowing bracket for application code.
+
 `batter_runledger::job_phases(execution, reserve)` is the one bridge from a
 native `JobExecution` to Batter `OperationPhases`. Both phases share one root at
 exactly `JobExecution::deadline()`, converted from the native std instant to

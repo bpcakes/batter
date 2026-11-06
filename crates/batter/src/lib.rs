@@ -31,6 +31,7 @@
 //! | A long-running service | [`startup::Startup::protected`] with an async-closure initializer, `with_unix_signals`, `start`, `finish_with_output` for a typed result such as the bound address, then [`lifecycle::RunningSupervisor::wait_checked`]; [`startup::ApplicationError`] when the initializer combines unrelated errors with `?`; with metrics export, [`service::start`] and `otlp::prepare` (feature `otlp`), unit output only | driving [`lifecycle::Supervisor::start`] yourself, a channel to carry startup values out, an adapter error type, or awaiting the raw report without the checked form |
 //! | Finite work: setup, migration, an operator command | [`command::Command::new`] or [`command::Command::within`]; at an executable root [`command::Command::start_with_unix_signals`], then [`command::CommandOwner::finish`] and [`command::CommandSuccess::into_value`]; in reusable helpers and in-process tests [`command::Command::start_without_signals`]; [`command::Command::start`] with [`command::check_command`] only when observers must share one report | `Startup`, which reports `EmptySupervisor` for a process with no critical component; hand-installed `tokio::signal` listeners around a command; a command started inside another command's work, whose cleanup an interrupted outer command leaves unjoined; `expect` after `check_command`, or `Clone`, to copy a value out of a shared report |
 //! | Work whose finalization needs its typed outcome | [`operation::PhasedOperation::new`] with a parent context and positive reserve, then `start()`; retain the running owner and await `running.wait().await`, whose `Ok` proves both phases succeeded and whose phase-failure report retains both outcomes; parent cancellation still interrupts finalization | manual `work()` / `finalization()` sequencing that can return on work error before finalization |
+//! | Job work/finalization borrowing native progress or checkpoint services | `runledger::PhasedJob::new` with a `runledger::PhasedJobHandler`; the native worker owns both callbacks | manual `job_phases` sequencing or an independently spawned coordinator capturing the invocation |
 //! | A supported native resource with registered cleanup | obtain a slot with `reserve_cleanup` in owned startup/command work, then use [`cleanup::CleanupSlot::acquire_semaphore`] or [`cleanup::CleanupSlot::bind_udp`]; use adapter-owned acquisition such as `sqlx::pool_in` for a PostgreSQL pool | acquiring first and calling `push` / `register` by hand, or [`cleanup::low_level::acquire_pair`], which leaves acquisition-to-pair construction with the caller; application hooks and unsupported resource protocols retain explicit manual ownership |
 //! | A PostgreSQL pool the service owns | `sqlx::pool_in` after `reserve_cleanup` (feature `sqlx`); `sqlx::PgProfiledPool` when a session profile is declared; `runledger::RunledgerDatabase` when Runledger runs on the same pool (feature `runledger`) | a pool built outside startup with a manual close |
 //! | Routines, triggers and constraint triggers a release owns | one `sqlx::managed::ManagedObjectManifest` built from in-place source files: `sqlx::PgLease::migrate_and_apply` at setup, then the same manifest in `sqlx::verification::VerificationPlan::with_managed_objects` at readiness (feature `sqlx`) | whole routine bodies restated in new migrations, a constraint trigger created in a migration (it binds the previously installed body), or objects applied by hand before or after `PgLease::migrate` |
@@ -40,7 +41,7 @@
 //! | Synchronous CPU work or blocking I/O under a concurrency bound | [`admission::Bulkhead::run_blocking`] with the caller's context, matching its exhaustive [`admission::BlockingError`] in separate arms | [`admission::Bulkhead::enter`] with its permit moved into `tokio::task::spawn_blocking` by hand, a permit held by the awaiting future, or unbounded `spawn_blocking` |
 //! | PostgreSQL quota storage a service serves from | `runlimit::maintenance::register_in` with the native limiter, then serve the returned limiter through `runlimit::Quota` or `runlimit::http::HttpQuota`; its login needs the store's admission and expiry-cleanup `runlimit::grants` selections (feature `runlimit-postgres`) | a `runlimit::postgres` limiter served directly, whose expired rows nothing deletes |
 //! | A provider HTTP call | `outbound_http::Client::new` with a validated `outbound_http::Origin` and `outbound_http::ConnectTimeout`, built once and cloned; `client.request(method, path_segments)` with its headers and body, then `prepare()?`, which reports every construction error before anything is sent; `PreparedRequest::send_in` with the work phase of `reserve_finalization` after the application's dispatch fence is written, so the outcome can be recorded in the finalization phase unless the parent is cancelled; then an exhaustive `outbound_http::Exchange` match with no wildcard arm, where only `NotStarted` and `NotDispatched` (`proves_unsent`) show that this attempt wrote nothing and what a `Responded` status means is the application's reading of its provider (feature `outbound-http`) | a hand-built `reqwest` client, whose default redirects and replays make a connect error no proof that nothing was sent; retrying `Unknown` as though nothing was sent; reading `Responded` as processed, accepted or refused by the provider, when a load balancer or proxy may have answered; wrapping `send_in` in `run`, `retry`, `timeout` or `select!`, whose interruption drops the exchange and proves nothing |
-//! | A job handler's budget | `runledger::job_phases(execution, reserve)?.into_operation(work, finalize).start()` for owned `Send + 'static` callbacks; retain the running owner and await `running.wait().await`. Native progress/checkpoint calls that borrow `JobExecution` retain lower-level manual `work()` / `finalization()` sequencing. A positive reserve keeps time for finalization and `Duration::ZERO` keeps none; native invocation exit cancels both phases | a fresh root sized from the remaining budget, which never sees the invocation's exit; returning with `?` from manual work before finalization |
+//! | A job handler's budget | `runledger::PhasedJob::new(handler, reserve)?` derives both budgets from the native invocation, whose exit cancels both phases. For lower-level owned callbacks, `runledger::job_phases(execution, reserve)?.into_operation(work, finalize).start()` retains separate operation ownership | a fresh root sized from the remaining budget, which never sees the invocation's exit; returning with `?` from manual work before finalization |
 //! | A job handler test without a worker | `runledger::test_support::HandlerInvocation::new(budget)?.execute(&handler.into_job_handler(), payload)`, or `HandlerInvocation::for_context(budget, context)?` for a handler that reads its job's organization, attempt or lease, in a `[dev-dependencies]` graph (feature `runledger-test-support`), then match its exhaustive `HandlerExit` | custom `JobExecutionServices` owning a `JobInvocationOwner` the test must end itself |
 //!
 //! Every executable root starts the same way, whatever it goes on to run:
@@ -230,74 +231,51 @@ pub mod sqlx {
 /// native namespace does not move ownership of durable policy, storage or
 /// supervision into the facade.
 ///
-/// Inside a native handler, `runledger::job_phases` derives work and
-/// finalization contexts from the invocation: the worker's own deadline bounds
-/// them and the invocation's exit cancels them. Handlers join a native
-/// `JobCatalog` or `JobRegistry`; `register_in` registers the prepared worker,
-/// not a handler. To test a handler, execute the same adapted value through
-/// `runledger::test_support::HandlerInvocation` instead of writing execution
-/// services.
+/// Register [`runledger::PhasedJob`] when work requires finalization. Its
+/// callbacks borrow native services, and the adapter owns sequencing, budgets
+/// and complete failure classification. Handlers join a native `JobCatalog` or
+/// `JobRegistry`; `register_in` registers the prepared worker. Test the same
+/// adapted handler through `runledger::test_support::HandlerInvocation`.
+/// Lower-level `job_phases` remains available for caller-owned composition.
 ///
 /// ```
-/// use batter::operation::OperationError;
 /// use batter::runledger::native::core::jobs::{
-///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
+///     JobCompletion, JobExecutionError, JobFailure, JobType,
 /// };
 /// use batter::runledger::native::core::prelude::async_trait;
 /// use batter::runledger::native::runtime::catalog::JobCatalog;
-/// use batter::runledger::{JobPhasesRejection, job_phases};
+/// use batter::runledger::{
+///     JobFinalization, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
+/// };
 /// use serde_json::Value;
 /// use std::time::Duration;
 ///
-/// /// Time kept inside the native deadline for recording the outcome.
-/// const RECORD_RESERVE: Duration = Duration::from_millis(300);
-///
-/// struct Notify;
-///
+/// struct Count;
 /// #[async_trait]
-/// impl JobExecutionHandler for Notify {
-///     fn job_type(&self) -> JobType<'static> {
-///         JobType::new("example.notify")
+/// impl PhasedJobHandler for Count {
+///     type Output = u64;
+///     type Error = JobExecutionError;
+///     fn job_type(&self) -> JobType<'static> { JobType::new("example.count") }
+///     async fn work(&self, scope: JobWork<'_>, _: Value) -> Result<u64, Self::Error> {
+///         scope.execution().save_checkpoint(&1_u64).await?;
+///         Ok(2)
 ///     }
-///
-///     async fn execute(
-///         &self,
-///         execution: JobExecution<'_>,
-///         _payload: Value,
-///     ) -> Result<JobCompletion, JobFailure> {
-///         let phases = job_phases(execution, RECORD_RESERVE).map_err(|rejection| {
-///             match rejection {
-///                 JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => {
-///                     JobFailure::timeout("example.no_work_time", "No work time remained.")
-///                 }
-///                 JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => {
-///                     JobFailure::terminal("example.unsupported", "Invocation phases unavailable.")
-///                 }
-///             }
-///         })?;
-///         let sent = phases
-///             .work()
-///             .run("example.send", |_scope| async { Ok::<_, std::io::Error>("receipt") })
-///             .await;
-///         let outcome = match sent {
-///             Ok(_receipt) => Ok(JobCompletion::success()),
-///             Err(OperationError::Failed(_)) => {
-///                 Err(JobFailure::retryable("example.refused", "The provider refused."))
-///             }
-///             Err(OperationError::Interrupted(_)) => {
-///                 Err(JobFailure::timeout("example.unknown", "Delivery is unknown."))
-///             }
-///         };
-///         phases
-///             .finalization()
-///             .run("example.record", |_scope| async { Ok::<_, std::io::Error>(()) })
-///             .await
-///             .map_err(|_| JobFailure::retryable("example.unrecorded", "Not recorded."))?;
-///         outcome
+///     async fn finalize(&self, scope: JobFinalization<'_, u64, Self::Error>)
+///         -> Result<JobCompletion, Self::Error> {
+///         if let Ok(count) = scope.work().classify() {
+///             scope.execution().save_checkpoint(count).await?;
+///         }
+///         Ok(JobCompletion::success())
+///     }
+///     fn failed(&self, _: PhasedJobFailure<u64, Self::Error>) -> JobFailure {
+///         // This example chooses terminal policy for every failed invocation.
+///         JobFailure::terminal("example.count_failed", "Count phases failed.")
 ///     }
 /// }
-///
-/// let _catalog = JobCatalog::new().handler(Notify.into_job_handler());
+/// let catalog = JobCatalog::new()
+///     .handler(PhasedJob::new(Count, Duration::from_millis(300))?);
+/// # let _ = catalog;
+/// # Ok::<(), batter::ConfigurationError>(())
 /// ```
 ///
 /// ```
