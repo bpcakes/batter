@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+pub(super) mod live_tests;
 mod progress;
 
 use batter::{
@@ -20,6 +22,8 @@ impl DeliveryService {
         Self {
             pool: database.pool().clone(),
             database,
+            #[cfg(test)]
+            after_settlement: None,
         }
     }
 
@@ -74,8 +78,10 @@ impl DeliveryService {
         let progress = SubmissionProgress::new();
         let progress_in_operation = progress.clone();
         let database = self.database.clone();
+        #[cfg(test)]
+        let after_settlement = self.after_settlement.clone();
         let work = move |scope: OperationContext| async move {
-            attempt_submit(
+            let result = attempt_submit(
                 &database,
                 &scope,
                 &progress_in_operation,
@@ -83,7 +89,14 @@ impl DeliveryService {
                 record_id,
                 &request,
             )
-            .await
+            .await;
+            #[cfg(test)]
+            if result.is_ok()
+                && let Some(probe) = after_settlement
+            {
+                probe.interrupt().await;
+            }
+            result
         };
         let resolve = move |result| progress.resolve(result);
         match bulkhead {

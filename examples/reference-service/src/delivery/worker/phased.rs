@@ -3,6 +3,7 @@ use super::*;
 use batter::{
     command::CommandCause,
     operation::{Interruption, PhaseOutcome, PhasedFailure},
+    runledger::{LateJobFinalization, LateJobSettlement},
 };
 use std::sync::Mutex;
 
@@ -213,6 +214,12 @@ impl PhasedJobHandler for Invocation<'_> {
     }
     async fn work(&self, scope: JobWork<'_>, _: Value) -> Result<Action, JobFailure> {
         self.prepare(scope.execution(), scope.context()).await
+    }
+    fn settle_late<'a>(
+        &'a self,
+        scope: LateJobFinalization<'a, Action>,
+    ) -> LateJobSettlement<'a, JobFailure> {
+        scope.settle(async move |scope| self.finish(scope.execution(), scope.value()).await)
     }
     async fn finalize(
         &self,

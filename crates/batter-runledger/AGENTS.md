@@ -53,6 +53,11 @@ No raw owner extraction or legacy bridge is supported.
 `PhasedJob` owns the entire native handler future: never expose a separately
 cancellable scoped runner as the protected path. Work failure cannot bypass
 finalization, and failed finalization cannot publish a successful completion.
+The optional `settle_late` callback receives only a retained successful value
+whose sole work failure is deadline expiry. Its opaque proposal is driven by
+the existing kernel; accept recovery only after clean finalization and a native
+authority recheck after future destruction. Default finalization stays strict.
+Do not infer application commit meaning or merge native completion persistence.
 Native invocation termination still ends authority; do not finalize after it.
 Private `job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the
 root from the absolute native deadline, never from the remaining budget; reuse

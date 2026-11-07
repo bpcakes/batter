@@ -23,6 +23,14 @@ finalization receives `JobFinalization` with the complete work outcome. Both
 can borrow the handler and the same native `JobExecution` progress/checkpoint
 services across awaits. The adapter owns sequencing and retains both outcomes;
 a failed phase must be mapped to a native `JobFailure` through `failed`.
+Handlers may explicitly override `settle_late` to settle a successful work value
+returned after its shortened deadline. Only the adapter can issue
+`LateJobFinalization`; cancellation, missing values, errors and panics cannot
+obtain it. Its consuming `settle` method proposes a callback under the original
+finalization budget. Recovery requires successful callback return, clean
+destruction and live native authority. The default declines recovery, preserving
+strict phase behavior. See `PhasedJobHandler::settle_late` for a checkpoint
+example. Application writes and subsequent native completion are not atomic.
 The native invocation owns the whole driver, with no independently spawned
 coordinator. Native deadline, lease loss or task destruction can end it;
 no finalization after invocation death is promised. The `PhasedJob` rustdoc and

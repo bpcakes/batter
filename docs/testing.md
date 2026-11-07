@@ -268,6 +268,10 @@ using a scoped tracing subscriber at the nested operation's preflight boundary.
 Awaiting and retryable-undispatched rows remain eligible for retry without a
 dispatch fence; reconciliation retains its existing fence. All three cases
 exercise the production handler and assert the native timeout classification.
+The admission and pending-fence wrappers delegate `settle_late` to that handler.
+They assert that retained admission and nested fence-interruption actions select
+late settlement without falling back to ordinary finalization, while outer
+interruption with no returned value uses ordinary finalization.
 
 ## Outbound exchange facade example
 

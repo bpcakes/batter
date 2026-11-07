@@ -60,7 +60,10 @@ mod phases;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
-pub use phased_handler::{JobFinalization, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler};
+pub use phased_handler::{
+    JobFinalization, JobWork, LateJobFinalization, LateJobSettlement, PhasedJob, PhasedJobFailure,
+    PhasedJobHandler,
+};
 pub use phases::JobPhasesRejection;
 use phases::job_phases;
 

@@ -13,6 +13,7 @@ use sqlx::postgres::PgPoolOptions;
 mod before_factory;
 mod confirmation;
 mod fence;
+mod late;
 
 /// Native budget of each probe invocation; its lock and lease waits stay well inside it.
 const PROBE_BUDGET: Duration = Duration::from_secs(10);
@@ -209,6 +210,11 @@ async fn probes(pool: &PgPool) -> Result<(), BoxError> {
     fence::interruption(&worker).await?;
     before_factory::interruption(&worker).await?;
     confirmation::ordering(&worker).await?;
+    late::settlement(&worker).await?;
+    with_profiled(pool, async |database| {
+        crate::delivery::service::live_tests::admitted_commit(database).await
+    })
+    .await?;
     Ok(())
 }
 

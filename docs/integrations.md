@@ -810,8 +810,14 @@ For work followed by finalization, register
 `batter_runledger::PhasedJob::new(handler, reserve)?` with a `PhasedJobHandler`.
 The native worker owns one adapter invocation. Work and finalization borrow the
 same native execution services; finalization receives the complete work outcome
-after work-future destruction and work-context cancellation. Both phases must
-succeed before a native completion is accepted. The required `failed` callback
+after work-future destruction and work-context cancellation. By default, both
+phases must succeed before a native completion is accepted. An explicit
+`settle_late` override may instead propose settlement of a successful value
+returned after the shortened work deadline, without cancellation or panic.
+Recovery requires successful finalization, clean future destruction and live
+native invocation authority under the original deadline; ordinary finalization
+cannot erase work failure. See the [invocation phase contract](guarantees.md#runledger-invocation-phases).
+The required `failed` callback
 receives both outcomes and returns only `JobFailure`, keeping retry policy with
 the application. Native deadline, lease loss and task destruction still end
 authority and can interrupt finalization. There is no independently spawned

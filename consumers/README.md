@@ -9,7 +9,10 @@ exist so the manifests those checks generate stay reviewable source in Git.
   Its `PhasedJobHandler` is registered through `batter::runledger::PhasedJob`,
   which owns work/finalization sequencing and borrows native checkpoint services
   during finalization. An independent task per invocation observes native exit
-  and checks that its work context is cancelled before the run counts as complete.
+  and checks adapter-owned work cancellation before the run counts as complete.
+  This checks cancellation by the end of execution, not its cause: the driver
+  cancels work before finalization independently of the native exit hook. The
+  adapter's private phase tests separately prove native exit linkage.
   Work and recording interruptions have their own timeout-kind diagnostics;
   only application failures report an invalid payload or a closed observer.
   Its paused-time job tests drive that handler through

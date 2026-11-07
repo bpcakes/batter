@@ -8,6 +8,14 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add explicit late-value settlement to `PhasedJobHandler`: the adapter issues
+  `LateJobFinalization` only for clean successful work returns after the work
+  deadline and accepts recovery only after checked settlement within native
+  authority. Existing handlers retain strict success semantics. The reference
+  worker shares its normal Action settlement, so acknowledged late confirmation
+  and denial return success even on a last attempt (`batter-f9kq.5`). This API is
+  additive; no deprecated shim or public hard cut is needed.
+
 - Preserve callback return values and errors alongside destruction panics in
   borrowed job phases. Validate finalization reserves before registration with
   the core-owned `OperationPhases::validate_reserve` check. The reference worker

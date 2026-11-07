@@ -1,5 +1,6 @@
 use super::super::super::phased::{Action, Invocation, Progress};
 use super::*;
+use batter::runledger::{LateJobFinalization, LateJobSettlement};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -59,6 +60,7 @@ impl<S: Subscriber> Layer<S> for ExpireBeforeFactory {
 struct Probe<'a> {
     invocation: Invocation<'a>,
     deadline: Arc<Mutex<Option<Instant>>>,
+    late: Arc<AtomicBool>,
 }
 #[async_trait]
 impl PhasedJobHandler for Probe<'_> {
@@ -76,10 +78,22 @@ impl PhasedJobHandler for Probe<'_> {
         scope: JobFinalization<'_, Action, JobFailure>,
     ) -> Result<JobCompletion, JobFailure> {
         assert!(
+            !self.late.load(Ordering::SeqCst),
+            "settlement must not decline"
+        );
+        self.invocation.finalize(scope).await
+    }
+    fn settle_late<'a>(
+        &'a self,
+        scope: LateJobFinalization<'a, Action>,
+    ) -> LateJobSettlement<'a, JobFailure> {
+        assert!(
             matches!(self.invocation.current_progress(), Progress::Admission(_)),
             "neither fence nor provider callback started"
         );
-        self.invocation.finalize(scope).await
+        assert!(matches!(scope.value(), Action::Admission { .. }));
+        self.late.store(true, Ordering::SeqCst);
+        self.invocation.settle_late(scope)
     }
     fn failed(&self, failure: PhasedJobFailure<Action, JobFailure>) -> JobFailure {
         self.invocation.failed(failure)
@@ -92,42 +106,10 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
         ProviderEffectState::RetryableUndispatched,
         ProviderEffectState::ReconcileNeeded,
     ] {
-        let (context, payload) = claimed(&worker.pool).await?;
-        if source != ProviderEffectState::AwaitingAttempt {
-            in_invocation(PROBE_BUDGET, context.clone(), {
-                let (worker, payload) = (worker.clone(), payload.clone());
-                move |execution| {
-                    Box::pin(async move {
-                        assert!(
-                            worker
-                                .mark_dispatch_possible(
-                                    execution,
-                                    &payload,
-                                    ProviderEffectState::AwaitingAttempt
-                                )
-                                .await
-                                .unwrap()
-                        );
-                        if source == ProviderEffectState::RetryableUndispatched {
-                            assert!(
-                                worker
-                                    .record_provider_undispatched(
-                                        execution,
-                                        &payload,
-                                        Duration::ZERO
-                                    )
-                                    .await
-                                    .kind
-                                    .is_retryable()
-                            );
-                        }
-                    })
-                }
-            })
-            .await;
-        }
+        let (context, payload) = claimed_in_state(worker, source).await?;
         let deadline = Arc::new(Mutex::new(None));
         let fired = Arc::new(AtomicBool::new(false));
+        let late = Arc::new(AtomicBool::new(false));
         let subscriber = tracing_subscriber::registry().with(ExpireBeforeFactory {
             operation: if source == ProviderEffectState::ReconcileNeeded {
                 "provider.reconcile.admitted"
@@ -141,6 +123,7 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
             Probe {
                 invocation: Invocation::new(worker, &payload),
                 deadline,
+                late: late.clone(),
             },
             PROBE_BUDGET - Duration::from_millis(500),
         )?;
@@ -151,6 +134,10 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
         assert!(
             fired.load(Ordering::SeqCst),
             "deadline crossed after admission"
+        );
+        assert!(
+            late.load(Ordering::SeqCst),
+            "production late settlement ran"
         );
         let failure = returned_failure(run);
         assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
@@ -176,4 +163,41 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
         assert_eq!(code.as_deref(), Some(CODE_ADMISSION_INTERRUPTED));
     }
     Ok(())
+}
+
+async fn claimed_in_state(
+    worker: &DeliveryWorker,
+    source: ProviderEffectState,
+) -> Result<(JobContext, DeliveryJobPayload), BoxError> {
+    let (context, payload) = claimed(&worker.pool).await?;
+    if source != ProviderEffectState::AwaitingAttempt {
+        in_invocation(PROBE_BUDGET, context.clone(), {
+            let (worker, payload) = (worker.clone(), payload.clone());
+            move |execution| {
+                Box::pin(async move {
+                    assert!(
+                        worker
+                            .mark_dispatch_possible(
+                                execution,
+                                &payload,
+                                ProviderEffectState::AwaitingAttempt
+                            )
+                            .await
+                            .unwrap()
+                    );
+                    if source == ProviderEffectState::RetryableUndispatched {
+                        assert!(
+                            worker
+                                .record_provider_undispatched(execution, &payload, Duration::ZERO)
+                                .await
+                                .kind
+                                .is_retryable()
+                        );
+                    }
+                })
+            }
+        })
+        .await;
+    }
+    Ok((context, payload))
 }

@@ -189,6 +189,22 @@ no invocation exit claim are refused as `delivery.operation_phases_unavailable`
 before any state or provider work. The reserve does not shield cleanup, join
 detached work or undo a provider effect.
 
+The handler opts into `settle_late` for a concrete action returned after the work
+deadline without cancellation or panic. Both normal and late values use the same
+exhaustive settlement function: acknowledged confirmation or business denial
+returns native success, known non-dispatch retains its retry delay, and conflict
+or stale acceptance records manual resolution with a terminal failure. Storage
+failure or unknown commit acknowledgement cannot produce recovered success.
+Progress markers classify only missing results; they never replace a retained
+action. The live state-boundary probe checks the returned native handler outcome
+and durable application rows, including confirmation/denial on the last attempt,
+lease loss and deferred commit failure. It does not exercise wire-level loss of
+a COMMIT acknowledgement. The admitted-submission probe uses the actual service
+transaction and injects cancellation after acknowledged retention, then verifies
+the response, durable rows and capacity through an exact replay. These probes do
+not make application settlement and native completion persistence atomic: death
+between those commits still relies on the existing durable reconciliation path.
+
 Provider admission waits on the purpose-specific `BATTER_PROVIDER_CAPACITY`
 inside the handler work deadline. Runledger necessarily claims and increments the
 native attempt before invoking the handler and exposes no attempt-neutral

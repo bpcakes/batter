@@ -102,7 +102,8 @@ impl PhasedJobHandler for Greet {
     }
 
     async fn work(&self, scope: JobWork<'_>, payload: Value) -> Result<String, JobFailure> {
-        // Observe native invocation exit, rather than the shorter work phase.
+        // Observe native exit and check adapter-owned work cancellation by then.
+        // The driver cancels work earlier; this does not prove the exit hook.
         let observed = scope
             .execution()
             .invocation()
@@ -438,7 +439,7 @@ async fn run_worker(url: String, payload: &Value, subject: &str) -> Outcome {
                 .map_err(|_| "native invocation ended without a cancelled work scope")?
                 .ok_or("worker stopped before both invocations ended")?;
         }
-        println!("facade consumer: native invocation exit observed with cancelled work scopes");
+        println!("facade consumer: adapter work cancellation observed by native exit");
         run_limiter(PostgresLimiter::new(database.pool().clone()), subject).await
     })
     .await?;

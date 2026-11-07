@@ -3273,8 +3273,21 @@ borrow the same native execution services and receive only their own phase's
 context. Work return, error, panic and work-budget expiry all reach finalization
 while native invocation authority remains live. The adapter uses the foundation's
 command-phase polling and destruction checks, retains both outcomes, and accepts
-a native completion only after both phases succeed. A required `failed` callback
+a native completion only after both phases succeed by default. A required `failed` callback
 maps the complete failure to native policy and cannot return job success.
+An explicit `settle_late` override may instead consume `LateJobFinalization`
+and propose settlement of a retained `Ok(value)` returned after the shortened
+work deadline, without cancellation or polling/destruction panic. The opaque
+`LateJobSettlement` is not a runnable future or a completion proof. The adapter
+drives its callback as finalization through the same kernel, accepts recovery
+only after successful return and clean destruction, and rechecks the original
+native deadline and invocation exit before releasing completion. Declining runs
+the ordinary finalizer and keeps strict failure. Missing values, application
+errors and panics never receive this capability. `PhaseOutcome::classify` stays
+strict; ordinary finalizer success cannot erase a work failure. Application
+settlement semantics remain application policy. Application commits and native
+completion persistence remain separate; invocation death between them still
+requires durable reconciliation.
 The callback future reaches the polling kernel directly: its returned value or
 error remains available when destroying that future separately panics. A panic
 inside an application callback's own awaited subfuture can still prevent that

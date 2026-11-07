@@ -29,6 +29,8 @@ use std::{
 
 #[path = "phased_handler/destruction.rs"]
 mod destruction;
+#[path = "phased_handler/late.rs"]
+mod late;
 
 #[derive(Clone, Copy)]
 enum Mode {

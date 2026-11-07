@@ -1,5 +1,6 @@
 use super::super::super::phased::{Action, Invocation, Progress};
 use super::*;
+use batter::runledger::{LateJobFinalization, LateJobSettlement};
 use std::{
     future::Future,
     pin::Pin,
@@ -77,6 +78,7 @@ struct PendingFence<'a> {
     nested: bool,
     fence_waiting: Arc<AtomicBool>,
     nested_returned: Arc<AtomicBool>,
+    late: Arc<AtomicBool>,
     timer: Timer,
 }
 impl PhasedJobHandler for PendingFence<'_> {
@@ -116,7 +118,17 @@ impl PhasedJobHandler for PendingFence<'_> {
         's: 'f,
         Self: 'f,
     {
+        assert!(!self.nested, "nested interruption must use late settlement");
         self.invocation.finalize(scope)
+    }
+    fn settle_late<'a>(
+        &'a self,
+        scope: LateJobFinalization<'a, Action>,
+    ) -> LateJobSettlement<'a, JobFailure> {
+        assert!(self.nested, "outer interruption has no returned value");
+        assert!(matches!(scope.value(), Action::FenceInterrupted));
+        self.late.store(true, Ordering::SeqCst);
+        self.invocation.settle_late(scope)
     }
     fn failed(&self, failure: PhasedJobFailure<Action, JobFailure>) -> JobFailure {
         self.invocation.failed(failure)
@@ -136,6 +148,7 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
         let (release, released) = oneshot::channel();
         let fence_waiting = Arc::new(AtomicBool::new(false));
         let nested_returned = Arc::new(AtomicBool::new(false));
+        let late = Arc::new(AtomicBool::new(false));
         let timer = Timer::default();
         let probe = PendingFence {
             invocation: Invocation::new(worker, &payload),
@@ -143,6 +156,7 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
             nested,
             fence_waiting: fence_waiting.clone(),
             nested_returned: nested_returned.clone(),
+            late: late.clone(),
             timer: timer.clone(),
         };
         let handler = PhasedJob::new(probe, PROBE_BUDGET - Duration::from_secs(2))?;
@@ -187,6 +201,7 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
             nested,
             "requested deadline ordering was exercised"
         );
+        assert_eq!(late.load(Ordering::SeqCst), nested, "finalization path");
         assert_eq!(returned_failure(run).code, CODE_OPERATION_BUDGET_EXHAUSTED);
         assert_state(
             worker,
@@ -196,6 +211,10 @@ pub(super) async fn interruption(worker: &DeliveryWorker) -> Result<(), BoxError
         )
         .await?;
     }
+    committed_fence(worker).await
+}
+
+async fn committed_fence(worker: &DeliveryWorker) -> Result<(), BoxError> {
     // Commit the real fenced write, then withhold the work result. This models
     // the durable side of a lost acknowledgement without claiming to emulate
     // PostgreSQL's wire-level COMMIT response timing.

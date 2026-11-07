@@ -1,4 +1,5 @@
 //! Protected work/finalization sequencing inside a native handler invocation.
+mod late;
 use crate::{JobPhasesRejection, job_phases};
 use batter_core::{
     ConfigurationError,
@@ -7,6 +8,8 @@ use batter_core::{
         low_level::{ScopedPhases, drive_phases},
     },
 };
+pub use late::{LateJobFinalization, LateJobSettlement};
+use late::{RecoveredCompletion, late_value};
 use runledger_core::{
     jobs::{
         JobCompletion, JobContext, JobDeadLetterInfo, JobExecution, JobFailure, JobHandler, JobType,
@@ -78,7 +81,8 @@ impl<T, E> fmt::Debug for PhasedJobFailure<T, E> {
 /// The adapter owns ordering, phase deadlines, child cancellation, destruction
 /// and failure retention. An early `?` or panic in work still reaches finalization
 /// while the invocation remains live. The final completion is accepted only
-/// when both phases succeed. Application error/retry policy stays in `failed`.
+/// when both phases succeed, unless [`Self::settle_late`] explicitly settles a
+/// qualifying late value. Application error/retry policy stays in `failed`.
 #[async_trait]
 pub trait PhasedJobHandler: Send + Sync {
     /// Provisional work output, available to finalization by reference.
@@ -94,6 +98,34 @@ pub trait PhasedJobHandler: Send + Sync {
         &self,
         scope: JobFinalization<'_, Self::Output, Self::Error>,
     ) -> Result<JobCompletion, Self::Error>;
+    /// Optionally settle a retained successful value after work's shortened
+    /// deadline. Default: decline recovery and call [`Self::finalize`].
+    ///
+    /// Called only without work cancellation or panic. An accepted proposal
+    /// replaces ordinary finalization; errors, interruption and destruction
+    /// panics still reach [`Self::failed`] with both phase outcomes. The adapter
+    /// accepts recovery only after successful finalization and a final native
+    /// authority check. Settlement cannot make application writes and native
+    /// completion persistence atomic.
+    ///
+    /// ```
+    /// # use batter_runledger::{LateJobFinalization, LateJobSettlement};
+    /// # use runledger_core::jobs::{JobCompletion, JobExecutionError};
+    /// // A settlement helper for a handler whose Output is u64:
+    /// fn settle_late<'a>(scope: LateJobFinalization<'a, u64>)
+    ///     -> LateJobSettlement<'a, JobExecutionError> {
+    ///     scope.settle(async move |scope| {
+    ///         scope.execution().save_checkpoint(scope.value()).await?;
+    ///         Ok(JobCompletion::success())
+    ///     })
+    /// }
+    /// ```
+    fn settle_late<'a>(
+        &'a self,
+        scope: LateJobFinalization<'a, Self::Output>,
+    ) -> LateJobSettlement<'a, Self::Error> {
+        scope.decline()
+    }
     /// Classify all retained failure evidence into native job policy.
     fn failed(&self, failure: PhasedJobFailure<Self::Output, Self::Error>) -> JobFailure;
     /// Native dead-letter callback, outside the work/finalization phases.
@@ -203,10 +235,18 @@ impl<H: PhasedJobHandler> JobHandler for PhasedJob<H> {
                 handler: &self.handler,
                 execution,
                 payload: Some(payload),
+                settling_late: false,
             };
             match drive_phases(phases, &mut driver).await {
                 Ok((_work, completion)) => Ok(completion),
-                Err(error) => Err(self.handler.failed(PhasedJobFailure::Phases(error))),
+                Err(error) => {
+                    if driver.settling_late
+                        && let Some(recovered) = RecoveredCompletion::checked(&error, execution)
+                    {
+                        return Ok(recovered.into_completion());
+                    }
+                    Err(self.handler.failed(PhasedJobFailure::Phases(error)))
+                }
             }
         })
         .await
@@ -220,6 +260,7 @@ struct Driver<'a, H> {
     handler: &'a H,
     execution: JobExecution<'a>,
     payload: Option<Value>,
+    settling_late: bool,
 }
 impl<'a, H: PhasedJobHandler> ScopedPhases for Driver<'a, H> {
     type Work = H::Output;
@@ -244,6 +285,19 @@ impl<'a, H: PhasedJobHandler> ScopedPhases for Driver<'a, H> {
         context: &'s OperationContext,
         work: &'s PhaseOutcome<H::Output, H::Error>,
     ) -> impl std::future::Future<Output = Result<JobCompletion, H::Error>> + Send + 's {
+        if let Some(value) = late_value(work)
+            && let Some(future) = self
+                .handler
+                .settle_late(LateJobFinalization {
+                    execution: self.execution,
+                    context,
+                    value,
+                })
+                .0
+        {
+            self.settling_late = true;
+            return future;
+        }
         self.handler.finalize(JobFinalization {
             execution: self.execution,
             context,
