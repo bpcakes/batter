@@ -97,6 +97,9 @@ without credentials; only an admitted request can receive 401. Authentication
 runs within the request's operation deadline, and unmatched paths receive the
 404 only after admission. The repository owner selected this order on
 2026-09-28; authentication before admission is not a canonical composition.
+For an authenticated POST, application command validation precedes the database
+bulkhead. An invalid command returns 422 `invalid_delivery_command` even when
+database capacity is exhausted; a valid command can receive 503 `overloaded`.
 The separate `http::in_process_client` test seam awaits the same assembly,
 consumes it with `AssembledHttp::in_process` and wraps the adapter's opaque
 `InProcessClient`; it returns a request client rather than a `Router`, cannot

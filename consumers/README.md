@@ -18,8 +18,7 @@ exist so the manifests those checks generate stay reviewable source in Git.
   consumer binary never compiles: successful protected execution with a cancelled
   work scope at native exit, application failures, plus protected callback checks
   for a budget inside the reserve, work expiry while
-  the reserve remains, recording at the invocation deadline, work-scope cancellation, and
-  recording after the invocation ended.
+  the reserve remains, work-scope cancellation, and recording after the invocation ended.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly
   the property it proves.

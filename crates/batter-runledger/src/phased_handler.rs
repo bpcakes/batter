@@ -172,6 +172,8 @@ impl<H: PhasedJobHandler> PhasedJob<H> {
     /// Validate a positive, clock-representable reserve of at most one year
     /// before registration. Per-invocation checks reject deadlines that leave
     /// no work time before any callback runs.
+    /// Migration: `job_phases(execution, Duration::ZERO)` had no reserve; this
+    /// protected handler requires a positive reserve for finalization.
     pub fn new(handler: H, reserve: Duration) -> Result<Self, ConfigurationError> {
         OperationPhases::validate_reserve(reserve)?;
         Ok(Self { handler, reserve })

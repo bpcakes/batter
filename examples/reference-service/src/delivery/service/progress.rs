@@ -159,6 +159,52 @@ mod tests {
         assert_eq!(result.unwrap(), expected);
     }
 
+    #[tokio::test]
+    async fn admitted_commit_survives_operation_interruption() {
+        use batter::{
+            admission::{Admission, Bulkhead, BulkheadCapacity},
+            operation::OperationOwner,
+        };
+        use std::time::Duration;
+
+        let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
+        let owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context().clone();
+        let progress = SubmissionProgress::new();
+        let in_operation = progress.clone();
+        let expected = committed_result();
+        let committed = expected.clone();
+
+        let result = bulkhead
+            .run_resolved(
+                &context,
+                Admission::Reject,
+                "test.submit_admitted",
+                move |_| async move {
+                    let _settled = in_operation.transaction_began().committed(committed);
+                    owner.cancel();
+                    std::future::pending::<Result<SettledSubmission, SubmitAttemptError>>().await
+                },
+                move |result| progress.resolve(result),
+            )
+            .await;
+
+        assert_eq!(result.unwrap(), expected);
+        assert!(
+            bulkhead
+                .run(
+                    &OperationOwner::new(Duration::from_secs(1))
+                        .unwrap()
+                        .into_context(),
+                    Admission::Reject,
+                    "test.capacity_released",
+                    |_| async { Ok::<_, std::convert::Infallible>(()) },
+                )
+                .await
+                .is_ok()
+        );
+    }
+
     #[test]
     fn acknowledged_rollback_survives_cleanup_interruption() {
         let progress = SubmissionProgress::new();

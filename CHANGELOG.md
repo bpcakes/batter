@@ -58,13 +58,18 @@ contracts, capability facts and validation history.
   borrowed execution services remain available in each. The required failure
   classifier receives both outcomes and cannot return success. No deprecated
   shim is retained because returning a phase pair restores skipped or reordered
-  finalization (`batter-f9kq.2`).
+  finalization (`batter-f9kq.2`). The former `Duration::ZERO` mode is also
+  removed from this protected handler path: choose a positive reserve for
+  final-state recording. The lower-level core `split_finalization` remains
+  available for callers that explicitly own manual phase sequencing.
 
   ```rust,ignore
   // Before: manual sequencing could skip finalize on the early `?`.
   let phases = job_phases(execution, reserve)?;
   let value = work(phases.work(), execution).await?;
   finalize(phases.finalization(), execution, value).await
+  // Before, zero selected no reserve on the manual path:
+  let phases = job_phases(execution, Duration::ZERO)?;
   // Before: owned callbacks required a separately managed operation owner.
   let running = job_phases(execution, reserve)?
       .into_operation(work, finalize).start();
@@ -88,6 +93,9 @@ contracts, capability facts and validation history.
       }
   }
   let catalog = JobCatalog::new().handler(PhasedJob::new(Handler, reserve)?);
+  // After, including former zero-reserve callers:
+  let catalog = JobCatalog::new().handler(
+      PhasedJob::new(Handler, Duration::from_millis(500))?);
   ```
 
 - Direct facade consumers to owned work/finalization and supported native acquisition;

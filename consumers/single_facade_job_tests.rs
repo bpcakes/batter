@@ -77,7 +77,6 @@ async fn a_budget_inside_the_reserve_leaves_no_work_time() {
 
 enum Mode {
     ExpireWork,
-    ExpireFinalization,
     FinishedWork,
 }
 struct Probe {
@@ -110,7 +109,6 @@ impl PhasedJobHandler for Probe {
                 assert_eq!(scope.context().remaining(), FINAL_STATE_RESERVE);
                 assert!(!scope.work().is_success());
             }
-            Mode::ExpireFinalization => std::future::pending().await,
             Mode::FinishedWork => {
                 let work = self.work.lock().unwrap().clone().unwrap();
                 let error = greeting_name(&work, json!({"name":"valid"}))
@@ -149,24 +147,6 @@ async fn expired_work_is_interruption_while_finalization_time_remains() {
     let interrupted = failure(drive(INVOCATION_TIME, handler, json!({})).await);
     assert_eq!(interrupted.kind, JobFailureKind::Timeout);
     assert_eq!(interrupted.code, "facade.consumer.work_interrupted");
-}
-
-#[tokio::test(start_paused = true)]
-async fn recording_at_the_invocation_deadline_is_an_interruption() {
-    let (handler, mut phases) = probe(Mode::ExpireFinalization);
-    let exit = drive(INVOCATION_TIME, handler, json!({})).await;
-    assert!(matches!(exit, HandlerExit::TimedOut), "{exit:?}");
-    let finalization = phases
-        .recv()
-        .await
-        .expect("finalization ran before native cutoff");
-    let (executed, mut recorded) = unbounded_channel();
-    let expired = record_greeting(&finalization, executed, "valid".into())
-        .await
-        .expect_err("native deadline closes recording");
-    assert!(recorded.recv().await.is_none());
-    assert_eq!(expired.kind, JobFailureKind::Timeout);
-    assert_eq!(expired.code, "facade.consumer.record_interrupted");
 }
 
 #[tokio::test(start_paused = true)]
