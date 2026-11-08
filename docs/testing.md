@@ -320,7 +320,11 @@ discarded interruption rendering followed by an unrelated application 503.
 `observation::stacked_interruption` exercises both split and combined low-level
 layers: handler-returned interruption and the inner boundary's own deadline or
 forced cancellation retain the inner outcome and leave an active outer operation
-successful, with one custom render and one HTTP completion.
+successful, with one custom render and one HTTP completion. A second matrix
+recycles response extensions from both interruption reasons through drain
+rejection, deadline, cancellation and handler rendering. It checks that stale
+evidence cannot classify the outer operation, the current handler reason wins,
+and custom status, headers, body and unrelated extensions survive.
 
 The core `resolved_value` target exercises every classified-value outcome,
 redaction, refusal before work, inert unpolled callbacks, borrowed/non-`Send`

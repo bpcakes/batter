@@ -146,7 +146,7 @@ pub struct RequestPolicy {
 /// }
 /// ```
 #[derive(Clone)]
-pub struct RequestInterruptionResponder(InterruptionRendering);
+pub struct RequestInterruptionResponder(FailureRendering);
 
 // Only a returned response carries this fact; merely invoking a renderer must
 // not classify a different response that the handler ultimately chooses.
@@ -154,7 +154,7 @@ pub struct RequestInterruptionResponder(InterruptionRendering);
 struct RenderedInterruption(Interruption);
 
 #[derive(Clone)]
-enum InterruptionRendering {
+enum FailureRendering {
     Default,
     Custom {
         renderer: Arc<FailureRenderer>,
@@ -162,15 +162,35 @@ enum InterruptionRendering {
     },
 }
 
-impl RequestInterruptionResponder {
+impl FailureRendering {
     fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
         match &policy.failure_renderer {
-            Some(renderer) => Self(InterruptionRendering::Custom {
+            Some(renderer) => Self::Custom {
                 renderer: renderer.clone(),
                 original_parts: Arc::new(correlation::renderer_parts(original_parts.clone())),
-            }),
-            None => Self(InterruptionRendering::Default),
+            },
+            None => Self::Default,
         }
+    }
+
+    fn render(&self, failure: HttpFailure) -> Response {
+        let mut response = match self {
+            Self::Default => failure.into_response(),
+            Self::Custom {
+                renderer,
+                original_parts,
+            } => renderer(failure, original_parts.as_ref()),
+        };
+        // Every policy-owned rendering starts without evidence from an older
+        // response, including early rejections that never enter the operation.
+        response.extensions_mut().remove::<RenderedInterruption>();
+        response
+    }
+}
+
+impl RequestInterruptionResponder {
+    fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
+        Self(FailureRendering::from_policy(policy, original_parts))
     }
 
     /// Render cancellation or deadline expiry with the admission policy's envelope.
@@ -196,17 +216,7 @@ impl RequestInterruptionResponder {
             Interruption::Cancelled => HttpFailure::Cancelled,
             Interruption::DeadlineExceeded => HttpFailure::DeadlineExceeded,
         };
-        let mut response = match &self.0 {
-            InterruptionRendering::Default => failure.into_response(),
-            InterruptionRendering::Custom {
-                renderer,
-                original_parts,
-            } => renderer(failure, original_parts.as_ref()),
-        };
-        // A custom renderer may reuse native response extensions. This boundary
-        // owns its evidence namespace, including evidence from an older response.
-        response.extensions_mut().remove::<RenderedInterruption>();
-        response
+        self.0.render(failure)
     }
 }
 
@@ -318,10 +328,7 @@ impl RequestPolicy {
     }
 
     fn render_failure(&self, failure: HttpFailure, parts: &Parts) -> Response {
-        match &self.failure_renderer {
-            Some(renderer) => renderer(failure, &correlation::renderer_parts(parts.clone())),
-            None => failure.into_response(),
-        }
+        FailureRendering::from_policy(self, parts).render(failure)
     }
 }
 

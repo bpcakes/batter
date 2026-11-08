@@ -2493,7 +2493,11 @@ without calling the renderer again. Admission consumes the private marker before
 returning; its own timer/cancellation path renders directly without producing a
 handoff marker. In stacked low-level admission, an inner interruption therefore
 does not reclassify an outer boundary whose own authority remains active. Both
-interruption paths have the same ownership. Rendering and discarding a response
+interruption paths have the same ownership. Every policy-owned failure rendering,
+including early admission rejection, removes recycled private interruption
+evidence from custom response extensions while retaining unrelated metadata.
+Only the public interruption responder attaches a current handoff reason.
+Rendering and discarding a response
 does not classify a later response;
 an unmarked application 503 remains successful response construction. The single
 HTTP completion still describes the actual response status. The operation event

@@ -26,6 +26,17 @@ into `ResolvedOutcome<Response>`; a boundary rendering its own interruption
 creates an unmarked response. Reused custom-renderer extensions are cleared of
 the adapter's private evidence before the current handoff is constructed.
 
+The next independent panel reproduced stale evidence escaping through early
+admission rejection: `RequestPolicy::render_failure` bypassed the interruption
+renderer's cleanup. The recurrence assessment located an adapter ownership gap,
+not a consumer ordering obligation or a flaw in the typed core outcome. Private
+`FailureRendering` now owns captured metadata, renderer selection and evidence
+cleanup for every policy failure. The public responder alone attaches the
+current reason after that shared rendering step. This removes the separate
+sanitization obligation without a new public state or call shape. Recycled
+response-extension regressions cover rejection, deadline, forced cancellation
+and returned-handler paths with both old reasons, preserving unrelated metadata.
+
 Native Axum handlers return `Response`, so a private response extension remains
 the transport for a handler's interruption reason. This is an upstream response
 representation boundary, not a public application phase transition. The library
