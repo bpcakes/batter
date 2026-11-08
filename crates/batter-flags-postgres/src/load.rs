@@ -64,11 +64,15 @@ impl PooledStore {
                 let recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
                     .fetch_one(sql.executor()).await?;
                 check_primary(recovery)?;
+                // No control relation means no flags migration has run yet.
                 let row = sqlx::query("SELECT version, schema_revision, channel FROM flags.flag_control WHERE singleton")
-                    .fetch_one(sql.executor()).await?;
+                    .fetch_one(sql.executor()).await.map_err(|error| match error.as_database_error().and_then(|e| e.code()) {
+                        Some(code) if code == "42P01" || code == "3F000" => StoreError::schema_behind(0),
+                        _ => StoreError::from(error),
+                    })?;
                 let version = version(row.try_get("version")?)?;
                 let schema_revision: i32 = row.try_get("schema_revision")?;
-                if schema_revision < REQUIRED_SCHEMA_REVISION { return Err(StoreError::classified(ErrorClass::SchemaRevision)); }
+                if schema_revision < REQUIRED_SCHEMA_REVISION { return Err(StoreError::schema_behind(schema_revision)); }
                 let rows = sqlx::query("SELECT name, kind, value_type, updated_version, state::text FROM flags.flag_state WHERE archived_version IS NULL ORDER BY name")
                     .fetch_all(sql.executor()).await?.into_iter().map(|r| {
                         Ok(CandidateRow::new(r.try_get("name")?, r.try_get("kind")?, r.try_get("value_type")?,

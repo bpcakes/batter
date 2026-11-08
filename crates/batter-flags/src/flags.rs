@@ -58,6 +58,12 @@ pub struct Flags {
 }
 
 impl Flags {
+    /// Flags over a reader the control plane also holds.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn shared(reader: Arc<Reader>) -> Self {
+        Self { reader }
+    }
+
     pub(crate) fn new(reader: Reader) -> Self {
         Self {
             reader: Arc::new(reader),

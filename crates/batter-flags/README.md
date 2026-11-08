@@ -27,8 +27,18 @@ and invariants, a redacted startup report and two revisions; `Resolved::into_fla
 enters declared mode. `test::TestFlags` is the fixture path, and
 `low_level::capture_now` is the disclosed, non-canonical live read. The
 protected periodic, `axum` HTTP and `runledger` job gates are implemented.
-Control-plane registration arrives with a later delivery task of the flags
-epic. The catalog grammar and evaluation live in
+With `postgres`, `control_plane::register_in` turns a `Resolved` and a
+`ControlPlaneStore` (built from the pool `batter_sqlx::pool_in` registered) into
+`RegisteredFlags`: the `flags.refresh` loader reads, validates and publishes
+snapshots on a `RefreshTiming` cadence under a `LoadPolicy`
+(`unready_until_loaded` or `start_on_defaults`); `flags.presence` and
+`flags.presence_prune` keep the fleet view current; and the
+`flags.presence.stopped` cleanup records the stop before the application's
+pool closes. `RegisteredFlags::status()` reports a `SnapshotStatus` in
+precedence order, and `readiness_condition(Gate::Published | Gate::Fresh)`
+returns the `flags.snapshot` condition. `grants::grant_fragment` lists the
+exact privileges of each `FlagsOperation`. The last-good file and the
+LISTEN/NOTIFY wake arrive with later delivery tasks of the flags epic. The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).
@@ -148,8 +158,11 @@ even with a released safe state. Capture-only groups impose no switch decision.
 The source remains `NotLoaded`; serving is not proof of publication. This choice
 follows the plan's startup-defaults contract and the existing reader/native
 switch resolution. Jobs defer an awaiting-publication reading, and periodic
-maintenance skips it. The loader and its first-attempt readiness sequencing are
-not implemented by this HTTP adapter and remain T-14 work.
+maintenance skips it. The loader and its first-attempt readiness sequencing
+belong to `control_plane::register_in`, not to this HTTP adapter: under
+`unready_until_loaded` admission stays closed until a control-plane read is
+published, and under `start_on_defaults` it opens after the first bounded
+attempt.
 
 ```sh
 cargo test -p batter-flags --features axum --locked

@@ -197,3 +197,21 @@ fn every_error_wrapper_redacts_both_formats_and_preserves_causes() {
         assert!(!text.contains("retained-private-marker"));
     }
 }
+
+#[test]
+fn a_schema_observation_survives_a_failed_cleanup() {
+    use crate::errors::ErrorKind;
+    let behind = StoreError::schema_behind(0);
+    assert_eq!(behind.installed_schema_revision(), Some(0));
+    let wrapped = crate::RollbackFailure::deadline(StoreError::schema_behind(0));
+    assert_eq!(wrapped.class(), ErrorClass::Database);
+    assert_eq!(wrapped.installed_schema_revision(), Some(0));
+    let snapshot = StoreError(ErrorKind::Snapshot(Box::new(
+        batter_sqlx::PgSnapshotError::Inspection(StoreError::schema_behind(0)),
+    )));
+    assert_eq!(snapshot.installed_schema_revision(), Some(0));
+    assert_eq!(
+        StoreError::classified(ErrorClass::Database).installed_schema_revision(),
+        None
+    );
+}

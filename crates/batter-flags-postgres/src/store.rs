@@ -32,6 +32,22 @@ impl StoreTiming {
             idle,
         })
     }
+    /// The pool-acquire timeout, which also bounds one load's inspection.
+    pub fn acquire(self) -> Duration {
+        self.acquire
+    }
+    /// The per-statement timeout.
+    pub fn statement(self) -> Duration {
+        self.statement
+    }
+    /// The lock-wait timeout.
+    pub fn lock(self) -> Duration {
+        self.lock
+    }
+    /// The idle-in-transaction timeout.
+    pub fn idle(self) -> Duration {
+        self.idle
+    }
     pub(crate) fn settings(self, deadline: Instant) -> Result<[String; 3], StoreError> {
         let remaining = remaining(deadline)?;
         Ok([self.statement, self.lock, self.idle]
@@ -55,6 +71,10 @@ impl std::fmt::Debug for PooledStore {
     }
 }
 impl PooledStore {
+    /// The timing every operation of this store runs under.
+    pub fn timing(&self) -> StoreTiming {
+        self.timing
+    }
     /// Bind an application-owned pool to validated timing. The application owns
     /// pool shutdown; individual operations own all checked-out connections.
     pub fn new(pool: PgPool, timing: StoreTiming) -> Self {

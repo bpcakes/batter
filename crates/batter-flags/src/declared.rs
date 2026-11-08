@@ -281,6 +281,12 @@ impl Resolved {
         StartupView { base: &self.base }
     }
 
+    /// The base and the environment class, for the control plane.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn into_parts(self) -> (Base, EnvironmentClass) {
+        (self.base, self.class)
+    }
+
     /// Enters declared mode: the resolved values are what the process serves
     /// until it restarts.
     pub fn into_flags(self) -> Flags {

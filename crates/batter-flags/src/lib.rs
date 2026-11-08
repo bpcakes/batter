@@ -16,8 +16,11 @@
 //!
 //! Experimental. Declared mode, the startup report and the test flags are
 //! implemented, as are HTTP gates with `axum`, job gates with `runledger` and
-//! [`Flags::gate_periodic_in`] for protected periodic work. Control-plane
-//! registration arrives with a later delivery task of the flags epic.
+//! [`Flags::gate_periodic_in`] for protected periodic work. With `postgres`,
+//! `control_plane::register_in` loads, refreshes and reports the audited
+//! snapshot and the process's presence, and `grants` lists the exact
+//! privileges each flags operation needs. The last-good file and the
+//! LISTEN/NOTIFY wake arrive with later delivery tasks of the flags epic.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -36,6 +39,8 @@ pub use report::{ReportEntry, StartupReport, ValueSource};
 
 #[cfg(feature = "postgres")]
 pub mod control_plane;
+#[cfg(feature = "postgres")]
+pub mod grants;
 #[cfg(feature = "axum")]
 pub mod http;
 #[cfg(feature = "runledger")]

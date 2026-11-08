@@ -420,6 +420,7 @@ dependencies = [
  "batter-sqlx",
  "batter-test-support",
  "pin-project-lite",
+ "postgres-test-harness",
  "runledger-core",
  "serde_json",
  "sha2 0.11.1",

@@ -48,9 +48,15 @@ batter-runledger = { workspace = true, features = ["test-support"] }
 batter-test-support.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 tracing-subscriber = { workspace = true, features = ["registry"] }
+# A per-test database for the live control-plane contracts.
+postgres-test-harness = { version = "0.2.0", git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true
+
+[[test]]
+name = "control_plane_live"
+required-features = ["postgres"]
 
 [[test]]
 name = "jobs_live"

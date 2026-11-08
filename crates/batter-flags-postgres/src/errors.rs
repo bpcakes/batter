@@ -41,6 +41,8 @@ pub enum ErrorClass {
 }
 pub(crate) enum ErrorKind {
     Class(ErrorClass),
+    /// The installed revision, 0 when no flags migration has run.
+    SchemaBehind(i32),
     Sql(SqlxFailure),
     Transaction(PgTransactionError),
     Unconfirmed(PgTransactionError),
@@ -53,9 +55,38 @@ impl StoreError {
     pub fn class(&self) -> ErrorClass {
         match &self.0 {
             ErrorKind::Class(c) => *c,
+            ErrorKind::SchemaBehind(_) => ErrorClass::SchemaRevision,
             ErrorKind::Unconfirmed(_) => ErrorClass::CommitUnknown,
             _ => ErrorClass::Database,
         }
+    }
+    /// For [`ErrorClass::SchemaRevision`] from a load, the installed schema
+    /// revision: 0 when no flags migration has run.
+    ///
+    /// The observation survives a failed cleanup: a load that found the
+    /// schema behind and then could not roll back still reports it.
+    pub fn installed_schema_revision(&self) -> Option<i32> {
+        match &self.0 {
+            ErrorKind::SchemaBehind(found) => Some(*found),
+            ErrorKind::Snapshot(snapshot) => match snapshot.as_ref() {
+                PgSnapshotError::Inspection(inspection)
+                | PgSnapshotError::Cleanup { inspection, .. } => {
+                    inspection.installed_schema_revision()
+                }
+                PgSnapshotError::Transaction(_) => None,
+            },
+            ErrorKind::Other(other) => other
+                .downcast_ref::<crate::RollbackFailure>()
+                .and_then(|failure| failure.operation().installed_schema_revision()),
+            ErrorKind::Class(_)
+            | ErrorKind::Sql(_)
+            | ErrorKind::Transaction(_)
+            | ErrorKind::Unconfirmed(_)
+            | ErrorKind::Scope(_) => None,
+        }
+    }
+    pub(crate) fn schema_behind(found: i32) -> Self {
+        Self(ErrorKind::SchemaBehind(found))
     }
     pub(crate) fn classified(class: ErrorClass) -> Self {
         Self(ErrorKind::Class(class))
@@ -84,7 +115,7 @@ impl fmt::Debug for StoreError {
 impl Error for StoreError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match &self.0 {
-            ErrorKind::Class(_) => None,
+            ErrorKind::Class(_) | ErrorKind::SchemaBehind(_) => None,
             ErrorKind::Sql(e) => Some(e),
             ErrorKind::Transaction(e) | ErrorKind::Unconfirmed(e) => Some(e),
             ErrorKind::Scope(e) => Some(e.as_ref()),

@@ -23,7 +23,8 @@ use std::{sync::Arc, time::Duration};
 use batter_flags_core::{
     Freshness, PrePublication, SnapshotView,
     low_level::{
-        Base, Disposition, Provenance, Published, Refusal, Snapshot, SnapshotRejection, ViewError,
+        Base, Disposition, Provenance, Published, Refusal, Snapshot, SnapshotRejection, Standing,
+        ViewError,
     },
 };
 use tokio::{sync::watch, time::Instant};
@@ -41,6 +42,13 @@ enum Mode {
         freshness: Freshness,
     },
     /// A control plane: the record a loader publishes.
+    #[cfg_attr(
+        not(feature = "postgres"),
+        allow(
+            dead_code,
+            reason = "only the control plane, behind `postgres`, publishes outside tests"
+        )
+    )]
     Live(Live),
 }
 
@@ -69,6 +77,13 @@ pub(crate) struct Reader {
 /// publish a record the writer did not derive. The mutating methods take
 /// `&mut self`, so there is one writer at a time, and the record it derives
 /// from cannot change between reading it and replacing it.
+#[cfg_attr(
+    not(feature = "postgres"),
+    allow(
+        dead_code,
+        reason = "only the control plane, behind `postgres`, publishes outside tests"
+    )
+)]
 pub(crate) struct Writer {
     sender: watch::Sender<Record>,
     /// Where age counts from for what carries no clock of its own.
@@ -99,9 +114,12 @@ impl Reader {
     ///
     /// `registered` is where age counts from until the first publication,
     /// and `maximum_age` is how long a confirmation keeps a view fresh.
-    #[allow(
-        dead_code,
-        reason = "the control-plane loader is the only caller and arrives with its own task"
+    #[cfg_attr(
+        not(feature = "postgres"),
+        allow(
+            dead_code,
+            reason = "only the control plane, behind `postgres`, publishes outside tests"
+        )
     )]
     pub(crate) fn live(
         base: Base,
@@ -165,14 +183,74 @@ impl Reader {
 
     /// Whether the control plane's writer has been dropped, so nothing will
     /// ever publish again. Declared and test readers have no writer to lose.
-    #[allow(
-        dead_code,
-        reason = "the loader's status is the only caller and arrives with its own task"
+    #[cfg_attr(
+        not(feature = "postgres"),
+        allow(
+            dead_code,
+            reason = "only the control plane, behind `postgres`, publishes outside tests"
+        )
     )]
     pub(crate) fn writer_gone(&self) -> bool {
         match &self.mode {
             Mode::Live(live) => live.receiver.has_changed().is_err(),
             Mode::Declared | Mode::Test { .. } => false,
+        }
+    }
+}
+
+#[cfg_attr(
+    not(feature = "postgres"),
+    allow(
+        dead_code,
+        reason = "only the control plane, behind `postgres`, publishes outside tests"
+    )
+)]
+/// What a control-plane reader serves, for status and presence.
+pub(crate) enum Publication {
+    /// Nothing is published, and this long has passed since registration.
+    Unpublished { since_registration: Duration },
+    /// A record is published: what it stands on, and whether its age is
+    /// within the maximum.
+    Published { standing: Standing, fresh: bool },
+}
+
+#[cfg_attr(
+    not(feature = "postgres"),
+    allow(
+        dead_code,
+        reason = "only the control plane, behind `postgres`, publishes outside tests"
+    )
+)]
+impl Reader {
+    /// The record being served, behind a control plane.
+    pub(crate) fn record(&self) -> Record {
+        match &self.mode {
+            Mode::Live(live) => live.receiver.borrow().clone(),
+            Mode::Declared | Mode::Test { .. } => None,
+        }
+    }
+
+    /// Whether anything, a control-plane read or a file, is published.
+    pub(crate) fn has_publication(&self) -> bool {
+        self.record().is_some()
+    }
+
+    /// What is served at `now`. Declared and test readers have no control
+    /// plane and report as never published.
+    pub(crate) fn publication(&self, now: Instant) -> Publication {
+        match &self.mode {
+            Mode::Live(live) => match live.receiver.borrow().clone() {
+                Some(record) => Publication::Published {
+                    standing: record.authority().standing(),
+                    fresh: live.recent(*record.age_origin(), now),
+                },
+                None => Publication::Unpublished {
+                    since_registration: now.saturating_duration_since(live.registered),
+                },
+            },
+            Mode::Declared | Mode::Test { .. } => Publication::Unpublished {
+                since_registration: Duration::ZERO,
+            },
         }
     }
 }
@@ -203,9 +281,12 @@ impl Live {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "the control-plane loader is the only caller and arrives with its own task"
+#[cfg_attr(
+    not(feature = "postgres"),
+    allow(
+        dead_code,
+        reason = "only the control plane, behind `postgres`, publishes outside tests"
+    )
 )]
 impl Writer {
     /// Publishes what one read returned, and says what that did.
