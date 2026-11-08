@@ -474,3 +474,69 @@ async fn a_governor_readers_hold_is_judged_both_engaged_and_released() {
     assert_eq!(deferral(&on).overridden_by, [key("checkout_halt")]);
     f.close().await;
 }
+
+/// Seeds a kill switch row a newer build wrote, which readers hold.
+async fn unreadable_switch(f: &Fixture, name: &str) {
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','newer encoding',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
+        .execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) SELECT $1,'switch','switch','{\"encoding\":2,\"switch\":\"engaged\"}',version,version FROM flags.flag_control")
+        .bind(name).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn independently_held_governors_are_judged_in_every_combination() {
+    let f = Fixture::migrated().await;
+    // `pair_x` and `pair_y` are both or none, each governed by its own switch.
+    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+    let serving = catalog.process_kind("serving").unwrap();
+    catalog.environment_class("hosted").unwrap();
+    let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
+    let mut governed = |flag: &str, switch: &str| {
+        let switch = catalog
+            .kill_switch(switch, SafeState::Released, StaleRule::HoldLastKnown)
+            .declare()
+            .unwrap();
+        catalog
+            .release_flag(flag, Toggle::Off, expiry)
+            .governed_by(&switch)
+            .declare()
+            .unwrap()
+    };
+    let pair_x = governed("pair_x", "halt_x");
+    let pair_y = governed("pair_y", "halt_y");
+    catalog.both_or_none(&pair_x, &pair_y).unwrap();
+    let base = BaseBuilder::new(catalog.build().unwrap(), serving)
+        .unwrap()
+        .finish();
+    let labels = ProcessLabels {
+        application: ProcessLabel::new("service").unwrap(),
+        environment: ProcessLabel::new("hosted").unwrap(),
+        build: ProcessLabel::new("pairs").unwrap(),
+    };
+    let cadence = Cadence::new(Duration::from_secs(60), Duration::from_secs(600)).unwrap();
+    let mut process = ProcessPresence::new(labels, &base, cadence);
+    f.store
+        .heartbeat(&mut process, &report(SnapshotReport::NotLoaded), deadline())
+        .await
+        .unwrap();
+    let _ = submit(&f, set("pair_x", "on", None), InvariantPolicy::AcceptHeld).await;
+    unreadable_switch(&f, "halt_x").await;
+    unreadable_switch(&f, "halt_y").await;
+    // Both released or both engaged, the pair meets; with only `halt_x`
+    // engaged, `pair_x` serves off and the written `pair_y` would be held.
+    let refused = strict(&f, "pair_y", "on").await;
+    assert_eq!(
+        refused_for(&refused),
+        [unmet(
+            "pair_y",
+            InvariantRule::BothOrNone,
+            ("pair_x", "on"),
+            ("pair_y", "on"),
+            Basis::CodeDefault,
+        )]
+    );
+    f.close().await;
+}

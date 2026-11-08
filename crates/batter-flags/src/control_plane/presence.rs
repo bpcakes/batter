@@ -309,12 +309,13 @@ fn report(shared: &Shared, floor_engaged: KeySample) -> PresenceReport {
                 Standing::Persisted { version } => SnapshotReport::PersistedFile(version),
                 Standing::ControlPlane { version, .. } => SnapshotReport::ControlPlane(version),
             };
-            // The holds a view captured now has, so a stale view's extra
-            // holds are reported while it is stale.
+            // The holds a view of this same record captured now has, so a
+            // stale view's extra holds are reported while it is stale and the
+            // version is never paired with another publication's holds.
             let held = KeySample::of(
                 shared
                     .reader()
-                    .held_at(Instant::now())
+                    .held_in(&record, Instant::now())
                     .into_iter()
                     .map(|(key, _)| key),
             );

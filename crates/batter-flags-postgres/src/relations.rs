@@ -80,6 +80,10 @@ pub(crate) enum Written<'a> {
     Switch(SwitchState),
 }
 
+/// The most governing switches with rows readers hold that one catalog's
+/// judgement enumerates; a catalog with more counts as unjudged.
+const MAX_HELD_GOVERNORS: usize = 4;
+
 /// Judges `written`, the state a write leaves `key` in, against the
 /// catalogs of Live and Silent processes that declare `key`.
 pub(crate) async fn judge(
@@ -114,20 +118,31 @@ pub(crate) async fn judge(
     let rows = Rows(stored(sql, names.into_iter().collect()).await?);
     for manifest in &manifests {
         // A governing switch whose row readers hold serves whatever state each
-        // reader last published, so both are judged.
-        let held_switch = manifest
+        // reader last published, independently of every other, so each
+        // combination is judged.
+        let held: BTreeSet<&FlagKey> = manifest
             .flags()
             .iter()
             .filter_map(ManifestEntry::governed_by)
-            .filter_map(|switch| manifest.flag(switch.as_str()))
-            .any(|switch| matches!(rows.read(switch), Read::Undecodable));
-        let assumptions: &[SwitchState] = if held_switch {
-            &[SwitchState::Released, SwitchState::Engaged]
-        } else {
-            &[SwitchState::Released]
-        };
-        for &assumed in assumptions {
-            judge_catalog(manifest, &rows, key, written, assumed, &mut deferral);
+            .filter(|switch| {
+                manifest
+                    .flag(switch.as_str())
+                    .is_some_and(|entry| matches!(rows.read(entry), Read::Undecodable))
+            })
+            .collect();
+        let held: Vec<&FlagKey> = held.into_iter().collect();
+        if held.len() > MAX_HELD_GOVERNORS {
+            deferral.unjudged_catalogs += 1;
+            continue;
+        }
+        for subset in 0..1_usize << held.len() {
+            let engaged: BTreeSet<&FlagKey> = held
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| subset & (1 << bit) != 0)
+                .map(|(_, switch)| *switch)
+                .collect();
+            judge_catalog(manifest, &rows, key, written, &engaged, &mut deferral);
         }
     }
     deferral.unmet.sort();
@@ -138,24 +153,25 @@ pub(crate) async fn judge(
 }
 
 /// Adds to `deferral` what one catalog's processes would make of the write,
-/// with a held governing switch taken to serve `assumed`.
+/// with the held governing switches in `engaged` taken to serve engaged and
+/// every other held one released.
 fn judge_catalog(
     manifest: &Manifest,
     rows: &Rows,
     key: &FlagKey,
     written: Written<'_>,
-    assumed: SwitchState,
+    engaged: &BTreeSet<&FlagKey>,
     deferral: &mut Deferral,
 ) {
     for kind in manifest.process_kinds() {
-        let before = Judged::new(manifest, rows, None, assumed);
+        let before = Judged::new(manifest, rows, None, engaged);
         let held_before: BTreeSet<FlagKey> = manifest
             .invariant_holds(kind, |entry| before.standing(entry))
             .holds
             .into_iter()
             .map(|hold| hold.held)
             .collect();
-        let after = Judged::new(manifest, rows, Some((key, written)), assumed);
+        let after = Judged::new(manifest, rows, Some((key, written)), engaged);
         // Every fixed standing here is a code default, so nothing is left
         // unresolved.
         for hold in manifest
@@ -170,7 +186,7 @@ fn judge_catalog(
     if let (Written::Flag(variant), Some(entry)) = (written, manifest.flag(key.as_str()))
         && let Some(switch) = entry.governed_by()
         && entry.default_variant() != Some(variant)
-        && Judged::new(manifest, rows, None, assumed).engaged(switch)
+        && Judged::new(manifest, rows, None, engaged).engaged(switch)
     {
         deferral.overridden_by.push(switch.clone());
     }
@@ -236,9 +252,10 @@ struct Judged<'a> {
     manifest: &'a Manifest,
     rows: &'a Rows,
     written: Option<(&'a FlagKey, Written<'a>)>,
-    /// What a governing switch whose row readers hold is taken to serve: a
-    /// reader keeps whichever state it last published, which only it knows.
-    held_switch: SwitchState,
+    /// The governing switches whose rows readers hold that are taken to
+    /// serve engaged: a reader keeps whichever state it last published,
+    /// which only it knows.
+    held_engaged: &'a BTreeSet<&'a FlagKey>,
 }
 
 impl<'a> Judged<'a> {
@@ -246,13 +263,13 @@ impl<'a> Judged<'a> {
         manifest: &'a Manifest,
         rows: &'a Rows,
         written: Option<(&'a FlagKey, Written<'a>)>,
-        held_switch: SwitchState,
+        held_engaged: &'a BTreeSet<&'a FlagKey>,
     ) -> Self {
         Self {
             manifest,
             rows,
             written,
-            held_switch,
+            held_engaged,
         }
     }
 
@@ -305,7 +322,7 @@ impl<'a> Judged<'a> {
         };
         match self.rows.read(entry) {
             Read::Switch(state) => state.is_engaged(),
-            Read::Undecodable => self.held_switch.is_engaged(),
+            Read::Undecodable => self.held_engaged.contains(key),
             Read::Flag(_) | Read::Absent => entry.safe_state() == Some(SafeState::Engaged),
         }
     }

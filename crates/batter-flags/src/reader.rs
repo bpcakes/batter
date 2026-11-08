@@ -234,20 +234,27 @@ impl Reader {
     /// `now` holds them, with why each is held; empty before anything is
     /// published. A stale view can hold more than a fresh one.
     pub(crate) fn held_at(&self, now: Instant) -> Vec<(FlagKey, HoldCause)> {
-        match &self.mode {
-            Mode::Live(live) => match live.receiver.borrow().clone() {
-                Some(record) => {
-                    let freshness = live.freshness(*record.age_origin(), now);
-                    record
-                        .snapshot()
-                        .held(freshness)
-                        .map(|(key, cause)| (key.clone(), cause))
-                        .collect()
-                }
-                None => Vec::new(),
-            },
-            Mode::Declared | Mode::Test { .. } => Vec::new(),
-        }
+        self.record()
+            .map_or_else(Vec::new, |record| self.held_in(&record, now))
+    }
+
+    /// The held keys of `record`, as a view of it captured at `now` holds
+    /// them, so a report built from one record pairs its version with its
+    /// own holds.
+    pub(crate) fn held_in(
+        &self,
+        record: &Published<Instant>,
+        now: Instant,
+    ) -> Vec<(FlagKey, HoldCause)> {
+        let freshness = match &self.mode {
+            Mode::Live(live) => live.freshness(*record.age_origin(), now),
+            Mode::Declared | Mode::Test { .. } => Freshness::Fresh,
+        };
+        record
+            .snapshot()
+            .held(freshness)
+            .map(|(key, cause)| (key.clone(), cause))
+            .collect()
     }
 
     /// Whether anything, a control-plane read or a file, is published.
