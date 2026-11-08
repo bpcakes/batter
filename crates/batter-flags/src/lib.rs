@@ -19,8 +19,10 @@
 //! [`Flags::gate_periodic_in`] for protected periodic work. With `postgres`,
 //! `control_plane::register_in` loads, refreshes and reports the audited
 //! snapshot and the process's presence, and `grants` lists the exact
-//! privileges each flags operation needs. The last-good file and the
-//! LISTEN/NOTIFY wake arrive with later delivery tasks of the flags epic.
+//! privileges each flags operation needs. `LoadPolicy::with_last_good` keeps
+//! the last control-plane publication on disk, so a restart during an outage
+//! serves it. The LISTEN/NOTIFY wake arrives with a later delivery task of the
+//! flags epic.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -45,6 +47,8 @@ pub mod grants;
 pub mod http;
 #[cfg(feature = "runledger")]
 pub mod jobs;
+#[cfg(feature = "postgres")]
+mod last_good;
 
 /// The catalog, snapshot and evaluation crate itself.
 ///

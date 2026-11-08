@@ -37,8 +37,17 @@ snapshots on a `RefreshTiming` cadence under a `LoadPolicy`
 pool closes. `RegisteredFlags::status()` reports a `SnapshotStatus` in
 precedence order, and `readiness_condition(Gate::Published | Gate::Fresh)`
 returns the `flags.snapshot` condition. `grants::grant_fragment` lists the
-exact privileges of each `FlagsOperation`. The last-good file and the
-LISTEN/NOTIFY wake arrive with later delivery tasks of the flags epic. The catalog grammar and evaluation live in
+exact privileges of each `FlagsOperation`. `LoadPolicy::with_last_good(SnapshotDirectory)`
+keeps the last control-plane publication in a `BFSN` v1 file
+([format](docs/snapshot-file-v1.md)): registration publishes a usable file
+before the driver starts, as `Source::PersistedFile`, so a restart during an
+outage serves its engaged kill switches; a missing, damaged or foreign file
+publishes nothing, and `startup_file()` says which (`Disabled`, `Missing`,
+`Published`, `Unusable`); each control-plane
+publication is persisted under a directory lock, and a persist failure goes to
+`last_persist_failure()` and never changes a run's outcome. The file is a
+cache: deleting it is always safe. The LISTEN/NOTIFY wake arrives with a later
+delivery task of the flags epic. The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).

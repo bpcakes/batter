@@ -19,16 +19,21 @@ use batter_core::{
     },
     registration::RegistrationTarget,
 };
-use batter_flags_core::low_level::{Disposition, Refusal, Snapshot, Standing, ValidationScope};
+use batter_flags_core::low_level::{
+    CandidateRow, Disposition, Refusal, Snapshot, Standing, ValidationScope,
+};
 use tokio::time::Instant;
 
 use super::{
     LoadCause,
     source::{FetchFailure, Fetched, LoadSource},
     status::{LastRun, Shared},
-    timing::{FirstFailure, Startup, work_deadline},
+    timing::{FILE_SUBDEADLINE, FirstFailure, Startup, work_deadline},
 };
-use crate::reader::Writer;
+use crate::{
+    last_good::{self, Persister},
+    reader::Writer,
+};
 
 /// Everything one run needs, shared by every run of the component. The
 /// writer is dropped when the component ends, which readers see as
@@ -38,6 +43,13 @@ struct Refresh {
     writer: Mutex<Writer>,
     scope: ValidationScope,
     shared: Arc<Shared>,
+    persistence: Persistence,
+}
+
+/// Whether each run persists what it published.
+pub(crate) enum Persistence {
+    Off,
+    File(Persister),
 }
 
 /// A run that published nothing.
@@ -62,11 +74,16 @@ pub(crate) struct Prepared {
     tolerance: Tolerance,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "crate-private assembly of one component from already validated parts"
+)]
 pub(crate) fn prepare(
     source: LoadSource,
     writer: Writer,
     scope: ValidationScope,
     shared: Arc<Shared>,
+    persistence: Persistence,
     interval: Duration,
     budget: Duration,
     startup: Startup,
@@ -83,6 +100,7 @@ pub(crate) fn prepare(
             writer: Mutex::new(writer),
             scope,
             shared,
+            persistence,
         }),
         policy,
         tolerance: match startup.first_failure {
@@ -138,10 +156,48 @@ impl Refresh {
                 Err(LoadCause::SchemaBehind),
             ),
             Err(FetchFailure::Failed(cause)) => (self.shared.failed(cause), Err(cause)),
-            Ok(fetched) => self.publish(fetched, deadline),
+            Ok(fetched) => {
+                let rows = match self.persistence {
+                    Persistence::Off => Vec::new(),
+                    Persistence::File(_) => fetched.rows().to_vec(),
+                };
+                let judged = self.publish(fetched, deadline);
+                if judged.1.is_ok() {
+                    self.offer(&rows);
+                }
+                judged
+            }
         };
         report(previous, result);
+        // Whatever this run read, a publication still waiting is retried.
+        self.persist(deadline).await;
         result.map_err(LoadFailed)
+    }
+
+    /// Queues the published control-plane snapshot for the last-good file.
+    fn offer(&self, rows: &[CandidateRow]) {
+        let Persistence::File(persister) = &self.persistence else {
+            return;
+        };
+        let Some(record) = self.shared.reader().record() else {
+            return;
+        };
+        if let Some(file) = last_good::file_of(self.shared.reader().base(), record.snapshot(), rows)
+        {
+            persister.offer(file);
+        }
+    }
+
+    /// Writes what waits for the last-good file. A failure is recorded and
+    /// never changes the run's outcome.
+    async fn persist(&self, deadline: Instant) {
+        let Persistence::File(persister) = &self.persistence else {
+            return;
+        };
+        let by = (Instant::now() + FILE_SUBDEADLINE).min(work_deadline(deadline));
+        if let Err(failure) = persister.attempt(by).await {
+            self.shared.persist_failed(failure);
+        }
     }
 
     /// Judges one read and publishes it if it may be published: a version

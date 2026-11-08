@@ -13,7 +13,10 @@ use batter_flags_core::{
 };
 use tokio::time::Instant;
 
-use crate::reader::{Publication, Reader};
+use crate::{
+    last_good::PersistFailure,
+    reader::{Publication, Reader},
+};
 
 /// Why a refresh published nothing.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -157,6 +160,7 @@ struct State {
     verdict: Verdict,
     last_run: LastRun,
     last_rejection: Option<Refusal>,
+    persist_failure: Option<PersistFailure>,
 }
 
 /// What the loader shares with the registered flags.
@@ -174,6 +178,7 @@ impl Shared {
                 verdict: Verdict::Clear,
                 last_run: LastRun::None,
                 last_rejection: None,
+                persist_failure: None,
             }),
         }
     }
@@ -230,6 +235,15 @@ impl Shared {
 
     pub(crate) fn last_rejection(&self) -> Option<Refusal> {
         self.state().last_rejection
+    }
+
+    /// Records a persist that did not write.
+    pub(crate) fn persist_failed(&self, failure: PersistFailure) {
+        self.state().persist_failure = Some(failure);
+    }
+
+    pub(crate) fn last_persist_failure(&self) -> Option<PersistFailure> {
+        self.state().persist_failure
     }
 
     pub(crate) fn reader(&self) -> &Reader {

@@ -29,6 +29,10 @@ pub(crate) struct Fetched {
 }
 
 impl Fetched {
+    pub(crate) fn rows(&self) -> &[CandidateRow] {
+        &self.rows
+    }
+
     pub(crate) fn candidate(self, scope: &ValidationScope) -> Candidate {
         Candidate::new(scope).at(self.version).rows(self.rows)
     }

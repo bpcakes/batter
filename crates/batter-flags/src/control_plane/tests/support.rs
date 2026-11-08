@@ -102,6 +102,14 @@ pub(super) fn timing() -> RefreshTiming {
     RefreshTiming::new(POLL, MAXIMUM_AGE).unwrap()
 }
 
+/// With a last-good file the run budget grows by the 2 s file sub-deadline,
+/// so the shortest maximum age is 11 s.
+pub(super) const FILE_MAXIMUM_AGE: Duration = Duration::from_secs(12);
+
+pub(super) fn file_timing() -> RefreshTiming {
+    RefreshTiming::new(POLL, FILE_MAXIMUM_AGE).unwrap()
+}
+
 pub(super) fn presence() -> Presence {
     Presence::new(
         ApplicationName::new("service").unwrap(),

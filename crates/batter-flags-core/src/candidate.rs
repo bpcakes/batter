@@ -5,6 +5,7 @@ use std::{fmt, sync::Arc};
 use crate::{
     base::BaseInner,
     decision::SwitchState,
+    digest::DeclarationFingerprint,
     handle::{Flag, KillSwitch},
     key::name_or_placeholder,
     snapshot::{Carried, EntryState, ForeignSnapshot, Provenance, Snapshot, ValidationScope},
@@ -32,6 +33,17 @@ pub struct CandidateRow {
     pub(crate) value_type: Box<str>,
     pub(crate) updated: Version,
     pub(crate) state: Box<str>,
+    /// The declaration this row was written for, when its source records one.
+    pub(crate) written_for: WrittenFor,
+}
+
+/// Which declaration a row was written for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WrittenFor {
+    /// The source does not say; the store's rows carry no fingerprint.
+    Unrecorded,
+    /// The declaration with this fingerprint.
+    Declaration(DeclarationFingerprint),
 }
 
 impl CandidateRow {
@@ -49,7 +61,43 @@ impl CandidateRow {
             value_type: Box::from(value_type),
             updated: updated_version,
             state: Box::from(state),
+            written_for: WrittenFor::Unrecorded,
         }
+    }
+
+    /// Records the fingerprint of the declaration this row was written for,
+    /// as the last-good file does. A row whose fingerprint differs from the
+    /// running declaration's is held with cause `entry_type_mismatch`, even
+    /// when its kind and value type still match.
+    ///
+    /// ```
+    /// use batter_flags_core::{
+    ///     CatalogBuilder, CivilDate, Expiry, Flag, SettingsPrefix, Toggle, Version,
+    ///     low_level::{BaseBuilder, Candidate, CandidateRow, HoldCause, Snapshot},
+    /// };
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
+    /// let serving = catalog.process_kind("serving")?;
+    /// catalog.environment_class("hosted")?;
+    /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
+    /// let fast = catalog.release_flag("fast_path", Toggle::Off, expiry).declare()?;
+    /// let other = catalog.release_flag("other_path", Toggle::Off, expiry).declare()?;
+    /// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+    /// let scope = base.validation_scope();
+    ///
+    /// let at = Version::new(3);
+    /// let other_declaration = base.catalog().declarations().find(|d| d.key() == other.key()).unwrap();
+    /// let stale = CandidateRow::flag(&fast, Toggle::On, at).written_for(other_declaration.fingerprint());
+    /// let snapshot = Snapshot::validate(&scope, Candidate::from_last_good_file(&scope).at(at).row(stale))?;
+    /// assert!(snapshot.held().any(|(key, cause)| key.as_str() == "fast_path"
+    ///     && cause == HoldCause::EntryTypeMismatch));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn written_for(mut self, fingerprint: DeclarationFingerprint) -> Self {
+        self.written_for = WrittenFor::Declaration(fingerprint);
+        self
     }
 
     /// The canonical row for a release or mode flag at `variant`, with the
@@ -79,6 +127,26 @@ impl CandidateRow {
             updated_version,
             &format!("{{\"encoding\":1,\"switch\":\"{}\"}}", state.as_str()),
         )
+    }
+
+    /// The row's key as read.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The row's kind tag as read.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// The row's value-type tag as read.
+    pub fn value_type(&self) -> &str {
+        &self.value_type
+    }
+
+    /// The version that last changed the row.
+    pub fn updated_version(&self) -> Version {
+        self.updated
     }
 
     /// The state text, as it will be decoded and digested.

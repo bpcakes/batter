@@ -371,6 +371,15 @@ impl ManifestDigest {
     }
 }
 
+impl DeclarationFingerprint {
+    /// A fingerprint as a store or file recorded it, for comparison with the
+    /// running declaration's. A fingerprint grants nothing: a row carrying a
+    /// fingerprint that does not match is held, never applied.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

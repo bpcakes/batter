@@ -94,8 +94,16 @@ pub use self::{
     status::{Gate, LoadCause, RejectionCause, SnapshotStatus},
     timing::{LoadPolicy, RefreshTiming},
 };
-use self::{source::LoadSource, status::Shared, timing::Budgets};
-use crate::{Flags, declared::Resolved, reader::Reader};
+use self::{refresh::Persistence, source::LoadSource, status::Shared, timing::Budgets};
+pub use crate::last_good::{
+    DirectoryError, FileProblem, PersistFailure, SnapshotDirectory, SnapshotFilePath, StartupFile,
+};
+use crate::{
+    Flags,
+    declared::Resolved,
+    last_good::{self, Initial, LastGood, Persister},
+    reader::{Reader, Writer},
+};
 
 /// Flags whose values a registered loader keeps current.
 ///
@@ -107,6 +115,7 @@ pub struct RegisteredFlags {
     process: ProcessId,
     presence: PeriodicReader,
     prune: PeriodicReader,
+    startup_file: StartupFile,
 }
 
 /// The store a registered control plane reads and heartbeats through.
@@ -170,6 +179,17 @@ impl RegisteredFlags {
     /// This process's id in the fleet view.
     pub fn process(&self) -> ProcessId {
         self.process
+    }
+
+    /// What the last-good file did at startup: disabled, missing, published
+    /// or unusable, and why.
+    pub fn startup_file(&self) -> StartupFile {
+        self.startup_file
+    }
+
+    /// The most recent persist that did not write, if there has been one.
+    pub fn last_persist_failure(&self) -> Option<PersistFailure> {
+        self.shared.last_persist_failure()
     }
 
     /// The heartbeat component's runs so far. A heartbeat skipped while the
@@ -250,13 +270,13 @@ fn register_with<T: RegistrationTarget + ?Sized>(
     presence: Presence,
 ) -> Result<RegisteredFlags, RegisterError> {
     // Validate everything before registering anything.
-    let budgets = Budgets::of(store.timing());
+    let budgets = Budgets::for_policy(store.timing(), &policy);
     let startup = policy.startup(budgets)?;
     let timing = policy.timing();
     let (base, class) = resolved.into_parts();
     let presence = presence::prepare(store, presence, &base, class.name(), budgets)?;
     let scope = base.validation_scope();
-    let (writer, reader) = Reader::live(
+    let (mut writer, reader) = Reader::live(
         base,
         policy.pre_publication(),
         timing.maximum_age(),
@@ -264,11 +284,19 @@ fn register_with<T: RegistrationTarget + ?Sized>(
     );
     let reader = Arc::new(reader);
     let shared = Arc::new(Shared::new(reader.clone()));
+    let (persistence, startup_file) = match policy.last_good() {
+        LastGood::Off => (Persistence::Off, StartupFile::Disabled),
+        LastGood::File(directory) => (
+            Persistence::File(Persister::new(directory.path().clone())),
+            publish_file(&mut writer, &shared, directory),
+        ),
+    };
     let refresh = refresh::prepare(
         source,
         writer,
         scope,
         shared.clone(),
+        persistence,
         timing.poll_interval(),
         budgets.refresh,
         startup,
@@ -289,7 +317,31 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         process,
         presence,
         prune,
+        startup_file,
     })
+}
+
+/// Publishes a usable last-good file before the driver starts, so the first
+/// view of every surface sees it. A file that cannot be used is recorded and
+/// publishes nothing.
+fn publish_file(
+    writer: &mut Writer,
+    shared: &Shared,
+    directory: &SnapshotDirectory,
+) -> StartupFile {
+    let bytes = match directory.initial() {
+        Initial::Absent => return StartupFile::Missing,
+        Initial::Unreadable => return StartupFile::Unusable(FileProblem::Unreadable),
+        Initial::Read(bytes) => bytes,
+    };
+    match last_good::load(shared.reader().base(), bytes) {
+        Ok(snapshot) => {
+            let version = snapshot.version();
+            writer.apply(Arc::new(snapshot), Instant::now());
+            StartupFile::Published { version }
+        }
+        Err(problem) => StartupFile::Unusable(problem),
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::{
     base::BaseInner,
-    candidate::{Candidate, CandidateRow},
+    candidate::{Candidate, CandidateRow, WrittenFor},
     decision::SwitchState,
     declaration::{Entry, Kind},
     digest::{DigestRow, SnapshotDigest},
@@ -401,6 +401,12 @@ fn classify(
     }
     if *row.kind != *entry.kind.as_str() || *row.value_type != *entry.value_type.as_str() {
         return held(HoldCause::EntryTypeMismatch);
+    }
+    match row.written_for {
+        WrittenFor::Declaration(fingerprint) if fingerprint != entry.fingerprint => {
+            return held(HoldCause::EntryTypeMismatch);
+        }
+        WrittenFor::Declaration(_) | WrittenFor::Unrecorded => {}
     }
     let expect = match entry.kind {
         Kind::Switch => Expect::Switch,
