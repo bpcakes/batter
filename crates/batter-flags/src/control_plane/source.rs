@@ -75,9 +75,10 @@ fn classify(error: &StoreError) -> FetchFailure {
         ErrorClass::Standby => FetchFailure::Failed(LoadCause::Standby),
         ErrorClass::Deadline => FetchFailure::Failed(LoadCause::Deadline),
         ErrorClass::InvalidData => FetchFailure::Failed(LoadCause::InvalidData),
-        ErrorClass::UnsupportedServer | ErrorClass::Database | ErrorClass::CommitUnknown => {
-            FetchFailure::Failed(LoadCause::Unavailable)
-        }
+        ErrorClass::UnsupportedServer
+        | ErrorClass::Database
+        | ErrorClass::CommitUnknown
+        | ErrorClass::Interrupted => FetchFailure::Failed(LoadCause::Unavailable),
     }
 }
 

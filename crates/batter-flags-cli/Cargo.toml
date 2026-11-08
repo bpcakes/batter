@@ -33,3 +33,7 @@ serde_json = "1.0.154"
 # unification elsewhere in the workspace, must select the rustls provider.
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls-ring"] }
 tokio = { workspace = true, features = ["macros", "rt", "signal", "time"] }
+
+[dev-dependencies]
+# A per-test database for the ignored live suite.
+postgres-test-harness = { version = "0.2.0", git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }

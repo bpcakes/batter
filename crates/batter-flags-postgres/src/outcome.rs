@@ -65,9 +65,15 @@ pub enum Refusal {
     },
     /// The caller's CAS revision exceeds the database head.
     RevisionAboveHead {
+        /// The key's current revision, 0 for an absent row.
+        current: Version,
         /// Actual database head.
         head: Version,
     },
+    /// A retained catalog declares the flip coordinated, and the request
+    /// refused coordinated flips: processes apply a change poll by poll,
+    /// never all at once.
+    CoordinatedFlip,
     /// A live control-plane reader has already applied a higher version.
     StoreBehindFleet,
 }

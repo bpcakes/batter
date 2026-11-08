@@ -64,7 +64,7 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
         matches!(f.store.write(set("live_flag","off",Some(0)),deadline()).await.unwrap(),WriteOutcome::RevisionMismatch { current, head } if current == Version::new(5) && head == Version::new(5))
     );
     assert!(
-        matches!(f.store.write(set("live_flag","off",Some(99)),deadline()).await.unwrap(),WriteOutcome::Refused(Refusal::RevisionAboveHead { head }) if head == Version::new(5))
+        matches!(f.store.write(set("live_flag","off",Some(99)),deadline()).await.unwrap(),WriteOutcome::Refused(Refusal::RevisionAboveHead { head, .. }) if head == Version::new(5))
     );
     assert!(matches!(
         f.store
@@ -296,7 +296,7 @@ async fn absent_row_cas_and_lower_encoding_declarers_are_refused_without_consumi
             matches!(f.store.write(set(name,"on",Some(0)),deadline()).await.unwrap(), WriteOutcome::Refused(Refusal::UndecodableByLiveDeclaration { builds }) if builds.len()==1)
         );
         assert!(
-            matches!(f.store.write(set(name,"on",Some(u64::MAX)),deadline()).await.unwrap(), WriteOutcome::Refused(Refusal::RevisionAboveHead { head }) if head.get()==0)
+            matches!(f.store.write(set(name,"on",Some(u64::MAX)),deadline()).await.unwrap(), WriteOutcome::Refused(Refusal::RevisionAboveHead { head, .. }) if head.get()==0)
         );
     }
     assert_eq!(f.head().await, 0);

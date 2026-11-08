@@ -441,6 +441,7 @@ dependencies = [
  "batter-flags-postgres",
  "chrono",
  "clap",
+ "postgres-test-harness",
  "serde",
  "serde_json",
  "sqlx",

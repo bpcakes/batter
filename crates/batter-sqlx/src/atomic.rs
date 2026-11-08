@@ -3,7 +3,9 @@ mod error;
 pub(crate) mod fast;
 pub(crate) mod scope;
 
-pub use error::{CommitUnconfirmed, PgScopeError, PgScopeFailure, PgScopeLoss, PgTransactionError};
+pub use error::{
+    CommitUnconfirmed, PgCommitStop, PgScopeError, PgScopeFailure, PgScopeLoss, PgTransactionError,
+};
 pub use scope::PgScopedSql;
 use scope::{ScopeSavepoint, command, normalize};
 
@@ -215,6 +217,46 @@ impl PgAtomicTransaction {
             .map_err(CommitUnconfirmed)?;
         // The lease retires even after acknowledgement: arbitrary SQL may have
         // changed session settings or acquired session advisory locks.
+        Ok(PgCommitConfirmed(()))
+    }
+
+    /// Like [`commit`](Self::commit), but `interrupt` may stop it until
+    /// COMMIT is sent: while continuity is validated, an interrupt drops the
+    /// transaction, whose connection is retired, so nothing commits. Once
+    /// COMMIT is sent nothing interrupts it, and the outcome returned is the
+    /// real one.
+    ///
+    /// ```no_run
+    /// # async fn example(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    /// use batter_sqlx::{PgCommitStop, low_level::PgAtomicTransaction};
+    ///
+    /// let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    /// let transaction = PgAtomicTransaction::begin(&pool).await?;
+    /// let interrupt = async move {
+    ///     if stopped.await.is_err() {
+    ///         std::future::pending::<()>().await;
+    ///     }
+    /// };
+    /// match transaction.commit_unless(interrupt).await {
+    ///     Ok(_committed) => {}
+    ///     Err(PgCommitStop::Interrupted) => { /* nothing was sent; nothing committed */ }
+    ///     Err(PgCommitStop::Unconfirmed(_unknown)) => { /* reconcile */ }
+    /// }
+    /// # drop(stop);
+    /// # Ok(()) }
+    /// ```
+    pub async fn commit_unless(
+        mut self,
+        interrupt: impl Future<Output = ()>,
+    ) -> Result<PgCommitConfirmed, PgCommitStop> {
+        tokio::select! {
+            biased;
+            () = interrupt => return Err(PgCommitStop::Interrupted),
+            validated = self.validate() => validated.map_err(|error| PgCommitStop::Unconfirmed(CommitUnconfirmed(error)))?,
+        }
+        command(self.lease.connection_mut(), "COMMIT")
+            .await
+            .map_err(|error| PgCommitStop::Unconfirmed(CommitUnconfirmed(error)))?;
         Ok(PgCommitConfirmed(()))
     }
 

@@ -5,7 +5,7 @@ use crate::{
     store::{bounded, remaining},
 };
 use batter_flags_core::FlagKey;
-use batter_sqlx::{PgScopedSql, PgTransactionError, low_level::PgAtomicTransaction};
+use batter_sqlx::{PgCommitStop, PgScopedSql, PgTransactionError, low_level::PgAtomicTransaction};
 use sqlx::Row;
 use tokio::time::Instant;
 
@@ -28,8 +28,53 @@ impl Mutation {
         }
     }
 }
+/// Whether a write may flip a key a retained catalog declares coordinated.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FlipPolicy {
+    /// Refuse it with [`Refusal::CoordinatedFlip`](crate::Refusal::CoordinatedFlip),
+    /// judged inside the write's transaction.
+    RefuseCoordinated,
+    /// Write it; processes apply it poll by poll.
+    AcceptRolling,
+}
+
+/// One audited mutation, for [`PooledStore::submit`].
+#[derive(Clone, Debug)]
+pub enum Request {
+    /// `set`, `kill` or an explicit write.
+    Write(Write),
+    /// Archive an existing key.
+    Archive(Archive),
+    /// Restore an archived key.
+    Restore(Archive),
+}
+
 impl PooledStore {
-    /// Write exactly once under the global counter lock. Every refusal and no-op
+    /// Runs one audited mutation that `interrupt` may stop before COMMIT is
+    /// sent: a signal while the transaction is being prepared, or before
+    /// COMMIT, rolls it back and returns [`ErrorClass::Interrupted`], with
+    /// nothing written. Once COMMIT is sent it is never interrupted, so the
+    /// outcome reported is the real one. Dropping the sender interrupts
+    /// nothing.
+    pub async fn submit(
+        &self,
+        request: Request,
+        flip: FlipPolicy,
+        deadline: Instant,
+        interrupt: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<WriteOutcome, StoreError> {
+        let mutation = match request {
+            Request::Write(write) => Mutation::Write(write),
+            Request::Archive(archive) => Mutation::Archive(archive),
+            Request::Restore(restore) => Mutation::Restore(restore),
+        };
+        self.mutate_until(mutation, flip, deadline, Interrupt::On(interrupt))
+            .await
+    }
+
+    /// Write exactly once under the global counter lock. It never refuses a
+    /// coordinated flip; [`submit`](Self::submit) with
+    /// [`FlipPolicy::RefuseCoordinated`] does. Every refusal and no-op
     /// acknowledges rollback. No transport or timeout result triggers retry.
     pub async fn write(&self, write: Write, deadline: Instant) -> Result<WriteOutcome, StoreError> {
         self.mutate(Mutation::Write(write), deadline).await
@@ -56,6 +101,22 @@ impl PooledStore {
         mutation: Mutation,
         deadline: Instant,
     ) -> Result<WriteOutcome, StoreError> {
+        self.mutate_until(
+            mutation,
+            FlipPolicy::AcceptRolling,
+            deadline,
+            Interrupt::Never,
+        )
+        .await
+    }
+
+    async fn mutate_until(
+        &self,
+        mutation: Mutation,
+        flip: FlipPolicy,
+        deadline: Instant,
+        mut interrupt: Interrupt,
+    ) -> Result<WriteOutcome, StoreError> {
         let acquire_deadline = deadline.min(Instant::now() + self.timing.acquire);
         let tx = bounded(acquire_deadline, async {
             PgAtomicTransaction::begin(&self.pool)
@@ -63,12 +124,21 @@ impl PooledStore {
                 .map_err(StoreError::from)
         })
         .await?;
-        let (tx, result) = tx
-            .operation_until(deadline, async |sql| {
-                self.prepare(sql, &mutation, deadline).await
-            })
-            .await
-            .map_err(crate::atomic::scope_error)?;
+        let operation = tx.operation_until(deadline, async |sql| {
+            self.prepare(sql, &mutation, flip, deadline).await
+        });
+        // Until COMMIT is sent an interrupt drops the transaction whole: its
+        // connection is retired, so the server aborts it, and nothing waits
+        // for a statement still blocked on a lock.
+        let (tx, result) = match &mut interrupt {
+            Interrupt::Never => operation.await,
+            Interrupt::On(signal) => tokio::select! {
+                biased;
+                Ok(()) = signal => return Err(StoreError::classified(ErrorClass::Interrupted)),
+                done = operation => done,
+            },
+        }
+        .map_err(crate::atomic::scope_error)?;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -96,12 +166,30 @@ impl PooledStore {
         // Do not poll commit at all after a known pre-commit timeout.
         remaining(deadline)?;
         let proposed_version = pending.version;
-        match tokio::time::timeout_at(deadline, tx.commit()).await {
+        // An interrupt is honoured until COMMIT is sent, including during the
+        // native continuity check before it, and never after.
+        let committed = match interrupt {
+            Interrupt::Never => tokio::time::timeout_at(deadline, tx.commit())
+                .await
+                .map(|result| result.map_err(PgCommitStop::Unconfirmed)),
+            Interrupt::On(signal) => {
+                let stop = async move {
+                    if signal.await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                };
+                tokio::time::timeout_at(deadline, tx.commit_unless(stop)).await
+            }
+        };
+        match committed {
             Ok(Ok(proof)) => Ok(pending.committed(proof)),
-            Ok(Err(cause)) if known_commit_rejection(cause.cause()) => {
+            Ok(Err(PgCommitStop::Interrupted)) => {
+                Err(StoreError::classified(ErrorClass::Interrupted))
+            }
+            Ok(Err(PgCommitStop::Unconfirmed(cause))) if known_commit_rejection(cause.cause()) => {
                 Err(cause.into_cause().into())
             }
-            Ok(Err(cause)) => Ok(WriteOutcome::Uncertain {
+            Ok(Err(PgCommitStop::Unconfirmed(cause))) => Ok(WriteOutcome::Uncertain {
                 proposed_version,
                 cause: CommitUncertainty::Native(cause),
             }),
@@ -115,6 +203,7 @@ impl PooledStore {
         &self,
         sql: &mut PgScopedSql<'_>,
         mutation: &Mutation,
+        flip: FlipPolicy,
         deadline: Instant,
     ) -> Result<Prepared, StoreError> {
         let [statement, lock, idle] = self.timing.settings(deadline)?;
@@ -144,9 +233,15 @@ impl PooledStore {
             pause.entered.notify_one();
             pause.release.notified().await;
         }
-        super::validate::apply(sql, mutation, head, next).await
+        super::validate::apply(sql, mutation, flip, head, next).await
     }
 }
+/// Whether a mutation may be interrupted before COMMIT.
+enum Interrupt {
+    Never,
+    On(tokio::sync::oneshot::Receiver<()>),
+}
+
 // SQLSTATE ErrorResponse on COMMIT is a rejection, except connection/unknown
 // completion classes: these cannot prove the transaction's outcome.
 pub(crate) fn known_commit_rejection(error: &PgTransactionError) -> bool {

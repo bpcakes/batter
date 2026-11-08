@@ -30,6 +30,9 @@ pub enum ErrorClass {
     InvalidData,
     /// SQLx, acquisition, migration or boundary failure.
     Database,
+    /// The caller interrupted an audited mutation before COMMIT was sent; it
+    /// was rolled back and nothing was written.
+    Interrupted,
     /// An unaudited operation (heartbeat, stop or prune) may have committed:
     /// its commit, including the native checks just before COMMIT, failed
     /// without a database rejection or ran out of time. The next heartbeat
@@ -57,6 +60,30 @@ impl StoreError {
             ErrorKind::Class(c) => *c,
             ErrorKind::SchemaBehind(_) => ErrorClass::SchemaRevision,
             ErrorKind::Unconfirmed(_) => ErrorClass::CommitUnknown,
+            // An interrupted mutation whose recovery or rollback also failed
+            // still wrote nothing: the transaction never reached COMMIT and
+            // its connection is retired.
+            ErrorKind::Scope(failure)
+                if matches!(
+                    failure.as_ref(),
+                    batter_sqlx::PgScopeFailure::Recovery { application, .. }
+                        if application.class() == ErrorClass::Interrupted
+                ) =>
+            {
+                ErrorClass::Interrupted
+            }
+            // An interrupted mutation whose rollback also failed still wrote
+            // nothing: the transaction never reached COMMIT and its
+            // connection is retired.
+            ErrorKind::Other(other)
+                if other
+                    .downcast_ref::<crate::RollbackFailure>()
+                    .is_some_and(|failure| {
+                        failure.operation().class() == ErrorClass::Interrupted
+                    }) =>
+            {
+                ErrorClass::Interrupted
+            }
             _ => ErrorClass::Database,
         }
     }
@@ -85,6 +112,21 @@ impl StoreError {
             | ErrorKind::Scope(_) => None,
         }
     }
+    /// The SQLSTATE of the database error behind this failure, if one
+    /// caused it: a code, never a message or detail.
+    pub fn sqlstate(&self) -> Option<String> {
+        let mut source: Option<&(dyn Error + 'static)> = Some(self);
+        while let Some(error) = source {
+            if let Some(sqlx::Error::Database(database)) = error.downcast_ref::<sqlx::Error>()
+                && let Some(code) = database.code()
+            {
+                return Some(code.into_owned());
+            }
+            source = error.source();
+        }
+        None
+    }
+
     pub(crate) fn schema_behind(found: i32) -> Self {
         Self(ErrorKind::SchemaBehind(found))
     }

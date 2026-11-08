@@ -1,5 +1,6 @@
 use crate::{
-    ErrorClass, Precondition, Presence, Refusal, StoreError, StoredState, UndeclaredBasis,
+    ErrorClass, FlipPolicy, Precondition, Presence, Refusal, StoreError, StoredState,
+    UndeclaredBasis,
     prepared::{DeclarationEvidence, PendingWrite, Prepared, RollbackDecision},
     request::RequestedValue,
     state::{ExistingRow, Process, Shape, StoredRow, blocking},
@@ -79,15 +80,16 @@ impl ChangePlan {
 pub(crate) async fn apply(
     sql: &mut PgScopedSql<'_>,
     mutation: &Mutation,
+    flip: FlipPolicy,
     head: i64,
     next: i64,
 ) -> Result<Prepared, StoreError> {
     let key = mutation.key().as_str();
     let stored = StoredRow::read(sqlx::query("SELECT kind, value_type, state, updated_version, archived_version FROM flags.flag_state WHERE name = $1")
         .bind(key).fetch_optional(sql.executor()).await?)?;
-    let declarations = sqlx::query("SELECT e.kind, e.value_type, e.only_in, e.manifest_digest FROM flags.flag_catalog_entries e JOIN flags.flag_catalogs c USING(manifest_digest) WHERE e.key = $1 ORDER BY c.last_referenced_at DESC, e.manifest_digest")
+    let declarations = sqlx::query("SELECT e.kind, e.value_type, e.only_in, e.flip_discipline, e.manifest_digest FROM flags.flag_catalog_entries e JOIN flags.flag_catalogs c USING(manifest_digest) WHERE e.key = $1 ORDER BY c.last_referenced_at DESC, e.manifest_digest")
         .bind(key).fetch_all(sql.executor()).await?;
-    let plan = match preflight(mutation, head, stored, &declarations)? {
+    let plan = match preflight(mutation, flip, head, stored, &declarations)? {
         ControlFlow::Break(decision) => return Ok(Prepared::Rollback(decision)),
         ControlFlow::Continue(plan) => plan,
     };
@@ -158,6 +160,7 @@ pub(crate) async fn apply(
 }
 fn preflight(
     mutation: &Mutation,
+    flip: FlipPolicy,
     head: i64,
     stored: StoredRow,
     declarations: &[PgRow],
@@ -214,6 +217,7 @@ fn preflight(
     if let Precondition::UnchangedSince(v) = mutation.change().precondition {
         if v.get() > head as u64 {
             return refuse(Refusal::RevisionAboveHead {
+                current: Version::new(row_version as u64),
                 head: Version::new(head as u64),
             });
         }
@@ -224,16 +228,8 @@ fn preflight(
             }));
         }
     }
-    if declarations
-        .iter()
-        .any(|r| r.get::<Option<String>, _>("only_in").is_some())
-    {
-        return refuse(Refusal::EnvironmentRestricted);
-    }
-    if declarations.is_empty()
-        && matches!(mutation, Mutation::Write(w) if matches!(w.value, RequestedValue::DeclaredFlag(_) | RequestedValue::DeclaredSwitch(_)))
-    {
-        return refuse(Refusal::Undeclared);
+    if let Some(refusal) = declaration_refusal(mutation, flip, declarations) {
+        return refuse(refusal);
     }
     Ok(ControlFlow::Continue(match (mutation, stored) {
         (Mutation::Write(w), StoredRow::Absent) => {
@@ -261,4 +257,33 @@ fn preflight(
             return Err(StoreError::classified(ErrorClass::InvalidData));
         }
     }))
+}
+
+/// What the retained declarations, read in this transaction after the
+/// counter lock, refuse: an environment restriction, an undeclared value
+/// write, then a coordinated flip the request did not accept.
+fn declaration_refusal(
+    mutation: &Mutation,
+    flip: FlipPolicy,
+    declarations: &[PgRow],
+) -> Option<Refusal> {
+    if declarations
+        .iter()
+        .any(|r| r.get::<Option<String>, _>("only_in").is_some())
+    {
+        return Some(Refusal::EnvironmentRestricted);
+    }
+    if declarations.is_empty()
+        && matches!(mutation, Mutation::Write(w) if matches!(w.value, RequestedValue::DeclaredFlag(_) | RequestedValue::DeclaredSwitch(_)))
+    {
+        return Some(Refusal::Undeclared);
+    }
+    if let (Mutation::Write(_), FlipPolicy::RefuseCoordinated) = (mutation, flip)
+        && declarations
+            .iter()
+            .any(|r| r.get::<String, _>("flip_discipline") == "coordinated")
+    {
+        return Some(Refusal::CoordinatedFlip);
+    }
+    None
 }

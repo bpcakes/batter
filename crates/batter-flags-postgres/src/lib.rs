@@ -36,6 +36,7 @@ mod catalogs;
 mod errors;
 mod fleet;
 mod history;
+mod listing;
 mod load;
 mod migrate;
 mod outcome;
@@ -50,6 +51,7 @@ mod write;
 pub use errors::{ErrorClass, StoreError, ValidationError};
 pub use fleet::{Fleet, FleetProcess, ProcessState, Rollout};
 pub use history::HistoryEntry;
+pub use listing::{Coordination, Declaration, Expiry, KeyListing, Reference, Stored};
 pub use load::Loaded;
 pub use migrate::{CREATE_FLAGS_SQL, MIGRATOR, REQUIRED_SCHEMA_REVISION};
 pub use outcome::{
@@ -64,7 +66,7 @@ pub use request::{
     Actor, Archive, Change, ChangeReason, ExplicitValue, Precondition, Variant, Write,
 };
 pub use store::{PooledStore, StoreTiming};
-pub use write::RollbackFailure;
+pub use write::{FlipPolicy, Request, RollbackFailure};
 #[cfg(test)]
 extern crate self as batter_flags_postgres;
 #[cfg(test)]

@@ -193,6 +193,36 @@ impl<E: Error + 'static> Error for PgScopeFailure<E> {
 /// also be reconciled by the application as an uncertain outcome.
 pub struct CommitUnconfirmed(pub(crate) PgTransactionError);
 
+/// Why [`commit_unless`](crate::low_level::PgAtomicTransaction::commit_unless)
+/// did not confirm a commit.
+#[derive(Debug)]
+pub enum PgCommitStop {
+    /// The interrupt arrived before COMMIT was sent; nothing committed and the
+    /// connection is retired.
+    Interrupted,
+    /// COMMIT, or the validation before it, failed; the outcome is the one
+    /// [`CommitUnconfirmed`] describes.
+    Unconfirmed(CommitUnconfirmed),
+}
+
+impl fmt::Display for PgCommitStop {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interrupted => f.write_str("the commit was interrupted before COMMIT was sent"),
+            Self::Unconfirmed(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for PgCommitStop {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Interrupted => None,
+            Self::Unconfirmed(error) => Some(error),
+        }
+    }
+}
+
 impl CommitUnconfirmed {
     /// Inspect the retained cause explicitly.
     pub fn cause(&self) -> &PgTransactionError {
