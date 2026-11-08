@@ -31,6 +31,18 @@ Fast jump index for agent-facing guidance in this repository.
 - [Native quota adapter](./crates/batter-runlimit/AGENTS.md): atomic quota-before-work,
   authenticated HTTP assembly, retained consumption observations and
   supervised PostgreSQL limiters with registered expiry cleanup.
+- [Flags catalog](./crates/batter-flags-core/AGENTS.md): flag and kill-switch
+  declarations, validated snapshots and their holds, the shared invariant
+  judgement, clock-free evaluation, pins and the manifest.
+- [Flags adapter](./crates/batter-flags/AGENTS.md): declared resolution, the
+  process reader, HTTP, job and periodic gates, test flags, grants and the
+  control-plane registration with its refresh, heartbeat, prune, last-good file
+  and LISTEN wake.
+- [Flags store](./crates/batter-flags-postgres/AGENTS.md): the `flags` schema,
+  audited writes and their refusals, history, presence, pruning and the fleet
+  view.
+- [Flags operator command](./crates/batter-flags-cli/AGENTS.md): the
+  `batter-flags` root, its exit codes and JSON reports.
 - [Test support](./crates/batter-test-support/AGENTS.md): generic test scripts
   and error-preserving result combination.
 - [SQLx lifecycle example](./examples/postgres-lifecycle/AGENTS.md): native pool

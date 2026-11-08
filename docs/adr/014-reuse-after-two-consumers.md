@@ -261,3 +261,9 @@ predate later hard cuts.
   evidence that track 2 requires. The facade declares it as an optional
   dependency, so a crates.io release of `batter` must publish it first. Its
   place in the `batter-ddc` release train is not yet recorded.
+- 2026-11-08 (`batter-jkw6`): [ADR-016](016-typed-flags-control-plane.md)
+  records typed flags and kill switches: the survey-evidenced startup rules as
+  a track 1 extraction, and the control plane as an owner-selected addition
+  beside it. One consumer now composes through the lifecycle layer, which is
+  this record's reopening condition for the application-root question; the
+  re-survey that would test it is deferred to `batter-8pn8`.

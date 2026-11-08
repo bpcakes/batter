@@ -2,9 +2,12 @@
 
 ## Purpose
 
-Own declared settings resolution, the process reader and protected flags
-surfaces. Catalog grammar and evaluation belong to `batter-flags-core`;
-periodic timing, lifecycle and failure retention belong to `batter-core`.
+Own declared settings resolution, the process reader, protected flags
+surfaces, the exact-role grant inventory and, with `postgres`, the control-plane
+registration. Catalog grammar, evaluation and the invariant judgement belong to
+`batter-flags-core`; the store and its SQL to `batter-flags-postgres`; periodic
+timing, lifecycle and failure retention to `batter-core`. Flags has no
+view-returning method; the only public live read is `low_level::capture_now`.
 
 ## Key entrypoints
 
@@ -15,12 +18,26 @@ periodic timing, lifecycle and failure retention belong to `batter-core`.
 - `src/jobs.rs` owns native job-handler views and gates with `runledger`.
 - `src/periodic.rs` owns gated registration, its restricted policy and skips.
 - `src/test.rs` supplies public fixtures; `src/low_level.rs` discloses live reads.
+- `src/control_plane.rs` is `register_in` and `RegisteredFlags`; `control_plane/`
+  holds the refresh (`refresh.rs`), presence and its heartbeat report
+  (`presence.rs`), status and readiness (`status.rs`), timing and load policy
+  (`timing.rs`), the LISTEN component (`listen.rs`) and the crate-private load
+  source with its test fake (`source.rs`).
+- `src/last_good.rs` and `last_good/` own the last-good file, format `BFSN` v1
+  ([`docs/snapshot-file-v1.md`](docs/snapshot-file-v1.md)).
+- `src/grants.rs` and `grants/inventory.rs` list the privileges each
+  `FlagsOperation` needs, checked against the store's statements.
 
 ## Edit here for X
 
 Change periodic admission and skip evidence in `src/periodic.rs`, with paused
 clock contracts in `src/periodic/tests.rs`. Do not add another scheduler or
-change core's lifecycle to implement a flags surface.
+change core's lifecycle to implement a flags surface. Change what a load does in
+`control_plane/refresh.rs` and what a heartbeat reports in
+`control_plane/presence.rs`, with paused-time contracts over the scripted source
+in `control_plane/tests/`. When a store statement gains a column, update
+`grants/inventory.rs`; the live grant case runs the statement under exactly
+those privileges.
 
 ## Invariants
 
@@ -33,13 +50,20 @@ withholding decision. Jobs defer awaiting publication and apply their native
 policy to tripped readings. Immediate startup and stop-at-drain are fixed by
 `GatedPeriodicPolicy`. Never gate support work needed during native settlement.
 No protected surface accepts a caller-supplied view. Keep control-plane writer
-injection private to tests; public fixtures use `TestFlags`.
+injection private to tests; public fixtures use `TestFlags`. Registration
+validates every input before registering anything, and refuses a base an
+engaged governing switch would leave breaking an invariant. A heartbeat takes
+its version, freshness and held keys from one published record. Persisting the
+last-good file never changes a run's outcome or narrows readiness.
 
 ## Common commands
 
 ```sh
-cargo test -p batter-flags --locked
-cargo clippy -p batter-flags --all-targets --locked -- -D warnings
+cargo test -p batter-flags --all-features --locked
+cargo clippy -p batter-flags --all-targets --all-features --locked -- -D warnings
+BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL=postgres://... cargo test -p batter-flags \
+  --features postgres --test control_plane_live --test listen_live \
+  --test invariants_live -- --ignored
 ```
 
 Full backend verification follows the root guide and the active delivery

@@ -4,8 +4,9 @@
 
 Own the dedicated `flags` schema, immutable migration ledger, coherent loads,
 audited CAS writes, history, archive and restore. Follow the root Unix policy.
-Native SQLx ownership stays in `batter-sqlx`; evaluation stays in flags core.
-Catalog publication, presence and pruning have a separate delivery owner.
+Native SQLx ownership stays in `batter-sqlx`; evaluation and the invariant
+judgement stay in flags core. This crate also owns catalog publication,
+presence, pruning, the fleet view and the operator listings.
 
 ## Key entrypoints
 
@@ -15,6 +16,12 @@ Catalog publication, presence and pruning have a separate delivery owner.
 - `src/load.rs`, `src/history.rs`: bounded repeatable-read inspection.
 - `src/request.rs`, `src/outcome.rs`, `src/errors.rs`: validated inputs, exhaustive
   outcomes, redacted retained causes.
+- `src/relations.rs`: the write-side invariant judgement, replaying
+  `Manifest::invariant_holds` per running declarer catalog and process kind.
+- `src/catalogs.rs`, `src/presence.rs`, `presence/stop.rs`, `src/prune.rs`,
+  `src/fleet.rs`, `src/listing.rs`: catalog publication, heartbeats and the
+  stop marker, bounded pruning, the fleet view and the operator listings.
+- `src/atomic.rs`: the native transaction owners presence and pruning run in.
 
 ## Edit here for X
 
@@ -26,7 +33,9 @@ ownership; do not expose `PgConnection` or add a caller rollback protocol.
 ## Invariants
 
 One locked counter, one row change, one audit row, one transactional NOTIFY.
-No-op/refusal rolls back the counter. Silent declarers still block incompatible
+No-op/refusal rolls back the counter. Refusals are judged inside the write's
+transaction, after the counter lock; a kill switch is never refused for the
+flags engaging it holds. Silent declarers still block incompatible
 writes/archive. Uncertain commit never becomes ordinary failure or automatic
 replay. The private mutation callback cannot accept arbitrary caller SQL.
 Default formatting does not expose values or native error contents.

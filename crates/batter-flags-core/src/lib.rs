@@ -58,8 +58,10 @@
 //! every evaluation: [`Base::check_flag`](low_level::Base::check_flag) and
 //! [`Base::check_switch`](low_level::Base::check_switch) apply the rule
 //! evaluation applies. Declared-mode resolution, the reader that publishes
-//! snapshots and the test flags are in `batter-flags`; every loader arrives
-//! with a later delivery task of the flags epic.
+//! snapshots, the control-plane loader and the test flags are in
+//! `batter-flags`. A snapshot holds a published flag that would leave a
+//! cross-flag invariant unmet; with `serde`, `Manifest::invariant_holds` replays that
+//! judgement for a writer.
 //!
 //! The `serde` feature derives serialization for the manifest and snapshot
 //! types that the store and the operator command exchange; without it the
