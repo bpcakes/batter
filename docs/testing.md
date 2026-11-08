@@ -4322,3 +4322,45 @@ an actual COMMIT acknowledgement, then recovery finds the committed identity and
 replaying the original request creates no duplicate. Compile-fail rustdoc checks
 that both removed getters stay unavailable. The external single-facade consumer
 also reads its own intent through the protected owner before queue transition.
+
+## Flags control-plane PostgreSQL 18 suites
+
+The flags control plane's live suites are ignored tests against a disposable
+PostgreSQL 18 server. Neither `scripts/verify.sh` nor hosted CI runs them; only
+the `grants_live` flags case is in `scripts/sqlx_live.py`, and registering the
+rest there and in CI is `batter-jkw6.28`. Each run is recorded on the owning
+Bead.
+
+```text
+# The admin URL of the disposable server; each test leases its own database.
+export BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL=postgres://...
+cargo test -p batter-flags-postgres -- --ignored
+cargo test -p batter-flags --features postgres \
+  --test control_plane_live --test listen_live --test invariants_live -- --ignored
+cargo test -p batter-flags-cli -- --ignored
+
+# The facade: the ledger shared with Runledger and Runlimit, the restore
+# remedy, and the exact-role grants of every flags operation.
+export BATTER_SQLX_ADMIN_URL=postgres://...
+cargo test -p batter --features runledger,runlimit-postgres,flags-postgres \
+  --test flags_live --test grants_live -- --ignored --test-threads=1
+
+# The job gate, against a dedicated database it migrates itself.
+DATABASE_URL=postgres://.../dedicated cargo test -p batter-flags \
+  --features runledger,postgres --test jobs_live -- --ignored
+```
+
+`listen_live` covers the NOTIFY wake (`batter-jkw6.19`): a committed write
+reaching every listening process under a 60 s poll within one wake spacing
+plus a 1.5 s load allowance (the spacing is a minimum between refresh starts,
+not a delivery bound), a
+notification inside an open transaction waking nothing until it commits, a
+terminated listener session rebuilt with a resync that catches the gap, the
+poll converging with no listener, and drain unlistening, closing the listener
+sessions and recording the stop. `invariants_live` covers `requires`,
+`conflicts`, `both_or_none` and a variant whose required settings the process
+lacks, each held and listed in the heartbeat's `held_keys`, and a governed
+flag under its engaged switch, served at its code default with
+`Layer::Override` and not held (`batter-jkw6.21`); the
+store's `relations` suite covers the write-side judgement, refusal and
+deferral, and the CLI's `live_writes` suite `--accept-invariant-hold`.

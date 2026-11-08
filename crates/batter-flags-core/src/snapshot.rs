@@ -60,6 +60,9 @@ impl fmt::Debug for ValidationScope {
 /// [`EntryTypeMismatch`], [`UnknownRowEncoding`], [`UndeclaredVariant`],
 /// [`RequiresSettingsAbsent`], [`InvariantUnmet`].
 ///
+/// Migration: an exhaustive `match` over the five causes before
+/// `InvariantUnmet` adds an arm for it.
+///
 /// [`EnvironmentRestricted`]: Self::EnvironmentRestricted
 /// [`EntryTypeMismatch`]: Self::EntryTypeMismatch
 /// [`UnknownRowEncoding`]: Self::UnknownRowEncoding

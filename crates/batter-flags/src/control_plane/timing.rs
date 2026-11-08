@@ -165,8 +165,9 @@ impl LoadPolicy {
     /// listener on its own two-connection pool to `endpoint`. A wake never
     /// starts a refresh sooner than the endpoint's wake spacing after the
     /// previous one; the poll stays the backstop, so a lost listener only
-    /// delays changes to the poll interval. LISTEN delivery is unverified
-    /// until the ignored live suite runs.
+    /// delays changes to the poll interval. LISTEN delivery is exercised by
+    /// the ignored `listen_live` suite against PostgreSQL 18; hosted CI does
+    /// not run it.
     pub fn with_listen(self, endpoint: super::listen::ListenEndpoint) -> Self {
         Self {
             listen: Listen::On(Box::new(endpoint)),

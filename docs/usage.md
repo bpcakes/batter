@@ -977,6 +977,60 @@ refreshes an audited PostgreSQL snapshot instead, over a `ControlPlaneStore`
 built from the pool `batter::sqlx::pool_in` registered, optionally keeping a
 last-good file. `crates/batter/examples/rollout.rs` shows both modes.
 
+### Push control-plane changes with LISTEN/NOTIFY (experimental, `batter-jkw6.19`)
+
+Every audited write notifies the store's channel. A root that wants changes
+sooner than its poll adds a listener endpoint to the load policy; the poll
+stays the backstop, so a lost listener only delays a change to the poll:
+
+```rust,ignore
+use batter::flags::control_plane::{ListenEndpoint, LoadPolicy, RefreshTiming};
+
+let timing = RefreshTiming::new(Duration::from_secs(30), Duration::from_secs(120))?;
+// The listener's own connection options, supplied by the root, and the
+// shortest spacing between two refreshes a wake may start.
+let listen = ListenEndpoint::new(listener_options, Duration::from_secs(1))?;
+let policy = LoadPolicy::start_on_defaults(timing).with_listen(listen);
+```
+
+`register_in` refuses a wake spacing longer than the poll interval
+(`RegisterError::WakeSpacingTooLong`). The listener is a component on a private
+two-connection pool; it never reads a payload, and its `Debug` is redacted.
+
+### Cross-flag invariants in control-plane mode (experimental, `batter-jkw6.21`)
+
+`requires`, `conflicts` and `both_or_none` hold in control-plane mode as in
+declared mode. A process holds a published flag at its declared base while an
+invariant between flags its kind owns is unmet: its snapshot reports the key
+with `HoldCause::InvariantUnmet` (`Snapshot::held`), and its heartbeat's
+`held_keys` lists the key, without the cause. A flag whose governing kill
+switch is engaged is judged at its code default; the flag itself is not held,
+and its decision reports `Layer::Override`. `register_in` refuses a declared
+base that an engaged governing switch would leave breaking an invariant
+(`RegisterError::GovernedInvariant`). On the write side, `PooledStore::submit`
+with `WritePolicy::STRICT` refuses a flag write after which a running
+declarer's processes would newly hold a flag
+(`Refusal::InvariantUnmet`), or that a catalog cannot be judged for
+(`Refusal::InvariantsUnjudged`: a newer build's manifest, or more than four
+governing switches whose rows this build cannot read); `InvariantPolicy::AcceptHeld` writes it
+and lists each hold in the outcome's `Deferral`. The operator command's
+`--accept-invariant-hold` is that acceptance. Change a `both_or_none` pair,
+or two flags that require each other, by accepting the hold on the first
+write:
+
+```rust,ignore
+use batter::flags::postgres::{InvariantPolicy, Request, WriteOutcome, WritePolicy};
+
+let accept_hold = WritePolicy { invariants: InvariantPolicy::AcceptHeld, ..WritePolicy::STRICT };
+let first = store.submit(Request::Write(pair_a_on), accept_hold, deadline, interrupt).await?;
+// Processes hold `pair_a` at its base until `pair_b` follows.
+let second = store.submit(Request::Write(pair_b_on), WritePolicy::STRICT, deadline, interrupt2).await?;
+```
+
+The write-side judgement replays the processes' own over the stored rows and
+code defaults; it cannot see a process's settings or staleness, so each
+process still judges when it loads.
+
 ## Register recurring maintenance instead of writing a drain-aware loop
 
 ```rust

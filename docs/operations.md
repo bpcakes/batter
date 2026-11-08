@@ -250,6 +250,23 @@ cluster-wide NOTIFY queue fails every audited write at COMMIT with 54000,
 store. Releasing a switch warns with the number of Live processes whose settings
 floor keeps it engaged.
 
+### Change flags an invariant relates
+
+A `set` after which a running declarer's processes would newly hold a flag
+exits 3 with `refusal` `invariant_unmet`, listing each flag that would be held
+and its invariant under `data.unmet`; nothing is written. Write the missing
+flag first. A `both_or_none` pair, or two flags that require each other,
+cannot change one strict write at a time: pass `--accept-invariant-hold` on
+the first write, read the warning naming the held flag, then write the other
+without it. `invariants_unjudged` (`data.catalogs`) has two causes: a
+running build's catalog is newer than the command, which upgrading
+`batter-flags` resolves, or a catalog has more than four governing kill
+switches whose stored rows a newer build wrote, which only a write of those
+switches from a build that reads them resolves; accept the hold only once the
+fleet's holds are known. Invariant holds never refuse a `kill`, whose report
+lists the flags engaging the switch newly holds; its revision, encoding,
+coordinated-flip and store-behind-fleet refusals still apply.
+
 ### Restore or fail over the flags database
 
 After a point-in-time restore or a failover to an older head, writes are refused

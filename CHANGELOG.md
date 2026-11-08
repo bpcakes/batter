@@ -8,6 +8,105 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** within the unreleased flags family, `batter_flags_postgres::PooledStore::submit`
+  takes a `WritePolicy` in place of a `FlipPolicy`, so one argument decides
+  both what a write refuses inside its transaction: a coordinated flip and a
+  flag write after which a running declarer's processes would newly hold a
+  flag for an unmet `requires`, `conflicts` or `both_or_none` invariant
+  (`batter-jkw6.21`). No `#[deprecated]` shim: no released caller exists, and a
+  shim taking only a `FlipPolicy` would have to choose the invariant policy
+  silently.
+
+  ```rust,ignore
+  // Before:
+  store.submit(request, FlipPolicy::RefuseCoordinated, deadline, interrupt).await?;
+  store.submit(request, FlipPolicy::AcceptRolling, deadline, interrupt).await?;
+
+  // After: STRICT refuses both; accept each explicitly.
+  store.submit(request, WritePolicy::STRICT, deadline, interrupt).await?;
+  store.submit(
+      request,
+      WritePolicy { flip: FlipPolicy::AcceptRolling, ..WritePolicy::STRICT },
+      deadline,
+      interrupt,
+  ).await?;
+  ```
+
+- **Breaking:** within the unreleased flags family, control-plane invariants add
+  variants and fields to exhaustive types (`batter-jkw6.21`):
+  `low_level::HoldCause::InvariantUnmet`, `Refusal::InvariantUnmet { unmet }`,
+  `Refusal::InvariantsUnjudged { catalogs }`, and a `deferral: Deferral` field
+  on `WriteOutcome::Written` and `WriteOutcome::WrittenUndeclared`. No shim: a
+  new variant or field cannot be hidden from an exhaustive match.
+
+  ```rust,ignore
+  // Before:
+  match cause {
+      HoldCause::EntryTypeMismatch | HoldCause::UnknownRowEncoding
+      | HoldCause::UndeclaredVariant | HoldCause::RequiresSettingsAbsent
+      | HoldCause::EnvironmentRestricted => {}
+  }
+  match outcome {
+      WriteOutcome::Written { version, previous, live_declaring } => {}
+      WriteOutcome::WrittenUndeclared { version, basis } => {}
+      WriteOutcome::Refused(Refusal::StoreBehindFleet) => {}
+      // ...
+  }
+
+  // After: hold and refusal arms for the invariants, and the deferral, which
+  // lists accepted holds, engaged governing switches and unjudged catalogs.
+  match cause {
+      HoldCause::EntryTypeMismatch | HoldCause::UnknownRowEncoding
+      | HoldCause::UndeclaredVariant | HoldCause::RequiresSettingsAbsent
+      | HoldCause::EnvironmentRestricted | HoldCause::InvariantUnmet => {}
+  }
+  match outcome {
+      WriteOutcome::Written { version, previous, live_declaring, deferral } => {}
+      WriteOutcome::WrittenUndeclared { version, basis, deferral } => {}
+      WriteOutcome::Refused(Refusal::StoreBehindFleet) => {}
+      WriteOutcome::Refused(Refusal::InvariantUnmet { unmet }) => {}
+      WriteOutcome::Refused(Refusal::InvariantsUnjudged { catalogs }) => {}
+      // ...
+  }
+  ```
+
+- **Breaking:** within the unreleased flags family, `low_level::Snapshot::held`
+  takes the view's `Freshness`: a stale view can hold more, because a stale
+  rule can engage a governing kill switch and so leave an invariant unmet.
+  `RegisteredFlags::held` and the heartbeat's held keys now report the holds of
+  a view captured at that moment (`batter-jkw6.21`). No shim: the old form
+  silently reported a fresh view's holds.
+
+  ```rust,ignore
+  // Before:
+  let held = snapshot.held().count();
+  // After: the freshness of the view being reported on.
+  let held = snapshot.held(Freshness::Fresh).count();
+  ```
+
+- **Breaking:** declared flag resolution judges a release flag at its code
+  default while its governing kill switch resolves engaged, by its literal or
+  its safe state, so settings that turn on a flag requiring a governed flag
+  the switch overrides now fail `declared::resolve` with
+  `DeclaredError::Invariant` instead of serving the forbidden pair. In
+  control-plane mode, where any switch can be engaged at runtime,
+  `control_plane::register_in` refuses a base that breaks an invariant under
+  any reachable switch state with the new `RegisterError::GovernedInvariant`
+  (`batter-jkw6.21`). Remove the setting, or the invariant, that the override
+  cannot keep.
+
+  ```rust,ignore
+  // Before: resolved, then served `dependent` on with `governed` overridden off.
+  // FLAG_DEPENDENT=on FLAG_GOVERNED=on FLAG_HALT=engaged
+  let resolved = declared::resolve(catalog, &settings, kind, class, today)?;
+  // After: refused at resolution; drop FLAG_DEPENDENT=on while `halt` governs
+  // the flag it requires.
+  assert!(matches!(
+      declared::resolve(catalog, &settings, kind, class, today),
+      Err(DeclaredError::Invariant { .. })
+  ));
+  ```
+
 - Remove Testcontainers and `astral-tokio-tar` from Runledger test support and the
   optional facade test-support graph by using Bollard directly. Preserve the
   existing PostgreSQL 18 fixture API, Docker cleanup and keep policy
