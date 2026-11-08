@@ -47,6 +47,8 @@ have been removed; Git retains their history.
 
 ## PostgreSQL execution, managed objects and verification
 
+- [PostgreSQL 18 GCRA response timing (2026-11-08)](references/postgresql.md#postgresql-18-gcra-response-timing-2026-11-08)
+
 - <a id="postgresql-18-guarded-index-removal-2026-10-27"></a>[PostgreSQL 18 guarded index removal, 2026-10-27](references/postgresql.md#postgresql-18-guarded-index-removal-2026-10-27)
 - <a id="postgresql-18-scoped-managed-apply-2026-10-26"></a>[PostgreSQL 18 scoped managed apply, 2026-10-26](references/postgresql.md#postgresql-18-scoped-managed-apply-2026-10-26)
 - <a id="postgresql-18-managed-routine-and-trigger-semantics-2026-10-15"></a>[PostgreSQL 18 managed routine and trigger semantics, 2026-10-15](references/postgresql.md#postgresql-18-managed-routine-and-trigger-semantics-2026-10-15)

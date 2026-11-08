@@ -344,8 +344,9 @@ assert!(decision.permits_request());
 <!-- runlimit-readme-gcra:end -->
 
 The backend uses exact scaled-integer arithmetic rather than a floating-point
-token count. Policy periods must be exact whole milliseconds; reported retry
-and full-replenishment durations round up to the next whole millisecond.
+token count. Policy periods must be exact whole milliseconds; the evaluator's
+retry and full-replenishment durations round up to the next whole millisecond
+before any backend elapsed-time adjustment.
 `quota`, `period`, and `burst_capacity` are all part of the policy fingerprint.
 Each key uses constant-size state, and it becomes eligible for bounded cleanup
 once its full burst capacity has replenished.
@@ -370,10 +371,16 @@ histories require every participating migrator to ignore unrelated versions.
 The memory and PostgreSQL GCRA implementations share one pure, exact evaluator
 in `runlimit_core::gcra`. PostgreSQL supplies whole-millisecond time and retains
 a committed time watermark per shard, preventing backward clock adjustments
-from replenishing quota early. Delays are measured at evaluation time and may
-conservatively include later database/transport latency. Allowed batches commit
-every member together, preserve input order, and consume nothing on enforced or
-shadow denial. The existing `CheckError` and `BatchCheckError` distinguish
+from replenishing quota early. Like the fixed-window PostgreSQL limiter, it
+subtracts database-clock elapsed time from the evaluation sample through the
+last statement of each path from retry and replenishment delays, saturating at
+zero. Denials sample the counter read; allowances sample after all counter and
+shard-watermark updates. Elapsed time uses the unclamped database clock, leaving
+the evaluation instant and persisted state unchanged. Clock regression subtracts
+zero; commit and transport latency may still conservatively overstate the delay
+at the caller. `Delay::seconds()` rounds the resulting delay up for HTTP headers.
+Allowed batches commit every member together, preserve input order, and consume
+nothing on enforced or shadow denial. The existing `CheckError` and `BatchCheckError` distinguish
 definite non-consumption from uncertain commit; uncertain operations are never
 automatically replayed. Cancellation while committing is likewise uncertain.
 

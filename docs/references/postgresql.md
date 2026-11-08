@@ -6,6 +6,23 @@ These source checks support current contracts. Each record names the
 version and date actually inspected; it is not a new dependency audit.
 Re-check the resolved dependency before changing an integration.
 
+## PostgreSQL 18 GCRA response timing, 2026-11-08
+
+For `batter-1zoj`, checked PostgreSQL 18 semantics and the resolved SQLx 0.9.0
+integration before changing delay metadata:
+
+- [Current date/time](https://www.postgresql.org/docs/18/functions-datetime.html#FUNCTIONS-DATETIME-CURRENT):
+  `clock_timestamp()` observes the actual wall clock, including changes within a
+  statement. It supplies both the evaluation sample and response sample; the
+  committed GCRA watermark remains a separate clamp on quota evaluation.
+- [Data-modifying WITH](https://www.postgresql.org/docs/18/queries-with.html#QUERIES-WITH-MODIFYING):
+  `RETURNING` supplies the rows consumed by the outer query. The final watermark
+  update returns one row per shard; an outer aggregate consumes all rows before
+  sampling the response clock. Denials sample in their final counter read.
+
+The implementation subtracts only a nonnegative difference of these samples.
+It does not measure later commit or transport latency.
+
 ## PostgreSQL 18 guarded index removal, 2026-10-27
 
 For `batter-fnj8.10`, PostgreSQL 18.6 SQL-boundary and public-API probes establish
