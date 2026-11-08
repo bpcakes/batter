@@ -252,6 +252,11 @@ The process-ownership `bounded_refresh` tests exercise the migration's exhaustiv
 bulkhead outcome mapping: fatal work drains with its original cause after receipt
 disposal, while refusal and interruption remain explicit nonfatal receipt values.
 
+The async bulkhead `dispatch` regression holds capacity, polls a waiter under
+one subscriber and drops it under another. It checks that both uncalled callback
+captures are destroyed exactly once, their nested spans close under the first
+subscriber, and neither the factory nor resolver runs.
+
 ## Provider lease and retry boundary probes
 
 Reference provider tests exercise application-owned idempotency, payload

@@ -546,6 +546,11 @@ this does not join them or prove remote effects. A nested durable protocol still
 uses `Bulkhead::run_resolved` to resolve retained evidence inside the admission
 boundary before telemetry; an outer deadline is not commit evidence.
 
+Both async entrypoints capture the tracing dispatcher on first poll. While
+admission is pending, destruction of uncalled factory and resolver captures,
+including nested spans, stays under that dispatcher even if another subscriber
+is current when the waiter is dropped. Neither callback runs on that drop.
+
 `Bulkhead::run_blocking(context, admission, work)` is the canonical path for
 synchronous CPU work or blocking I/O under a bulkhead. It checks the context
 again after a permit is granted and records

@@ -2,6 +2,10 @@
 use batter_core as bulkhead_foundation;
 #[path = "support/bulkhead.rs"]
 mod bulkhead_testing;
+#[path = "async_bulkhead/dispatch.rs"]
+mod dispatch;
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity, BulkheadError},
     operation::{Interruption, OperationContext, OperationError, OperationOwner},
