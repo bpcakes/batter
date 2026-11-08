@@ -200,13 +200,14 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        // Tests run as threads of one process and a clock can repeat across
+        // them, so each scratch workspace also takes the next number.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root =
-            std::env::temp_dir().join(format!("batter-env-scan-{}-{nanos}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
+            std::env::temp_dir().join(format!("batter-env-scan-{}-{number}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
         let scratch = Self(root.canonicalize().unwrap());
         scratch.write(
             "Cargo.toml",
