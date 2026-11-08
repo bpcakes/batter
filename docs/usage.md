@@ -966,6 +966,17 @@ The helper combines results; it does not magically run teardown after panic or
 cancellation. A test that needs that behavior must drive the body in an owned
 task, observe its JoinError, and explicitly perform teardown afterward.
 
+## Typed flags and kill switches (experimental)
+
+Declare every flag and kill switch once in one catalog and evaluate them only
+through typed handles, one view per HTTP request, job invocation or periodic
+run. `batter::flags::declared::resolve` resolves a catalog once from the
+application's settings source; `Resolved::into_flags` enters declared mode.
+With `flags-postgres`, `batter::flags::control_plane::register_in` loads and
+refreshes an audited PostgreSQL snapshot instead, over a `ControlPlaneStore`
+built from the pool `batter::sqlx::pool_in` registered, optionally keeping a
+last-good file. `crates/batter/examples/rollout.rs` shows both modes.
+
 ## Register recurring maintenance instead of writing a drain-aware loop
 
 ```rust

@@ -6,13 +6,19 @@
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-use batter_flags::grants::{FlagsGrantError, FlagsOperation, grant_fragment};
-use batter_sqlx::verification::{DiscoveryScope, ExactRoleManifest, Identifier};
+use batter_flags::grants::{FlagsGrantError, FlagsOperation, SCHEMA, grant_fragment};
+use batter_sqlx::verification::{
+    DiscoveryScope, ExactRoleManifest, FragmentObjectPolicy, Identifier,
+};
+
+fn policy() -> FragmentObjectPolicy {
+    FragmentObjectPolicy::new(Identifier::new(SCHEMA).unwrap())
+}
 
 fn rendered(operations: impl IntoIterator<Item = FlagsOperation>) -> String {
     ExactRoleManifest::new(Identifier::new("flags").unwrap(), DiscoveryScope::Declared)
         .unwrap()
-        .with_fragment(grant_fragment(operations).unwrap())
+        .with_fragment(grant_fragment(&policy(), operations).unwrap())
         .unwrap()
         .compile()
         .unwrap()
@@ -102,7 +108,12 @@ fn the_operator_cli_is_the_union_of_its_parts() {
 #[test]
 fn an_empty_selection_is_refused() {
     assert!(matches!(
-        grant_fragment([]),
+        grant_fragment(&policy(), []),
         Err(FlagsGrantError::EmptySelection)
+    ));
+    let elsewhere = FragmentObjectPolicy::new(Identifier::new("public").unwrap());
+    assert!(matches!(
+        grant_fragment(&elsewhere, [FlagsOperation::SnapshotRead]),
+        Err(FlagsGrantError::WrongSchema)
     ));
 }

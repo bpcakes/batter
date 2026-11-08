@@ -102,6 +102,11 @@ name = "verification"
 required-features = ["sqlx"]
 
 [[example]]
+name = "rollout"
+test = true
+required-features = ["flags-axum", "flags-runledger", "flags-postgres"]
+
+[[example]]
 name = "grant_composition"
 test = true
 required-features = ["runledger", "runlimit-postgres"]
@@ -125,4 +130,8 @@ required-features = ["runlimit-memory", "runlimit-native-http", "runlimit-native
 
 [[test]]
 name = "grants_live"
-required-features = ["runledger", "runlimit-postgres"]
+required-features = ["runledger", "runlimit-postgres", "flags-postgres"]
+
+[[test]]
+name = "flags_live"
+required-features = ["runledger", "runlimit-postgres", "flags-postgres"]

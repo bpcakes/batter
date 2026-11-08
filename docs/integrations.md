@@ -1629,3 +1629,10 @@ reopening intent recording. Match `IntentReconciliation` and then
 manifest. It is metadata-only, but does not authorize a tenant or revoke earlier
 grants. See the [migration](../runledger/CHANGELOG.md) and
 [evidence](evidence/intent-reconciliation-2026-11-05.md).
+
+## Typed flags in job handlers
+
+Batter never writes a `Pinned<T>` into a Runledger payload; the application
+places it in its own row, or in a payload by its own choice, where it joins the
+keyed idempotency snapshot. A handler resolves a stored pin through `JobFlags`,
+and a governing kill switch engaged in the invocation's view overrides it.

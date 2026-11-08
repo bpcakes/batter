@@ -20,7 +20,7 @@ from runledger_source import copy_source, external_sources, run, validate_consum
 ROOT = Path(__file__).resolve().parent.parent
 CONSUMER_SOURCE = "consumers/single_facade_consumer.rs"
 HARNESS_SOURCE = "consumers/single_facade_harness.rs"
-FACADE_FEATURES = ("runledger", "runlimit-postgres", "runlimit-native-http")
+FACADE_FEATURES = ("runledger", "runlimit-postgres", "runlimit-native-http", "flags-postgres")
 # Selected only for the consumer's tests, which drive its job handler without a worker.
 TEST_FEATURES = ("runledger-test-support",)
 # The library the test feature brings in; the consumer binary must not compile it.
@@ -31,7 +31,8 @@ PACKAGE_LINTS = '[lints.rust]\nwarnings = "deny"\n'
 # package the consumer reaches without declaring it.
 IDENTITIES = ("batter", "batter-core", "batter-sqlx", "batter-runledger", "batter-runlimit",
               "runledger-core", "runledger-postgres", "runledger-runtime",
-              "runlimit-core", "runlimit-postgres", "runlimit-http")
+              "runlimit-core", "runlimit-postgres", "runlimit-http",
+              "batter-flags", "batter-flags-core", "batter-flags-postgres")
 HARNESS_IDENTITIES = ("batter", "batter-runledger", "runledger-test-support", "batter-test-support")
 # Ordinary registry crates. These are not native-workspace side pins.
 ECOSYSTEM = ('tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }',
@@ -44,6 +45,13 @@ MARKERS = ("facade consumer: runledger and runlimit migrations applied",
            "facade consumer: postgres quota admitted then denied",
            "facade consumer: native draft-11 response metadata encoded",
            "single batter dependency reached runledger and runlimit",
+           "facade consumer: declared catalog resolved",
+           "facade consumer: pinned decision stored in row",
+           "facade consumer: control-plane snapshot loaded before readiness",
+           "facade consumer: pinned decision executed",
+           "facade consumer: kill switch overrode a pin",
+           "facade consumer: heartbeat recorded build and version",
+           "single batter dependency reached the flags control plane",
            "single-facade harness: disposable database created, consumed and dropped")
 
 

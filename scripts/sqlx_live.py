@@ -191,6 +191,7 @@ TARGETS = {
         "the_direct_job_worker_runs_every_selected_lifecycle_path",
         "maintained_limiters_clean_expired_rows_under_their_selections_until_drain",
         "maintenance_without_its_cleanup_selection_never_becomes_ready",
+        "flags_serving_and_operator_logins_run_their_operations_and_nothing_more",
     },
     "verification_live": {
         "verification_temporary_namespace_requests_are_incomplete",
@@ -234,7 +235,7 @@ TARGETS = {
 
 
 # Targets outside the owned-PostgreSQL adapter and the exact features they need.
-PACKAGES = {"grants_live": ("batter", ["--features", "runledger,runlimit-postgres"])}
+PACKAGES = {"grants_live": ("batter", ["--features", "runledger,runlimit-postgres,flags-postgres"])}
 
 
 def command(target):

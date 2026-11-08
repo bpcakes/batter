@@ -458,10 +458,11 @@ pub mod runlimit {
 /// remains [`batter_flags`]; `flags::core` is the `batter-flags-core` catalog
 /// crate itself, so handles, decisions and views keep one type identity through
 /// the direct and facade paths. `flags-postgres` adds `flags::postgres` and the
-/// protected `flags::control_plane` registration and selects `sqlx`;
-/// `flags-axum` adds `flags::http` and selects `axum`; `flags-runledger` adds
-/// `flags::jobs` and selects `runledger`. The crate is a scaffold until the
-/// declared-mode and control-plane tasks land their items.
+/// protected `flags::control_plane` registration, the `flags::grants`
+/// inventory and selects `sqlx`, so `batter::sqlx::pool_in` owns the pool the
+/// control plane takes; `flags-axum` adds `flags::http` and selects `axum`;
+/// `flags-runledger` adds `flags::jobs` and selects `runledger`. The
+/// `rollout` example shows declared mode and the control plane.
 #[cfg(feature = "flags")]
 pub mod flags {
     pub use batter_flags::*;

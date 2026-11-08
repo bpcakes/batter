@@ -219,6 +219,65 @@ then explicitly await the sibling finalization context, retaining both outcomes.
 Do not wrap the pair in the work deadline or reuse a token cancelled when work
 finished. The reserve neither ignores parent cancellation nor extends total time.
 
+## Flags control plane (experimental)
+
+### Migrate before deploying
+
+Run `PooledStore::migrate` as a finite command under a login that is neither the
+serving nor the operator login, before the build that needs it serves. A build
+deployed ahead of its migration reports `SnapshotStatus::SchemaBehind`, reads
+nothing and skips its heartbeat until the migration runs; under
+`Gate::Published` it never becomes ready.
+
+### Engage a kill switch
+
+```sh
+batter-flags show outbound_halt                 # note its revision
+batter-flags kill outbound_halt engage --actor ops --reason "contain failures" --if-revision N
+batter-flags fleet --version V                  # V from the write's report
+```
+
+Exit 0 means the command succeeded, not that it wrote: read the report's
+`outcome` (`written`, `written_undeclared` or `unchanged`). Exit 3 is a
+precondition (nothing written) and 4 is unknown: run
+`batter-flags history outbound_halt` and re-run with `--if-revision`. `fleet
+--version V` also exits 0 while the rollout is pending or no process is Live;
+the change has reached every Live process only when `data.rollout.reached` is
+`true`. A full
+cluster-wide NOTIFY queue fails every audited write at COMMIT with 54000,
+`kill` included (`pg_notification_queue_usage()` shows it); the settings floor
+(`FLAG_OUTBOUND_HALT=engaged` and a restart) engages the switch without the
+store. Releasing a switch warns with the number of Live processes whose settings
+floor keeps it engaged.
+
+### Restore or fail over the flags database
+
+After a point-in-time restore or a failover to an older head, writes are refused
+with `store_behind_fleet` while a Live process reports a version above the
+head, and versions above the restored head are reused. The remedy, in order:
+
+1. Stop every process of the fleet. A running process can still persist its
+   pre-restore snapshot, so its file is not safe to delete while it runs.
+2. Delete every host's last-good file.
+3. Start the fleet, and check with `batter-flags fleet --version H` (H the
+   restored head) that every Live process reports `control_plane` at H.
+4. Write.
+
+A restart before the files are deleted serves pre-restore state during an
+outage. The counter is never rebased.
+
+### Size the pool
+
+Each process holds up to three flags sessions at once (refresh, heartbeat,
+prune) on top of the application's peak. Exhaustion presents as `Stale` and
+applies each switch's stale rule.
+
+### Version the environment with the build
+
+A process's settings floor, its environment class and its catalog travel with
+its build: change them by deploying, and expect `batter-flags fleet --version`
+to group processes by build, applied version and declared revision.
+
 ## Deployment prerequisites
 
 Choose exposure, TLS, authentication, and service budgets from the consuming
