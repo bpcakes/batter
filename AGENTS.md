@@ -48,8 +48,8 @@ miscompilation. Upgrade the pin deliberately, together with every `rust-version`
 the pinned CI entries and the `batter-at-rest` portability gate. Keeping an older
 minimum after a pin upgrade first requires a separate exact-minimum CI job.
 Run `bash scripts/verify.sh` with the default toolchain.
-It directly runs formatting, file budgets, all four Clippy configurations,
-all six test-matrix parts, rustdoc and all HTTP
+It directly runs formatting, file budgets, all eight Clippy configurations,
+all seven test-matrix parts, rustdoc and all HTTP
 smoke profiles. It does not create plans, receipts or gates. Do not repeat the matrix after it passes.
 The standalone `batter-at-rest` gate in `scripts/check-batter-at-rest-portability.sh`
 runs in CI. CI tests the pinned release once; a weekly run checks floating
@@ -385,7 +385,7 @@ like "safe" or "reliable". Test what those words would actually mean.
 ## Verification ownership
 
 `scripts/verify.sh` owns the complete local verification command sequence.
-`scripts/test_matrix.py` owns the six test parts and their bounded subprocesses.
+`scripts/test_matrix.py` owns the seven test parts and their bounded subprocesses.
 `scripts/ci_plan.py` owns hosted Rust CI job selection; a skip must stay provable
 and every planner failure must select the full run.
 Keep these commands complete when adding fixtures, helpers or source roots.

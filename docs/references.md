@@ -58,8 +58,9 @@ descriptor for the directory". The last-good file therefore writes a
 temporary file under the directory lock, syncs it, renames it over the final
 name within the one directory and syncs the directory. Recorded from the plan
 and not re-fetched: Rust 1.98.1 `File::sync_all` issues `F_FULLFSYNC` on Apple
-targets and `fsync` elsewhere. Directory fsync on macOS and `flock` on tmpfs or
-overlayfs remain unverified.
+targets and `fsync` elsewhere. On macOS 27.2 arm64 (APFS) a directory's
+`File::sync_all` returned `Ok` in a probe on 2026-11-08 (`batter-jkw6.28`);
+power-loss durability and `flock` on tmpfs or overlayfs remain unverified.
 
 OpenTelemetry semantic conventions v1.45.0
 ([`feature-flags-events.md`](https://github.com/open-telemetry/semantic-conventions/blob/v1.45.0/docs/feature-flags/feature-flags-events.md)):

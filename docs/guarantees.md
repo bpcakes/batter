@@ -3514,8 +3514,10 @@ The last-good file is written by the refresh after it publishes, only for
 values this process published from the control plane, under a directory lock,
 synced and renamed into place within the directory, and never changes a run's
 outcome or narrows readiness. A persist abandoned at its deadline can outlive
-drain, so roots end with `Runtime::shutdown_timeout`. Directory fsync on macOS
-and `flock` on tmpfs or overlayfs are unverified.
+drain, so roots end with `Runtime::shutdown_timeout`. On macOS 27.2 arm64
+(APFS) a directory's `File::sync_all` returns `Ok`, probed on 2026-11-08 and
+exercised by the last-good tests; durability across power loss is not tested,
+and `flock` on tmpfs or overlayfs is unverified.
 
 With `LoadPolicy::with_listen`, a committed audited write's notification wakes
 the refresh; wakes coalesce, no refresh starts sooner than the wake spacing

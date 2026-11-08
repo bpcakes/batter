@@ -362,7 +362,8 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
                          {"workspace": [2, 2], "no-default-features": [4, 1, 1, 1], "doctests": [1],
-                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 3]})
+                          "consumers": [4, 4, 1], "runlimit": [3], "flags": [3],
+                          "scripts": [4, 4]})
         planned = matrix.parts()
         # Each part executes exactly the batches it plans, in the planned order.
         self.assertEqual({part: [commands for _, commands in plan] for part, plan in planned.items()},
@@ -379,9 +380,10 @@ class MatrixTests(unittest.TestCase):
             matrix.RUNLIMIT_GRAPH, matrix.RUNLIMIT_CONTROLS, matrix.RUNLIMIT_DEFAULT,
             matrix.RUNLIMIT_RELEASE, matrix.FACADE_FEATURES, matrix.FACADE_CACHE_CONTROLS,
             matrix.FUTURE_SIZE_RELEASE, matrix.SINGLE_FACADE_CONSUMER, matrix.SINGLE_FACADE_CONTROLS,
-            matrix.HTTP_SMOKE_CONTROLS, matrix.FLAGS_DECLARED,
+            matrix.HTTP_SMOKE_CONTROLS, matrix.FLAGS_DECLARED, matrix.FLAGS_DEFAULT,
+            matrix.FLAGS_CORE_BARE, matrix.FLAGS_GRAPH, matrix.FLAGS_CONTROLS,
         ])
-        self.assertEqual(len(commands), 31)
+        self.assertEqual(len(commands), 35)
         self.assertIn("--all-targets", commands["workspace-tests"])
         self.assertIn("--workspace", commands["workspace-tests"])
         hostile = commands["configuration-hostile-environment"]
@@ -404,6 +406,10 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("test_parallel_process.py", batches["scripts"][0][0])
         self.assertIn("scripts/test_smoke_postgres.py", batches["scripts"][0][1])
         self.assertTrue(all("runlimit" in " ".join(command) for command in batches["runlimit"][0]))
+        self.assertTrue(all("flags" in " ".join(command) for command in batches["flags"][0]))
+        core_bare = commands["flags-core-bare"]
+        self.assertEqual(core_bare[core_bare.index("-p") + 1], "batter-flags-core")
+        self.assertIn("--no-default-features", core_bare)
         self.assertTrue(all("--locked" in command for command in commands.values()
                             if command[0] == "cargo"))
 
@@ -548,11 +554,14 @@ artifact.write_text('default')
         return status, rendered, spans
 
     def prior_schedule(self):
-        """The single batch this task replaced, rebuilt from the same commands."""
-        return {"workspace": [(["workspace-tests", "configuration-hostile-environment",
-                                "reference-runner-controls", "release-future-sizes"],
-                               [matrix.WORKSPACE_TESTS, matrix.HOSTILE_CONFIGURATION,
-                                matrix.REFERENCE_RUNNER_TESTS, matrix.FUTURE_SIZE_RELEASE])]}
+        """The single batch this task replaced, rebuilt from the same commands,
+        beside every other part as currently planned."""
+        planned = {part: plan for part, plan in matrix.parts().items() if part != "workspace"}
+        planned["workspace"] = [(["workspace-tests", "configuration-hostile-environment",
+                                  "reference-runner-controls", "release-future-sizes"],
+                                 [matrix.WORKSPACE_TESTS, matrix.HOSTILE_CONFIGURATION,
+                                  matrix.REFERENCE_RUNNER_TESTS, matrix.FUTURE_SIZE_RELEASE])]
+        return planned
 
     @staticmethod
     def overlapping(first, second):
@@ -560,17 +569,18 @@ artifact.write_text('default')
 
     def test_declared_uplifts_agree_with_the_scheduled_commands(self):
         commands = self.scheduled()
+        binaries = (matrix.REFERENCE_BINARY, matrix.FLAGS_BINARY)
         for label, declared in matrix.UPLIFTED_BINARIES.items():
             with self.subTest(label=label):
                 command = commands[label]
-                selection, = [chosen for binary, chosen in declared
-                              if binary == matrix.REFERENCE_BINARY]
-                self.assertEqual(selection, "all-features" if "--all-features" in command
-                                 else "default")
+                for binary, selection in declared:
+                    self.assertIn(binary, binaries)
+                    self.assertEqual(selection, "all-features" if "--all-features" in command
+                                     else "default")
         for label, command in commands.items():
             # Cargo builds a package's binaries for its integration tests so they
             # can spawn CARGO_BIN_EXE_*; only doctest runs skip them.
-            selects = "--workspace" in command or matrix.REFERENCE_BINARY in command
+            selects = "--workspace" in command or any(binary in command for binary in binaries)
             with self.subTest(label=label):
                 self.assertEqual(selects and "--doc" not in command,
                                  label in matrix.UPLIFTED_BINARIES)

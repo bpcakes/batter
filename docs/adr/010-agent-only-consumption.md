@@ -2425,8 +2425,8 @@ and `with_last_good` carries only an opened directory. Only control-plane
 values are persisted, a held entry first read from the file without a value;
 persistence runs after publish and never changes a run's outcome or readiness.
 A persist failure is retained as a `PersistFailure` for
-inspection. Residual: directory fsync on macOS and `flock` on tmpfs or overlayfs
-are unverified.
+inspection. Residual: power-loss durability of the directory sync, which returns
+`Ok` on macOS APFS, and `flock` on tmpfs or overlayfs are unverified.
 
 ### Operator command assessment (T-16, `batter-jkw6.16`)
 

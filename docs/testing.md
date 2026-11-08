@@ -1035,14 +1035,17 @@ verification calls the complete script, so its former standalone HTTP
 step is removed. The focused macOS job retains its explicit smoke step.
 Superseded runs for the same PR/ref are cancelled. A planning job runs
 `scripts/ci_plan.py` first. Regular CI then runs one Linux verification job,
-one focused macOS job and one native Runlimit PostgreSQL job, all on the pinned
-1.98.1 toolchain. The macOS job exists for macOS process, signal and scheduling
+one focused macOS job, one native Runlimit PostgreSQL job and one flags
+PostgreSQL 18 job, all on the pinned 1.98.1 toolchain. The macOS job exists for macOS process, signal and scheduling
 behavior. Until `batter-wis2`, a second Linux job verified the former Rust
 1.94.0 minimum. The Runlimit PostgreSQL job runs only when a change touches
 the local package closure of `runlimit-postgres` (from `cargo metadata
 --no-deps`, including that package's own dev-dependencies) or a workspace-wide
 input: the root manifest, lockfile, toolchain file, `.cargo/`, this workflow or
-the planner. Manual dispatch always runs it. Mondays at 04:23 UTC, the scheduled
+the planner. The flags PostgreSQL job runs likewise only for the union of the
+local package closures of `batter-flags-postgres`, `batter-flags` and
+`batter-flags-cli`, or a workspace-wide input, and tree recording requires it
+too. Manual dispatch always runs both. Mondays at 04:23 UTC, the scheduled
 run executes only the Linux verification job with `stable`, including all five
 HTTP smoke profiles. Its concurrency group is separate from regular CI.
 Scheduled execution starts after the workflow reaches the default branch.
@@ -1816,10 +1819,12 @@ default profile because the override belongs to this workspace, not the leaf
 manifest. See [Cargo profile semantics](references.md#cargo-test-artifacts-and-profiles-2026-09-24).
 
 `bash scripts/verify.sh` directly runs formatting, source file budgets,
-four Clippy configurations (all-features workspace, default-feature Runlimit packages,
+eight Clippy configurations (all-features workspace, default-feature Runlimit packages,
 the non-HTTP Runlimit adapter with memory and PostgreSQL,
-and the default-feature reference package without its opt-in metrics exporter),
-all six parts of `scripts/test_matrix.py`, rustdoc with
+the default-feature reference package without its opt-in metrics exporter, the
+bare `batter-flags-core`, and `batter-flags` declared-only, with `postgres` and
+with `axum,runledger`),
+all seven parts of `scripts/test_matrix.py`, rustdoc with
 warnings denied, and all five built HTTP process smoke profiles. Checks fail the
 script on any unsuccessful command. No plan, receipt, freshness digest or gate
 is involved. Record executed results and limitations in the owning Bead.
@@ -1828,7 +1833,7 @@ Work tracking uses beadroll outside the checkout. The historical `.beads/`
 export is not validated by the local or CI verification sequence; see
 [backlog navigation](roadmap.md).
 
-The six test parts retain their existing command selections:
+The seven test parts hold these command selections:
 
 - `workspace`: all-feature workspace tests and reference runner controls, then
   hostile-environment configuration tests and optimized canonical future-size
@@ -1843,11 +1848,16 @@ The six test parts retain their existing command selections:
   `-p batter --no-default-features --features outbound-http`, whose build does not
   activate `batter-outbound-http`'s dev-only reqwest control client, so executes
   the owned transport without that dependency. The `workspace` part runs the
-  package tests with the bridge.
+  package tests with the bridge. A fourth batch runs `batter-flags` with no
+  features, the declared-only build.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.
 - `runlimit`: native default-feature tests, the release regression and graph checks.
-- `scripts`: subprocess, smoke, SQLx and Runlimit runner controls.
+- `flags`: the store and operator command with their default features, the bare
+  `batter-flags-core` without `serde`, and `scripts/check_flags_workspace.py`,
+  which checks the flags packages' identities, dependency direction and crate
+  roots.
+- `scripts`: subprocess, smoke, SQLx, Runlimit and flags graph runner controls.
 
 Jig is pinned to release `0.7.1` in `.jig/runtime-version` solely
 for `scripts/jig file-budget`; `scripts/jig --version` reports the selected release.
@@ -1914,10 +1924,10 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The six parts hold 30 commands in batches of at most four: `workspace` and
-`scripts` use two batches, `no-default-features` and `consumers` use three, and
-the others use one. Runner controls
-require that the parts partition all 30 commands exactly once, that each part
+The seven parts hold 35 commands in batches of at most four: `workspace` and
+`scripts` use two batches, `consumers` uses three, `no-default-features` four,
+and the others one. Runner controls
+require that the parts partition all 35 commands exactly once, that each part
 executes exactly the batches it plans in order, and that direct verification
 invokes each part exactly once. They inject a failure at every command
 position and require that no later batch of that part starts; surplus mocked
@@ -1933,7 +1943,10 @@ that places two selections for one binary in the same batch, or that renames,
 repeats or drops a declared label. The all-feature workspace run, whose
 `metrics_export::executable` test spawns the metrics-enabled reference executable,
 and the default-feature reference configuration run are the declared pair; they
-now sit in different batches of the `workspace` part. This is a scheduling rule
+now sit in different batches of the `workspace` part. The operator command
+`batter-flags`, whose live suites spawn it, is declared for the workspace run
+(all features) and for the `flags` part's store and command run (default
+features); those run in different parts. This is a scheduling rule
 only: no command, feature set, hostile environment, bound or assertion changed,
 and unrelated commands still run beside each of them.
 
@@ -4350,10 +4363,13 @@ cargo test --release -p batter-flags-core --test hot_path -- --ignored --nocaptu
 ## Flags control-plane PostgreSQL 18 suites
 
 The flags control plane's live suites are ignored tests against a disposable
-PostgreSQL 18 server. Neither `scripts/verify.sh` nor hosted CI runs them; only
-the `grants_live` flags case is in `scripts/sqlx_live.py`, and registering the
-rest there and in CI is `batter-jkw6.28`. Each run is recorded on the owning
-Bead.
+PostgreSQL 18 server, which `scripts/verify.sh` does not run. Hosted CI's
+`native-flags-postgres` job runs the store, loader and operator-command suites
+below against a PostgreSQL 18 service whenever `scripts/ci_plan.py` selects it
+(`flags_postgres`, the flags packages' local closure); no hosted run of it is
+recorded yet. `scripts/sqlx_live.py` runs the facade's `flags_live` target and
+the `grants_live` flags case; `jobs_live` needs a dedicated database and runs
+by hand. Each run is recorded on the owning Bead.
 
 ```text
 # The admin URL of the disposable server; each test leases its own database.

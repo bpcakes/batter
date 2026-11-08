@@ -1,0 +1,248 @@
+## batter-core: 1184 -> 1315 entries; 2 removed, 133 added
+- REMOVED method batter_core::startup::StartingSupervisor::wait
+- REMOVED method batter_core::startup::StartingSupervisor::wait_with_output
++ ADDED   enum batter_core::operation::PhasedFailure
++ ADDED   enum batter_core::operation::TrackedOperationError
++ ADDED   enum batter_core::service::ServiceReadinessError
++ ADDED   function batter_core::cleanup::low_level::acquire_pair
++ ADDED   function batter_core::periodic::register_wakeable_in
++ ADDED   function batter_core::service::start_with_readiness
++ ADDED   impl batter_core::operation::FailedPhasedReport: Clone
++ ADDED   impl batter_core::operation::FailedPhasedReport: Debug
++ ADDED   impl batter_core::operation::FailedPhasedReport: Deref
++ ADDED   impl batter_core::operation::NotStarted: Clone
++ ADDED   impl batter_core::operation::NotStarted: Copy
++ ADDED   impl batter_core::operation::NotStarted: Debug
++ ADDED   impl batter_core::operation::NotStarted: Display
++ ADDED   impl batter_core::operation::NotStarted: Eq
++ ADDED   impl batter_core::operation::NotStarted: Error
++ ADDED   impl batter_core::operation::NotStarted: PartialEq
++ ADDED   impl batter_core::operation::NotStarted: StructuralPartialEq
++ ADDED   impl batter_core::operation::PhaseFailure: Debug
++ ADDED   impl batter_core::operation::PhaseOutcome: Debug
++ ADDED   impl batter_core::operation::PhasedFailure: Clone
++ ADDED   impl batter_core::operation::PhasedFailure: Debug
++ ADDED   impl batter_core::operation::PhasedFailure: Display
++ ADDED   impl batter_core::operation::PhasedFailure: Error
++ ADDED   impl batter_core::operation::PhasedObserver: Clone
++ ADDED   impl batter_core::operation::PhasedReport: Debug
++ ADDED   impl batter_core::operation::PhasedSuccess: Clone
++ ADDED   impl batter_core::operation::PhasedSuccess: Debug
++ ADDED   impl batter_core::operation::RunningPhasedOperation: Drop
++ ADDED   impl batter_core::operation::TrackedOperationError: Debug
++ ADDED   impl batter_core::operation::TrackedOperationError: Display
++ ADDED   impl batter_core::operation::TrackedOperationError: Error
++ ADDED   impl batter_core::periodic::PeriodicWake: Clone
++ ADDED   impl batter_core::periodic::PeriodicWake: Debug
++ ADDED   impl batter_core::periodic::WakeablePolicy: Clone
++ ADDED   impl batter_core::periodic::WakeablePolicy: Copy
++ ADDED   impl batter_core::periodic::WakeablePolicy: Debug
++ ADDED   impl batter_core::periodic::WakeablePolicy: Eq
++ ADDED   impl batter_core::periodic::WakeablePolicy: PartialEq
++ ADDED   impl batter_core::periodic::WakeablePolicy: StructuralPartialEq
++ ADDED   impl batter_core::service::ServiceReadinessError: Clone
++ ADDED   impl batter_core::service::ServiceReadinessError: Copy
++ ADDED   impl batter_core::service::ServiceReadinessError: Debug
++ ADDED   impl batter_core::service::ServiceReadinessError: Display
++ ADDED   impl batter_core::service::ServiceReadinessError: Eq
++ ADDED   impl batter_core::service::ServiceReadinessError: Error
++ ADDED   impl batter_core::service::ServiceReadinessError: PartialEq
++ ADDED   impl batter_core::service::ServiceReadinessError: StructuralPartialEq
++ ADDED   impl batter_core::service::ServiceStartError: Debug
++ ADDED   impl batter_core::service::ServiceStartError: Display
++ ADDED   impl batter_core::service::ServiceStartError: Error
++ ADDED   method batter_core::cleanup::CleanupSlot::acquire_semaphore
++ ADDED   method batter_core::cleanup::CleanupSlot::bind_udp
++ ADDED   method batter_core::cleanup::low_level::Acquired::new
++ ADDED   method batter_core::operation::FinalizationScope::context
++ ADDED   method batter_core::operation::FinalizationScope::work
++ ADDED   method batter_core::operation::NotStarted::reason
++ ADDED   method batter_core::operation::OperationContext::child_until
++ ADDED   method batter_core::operation::OperationContext::run_tracked
++ ADDED   method batter_core::operation::OperationPhases::into_operation
++ ADDED   method batter_core::operation::PhaseFailure::destruction_panic
++ ADDED   method batter_core::operation::PhaseFailure::interruption_after_return
++ ADDED   method batter_core::operation::PhaseFailure::returned_result
++ ADDED   method batter_core::operation::PhaseOutcome::classify
++ ADDED   method batter_core::operation::PhaseOutcome::is_success
++ ADDED   method batter_core::operation::PhasedObserver::wait
++ ADDED   method batter_core::operation::PhasedOperation::new
++ ADDED   method batter_core::operation::PhasedOperation::start
++ ADDED   method batter_core::operation::PhasedReport::finalization
++ ADDED   method batter_core::operation::PhasedReport::work
++ ADDED   method batter_core::operation::PhasedSuccess::finalization
++ ADDED   method batter_core::operation::PhasedSuccess::work
++ ADDED   method batter_core::operation::RunningPhasedOperation::cancel
++ ADDED   method batter_core::operation::RunningPhasedOperation::observer
++ ADDED   method batter_core::operation::RunningPhasedOperation::wait
++ ADDED   method batter_core::periodic::PeriodicWake::wake
++ ADDED   method batter_core::periodic::WakeablePolicy::new
++ ADDED   method batter_core::periodic::WakeablePolicy::periodic
++ ADDED   method batter_core::periodic::WakeablePolicy::wake_spacing
++ ADDED   method batter_core::service::ServiceCompletion::readiness
++ ADDED   method batter_core::service::ServiceCompletion::startup_output_failure
++ ADDED   method batter_core::service::ServiceObserver::status
++ ADDED   method batter_core::service::ServiceObserver::wait_ready
++ ADDED   method batter_core::service::ServiceOwner::status
++ ADDED   method batter_core::service::ServiceOwner::wait_ready
++ ADDED   method batter_core::service::ServiceStartError::completion
++ ADDED   method batter_core::service::StartingService::into_ready
++ ADDED   method batter_core::service::StartingService::observer
++ ADDED   method batter_core::service::StartingService::request_shutdown
++ ADDED   method batter_core::startup::StartingSupervisor::finish
++ ADDED   method batter_core::startup::StartingSupervisor::finish_with_output
++ ADDED   mod batter_core::cleanup::low_level
++ ADDED   struct batter_core::cleanup::low_level::Acquired
++ ADDED   struct batter_core::operation::FailedPhasedReport
++ ADDED   struct batter_core::operation::FinalizationScope
++ ADDED   struct batter_core::operation::NotStarted
++ ADDED   struct batter_core::operation::PhaseFailure
++ ADDED   struct batter_core::operation::PhaseOutcome
++ ADDED   struct batter_core::operation::PhasedObserver
++ ADDED   struct batter_core::operation::PhasedOperation
++ ADDED   struct batter_core::operation::PhasedReport
++ ADDED   struct batter_core::operation::PhasedSuccess
++ ADDED   struct batter_core::operation::RunningPhasedOperation
++ ADDED   struct batter_core::periodic::PeriodicWake
++ ADDED   struct batter_core::periodic::WakeablePolicy
++ ADDED   struct batter_core::service::ServiceStartError
++ ADDED   struct batter_core::service::StartingService
++ ADDED   trait batter_core::operation::PhaseAction
++ ADDED   use batter_core::operation::FailedPhasedReport <- phased::FailedPhasedReport
++ ADDED   use batter_core::operation::FinalizationScope <- phased::FinalizationScope
++ ADDED   use batter_core::operation::NotStarted <- tracked::NotStarted
++ ADDED   use batter_core::operation::PhaseAction <- phased::PhaseAction
++ ADDED   use batter_core::operation::PhaseFailure <- phased::PhaseFailure
++ ADDED   use batter_core::operation::PhaseOutcome <- phased::PhaseOutcome
++ ADDED   use batter_core::operation::PhasedFailure <- phased::PhasedFailure
++ ADDED   use batter_core::operation::PhasedObserver <- phased::PhasedObserver
++ ADDED   use batter_core::operation::PhasedOperation <- phased::PhasedOperation
++ ADDED   use batter_core::operation::PhasedReport <- phased::PhasedReport
++ ADDED   use batter_core::operation::PhasedSuccess <- phased::PhasedSuccess
++ ADDED   use batter_core::operation::RunningPhasedOperation <- phased::RunningPhasedOperation
++ ADDED   use batter_core::operation::TrackedOperationError <- tracked::TrackedOperationError
++ ADDED   use batter_core::periodic::PeriodicWake <- wake::PeriodicWake
++ ADDED   use batter_core::periodic::WakeablePolicy <- wake::WakeablePolicy
++ ADDED   use batter_core::service::ServiceReadinessError <- readiness::ServiceReadinessError
++ ADDED   use batter_core::service::ServiceStartError <- readiness::ServiceStartError
++ ADDED   use batter_core::service::StartingService <- readiness::StartingService
++ ADDED   use batter_core::service::start_with_readiness <- readiness::start_with_readiness
++ ADDED   variant batter_core::operation::PhasedFailure::Coordinator
++ ADDED   variant batter_core::operation::PhasedFailure::Report
++ ADDED   variant batter_core::operation::TrackedOperationError::Failed
++ ADDED   variant batter_core::operation::TrackedOperationError::Interrupted
++ ADDED   variant batter_core::operation::TrackedOperationError::NotStarted
++ ADDED   variant batter_core::service::ServiceReadinessError::DeadlineExceeded
++ ADDED   variant batter_core::service::ServiceReadinessError::StoppedBeforeReady
+
+## batter-axum: 590 -> 606 entries; 0 removed, 16 added
++ ADDED   enum batter_axum::Gated
++ ADDED   impl batter_axum::GateView: FromRequestParts
++ ADDED   impl batter_axum::GroupGate: Clone
++ ADDED   method batter_axum::GateView::value
++ ADDED   method batter_axum::GroupGate::new
++ ADDED   method batter_axum::GroupGate::with_disabled_level
++ ADDED   method batter_axum::GroupPolicy::browser_gated
++ ADDED   method batter_axum::GroupPolicy::gated
++ ADDED   struct batter_axum::GateView
++ ADDED   struct batter_axum::GroupGate
++ ADDED   use batter_axum::GateView <- boundary::GateView
++ ADDED   use batter_axum::Gated <- boundary::Gated
++ ADDED   use batter_axum::GroupGate <- boundary::GroupGate
++ ADDED   variant batter_axum::Gated::Disabled
++ ADDED   variant batter_axum::Gated::Serve
++ ADDED   variant batter_axum::HttpFailure::Disabled
+
+## batter-sqlx: 1347 -> 1409 entries; 3 removed, 65 added
+- REMOVED function batter_sqlx::register_pool_close
+- REMOVED method batter_sqlx::PgProfiledPool::connect
+- REMOVED method batter_sqlx::PgProfiledPool::connect_lazy
++ ADDED   enum batter_sqlx::PgCommitStop
++ ADDED   enum batter_sqlx::PgDeadlineError
++ ADDED   enum batter_sqlx::managed::ManagedReleaseError
++ ADDED   function batter_sqlx::low_level::connect_profiled_pool
++ ADDED   function batter_sqlx::low_level::connect_profiled_pool_lazy
++ ADDED   function batter_sqlx::low_level::pool_in
++ ADDED   function batter_sqlx::low_level::register_pool_close
++ ADDED   impl batter_sqlx::PgCommitStop: Debug
++ ADDED   impl batter_sqlx::PgCommitStop: Display
++ ADDED   impl batter_sqlx::PgCommitStop: Error
++ ADDED   impl batter_sqlx::PgDeadlineError: Debug
++ ADDED   impl batter_sqlx::PgDeadlineError: Display
++ ADDED   impl batter_sqlx::PgDeadlineError: Error
++ ADDED   impl batter_sqlx::PgMigrationTimeoutError: Debug
++ ADDED   impl batter_sqlx::PgMigrationTimeoutError: Display
++ ADDED   impl batter_sqlx::PgMigrationTimeoutError: Error
++ ADDED   impl batter_sqlx::PgMigrationTimeouts: Clone
++ ADDED   impl batter_sqlx::PgMigrationTimeouts: Copy
++ ADDED   impl batter_sqlx::PgMigrationTimeouts: Debug
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Clone
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Copy
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Debug
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Display
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Eq
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: Error
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedReleaseError: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Clone
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Copy
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Debug
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Eq
++ ADDED   impl batter_sqlx::managed::ManagedRevision: Ord
++ ADDED   impl batter_sqlx::managed::ManagedRevision: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedRevision: PartialOrd
++ ADDED   impl batter_sqlx::managed::ManagedRevision: StructuralPartialEq
++ ADDED   method batter_sqlx::PgLease::migrate_until
++ ADDED   method batter_sqlx::PgMigrationTimeouts::new
++ ADDED   method batter_sqlx::PgReadOnlySnapshot::inspect_until
++ ADDED   method batter_sqlx::low_level::PgAtomicTransaction::commit_unless
++ ADDED   method batter_sqlx::low_level::PgAtomicTransaction::operation_until
++ ADDED   method batter_sqlx::managed::AppliedManagedObjects::revision
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::revision
++ ADDED   method batter_sqlx::managed::ManagedRevision::get
++ ADDED   method batter_sqlx::managed::ManagedRevision::new
++ ADDED   struct batter_sqlx::PgMigrationTimeoutError
++ ADDED   struct batter_sqlx::PgMigrationTimeouts
++ ADDED   struct batter_sqlx::managed::ManagedRevision
++ ADDED   use batter_sqlx::PgCommitStop <- atomic::PgCommitStop
++ ADDED   use batter_sqlx::PgDeadlineError <- deadline::PgDeadlineError
++ ADDED   use batter_sqlx::PgMigrationTimeoutError <- migration::PgMigrationTimeoutError
++ ADDED   use batter_sqlx::PgMigrationTimeouts <- migration::PgMigrationTimeouts
++ ADDED   use batter_sqlx::managed::ManagedObjectManifest <- manifest::ManagedObjectManifest
++ ADDED   use batter_sqlx::managed::ManagedReleaseError <- revision::ManagedReleaseError
++ ADDED   use batter_sqlx::managed::ManagedRevision <- revision::ManagedRevision
++ ADDED   variant batter_sqlx::PgCommitStop::Interrupted
++ ADDED   variant batter_sqlx::PgCommitStop::Unconfirmed
++ ADDED   variant batter_sqlx::PgDeadlineError::Elapsed
++ ADDED   variant batter_sqlx::PgDeadlineError::Failed
++ ADDED   variant batter_sqlx::PgDeadlineError::RecoveryElapsed
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::Release
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::Downgrade
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::InvalidLedger
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::LegacyBaselineRequired
++ ADDED   variant batter_sqlx::managed::ManagedReleaseError::RevisionConflict
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectRevisionMismatch
+
+## batter-runledger: 83 -> 88 entries; 0 removed, 5 added
++ ADDED   use batter_runledger::CorrelatedDefinition <- runledger_postgres::CorrelatedDefinition
++ ADDED   use batter_runledger::CorrelatedJob <- runledger_postgres::CorrelatedJob
++ ADDED   use batter_runledger::IntentCorrelationState <- runledger_postgres::IntentCorrelationState
++ ADDED   use batter_runledger::IntentReconciliation <- runledger_postgres::IntentReconciliation
++ ADDED   use batter_runledger::RetainedIntent <- runledger_postgres::RetainedIntent
+
+## batter-runlimit: 228 -> 228 entries; 0 removed, 0 added
+
+## batter-otlp: 106 -> 106 entries; 0 removed, 0 added
+
+## batter-outbound-http: 197 -> 199 entries; 0 removed, 2 added
++ ADDED   method batter_outbound_http::Origin::public_https
++ ADDED   variant batter_outbound_http::OriginError::NonPublicAddress
+
+## batter-at-rest: 145 -> 145 entries; 0 removed, 0 added
+
+## batter-test-support: 21 -> 21 entries; 0 removed, 0 added
+
+## batter: 21 -> 23 entries; 0 removed, 2 added
++ ADDED   mod batter::flags
++ ADDED   use batter::flags::batter_flags <- batter_flags::*
+

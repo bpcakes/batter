@@ -677,8 +677,11 @@ cover T-04 through T-21.
 | Operator command (`batter-flags`) | `list`, `show`, `set`, `kill`, `archive`, `restore`, `history` and `fleet`; validated before connecting; one timeout; signal-safe writes; closed exit codes and JSON document; `--accept-rolling-flip` and `--accept-invariant-hold` | `batter-flags-cli` tests and the ignored live suites |
 | Facade, example and consumer | `flags`, `flags-postgres`, `flags-axum` and `flags-runledger` features; `crates/batter/examples/rollout.rs` in both modes; the single-facade consumer's flags markers | Facade feature checks, `flags_live` and `grants_live` against PostgreSQL 18, the consumer check |
 
-The live suites are ignored tests that neither `scripts/verify.sh` nor hosted CI
-runs (`batter-jkw6.28` registers them); each run is recorded on its Bead. No
+The live suites are ignored tests `scripts/verify.sh` does not run. Hosted CI's
+`native-flags-postgres` job, selected by `scripts/ci_plan.py`, runs the store,
+loader and operator-command suites, with no hosted run recorded yet;
+`scripts/sqlx_live.py` runs `flags_live` and the `grants_live` flags case; each
+run is recorded on its Bead. No
 standby, hosted run or fresh-agent evaluation is claimed here. R-08 agreement
 across process kinds, R-15, R-17, R-18 and per-subject rollouts are not
 implemented.

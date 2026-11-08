@@ -64,6 +64,7 @@ RUNLIMIT_BRIDGES = ("runlimit-memory", "runlimit-postgres", "runlimit-axum",
                     "runlimit-native-http", "runlimit-native-axum")
 # Facade features that select the Runledger adapter and its native packages.
 RUNLEDGER_SELECTORS = {"runledger", "runledger-test-support"}
+FLAGS_SELECTORS = {"flags", "flags-postgres", "flags-axum", "flags-runledger"}
 # Native Runlimit packages each bridge additionally declares in the identity
 # fixture, so a facade path is compared against a direct dependency.
 BRIDGE_NATIVES = {
@@ -155,6 +156,10 @@ def feature_cases() -> list[tuple[str, ...]]:
         ("runlimit-native-axum",),
         ("test-support",),
         ("sqlx-test-support",),
+        ("flags",),
+        ("flags-postgres",),
+        ("flags-axum",),
+        ("flags-runledger",),
         ("axum", "sqlx"),
         ("axum", "runlimit"),
         ("sqlx", "runlimit-postgres"),
@@ -166,11 +171,12 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
     chosen = set(selected)
     at_rest = "at-rest" in chosen
     # The Batter Axum adapter. Native runlimit-axum deliberately does not select it.
-    axum = "axum" in chosen or "runlimit-axum" in chosen
+    axum = bool(chosen & {"axum", "runlimit-axum", "flags-axum"})
     # The Axum crate itself. Only the native transport layer also needs it.
     axum_crate = axum or "runlimit-native-axum" in chosen
-    runledger = bool(chosen & {"runledger", "runledger-test-support"})
-    sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runlimit-postgres"}) or runledger
+    runledger = bool(chosen & {"runledger", "runledger-test-support", "flags-runledger"})
+    sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runlimit-postgres", "flags-postgres"}) or runledger
+    flags = bool(chosen & FLAGS_SELECTORS)
     batter_sqlx = sqlx
     runlimit = bool(chosen & {"runlimit", *RUNLIMIT_BRIDGES})
     return {
@@ -206,6 +212,9 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "runlimit-http": "runlimit-native-http" in chosen,
         "runlimit-axum": "runlimit-native-axum" in chosen,
         "postgres-test-harness": "sqlx-test-support" in chosen,
+        "batter-flags": flags,
+        "batter-flags-core": flags,
+        "batter-flags-postgres": "flags-postgres" in chosen,
     }
 
 
@@ -226,13 +235,23 @@ def facade_source(selected: tuple[str, ...]) -> str:
         lines.insert(1, "use batter::outbound_http::{Client, Exchange, Origin, PreparedRequest};")
         # The feature alone must select the operation bridge on the facade's context.
         lines.append("#[allow(dead_code)]\nasync fn send_once(request: PreparedRequest, context: &OperationContext, limit: batter::outbound_http::ResponseLimit) -> Exchange { request.send_in(context, limit).await }")
-    if "axum" in chosen or "runlimit-axum" in chosen:
+    if chosen & {"axum", "runlimit-axum", "flags-axum"}:
         # Supported paths only: assembly is sealed into protected serving or
         # an opaque request client, and the raw helpers live in low_level.
         lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, RequestPolicy};")
-    if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
+        # An exhaustive match: a new failure variant is a visible facade change.
+        lines.append("#[allow(dead_code)]\nfn failure_name(failure: batter::axum::HttpFailure) -> &'static str { match failure { batter::axum::HttpFailure::Unavailable => \"unavailable\", batter::axum::HttpFailure::Cancelled => \"cancelled\", batter::axum::HttpFailure::DeadlineExceeded => \"deadline\", batter::axum::HttpFailure::Overloaded => \"overloaded\", batter::axum::HttpFailure::Internal => \"internal\", batter::axum::HttpFailure::Disabled => \"disabled\" } }")
+    if chosen & FLAGS_SELECTORS:
+        lines.insert(1, "use batter::flags::{Flags, GateError, declared::resolve, core::CatalogBuilder, test::TestFlags};")
+    if "flags-postgres" in chosen:
+        lines.insert(1, "use batter::flags::{control_plane::{ControlPlaneStore, LoadPolicy, register_in as register_flags_in}, grants::FlagsOperation, postgres::PooledStore};")
+    if "flags-axum" in chosen:
+        lines.insert(1, "use batter::flags::http::AdmittedFlags;")
+    if "flags-runledger" in chosen:
+        lines.insert(1, "use batter::flags::jobs::{FlagAwareHandler, GatePolicy, JobFlags};")
+    if chosen & ({"sqlx", "sqlx-test-support", "flags-postgres", "flags-runledger"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
-    if chosen & RUNLEDGER_SELECTORS:
+    if chosen & (RUNLEDGER_SELECTORS | {"flags-runledger"}):
         lines.insert(1, "use batter::runledger::{JobPhasesRejection, NativeReport, job_phases, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
         lines.insert(1, "use batter::runledger::native::core::jobs::{JobHandler, JobType};")
         lines.insert(1, "use batter::runledger::native::postgres::jobs::{JobEnqueue, JobEnqueueIntent};")
@@ -416,6 +435,12 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("tokio = { version = \"1.53.1\", default-features = false, features = [\"net\"] }")
     if "test-support" in chosen or "sqlx-test-support" in chosen:
         deps.append("batter-test-support = { path = " + json.dumps(str(ROOT / "crates/batter-test-support")) + " }")
+    if chosen & FLAGS_SELECTORS:
+        for package in ("batter-flags", "batter-flags-core"):
+            deps.append(package + " = { path = " + json.dumps(str(ROOT / "crates" / package)) + " }")
+    if "flags-postgres" in chosen:
+        deps.append("batter-flags-postgres = { path = "
+                    + json.dumps(str(ROOT / "crates/batter-flags-postgres")) + " }")
     return deps
 
 
@@ -428,6 +453,14 @@ def identity_source(selected: tuple[str, ...]) -> str:
         "fn core_identity(_: CoreOperationContext) {}",
         "fn main() { let _: fn(OperationContext) = core_identity; }",
     ]
+    if chosen & FLAGS_SELECTORS:
+        lines += [
+            "const _: fn(batter::flags::core::Catalog) = |_: batter_flags_core::Catalog| {};",
+            "const _: fn(batter::flags::Flags) = |_: batter_flags::Flags| {};",
+        ]
+    if "flags-postgres" in chosen:
+        lines.append("const _: fn(batter::flags::postgres::PooledStore) = "
+                     "|_: batter_flags_postgres::PooledStore| {};")
     if "at-rest" in chosen:
         lines += [
             "use batter::at_rest::Keyring;",
@@ -694,6 +727,10 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
          "batter::runlimit::native_transport::axum"),
         (("runlimit-native-axum",), "runlimit-native-http",
          "batter::runlimit::native_transport::http"),
+        ((), "flags", "batter::flags"),
+        (("flags",), "flags-postgres", "batter::flags::control_plane"),
+        (("flags",), "flags-axum", "batter::flags::http"),
+        (("flags",), "flags-runledger", "batter::flags::jobs"),
     ]
 
 
@@ -714,6 +751,9 @@ def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
         "runlimit-native-http": ("batter-runlimit", "native-http"),
         "runlimit-native-axum": ("batter-runlimit", "native-axum"),
         "runledger-test-support": ("batter-runledger", "test-support"),
+        "flags-postgres": ("batter-flags", "postgres"),
+        "flags-axum": ("batter-flags", "axum"),
+        "flags-runledger": ("batter-flags", "runledger"),
     }
     if disabled in adapter_features:
         package, feature = adapter_features[disabled]

@@ -22,6 +22,15 @@ OUTBOUND_SHIPPED_EXAMPLE = ["cargo", "test", "-p", "batter", "--no-default-featu
 # The `flags`-only build that declared-mode consumers select: no store, no HTTP
 # or job integration, so none of those optional packages may be required.
 FLAGS_DECLARED = ["cargo", "test", "-p", "batter-flags", "--no-default-features", "--locked"]
+# The store and the operator command with their own default features; their
+# live suites stay ignored.
+FLAGS_DEFAULT = ["cargo", "test", "-p", "batter-flags-postgres", "-p", "batter-flags-cli", "--locked"]
+# The catalog crate alone, without `serde`: the all-features workspace run
+# unifies `serde` on and would hide an unconditional use of it.
+FLAGS_CORE_BARE = ["cargo", "test", "-p", "batter-flags-core", "--no-default-features", "--locked"]
+FLAGS_GRAPH = [sys.executable, "scripts/check_flags_workspace.py"]
+FLAGS_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                  "-p", "test_flags_workspace.py", "-v"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
 # A clean developer shell must not hide ambient-state dependencies in tests.
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -71,9 +80,12 @@ FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"
 # command is still running the tests that spawn it. Declare the selection each
 # labelled command uplifts; a batch may not mix selections for one binary.
 REFERENCE_BINARY = "batter-example-reference-service"
+# The operator command's live tests spawn it through CARGO_BIN_EXE_batter-flags.
+FLAGS_BINARY = "batter-flags-cli"
 UPLIFTED_BINARIES = {
-    "workspace-tests": ((REFERENCE_BINARY, "all-features"),),
+    "workspace-tests": ((REFERENCE_BINARY, "all-features"), (FLAGS_BINARY, "all-features")),
     "configuration-hostile-environment": ((REFERENCE_BINARY, "default"),),
+    "flags-default": ((FLAGS_BINARY, "default"),),
 }
 
 
@@ -145,10 +157,14 @@ def parts():
                       (["single-facade-consumer"], [SINGLE_FACADE_CONSUMER])],
         "runlimit": [(["runlimit-default", "runlimit-release", "runlimit-workspace"],
                       [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
+        "flags": [(["flags-default", "flags-core-bare", "flags-workspace"],
+                   [FLAGS_DEFAULT, FLAGS_CORE_BARE, FLAGS_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
-                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls"],
-                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS])],
+                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls",
+                      "flags-controls"],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS,
+                      FLAGS_CONTROLS])],
     })
 
 
