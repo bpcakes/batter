@@ -22,6 +22,13 @@ against an oracle frozen before launch.
 - The consumer is archived in [`consumer/`](consumer/) as the agent left it,
   except an empty `[workspace]` table added so the copy builds standalone inside
   this repository. It path-depends on `crates/batter` by absolute path.
+- The consumer builds against `63fe812a`. `master`'s `f6e076d4`, merged into
+  the branch at `29c0c0d2`, made `batter::runledger::job_phases` private, so
+  `consumer/src/receipts.rs` does not type-check against any revision that
+  includes that merge.
+  To rebuild it, check out `63fe812a` in a separate worktree and point the
+  path dependency there; item 10's recheck ran before the merge, against that
+  library source.
 
 ## Scores
 
@@ -63,7 +70,10 @@ independently established API limits. Design signals for the canonical path
    takes owned callbacks, did not fit its flag-aware handler, which borrows
    `JobFlags` and reads its pin from the row first, and fell back to the manual
    sequencing the adapter labels "not the protected path"; whether a protected
-   composition exists is the follow-up's question.
+   composition exists is the follow-up's question (`batter-31p9`). `master`
+   has since removed public `job_phases` and added `PhasedJob` with a
+   `PhasedJobHandler` whose work and finalization borrow the invocation; that
+   path postdates this run and is unevaluated here.
 4. Before the first publication the job gate always consumes an attempt, so a
    long first-boot outage of the flags store can dead-letter jobs whatever the
    tripped policy says (disclosed in ADR-016).

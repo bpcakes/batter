@@ -122,8 +122,9 @@ cargo test -p batter-runledger --features test-support --locked
 ```
 
 `test_support::HandlerInvocation` drives native handler dispatch without a queue,
-worker or database. `handler_invocation` and `handler_progress` cover first-poll
-budgets, retained progress, returned failures, panic handling and invocation exit.
+worker or database. Its in-crate tests (`src/test_support/invocation_tests.rs`)
+and the `handler_progress` target cover first-poll budgets, retained progress,
+returned failures, panic handling and invocation exit.
 This facility applies no durable persistence or retry policy.
 
 ## Managed routines and triggers

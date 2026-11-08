@@ -29,16 +29,17 @@ The default feature set is empty. The available feature/module pairs are:
 | `runlimit-axum` | `batter::runlimit::http` and `batter::axum` |
 | `runlimit-native-http` | `batter::runlimit::native_transport::http`: native response metadata, no transport framework |
 | `runlimit-native-axum` | `batter::runlimit::native_transport::axum`: the native caller-controlled layer, without `batter::axum` |
-| `flags` | `batter::flags` and `batter::flags::core` (experimental): typed flags and kill switches declared once in code; `core` holds the catalog today, and declared mode, resolved from the application's settings source at startup, arrives later |
-| `flags-postgres` | `batter::flags::postgres` and `batter::flags::control_plane` (experimental scaffold): the namespaces that will hold the store and the protected registration of the audited control plane, plus the required `batter::sqlx` capability |
-| `flags-axum` | `batter::flags::http` (experimental scaffold): the namespace that will hold route-group gates and per-request views, plus `batter::axum` |
-| `flags-runledger` | `batter::flags::jobs` (experimental scaffold): the namespace that will hold job-handler gates and pinned decisions, plus `batter::runledger` |
+| `flags` | `batter::flags` and `batter::flags::core` (experimental, [ADR-016](../../docs/adr/016-typed-flags-control-plane.md)): typed flags and kill switches declared once in code, `declared::resolve` from the application's settings source with its startup report, the periodic gate and `test::TestFlags` |
+| `flags-postgres` | `batter::flags::postgres`, `batter::flags::control_plane` and `batter::flags::grants` (experimental): the audited store and the protected registration of its refresh, heartbeat, prune and optional LISTEN wake, plus the required `batter::sqlx` capability |
+| `flags-axum` | `batter::flags::http` (experimental): route-group gates and per-request flag views, plus `batter::axum` |
+| `flags-runledger` | `batter::flags::jobs` (experimental): job-handler gates and pinned decisions, plus `batter::runledger` |
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
 
-The four `flags*` features select the scaffold of the typed flags and
-kill-switch delivery: the namespaces exist and compile, and their items arrive
-with that epic's declared-mode and control-plane tasks.
+The four `flags*` features are experimental. `flags` alone is declared mode,
+with no database; the [`rollout` example](examples/rollout.rs) runs in both
+declared and control-plane mode. The `batter-flags` operator command is the
+unpublished [`batter-flags-cli`](../batter-flags-cli/README.md) package.
 
 For example:
 

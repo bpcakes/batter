@@ -84,7 +84,7 @@ native packages are also local, imported from master
 and native [Runledger](runledger/IMPORT.md) / [Runlimit](runlimit/IMPORT.md) provenance.
 Runledger remains optional for facade consumers and is absent from the default
 foundation graph. Releasable packages are prepared for crates.io; the two
-example packages remain unpublished.
+example packages and the `batter-flags-cli` operator command remain unpublished.
 
 ```sh
 cargo run -p batter --features axum --example http_service
@@ -205,10 +205,10 @@ batter-test-support = { path = "../batter/crates/batter-test-support" }
 ## Packages
 
 The default `batter` graph does not bring in encryption, the outbound HTTP exchange,
-Axum, SQLx, or test utilities.
+Axum, SQLx, flags, or test utilities.
 Adapter APIs are also available from their direct packages. The facade exposes
 `batter::at_rest`, `batter::outbound_http`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
-`batter::runlimit`, and `batter::test_support` through additive opt-in features;
+`batter::runlimit`, `batter::flags`, and `batter::test_support` through additive opt-in features;
 `outbound-http` also selects that package's `operation` bridge. The `metrics`
 feature records bounded outcome metrics through `batter::telemetry::metrics`; the
 `otlp` feature selects explicit bounded export through `batter::otlp` and
@@ -220,7 +220,7 @@ and Runlimit library package through explicitly native namespaces, so one
 `batter` dependency needs no direct native declaration and no `[patch]`; the
 [single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
 records the executed evidence and the caller obligations those namespaces carry. Each package declares its own version and Rust minimum.
-The ten Batter packages are 0.0.1, native Runledger is 0.13.0, and native
+The fourteen Batter packages are 0.0.1, native Runledger is 0.13.0, and native
 Runlimit is 0.4.0. All declare Rust 1.98.1, the pinned default toolchain, as
 their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
 `batter-at-rest` leaf verifies that minimum independently.
@@ -236,6 +236,10 @@ their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, managed routines and triggers applied after migrations, explicit low-level connection disposition, and opt-in fixtures. |
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Native initialization and settlement plus a phase-scoped atomic enqueue runner and schema snapshots built on `batter-sqlx`. |
 | `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution, protected authenticated HTTP assembly and supervised PostgreSQL limiters with registered expiry cleanup. |
+| `batter-flags-core` | [crates/batter-flags-core](crates/batter-flags-core/README.md) | Experimental flag and kill-switch catalog, cross-flag invariants, validated snapshots, clock-free evaluation and pinned decisions; no Batter dependency. |
+| `batter-flags-postgres` | [crates/batter-flags-postgres](crates/batter-flags-postgres/README.md) | Experimental audited PostgreSQL store for the flags control plane: compare-and-set writes, history, presence, pruning and the fleet view. |
+| `batter-flags` | [crates/batter-flags](crates/batter-flags/README.md) | Experimental typed flags: declared mode from the settings source, HTTP, job and periodic gates, test flags and the optional control-plane registration ([ADR-016](docs/adr/016-typed-flags-control-plane.md)). |
+| `batter-flags-cli` | [crates/batter-flags-cli](crates/batter-flags-cli/README.md) | The unpublished `batter-flags` operator command for the control plane. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `runlimit-core` | [runlimit/runlimit-core](runlimit/README.md) | Native validated policies, subject keys and decisions. |
 | `runlimit-memory` | [runlimit/runlimit-memory](runlimit/README.md) | Native bounded process-local quota and attempt storage. |
