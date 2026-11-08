@@ -16,8 +16,8 @@ release-train record. The rules, each with a negative control in
    library, and its manifest declares `serde` and `serde_json` optional.
 4. No closure of `batter-core`, `batter-axum` or `batter-runledger` holds a
    flags package.
-5. Only the flags packages themselves and the facade's optional `batter-flags`
-   edge depend on a flags package.
+5. Only the flags packages themselves and the facade's optional, normal
+   `batter-flags` edge depend on a flags package.
 6. `batter-flags`' closure never holds the facade; its Batter edges are exactly
    the normal ones below and the two dev-only test packages.
 7. Every flags package inherits the workspace lints, and the command's own
@@ -29,6 +29,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 LIBRARIES = ('batter-flags-core', 'batter-flags-postgres', 'batter-flags')
@@ -129,6 +130,10 @@ def validate_graph(metadata):
         stray = sorted(edges - FLAGS_EDGES.get(name, set()))
         if stray:
             raise ValueError(name + ' may not depend on ' + ', '.join(stray))
+    facade = next(p for p in metadata['packages'] if p['name'] == 'batter')
+    edges = [d for d in facade.get('dependencies', []) if d['name'] == 'batter-flags']
+    if not edges or any(d.get('kind') is not None or not d.get('optional') for d in edges):
+        raise ValueError('the facade must depend on batter-flags only as an optional normal edge')
     adapter = ids['batter-flags']
     if 'batter' in _closure(nodes, names, adapter):
         raise ValueError('batter-flags must never depend on the facade')
@@ -152,30 +157,29 @@ def validate_core_bare(closure_names):
         raise ValueError('bare batter-flags-core holds ' + ', '.join(held))
 
 
-def _dependency_line(manifest, name):
-    """`name`'s entry in the manifest's `[dependencies]` table, if any."""
-    table = re.search(r'^\[dependencies\]\s*\n(.*?)(?=^\[|\Z)', manifest, re.MULTILINE | re.DOTALL)
-    if table is None:
+def _dependency(manifest, name):
+    """`name`'s entry in the manifest's `[dependencies]` table, as a table."""
+    entry = tomllib.loads(manifest).get('dependencies', {}).get(name)
+    if entry is None:
         return None
-    match = re.search(r'^' + re.escape(name) + r'\s*=\s*(.+)$', table.group(1), re.MULTILINE)
-    return match.group(1) if match else None
+    return entry if isinstance(entry, dict) else {'version': entry}
 
 
 def validate_core_manifest(manifest):
     """Rule 3, the manifest."""
     for name in CORE_OPTIONAL:
-        line = _dependency_line(manifest, name)
-        if line is None or not re.search(r'optional\s*=\s*true', line):
+        entry = _dependency(manifest, name)
+        if entry is None or entry.get('optional') is not True:
             raise ValueError('batter-flags-core must declare ' + name + ' optional')
 
 
 def validate_manifests(manifests):
     """Rule 7, over each package's manifest text."""
     for name, manifest in manifests.items():
-        if not re.search(r'^\[lints\]\s*\nworkspace\s*=\s*true', manifest, re.MULTILINE):
+        if tomllib.loads(manifest).get('lints') != {'workspace': True}:
             raise ValueError(name + ' must inherit the workspace lints')
-    sqlx = _dependency_line(manifests[COMMAND], 'sqlx')
-    if sqlx is None or not re.search(r'"tls-rustls[a-z-]*"', sqlx):
+    sqlx = _dependency(manifests[COMMAND], 'sqlx') or {}
+    if not any(feature.startswith('tls-rustls') for feature in sqlx.get('features', [])):
         raise ValueError(COMMAND + "'s own sqlx entry must select a rustls TLS feature")
 
 

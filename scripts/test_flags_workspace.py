@@ -38,6 +38,8 @@ class Fixture(unittest.TestCase):
         self.edge('batter-flags-cli', 'batter-flags-core')
         self.edge('batter-flags-cli', 'batter-flags-postgres')
         self.edge('batter', 'batter-flags')
+        self.package('batter')['dependencies'] = [
+            dict(name='batter-flags', kind=None, optional=True)]
         for target in ADAPTER_NORMAL:
             self.edge('batter-flags', target)
         for target in ADAPTER_DEV:
@@ -100,6 +102,13 @@ class GraphTests(Fixture):
         with self.assertRaisesRegex(ValueError, 'batter-sqlx may not depend on batter-flags-core'):
             validate_graph(self.metadata)
 
+    def test_rule_5_a_mandatory_or_dev_facade_edge_fails(self):
+        for change in (dict(optional=False), dict(kind='dev')):
+            self.setUp()
+            self.package('batter')['dependencies'][0].update(change)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'optional normal edge'):
+                validate_graph(self.metadata)
+
     def test_rule_6_the_adapter_reaching_the_facade_fails(self):
         self.edge('batter-flags', 'bridge')
         self.edge('bridge', 'batter')
@@ -136,8 +145,13 @@ class SourceTests(unittest.TestCase):
         command = self.MANIFEST + 'sqlx = { workspace = true, features = ["tls-rustls-ring"] }\n'
         manifests = {name: self.MANIFEST for name in LIBRARIES}
         validate_manifests(dict(manifests, **{COMMAND: command}))
-        with self.assertRaisesRegex(ValueError, 'rustls TLS feature'):
-            validate_manifests(dict(manifests, **{COMMAND: command.replace('tls-rustls-ring', 'json')}))
+        # A wrapped feature array is the same declaration.
+        wrapped = self.MANIFEST + 'sqlx = { workspace = true, features = [\n  "postgres",\n  "tls-rustls-ring",\n] }\n'
+        validate_manifests(dict(manifests, **{COMMAND: wrapped}))
+        for without in (command.replace('tls-rustls-ring', 'json'),
+                        self.MANIFEST + 'sqlx = { workspace = true, features = ["postgres"] } # "tls-rustls-ring"\n'):
+            with self.subTest(manifest=without), self.assertRaisesRegex(ValueError, 'rustls TLS feature'):
+                validate_manifests(dict(manifests, **{COMMAND: without}))
         with self.assertRaisesRegex(ValueError, 'inherit the workspace lints'):
             validate_manifests(dict(manifests, **{COMMAND: command.replace('workspace = true\n\n[dep',
                                                                             'unused = true\n\n[dep')}))

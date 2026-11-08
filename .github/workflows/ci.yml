@@ -109,6 +109,10 @@ jobs:
           POSTGRES_USER: flags
           POSTGRES_PASSWORD: flags
           POSTGRES_DB: flags
+          # The fixtures create password-less roles and connect as them, as
+          # against a local trust-authenticated server; this service is
+          # disposable and reachable only from the job.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
