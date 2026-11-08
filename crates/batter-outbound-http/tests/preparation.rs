@@ -20,6 +20,20 @@ fn client() -> Client {
     .unwrap()
 }
 
+#[test]
+fn explicit_trailing_slash_does_not_admit_empty_or_dot_segments() {
+    for segment in ["", ";x", ".", "..", "..;x", ".\t."] {
+        assert!(
+            client()
+                .request(Method::GET, ["v1", segment])
+                .trailing_slash()
+                .prepare()
+                .is_err(),
+            "invalid segment {segment:?}"
+        );
+    }
+}
+
 fn refusal(draft: RequestDraft) -> Option<PrepareError> {
     draft.prepare().err()
 }

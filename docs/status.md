@@ -1,5 +1,9 @@
 # Implementation status
 
+`RequestDraft::trailing_slash()` preserves exact trailing-slash request targets
+without relaxing path-segment validation (`batter-q1jl`). Wire tests cover root
+paths, repeated selection, percent encoding and query placement.
+
 2026-11-04 outbound connection ownership (`batter-u387`, experimental):
 `batter-outbound-http` now owns a fresh TCP/TLS connection and low-level hyper
 HTTP/1 driver per exchange. Handoff is gated at `send_request`, and socket

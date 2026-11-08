@@ -8,6 +8,9 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `RequestDraft::trailing_slash()` for provider endpoints whose exact path
+  ends in `/`. Segment validation, escaping and the origin root are preserved.
+
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates
   and one shared setup budget; drop losing sockets before TLS/HTTP. Preserve

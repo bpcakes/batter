@@ -15,6 +15,8 @@ ownership and deadline correction belong to `batter-u387`.
 - `src/origin.rs`, `src/limits.rs`: validated origins and bounded limits.
 - `src/request.rs`: draft validation, origin-form request/Host/framing assembly,
   non-Clone prepared request and consuming send; compile-fail ownership tests.
+  `RequestDraft::trailing_slash()` preserves endpoint path endings without
+  admitting empty or dot segments or changing the origin root.
 - `src/transport.rs`: owned TCP/TLS establishment, clock/cancellation gate and
   guarded writes above and below TLS. TLS reads may flush encrypted records.
 - `src/transport/dial.rs`: bounded family/address fallback, with at most two
