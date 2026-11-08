@@ -16,7 +16,10 @@ impl Invocation<'_> {
     ) -> Result<Action, JobFailure> {
         let worker = self.worker;
         let payload = self.payload;
-        let mut snapshot = worker.load_retained(execution, payload).await?;
+        let RetainedLoad::Snapshot(mut snapshot) = worker.load_retained(execution, payload).await?
+        else {
+            return Ok(Action::Invariant);
+        };
         let origin = match snapshot.plan(payload.record_generation) {
             EffectPlan::Complete => return Ok(Action::Complete),
             EffectPlan::Manual => {
@@ -52,7 +55,12 @@ impl Invocation<'_> {
                     return Ok(action);
                 }
                 self.progress(Progress::Preparing);
-                snapshot = worker.load_retained(execution, payload).await?;
+                let RetainedLoad::Snapshot(reloaded) =
+                    worker.load_retained(execution, payload).await?
+                else {
+                    return Ok(Action::Invariant);
+                };
+                snapshot = reloaded;
                 if snapshot.state != ProviderEffectState::ReconcileNeeded {
                     return Err(state_failure(StateError::Invariant));
                 }
@@ -182,7 +190,11 @@ impl Invocation<'_> {
             Ok(Sent::Outcome(outcome)) => outcome,
             Ok(Sent::GenerationChanged) => {
                 self.progress(Progress::Preparing);
-                let snapshot = worker.load_retained(execution, payload).await?;
+                let RetainedLoad::Snapshot(snapshot) =
+                    worker.load_retained(execution, payload).await?
+                else {
+                    return Ok(Action::Invariant);
+                };
                 if snapshot.current_generation != Some(payload.record_generation) {
                     return Ok(Action::Deny {
                         code: "target_generation_changed",

@@ -248,6 +248,10 @@ retained failures, endpoint prerequisites, cache identity and interruption.
 Fixture provisioning belongs to the external harness; fixture tests do not prove
 the termination of arbitrary server sessions or detached work.
 
+The process-ownership `bounded_refresh` tests exercise the migration's exhaustive
+bulkhead outcome mapping: fatal work drains with its original cause after receipt
+disposal, while refusal and interruption remain explicit nonfatal receipt values.
+
 ## Provider lease and retry boundary probes
 
 Reference provider tests exercise application-owned idempotency, payload
@@ -272,6 +276,13 @@ The admission and pending-fence wrappers delegate `settle_late` to that handler.
 They assert that retained admission and nested fence-interruption actions select
 late settlement without falling back to ordinary finalization, while outer
 interruption with no returned value uses ordinary finalization.
+
+The invariant-recovery probe corrupts a retained payload in its disposable
+database and observes the real recovery UPDATE waiting on an effect-row lock.
+It holds the lock beyond the entire work budget, then releases it while the
+original native deadline remains live. The last-attempt handler must return the
+manual-resolution failure and retain `retained_state_invariant` in the database.
+This checks phase placement, not wire-level commit acknowledgement loss.
 
 ## Outbound exchange facade example
 

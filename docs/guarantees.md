@@ -3199,8 +3199,14 @@ stale unresolved source. Neighboring confirmation, failure, invariant and dispat
 writes constrain their own legal sources. This is an application-private boundary,
 not a new foundation provider protocol or protection from arbitrary external SQL.
 
-Provider response exchanges consume their admission permit; post-response SQL
-cannot retain that capacity. Send and body errors remain distinct, with static
+Detected retained-state invariants become an explicit reference-worker action.
+Their manual-resolution write runs in finalization, including when a lock wait
+outlives work's shortened deadline. Interrupted-fence reloads use the same writer
+within finalization. The write still requires the live native lease and original
+deadline; failed storage or lost authority cannot establish recorded recovery.
+
+`Bulkhead::run` owns each provider exchange and releases its capacity before
+finalization persists the outcome. Send and body errors remain distinct, with static
 diagnostic codes and connector-only known non-dispatch. One owner-scoped query
 boundary validates identity and projects unresolved terminal jobs from a single
 job/effect snapshot: spent dead-lettered attempts become exhausted, other native

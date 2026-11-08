@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 pub(super) enum Action {
     Complete,
+    Invariant,
     Confirm(String),
     Deny {
         code: &'static str,
@@ -90,6 +91,7 @@ impl Invocation<'_> {
         let payload = self.payload;
         match action {
             Action::Complete => Ok(JobCompletion::success()),
+            Action::Invariant => worker.finish_state_invariant(execution, payload).await,
             Action::Confirm(id) => worker.confirm(execution, payload, id.clone()).await,
             Action::Deny { code, expected } => {
                 worker
@@ -141,7 +143,14 @@ impl Invocation<'_> {
     ) -> Result<JobCompletion, JobFailure> {
         // Cancellation cannot tell us whether the fence committed. Reload
         // under the live native lease before choosing a legal source state.
-        let snapshot = self.worker.load_retained(execution, self.payload).await?;
+        let RetainedLoad::Snapshot(snapshot) =
+            self.worker.load_retained(execution, self.payload).await?
+        else {
+            return self
+                .worker
+                .finish_state_invariant(execution, self.payload)
+                .await;
+        };
         let state = match snapshot.state {
             state @ (ProviderEffectState::AwaitingAttempt
             | ProviderEffectState::RetryableUndispatched) => {

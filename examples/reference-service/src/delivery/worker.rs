@@ -123,25 +123,37 @@ impl DeliveryWorker {
         &self,
         execution: JobExecution<'_>,
         payload: &DeliveryJobPayload,
-    ) -> Result<EffectSnapshot, JobFailure> {
+    ) -> Result<RetainedLoad, JobFailure> {
         match self.load(execution, payload).await {
-            Ok(snapshot) => Ok(snapshot),
+            Ok(snapshot) => Ok(RetainedLoad::Snapshot(snapshot)),
             Err(StateError::Storage) => Err(state_failure(StateError::Storage)),
             Err(StateError::LeaseLost) => Err(state_failure(StateError::LeaseLost)),
             Err(StateError::RetryDeferred(delay)) => {
                 Err(state_failure(StateError::RetryDeferred(delay)))
             }
-            Err(StateError::Invariant) => {
-                self.record_state_invariant(execution, payload)
-                    .await
-                    .map_err(state_failure)?;
-                Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "The retained provider state requires manual resolution.",
-                ))
-            }
+            Err(StateError::Invariant) => Ok(RetainedLoad::Invariant),
         }
     }
+
+    async fn finish_state_invariant(
+        &self,
+        execution: JobExecution<'_>,
+        payload: &DeliveryJobPayload,
+    ) -> Result<JobCompletion, JobFailure> {
+        self.record_state_invariant(execution, payload)
+            .await
+            .map_err(state_failure)?;
+        Err(JobFailure::terminal(
+            CODE_MANUAL_RESOLUTION,
+            "The retained provider state requires manual resolution.",
+        ))
+    }
+}
+
+// Detection belongs to work; the terminal write belongs to finalization.
+enum RetainedLoad {
+    Snapshot(EffectSnapshot),
+    Invariant,
 }
 
 struct EffectSnapshot {

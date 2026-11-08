@@ -54,9 +54,18 @@ contracts, capability facts and validation history.
       refresh().await
   })?;
   // After: the process task owns the entire bounded run.
-  process.try_spawn("refresh", move |_| async move {
-      Ok::<_, Fatal<MyError>>(bulkhead.run(&context, Admission::Reject,
-          "refresh", |_| refresh()).await)
+  // Application policy: refusal/interruption are nonfatal receipt values.
+  // Keep and inspect the receipt for those outcomes; fatal work still drains.
+  let receipt = process.try_spawn("refresh", move |_| async move {
+      match bulkhead.run(&context, Admission::Reject,
+          "refresh", |_| refresh()).await {
+          Ok(value) => Ok(Ok(value)),
+          Err(BulkheadError::Operation(OperationError::Failed(fatal))) => Err(fatal),
+          Err(BulkheadError::NotAdmitted(reason)) =>
+              Ok(Err(BulkheadError::<std::convert::Infallible>::NotAdmitted(reason))),
+          Err(BulkheadError::Operation(OperationError::Interrupted(reason))) =>
+              Ok(Err(BulkheadError::Operation(OperationError::Interrupted(reason)))),
+      }
   })?;
   ```
 

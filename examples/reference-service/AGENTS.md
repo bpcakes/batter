@@ -199,7 +199,10 @@ Admission failure has a separate narrow transition and cannot classify an
 uncertain provider result. Derive provider work only through
 `batter::runledger::PhasedJob` with the explicit 500 ms final-state reserve;
 never rebuild a fresh root from the remaining budget. Keep the explicit
-rejection-to-`JobFailure` mapping and the final-state SQL after work expiry. A recovered attempt may consume native retry budget
+rejection-to-`JobFailure` mapping and the final-state SQL after work expiry.
+Retained-state invariant detection returns an explicit action; both ordinary
+work and interrupted-fence reloads route its terminal write through finalization.
+A recovered attempt may consume native retry budget
 while deferring; there is no refund or replacement scheduler. A response never
 successfully persisted can still be lost on process death; no local type removes
 that external acknowledgement gap.
