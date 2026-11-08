@@ -474,7 +474,8 @@ wrap and unwrap the same `std::time::Instant` (the locked source stores the std
 value unchanged), and outside a paused test clock `Instant::now()` reads
 `std::time::Instant::now()`. The Runledger worker computes its handler deadline
 with Tokio's `Instant::now()`, exposes it through `into_std`, and enforces it
-with Tokio timers; `job_phases` converts it back with `from_std`, so the bridge
+with Tokio timers; the private `job_phases` bridge used by `PhasedJob` converts
+it back with `from_std`, so the bridge
 and native enforcement use one value on one clock, including under
 [paused time](https://docs.rs/tokio/1.53.1/tokio/time/fn.pause.html). A custom
 runtime that reads `std::time::Instant::now()` while a Tokio test clock is paused

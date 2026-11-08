@@ -148,6 +148,11 @@ pub struct RequestPolicy {
 #[derive(Clone)]
 pub struct RequestInterruptionResponder(InterruptionRendering);
 
+// Only a returned response carries this fact; merely invoking a renderer must
+// not classify a different response that the handler ultimately chooses.
+#[derive(Clone, Copy)]
+struct RenderedInterruption(Interruption);
+
 #[derive(Clone)]
 enum InterruptionRendering {
     Default,
@@ -173,18 +178,25 @@ impl RequestInterruptionResponder {
     /// The custom renderer receives the original request metadata captured
     /// before inner adapter extensions were inserted, without private quota,
     /// observation or operational ownership state.
+    /// Returning this response through admission also records `reason` as the
+    /// response-construction operation's outcome, preserving the rendered body,
+    /// headers and status. Rendering and discarding it changes no outcome.
     pub fn render(&self, reason: Interruption) -> Response {
         let failure = match reason {
             Interruption::Cancelled => HttpFailure::Cancelled,
             Interruption::DeadlineExceeded => HttpFailure::DeadlineExceeded,
         };
-        match &self.0 {
+        let mut response = match &self.0 {
             InterruptionRendering::Default => failure.into_response(),
             InterruptionRendering::Custom {
                 renderer,
                 original_parts,
             } => renderer(failure, original_parts.as_ref()),
-        }
+        };
+        response
+            .extensions_mut()
+            .insert(RenderedInterruption(reason));
+        response
     }
 }
 

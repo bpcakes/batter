@@ -4,13 +4,13 @@ use std::{fmt, future::Future, sync::Arc, time::Instant as WallInstant};
 
 use runlimit_core::{
     AdmissionObservation, BatchDecision, Check, CleanupObservation, CleanupOutcome, Decision,
-    Denial, GcraPolicy, Limiter, Observation, Observer, QuotaMode, gcra, observe_safely,
-    validate_batch,
+    GcraPolicy, Limiter, Observation, Observer, QuotaMode, gcra, observe_safely, validate_batch,
 };
 use sqlx::{
     Acquire, PgPool, Row,
     migrate::{MigrateError, Migrator},
     postgres::PgRow,
+    types::chrono::{DateTime, Utc},
 };
 use tokio::time::Instant;
 
@@ -18,7 +18,8 @@ use crate::{
     BatchCheckError, CheckError, CheckPhase, CleanupPhase, ConnectionCancellationGuard,
     ConnectionOutcome, MaintenanceError, PostgresConfig,
     admission::{
-        Admission, CheckTransaction, acquire_check_connection, batch_decision, single_decision,
+        Admission, CheckTransaction, PendingDenial, PendingQuotaDenial, acquire_check_connection,
+        authoritative_elapsed, batch_decision, single_decision,
     },
     maintenance::{
         acquire_maintenance_connection, commit_maintenance, maintenance_before_commit,
@@ -26,6 +27,8 @@ use crate::{
     },
     protocol::{CAPACITY_SHARD_COUNT, capacity_shard},
 };
+
+mod response;
 
 /// Independent, opt-in GCRA storage migration. Strict host migrators may vendor
 /// this SQL into their own migration stream; no fixed-window tables are needed.
@@ -42,11 +45,13 @@ pub const INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL: &str =
 pub static GCRA_MIGRATOR: Migrator = sqlx::migrate!("./gcra-migrations");
 
 const LOCK_SHARDS: &str = "SELECT capacity_shard, row_count, observed_at_ms FROM runlimit_gcra_shards WHERE capacity_shard = ANY($1) ORDER BY capacity_shard FOR UPDATE";
-const SAMPLE_TIME: &str =
-    "SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms";
+const SAMPLE_TIME: &str = r"
+WITH sample AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS database_now)
+SELECT database_now, floor(extract(epoch FROM database_now) * 1000)::BIGINT AS now_ms
+FROM sample";
 const READ_COUNTERS: &str = r"
 SELECT input.ordinality - 1 AS input_index, stored.tat_scaled::TEXT AS tat_scaled,
-    stored.expires_at_ms
+    stored.expires_at_ms, pg_catalog.clock_timestamp() AS response_now
 FROM unnest($1::BYTEA[], $2::BYTEA[]) WITH ORDINALITY AS input(fingerprint, subject, ordinality)
 LEFT JOIN runlimit_gcra AS stored ON stored.config_fingerprint = input.fingerprint
     AND stored.subject_key = input.subject
@@ -57,6 +62,12 @@ SELECT fingerprint, subject, tat::NUMERIC, expires
 FROM unnest($1::BYTEA[], $2::BYTEA[], $3::TEXT[], $4::BIGINT[]) AS input(fingerprint, subject, tat, expires)
 ON CONFLICT (config_fingerprint, subject_key) DO UPDATE
 SET tat_scaled = EXCLUDED.tat_scaled, expires_at_ms = EXCLUDED.expires_at_ms";
+const UPDATE_WATERMARKS: &str = r"
+WITH updated AS (
+    UPDATE runlimit_gcra_shards SET observed_at_ms = $2 WHERE capacity_shard = ANY($1)
+    RETURNING 1
+)
+SELECT count(*) AS updated_count, pg_catalog.clock_timestamp() AS response_now FROM updated";
 const CLEANUP_LOCKS: &str = r"
 WITH sample AS MATERIALIZED (
     SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
@@ -371,6 +382,8 @@ async fn run_transaction<D>(
         .fetch_one(CheckPhase::PreflightingCounters, sqlx::query(SAMPLE_TIME))
         .await?;
     let mut now: i64 = field(&sample, "now_ms")?;
+    // The watermark clamps evaluation only; elapsed time uses the real sample.
+    let database_now: DateTime<Utc> = field(&sample, "database_now")?;
     for (row, expected) in locked.iter().zip(&shards) {
         let shard: i16 = field(row, "capacity_shard")?;
         let count: i64 = field(row, "row_count")?;
@@ -409,49 +422,89 @@ async fn run_transaction<D>(
         now_u128,
     )?;
     match pending {
-        Pending::Denied(admission) => {
-            let decision = build(admission).map_err(ConnectionOutcome::Reusable)?;
+        denied @ Pending::Denied { .. } => {
+            let response_now = field(
+                rows.last()
+                    .ok_or_else(|| invariant("missing GCRA response time"))?,
+                "response_now",
+            )?;
+            let decision = build(denied.finish(authoritative_elapsed(database_now, response_now)))
+                .map_err(ConnectionOutcome::Reusable)?;
             Ok(transaction.deny(decision).await)
         }
         Pending::Allowed(allowances) => {
-            let tats = allowances
-                .iter()
-                .map(|allowance| allowance.tat_scaled.to_string())
-                .collect::<Vec<_>>();
-            let expiries = allowances
-                .iter()
-                .map(|allowance| {
-                    i64::try_from(allowance.expires_at_millis)
-                        .map_err(|_| invariant("GCRA expiry exceeds database range"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let decision = build(Admission::Allowed(
-                allowances.into_iter().map(|item| item.allowance).collect(),
-            ))
+            let response_now = persist_allowances(
+                &mut transaction,
+                &fingerprints,
+                &subjects,
+                &allowances,
+                &shards,
+                now,
+            )
+            .await?;
+            let decision = build(
+                Pending::Allowed(allowances)
+                    .finish(authoritative_elapsed(database_now, response_now)),
+            )
             .map_err(ConnectionOutcome::Reusable)?;
-            let updated = transaction
-                .execute(
-                    CheckPhase::UpdatingCounters,
-                    sqlx::query(UPSERT)
-                        .bind(&fingerprints)
-                        .bind(&subjects)
-                        .bind(tats)
-                        .bind(expiries),
-                )
-                .await?;
-            if updated.rows_affected() != checks.len() as u64 {
-                return Err(invariant("GCRA upsert count disagrees with the batch"));
-            }
-            transaction.execute(CheckPhase::UpdatingCounters, sqlx::query("UPDATE runlimit_gcra_shards SET observed_at_ms = $2 WHERE capacity_shard = ANY($1)").bind(&shards).bind(now)).await?;
             transaction.commit().await?;
             Ok(ConnectionOutcome::Reusable(decision))
         }
     }
 }
 
+async fn persist_allowances(
+    transaction: &mut CheckTransaction<'_>,
+    fingerprints: &[Vec<u8>],
+    subjects: &[Vec<u8>],
+    allowances: &[gcra::PendingAllowance],
+    shards: &[i16],
+    now: i64,
+) -> Result<DateTime<Utc>, Failure> {
+    let tats = allowances
+        .iter()
+        .map(|allowance| allowance.tat_scaled.to_string())
+        .collect::<Vec<_>>();
+    let expiries = allowances
+        .iter()
+        .map(|allowance| {
+            i64::try_from(allowance.expires_at_millis)
+                .map_err(|_| invariant("GCRA expiry exceeds database range"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let updated = transaction
+        .execute(
+            CheckPhase::UpdatingCounters,
+            sqlx::query(UPSERT)
+                .bind(fingerprints)
+                .bind(subjects)
+                .bind(tats)
+                .bind(expiries),
+        )
+        .await?;
+    if updated.rows_affected() != allowances.len() as u64 {
+        return Err(invariant("GCRA upsert count disagrees with the batch"));
+    }
+    let response = transaction
+        .fetch_one(
+            CheckPhase::UpdatingCounters,
+            sqlx::query(UPDATE_WATERMARKS).bind(shards).bind(now),
+        )
+        .await?;
+    let updated_count: i64 = field(&response, "updated_count")?;
+    if usize::try_from(updated_count).ok() != Some(shards.len()) {
+        return Err(invariant("GCRA watermark count disagrees with the shards"));
+    }
+    field(&response, "response_now")
+}
+
 enum Pending {
     Allowed(Vec<gcra::PendingAllowance>),
-    Denied(Admission),
+    Denied {
+        index: usize,
+        denial: PendingDenial,
+        mode: QuotaMode,
+    },
 }
 
 fn evaluate(
@@ -496,29 +549,20 @@ fn evaluate(
             .map_err(|_| invariant("GCRA arithmetic exceeded exact range"))?;
         match evaluated {
             gcra::Evaluation::Denied(quota) => {
-                denial.get_or_insert_with(|| {
-                    if check.policy().quota_mode() == QuotaMode::Shadow {
-                        Admission::ShadowDenied {
-                            index,
-                            denial: quota,
-                        }
-                    } else {
-                        Admission::Denied {
-                            index,
-                            denial: quota.into(),
-                        }
-                    }
-                });
+                denial.get_or_insert((
+                    index,
+                    PendingDenial::Quota(PendingQuotaDenial {
+                        limit: quota.capacity(),
+                        retry_from_sample: quota.retry_after().duration(),
+                    }),
+                ));
             }
             gcra::Evaluation::Allowed(allowance) => {
                 if stored.is_none() {
                     let shard = usize::try_from(capacity_shard(check.counter_key()))
                         .expect("stable shard fits usize");
                     if counts[shard] >= i64::from(maximum) {
-                        denial.get_or_insert(Admission::Denied {
-                            index,
-                            denial: Denial::StorageCapacity { retry_after: None },
-                        });
+                        denial.get_or_insert((index, PendingDenial::StorageCapacity));
                     }
                     counts[shard] += 1;
                 }
@@ -527,7 +571,11 @@ fn evaluate(
         }
     }
     Ok(match denial {
-        Some(denial) => Pending::Denied(denial),
+        Some((index, denial)) => Pending::Denied {
+            index,
+            denial,
+            mode: checks[index].policy().quota_mode(),
+        },
         None => Pending::Allowed(pending),
     })
 }

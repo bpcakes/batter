@@ -11,6 +11,8 @@ mod composition_edges;
 mod correlation;
 #[path = "observation/event_fields.rs"]
 mod event_fields;
+#[path = "observation/interruption.rs"]
+mod interruption;
 #[path = "observation/lifetime.rs"]
 mod lifetime;
 #[path = "observation/placement.rs"]

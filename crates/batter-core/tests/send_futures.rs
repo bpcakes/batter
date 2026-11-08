@@ -2,6 +2,9 @@
 //! handlers require. The closures are only type-checked, never called, so a
 //! regression fails to compile. Bulkhead blocking runs are pinned in
 //! `admission/blocking_outcomes.rs`.
+use batter_core as bulkhead_foundation;
+#[path = "support/bulkhead.rs"]
+mod bulkhead_testing;
 use batter_core::{
     admission::{Admission, Bulkhead},
     cleanup::{CleanupBudget, CleanupStack},
@@ -17,6 +20,7 @@ use batter_core::{
     startup::{StartingSupervisor, StartupObserver},
     telemetry::with_current_dispatch,
 };
+use bulkhead_testing::BulkheadTestExt;
 use std::{
     future::{Future, Ready, pending, ready},
     io,
@@ -148,7 +152,7 @@ fn operation_retry_and_admission_futures_are_send() {
         ));
     };
     let _ = |bulkhead: &Bulkhead, context: &OperationContext| {
-        send(bulkhead.enter(context, Admission::Reject));
+        send(bulkhead.hold(context, Admission::Reject));
     };
     let _ = || send(with_current_dispatch(ready(())));
 }

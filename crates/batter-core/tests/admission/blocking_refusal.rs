@@ -2,6 +2,7 @@
 //! never hands it to Tokio.
 
 use crate::blocking_support::{Unrun, bulkhead, fresh, owner};
+use crate::bulkhead_testing::BulkheadTestExt;
 use batter_core::{
     admission::{Admission, AdmissionError, BlockingError},
     operation::Interruption,
@@ -11,12 +12,11 @@ use std::{
     task::{Context, Waker},
     time::Duration,
 };
-use tokio::sync::OwnedSemaphorePermit;
 
 #[tokio::test]
 async fn reject_overload_destroys_work_uncalled() {
     let bulkhead = bulkhead(1);
-    let _held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+    let _held = bulkhead.hold(&fresh(), Admission::Reject).await.unwrap();
     let probe = Unrun::default();
     assert!(matches!(
         bulkhead
@@ -47,13 +47,13 @@ async fn precancelled_context_is_not_admitted_with_free_capacity() {
         );
         probe.assert_destroyed_uncalled();
     }
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 #[tokio::test(start_paused = true)]
 async fn wait_deadline_interrupts_admission_before_work_starts() {
     let bulkhead = bulkhead(1);
-    let held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&fresh(), Admission::Reject).await.unwrap();
     let context = owner(1).into_context();
     let probe = Unrun::default();
     assert!(matches!(
@@ -66,13 +66,13 @@ async fn wait_deadline_interrupts_admission_before_work_starts() {
     ));
     probe.assert_destroyed_uncalled();
     drop(held);
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 #[tokio::test]
 async fn wait_cancellation_interrupts_admission_before_work_starts() {
     let bulkhead = bulkhead(1);
-    let held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&fresh(), Admission::Reject).await.unwrap();
     let owner = owner(10);
     let probe = Unrun::default();
     let waiter = tokio::spawn({
@@ -92,7 +92,7 @@ async fn wait_cancellation_interrupts_admission_before_work_starts() {
     ));
     probe.assert_destroyed_uncalled();
     drop(held);
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 #[tokio::test(start_paused = true)]
@@ -104,7 +104,7 @@ async fn unpolled_call_and_dropped_admission_wait_do_no_work() {
     drop(call);
     unpolled.assert_destroyed_uncalled();
     // The unpolled call took no permit.
-    let held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
 
     let dropped = Unrun::default();
     let waited = tokio::time::timeout(
@@ -123,7 +123,7 @@ async fn unpolled_call_and_dropped_admission_wait_do_no_work() {
 /// deadline in one step. On the current-thread scheduler the woken waiter
 /// runs before the driver next fires timers, so its deadline timer is unfired.
 async fn granted_after_an_unfired_deadline<T: Send + 'static>(
-    held: OwnedSemaphorePermit,
+    held: impl Send + 'static,
     wait: impl Future<Output = T> + Send + 'static,
 ) -> T {
     let waiter = tokio::spawn(wait);
@@ -137,7 +137,7 @@ async fn granted_after_an_unfired_deadline<T: Send + 'static>(
 #[tokio::test(start_paused = true)]
 async fn admission_granted_after_an_unfired_deadline_never_starts_work() {
     let bulkhead = bulkhead(1);
-    let held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&fresh(), Admission::Reject).await.unwrap();
     let probe = Unrun::default();
     let result = granted_after_an_unfired_deadline(held, {
         let bulkhead = bulkhead.clone();
@@ -153,20 +153,25 @@ async fn admission_granted_after_an_unfired_deadline_never_starts_work() {
         )))
     ));
     probe.assert_destroyed_uncalled();
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 /// Control for the recheck: if Tokio stops granting the permit before the
 /// timer fires, this fails and the recheck test no longer exercises it.
 #[tokio::test(start_paused = true)]
-async fn enter_alone_can_grant_a_permit_after_an_unfired_deadline() {
-    let bulkhead = bulkhead(1);
-    let held = bulkhead.enter(&fresh(), Admission::Reject).await.unwrap();
+async fn semaphore_wait_can_complete_after_an_unfired_deadline() {
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+    let held = semaphore.clone().try_acquire_owned().unwrap();
     let context = owner(1).into_context();
     let permit = granted_after_an_unfired_deadline(held, {
-        let bulkhead = bulkhead.clone();
         let context = context.clone();
-        async move { bulkhead.enter(&context, Admission::Wait).await }
+        async move {
+            context
+                .run("test.raw_wait", |_| async move {
+                    semaphore.acquire_owned().await
+                })
+                .await
+        }
     })
     .await;
     assert!(permit.is_ok(), "{permit:?}");
@@ -178,12 +183,13 @@ fn polling_outside_a_runtime_panics_before_admission() {
     let bulkhead = bulkhead(1);
     let context = fresh();
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .unwrap();
-    // Reject admission needs no runtime: with the only permit held, admitting
-    // first would return `NotAdmitted(Overloaded)` instead of panicking.
+    // With the only slot held by work in another runtime, admitting
+    // before checking this call's runtime would return `NotAdmitted(Overloaded)` instead of panicking.
     let held = runtime
-        .block_on(bulkhead.enter(&context, Admission::Reject))
+        .block_on(bulkhead.hold(&context, Admission::Reject))
         .unwrap();
     let probe = Unrun::default();
     let mut call = Box::pin(bulkhead.run_blocking(&context, Admission::Reject, probe.closure()));
@@ -198,7 +204,7 @@ fn polling_outside_a_runtime_panics_before_admission() {
     drop(held);
     assert!(
         runtime
-            .block_on(bulkhead.enter(&context, Admission::Reject))
+            .block_on(bulkhead.hold(&context, Admission::Reject))
             .is_ok()
     );
 }
@@ -217,9 +223,13 @@ fn polling_on_a_runtime_without_timers_panics_before_admission() {
     assert!(polled.is_err());
     // The closure was never handed to Tokio, and no permit stayed with it.
     probe.assert_destroyed_uncalled();
+    let check_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
     assert!(
-        runtime
-            .block_on(bulkhead.enter(&context, Admission::Reject))
+        check_runtime
+            .block_on(bulkhead.hold(&context, Admission::Reject))
             .is_ok()
     );
 }

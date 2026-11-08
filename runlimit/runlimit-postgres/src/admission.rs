@@ -594,7 +594,7 @@ async fn first_capacity_denial(
 
     Ok(None)
 }
-fn authoritative_elapsed(start: DateTime<Utc>, end: DateTime<Utc>) -> Duration {
+pub(crate) fn authoritative_elapsed(start: DateTime<Utc>, end: DateTime<Utc>) -> Duration {
     end.signed_duration_since(start)
         .to_std()
         .unwrap_or(Duration::ZERO)

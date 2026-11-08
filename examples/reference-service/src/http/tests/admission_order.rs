@@ -155,6 +155,61 @@ async fn admitted_authenticated_request_succeeds_until_drain() {
 }
 
 #[tokio::test]
+async fn invalid_submission_answers_before_database_capacity_is_available() {
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    let settings = settings();
+    let pool = crate::database::low_level_configured(
+        settings.connect_options_from_process().unwrap(),
+        settings.pool_options(),
+    )
+    .unwrap();
+    let database = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
+    let (entered, admitted) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let held = database.clone();
+    let owner = batter::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let holder = tokio::spawn(async move {
+        held.run(
+            owner.context(),
+            Admission::Reject,
+            "test.capacity",
+            |_| async {
+                let _ = entered.send(());
+                let _ = released.await;
+                Ok::<_, Infallible>(())
+            },
+        )
+        .await
+    });
+    admitted.await.expect("the only database slot is held");
+
+    let routes = GuardedRouter::new()
+        .route("/records/{record_id}/deliveries", post(submit_delivery))
+        .with_state(AppState {
+            deliveries: DeliveryService::new(pool),
+            database,
+        });
+    let app = boundary_app(routes, &handle).await;
+    let response = app
+        .request(direct_request(
+            "POST",
+            "/records/00000000-0000-0000-0000-000000000002/deliveries",
+            Body::from(r#"{"expected_generation":0,"idempotency_key":"key","payload":{}}"#),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            Some("Bearer fake-token"),
+            RequestHeaders::Ordinary,
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, body) = json_response(response).await;
+    assert_eq!(body["code"], "invalid_delivery_command");
+
+    release.send(()).unwrap();
+    assert!(holder.await.unwrap().is_ok());
+}
+
+#[tokio::test]
 async fn fallbacks_answer_only_after_admission() {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     let app = production_app_with(&handle).await;

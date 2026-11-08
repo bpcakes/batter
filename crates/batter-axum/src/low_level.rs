@@ -274,16 +274,37 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(responder.clone());
     let interruption = responder.clone();
+    let mut rendered = None;
     match context
-        .run("http.response_construction", |scope| async move {
-            admitted::record(request.extensions_mut(), scope.clone(), interruption);
-            request.extensions_mut().insert(scope);
-            Ok::<_, Infallible>(next.run(request).await)
-        })
+        .run_resolved(
+            "http.response_construction",
+            |scope| async move {
+                admitted::record(request.extensions_mut(), scope.clone(), interruption);
+                request.extensions_mut().insert(scope);
+                Ok::<_, Infallible>(next.run(request).await)
+            },
+            |result| {
+                let mut response = result?;
+                let interruption = response
+                    .extensions_mut()
+                    .remove::<crate::RenderedInterruption>();
+                if let Some(crate::RenderedInterruption(reason)) = interruption {
+                    // A nested admission check can observe expiry within a poll
+                    // before our timer runs. Resolve its fact before telemetry,
+                    // retaining the exact response without rendering it twice.
+                    rendered = Some(response);
+                    Err(OperationError::Interrupted(reason))
+                } else {
+                    Ok(response)
+                }
+            },
+        )
         .await
     {
         Ok(response) => response,
-        Err(OperationError::Interrupted(reason)) => responder.render(reason),
+        Err(OperationError::Interrupted(reason)) => {
+            rendered.unwrap_or_else(|| responder.render(reason))
+        }
         Err(OperationError::Failed(never)) => match never {},
     }
 }

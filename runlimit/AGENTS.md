@@ -116,9 +116,11 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   evaluated or consumed.
 - Retry and replenishment delays are measured from the backend's authoritative
   evaluation time and round up when converted to whole-second headers.
-  PostgreSQL measures elapsed evaluation time with its database clock and may
-  conservatively overstate the delay at the caller by commit and transport
-  latency.
+  Both PostgreSQL limiters (fixed-window and GCRA) subtract database-clock
+  elapsed time from the evaluation sample through the path's last statement,
+  saturating at zero. GCRA's shard watermark clamps evaluation and persisted
+  state only, never the elapsed-time sample. Commit and transport latency may
+  still conservatively overstate the delay at the caller.
 - PostgreSQL builds every decision from the database response before the
   transaction is finalized. A malformed response is a pre-commit
   `StorageInvariant` failure, never a decision that may already have consumed

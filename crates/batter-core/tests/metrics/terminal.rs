@@ -2,6 +2,7 @@
 //! executions, abandoned admission waits and abandoned cleanup hooks.
 
 use super::{assert_catalog, capture::Capture, owner};
+use crate::bulkhead_testing::BulkheadTestExt;
 use batter_core::{
     admission::{Admission, Bulkhead, BulkheadCapacity},
     cleanup::{CleanupBudget, CleanupStack},
@@ -100,10 +101,10 @@ async fn abandoned_admission_wait_records_a_dropped_decision() {
     let _recorder = facade::set_default_local_recorder(&capture);
     let context = owner().into_context();
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
-    let _held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let _held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     let waiting = tokio::time::timeout(
         Duration::from_millis(1),
-        bulkhead.enter(&context, Admission::Wait),
+        bulkhead.hold(&context, Admission::Wait),
     )
     .await;
     assert!(waiting.is_err());
@@ -290,11 +291,11 @@ async fn admission_wait_destroyed_while_unwinding_records_panicked() {
     let _recorder = facade::set_default_local_recorder(&capture);
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let context = owner().into_context();
-    let _held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let _held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     let waiting = tokio::spawn({
         let bulkhead = bulkhead.clone();
         async move {
-            let wait = bulkhead.enter(&context, Admission::Wait);
+            let wait = bulkhead.hold(&context, Admission::Wait);
             tokio::pin!(wait);
             // A zero timeout polls the wait exactly once while it stays owned.
             let polled = tokio::time::timeout(Duration::ZERO, wait.as_mut()).await;

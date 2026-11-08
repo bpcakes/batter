@@ -1,4 +1,8 @@
+use batter as bulkhead_foundation;
+#[path = "../../../../../crates/batter-core/tests/support/bulkhead.rs"]
+pub(super) mod bulkhead_testing;
 use crate::delivery::AttemptBudget;
+use bulkhead_testing::BulkheadTestExt;
 
 use super::*;
 use batter::runledger::test_support::{HandlerExit, HandlerInvocation, HandlerRun};
@@ -451,100 +455,8 @@ async fn rejected_derivation_starts_no_state_or_provider_work() -> Result<(), ba
     Ok(())
 }
 
-#[tokio::test]
-async fn invocation_exit_reaches_provider_admission_and_calls() -> Result<(), batter::BoxError> {
-    let worker = offline_worker().await?;
-    let independent = batter::operation::OperationOwner::new(Duration::from_secs(60))?;
-    let held = worker
-        .admission
-        .enter(independent.context(), Admission::Wait)
-        .await?;
-    let (context, payload) = owned_payload();
-    let admission = worker.admission.clone();
-    let (phases, waiting) = in_invocation(Duration::from_secs(60), context, move |execution| {
-        Box::pin(async move {
-            let phases = provider_phases(execution).expect("phases");
-            let work = phases.work().clone();
-            let mut waiting =
-                Box::pin(async move { admission.enter(&work, Admission::Wait).await.map(drop) });
-            // Its first poll, before the invocation ends, finds the slot held,
-            // so the exit interrupts the wait rather than the entry check.
-            let first =
-                std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
-            assert!(
-                first.is_pending(),
-                "provider admission waits for the held slot"
-            );
-            // Provider work that outlives the handler waits in its own task.
-            (phases, tokio::spawn(waiting))
-        })
-    })
-    .await;
-    // The invocation's exit, not the test, interrupts the waiting admission.
-    assert!(matches!(
-        waiting.await?,
-        Err(AdmissionError::Interrupted(
-            batter::operation::Interruption::Cancelled
-        ))
-    ));
-    // A provider call under the ended invocation is refused before any request.
-    let request = provider_request(&payload);
-    let dispatch = worker
-        .provider
-        .prepare_dispatch(&request.idempotency_key(), &request)?;
-    let refused = dispatch
-        .execute(phases.work(), held)
-        .await
-        .expect("uninvoked dispatch is known not dispatched");
-    assert_eq!(
-        refused,
-        DispatchOutcome::KnownNotDispatched {
-            retry_not_before: Duration::ZERO,
-        }
-    );
-    assert!(
-        independent.context().check().is_ok(),
-        "only linked work stops"
-    );
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn provider_work_expiry_leaves_the_final_state_reserve() -> Result<(), batter::BoxError> {
-    let worker = offline_worker().await?;
-    let (context, payload) = owned_payload();
-    let budget = Duration::from_secs(10);
-    let failure = in_invocation(budget, context, move |execution| {
-        Box::pin(async move {
-            let phases = provider_phases(execution).expect("phases");
-            tokio::time::advance(budget - FINAL_STATE_RESERVE).await;
-            let expired = worker
-                .admission
-                .enter(phases.work(), Admission::Wait)
-                .await
-                .expect_err("provider work expired");
-            assert!(matches!(
-                expired,
-                AdmissionError::Interrupted(batter::operation::Interruption::DeadlineExceeded)
-            ));
-            assert!(phases.finalization().check().is_ok());
-            assert_eq!(phases.finalization().remaining(), FINAL_STATE_RESERVE);
-            // The handler still records the retained state; offline storage refuses it.
-            worker
-                .admission_failure(
-                    execution,
-                    &payload,
-                    ProviderEffectState::AwaitingAttempt,
-                    expired,
-                )
-                .await
-                .expect_err("offline state")
-        })
-    })
-    .await;
-    assert_eq!(failure.code, CODE_STATE_UNAVAILABLE);
-    Ok(())
-}
+mod panic_policy;
+mod phase_ownership;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RetentionWindow {

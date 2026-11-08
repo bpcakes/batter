@@ -37,7 +37,7 @@ use tracing::{Dispatch, Span};
 /// };
 ///
 /// async fn admit(bulkhead: &Bulkhead, context: &OperationContext) -> Result<(), BlockingError> {
-///     let _permit = bulkhead.enter(context, Admission::Reject).await?;
+///     bulkhead.run(context, Admission::Reject, "example.work", |_| async { Ok::<_, ()>(()) }).await?;
 ///     Ok(())
 /// }
 /// ```
@@ -106,7 +106,7 @@ impl Bulkhead {
     /// Run synchronous CPU work or blocking I/O on Tokio's blocking pool while
     /// holding one permit of this bulkhead until `work` returns.
     ///
-    /// Admission follows [`Self::enter`]: the same [`Admission`] policy, the
+    /// Admission follows [`Self::run`]: the same [`Admission`] policy, the
     /// same context preflight and the same single bulkhead decision. After a
     /// permit is granted the context is checked again, so a cancellation, or a
     /// deadline that passed before its timer fired, still refuses the call. A
@@ -121,7 +121,7 @@ impl Bulkhead {
     /// it returns: anything returned as `T` that still has work to do, such as
     /// a future from `|| async move { .. }`, a `JoinHandle` or a thread handle,
     /// runs outside the bulkhead, and awaiting a returned future runs it on the
-    /// caller's async thread. Use [`Self::enter`] for async work.
+    /// caller's async thread. Use [`Self::run`] for async work.
     ///
     /// The context bounds only the wait, with [`OperationContext::run`]'s
     /// precedence; a result that becomes ready in the same poll as an
@@ -218,7 +218,7 @@ impl Bulkhead {
     /// assert_eq!(value, digest(&[7; 4096]));
     /// // When the value arrives, the closure's permit is already free.
     /// let context = OperationOwner::new(Duration::from_secs(1))?.into_context();
-    /// assert!(runtime.block_on(bulkhead.enter(&context, Admission::Reject)).is_ok());
+    /// assert!(runtime.block_on(bulkhead.run(&context, Admission::Reject, "example.check", |_| async { Ok::<_, ()>(()) })).is_ok());
     /// # Ok::<(), BoxError>(())
     /// ```
     pub async fn run_blocking<T, F>(

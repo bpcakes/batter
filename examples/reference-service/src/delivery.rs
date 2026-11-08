@@ -436,6 +436,8 @@ pub enum QueryError {
 pub struct DeliveryService {
     pool: PgPool,
     database: runledger_postgres::RunledgerDatabase,
+    #[cfg(test)]
+    after_settlement: Option<std::sync::Arc<service::live_tests::AfterSettlement>>,
 }
 
 /// Immutable, versioned payload stored in the authoritative Runledger job.

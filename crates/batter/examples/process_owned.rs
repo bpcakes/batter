@@ -82,17 +82,20 @@ async fn main() -> Result<(), BoxError> {
             .await
             .map_err(|_| std::io::Error::other("startup failed"))?;
 
-        // Transfer the provider permit into owned work. A lost HTTP receipt must
-        // not release capacity while the provider call is running.
+        // The process task owns bounded execution. A lost HTTP receipt cannot
+        // release capacity while the provider call is running.
         let bulkhead = Bulkhead::new(BulkheadCapacity::new(1)?);
         let request =
             batter::operation::OperationOwner::new(Duration::from_secs(1))?.into_context();
-        let permit = bulkhead.enter(&request, Admission::Reject).await?;
         let (finished, finished_rx) = oneshot::channel();
         let receipt = process.try_spawn("provider.refresh", move |_scope| async move {
-            let _permit = permit;
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let _ = finished.send(());
+            let result = bulkhead
+                .run(&request, Admission::Reject, "provider.refresh", |_| async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok::<_, Infallible>(())
+                })
+                .await;
+            let _ = finished.send(result);
             Ok::<_, Fatal<Infallible>>(())
         })?;
         drop(receipt); // A disconnected caller is not the operation's owner.
@@ -118,7 +121,8 @@ async fn main() -> Result<(), BoxError> {
     let body = match submitted {
         Ok(finished_rx) => finished_rx
             .await
-            .map_err(|error| Box::new(error) as BoxError),
+            .map_err(|error| Box::new(error) as BoxError)
+            .and_then(|result| result.map_err(|error| Box::new(error) as BoxError)),
         Err(error) => Err(error),
     };
     let success = complete(body, shutdown)?;

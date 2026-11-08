@@ -173,7 +173,7 @@ scheduling, a retry framework or a lease protocol.
 an expiring HTTP cancellation token or serialize a Tokio Instant. Persist safe
 correlation metadata and give each job its own policy. Runledger owns leasing,
 retries, scheduling, recovery, and its own internal supervisor. A handler
-derives its operation phases from its own invocation with `job_phases`: the
+registers `PhasedJob`, which derives its phases from its own invocation: the
 worker's absolute deadline bounds them, and Runledger's invocation exit hook,
 which holds the root's only cancellation authority, cancels them when the
 invocation ends.
@@ -206,6 +206,11 @@ interruption responder under a type that only the adapter can name. The public
 `AdmittedRequest` extractor wraps that record without `Clone`, so request
 extensions cannot hold it, and the shared renderer filter removes the record
 at every application renderer boundary.
+
+The interruption responder attaches private outcome evidence to the response it
+renders. Admission resolves that evidence before operation telemetry, preserving
+the exact response. A discarded rendering cannot classify another response, and
+an HTTP status alone is not evidence of an interruption.
 
 The public `batter_axum::browser` namespace owns a separate synchronous HTTP
 transport boundary: validated configured origins, strict named-cookie scanning,
