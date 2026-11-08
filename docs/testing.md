@@ -312,6 +312,32 @@ completion fields and checked shutdown. The smoke launcher owns its fixture
 settings instead of consuming ambient `BATTER_*` values. These are not load,
 streaming or external deployment tests.
 
+`batter-axum`'s `observation::interruption` regressions exhaust the request budget
+inside one handler poll, before bulkhead work starts, and require a correlated
+deadline operation event under both normal and WARN-filtered telemetry. Controls
+cover cancellation, custom response retention, single renderer invocation and a
+discarded interruption rendering followed by an unrelated application 503.
+`observation::stacked_interruption` exercises both split and combined low-level
+layers: handler-returned interruption and the inner boundary's own deadline or
+forced cancellation retain the inner outcome and leave an active outer operation
+successful, with one custom render and one HTTP completion. A second matrix
+recycles response extensions from both interruption reasons through drain
+rejection, deadline, cancellation and handler rendering. It checks that stale
+evidence cannot classify the outer operation, the current handler reason wins,
+and custom status, headers, body and unrelated extensions survive.
+`observation::policy_rendering` recycles both reasons through browser rejection,
+liveness, readiness and unmatched-fallback callbacks. It returns each in-process
+response through an independent admission, checking successful construction,
+one callback and HTTP completion, retained application metadata and envelopes,
+and probe-owned status. All four scenarios failed on stale operation evidence
+before the private renderer-output contract was enforced.
+
+The core `resolved_value` target exercises every classified-value outcome,
+redaction, refusal before work, inert unpolled callbacks, borrowed/non-`Send`
+values, `Send` preservation, panic propagation, child cancellation, one metric
+per completion, and abandoned work/resolver captures plus nested span destruction
+under the first-poll dispatcher. Rustdoc rejects a dropped-with-value variant.
+
 ## Typed settings verification
 
 Core settings and reference configuration tests cover bounded explicit sources,

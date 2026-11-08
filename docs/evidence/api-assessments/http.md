@@ -6,6 +6,67 @@ These records apply ADR-010 to specific changes. They retain the evidence
 and limitations recorded at delivery; current contracts remain in rustdoc
 and [guarantees](../../guarantees.md).
 
+## Explicit HTTP completion (`batter-q1jl`)
+
+The first deadline-telemetry repair at `fc48183` spread one terminal decision
+across a private response marker, a captured `Option<Response>`, and an
+`OperationError::Interrupted` result. A stacked-admission probe demonstrated the
+consequence: an inner timer response leaked its marker and changed the outer
+outcome, while a handler-returned interruption had its marker consumed. The user
+requested an explicit representation rather than another implicit state protocol.
+
+The replacement is `operation::low_level::ResolvedOutcome<T>`, an exhaustive sum
+of successful, failed and interrupted values. `run_resolved_value` delegates to
+the existing core boundary; it owns execution, synchronous resolution,
+observation and return of the value in that order. No paired completion call,
+optional retained-value slot, task, new polling loop or mutable phase flag is
+introduced. A completed value cannot be classified as dropped. Debug formatting
+does not inspect its payload. The HTTP adapter consumes native response evidence
+into `ResolvedOutcome<Response>`; a boundary rendering its own interruption
+creates an unmarked response. Reused custom-renderer extensions are cleared of
+the adapter's private evidence before the current handoff is constructed.
+
+The next independent panel reproduced stale evidence escaping through early
+admission rejection: `RequestPolicy::render_failure` bypassed the interruption
+renderer's cleanup. The recurrence assessment located an adapter ownership gap,
+not a consumer ordering obligation or a flaw in the typed core outcome. Private
+`FailureRendering` centralized request-policy rendering, but the next review
+found that browser rejection still returned a raw response inside admission.
+Probes and unmatched fallback responses reproduced the same leak when returned
+through another admission. These distinct callback families exposed why an
+invocation-site cleanup obligation was insufficient.
+
+The final internal contract makes every stored synchronous renderer return an
+opaque `PolicyResponse`. Public callback registration wraps the native response
+in this value, whose sole constructor removes old interruption evidence. Failure,
+browser, liveness, readiness and fallback callbacks therefore cannot return a
+raw response to their adapter caller. The public interruption responder alone
+attaches the current reason afterward. Public signatures and ordinary handler
+responses are unchanged. Recycled response-extension regressions cover all
+renderer families, plus rejection, deadline, forced cancellation and returned
+handler paths with both old reasons. They retain unrelated metadata and the
+existing probe-owned status/severity decisions. This moves the invariant into
+the private output type rather than adding consumer instructions.
+
+Native Axum handlers return `Response`, so a private response extension remains
+the transport for a handler's interruption reason. This is an upstream response
+representation boundary, not a public application phase transition. The library
+owns both marker production and consumption; consumers acquire no paired call
+or ordering obligation. Returning a replacement native response or clearing all
+its extensions discards that response's evidence. The typed terminal outcome
+cannot prove application classification truth or remote effects; those remain
+explicit obligations of the lower-level resolution seam, as with `run_resolved`.
+
+The existing `run_resolved` result cannot retain a value in its interrupted arm,
+which justifies the additive core seam for this adapter. Existing public names
+and signatures remain unchanged; no hard cut or deprecated shim is needed.
+The trailing-slash option remains idempotent configuration, with no new request
+execution phase. Focused regressions cover the original missing event, both
+stacked paths and interruption reasons, exact response retention, discarded
+renderings, typed outcomes, callback laziness, dispatch destruction and metrics.
+Executed verification is recorded in the Bead. A fresh consumer-agent adoption
+or mutation exercise remains proposed and unexecuted.
+
 ## Private-response referrer assessment (`batter-lto`)
 
 The adapter previously fixed `Referrer-Policy: same-origin`. A consumer needing

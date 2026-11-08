@@ -1,11 +1,11 @@
 //! Metadata-only unmatched-path rendering outside admission.
 
 use super::{BoundaryAssemblyError, HttpBoundary};
-use crate::correlation;
+use crate::{correlation, rendering::PolicyResponse};
 use axum::{Router, extract::Request, http::request::Parts, response::Response};
 use std::sync::Arc;
 
-type Renderer = dyn Fn(&Parts) -> Response + Send + Sync;
+type Renderer = dyn Fn(&Parts) -> PolicyResponse + Send + Sync;
 
 pub(super) struct RenderedFallback(Arc<Renderer>);
 
@@ -68,7 +68,9 @@ impl HttpBoundary {
         if self.fallback.is_some() {
             return Err(BoundaryAssemblyError::ConflictingFallback);
         }
-        self.fallback = Some(RenderedFallback(Arc::new(render)));
+        self.fallback = Some(RenderedFallback(Arc::new(move |parts| {
+            PolicyResponse::new(render(parts))
+        })));
         Ok(self)
     }
 }

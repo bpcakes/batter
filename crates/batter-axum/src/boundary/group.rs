@@ -9,13 +9,14 @@ use crate::{
     },
     correlation,
     low_level::request_admission,
+    rendering::PolicyResponse,
 };
 use axum::{
     Router,
     extract::{Request, State},
     http::{Method, request::Parts},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use std::{error::Error, fmt, sync::Arc};
 
@@ -23,7 +24,7 @@ use std::{error::Error, fmt, sync::Arc};
 pub(super) const DEFAULT_GROUP: &str = "default";
 const NAME_MAX_LEN: usize = 96;
 
-type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + Sync;
+type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> PolicyResponse + Send + Sync;
 
 /// Browser policy that [`HttpBoundary`](crate::HttpBoundary) installs for one route group.
 ///
@@ -184,7 +185,9 @@ impl BrowserPolicy {
             response,
             mutation: MutationGate::Checked(Arc::new(MutationGuard {
                 policy: mutation,
-                render: Box::new(render),
+                render: Box::new(move |rejection, parts| {
+                    PolicyResponse::new(render(rejection, parts))
+                }),
             })),
         }
     }
@@ -264,7 +267,8 @@ async fn browser_gate(
                 Err(rejection) => {
                     let (parts, body) = request.into_parts();
                     drop(body);
-                    return (guard.render)(rejection, &correlation::renderer_parts(parts));
+                    return (guard.render)(rejection, &correlation::renderer_parts(parts))
+                        .into_response();
                 }
             },
             MutationGate::Waived(MutationCheckWaiver::ApplicationChecksMutations) => {

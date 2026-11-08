@@ -37,6 +37,10 @@ Windows support and non-Unix fallbacks are out of scope.
   public entrypoint; all run variants share the boundary in `operation.rs`.
   Keep the invocation marker immediately before the factory call, and preserve
   cancellation/deadline precedence for both tracked and legacy callers.
+  `operation/resolved.rs` owns the lower-level `ResolvedOutcome` and
+  `run_resolved_value` seam: one terminal classification carries its adapter value,
+  and the existing boundary observes it before releasing the value. Never split
+  that terminal state into a result plus a separately retained value slot.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.

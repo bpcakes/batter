@@ -207,6 +207,20 @@ interruption responder under a type that only the adapter can name. The public
 extensions cannot hold it, and the shared renderer filter removes the record
 at every application renderer boundary.
 
+The interruption responder attaches private outcome evidence to the response it
+renders. Admission consumes that evidence into one
+`operation::low_level::ResolvedOutcome<Response>`, carrying the classification and
+response together. `run_resolved_value` shares the core execution boundary and
+observes that terminal value before returning the response. There is no separate
+retained-response slot. A boundary rendering its own interruption creates no
+handoff marker. Every stored synchronous renderer returns the private
+`rendering::PolicyResponse`, whose constructor removes recycled interruption
+evidence. This covers failure, browser, probe and fallback callbacks without a
+cleanup step at each invocation site; the public interruption responder alone
+adds a current handoff reason afterward. A discarded
+rendering cannot classify another response, and an HTTP status alone is not
+evidence of an interruption. See the [invalid-state assessment](evidence/api-assessments/http.md#explicit-http-completion-batter-q1jl).
+
 The public `batter_axum::browser` namespace owns a separate synchronous HTTP
 transport boundary: validated configured origins, strict named-cookie scanning,
 fixed host-only cookie serialization, exact browser mutation signals, and

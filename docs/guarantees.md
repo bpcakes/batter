@@ -154,6 +154,18 @@ the outer future itself is dropped. The application owns the retained evidence
 and may reclassify interruption only from that evidence; Batter does not prove a
 remote commit, rollback, or other effect.
 
+`operation::low_level::run_resolved_value` uses that same execution boundary when
+an adapter must return a value even for interruption. Its resolver returns one
+`ResolvedOutcome<T>`: `Succeeded(T)`, `Failed(T)`, or
+`Interrupted { reason, value: T }`. Classification and value cannot be split
+across an operation result and a separately coordinated optional slot. The
+library records the selected outcome before returning the value. There is no
+constructible dropped-with-value variant. An unpolled call invokes neither
+callback; abandoning a pending call destroys work and resolver captures under
+the first-poll dispatch without invoking the resolver. Panics propagate and
+cancel the child. The low-level caller still owns classification truth and any
+remote-effect claim; the supported adapter owns that translation for its users.
+
 Batter restores the originating tracing dispatcher during polling and destruction
 of its observed futures. Completion/drop events and nested span destruction stay
 with that subscriber when a runtime abort happens outside the original poll.
@@ -2471,6 +2483,27 @@ The timeout ends when Next returns a Response. It does not bound streaming body
 polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring
 outside this layer. An escaped request context is cancelled at response
 construction, so a streaming design needs a distinct owner.
+
+A response returned from `RequestInterruptionResponder::render` carries private
+interruption evidence. Admission uses it to classify the response-construction
+operation before emitting telemetry, including when a nested bulkhead refuses
+expired work before its factory starts and the outer timer has not fired. The
+original status, headers and body are retained in one `ResolvedOutcome<Response>`
+without calling the renderer again. Admission consumes the private marker before
+returning; its own timer/cancellation path renders directly without producing a
+handoff marker. In stacked low-level admission, an inner interruption therefore
+does not reclassify an outer boundary whose own authority remains active. Both
+interruption paths have the same ownership. Every stored adapter renderer returns
+an opaque private output that removes recycled interruption evidence from custom
+response extensions while retaining unrelated metadata. This includes request
+failures, early admission rejection, browser rejection, probes and unmatched
+fallback rendering; their existing status and severity policies still apply.
+Only the public interruption responder attaches a current handoff reason.
+Rendering and discarding a response
+does not classify a later response;
+an unmarked application 503 remains successful response construction. The single
+HTTP completion still describes the actual response status. The operation event
+retains request correlation when INFO operation spans are filtered out.
 
 The two HTTP/1.1 lifetime targets share launch/completion evidence but retain
 separate raw-wire and instrumented-IO fixtures ([ADR-008](adr/008-http-transport-ownership.md),

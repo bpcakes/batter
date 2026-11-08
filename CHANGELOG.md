@@ -8,6 +8,18 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Preserve nested HTTP interruption outcomes in response-construction telemetry,
+  including deadline expiry before bulkhead execution starts. Carry classification
+  and response in `operation::low_level::ResolvedOutcome`, driven by the additive
+  `run_resolved_value` seam. Retain the exact response and filtered correlation,
+  and consume interruption evidence within one admission boundary. All policy
+  renderer callbacks return a private sanitized response, clearing recycled
+  evidence from failures, browser rejections, probes and unmatched fallbacks
+  (`batter-q1jl`).
+
+- Add `RequestDraft::trailing_slash()` for provider endpoints whose exact path
+  ends in `/`. Segment validation, escaping and the origin root are preserved.
+
 - Own reference-worker interruption evidence inside exchange execution, remove
   caller-set progress markers and constrain recovery actions to unresolved
   source states. Represent the phased job adapter's private execution state

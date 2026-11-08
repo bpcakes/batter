@@ -137,6 +137,10 @@ with a nonzero port, for local fixtures and tests.
 `client.request(method, segments)` starts a `RequestDraft` below the origin.
 Each segment is percent-encoded, so `/`, `?`, `#` and `%` stay inside it: pass
 `["v1", "effects"]`, not `["v1/effects"]`, which is sent as one encoded segment.
+For an endpoint whose path ends in `/`, use
+`client.request(Method::POST, ["v1", "effects"]).trailing_slash()` before
+`prepare()`. It sends `/v1/effects/`; repeated calls add no further slash, and
+the origin root remains `/`. Empty or dot segments are still refused.
 `header` marks every value it is given sensitive and refuses `Host`,
 `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`, `Trailer`,
 `Expect`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and
