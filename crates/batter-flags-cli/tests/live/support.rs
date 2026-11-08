@@ -124,6 +124,20 @@ fn process_with(catalog_keys: &[&str], build: &str, liveness: u64) -> ProcessPre
                     .declare()
                     .unwrap();
             }
+            // `ledger_v2` on requires `ledger_audit` on.
+            "ledger" => {
+                let v2 = catalog
+                    .mode_flag("ledger_v2", Toggle::Off)
+                    .declare()
+                    .unwrap();
+                let audit = catalog
+                    .mode_flag("ledger_audit", Toggle::Off)
+                    .declare()
+                    .unwrap();
+                catalog
+                    .requires(&v2, Toggle::On, &audit, Toggle::On)
+                    .unwrap();
+            }
             other => {
                 catalog
                     .release_flag(other, Toggle::Off, later)
@@ -314,6 +328,20 @@ impl Database {
         sqlx::raw_sql("CREATE FUNCTION flags.lose_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_terminate_backend(pg_backend_pid()); RETURN NULL; END $$; \
              CREATE CONSTRAINT TRIGGER lose_commit AFTER INSERT ON flags.flag_audit DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION flags.lose_commit();")
             .execute(&self.pool)
+            .await
+            .unwrap();
+    }
+
+    /// Adds a Live process of `build` declaring `keys`.
+    pub async fn live(&self, keys: &[&str], build: &str) {
+        let mut live = process(keys, build);
+        let second = Duration::from_secs(1);
+        let store = PooledStore::new(
+            self.pool.clone(),
+            StoreTiming::new(second * 3, second * 3, second * 3, second * 3).unwrap(),
+        );
+        store
+            .heartbeat(&mut live, &report(&[]), deadline())
             .await
             .unwrap();
     }

@@ -43,6 +43,7 @@ mod outcome;
 mod prepared;
 mod presence;
 mod prune;
+mod relations;
 mod request;
 mod state;
 mod store;
@@ -62,11 +63,12 @@ pub use presence::{
     SnapshotReport, StopFailure, StopOutcome,
 };
 pub use prune::{PruneLimit, Pruned};
+pub use relations::{Basis, Deferral, UnmetInvariant};
 pub use request::{
     Actor, Archive, Change, ChangeReason, ExplicitValue, Precondition, Variant, Write,
 };
 pub use store::{PooledStore, StoreTiming};
-pub use write::{FlipPolicy, Request, RollbackFailure};
+pub use write::{FlipPolicy, InvariantPolicy, Request, RollbackFailure, WritePolicy};
 #[cfg(test)]
 extern crate self as batter_flags_postgres;
 #[cfg(test)]

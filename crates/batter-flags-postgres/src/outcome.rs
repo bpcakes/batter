@@ -1,3 +1,4 @@
+use crate::{Deferral, UnmetInvariant};
 use batter_flags_core::Version;
 use batter_sqlx::CommitUnconfirmed;
 use std::{error::Error, fmt};
@@ -76,6 +77,20 @@ pub enum Refusal {
     CoordinatedFlip,
     /// A live control-plane reader has already applied a higher version.
     StoreBehindFleet,
+    /// The written flag would newly hold flags in a Live or Silent
+    /// declarer's processes, for cross-flag invariants it leaves unmet, and
+    /// the request refused that.
+    InvariantUnmet {
+        /// The flags it would newly hold, sorted; never empty.
+        unmet: Vec<UnmetInvariant>,
+    },
+    /// A Live or Silent declarer's manifest is one this writer cannot
+    /// decode, so the write's invariants could not be judged, and the
+    /// request refused that.
+    InvariantsUnjudged {
+        /// How many catalogs could not be judged.
+        catalogs: std::num::NonZeroUsize,
+    },
 }
 /// Commit acknowledgement was not obtained. Reconcile; never blindly replay.
 /// Native completion failures retain `batter-sqlx`'s original evidence.
@@ -116,6 +131,8 @@ pub enum WriteOutcome {
         previous: Option<StoredState>,
         /// Number of live declaring processes.
         live_declaring: usize,
+        /// Why processes will not serve the state as written for now.
+        deferral: Deferral,
     },
     /// Acknowledged write without a live declaring process.
     WrittenUndeclared {
@@ -123,6 +140,9 @@ pub enum WriteOutcome {
         version: Version,
         /// Why there was no live declaration.
         basis: UndeclaredBasis,
+        /// Why a Silent declarer's processes will not serve the state as
+        /// written, should they still run.
+        deferral: Deferral,
     },
     /// Identical state; no counter or audit change.
     Unchanged {

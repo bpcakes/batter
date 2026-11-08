@@ -117,3 +117,19 @@ fn an_empty_selection_is_refused() {
         Err(FlagsGrantError::WrongSchema)
     ));
 }
+
+#[test]
+fn an_audited_write_reads_what_its_judgements_need() {
+    let write = rendered([FlagsOperation::AuditedWrite]);
+    // The coordinated-flip refusal reads the flip discipline, and the
+    // invariant and governance judgement reads each running catalog's manifest.
+    assert!(
+        write.contains("SELECT (\"flip_discipline\") ON TABLE \"flags\".\"flag_catalog_entries\""),
+        "{write}"
+    );
+    assert!(
+        write.contains("SELECT (\"manifest\") ON TABLE \"flags\".\"flag_catalogs\""),
+        "{write}"
+    );
+    assert!(!write.contains("UPDATE (\"manifest\")") && !write.contains("INSERT (\"manifest\")"));
+}

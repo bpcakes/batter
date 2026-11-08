@@ -38,6 +38,55 @@ pub enum FlipPolicy {
     AcceptRolling,
 }
 
+/// Whether a write may leave a cross-flag invariant unmet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InvariantPolicy {
+    /// Refuse it with [`Refusal::InvariantUnmet`](crate::Refusal::InvariantUnmet),
+    /// judged inside the write's transaction against the stored rows.
+    RefuseUnmet,
+    /// Write it: a process whose kind owns both flags holds a flag of the
+    /// pair at its declared base until the invariant is met, and
+    /// [`WriteOutcome::Written`] lists each in its
+    /// [`Deferral`](crate::Deferral). The way to change a `both_or_none`
+    /// pair, or two flags that require each other, one write at a time.
+    AcceptHeld,
+}
+
+/// What a write accepts that processes will not apply as written at once.
+///
+/// [`WritePolicy::STRICT`] refuses both; an operator accepts each one
+/// explicitly.
+///
+/// ```
+/// use batter_flags_postgres::{FlipPolicy, InvariantPolicy, WritePolicy};
+///
+/// let pair = WritePolicy {
+///     invariants: InvariantPolicy::AcceptHeld,
+///     ..WritePolicy::STRICT
+/// };
+/// assert_eq!(pair.flip, FlipPolicy::RefuseCoordinated);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WritePolicy {
+    /// A flip a retained catalog declares coordinated.
+    pub flip: FlipPolicy,
+    /// A cross-flag invariant the write leaves unmet.
+    pub invariants: InvariantPolicy,
+}
+
+impl WritePolicy {
+    /// Refuse a coordinated flip and an unmet invariant.
+    pub const STRICT: Self = Self {
+        flip: FlipPolicy::RefuseCoordinated,
+        invariants: InvariantPolicy::RefuseUnmet,
+    };
+    /// Refuse neither, as [`PooledStore::write`], `archive` and `restore` do.
+    pub const ACCEPT_ALL: Self = Self {
+        flip: FlipPolicy::AcceptRolling,
+        invariants: InvariantPolicy::AcceptHeld,
+    };
+}
+
 /// One audited mutation, for [`PooledStore::submit`].
 #[derive(Clone, Debug)]
 pub enum Request {
@@ -55,11 +104,15 @@ impl PooledStore {
     /// COMMIT, rolls it back and returns [`ErrorClass::Interrupted`], with
     /// nothing written. Once COMMIT is sent it is never interrupted, so the
     /// outcome reported is the real one. Dropping the sender interrupts
-    /// nothing.
+    /// nothing. `policy` decides what is refused inside the transaction.
+    ///
+    /// Migration: the `flip: FlipPolicy` argument is now
+    /// `WritePolicy { flip, invariants }`; `WritePolicy::STRICT` refuses what
+    /// `FlipPolicy::RefuseCoordinated` did and an unmet invariant too.
     pub async fn submit(
         &self,
         request: Request,
-        flip: FlipPolicy,
+        policy: WritePolicy,
         deadline: Instant,
         interrupt: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<WriteOutcome, StoreError> {
@@ -68,13 +121,13 @@ impl PooledStore {
             Request::Archive(archive) => Mutation::Archive(archive),
             Request::Restore(restore) => Mutation::Restore(restore),
         };
-        self.mutate_until(mutation, flip, deadline, Interrupt::On(interrupt))
+        self.mutate_until(mutation, policy, deadline, Interrupt::On(interrupt))
             .await
     }
 
     /// Write exactly once under the global counter lock. It never refuses a
-    /// coordinated flip; [`submit`](Self::submit) with
-    /// [`FlipPolicy::RefuseCoordinated`] does. Every refusal and no-op
+    /// coordinated flip or an unmet invariant; [`submit`](Self::submit) with
+    /// [`WritePolicy::STRICT`] does. Every refusal and no-op
     /// acknowledges rollback. No transport or timeout result triggers retry.
     pub async fn write(&self, write: Write, deadline: Instant) -> Result<WriteOutcome, StoreError> {
         self.mutate(Mutation::Write(write), deadline).await
@@ -103,7 +156,7 @@ impl PooledStore {
     ) -> Result<WriteOutcome, StoreError> {
         self.mutate_until(
             mutation,
-            FlipPolicy::AcceptRolling,
+            WritePolicy::ACCEPT_ALL,
             deadline,
             Interrupt::Never,
         )
@@ -113,7 +166,7 @@ impl PooledStore {
     async fn mutate_until(
         &self,
         mutation: Mutation,
-        flip: FlipPolicy,
+        policy: WritePolicy,
         deadline: Instant,
         mut interrupt: Interrupt,
     ) -> Result<WriteOutcome, StoreError> {
@@ -125,7 +178,7 @@ impl PooledStore {
         })
         .await?;
         let operation = tx.operation_until(deadline, async |sql| {
-            self.prepare(sql, &mutation, flip, deadline).await
+            self.prepare(sql, &mutation, policy, deadline).await
         });
         // Until COMMIT is sent an interrupt drops the transaction whole: its
         // connection is retired, so the server aborts it, and nothing waits
@@ -203,7 +256,7 @@ impl PooledStore {
         &self,
         sql: &mut PgScopedSql<'_>,
         mutation: &Mutation,
-        flip: FlipPolicy,
+        policy: WritePolicy,
         deadline: Instant,
     ) -> Result<Prepared, StoreError> {
         let [statement, lock, idle] = self.timing.settings(deadline)?;
@@ -233,7 +286,7 @@ impl PooledStore {
             pause.entered.notify_one();
             pause.release.notified().await;
         }
-        super::validate::apply(sql, mutation, flip, head, next).await
+        super::validate::apply(sql, mutation, policy, head, next).await
     }
 }
 /// Whether a mutation may be interrupted before COMMIT.

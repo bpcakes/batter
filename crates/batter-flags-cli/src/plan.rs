@@ -1,7 +1,7 @@
 //! Turning parsed arguments into a validated plan, before any connection.
 
 use batter_flags_core::{FlagKey, SwitchState};
-use batter_flags_postgres::{Archive, FlipPolicy, Request, Variant, Write};
+use batter_flags_postgres::{Archive, Request, Variant, Write, WritePolicy};
 
 use crate::commands::{Command, Guard, KillState, ListFilter};
 
@@ -18,7 +18,7 @@ pub(crate) enum Plan {
         name: &'static str,
         key: FlagKey,
         request: Request,
-        flip: FlipPolicy,
+        policy: WritePolicy,
         after: AfterWrite,
     },
 }
@@ -54,7 +54,7 @@ pub(crate) fn plan(command: Command) -> Result<Plan, String> {
         name,
         key,
         request,
-        flip: guard.flip(),
+        policy: guard.policy(),
         after,
     };
     Ok(match command {

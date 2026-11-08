@@ -54,7 +54,7 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
     }
     f.seed("live_flag", "release", "toggle", "live").await;
     assert!(
-        matches!(f.store.write(set("live_flag","on",Some(0)),deadline()).await.unwrap(),WriteOutcome::Written { version, previous: None, live_declaring: 1 } if version == Version::new(5))
+        matches!(f.store.write(set("live_flag","on",Some(0)),deadline()).await.unwrap(),WriteOutcome::Written { version, previous: None, live_declaring: 1, .. } if version == Version::new(5))
     );
     let before = f.head().await;
     assert!(
@@ -397,7 +397,7 @@ async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
             .unwrap();
         assert!(matches!(
             f.store.restore(Archive::new(key("archived_flag"), change(Some(2))), deadline()).await.unwrap(),
-            WriteOutcome::WrittenUndeclared { version, basis: UndeclaredBasis::NoLiveDeclarer }
+            WriteOutcome::WrittenUndeclared { version, basis: UndeclaredBasis::NoLiveDeclarer, .. }
                 if version.get() == 3
         ));
         let restored: (serde_json::Value, i64, Option<i64>) = sqlx::query_as(

@@ -2,6 +2,7 @@
 
 mod diff;
 mod entry;
+mod holds;
 mod validate;
 mod wire;
 
@@ -11,6 +12,7 @@ pub use diff::{ManifestDiff, ManifestDiffError, Retype, manifest_diff};
 pub use entry::{
     ManifestEntry, ManifestInvariant, ManifestOwners, ManifestRequiredSettings, ManifestRetired,
 };
+pub use holds::InvariantHold;
 
 use crate::{
     catalog::Catalog,

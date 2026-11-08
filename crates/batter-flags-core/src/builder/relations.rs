@@ -39,8 +39,10 @@ impl CatalogBuilder {
     /// declarations, changes nothing, because the catalog digest and the
     /// manifest sort every relationship.
     ///
-    /// Declared mode checks it once at startup. The call refuses a
-    /// relationship the two code defaults already break.
+    /// Declared mode checks it once at startup; a control-plane snapshot
+    /// holds the published entry that would break it, with
+    /// [`HoldCause::InvariantUnmet`](crate::low_level::HoldCause::InvariantUnmet).
+    /// The call refuses a relationship the two code defaults already break.
     ///
     /// ```
     /// use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
@@ -84,8 +86,9 @@ impl CatalogBuilder {
     /// `flag` at `when` and `other` at `then` must not both hold.
     ///
     /// The relationship is symmetric, so one call states it; it is stored on
-    /// `flag`. Declared mode checks it once at startup. The call refuses a
-    /// relationship the two code defaults already break.
+    /// `flag`. Declared mode checks it once at startup, and a control-plane
+    /// snapshot holds the published entry that would break it. The call
+    /// refuses a relationship the two code defaults already break.
     ///
     /// # Errors
     ///

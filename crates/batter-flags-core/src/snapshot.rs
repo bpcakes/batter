@@ -3,7 +3,12 @@
 //! Validation rejects a whole candidate only for structural corruption: no
 //! version, a repeated key, or a candidate read for another scope. Everything
 //! else is decided per entry, because one bad row must never take the other
-//! flags down with it.
+//! flags down with it. Cross-flag invariants are judged last, over what the
+//! entries would serve, and hold the entry that leaves one unmet.
+
+mod relations;
+
+pub(crate) use relations::{EntrySwitch, SwitchOverride, entry_switch, switch_override};
 
 use std::{collections::HashSet, fmt, sync::Arc};
 
@@ -12,7 +17,7 @@ use thiserror::Error;
 use crate::{
     base::BaseInner,
     candidate::{Candidate, CandidateRow, WrittenFor},
-    decision::SwitchState,
+    decision::{Freshness, SwitchState},
     declaration::{Entry, Kind},
     digest::{DigestRow, SnapshotDigest},
     encoding::{self, Decoded, Expect},
@@ -51,13 +56,14 @@ impl fmt::Debug for ValidationScope {
 /// keeps the state it last published, else its safe state. When several causes
 /// apply the first in this order is reported: [`EnvironmentRestricted`],
 /// [`EntryTypeMismatch`], [`UnknownRowEncoding`], [`UndeclaredVariant`],
-/// [`RequiresSettingsAbsent`].
+/// [`RequiresSettingsAbsent`], [`InvariantUnmet`].
 ///
 /// [`EnvironmentRestricted`]: Self::EnvironmentRestricted
 /// [`EntryTypeMismatch`]: Self::EntryTypeMismatch
 /// [`UnknownRowEncoding`]: Self::UnknownRowEncoding
 /// [`UndeclaredVariant`]: Self::UndeclaredVariant
 /// [`RequiresSettingsAbsent`]: Self::RequiresSettingsAbsent
+/// [`InvariantUnmet`]: Self::InvariantUnmet
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum HoldCause {
     /// The row's kind or value type is not the declaration's.
@@ -73,6 +79,10 @@ pub enum HoldCause {
     /// The declaration is restricted with `only_in`, so the control plane never
     /// supplies it, in any environment class.
     EnvironmentRestricted,
+    /// The row's variant, against what another flag this process kind owns
+    /// serves, leaves a `requires`, `conflicts` or `both_or_none` invariant
+    /// between the two unmet, a pair declared mode refuses to start with.
+    InvariantUnmet,
 }
 
 impl HoldCause {
@@ -84,6 +94,7 @@ impl HoldCause {
             Self::UndeclaredVariant => "undeclared_variant",
             Self::RequiresSettingsAbsent => "requires_settings_absent",
             Self::EnvironmentRestricted => "environment_restricted",
+            Self::InvariantUnmet => "invariant_unmet",
         }
     }
 }
@@ -236,8 +247,11 @@ pub struct Snapshot {
     pub(crate) version: Version,
     provenance: Provenance,
     digest: SnapshotDigest,
-    /// Per declaration, in declaration order.
+    /// Per declaration, in declaration order, as a fresh view serves them.
     pub(crate) entries: Box<[EntryState]>,
+    /// As a stale view serves them, when a stale rule engages a governing
+    /// switch and so changes which invariants hold.
+    stale: Option<Box<[EntryState]>>,
     unknown: usize,
     not_owned: usize,
 }
@@ -250,6 +264,18 @@ impl Snapshot {
     /// does not own (counted as [`not_owned`](Self::not_owned)); neither is
     /// held, and validation emits no event. Any other row is either published
     /// or held for one [`HoldCause`].
+    ///
+    /// Then every invariant between two flags this process kind owns is
+    /// judged over what a view would serve: the code default under an engaged
+    /// governing switch, else a published variant, else the declared base.
+    /// While one is unmet a published entry it involves is held with
+    /// [`HoldCause::InvariantUnmet`] and serves its base: the flag the
+    /// invariant is declared on first, unless only the other flag's base
+    /// meets it. Invariants are visited by key, so the outcome never depends
+    /// on declaration order. An invariant whose other flag this kind does not
+    /// own is not judged, as in declared mode. A stale rule can engage a
+    /// governing switch, so a stale view is judged on its own;
+    /// [`held`](Self::held) reports a fresh view's holds.
     ///
     /// # Errors
     ///
@@ -303,15 +329,28 @@ impl Snapshot {
             }
             entries[index] = classify(&base, index, entry, row, carried[index]);
         }
+        let mut stale = entries.clone();
+        relations::hold_unmet(&base, &mut entries, Freshness::Fresh);
+        relations::hold_unmet(&base, &mut stale, Freshness::Stale);
+        let stale = (stale != entries).then(|| stale.into_boxed_slice());
         Ok(Self {
             base,
             version,
             provenance,
             digest,
             entries: entries.into_boxed_slice(),
+            stale,
             unknown,
             not_owned,
         })
+    }
+
+    /// The entries a view of `freshness` serves.
+    pub(crate) fn entries_for(&self, freshness: Freshness) -> &[EntryState] {
+        match (freshness, &self.stale) {
+            (Freshness::Stale, Some(stale)) => stale,
+            (Freshness::Stale, None) | (Freshness::Fresh, _) => &self.entries,
+        }
     }
 
     /// The version the candidate was read at.
@@ -359,7 +398,8 @@ impl Snapshot {
             })
     }
 
-    /// The held entries, in declaration order, with why each is held.
+    /// The held entries of a fresh view, in declaration order, with why each
+    /// is held.
     pub fn held(&self) -> impl Iterator<Item = (&FlagKey, HoldCause)> + '_ {
         self.entries
             .iter()

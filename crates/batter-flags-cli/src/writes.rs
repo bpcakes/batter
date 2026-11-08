@@ -1,29 +1,30 @@
-//! The write path: one audited mutation, with the coordinated-flip policy
-//! judged inside its transaction, and the report each outcome and failure
-//! ends with.
+//! The write path: one audited mutation, with the coordinated-flip and
+//! invariant policies judged inside its transaction, and the report each
+//! outcome and failure ends with.
 
 use batter_flags_core::FlagKey;
 use batter_flags_postgres::{
-    ErrorClass, FlipPolicy, PooledStore, Refusal, Request, StoreError, UndeclaredBasis,
-    WriteOutcome,
+    Basis, Deferral, ErrorClass, PooledStore, Refusal, Request, StoreError, UndeclaredBasis,
+    UnmetInvariant, WriteOutcome, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
 
 use crate::{commands::Failure, exit::Exit, output::Report};
 
-/// Writes once. A key a retained catalog declares coordinated is refused,
-/// in the write's own transaction, unless `flip` accepts a rolling flip.
+/// Writes once. A key a retained catalog declares coordinated, and a state
+/// that leaves a running declarer's invariant unmet, are refused in the
+/// write's own transaction unless `policy` accepts them.
 pub(crate) async fn write(
     name: &'static str,
     store: &PooledStore,
     deadline: Instant,
     interrupt: oneshot::Receiver<()>,
-    flip: FlipPolicy,
+    policy: WritePolicy,
     key: &FlagKey,
     request: Request,
 ) -> Result<Report, Failure> {
-    match store.submit(request, flip, deadline, interrupt).await {
+    match store.submit(request, policy, deadline, interrupt).await {
         Ok(outcome) => Ok(outcome_report(name, key, outcome)),
         Err(error) => Err(Failure::Store(error)),
     }
@@ -31,17 +32,25 @@ pub(crate) async fn write(
 
 fn outcome_report(name: &'static str, key: &FlagKey, outcome: WriteOutcome) -> Report {
     match outcome {
-        WriteOutcome::Written { version, live_declaring, .. } => Report::new(name, Exit::Ok, "written", format!("written at version {}", version.get()))
-            .with_data(json!({"version": version.get(), "live_declaring": live_declaring})),
-        WriteOutcome::WrittenUndeclared { version, basis } => {
+        WriteOutcome::Written { version, live_declaring, deferral, .. } => deferred(
+            Report::new(name, Exit::Ok, "written", format!("written at version {}", version.get()))
+                .with_data(json!({"version": version.get(), "live_declaring": live_declaring, "deferral": deferral_data(&deferral)})),
+            key,
+            &deferral,
+        ),
+        WriteOutcome::WrittenUndeclared { version, basis, deferral } => {
             let basis = match basis {
                 UndeclaredBasis::NoLiveDeclarer => "no_live_declarer",
                 UndeclaredBasis::Orphaned => "orphaned",
                 UndeclaredBasis::NeverDeclared => "never_declared",
             };
-            Report::new(name, Exit::Ok, "written_undeclared", format!("written at version {}", version.get()))
-                .with_data(json!({"version": version.get(), "basis": basis}))
-                .warn(format!("no Live process declares the key ({basis}); nothing applies it yet"))
+            deferred(
+                Report::new(name, Exit::Ok, "written_undeclared", format!("written at version {}", version.get()))
+                    .with_data(json!({"version": version.get(), "basis": basis, "deferral": deferral_data(&deferral)}))
+                    .warn(format!("no Live process declares the key ({basis}); nothing applies it yet")),
+                key,
+                &deferral,
+            )
         }
         WriteOutcome::Unchanged { version } => Report::new(name, Exit::Ok, "unchanged", format!("already in that state at revision {}", version.get()))
             .with_data(json!({"revision": version.get()})),
@@ -138,7 +147,84 @@ fn refused(name: &'static str, key: &FlagKey, refusal: Refusal) -> Report {
             "a Live process applied a version above the store head; see the restore runbook".into(),
             Value::Null,
         ),
+        Refusal::InvariantUnmet { unmet } => report(
+            "invariant_unmet",
+            format!(
+                "processes would newly hold {} flag(s) at their declared base for unmet invariants ({}). Write the missing flag first, or pass --accept-invariant-hold to accept the hold",
+                unmet.len(),
+                unmet.iter().map(described).collect::<Vec<_>>().join("; ")
+            ),
+            json!({"unmet": unmet.iter().map(unmet_data).collect::<Vec<_>>()}),
+        ),
+        Refusal::InvariantsUnjudged { catalogs } => report(
+            "invariants_unjudged",
+            format!(
+                "{catalogs} running declarer catalog(s) come from a newer build this command cannot read, so their invariants were not judged; upgrade batter-flags, or pass --accept-invariant-hold to write unjudged"
+            ),
+            json!({"catalogs": catalogs.get()}),
+        ),
     }
+}
+
+/// The written report, with one warning for each reason processes will not
+/// serve the state as written for now.
+fn deferred(mut report: Report, key: &FlagKey, deferral: &Deferral) -> Report {
+    for unmet in &deferral.unmet {
+        report = report.warn(format!("held until met: {}", described(unmet)));
+    }
+    if deferral.unjudged_catalogs > 0 {
+        report = report.warn(format!(
+            "{} running declarer catalog(s) come from a newer build; their invariants were not judged",
+            deferral.unjudged_catalogs
+        ));
+    }
+    for switch in &deferral.overridden_by {
+        report = report.warn(format!(
+            "{switch} is engaged and governs {key}: processes serve its code default until {switch} is released",
+            switch = switch.as_str(),
+            key = key.as_str()
+        ));
+    }
+    report
+}
+
+fn described(unmet: &UnmetInvariant) -> String {
+    let judged = match unmet.basis {
+        Basis::StoredRows => "judged by stored rows",
+        Basis::CodeDefault => "judged against a code default",
+    };
+    format!(
+        "{held} held, as {flag} {variant} {rule} {other} {other_variant}, {judged}",
+        held = unmet.held.as_str(),
+        flag = unmet.flag.as_str(),
+        variant = unmet.variant,
+        rule = unmet.rule.as_str(),
+        other = unmet.other.as_str(),
+        other_variant = unmet.other_variant,
+    )
+}
+
+fn unmet_data(unmet: &UnmetInvariant) -> Value {
+    json!({
+        "held": unmet.held.as_str(),
+        "rule": unmet.rule.as_str(),
+        "flag": unmet.flag.as_str(),
+        "variant": unmet.variant,
+        "other": unmet.other.as_str(),
+        "other_variant": unmet.other_variant,
+        "basis": match unmet.basis {
+            Basis::StoredRows => "stored_rows",
+            Basis::CodeDefault => "code_default",
+        },
+    })
+}
+
+fn deferral_data(deferral: &Deferral) -> Value {
+    json!({
+        "unmet": deferral.unmet.iter().map(unmet_data).collect::<Vec<_>>(),
+        "overridden_by": deferral.overridden_by.iter().map(FlagKey::as_str).collect::<Vec<_>>(),
+        "unjudged_catalogs": deferral.unjudged_catalogs,
+    })
 }
 
 /// The report when the preflight refuses the store.

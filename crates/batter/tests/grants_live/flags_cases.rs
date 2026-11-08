@@ -8,14 +8,14 @@ use super::support::{
     Fixture, Result, exec, quote, require, require_denied, require_within_policy,
 };
 use batter::flags::core::{
-    CatalogBuilder, FlagKey, SafeState, SettingsPrefix, StaleRule, SwitchState, Version,
+    CatalogBuilder, FlagKey, SafeState, SettingsPrefix, StaleRule, SwitchState, Toggle, Version,
     low_level::BaseBuilder,
 };
 use batter::flags::grants::FlagsOperation;
 use batter::flags::postgres::{
     Actor, Archive, Cadence, Change, ChangeReason, KeySample, PooledStore, Precondition,
-    PresenceReport, ProcessLabel, ProcessLabels, ProcessPresence, PruneLimit, SnapshotReport,
-    StoreTiming, Write, WriteOutcome,
+    PresenceReport, ProcessLabel, ProcessLabels, ProcessPresence, PruneLimit, Refusal, Request,
+    SnapshotReport, StoreTiming, Variant, Write, WriteOutcome, WritePolicy,
 };
 use sqlx::PgPool;
 use tokio::time::Instant;
@@ -26,6 +26,7 @@ const SERVING: &[FlagsOperation] = &[
     FlagsOperation::PresencePrune,
 ];
 const OPERATOR: &[FlagsOperation] = &[FlagsOperation::OperatorCli];
+const WRITER: &[FlagsOperation] = &[FlagsOperation::AuditedWrite];
 
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(20)
@@ -48,6 +49,9 @@ fn presence() -> Result<ProcessPresence> {
     catalog
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()?;
+    let ledger_v2 = catalog.mode_flag("ledger_v2", Toggle::Off).declare()?;
+    let ledger_audit = catalog.mode_flag("ledger_audit", Toggle::Off).declare()?;
+    catalog.requires(&ledger_v2, Toggle::On, &ledger_audit, Toggle::On)?;
     let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
     let labels = ProcessLabels {
         application: ProcessLabel::new("service")?,
@@ -103,16 +107,19 @@ async fn flags_serving_and_operator_logins_run_their_operations_and_nothing_more
     .await
 }
 
-/// The two logins of a case, in its own database.
+/// The logins of a case, in its own database.
 struct Logins {
     admin: sqlx::PgConnection,
     serving: PgPool,
     operator: PgPool,
+    /// The audited write alone, without the operator's catalog reads.
+    writer: PgPool,
 }
 
 async fn in_database(fixture: &mut Fixture, database: &str) -> Result {
     let mut logins = provision(fixture, database).await?;
     let process = serve(&logins.serving).await?;
+    judge(&logins.writer).await?;
     operate(&logins, process).await?;
     deny(&logins).await?;
     prune_needs_its_lock_columns(fixture, &mut logins.admin, database).await?;
@@ -163,7 +170,11 @@ async fn provision(fixture: &mut Fixture, database: &str) -> Result<Logins> {
     )
     .await?;
     let mut pools = Vec::new();
-    for (label, operations) in [("flags_serving", SERVING), ("flags_operator", OPERATOR)] {
+    for (label, operations) in [
+        ("flags_serving", SERVING),
+        ("flags_operator", OPERATOR),
+        ("flags_writer", WRITER),
+    ] {
         let role = Composition::new(PublicPolicy::Deny)
             .with_flags(operations)
             .compile()?;
@@ -172,6 +183,9 @@ async fn provision(fixture: &mut Fixture, database: &str) -> Result<Logins> {
         require_within_policy(&pool, &role).await?;
         pools.push(pool);
     }
+    let writer = pools
+        .pop()
+        .ok_or_else(|| super::support::fail("writer pool"))?;
     let operator = pools
         .pop()
         .ok_or_else(|| super::support::fail("operator pool"))?;
@@ -182,6 +196,7 @@ async fn provision(fixture: &mut Fixture, database: &str) -> Result<Logins> {
         admin,
         serving,
         operator,
+        writer,
     })
 }
 
@@ -209,6 +224,42 @@ async fn serve(pool: &PgPool) -> Result<ProcessPresence> {
         store.prune(PruneLimit::new(100)?, deadline()).await,
     )?;
     Ok(process)
+}
+
+/// The audited write alone judges a flag write against the running
+/// declarer's catalog: the coordinated-flip refusal reads its flip
+/// discipline, and the invariant judgement its manifest and the stored rows.
+async fn judge(writer: &PgPool) -> Result {
+    let store = PooledStore::new(writer.clone(), timing()?);
+    let strict = async |name: &str| {
+        let (_keep, interrupt) = tokio::sync::oneshot::channel();
+        let write = Write::set(FlagKey::new(name)?, Variant::new("on")?, change()?);
+        step(
+            name,
+            store
+                .submit(
+                    Request::Write(write),
+                    WritePolicy::STRICT,
+                    deadline(),
+                    interrupt,
+                )
+                .await,
+        )
+    };
+    require!(
+        matches!(
+            strict("ledger_v2").await?,
+            WriteOutcome::Refused(Refusal::InvariantUnmet { .. })
+        ),
+        "the dependent is refused before its requirement"
+    )?;
+    for name in ["ledger_audit", "ledger_v2"] {
+        require!(
+            matches!(strict(name).await?, WriteOutcome::Written { .. }),
+            "the requirement, then the dependent"
+        )?;
+    }
+    Ok(())
 }
 
 /// The operator selection runs every operation the command issues: a first

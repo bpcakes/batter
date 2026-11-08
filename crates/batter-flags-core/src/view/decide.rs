@@ -11,10 +11,10 @@ use crate::{
     decision::{
         Decision, ErrorCause, Freshness, KillSwitchKey, Layer, PrePublication, Reason, SwitchState,
     },
-    declaration::{Entry, StaleRule},
+    declaration::Entry,
     handle::{Handle, KillSwitch},
     key::FlagKey,
-    snapshot::EntryState,
+    snapshot::{EntryState, EntrySwitch, SwitchOverride, entry_switch, switch_override},
     value::FlagValue,
 };
 
@@ -110,20 +110,22 @@ impl SnapshotView {
                     Layer::Base,
                 )
             }
-            Mode::Control(Control::Loaded { snapshot, kind }) => match snapshot.entries[index] {
-                EntryState::Flag(chosen) => {
-                    let value = T::from_variant(entry.variants[chosen]).unwrap_or(default);
-                    Decision::served(
-                        (value, value.variant()),
-                        self.entry_reason(*kind),
-                        source,
-                        Layer::Entry,
-                    )
+            Mode::Control(Control::Loaded { snapshot, kind }) => {
+                match snapshot.entries_for(self.freshness)[index] {
+                    EntryState::Flag(chosen) => {
+                        let value = T::from_variant(entry.variants[chosen]).unwrap_or(default);
+                        Decision::served(
+                            (value, value.variant()),
+                            self.entry_reason(*kind),
+                            source,
+                            Layer::Entry,
+                        )
+                    }
+                    EntryState::Absent | EntryState::Switch(_) | EntryState::Held { .. } => {
+                        from_base(Reason::Default)
+                    }
                 }
-                EntryState::Absent | EntryState::Switch(_) | EntryState::Held { .. } => {
-                    from_base(Reason::Default)
-                }
-            },
+            }
         }
     }
 
@@ -137,30 +139,37 @@ impl SnapshotView {
         }
     }
 
-    /// The one total function every surface reads a kill switch through.
+    /// The one total function every surface reads a kill switch through. In
+    /// control-plane mode it reads [`switch_override`] and then
+    /// [`entry_switch`], as the invariant judgement does.
     pub(super) fn switch_outcome(&self, index: usize) -> SwitchOutcome {
         let entry = &self.base.catalog.entries[index];
         let safe = SwitchState::safe_for(entry);
-        let literal = match self.base.states[index] {
-            BaseState::Switch(literal) => literal,
-            BaseState::Flag(_) => None,
-        };
         let control = match &self.mode {
             Mode::Declared => {
-                return match literal {
-                    Some(state) => SwitchOutcome::served(state, Layer::Entry, Reason::Static),
-                    None => SwitchOutcome::served(safe, Layer::Base, Reason::Default),
+                return match self.base.states[index] {
+                    BaseState::Switch(Some(state)) => {
+                        SwitchOutcome::served(state, Layer::Entry, Reason::Static)
+                    }
+                    BaseState::Switch(None) | BaseState::Flag(_) => {
+                        SwitchOutcome::served(safe, Layer::Base, Reason::Default)
+                    }
                 };
             }
             Mode::Control(control) => control,
         };
-        if literal == Some(SwitchState::Engaged) {
-            return SwitchOutcome::served(SwitchState::Engaged, Layer::Floor, Reason::Static);
-        }
-        if self.freshness == Freshness::Stale
-            && entry.stale_rule == Some(StaleRule::EngageWhenStale)
-        {
-            return SwitchOutcome::served(SwitchState::Engaged, Layer::StaleRule, Reason::Stale);
+        match switch_override(&self.base, index, self.freshness) {
+            Some(SwitchOverride::Floor) => {
+                return SwitchOutcome::served(SwitchState::Engaged, Layer::Floor, Reason::Static);
+            }
+            Some(SwitchOverride::StaleRule) => {
+                return SwitchOutcome::served(
+                    SwitchState::Engaged,
+                    Layer::StaleRule,
+                    Reason::Stale,
+                );
+            }
+            None => {}
         }
         match control {
             Control::NotLoaded(PrePublication::ServeDefaults) => {
@@ -172,22 +181,21 @@ impl SnapshotView {
                 reason: Reason::Error,
                 error: Some(ErrorCause::ProviderNotReady),
             },
-            Control::Loaded { snapshot, kind } => match snapshot.entries[index] {
-                EntryState::Switch(state) => {
-                    SwitchOutcome::served(state, Layer::Entry, self.entry_reason(*kind))
+            Control::Loaded { snapshot, kind } => {
+                match entry_switch(entry, &snapshot.entries_for(self.freshness)[index]) {
+                    EntrySwitch::Published(state) => {
+                        SwitchOutcome::served(state, Layer::Entry, self.entry_reason(*kind))
+                    }
+                    EntrySwitch::Carried(kept) => SwitchOutcome::served(
+                        kept.state,
+                        Layer::Held { since: kept.since },
+                        Reason::Stale,
+                    ),
+                    EntrySwitch::Safe(state) => {
+                        SwitchOutcome::served(state, Layer::Base, Reason::Default)
+                    }
                 }
-                EntryState::Held {
-                    carried: Some(kept),
-                    ..
-                } => SwitchOutcome::served(
-                    kept.state,
-                    Layer::Held { since: kept.since },
-                    Reason::Stale,
-                ),
-                EntryState::Absent | EntryState::Flag(_) | EntryState::Held { .. } => {
-                    SwitchOutcome::served(safe, Layer::Base, Reason::Default)
-                }
-            },
+            }
         }
     }
 

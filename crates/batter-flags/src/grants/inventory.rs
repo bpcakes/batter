@@ -237,10 +237,13 @@ const AUDITED_WRITE: &[Requirement] = &[
         ],
         update: &["archived_version", "state", "updated_version"],
     },
+    // The flip discipline judges a coordinated flip; the manifest carries the
+    // invariants and governing switches a write is judged against.
     Requirement {
         relation: ENTRIES,
         relation_privileges: &[],
         select: &[
+            "flip_discipline",
             "key",
             "kind",
             "manifest_digest",
@@ -254,7 +257,7 @@ const AUDITED_WRITE: &[Requirement] = &[
     Requirement {
         relation: CATALOGS,
         relation_privileges: &[],
-        select: &["last_referenced_at", "manifest_digest"],
+        select: &["last_referenced_at", "manifest", "manifest_digest"],
         insert: &[],
         update: &[],
     },

@@ -2,8 +2,9 @@
 
 use batter_flags_core::{FlagKey, Version};
 use batter_flags_postgres::{
-    Actor, Change, ChangeReason, Coordination, Declaration, Expiry, FlipPolicy, KeyListing,
-    PooledStore, Precondition, ProcessState, Reference, SnapshotReport, StoreError, Stored,
+    Actor, Change, ChangeReason, Coordination, Declaration, Expiry, FlipPolicy, InvariantPolicy,
+    KeyListing, PooledStore, Precondition, ProcessState, Reference, SnapshotReport, StoreError,
+    Stored, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
@@ -98,6 +99,10 @@ pub(crate) struct Guard {
     /// Accept a poll-by-poll rollout of a flip the catalog marks coordinated.
     #[arg(long)]
     accept_rolling_flip: bool,
+    /// Accept a write that leaves a cross-flag invariant unmet: processes
+    /// hold a flag of the pair at its declared base until it is met.
+    #[arg(long)]
+    accept_invariant_hold: bool,
 }
 
 impl Command {
@@ -166,11 +171,12 @@ async fn execute(
             name,
             key,
             request,
-            flip,
+            policy,
             after,
         } => {
             let report =
-                crate::writes::write(name, store, deadline, interrupt, flip, &key, request).await?;
+                crate::writes::write(name, store, deadline, interrupt, policy, &key, request)
+                    .await?;
             Ok(match (after, report.outcome) {
                 (AfterWrite::FloorWarning, "written" | "written_undeclared") => {
                     crate::fleet::floor_warning(store, deadline, &key, report).await
@@ -226,11 +232,18 @@ async fn history(store: &PooledStore, deadline: Instant, key: &FlagKey) -> Resul
 }
 
 impl Guard {
-    pub(crate) fn flip(&self) -> FlipPolicy {
-        if self.accept_rolling_flip {
-            FlipPolicy::AcceptRolling
-        } else {
-            FlipPolicy::RefuseCoordinated
+    pub(crate) fn policy(&self) -> WritePolicy {
+        WritePolicy {
+            flip: if self.accept_rolling_flip {
+                FlipPolicy::AcceptRolling
+            } else {
+                FlipPolicy::RefuseCoordinated
+            },
+            invariants: if self.accept_invariant_hold {
+                InvariantPolicy::AcceptHeld
+            } else {
+                InvariantPolicy::RefuseUnmet
+            },
         }
     }
 

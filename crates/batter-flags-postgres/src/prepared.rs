@@ -1,5 +1,5 @@
 //! Private transaction decisions. Public outcomes require native completion proof.
-use crate::{Refusal, StoredState, UndeclaredBasis, WriteOutcome};
+use crate::{Deferral, Refusal, StoredState, UndeclaredBasis, WriteOutcome};
 use batter_flags_core::Version;
 use batter_sqlx::{PgCommitConfirmed, PgRollbackConfirmed};
 use std::num::NonZeroUsize;
@@ -34,6 +34,7 @@ pub(crate) enum DeclarationEvidence {
 pub(crate) struct PendingWrite {
     pub(crate) version: Version,
     pub(crate) declaration: DeclarationEvidence,
+    pub(crate) deferral: Deferral,
 }
 impl PendingWrite {
     pub(crate) fn committed(self, _: PgCommitConfirmed) -> WriteOutcome {
@@ -42,10 +43,12 @@ impl PendingWrite {
                 version: self.version,
                 previous,
                 live_declaring: count.get(),
+                deferral: self.deferral,
             },
             DeclarationEvidence::Undeclared(basis) => WriteOutcome::WrittenUndeclared {
                 version: self.version,
                 basis,
+                deferral: self.deferral,
             },
         }
     }

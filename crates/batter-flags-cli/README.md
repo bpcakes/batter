@@ -33,8 +33,21 @@ also act on a key no retained catalog declares any more, because archiving a
 key whose declarations were all pruned is the cleanup archive exists for. A
 flip a retained catalog marks coordinated is refused, inside the write's own
 transaction, unless `--accept-rolling-flip` is given, because processes apply
-it poll by poll. Releasing a kill switch warns with the number of Live
-processes whose settings floor keeps it engaged.
+it poll by poll. A flag write after which processes of a running declarer
+would newly hold a flag for an unmet `requires`, `conflicts` or
+`both_or_none` invariant is refused the same way (`invariant_unmet`, each held
+flag and its invariant under `data.unmet`), and so is one a running
+declarer's catalog from a newer build cannot be judged for
+(`invariants_unjudged`), unless `--accept-invariant-hold` is given. The
+judgement replays the processes' own over the stored rows, the write applied,
+and the code defaults (`basis`); it cannot see a process's settings or
+staleness, and each process judges again when it loads. Change a
+`both_or_none` pair, or two flags that require each other, with the hold
+accepted on the first write. Kill switches are never refused for what
+engaging one holds. A write reports each accepted hold, each engaged kill
+switch governing the written flag and each unjudged catalog under
+`data.deferral` and as a warning. Releasing a kill switch warns with the
+number of Live processes whose settings floor keeps it engaged.
 
 There is one end-to-end `--timeout` (1 to 60 s) and no operation is ever
 retried. The pool holds at most one connection at a time, but each store
@@ -48,7 +61,7 @@ reported.
 
 Exit codes: 0 ok, 1 failed with nothing written (a database rejection of
 COMMIT included), 2 usage, 3 precondition not met (a revision mismatch, every
-store refusal, and a coordinated flip), 4 commit outcome unknown (re-run with
+store refusal, a coordinated flip and an unmet invariant), 4 commit outcome unknown (re-run with
 `--if-revision` after `batter-flags history <key>`), 101 panic. Under
 `--output json` every exit writes exactly one JSON document, except the
 argument parser's own exits (a usage error, `--help` and `--version`) and a

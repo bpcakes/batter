@@ -167,6 +167,7 @@ fn the_hold_vocabulary_is_closed() {
             "requires_settings_absent",
         ),
         (HoldCause::EnvironmentRestricted, "environment_restricted"),
+        (HoldCause::InvariantUnmet, "invariant_unmet"),
     ];
     for (cause, name) in all {
         assert_eq!(cause.as_str(), name);
@@ -178,7 +179,8 @@ fn the_hold_vocabulary_is_closed() {
             | HoldCause::UnknownRowEncoding
             | HoldCause::UndeclaredVariant
             | HoldCause::RequiresSettingsAbsent
-            | HoldCause::EnvironmentRestricted => {}
+            | HoldCause::EnvironmentRestricted
+            | HoldCause::InvariantUnmet => {}
         }
     }
 }

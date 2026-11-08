@@ -451,7 +451,7 @@ impl PartialOrd for InvariantRule {
     }
 }
 
-/// A cross-flag invariant, validated once at startup by declared mode.
+/// A cross-flag invariant: declared mode refuses a pair breaking it, a snapshot holds an entry.
 ///
 /// It relates this flag at [`variant`](Self::variant) to the other flag at
 /// [`other_variant`](Self::other_variant) by [`rule`](Self::rule). The build

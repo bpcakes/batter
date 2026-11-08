@@ -177,3 +177,68 @@ async fn archive_and_restore_follow_the_declaration_gate_and_silent_blocks_name_
     assert!(report["message"].as_str().unwrap().contains("prune"));
     db.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_write_leaving_an_invariant_unmet_is_refused_until_the_hold_is_accepted() {
+    let db = Database::seeded().await;
+    db.live(&["ledger"], "build-ledger").await;
+    let set = |key: &str, extra: &[&str]| {
+        let mut args = vec![
+            "set", key, "on", "--actor", "ops", "--reason", "test", "--yes",
+        ];
+        args.extend_from_slice(extra);
+        db.cli_args(&args)
+    };
+    let head = db.head().await;
+    let refused = set("ledger_v2", &[]);
+    assert_eq!(refused.code, 3, "{refused:?}");
+    let report = refused.json();
+    assert_eq!(report["data"]["refusal"], "invariant_unmet");
+    let unmet = &report["data"]["unmet"][0];
+    assert_eq!(
+        (
+            &unmet["held"],
+            &unmet["rule"],
+            &unmet["flag"],
+            &unmet["other"],
+            &unmet["basis"]
+        ),
+        (
+            &"ledger_v2".into(),
+            &"requires".into(),
+            &"ledger_v2".into(),
+            &"ledger_audit".into(),
+            &"code_default".into()
+        )
+    );
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains("--accept-invariant-hold"),
+        "{report}"
+    );
+    assert_eq!(db.head().await, head, "nothing was written");
+
+    let accepted = set("ledger_v2", &["--accept-invariant-hold"]);
+    assert_eq!(accepted.code, 0, "{accepted:?}");
+    let report = accepted.json();
+    assert_eq!(report["outcome"], "written");
+    assert_eq!(report["data"]["deferral"]["unmet"][0]["flag"], "ledger_v2");
+    assert!(
+        report["warnings"][0].as_str().unwrap().starts_with(
+            "held until met: ledger_v2 held, as ledger_v2 on requires ledger_audit on"
+        ),
+        "{report}"
+    );
+
+    // Writing the requirement meets the invariant, so nothing is deferred.
+    let met = set("ledger_audit", &[]);
+    assert_eq!(met.code, 0, "{met:?}");
+    assert_eq!(
+        met.json()["data"]["deferral"]["unmet"],
+        serde_json::json!([])
+    );
+    db.close().await;
+}

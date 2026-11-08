@@ -1,10 +1,11 @@
 use crate::{
-    ErrorClass, FlipPolicy, Precondition, Presence, Refusal, StoreError, StoredState,
-    UndeclaredBasis,
+    ErrorClass, FlipPolicy, InvariantPolicy, Precondition, Presence, Refusal, StoreError,
+    StoredState, UndeclaredBasis,
     prepared::{DeclarationEvidence, PendingWrite, Prepared, RollbackDecision},
+    relations::Written,
     request::RequestedValue,
     state::{ExistingRow, Process, Shape, StoredRow, blocking},
-    write::Mutation,
+    write::{Mutation, WritePolicy},
 };
 use batter_flags_core::Version;
 use batter_sqlx::PgScopedSql;
@@ -36,6 +37,16 @@ impl ChangePlan {
         match self {
             Self::Create { state, .. } | Self::Replace { state, .. } => state,
             Self::Archive(row) | Self::Restore(row) => &row.state,
+        }
+    }
+    /// The state the change leaves its key serving; `None` for an archive,
+    /// which leaves nothing served.
+    fn written(&self) -> Option<Written<'_>> {
+        match self {
+            Self::Archive(_) => None,
+            Self::Create { .. } | Self::Replace { .. } | Self::Restore(_) => {
+                crate::relations::written(self.state())
+            }
         }
     }
     fn previous(self) -> Option<StoredState> {
@@ -80,7 +91,7 @@ impl ChangePlan {
 pub(crate) async fn apply(
     sql: &mut PgScopedSql<'_>,
     mutation: &Mutation,
-    flip: FlipPolicy,
+    policy: WritePolicy,
     head: i64,
     next: i64,
 ) -> Result<Prepared, StoreError> {
@@ -89,7 +100,7 @@ pub(crate) async fn apply(
         .bind(key).fetch_optional(sql.executor()).await?)?;
     let declarations = sqlx::query("SELECT e.kind, e.value_type, e.only_in, e.flip_discipline, e.manifest_digest FROM flags.flag_catalog_entries e JOIN flags.flag_catalogs c USING(manifest_digest) WHERE e.key = $1 ORDER BY c.last_referenced_at DESC, e.manifest_digest")
         .bind(key).fetch_all(sql.executor()).await?;
-    let plan = match preflight(mutation, flip, head, stored, &declarations)? {
+    let plan = match preflight(mutation, policy.flip, head, stored, &declarations)? {
         ControlFlow::Break(decision) => return Ok(Prepared::Rollback(decision)),
         ControlFlow::Continue(plan) => plan,
     };
@@ -134,6 +145,20 @@ pub(crate) async fn apply(
             Refusal::StoreBehindFleet,
         )));
     }
+    let written = plan.written();
+    let deferral = match written {
+        Some(written) if !active.is_empty() => {
+            crate::relations::judge(sql, mutation.key(), written).await?
+        }
+        Some(_) | None => crate::Deferral::default(),
+    };
+    // A kill switch is never refused for what it holds: engaging one is the
+    // emergency path, and its holds are reported instead.
+    if let (InvariantPolicy::RefuseUnmet, Some(Written::Flag(_))) = (policy.invariants, written)
+        && let Some(refusal) = invariant_refusal(&deferral)
+    {
+        return Ok(Prepared::Rollback(RollbackDecision::Refused(refusal)));
+    }
     plan.apply(sql, key, next).await?;
     let declaration = match NonZeroUsize::new(
         active
@@ -156,7 +181,20 @@ pub(crate) async fn apply(
     Ok(Prepared::Commit(PendingWrite {
         version: Version::new(next as u64),
         declaration,
+        deferral,
     }))
+}
+
+/// What a strict flag write is refused for: flags it would newly hold, then
+/// catalogs nothing could be judged in.
+fn invariant_refusal(deferral: &crate::Deferral) -> Option<Refusal> {
+    if !deferral.unmet.is_empty() {
+        return Some(Refusal::InvariantUnmet {
+            unmet: deferral.unmet.clone(),
+        });
+    }
+    NonZeroUsize::new(deferral.unjudged_catalogs)
+        .map(|catalogs| Refusal::InvariantsUnjudged { catalogs })
 }
 fn preflight(
     mutation: &Mutation,

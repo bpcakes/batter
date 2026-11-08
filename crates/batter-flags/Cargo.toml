@@ -63,5 +63,9 @@ name = "listen_live"
 required-features = ["postgres"]
 
 [[test]]
+name = "invariants_live"
+required-features = ["postgres"]
+
+[[test]]
 name = "jobs_live"
 required-features = ["runledger", "postgres"]
