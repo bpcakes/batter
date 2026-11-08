@@ -13,7 +13,6 @@ use runlimit_core::{
     Denial, GcraPolicy, Limiter, MAX_LIMIT, Observation, Observer, PolicyId, QuotaMode, ScopeId,
     SubjectKey,
 };
-use runlimit_memory::{Clock, GcraStore, MemoryStoreConfig};
 use runlimit_postgres::{
     BatchCheckError, CREATE_RUNLIMIT_GCRA_SQL, CheckError, GCRA_MIGRATOR,
     INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL, MIGRATOR, PostgresConfig, PostgresGcraLimiter,
@@ -150,14 +149,6 @@ fn subject(id: u8, shard: u8, policy: &GcraPolicy) -> SubjectKey {
     SubjectKey::from_digest(bytes)
 }
 
-#[derive(Clone, Copy)]
-struct FrozenClock(u64);
-impl Clock for FrozenClock {
-    fn now(&self) -> Duration {
-        Duration::from_millis(self.0)
-    }
-}
-
 #[derive(Default)]
 struct Recorder(Mutex<Vec<(AdmissionOutcome, ConsumptionStatus)>>);
 impl Observer for Recorder {
@@ -266,42 +257,6 @@ async fn canonical_migration_upgrades_original_gcra_storage_without_rewriting_it
     assert_eq!(db.watermark().await, 1000);
     assert_eq!(db.limiter().cleanup_expired(1).await.unwrap(), 1);
     db.teardown().await;
-}
-
-#[tokio::test]
-#[ignore = "requires disposable PostgreSQL"]
-async fn exact_memory_parity_covers_fractional_refill_weighted_costs_and_shadow_mode() {
-    for mode in [QuotaMode::Enforce, QuotaMode::Shadow] {
-        let db = Database::new().await;
-        let now = db.freeze_time().await;
-        let memory = GcraStore::builder(MemoryStoreConfig::new(8).unwrap())
-            .with_clock(FrozenClock(now))
-            .build();
-        let policy = policy(3, 10, 7).with_quota_mode(mode);
-        let limiter = db.limiter();
-        for cost in [3, 2, 3, 1, 2, 1] {
-            let check = Check::new(subject(1, 0, &policy).bind(&policy))
-                .with_cost(cost)
-                .unwrap();
-            assert_eq!(
-                limiter.check(&check).await.unwrap(),
-                memory.check(&check).unwrap()
-            );
-        }
-        let checks = [
-            Check::new(subject(2, 0, &policy).bind(&policy))
-                .with_cost(4)
-                .unwrap(),
-            Check::new(subject(3, 1, &policy).bind(&policy))
-                .with_cost(5)
-                .unwrap(),
-        ];
-        assert_eq!(
-            limiter.check_all(&checks).await.unwrap(),
-            memory.check_all(&checks).unwrap()
-        );
-        db.teardown().await;
-    }
 }
 
 #[tokio::test]
@@ -466,9 +421,9 @@ async fn committed_database_clock_watermark_survives_clock_regression() {
     let check = Check::new(subject(1, 0, &policy).bind(&policy));
     let limiter = db.limiter();
     assert!(limiter.check(&check).await.unwrap().permits_request());
-    let decision = limiter.check(&check).await.unwrap();
+    let (decision, elapsed_bound) = clock::check_with_elapsed_bound(&db, &check).await;
     assert!(
-        matches!(decision.view(), DecisionView::Denied { denial: Denial::QuotaExceeded(quota) } if quota.retry_after().duration() == Duration::from_secs(1))
+        matches!(decision.view(), DecisionView::Denied { denial: Denial::QuotaExceeded(quota) } if clock::delay_within_elapsed_bound(quota.retry_after().duration(), Duration::from_secs(1), elapsed_bound) && quota.retry_after().duration() < Duration::from_secs(1))
     );
     let observed: i64 = sqlx::query_scalar(
         "SELECT observed_at_ms FROM runlimit_gcra_shards WHERE capacity_shard = 0",

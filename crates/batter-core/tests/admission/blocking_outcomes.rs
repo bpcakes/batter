@@ -3,6 +3,7 @@
 //! Work its shutting-down runtime destroyed unstarted reports `NotStarted`.
 
 use crate::blocking_support::{Logs, Unrun, bulkhead, fresh};
+use crate::bulkhead_testing::BulkheadTestExt;
 use batter_core::admission::{Admission, BlockingError};
 use std::{
     future::Future,
@@ -34,7 +35,7 @@ async fn closure_panic_is_reported_with_its_original_payload() {
         payload.try_inspect(|value| value.downcast_ref::<&str>().copied()),
         Ok(Some("blocking defect"))
     );
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +67,7 @@ async fn returns_a_value_from_a_blocking_thread_and_frees_capacity_first() {
         .unwrap();
     assert_ne!(worker, caller);
     // The permit was released before the value was delivered.
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 #[tokio::test]
@@ -82,7 +83,7 @@ async fn fallible_closure_keeps_its_concrete_domain_error() {
     };
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "domain refusal");
-    assert!(bulkhead.enter(&fresh(), Admission::Reject).await.is_ok());
+    assert!(bulkhead.hold(&fresh(), Admission::Reject).await.is_ok());
 }
 
 #[tokio::test]
@@ -185,7 +186,7 @@ fn a_task_on_a_dropping_multi_thread_runtime_is_not_started() {
         let result = bulkhead
             .run_blocking(&context, Admission::Reject, work)
             .await;
-        let freed = bulkhead.enter(&context, Admission::Reject).await.is_ok();
+        let freed = bulkhead.hold(&context, Admission::Reject).await.is_ok();
         let _ = outcome.send((matches!(result, Err(BlockingError::NotStarted)), freed));
     }));
     in_poll_rx.recv().unwrap();
@@ -236,7 +237,7 @@ fn an_outside_call_during_current_thread_shutdown_is_not_started() {
     ));
     unrun.assert_destroyed_uncalled();
     assert!(matches!(
-        poll_once(bulkhead.enter(&context, Admission::Reject)),
+        poll_once(bulkhead.hold(&context, Admission::Reject)),
         Poll::Ready(Ok(_))
     ));
     drop(entered);
@@ -271,8 +272,13 @@ fn an_outside_call_during_current_thread_shutdown_is_not_started() {
         "Tokio destroyed the closure at spawn"
     );
     late.assert_destroyed_uncalled();
-    assert!(matches!(
-        poll_once(bulkhead.enter(&context, Admission::Reject)),
-        Poll::Ready(Ok(_))
-    ));
+    let check_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    assert!(
+        check_runtime
+            .block_on(bulkhead.hold(&context, Admission::Reject))
+            .is_ok()
+    );
 }

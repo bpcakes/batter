@@ -130,6 +130,122 @@ contracts, capability facts and validation history.
   ));
   ```
 
+- Own reference-worker interruption evidence inside exchange execution, remove
+  caller-set progress markers and constrain recovery actions to unresolved
+  source states. Represent the phased job adapter's private execution state
+  explicitly instead of combining optional payload and settlement flags
+  (`batter-f9kq.8`). Public APIs and persisted protocol states are unchanged.
+
+- Add explicit late-value settlement to `PhasedJobHandler`: the adapter issues
+  `LateJobFinalization` only for clean successful work returns after the work
+  deadline and accepts recovery only after checked settlement within native
+  authority. Existing handlers retain strict success semantics. The reference
+  worker shares its normal Action settlement, so acknowledged late confirmation
+  and denial return success even on a last attempt (`batter-f9kq.5`). This API is
+  additive; no deprecated shim or public hard cut is needed.
+
+- Preserve callback return values and errors alongside destruction panics in
+  borrowed job phases. Validate finalization reserves before registration with
+  the core-owned `OperationPhases::validate_reserve` check. The reference worker
+  keeps phase panics non-retryable and reloads an interrupted dispatch fence
+  before selecting its final-state transition (`batter-f9kq.3`).
+
+- **Breaking:** remove `Bulkhead::enter`; raw permit acquisition is no longer
+  public. Use `run` for async work, `run_resolved` when application-retained
+  outcomes must be resolved before telemetry, and `run_blocking` for blocking
+  closures. Every consumer migrates; no deprecated shim is retained because it
+  would restore early permit release and unchecked post-admission work
+  (`batter-f9kq.1`).
+
+  ```rust,ignore
+  // Before: callers own the permit lifetime and post-admission checks.
+  let permit = bulkhead.enter(&context, Admission::Wait).await?;
+  let value = work(&context).await?;
+  drop(permit);
+  // After: capacity covers the entire future and its destruction.
+  let value = bulkhead.run(&context, Admission::Wait, "work",
+      |scope| async move { work(&scope).await }).await?;
+
+  // Before: hand off the raw permit to a blocking closure.
+  let permit = bulkhead.enter(&context, Admission::Wait).await?;
+  let value = tokio::task::spawn_blocking(move || {
+      let _permit = permit;
+      calculate()
+  }).await?;
+  // After: the library owns the handoff and its exhaustive outcomes.
+  let value = bulkhead.run_blocking(&context, Admission::Wait, calculate).await?;
+
+  // Before: move a permit acquired by the request into a process task.
+  let permit = bulkhead.enter(&context, Admission::Reject).await?;
+  process.try_spawn("refresh", move |_| async move {
+      let _permit = permit;
+      refresh().await
+  })?;
+  // After: the process task owns the entire bounded run.
+  // Application policy: refusal/interruption are nonfatal receipt values.
+  // Keep and inspect the receipt for those outcomes; fatal work still drains.
+  let receipt = process.try_spawn("refresh", move |_| async move {
+      match bulkhead.run(&context, Admission::Reject,
+          "refresh", |_| refresh()).await {
+          Ok(value) => Ok(Ok(value)),
+          Err(BulkheadError::Operation(OperationError::Failed(fatal))) => Err(fatal),
+          Err(BulkheadError::NotAdmitted(reason)) =>
+              Ok(Err(BulkheadError::<std::convert::Infallible>::NotAdmitted(reason))),
+          Err(BulkheadError::Operation(OperationError::Interrupted(reason))) =>
+              Ok(Err(BulkheadError::Operation(OperationError::Interrupted(reason)))),
+      }
+  })?;
+  ```
+
+- **Breaking:** remove public `batter_runledger::job_phases` and
+  `batter::runledger::job_phases`. Register `PhasedJob::new(handler, reserve)?`
+  with a `PhasedJobHandler`; the native invocation owns both callbacks and
+  borrowed execution services remain available in each. The required failure
+  classifier receives both outcomes and cannot return success. No deprecated
+  shim is retained because returning a phase pair restores skipped or reordered
+  finalization (`batter-f9kq.2`). The former `Duration::ZERO` mode is also
+  removed from this protected handler path: choose a positive reserve for
+  final-state recording. The lower-level core `split_finalization` remains
+  available for callers that explicitly own manual phase sequencing.
+
+  ```rust,ignore
+  // Before: manual sequencing could skip finalize on the early `?`.
+  let phases = job_phases(execution, reserve)?;
+  let value = work(phases.work(), execution).await?;
+  finalize(phases.finalization(), execution, value).await
+  // Before, zero selected no reserve on the manual path:
+  let phases = job_phases(execution, Duration::ZERO)?;
+  // Before: owned callbacks required a separately managed operation owner.
+  let running = job_phases(execution, reserve)?
+      .into_operation(work, finalize).start();
+  running.wait().await
+  // After, for both shapes: implement the two callbacks and failure policy.
+  #[async_trait]
+  impl PhasedJobHandler for Handler {
+      type Output = Value;
+      type Error = DomainError;
+      fn job_type(&self) -> JobType<'static> { JOB }
+      async fn work(&self, scope: JobWork<'_>, payload: serde_json::Value)
+          -> Result<Value, DomainError> {
+          work(scope.context(), scope.execution(), payload).await
+      }
+      async fn finalize(&self, scope: JobFinalization<'_, Value, DomainError>)
+          -> Result<JobCompletion, DomainError> {
+          finalize(scope.context(), scope.execution(), scope.work()).await
+      }
+      fn failed(&self, failure: PhasedJobFailure<Value, DomainError>) -> JobFailure {
+          classify_failure(failure)
+      }
+  }
+  let catalog = JobCatalog::new().handler(PhasedJob::new(Handler, reserve)?);
+  // After, including former zero-reserve callers:
+  let catalog = JobCatalog::new().handler(
+      PhasedJob::new(Handler, Duration::from_millis(500))?);
+  ```
+
+- Direct facade consumers to owned work/finalization and supported native acquisition;
+  identify manual phase and cleanup registration obligations at the selection points.
+
 - Remove Testcontainers and `astral-tokio-tar` from Runledger test support and the
   optional facade test-support graph by using Bollard directly. Preserve the
   existing PostgreSQL 18 fixture API, Docker cleanup and keep policy
@@ -744,7 +860,7 @@ contracts, capability facts and validation history.
 
 - Drive one job handler in a test without a worker, queue or database
   (`batter-3upk`, closing gap 7 of the
-  [whole-application baseline](docs/evidence/whole-app-baseline-2026-10-09/README.md);
+  [whole-application baseline](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/evidence/whole-app-baseline-2026-10-09/README.md);
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#handler-test-facility-assessment-batter-3upk)).
   `batter_runledger::test_support::HandlerInvocation`, reachable as
   `batter::runledger::test_support` with the facade's `runledger-test-support`
@@ -922,7 +1038,7 @@ contracts, capability facts and validation history.
   -0346, -0347, -0348 and -0349 affect 0.23.44, which the workspace reached
   through `sqlx-core`, `reqwest` and `bollard`; the update is lock-only and
   within every dependent's semver range. The
-  [publication dossier](docs/evidence/publication-dossier-2026-10-17.md)
+  [publication dossier](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/evidence/publication-dossier-2026-10-17.md)
   records the remaining gates; nothing is published.
 - Manage constraint triggers with the routines they bind (`batter-n2s1`,
   [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
@@ -2058,7 +2174,7 @@ contracts, capability facts and validation history.
   rendering/redaction, reserve/jitter regressions; extend local HTTP smoke to
   SIGINT, error envelopes, deadlines, and ordinary INFO telemetry.
 - Upgrade all nine direct Rust dependencies to their latest stable releases and
-  refresh Cargo.lock; see [exact versions](docs/references.md#dependency-refresh-2026-09-07).
+  refresh Cargo.lock; see [exact versions](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/references.md#dependency-refresh-2026-09-07).
 - Pin the default Rust toolchain to 1.98.1. Raise the workspace minimum to 1.94
   for SQLx 0.9.0 and update the CI matrix to 1.94.0, 1.98.1, and stable.
 - Normalize rustfmt output, remove a redundant cleanup-test closure, and escape

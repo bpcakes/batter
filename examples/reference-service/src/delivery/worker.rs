@@ -9,9 +9,11 @@ use crate::provider::{
     ProviderEffectRequest, ReconcileOutcome,
 };
 use batter::{
-    admission::{Admission, AdmissionError, Bulkhead},
-    operation::{OperationContext, OperationPhases},
-    runledger::{JobPhasesRejection, job_phases},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadError},
+    operation::{OperationContext, OperationError},
+    runledger::{
+        JobFinalization, JobPhasesRejection, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
+    },
 };
 use runledger_core::{
     jobs::{JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType},
@@ -56,52 +58,15 @@ impl DeliveryWorker {
     }
 }
 
-#[async_trait]
-impl JobExecutionHandler for DeliveryWorker {
-    fn job_type(&self) -> JobType<'static> {
-        JobType::new(DELIVERY_JOB_TYPE)
-    }
-
-    async fn execute(
-        &self,
-        execution: JobExecution<'_>,
-        value: Value,
-    ) -> Result<JobCompletion, JobFailure> {
-        let payload = decode_payload(execution, value)?;
-        let phases = provider_phases(execution)?;
-        // Provider admission and calls use the work phase. The state SQL that
-        // records their outcome runs directly under the native deadline, so the
-        // reserve remains for it after provider work expires; the invocation's
-        // exit cancels every provider operation still linked to the phases.
-        self.execute_retained(execution, phases.work(), &payload)
-            .await
-    }
-}
-
-/// Derive provider work from the native invocation, not a fresh root. Both
-/// rejections that leave no provider time keep the earlier timeout mapping.
-fn provider_phases(execution: JobExecution<'_>) -> Result<OperationPhases, JobFailure> {
-    job_phases(execution, FINAL_STATE_RESERVE).map_err(|rejection| match rejection {
-        JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => JobFailure::timeout(
-            CODE_OPERATION_BUDGET_EXHAUSTED,
-            "No provider work budget remained.",
-        ),
-        JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => JobFailure::terminal(
-            CODE_OPERATION_PHASES_UNAVAILABLE,
-            "Provider work phases could not be derived from this invocation.",
-        ),
-    })
-}
-
 impl DeliveryWorker {
     async fn admission_failure(
         &self,
         execution: JobExecution<'_>,
         payload: &DeliveryJobPayload,
         state: ProviderEffectState,
-        error: AdmissionError,
+        error: &AdmissionError,
     ) -> Result<JobCompletion, JobFailure> {
-        let (code, message, interrupted) = admission_failure_details(&error);
+        let (code, message, interrupted) = admission_failure_details(error);
         let state = match state {
             ProviderEffectState::AwaitingAttempt | ProviderEffectState::RetryableUndispatched => {
                 self.record_admission_undispatched(execution, payload, code, state)
@@ -124,300 +89,6 @@ impl DeliveryWorker {
             return Err(JobFailure::timeout(code, message));
         }
         Err(retry_or_exhausted(state, code, message, None))
-    }
-
-    async fn execute_retained(
-        &self,
-        execution: JobExecution<'_>,
-        operation: &OperationContext,
-        payload: &DeliveryJobPayload,
-    ) -> Result<JobCompletion, JobFailure> {
-        let mut snapshot = self.load_retained(execution, payload).await?;
-        let provider_work = match snapshot.plan(payload.record_generation) {
-            EffectPlan::Complete => return Ok(JobCompletion::success()),
-            EffectPlan::Manual => {
-                return Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "The retained provider outcome requires manual resolution.",
-                ));
-            }
-            EffectPlan::Exhausted => {
-                return Err(JobFailure::terminal(
-                    CODE_ATTEMPTS_EXHAUSTED,
-                    "Delivery attempts are exhausted.",
-                ));
-            }
-            EffectPlan::Defer(delay) => {
-                return Err(state_failure(StateError::RetryDeferred(delay)));
-            }
-            EffectPlan::DenyGeneration { expected } => {
-                self.record_business_denial(
-                    execution,
-                    payload,
-                    "target_generation_changed",
-                    expected,
-                )
-                .await
-                .map_err(state_failure)?;
-                return Ok(JobCompletion::success());
-            }
-            EffectPlan::ExpireReconciliation => {
-                self.record_manual(
-                    execution,
-                    payload,
-                    "provider_retention_expired",
-                    None,
-                    ProviderAcceptance::Possible,
-                    ProviderEffectState::ReconcileNeeded,
-                )
-                .await
-                .map_err(state_failure)?;
-                return Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "Provider retention expired before reconciliation.",
-                ));
-            }
-            EffectPlan::Reconcile => ProviderWork::Reconcile,
-            EffectPlan::Dispatch { expected } => ProviderWork::Dispatch {
-                origin: DispatchOrigin::Initial(expected),
-            },
-        };
-
-        let dispatch_origin = match provider_work {
-            ProviderWork::Reconcile => match self
-                .reconcile_existing(execution, operation, payload, &snapshot)
-                .await?
-            {
-                ReconcileAction::Complete(completion) => return Ok(completion),
-                ReconcileAction::DispatchAfterAbsence => {
-                    snapshot = self.load_retained(execution, payload).await?;
-                    if snapshot.state != ProviderEffectState::ReconcileNeeded {
-                        return Err(state_failure(StateError::Invariant));
-                    }
-                    if snapshot.current_generation != Some(payload.record_generation) {
-                        self.record_business_denial(
-                            execution,
-                            payload,
-                            "target_generation_changed",
-                            ProviderEffectState::ReconcileNeeded,
-                        )
-                        .await
-                        .map_err(state_failure)?;
-                        return Ok(JobCompletion::success());
-                    }
-                    DispatchOrigin::ProvenAbsent
-                }
-            },
-            ProviderWork::Dispatch { origin } => origin,
-        };
-
-        self.dispatch(
-            execution,
-            operation,
-            payload,
-            &mut snapshot,
-            dispatch_origin,
-        )
-        .await
-    }
-
-    async fn reconcile_existing(
-        &self,
-        execution: JobExecution<'_>,
-        operation: &OperationContext,
-        payload: &DeliveryJobPayload,
-        snapshot: &EffectSnapshot,
-    ) -> Result<ReconcileAction, JobFailure> {
-        debug_assert!(
-            snapshot.retention_active,
-            "reconciliation is planned only while provider retention is active"
-        );
-        let permit = match self.admission.enter(operation, Admission::Wait).await {
-            Ok(permit) => permit,
-            Err(error) => {
-                return self
-                    .admission_failure(execution, payload, snapshot.state, error)
-                    .await
-                    .map(ReconcileAction::Complete);
-            }
-        };
-        match self
-            .provider
-            .reconcile(
-                operation,
-                permit,
-                &snapshot.provider_key,
-                &snapshot.provider_payload,
-            )
-            .await
-        {
-            Ok(ReconcileOutcome::Accepted { provider_effect_id }) => self
-                .confirm(execution, payload, provider_effect_id)
-                .await
-                .map(ReconcileAction::Complete),
-            Ok(ReconcileOutcome::Absent) => Ok(ReconcileAction::DispatchAfterAbsence),
-            Ok(ReconcileOutcome::Expired) => {
-                self.record_manual(
-                    execution,
-                    payload,
-                    "provider_retention_expired",
-                    None,
-                    ProviderAcceptance::Possible,
-                    ProviderEffectState::ReconcileNeeded,
-                )
-                .await
-                .map_err(state_failure)?;
-                Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "Provider lookup no longer retains a definitive outcome.",
-                ))
-            }
-            Ok(ReconcileOutcome::Conflict) => {
-                self.record_manual(
-                    execution,
-                    payload,
-                    "provider_payload_conflict",
-                    None,
-                    ProviderAcceptance::Possible,
-                    ProviderEffectState::ReconcileNeeded,
-                )
-                .await
-                .map_err(state_failure)?;
-                Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "Provider lookup conflicted with the retained payload.",
-                ))
-            }
-            outcome @ (Ok(ReconcileOutcome::Unavailable) | Err(_)) => {
-                let code = outcome
-                    .as_ref()
-                    .err()
-                    .map_or(CODE_RECONCILE_UNAVAILABLE, |error| error.code());
-                let state = self
-                    .record_uncertain_failure(execution, payload, code)
-                    .await
-                    .map_err(state_failure)?;
-                Err(retry_or_exhausted(
-                    state,
-                    code,
-                    "Provider reconciliation did not return a definitive outcome.",
-                    None,
-                ))
-            }
-        }
-    }
-
-    async fn dispatch(
-        &self,
-        execution: JobExecution<'_>,
-        operation: &OperationContext,
-        payload: &DeliveryJobPayload,
-        snapshot: &mut EffectSnapshot,
-        origin: DispatchOrigin,
-    ) -> Result<JobCompletion, JobFailure> {
-        // Serialization and request construction finish before the durable
-        // dispatch marker. Polling execute is the remote-effect boundary.
-        let dispatch = self
-            .prepare_retained_dispatch(execution, payload, snapshot)
-            .await?;
-        let permit = match self.admission.enter(operation, Admission::Wait).await {
-            Ok(permit) => permit,
-            Err(error) => {
-                return self
-                    .admission_failure(execution, payload, snapshot.state, error)
-                    .await;
-            }
-        };
-        let marked = match origin {
-            DispatchOrigin::Initial(expected) => {
-                self.mark_dispatch_possible(execution, payload, expected)
-                    .await
-            }
-            DispatchOrigin::ProvenAbsent => {
-                self.renew_dispatch_possible_after_absence(execution, payload)
-                    .await
-            }
-        }
-        .map_err(state_failure)?;
-        if !marked {
-            drop(permit);
-            *snapshot = self.load_retained(execution, payload).await?;
-            if snapshot.current_generation != Some(payload.record_generation) {
-                self.record_business_denial(
-                    execution,
-                    payload,
-                    "target_generation_changed",
-                    snapshot.state,
-                )
-                .await
-                .map_err(state_failure)?;
-                return Ok(JobCompletion::success());
-            }
-            return Err(state_failure(StateError::Invariant));
-        }
-
-        let outcome = dispatch.execute(operation, permit).await;
-        self.persist_dispatch_outcome(execution, payload, outcome)
-            .await
-    }
-
-    async fn persist_dispatch_outcome(
-        &self,
-        execution: JobExecution<'_>,
-        payload: &DeliveryJobPayload,
-        outcome: Result<DispatchOutcome, crate::provider::ProviderCallError>,
-    ) -> Result<JobCompletion, JobFailure> {
-        match outcome {
-            Ok(DispatchOutcome::Accepted { provider_effect_id }) => {
-                self.confirm(execution, payload, provider_effect_id).await
-            }
-            Ok(DispatchOutcome::KnownNotDispatched { retry_not_before }) => Err(self
-                .record_provider_undispatched(execution, payload, retry_not_before)
-                .await),
-            Ok(DispatchOutcome::BusinessDenied) => {
-                self.record_business_denial(
-                    execution,
-                    payload,
-                    "provider_business_denied",
-                    ProviderEffectState::ReconcileNeeded,
-                )
-                .await
-                .map_err(state_failure)?;
-                Ok(JobCompletion::success())
-            }
-            Ok(DispatchOutcome::Conflict) => {
-                self.record_manual(
-                    execution,
-                    payload,
-                    "provider_payload_conflict",
-                    None,
-                    ProviderAcceptance::Possible,
-                    ProviderEffectState::ReconcileNeeded,
-                )
-                .await
-                .map_err(state_failure)?;
-                Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "Provider identity conflicted with the retained payload.",
-                ))
-            }
-            outcome @ (Ok(DispatchOutcome::Indeterminate) | Err(_)) => {
-                let code = outcome
-                    .as_ref()
-                    .err()
-                    .map_or(CODE_DISPATCH_INDETERMINATE, |error| error.code());
-                let state = self
-                    .record_uncertain_failure(execution, payload, code)
-                    .await
-                    .map_err(state_failure)?;
-                Err(retry_or_exhausted(
-                    state,
-                    code,
-                    "Provider dispatch may have been accepted and requires reconciliation.",
-                    None,
-                ))
-            }
-        }
     }
 
     async fn prepare_retained_dispatch(
@@ -452,25 +123,37 @@ impl DeliveryWorker {
         &self,
         execution: JobExecution<'_>,
         payload: &DeliveryJobPayload,
-    ) -> Result<EffectSnapshot, JobFailure> {
+    ) -> Result<RetainedLoad, JobFailure> {
         match self.load(execution, payload).await {
-            Ok(snapshot) => Ok(snapshot),
+            Ok(snapshot) => Ok(RetainedLoad::Snapshot(snapshot)),
             Err(StateError::Storage) => Err(state_failure(StateError::Storage)),
             Err(StateError::LeaseLost) => Err(state_failure(StateError::LeaseLost)),
             Err(StateError::RetryDeferred(delay)) => {
                 Err(state_failure(StateError::RetryDeferred(delay)))
             }
-            Err(StateError::Invariant) => {
-                self.record_state_invariant(execution, payload)
-                    .await
-                    .map_err(state_failure)?;
-                Err(JobFailure::terminal(
-                    CODE_MANUAL_RESOLUTION,
-                    "The retained provider state requires manual resolution.",
-                ))
-            }
+            Err(StateError::Invariant) => Ok(RetainedLoad::Invariant),
         }
     }
+
+    async fn finish_state_invariant(
+        &self,
+        execution: JobExecution<'_>,
+        payload: &DeliveryJobPayload,
+    ) -> Result<JobCompletion, JobFailure> {
+        self.record_state_invariant(execution, payload)
+            .await
+            .map_err(state_failure)?;
+        Err(JobFailure::terminal(
+            CODE_MANUAL_RESOLUTION,
+            "The retained provider state requires manual resolution.",
+        ))
+    }
+}
+
+// Detection belongs to work; the terminal write belongs to finalization.
+enum RetainedLoad {
+    Snapshot(EffectSnapshot),
+    Invariant,
 }
 
 struct EffectSnapshot {
@@ -528,20 +211,9 @@ enum EffectPlan {
 }
 
 #[derive(Clone, Copy)]
-enum ProviderWork {
-    Reconcile,
-    Dispatch { origin: DispatchOrigin },
-}
-
-#[derive(Clone, Copy)]
 enum DispatchOrigin {
     Initial(ProviderEffectState),
     ProvenAbsent,
-}
-
-enum ReconcileAction {
-    Complete(JobCompletion),
-    DispatchAfterAbsence,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -635,6 +307,9 @@ fn retry_or_exhausted(
     }
 }
 
+mod exchange;
+mod execute;
+mod phased;
 mod state;
 #[cfg(test)]
 mod tests;

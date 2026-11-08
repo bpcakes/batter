@@ -3,6 +3,10 @@
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 #![cfg(feature = "metrics")]
 
+use batter_core as bulkhead_foundation;
+#[path = "support/bulkhead.rs"]
+mod bulkhead_testing;
+use bulkhead_testing::BulkheadTestExt;
 #[path = "metrics/blocking.rs"]
 mod blocking;
 #[path = "metrics/capture.rs"]
@@ -264,15 +268,15 @@ async fn bulkhead_storm(capture: &Capture, storm: usize) -> Vec<String> {
     let _recorder = facade::set_default_local_recorder(capture);
     let context = owner().into_context();
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
-    let held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     let mut results = Vec::with_capacity(storm);
     for _ in 0..storm {
-        let result = bulkhead.enter(&context, Admission::Reject).await;
+        let result = bulkhead.hold(&context, Admission::Reject).await;
         results.push(format!("{:?}", result.map(|_| ())));
     }
     drop(held);
     bulkhead.close();
-    let closed = bulkhead.enter(&context, Admission::Wait).await;
+    let closed = bulkhead.hold(&context, Admission::Wait).await;
     assert!(matches!(closed, Err(AdmissionError::Closed)));
     results
 }
@@ -299,8 +303,15 @@ async fn rejection_storm_under_a_saturated_recorder_keeps_decisions_and_bounds()
     assert_eq!(decision(&complete, "admitted"), 1.0);
     assert_eq!(decision(&complete, "overloaded"), STORM as f64);
     assert_eq!(decision(&complete, "closed"), 1.0);
-    // The waiting admission is not also recorded as an operation.
-    assert_eq!(complete.samples(OPERATION_COMPLETIONS), []);
+    // Only the parked admitted work is an operation; refusals add none.
+    assert_eq!(complete.samples(OPERATION_COMPLETIONS).len(), 1);
+    assert_eq!(
+        complete.count(
+            OPERATION_COMPLETIONS,
+            &[("operation", "test.held_work"), ("outcome", "dropped")]
+        ),
+        1.0
+    );
     // Rejection by the recorder is neither retried nor reported to Batter:
     // both recorders received exactly one registration per decision.
     assert_eq!(complete.registrations(), saturated.registrations());

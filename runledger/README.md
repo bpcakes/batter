@@ -71,7 +71,7 @@ handlers, process model, and admin surface.
 - [Platform support](#platform-support)
 - [PostgreSQL requirements](#postgresql-requirements)
 - [Working in this repository](#working-in-this-repository)
-- [Releasing](#releasing)
+- [Publication and version history](#publication-and-version-history)
 - [Repository layout](#repository-layout)
 - [License](#license)
 

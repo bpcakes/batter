@@ -1,12 +1,16 @@
 //! Retry policy validation, replay authorization and backoff budgets.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
+use batter_core as bulkhead_foundation;
+#[path = "support/bulkhead.rs"]
+mod bulkhead_testing;
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead},
     operation::{Interruption, OperationContext, OperationOwner},
     retry::{self, ReplaySafety, RetryDecision, RetryError, RetryPolicy, StopReason},
 };
 use batter_test_support::Script;
+use bulkhead_testing::BulkheadTestExt;
 use std::{
     sync::{
         Arc,
@@ -515,7 +519,7 @@ async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
         .unwrap();
     let work_deadline = phases.work().deadline();
     let bulkhead = Bulkhead::new(batter_core::admission::BulkheadCapacity::new(1).unwrap());
-    let _occupied = bulkhead.enter(&parent, Admission::Reject).await.unwrap();
+    let _occupied = bulkhead.hold(&parent, Admission::Reject).await.unwrap();
     let result: Result<(), _> = retry::execute_with_jitter(
         phases.work(),
         "jitter.reserved",
@@ -529,7 +533,7 @@ async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
                     return Err("first");
                 }
                 assert_eq!(attempt.context.deadline(), work_deadline);
-                match bulkhead.enter(&attempt.context, Admission::Wait).await {
+                match bulkhead.hold(&attempt.context, Admission::Wait).await {
                     Err(AdmissionError::Interrupted(_)) => Err("admission interrupted"),
                     other => panic!("unexpected admission: {other:?}"),
                 }

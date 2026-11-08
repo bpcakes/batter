@@ -10,7 +10,9 @@
 //! managed settlement and process cleanup classification. A native settlement
 //! cannot by itself prove remote effects or arbitrary detached work stopped.
 //!
-//! Inside a handler, [`job_phases`] derives Batter work and finalization contexts
+//! [`PhasedJob`] owns handler work/finalization with borrowed execution services.
+//! Its required failure classifier receives complete phase evidence.
+//! The adapter derives Batter work and finalization contexts internally
 //! from the native invocation: its deadline is the worker's own, and the
 //! invocation's exit cancels both phases without a guard or forwarding task.
 //! A test drives one handler without a worker, queue or database through
@@ -53,11 +55,17 @@
 
 #![forbid(unsafe_code)]
 
+mod phased_handler;
 mod phases;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
-pub use phases::{JobPhasesRejection, job_phases};
+pub use phased_handler::{
+    JobFinalization, JobWork, LateJobFinalization, LateJobSettlement, PhasedJob, PhasedJobFailure,
+    PhasedJobHandler,
+};
+pub use phases::JobPhasesRejection;
+use phases::job_phases;
 
 use batter_core::{
     BoxError, RegistrationError,

@@ -30,8 +30,7 @@ decisions include replaying the request, releasing a dispatch fence, refunding
 a budget and reconciling later. With reqwest, the answer depends on how the
 client was built and on which error predicates the caller checks. Its defaults
 follow redirects, replay some requests and read bodies without a bound. Batter
-had no outbound HTTP API. The [Effect reconciliation](../effect-v4-reconciliation.md)
-recorded that as the current boundary, not as a decision. `batter-3s1a` asks
+had no outbound HTTP API when this decision was proposed. `batter-3s1a` asks
 whether the transport part, below provider meaning, is shared enough for
 Batter to own.
 
@@ -100,8 +99,8 @@ could not see the later synchronous handoff to hyper's connection, or prevent
 a spawned connection driver writing after the exchange task stalled. No replay
 or redirect restriction closed that same-request timing gap. This is a library
 design gap under ADR-010, corrected by `batter-u387` at the user's request.
-The prior upstream classification evidence remains historical in
-[references](../references.md#reqwest-0135-and-hyper-util-0120-for-the-outbound-exchange-2026-11-02).
+The corrected ownership model's upstream evidence is recorded in
+[references](../references.md#owned-outbound-http1-connections-2026-11-04).
 
 ## Decision
 

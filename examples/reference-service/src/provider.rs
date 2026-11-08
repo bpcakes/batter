@@ -14,7 +14,6 @@ use reqwest::{Request, Response, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, time::Duration};
-use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
 
 pub(crate) const EFFECT_PROTOCOL_VERSION: u8 = 1;
@@ -95,7 +94,6 @@ impl ProviderClient {
     pub(crate) async fn reconcile(
         &self,
         context: &OperationContext,
-        _permit: OwnedSemaphorePermit,
         key: &str,
         expected: &ProviderEffectRequest,
     ) -> Result<ReconcileOutcome, ProviderCallError> {
@@ -144,7 +142,6 @@ impl PreparedDispatch {
     pub(crate) async fn execute(
         self,
         context: &OperationContext,
-        _permit: OwnedSemaphorePermit,
     ) -> Result<DispatchOutcome, ProviderCallError> {
         let Self {
             client,
@@ -388,12 +385,6 @@ fn valid_provider_effect_id(value: &str) -> bool {
 #[cfg(test)]
 mod contract_tests;
 #[cfg(test)]
-fn test_permit() -> OwnedSemaphorePermit {
-    std::sync::Arc::new(tokio::sync::Semaphore::new(1))
-        .try_acquire_owned()
-        .unwrap()
-}
-#[cfg(test)]
 mod tests {
     use super::*;
     use axum::{
@@ -626,7 +617,7 @@ mod tests {
                 client
                     .prepare_dispatch(&key, &request)
                     .unwrap()
-                    .execute(&operation, test_permit())
+                    .execute(&operation)
                     .await
                     .unwrap(),
                 DispatchOutcome::Accepted {
@@ -642,16 +633,13 @@ mod tests {
             client
                 .prepare_dispatch(&key, &changed)
                 .unwrap()
-                .execute(&operation, test_permit())
+                .execute(&operation)
                 .await
                 .unwrap(),
             DispatchOutcome::Conflict
         );
         assert_eq!(
-            client
-                .reconcile(&operation, test_permit(), &key, &request)
-                .await
-                .unwrap(),
+            client.reconcile(&operation, &key, &request).await.unwrap(),
             ReconcileOutcome::Accepted {
                 provider_effect_id: format!("provider:{}", request.effect_id)
             }
@@ -698,7 +686,7 @@ mod tests {
         let result = client
             .prepare_dispatch(&request.idempotency_key(), &request)
             .unwrap()
-            .execute(&operation, test_permit())
+            .execute(&operation)
             .await;
         assert!(matches!(
             result,
@@ -742,7 +730,6 @@ mod tests {
                 &batter::operation::OperationOwner::new(Duration::from_secs(2))
                     .unwrap()
                     .into_context(),
-                test_permit(),
             )
             .await;
         server.await.unwrap();

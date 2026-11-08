@@ -14,16 +14,18 @@ ownership, durable job outcomes, registry/catalog policy and database provisioni
 - `src/lib.rs`: opaque `run_atomic` composition without native connection exposure.
 - `src/lib.rs`: the `native` module reexporting `runledger-core`, `runledger-postgres`,
   `runledger-runtime` and, behind `test-support`, `runledger-test-support`.
-- `src/phases.rs`: `job_phases`, the one bridge from a native `JobExecution` to
+- `src/phased_handler.rs`: protected `PhasedJob` registration, phase-scoped
+  borrowed native services and complete failure classification.
+- `src/phases.rs`: private `job_phases`, the one bridge from a native `JobExecution` to
   Batter `OperationPhases`, and its typed `JobPhasesRejection`.
 - `src/test_support.rs` (feature `test-support`): `HandlerInvocation`, the
   worker-free drive of one handler to an exhaustive `HandlerExit`, with its
   in-memory `PersistedProgress`, for a fresh job (`new`) or a claimed job's
   context (`for_context`).
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
-- `tests/job_phases.rs`: paused-time bridge arithmetic, rejection, phase,
+- `src/phases/tests.rs`: paused-time bridge arithmetic, rejection, phase,
   observer and isolation contracts through the native invocation owner.
-- `tests/handler_invocation.rs` and `tests/handler_progress.rs`: the drive's
+- `src/test_support/invocation_tests.rs` and `tests/handler_progress.rs`: the drive's
   deadline, acceptance rule, destruction order and dispatch contracts, and its
   progress merge, declared retained progress, deadline refusal and budget
   acceptance, under paused time.
@@ -48,7 +50,19 @@ snapshot evidence; never restore borrowed session/transaction views.
 `run_atomic` owns disposition and consumes the intent phase before queue operations.
 It uses Batter's SQLx foundation and only releases outputs after acknowledgement.
 No raw owner extraction or legacy bridge is supported.
-`job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the
+`PhasedJob` owns the entire native handler future: never expose a separately
+cancellable scoped runner as the protected path. Work failure cannot bypass
+finalization, and failed finalization cannot publish a successful completion.
+The optional `settle_late` callback receives only a retained successful value
+whose sole work failure is deadline expiry. Its opaque proposal is driven by
+the existing kernel; accept recovery only after clean finalization and a native
+authority recheck after future destruction. Default finalization stays strict.
+Keep the private driver in one explicit state (ready payload, work, ordinary
+finalization or late settlement), rather than independent payload/settlement
+flags. Do not wrap callback futures before the kernel captures their destruction.
+Do not infer application commit meaning or merge native completion persistence.
+Native invocation termination still ends authority; do not finalize after it.
+Private `job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the
 root from the absolute native deadline, never from the remaining budget; reuse
 core `reserve_finalization`/`split_finalization` rather than new arithmetic.
 Link cancellation only through the native invocation's exit hook, which owns

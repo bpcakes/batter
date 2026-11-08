@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- PostgreSQL GCRA retry and replenishment delays now subtract database-measured
+  elapsed time through the final statement of the decision path, saturating at
+  zero, matching fixed-window delay semantics. The evaluation instant, persisted
+  quota state, public API and commit-uncertainty behavior are unchanged.
 - Raise the minimum supported Rust version from 1.94 to 1.98.1, the Batter
   workspace's pinned toolchain. No public item changes.
 - `MemoryAttemptLimiter::admit` borrows the subject's policy and clones it

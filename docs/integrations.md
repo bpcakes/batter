@@ -776,7 +776,7 @@ This is application-owned failure projection, not a queue transaction or a claim
 that arbitrary database tampering can be repaired.
 
 Provider `Bulkhead` admission then waits inside the provider work phase that
-`batter::runledger::job_phases` derives from the native invocation, using the
+`batter::runledger::PhasedJob` derives from the native invocation, using the
 purpose-specific `BATTER_PROVIDER_CAPACITY`. Runledger has already
 claimed the job and offers no attempt-neutral defer/refund, but its validated
 global handler concurrency also bounds the number of provider waiters. This
@@ -806,13 +806,40 @@ already-active wait. No application termination gate or independent join driver
 is required. In-flight claims can still dispatch after stop; arbitrary detached
 handler descendants and remote server sessions are not covered by native joins.
 
-Inside a `JobExecutionHandler`, `batter_runledger::job_phases(execution, reserve)`
-derives `OperationPhases` from the native invocation instead of a fresh root.
+For work followed by finalization, register
+`batter_runledger::PhasedJob::new(handler, reserve)?` with a `PhasedJobHandler`.
+The native worker owns one adapter invocation. Work and finalization borrow the
+same native execution services; finalization receives the complete work outcome
+after work-future destruction and work-context cancellation. By default, both
+phases must succeed before a native completion is accepted. An explicit
+`settle_late` override may instead propose settlement of a successful value
+returned after the shortened work deadline, without cancellation or panic.
+Recovery requires successful finalization, clean future destruction and live
+native invocation authority under the original deadline; ordinary finalization
+cannot erase work failure. See the [invocation phase contract](guarantees.md#runledger-invocation-phases).
+The required `failed` callback
+receives both outcomes and returns only `JobFailure`, keeping retry policy with
+the application. Native deadline, lease loss and task destruction still end
+authority and can interrupt finalization. There is no independently spawned
+coordinator or promise of finalization after invocation death.
+
+`PhasedJob` privately derives `OperationPhases` from the native invocation.
+The public `job_phases` function is removed; consumers cannot receive the pair.
 Their root deadline is exactly `JobExecution::deadline()`, the instant the worker
 enforces, on Tokio's view of the same monotonic clock; it is never rebuilt as
 now plus the remaining budget. Work ends `reserve` earlier through
 `reserve_finalization`'s checked arithmetic, finalization keeps the invocation
-deadline, and `Duration::ZERO` selects no reserve through `split_finalization`.
+deadline. Construction rejects zero, oversized or unrepresentable reserves;
+the current invocation must additionally have positive work time remaining.
+Applications classify both phase outcomes, including construction/polling and
+destruction panics, before choosing retry policy. The reference worker preserves
+native non-retryable `Panicked` classification even if finalization also returns
+a retryable error. A fence interruption reloads retained state under the live
+lease during finalization; cancellation alone proves neither commit nor rollback.
+Nested operation and outer phase interruptions share one exhaustive mapping
+from application progress. Expiry after admission but before callback entry
+remains an admission interruption; it cannot create dispatch uncertainty or
+authorize a transition requiring a dispatch fence that was never written.
 Runledger's `JobInvocation` ends when the invocation exits for any reason,
 after the handler future is destroyed and before the outcome is persisted:
 success, continuation, returned failure, panic, timeout, lease loss found by
@@ -824,9 +851,8 @@ invocation finish does not cancel it. Custom `JobExecutionServices` without an
 exit claim keep compiling but are refused with `JobPhasesRejection::Unsupported`;
 derivation also rejects ended invocations and exhausted work before any
 application work. The worker classifies a result or final-state write observed
-at or after its deadline as `job.timeout_exceeded`, so a zero reserve leaves no
-time for final-state work after work expiry; a positive reserve is application
-policy. Notification does not join detached work, shield cleanup, undo remote
+at or after its deadline as `job.timeout_exceeded`; the positive reserve is
+application policy. Notification does not join detached work, shield cleanup, undo remote
 effects or authorize dependency cleanup, and applications keep their explicit
 `OperationError`-to-`JobFailure` mapping; no generic conversion is provided,
 because `JobFailure` keeps only kind, code and message and native policy treats
@@ -857,7 +883,7 @@ Copy correlation metadata into durable payload/envelope fields only through a
 versioned, validated representation. Never persist a CancellationToken or Tokio
 Instant, and never keep a job subordinate to an already-finished HTTP scope.
 Each handler invocation derives its operation contexts from that invocation with
-`batter_runledger::job_phases`: the worker's deadline and the invocation's exit
+`batter_runledger::PhasedJob`: the worker's deadline and the invocation's exit
 bound the job's work, not the enqueuing request. Retry policy stays native and
 application-classified.
 
@@ -1176,7 +1202,7 @@ Native builders still read ambient configuration, so preparation rejects `OTEL_*
 and uses explicit empty resources. Applications must not mutate environment during
 preparation. See the [adapter guide](../crates/batter-otlp/README.md),
 [reference configuration](../examples/reference-service/README.md#opt-in-metrics-export)
-and [primary sources](references.md#reference-metrics-export).
+and [primary sources](references/runtime.md#reference-metrics-export-reviewed-2026-09-26).
 
 ## Outbound provider exchange: experimental transport evidence
 
@@ -1285,7 +1311,7 @@ only after an attempt proved unsent. `Idempotent` and `Deduplicated` would
 overclaim, and `Never` stops after the first failure. Such a request needs a
 hand-written second preparation after a `NotDispatched`, or a durable job.
 Durable retries keep Runledger's policy; a handler passes a context derived
-from `batter_runledger::job_phases` to `send_in`. Neither the retry nor the
+from `batter_runledger::JobWork` to `send_in`. Neither the retry nor the
 Runledger composition is exercised by a test in this repository.
 
 With default features, `batter-outbound-http` has no Batter runtime dependency, so a

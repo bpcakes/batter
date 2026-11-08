@@ -284,13 +284,22 @@ covers placement, replay and the transport's dependency policy.
 
 ## Bound concurrent work separately
 
+For async feature work, use `bulkhead.run(context, Admission::Reject,
+"record.read", |scope| async move { /* await work here */ Ok::<_, Error>(value) })`.
+The factory receives the child operation context, and the library keeps capacity
+until its future is destroyed. Match `BulkheadError::NotAdmitted` separately
+from `BulkheadError::Operation`. `Bulkhead::enter` has been removed. Start the
+entire bounded run inside a finite process task when that task owns the work.
+Use `run_resolved` to apply a durable protocol's retained-outcome resolver inside
+admission before telemetry; do not add an outer cancellation boundary around it.
+
 Create `BulkheadCapacity` from the configured count, then hand that validated
 witness to `Bulkhead::new` once and share clones of the resulting bulkhead. The
 [compiled API example](../crates/batter-core/src/admission.rs) shows the constructor
 handoff; admission still uses the caller's `OperationContext` and selected
 `Admission` policy.
 
-Place the permit around the resource you actually intend to limit. Holding it
+Place the bounded run around the resource you actually intend to limit. Holding capacity
 across backoff limits whole logical operations but consumes capacity while idle.
 Acquiring per attempt limits active dependency calls but creates a different
 queueing policy. Neither choice consumes a user admission quota automatically.
@@ -320,8 +329,7 @@ running, and an `Abandoned` result is never permission to replay automatically.
 A fallible closure returns its own error as `Ok(Err(error))`. Move owned data
 into the closure; move a `context.clone()` in only when the closure calls
 `check()` between steps, since it cannot otherwise observe cancellation. Keep
-`enter` for async work and for transferring a permit into a finite process
-task. The [compiled API example](../crates/batter-core/src/admission/blocking.rs)
+`run` for async work, including inside a finite process task. The [compiled API example](../crates/batter-core/src/admission/blocking.rs)
 shows the replacement and the permit being free when the value arrives.
 
 ## Supervising a service
@@ -437,26 +445,22 @@ Native initialization alone does not establish dependency health or
 application readiness, and native joins do not prove arbitrary detached work or
 remote sessions stopped.
 
-Inside a `JobExecutionHandler`, derive the job's operation contexts with
-`let phases = batter::runledger::job_phases(execution, reserve)` and match
-`JobPhasesRejection` explicitly into the job's `JobFailure`. Run provider calls,
-admission, retries and child operations under `phases.work()`, then await any
-final-state work under `phases.finalization()`, which keeps the native deadline
-after work expires. Choose a positive reserve that covers that final-state work;
-`Duration::ZERO` means none, and the worker then times out any result or write
-after work expiry. Do not build a fresh root from the remaining budget: it would
-neither share the worker's deadline nor be cancelled when the invocation ends.
-The worker destroys the handler future before ending the invocation, so the
-cancellation reaches spawned work holding a phase or one of its children, not
-code awaited in the handler. A plain final-state write awaited in the handler is
-bounded by the native deadline either way; use `finalization()` when that work
-uses Batter boundaries such as admission, retries, children or spawned tasks.
-Limit one step inside work with `phases.work().child(limit)`; never build a
-new root inside a handler, because nothing would cancel it when the invocation
-ends. The facade's `batter::runledger` module documentation shows the handler
-with facade paths.
-The [rustdoc example](../crates/batter-runledger/src/phases.rs) shows a complete
-handler; the reference delivery worker keeps a 500 ms reserve for its state SQL.
+For handler work followed by finalization, implement
+`batter::runledger::PhasedJobHandler` and register
+`PhasedJob::new(handler, reserve)?` directly. Both callbacks can borrow native
+progress/checkpoint services across awaits. The adapter owns sequencing and
+passes complete failed-phase evidence to the required native-failure classifier;
+an early work error cannot skip finalization while the invocation remains live.
+Native deadline, lease loss or task destruction can still interrupt finalization.
+See the [adapter guide](../crates/batter-runledger/README.md) and its
+[complete handler example](../crates/batter-runledger/src/phased_handler.rs).
+
+`job_phases` has been removed. Each callback receives its own context and
+native execution services; the finalizer also receives the complete work outcome.
+The reference delivery worker uses a 500 ms reserve and returns a typed provider
+outcome from work for persistence during finalization. Limit a work step with
+`scope.context().child(limit)`; it remains within the work deadline and follows
+native invocation cancellation.
 
 At service completion, use `running.wait_checked().await?` inside the
 application's `run` function. For an explicit stop, use
