@@ -4326,9 +4326,9 @@ also reads its own intent through the protected owner before queue transition.
 ## Flags offline suites
 
 The workspace part (`cargo test --workspace --all-features --all-targets`) runs
-every offline flags target; the `flags-declared` part also runs `batter-flags`
-with no features (`cargo test -p batter-flags --no-default-features --locked`),
-which guards the declared-only build. `batter-flags-core` targets: catalog
+every offline flags target; the `no-default-features` part's `flags-declared`
+command also runs `batter-flags` with no features (`cargo test -p batter-flags
+--no-default-features --locked`), which guards the declared-only build. `batter-flags-core` targets: catalog
 build, rules and queries, relations, handles and handle checks, digests,
 manifest and manifest decoding, snapshots, state encoding, revisions,
 resolutions, authority and published records, evaluation, governance, kill

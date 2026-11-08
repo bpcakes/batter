@@ -2312,14 +2312,17 @@ usability evaluations remain unexecuted.
 
 ### Flags catalog and declarations assessment (T-04, `batter-jkw6.4`)
 
-Relationships are stated on `CatalogBuilder` with both handles, so a pair is
-reciprocal whichever flag was declared first, and each side names its variant:
+Relationships are stated on `CatalogBuilder` with both handles, so a pair can be
+made reciprocal, with one call per direction, whichever flag was declared
+first, and each side names its variant:
 an implicit "enabled" would be ambiguous for enums and for toggles defaulting
 on. `both_or_none` exists only between toggles, which its signature enforces.
 Build refuses what pure construction can know: a self-relationship, an aliased
 or undeclared variant, code defaults that break an invariant, a catalog without
 a process kind or environment class, a duplicate key, a retired name in use.
-Single-assignment policy is a type state on the declaration (amendment A3).
+Ownership restriction is a type state on the declaration (amendment A3); a
+repeated `only_in` or `governed_by` call still compiles and is refused at
+`declare()` with `BuildError::RepeatedCall`.
 `Catalog::owned_by` refuses a foreign kind instead of answering it. Residual
 (ADR-016): a process kind can still name a handle it does not own; handles are
 catalog-wide, so the protected outcomes are refusal at gate and wrapper
@@ -2372,10 +2375,14 @@ application-built `GroupGate` observes it, and `AdmittedFlags` never accepts it.
 ### Job flags assessment (T-09, `batter-jkw6.9`)
 
 `gated_direct` and `gated_workflow_step` are separate constructors taking
-`DirectWhenTripped` or `StepWhenTripped`, so a deferral a workflow step cannot
-honour is unrepresentable rather than refused at run time. `GatePolicy` takes
-the awaiting-publication recheck explicitly, and `Drop` applies only to a
-tripped reading, so missing initial data never drops a job. `JobFlags` has no
+`DirectWhenTripped` or `StepWhenTripped`, so the workflow-step constructor
+cannot select a deferral a step cannot honour. Both return `GatedHandler`, so a
+direct handler enqueued as a workflow step is still refused only at run time,
+an application assertion `jobs_live`'s `drop_and_workflow_refusal` exercises.
+`GatePolicy` takes the awaiting-publication recheck explicitly, and `Drop`
+applies only to a tripped reading, so missing initial data never selects
+`Drop`; awaiting publication fails the attempt with that recheck, and a long
+outage can exhaust the job's attempts. `JobFlags` has no
 unrestricted live evaluation: unpinned facts report `UnpinnedBecause`. Batter
 never writes a pin into a Runledger payload; the application stores it.
 
@@ -2402,8 +2409,10 @@ database facts the store reports, not proves.
 
 `register_in` validates every input before registering anything and returns
 typed `RegisterError`s; the loader is the I/O shell around core's `Authority`,
-so an applied version and digest are always those of a judged snapshot, and
-`SnapshotStatus` is derived from one record at capture. `readiness_condition`
+so an applied version and digest are always those of a judged snapshot. One
+published record carries the snapshot, its authority and its age evidence;
+`SnapshotStatus` combines that record with the loader's separately held schema
+and refusal state and the writer's liveness. `readiness_condition`
 returns the condition and its closure together under one name. The stop marker
 is a reserved cleanup that runs before the pool closes. Residual: a restart
 during an outage without a last-good file serves the declared base.
@@ -2435,8 +2444,10 @@ The facade exposes the flags packages only behind `flags`, `flags-postgres`,
 `flags-axum` and `flags-runledger`, so one `batter` dependency reaches them
 without a direct declaration, and moves no ownership. `grant_fragment` refuses a
 schema other than `flags`. The rollout example separates the finite migration
-command from serving, which uses restricted credentials, and awaits cleanup on
-every failure path.
+command from serving, which uses restricted credentials, and awaits checked
+shutdown and cleanup once its supervisor has started. Residual: a failure
+between registering the pool's cleanup and starting the supervisor drops the
+cleanup without running it.
 
 ### Wakeable periodic seam assessment (T-18, `batter-jkw6.18`)
 
@@ -2466,8 +2477,10 @@ canonical key order and reports what no hold can meet as `unresolved`.
 fixed fallback is consistent. A strict write that would newly hold a flag is
 refused inside its transaction; accepting the hold is an explicit
 `InvariantPolicy::AcceptHeld`, and the outcome's `Deferral` lists what it
-accepted. `Snapshot::held` takes the view's freshness, so a stale view's holds
-cannot be reported as a fresh one's. Residual: the write side sees stored rows
+accepted. `RegisteredFlags::held` and the heartbeat choose the freshness of a
+view captured at that moment, so a stale view's holds are reported while it is
+stale; the low-level `Snapshot::held` takes the freshness as an argument, which
+its caller chooses. Residual: the write side sees stored rows
 and code defaults, not a process's settings, floor or staleness, and a catalog
 with more than four unreadable governing switches is reported unjudged.
 
