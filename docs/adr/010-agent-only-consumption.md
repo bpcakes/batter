@@ -2484,3 +2484,21 @@ its caller chooses. Residual: the write side sees stored rows
 and code defaults, not a process's settings, floor or staleness, and a catalog
 with more than four unreadable governing switches is reported unjudged.
 
+
+### Flags control-plane fresh-agent evaluation (T-24, `batter-jkw6.24`)
+
+Executed 2026-11-08 against an oracle frozen before launch
+([evidence](../evidence/flags-evaluation-2-2026-11-08/README.md)). A fresh agent
+given product requirements only built a service on the facade alone that meets
+all ten oracle items: protected control-plane registration over declared
+resolution, a kill switch with its safe state and stale rule, the route-group
+gate read through `AdmittedFlags`, a `gated_direct` job with explicit policies,
+a pin stored in the application's row in the enqueuing `run_atomic` and
+resolved with every `PinnedResolution` arm, and an operator script that retries
+an unknown commit with `--if-revision`. Nothing ran against a database. Its
+friction is evidence of remaining design debt on the canonical path: the flags
+example does not use protected startup (`batter-qrqy`), a gated handler cannot
+be driven in an offline test (`batter-alk2`), a flag-aware handler cannot use
+the protected invocation phases (`batter-31p9`), awaiting publication consumes
+attempts (`batter-owtx`), and the operator command's JSON and retry guidance are
+undocumented (`batter-xuv6`). One run of one agent is a signal, not a measure.
