@@ -8,6 +8,66 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Fix the flags write interrupt protocol: dropping its sender disables interruption
+  across preparation and commit validation instead of polling a completed receiver.
+  Persistence now owns selection through blocking-write completion, including after
+  a timeout, so a later attempt cannot reuse stale first-write authority.
+  Flags registration refuses pools whose cleanup belongs to another owner, was
+  extracted, or was never registered. Presence registration consumes a stop-marker
+  reservation tied to that same owner (`batter-jkw6.36`).
+
+- **Breaking:** `ReleaseDeclaration` and `ModeDeclaration` track set-once policies
+  in trailing `Unassigned`/`Assigned` type parameters. `only_in` (both kinds) and
+  `governed_by` (release flags) return a new type; a second assignment does not
+  compile. Existing inferred one-pass chains keep working. No deprecated shim:
+  returning the old type would restore the invalid repeated-assignment state.
+  Draft rejection is absorbing and encoding-1 parsing uses explicit member states.
+
+  ```rust,ignore
+  // Before: reassigning the old builder type (release or mode).
+  declaration = declaration.only_in(&hosted);
+  // After: shadow with the assigned type.
+  let declaration = declaration.only_in(&hosted);
+
+  // Before: release governance returned the same type.
+  release = release.governed_by(&halt);
+  // After:
+  let release = release.governed_by(&halt);
+
+  // Before: a helper returning an environment-restricted mode.
+  fn mode(...) -> ModeDeclaration<'a, Toggle> { ... }
+  // After:
+  fn mode(...) -> ModeDeclaration<'a, Toggle, Everyone, Assigned> { ... }
+
+  // Before: helpers returning restricted or governed release declarations.
+  fn release(...) -> ReleaseDeclaration<'a, Toggle> { ... }
+  // After: environment only, governance only, or both, respectively.
+  fn release(...) -> ReleaseDeclaration<'a, Toggle, Everyone, Assigned> { ... }
+  fn release(...) -> ReleaseDeclaration<'a, Toggle, Everyone, Unassigned, Assigned> { ... }
+  fn release(...) -> ReleaseDeclaration<'a, Toggle, Everyone, Assigned, Assigned> { ... }
+  ```
+
+  For conditional assignment, finish each branch to the common handle type:
+
+  ```rust,ignore
+  // Before:
+  if restricted { declaration = declaration.only_in(&hosted); }
+  let flag = declaration.declare()?;
+  // After (release and mode flags):
+  let flag = if restricted {
+      declaration.only_in(&hosted).declare()?
+  } else {
+      declaration.declare()?
+  };
+  // Apply the same branch-local finalization to optional `governed_by(&halt)`.
+  ```
+
+  Generic helpers must preserve the new policy parameters, including across
+  `owned_only_by`, rather than defaulting them back to `Unassigned`. Calls that
+  previously repeated a setter and expected `BuildError::RepeatedCall` must
+  choose one policy before construction. The variant remains available for
+  internal validation; no persisted format changes.
+
 - Add experimental typed flags and kill switches
   ([ADR-016](docs/adr/016-typed-flags-control-plane.md), `batter-jkw6`), through
   the facade's `flags`, `flags-postgres`, `flags-axum` and `flags-runledger`

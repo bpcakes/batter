@@ -496,6 +496,10 @@ impl Supervisor {
         std::mem::take(&mut self.cleanup)
     }
 
+    pub(crate) fn owns_cleanup(&self, registration: &crate::cleanup::CleanupRegistration) -> bool {
+        self.cleanup.owns_registration(registration)
+    }
+
     /// Approve application readiness once, then observe failures, stop admission,
     /// drain, cancel, abort/reap, and close dependencies. A panic, requested abort,
     /// or unjoined direct task causes conservative skipping of resource finalizers

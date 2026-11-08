@@ -182,35 +182,57 @@ fn setters_with_one_possible_meaning_are_idempotent() {
     assert_eq!(declared.pinned_by().len(), 1);
 }
 
-/// A second value would replace the first without a word, so it is refused.
 #[test]
-fn setters_that_would_replace_a_value_are_refused() {
-    let mut builder = vocabulary_builder();
-    let switch = halt(&mut builder);
-    let twice = |result: Result<_, BuildError>, expected: &str| match result {
-        Err(BuildError::RepeatedCall { method, .. }) => assert_eq!(method, expected),
-        other => panic!("expected a repeated {expected}, got {other:?}"),
+fn assignment_and_ownership_order_preserve_the_same_catalog() {
+    let build = |policy_first| {
+        let mut catalog = builder();
+        let serving = catalog.process_kind("serving").unwrap();
+        let hosted = catalog.environment_class("hosted").unwrap();
+        let switch = halt(&mut catalog);
+        if policy_first {
+            catalog
+                .release_flag("fast", Toggle::Off, expiry())
+                .governed_by(&switch)
+                .only_in(&hosted)
+                .owned_only_by(&serving)
+                .required()
+                .declare()
+                .unwrap();
+        } else {
+            catalog
+                .release_flag("fast", Toggle::Off, expiry())
+                .owned_only_by(&serving)
+                .only_in(&hosted)
+                .governed_by(&switch)
+                .required()
+                .declare()
+                .unwrap();
+        }
+        catalog.build().unwrap()
     };
-    twice(
-        builder
-            .release_flag("a", Toggle::Off, expiry())
-            .governed_by(&switch)
-            .governed_by(&switch)
-            .declare()
-            .map(drop),
-        "governed_by",
-    );
-    let mut classes = vocabulary_builder();
-    let development = classes.environment_class("staging").unwrap();
-    twice(
-        classes
-            .mode_flag("a", Toggle::Off)
-            .only_in(&development)
-            .only_in(&development)
-            .declare()
-            .map(drop),
-        "only_in",
-    );
+    assert_eq!(build(true).digest(), build(false).digest());
+}
+
+#[test]
+fn invalid_drafts_preserve_the_first_error_across_later_valid_mutations() {
+    let mut catalog = vocabulary_builder();
+    let mut foreign_catalog = builder();
+    let foreign = foreign_catalog.process_kind("foreign").unwrap();
+    let class = catalog.environment_class("staging").unwrap();
+    let switch = halt(&mut catalog);
+    let outcome = catalog
+        .release_flag("fast", Toggle::Off, expiry())
+        .owned_only_by(&foreign)
+        .required()
+        .coordinated()
+        .only_in(&class)
+        .governed_by(&switch)
+        .declare();
+    assert!(matches!(
+        outcome,
+        Err(BuildError::ForeignProcessKind { .. })
+    ));
+    assert!(catalog.build().unwrap().declaration("fast").is_none());
 }
 
 /// Empty owner lists, pin readers without a restriction and a second

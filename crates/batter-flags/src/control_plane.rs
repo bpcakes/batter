@@ -123,16 +123,22 @@ pub struct RegisteredFlags {
 
 /// The store a registered control plane reads and heartbeats through.
 ///
-/// It is built only from a pool that [`batter_sqlx::pool_in`] registered,
-/// so the pool's close was registered before the flags cleanup and, cleanup
-/// running in reverse, closes after the stop marker has run.
+/// [`register_in`] verifies that [`batter_sqlx::pool_in`] registered the pool
+/// with that same target before it installs any flags work. Caller-owned pools,
+/// other owners and extracted cleanup stacks are refused.
 #[derive(Clone, Debug)]
-pub struct ControlPlaneStore(PooledStore);
+pub struct ControlPlaneStore {
+    store: PooledStore,
+    pool: PgProfiledPool,
+}
 
 impl ControlPlaneStore {
     /// The store over `pool`, under `timing`.
     pub fn new(pool: &PgProfiledPool, timing: StoreTiming) -> Self {
-        Self(PooledStore::new(pool.pool().clone(), timing))
+        Self {
+            store: PooledStore::new(pool.pool().clone(), timing),
+            pool: pool.clone(),
+        }
     }
 }
 
@@ -223,6 +229,9 @@ impl std::fmt::Debug for RegisteredFlags {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RegisterError {
+    /// The pool's finalizer is not owned by this registration target.
+    #[error("the flags pool must be registered in this target's cleanup stack")]
+    PoolOwnership,
     /// The maximum age cannot cover one poll and one run budget, so a
     /// cadence whose runs all succeed would still go Stale.
     #[error("the flags maximum age must be at least {minimum:?}")]
@@ -285,8 +294,19 @@ pub fn register_in<T: RegistrationTarget + ?Sized>(
     policy: LoadPolicy,
     presence: Presence,
 ) -> Result<RegisteredFlags, RegisterError> {
-    let source = LoadSource::Store(store.0.clone());
-    register_with(target, source, &store.0, resolved, policy, presence)
+    let mut target = target.registration();
+    if !store.pool.is_registered_in(&target) {
+        return Err(RegisterError::PoolOwnership);
+    }
+    let source = LoadSource::Store(store.store.clone());
+    register_with(
+        &mut target,
+        source,
+        &store.store,
+        resolved,
+        policy,
+        presence,
+    )
 }
 
 fn register_with<T: RegistrationTarget + ?Sized>(
@@ -353,17 +373,18 @@ fn register_with<T: RegistrationTarget + ?Sized>(
     let process = presence.process();
     // Cleanup runs in reverse: the stop marker, then the listener's pool, then
     // the application's pool, which the root registered first.
-    presence
+    let mut presence = presence
         .reserve_stop(target)
         .map_err(RegisterError::Registration)?;
     let registered = refresh
-        .register(target)
+        .register(presence.registration())
         .map_err(RegisterError::Registration)?;
     if let (Some(endpoint), refresh::Registered::Woken(_, wake)) = (listening, &registered) {
-        listen::register(target, endpoint, wake.clone()).map_err(RegisterError::Registration)?;
+        listen::register(presence.registration(), endpoint, wake.clone())
+            .map_err(RegisterError::Registration)?;
     }
     let (presence, prune) = presence
-        .register(target, shared.clone())
+        .register(shared.clone())
         .map_err(RegisterError::Registration)?;
     Ok(RegisteredFlags {
         flags: Flags::shared(reader),

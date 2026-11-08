@@ -3638,3 +3638,16 @@ replays the processes' own over stored rows and code defaults and sees neither
 a process's settings nor its staleness, so it is advance notice and the
 process's own judgement is the enforcement. A kill switch is never refused for
 the flags engaging it holds.
+
+### Flags local state and cleanup ownership
+
+Flags registration rejects unregistered, foreign-owner and extracted-cleanup
+pools before registering components. The pool's opaque cleanup evidence and the
+presence reservation bind shutdown ordering to the same local owner; they do not
+prove that the native pool remains open or that PostgreSQL sessions terminated.
+A dropped write-interrupt sender disables both pre-commit waits without polling
+its completed receiver again. Last-good work selection and write admission are
+atomic, and a timed-out blocking write retains admission until it finishes. A
+failed selection retains the latest queued publication for retry.
+Declaration `only_in` and `governed_by` policies each assign once in the type
+system; validation failures retain the first error and admit no later mutation.

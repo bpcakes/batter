@@ -491,3 +491,12 @@ and fence state read-only. Native handler tests cover the private driver's ready
 work, ordinary-finalization and late-settlement paths, including callback
 construction, polling and destruction failures. Execution results belong to the
 owning Bead; no new fresh-agent usability evaluation is claimed.
+
+### Flags state-protocol regression coverage
+
+`batter-jkw6.36` adds a live store regression for a dropped interrupt sender,
+local two-phase interrupt tests, persistence admission tests spanning a timed-out
+blocking writer, and registration tests for foreign, unregistered and extracted
+pool cleanup. Catalog tests compare policy/ownership ordering and first-error
+retention; compile-fail doctests reject repeated set-once policies. The existing
+encoding-1 parser cases cover member order, duplicates and missing fields.

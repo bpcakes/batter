@@ -5,10 +5,12 @@
 //! Hooks must not detach work or block runtime threads.
 
 mod acquisition;
+mod registration;
+pub use registration::CleanupRegistration;
 pub mod low_level;
 
 use crate::{BoxError, ConfigurationError, RegistrationError, scoped_dispatch, validation};
-use std::{future::Future, pin::Pin, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::{
     task::{JoinError, JoinSet},
     time::Instant,
@@ -200,6 +202,7 @@ struct Hook {
 #[derive(Default)]
 pub struct CleanupStack {
     hooks: Vec<Hook>,
+    owner: Arc<()>,
 }
 
 /// A validated name and exclusive registration slot, reserved before acquisition.
@@ -235,10 +238,7 @@ impl CleanupSlot<'_> {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
-        self.stack.hooks.push(Hook {
-            name: self.name,
-            action: Box::new(move || Box::pin(action()) as CleanupFuture),
-        });
+        self.register_tracked(action);
     }
 }
 

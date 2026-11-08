@@ -36,8 +36,11 @@ the invariant judgement cannot drift apart.
 ## Invariants
 
 Every public enum is exhaustive, errors included; a new variant is a recorded
-hard cut. Evaluation reads no clock and does no I/O. Only a structurally
-corrupt candidate is rejected whole; every other row is published or held on
+hard cut. Evaluation reads no clock and does no I/O. A draft rejected by any
+validation transitions to an absorbing error state; declaration policy
+assignment is consuming (`only_in` and `governed_by` are each available once).
+The encoding parser tracks required-member progress with an exhaustive enum.
+Only a structurally corrupt candidate is rejected whole; every other row is published or held on
 its own. Holding never releases an engaged switch. The invariant judgement
 visits relations in canonical key order, so declaration order changes nothing.
 Debug never prints a setting's value. Without `serde` the normal closure holds

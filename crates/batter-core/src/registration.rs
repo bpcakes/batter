@@ -92,6 +92,13 @@ impl<'a> Registration<'a> {
         self.supervisor.reserve_cleanup(name)
     }
 
+    /// Whether this target still owns the finalizer's original cleanup stack.
+    /// This does not prove finalizer execution or remote resource liveness.
+    /// See [`crate::cleanup::CleanupSlot::register_tracked`] for an example.
+    pub fn owns_cleanup(&self, registration: &crate::cleanup::CleanupRegistration) -> bool {
+        self.supervisor.owns_cleanup(registration)
+    }
+
     /// Reborrow this authority for another helper call.
     pub fn registration(&mut self) -> Registration<'_> {
         Registration::new(self.supervisor)

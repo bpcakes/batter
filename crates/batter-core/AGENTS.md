@@ -104,6 +104,10 @@ Update the root contracts and implemented status, then record executed checks in
 
 ## Invariants
 
+`cleanup/registration.rs` owns opaque stack-registration evidence. It moves
+with the actual cleanup stack; extracting cleanup must not leave evidence
+valid for the emptied supervisor. Evidence proves registration, not execution.
+
 Preserve child deadline clamping, downward cancellation, inert factories,
 explicit replay permission, bounded process admission, and retained failures.
 Keep all state mutations inside `lifecycle/state.rs`. Publish the readiness

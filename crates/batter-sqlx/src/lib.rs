@@ -567,11 +567,11 @@ pub fn pool_in(
 ) -> Result<PgProfiledPool, sqlx::Error> {
     let database = PgProfiledPool::connect_lazy(connect_options, profile, pool_options)?;
     let closing = database.pool().clone();
-    slot.register(move || async move {
+    let registration = slot.register_tracked(move || async move {
         closing.close().await;
         Ok(())
     });
-    Ok(database)
+    Ok(database.with_cleanup(registration))
 }
 
 #[cfg(feature = "test-support")]

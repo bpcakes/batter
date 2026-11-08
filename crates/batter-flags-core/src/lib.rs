@@ -102,7 +102,8 @@ mod view;
 mod vocabulary;
 
 pub use builder::{
-    CatalogBuilder, Everyone, ModeDeclaration, ReleaseDeclaration, Restricted, SwitchDeclaration,
+    Assigned, CatalogBuilder, Everyone, ModeDeclaration, ReleaseDeclaration, Restricted,
+    SwitchDeclaration, Unassigned,
 };
 pub use catalog::{Catalog, Retired};
 pub use date::{CivilDate, CivilDateError, Expiry};

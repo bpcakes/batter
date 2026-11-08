@@ -28,13 +28,15 @@ enters declared mode. `test::TestFlags` is the fixture path, and
 `low_level::capture_now` is the disclosed, non-canonical live read. The
 protected periodic, `axum` HTTP and `runledger` job gates are implemented.
 With `postgres`, `control_plane::register_in` turns a `Resolved` and a
-`ControlPlaneStore` (built from the pool `batter_sqlx::pool_in` registered) into
+`ControlPlaneStore` (whose pool `batter_sqlx::pool_in` registered on the same
+target) into
 `RegisteredFlags`: the `flags.refresh` loader reads, validates and publishes
 snapshots on a `RefreshTiming` cadence under a `LoadPolicy`
 (`unready_until_loaded` or `start_on_defaults`); `flags.presence` and
 `flags.presence_prune` keep the fleet view current; and the
 `flags.presence.stopped` cleanup records the stop before the application's
-pool closes. `RegisteredFlags::status()` reports a `SnapshotStatus` in
+pool closes. Registration refuses caller-owned, foreign-owner and
+extracted-cleanup pools before adding any component. `RegisteredFlags::status()` reports a `SnapshotStatus` in
 precedence order, and `readiness_condition(Gate::Published | Gate::Fresh)`
 returns the `flags.snapshot` condition. `grants::grant_fragment` lists the
 exact privileges of each `FlagsOperation`. `LoadPolicy::with_last_good(SnapshotDirectory)`

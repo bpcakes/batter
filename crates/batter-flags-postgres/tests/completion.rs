@@ -23,6 +23,31 @@ fn write() -> Write {
         change(None),
     )
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn dropping_the_interrupt_sender_before_preparation_still_commits_once() {
+    let fixture = Fixture::migrated().await;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    drop(sender);
+    let outcome = fixture
+        .store
+        .submit(
+            Request::Write(write()),
+            WritePolicy::STRICT,
+            deadline(),
+            receiver,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, WriteOutcome::WrittenUndeclared { version, .. } if version.get() == 1)
+    );
+    let loaded = fixture.store.load(deadline()).await.unwrap();
+    assert_eq!(loaded.version().get(), 1);
+    assert_eq!(loaded.rows().len(), 1);
+    fixture.close().await;
+}
 fn sqlstate(mut error: &(dyn Error + 'static)) -> Option<String> {
     loop {
         if let Some(native) = error.downcast_ref::<sqlx::Error>() {

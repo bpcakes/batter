@@ -9,6 +9,9 @@ use batter_sqlx::{PgCommitStop, PgScopedSql, PgTransactionError, low_level::PgAt
 use sqlx::Row;
 use tokio::time::Instant;
 
+mod interrupt;
+use interrupt::Interrupt;
+
 pub(crate) enum Mutation {
     Write(Write),
     Archive(Archive),
@@ -183,13 +186,10 @@ impl PooledStore {
         // Until COMMIT is sent an interrupt drops the transaction whole: its
         // connection is retired, so the server aborts it, and nothing waits
         // for a statement still blocked on a lock.
-        let (tx, result) = match &mut interrupt {
-            Interrupt::Never => operation.await,
-            Interrupt::On(signal) => tokio::select! {
-                biased;
-                Ok(()) = signal => return Err(StoreError::classified(ErrorClass::Interrupted)),
-                done = operation => done,
-            },
+        let (tx, result) = tokio::select! {
+            biased;
+            () = interrupt.wait() => return Err(StoreError::classified(ErrorClass::Interrupted)),
+            done = operation => done,
         }
         .map_err(crate::atomic::scope_error)?;
         let outcome = match result {
@@ -221,19 +221,7 @@ impl PooledStore {
         let proposed_version = pending.version;
         // An interrupt is honoured until COMMIT is sent, including during the
         // native continuity check before it, and never after.
-        let committed = match interrupt {
-            Interrupt::Never => tokio::time::timeout_at(deadline, tx.commit())
-                .await
-                .map(|result| result.map_err(PgCommitStop::Unconfirmed)),
-            Interrupt::On(signal) => {
-                let stop = async move {
-                    if signal.await.is_err() {
-                        std::future::pending::<()>().await;
-                    }
-                };
-                tokio::time::timeout_at(deadline, tx.commit_unless(stop)).await
-            }
-        };
+        let committed = tokio::time::timeout_at(deadline, tx.commit_unless(interrupt.wait())).await;
         match committed {
             Ok(Ok(proof)) => Ok(pending.committed(proof)),
             Ok(Err(PgCommitStop::Interrupted)) => {
@@ -289,12 +277,6 @@ impl PooledStore {
         super::validate::apply(sql, mutation, policy, head, next).await
     }
 }
-/// Whether a mutation may be interrupted before COMMIT.
-enum Interrupt {
-    Never,
-    On(tokio::sync::oneshot::Receiver<()>),
-}
-
 // SQLSTATE ErrorResponse on COMMIT is a rejection, except connection/unknown
 // completion classes: these cannot prove the transaction's outcome.
 pub(crate) fn known_commit_rejection(error: &PgTransactionError) -> bool {

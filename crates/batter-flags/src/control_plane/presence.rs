@@ -10,7 +10,7 @@ use batter_core::{
         PeriodicFailure, PeriodicPolicy, PeriodicReader, PeriodicShutdown, PeriodicStartup,
         register_periodic_in,
     },
-    registration::RegistrationTarget,
+    registration::{Registration, RegistrationTarget},
 };
 use batter_flags_core::{
     FlagKey, Kind, SwitchState,
@@ -156,6 +156,80 @@ pub(crate) struct Prepared {
     stop_budget: Duration,
 }
 
+/// The stop marker is installed; this borrow pins all component registration
+/// to the same owner. Only this state can register heartbeat work.
+pub(crate) struct Reserved<'a> {
+    prepared: Prepared,
+    target: Registration<'a>,
+}
+
+impl<'a> Reserved<'a> {
+    pub(crate) fn registration(&mut self) -> &mut Registration<'a> {
+        &mut self.target
+    }
+
+    /// Registers `flags.presence` and `flags.presence_prune`, and returns
+    /// their readers.
+    pub(crate) fn register(
+        self,
+        shared: Arc<Shared>,
+    ) -> Result<(PeriodicReader, PeriodicReader), RegistrationError> {
+        let mut target = self.target;
+        let Prepared {
+            store,
+            slot,
+            floor,
+            heartbeat,
+            prune,
+            ..
+        } = self.prepared;
+        let beat_store = store.clone();
+        let presence =
+            register_periodic_in(&mut target, "flags.presence", heartbeat, move |context| {
+                let store = beat_store.clone();
+                let slot = slot.clone();
+                let shared = shared.clone();
+                let floor = floor.clone();
+                async move {
+                    if shared.schema_is_behind() {
+                        // Unknown columns would fail the heartbeat; the process
+                        // stays out of the fleet view until the migration runs.
+                        tracing::event!(
+                            name: "flags.presence",
+                            target: "batter::flags",
+                            tracing::Level::DEBUG,
+                            batter.flags.presence.cause = "schema_behind",
+                            "flags heartbeat skipped",
+                        );
+                        return Ok(());
+                    }
+                    let report = report(&shared, floor);
+                    let mut slot = slot.lock().await;
+                    match &mut *slot {
+                        Slot::Active(presence) => store
+                            .heartbeat(presence, &report, work_deadline(context.deadline()))
+                            .await
+                            .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error))),
+                        Slot::Stopped => Ok(()),
+                    }
+                }
+            })?;
+        let limit = PruneLimit::new(PRUNE_ROWS).expect("the prune limit is in range");
+        let pruning =
+            register_periodic_in(&mut target, "flags.presence_prune", prune, move |context| {
+                let store = store.clone();
+                async move {
+                    store
+                        .prune(limit, work_deadline(context.deadline()))
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error)))
+                }
+            })?;
+        Ok((presence, pruning))
+    }
+}
+
 /// Validates presence for the process whose declared base is `base`.
 pub(crate) fn prepare(
     store: &PooledStore,
@@ -206,9 +280,10 @@ impl Prepared {
     /// closes, because the pool was registered first and cleanup runs in
     /// reverse.
     pub(crate) fn reserve_stop<T: RegistrationTarget + ?Sized>(
-        &self,
+        self,
         target: &mut T,
-    ) -> Result<(), RegistrationError> {
+    ) -> Result<Reserved<'_>, RegistrationError> {
+        let mut target = target.registration();
         let slot = self.slot.clone();
         let store = self.store.clone();
         let budget = self.stop_budget;
@@ -216,67 +291,10 @@ impl Prepared {
             .registration()
             .reserve_cleanup("flags.presence.stopped")?
             .register(move || async move { stop(&store, &slot, budget).await });
-        Ok(())
-    }
-
-    /// Registers `flags.presence` and `flags.presence_prune`, and returns
-    /// their readers.
-    pub(crate) fn register<T: RegistrationTarget + ?Sized>(
-        self,
-        target: &mut T,
-        shared: Arc<Shared>,
-    ) -> Result<(PeriodicReader, PeriodicReader), RegistrationError> {
-        let Self {
-            store,
-            slot,
-            floor,
-            heartbeat,
-            prune,
-            ..
-        } = self;
-        let beat_store = store.clone();
-        let presence = register_periodic_in(target, "flags.presence", heartbeat, move |context| {
-            let store = beat_store.clone();
-            let slot = slot.clone();
-            let shared = shared.clone();
-            let floor = floor.clone();
-            async move {
-                if shared.schema_is_behind() {
-                    // Unknown columns would fail the heartbeat; the process
-                    // stays out of the fleet view until the migration runs.
-                    tracing::event!(
-                        name: "flags.presence",
-                        target: "batter::flags",
-                        tracing::Level::DEBUG,
-                        batter.flags.presence.cause = "schema_behind",
-                        "flags heartbeat skipped",
-                    );
-                    return Ok(());
-                }
-                let report = report(&shared, floor);
-                let mut slot = slot.lock().await;
-                match &mut *slot {
-                    Slot::Active(presence) => store
-                        .heartbeat(presence, &report, work_deadline(context.deadline()))
-                        .await
-                        .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error))),
-                    Slot::Stopped => Ok(()),
-                }
-            }
-        })?;
-        let limit = PruneLimit::new(PRUNE_ROWS).expect("the prune limit is in range");
-        let pruning =
-            register_periodic_in(target, "flags.presence_prune", prune, move |context| {
-                let store = store.clone();
-                async move {
-                    store
-                        .prune(limit, work_deadline(context.deadline()))
-                        .await
-                        .map(|_| ())
-                        .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error)))
-                }
-            })?;
-        Ok((presence, pruning))
+        Ok(Reserved {
+            prepared: self,
+            target,
+        })
     }
 }
 

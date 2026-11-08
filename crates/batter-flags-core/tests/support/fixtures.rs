@@ -222,13 +222,14 @@ fn finish_new_checkout<O>(
     checkout_halt: &KillSwitch,
     change: Change,
 ) -> ReleaseFlag<Toggle> {
-    if change != Change::NewCheckoutUngoverned {
-        flag = flag.governed_by(checkout_halt);
-    }
     if change != Change::WithoutRequiresSettings {
         flag = flag.requires_settings(Toggle::On, &["PAYMENT_API_URL", "PAYMENT_API_KEY"]);
     }
-    flag.declare().unwrap()
+    if change == Change::NewCheckoutUngoverned {
+        flag.declare().unwrap()
+    } else {
+        flag.governed_by(checkout_halt).declare().unwrap()
+    }
 }
 
 fn new_checkout(
@@ -296,13 +297,14 @@ fn debug_panel(
     change: Change,
 ) {
     let mut flag = builder.mode_flag("debug_panel", Toggle::Off);
-    if change != Change::DebugPanelEverywhere {
-        flag = flag.only_in(development);
-    }
     if change != Change::DebugPanelRolling {
         flag = flag.coordinated();
     }
-    let flag = flag.declare().unwrap();
+    let flag = if change == Change::DebugPanelEverywhere {
+        flag.declare().unwrap()
+    } else {
+        flag.only_in(development).declare().unwrap()
+    };
     builder
         .conflicts(&flag, Toggle::On, fast_path, Toggle::On)
         .unwrap();

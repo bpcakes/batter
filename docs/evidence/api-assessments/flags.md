@@ -63,8 +63,9 @@ Build refuses what pure construction can know: a self-relationship, an aliased
 or undeclared variant, code defaults that break an invariant, a catalog without
 a process kind or environment class, a duplicate key, a retired name in use.
 Ownership restriction is a type state on the declaration (amendment A3); a
-repeated `only_in` or `governed_by` call still compiles and is refused at
-`declare()` with `BuildError::RepeatedCall`.
+repeated `only_in` or `governed_by` call cannot compile: trailing policy
+types preserve assignment through every other builder operation. Invalid drafts
+retain their first rejection in an absorbing enum state (`batter-jkw6.36`).
 `Catalog::owned_by` refuses a foreign kind instead of answering it. Residual
 (ADR-016): a process kind can still name a handle it does not own; handles are
 catalog-wide, so the protected outcomes are refusal at gate and wrapper
@@ -249,3 +250,36 @@ established API limits: the flags example does not use protected startup
 flag-aware handler (`batter-31p9`); awaiting publication consumes attempts
 (`batter-owtx`); and the operator command's JSON and retry guidance are
 undocumented (`batter-xuv6`). One run of one agent is a signal, not a measure.
+
+## Branch state-protocol repairs (`batter-jkw6.36`)
+
+The write's interrupt owns Pending/Disabled/Requested states across both waits;
+observing sender closure cannot leave a completed receiver eligible for polling.
+The last-good writer acquires its explicit Writing state and selects the queued
+snapshot and prior-write evidence under the same mutex. Its selected owner stays
+inside the blocking task until completion or destruction; dropping a waiter cannot
+reopen admission, and failed/abandoned selections retain the latest pending value.
+
+`CleanupSlot::register_tracked` mints opaque stack-identity evidence only after
+installing the hook. SQLx keeps that evidence privately with a protected pool;
+caller-owned constructors keep an explicit unregistered state. Flags checks it
+against one borrowed registration target before any mutation. Extracting cleanup
+transfers its identity away from the supervisor. Moving the supervisor preserves
+it. This proves local registration ownership, not pool liveness, callback meaning,
+or remote termination. Native pool access can still close a pool explicitly.
+
+Presence reservation consumes its preparation and holds that same target until
+components are installed, so internal helpers cannot omit or change the stop
+marker's owner. Encoding-1's two required fields transition through an exhaustive
+Empty/Encoding/Payload/Complete enum; duplicate and incomplete input is refused.
+No new public hard cut except the builder policy return types is needed; their
+old-type shim would reintroduce repeated assignment, so none is supplied.
+
+Public-surface check against branch commit `ae6e4107`: the repository's rustdoc
+JSON walker reports 1,249 -> 1,253 entries for `batter-flags-core`, no removed
+paths, and four additions (the two policy markers and their re-exports). Manual
+signature comparison also identifies the new trailing declaration parameters
+and the assigned-state returns of both `only_in` methods and `governed_by`;
+the name-only walker cannot detect these cuts. The changelog covers reassignment,
+conditional finalization and helper return types; no compatibility shim can
+retain those old types without making repeat assignment possible again.

@@ -26,21 +26,38 @@ pub(super) struct Shape {
     pub(super) stale_rule: Option<StaleRule>,
 }
 
-/// A declaration in progress. The first error wins and is returned by
-/// [`finish`](Self::finish); later calls change nothing.
+/// A declaration is either editable or permanently rejected. Invalid input
+/// retains the first error and cannot mutate the remaining declaration.
 pub(super) struct Draft<'b> {
     builder: &'b mut CatalogBuilder,
-    key: Result<FlagKey, BuildError>,
-    /// The value type's declared variants; empty for a switch.
+    state: State,
+}
+
+enum State {
+    Valid(Fields),
+    Invalid(BuildError),
+}
+
+struct Fields {
+    key: FlagKey,
     variants: &'static [&'static str],
-    error: Option<BuildError>,
-    owners: Option<OwnedOwners>,
+    owners: OwnedOwners,
     pinned_by: Vec<ProcessKind>,
-    only_in: Option<EnvironmentClass>,
+    only_in: EnvironmentPolicy,
     absence: Absence,
     flip_discipline: FlipDiscipline,
-    governed_by: Option<GoverningSwitch>,
+    governed_by: Governance,
     requires_settings: Vec<RequiredSettings>,
+}
+
+enum EnvironmentPolicy {
+    Any,
+    Only(EnvironmentClass),
+}
+
+enum Governance {
+    Independent,
+    By(GoverningSwitch),
 }
 
 impl<'b> Draft<'b> {
@@ -49,111 +66,149 @@ impl<'b> Draft<'b> {
         key: &str,
         variants: &'static [&'static str],
     ) -> Self {
-        let key = FlagKey::new(key).map_err(|cause| BuildError::InvalidKey {
-            key: Box::from(key),
-            cause,
-        });
-        Self {
-            builder,
-            key,
-            variants,
-            error: None,
-            owners: None,
-            pinned_by: Vec::new(),
-            only_in: None,
-            absence: Absence::Default,
-            flip_discipline: FlipDiscipline::Rolling,
-            governed_by: None,
-            requires_settings: Vec::new(),
-        }
+        let state = match FlagKey::new(key) {
+            Ok(key) => State::Valid(Fields {
+                key,
+                variants,
+                owners: OwnedOwners::All,
+                pinned_by: Vec::new(),
+                only_in: EnvironmentPolicy::Any,
+                absence: Absence::Default,
+                flip_discipline: FlipDiscipline::Rolling,
+                governed_by: Governance::Independent,
+                requires_settings: Vec::new(),
+            }),
+            Err(cause) => State::Invalid(BuildError::InvalidKey {
+                key: Box::from(key),
+                cause,
+            }),
+        };
+        Self { builder, state }
     }
 
     pub(super) fn key(&self) -> Option<&FlagKey> {
-        self.key.as_ref().ok()
+        match &self.state {
+            State::Valid(fields) => Some(&fields.key),
+            State::Invalid(_) => None,
+        }
     }
 
-    /// Records the first error; an invalid key outranks everything after it.
+    fn update(
+        &mut self,
+        change: impl FnOnce(&mut Fields, &CatalogBuilder) -> Result<(), BuildError>,
+    ) {
+        match &mut self.state {
+            State::Valid(fields) => {
+                if let Err(error) = change(fields, self.builder) {
+                    self.state = State::Invalid(error);
+                }
+            }
+            State::Invalid(_) => {}
+        }
+    }
+
     pub(super) fn fail(&mut self, make: impl FnOnce(FlagKey) -> BuildError) {
-        if self.error.is_none()
-            && let Ok(key) = &self.key
-        {
-            self.error = Some(make(key.clone()));
-        }
+        self.update(|fields, _| Err(make(fields.key.clone())));
     }
 
-    fn repeated(&mut self, method: &'static str) {
-        self.fail(|key| BuildError::RepeatedCall { key, method });
-    }
-
-    /// Restricts ownership to `kind`. The typed builder offers this once, so
-    /// there is no earlier choice to replace, and it can never be empty.
     pub(super) fn owned_only_by(&mut self, kind: &ProcessKind) {
-        if !self.foreign(kind) {
-            self.owners = Some(OwnedOwners::Only(Box::new([kind.clone()])));
-        }
+        self.update(|fields, builder| {
+            fields.check_kind(builder, kind)?;
+            fields.owners = OwnedOwners::Only(Box::new([kind.clone()]));
+            Ok(())
+        });
     }
 
-    /// Adds an owner to a restricted declaration. Adding one already listed
-    /// changes nothing.
     pub(super) fn add_owner(&mut self, kind: &ProcessKind) {
-        if self.foreign(kind) {
-            return;
-        }
-        if let Some(OwnedOwners::Only(owners)) = &mut self.owners
-            && !owners.contains(kind)
-        {
-            let mut listed = std::mem::take(owners).into_vec();
-            listed.push(kind.clone());
-            listed.sort_unstable_by(|left, right| left.name().cmp(right.name()));
-            *owners = listed.into_boxed_slice();
-        }
+        self.update(|fields, builder| {
+            fields.check_kind(builder, kind)?;
+            match &mut fields.owners {
+                OwnedOwners::Only(owners) => {
+                    if !owners.contains(kind) {
+                        let mut listed = owners.to_vec();
+                        listed.push(kind.clone());
+                        listed.sort_unstable_by(|left, right| left.name().cmp(right.name()));
+                        *owners = listed.into_boxed_slice();
+                    }
+                }
+                OwnedOwners::All => unreachable!("only restricted declarations add owners"),
+            }
+            Ok(())
+        });
     }
 
-    /// Adds a kind that may resolve pins without owning. Adding one already
-    /// listed changes nothing.
     pub(super) fn add_pin_reader(&mut self, kind: &ProcessKind) {
-        if !self.foreign(kind) && !self.pinned_by.contains(kind) {
-            self.pinned_by.push(kind.clone());
-            self.pinned_by
-                .sort_unstable_by(|left, right| left.name().cmp(right.name()));
-        }
+        self.update(|fields, builder| {
+            fields.check_kind(builder, kind)?;
+            if !fields.pinned_by.contains(kind) {
+                fields.pinned_by.push(kind.clone());
+                fields
+                    .pinned_by
+                    .sort_unstable_by(|left, right| left.name().cmp(right.name()));
+            }
+            Ok(())
+        });
     }
 
     pub(super) fn only_in(&mut self, class: &EnvironmentClass) {
-        if self.only_in.is_some() {
-            return self.repeated("only_in");
-        }
-        if class.catalog() != self.builder.id {
-            return self.fail(|key| BuildError::ForeignEnvironmentClass {
-                key,
-                class: Box::from(class.name()),
-            });
-        }
-        self.only_in = Some(class.clone());
+        self.update(|fields, builder| {
+            if class.catalog() != builder.id {
+                return Err(BuildError::ForeignEnvironmentClass {
+                    key: fields.key.clone(),
+                    class: Box::from(class.name()),
+                });
+            }
+            match fields.only_in {
+                EnvironmentPolicy::Any => fields.only_in = EnvironmentPolicy::Only(class.clone()),
+                EnvironmentPolicy::Only(_) => {
+                    return Err(BuildError::RepeatedCall {
+                        key: fields.key.clone(),
+                        method: "only_in",
+                    });
+                }
+            }
+            Ok(())
+        });
     }
 
     pub(super) fn require_absence(&mut self) {
-        self.absence = Absence::Required;
+        self.update(|fields, _| {
+            fields.absence = Absence::Required;
+            Ok(())
+        });
     }
 
     pub(super) fn coordinate(&mut self) {
-        self.flip_discipline = FlipDiscipline::Coordinated;
+        self.update(|fields, _| {
+            fields.flip_discipline = FlipDiscipline::Coordinated;
+            Ok(())
+        });
     }
 
     pub(super) fn governed_by(&mut self, switch: &KillSwitch) {
-        if self.governed_by.is_some() {
-            return self.repeated("governed_by");
-        }
-        let handle = switch.handle();
-        if handle.catalog() != self.builder.id {
-            return self.fail(|key| BuildError::ForeignHandle {
-                key,
-                handle: handle.key().clone(),
-            });
-        }
-        self.governed_by = Some(GoverningSwitch {
-            index: handle.index(),
-            key: handle.key().clone(),
+        self.update(|fields, builder| {
+            let handle = switch.handle();
+            if handle.catalog() != builder.id {
+                return Err(BuildError::ForeignHandle {
+                    key: fields.key.clone(),
+                    handle: handle.key().clone(),
+                });
+            }
+            match fields.governed_by {
+                Governance::Independent => {
+                    fields.governed_by = Governance::By(GoverningSwitch {
+                        index: handle.index(),
+                        key: handle.key().clone(),
+                    })
+                }
+                Governance::By(_) => {
+                    return Err(BuildError::RepeatedCall {
+                        key: fields.key.clone(),
+                        method: "governed_by",
+                    });
+                }
+            }
+            Ok(())
         });
     }
 
@@ -163,42 +218,84 @@ impl<'b> Draft<'b> {
         default: &'static str,
         names: &[&'static str],
     ) {
+        self.update(|fields, builder| fields.requires_settings(builder, variant, default, names));
+    }
+
+    pub(super) fn finish(self, shape: &Shape) -> Result<Handle, BuildError> {
+        match self.state {
+            State::Valid(fields) => fields.finish(self.builder, shape),
+            State::Invalid(error) => Err(error),
+        }
+    }
+}
+
+impl Fields {
+    fn check_kind(&self, builder: &CatalogBuilder, kind: &ProcessKind) -> Result<(), BuildError> {
+        if kind.catalog() == builder.id {
+            Ok(())
+        } else {
+            Err(BuildError::ForeignProcessKind {
+                key: self.key.clone(),
+                kind: Box::from(kind.name()),
+            })
+        }
+    }
+
+    fn requires_settings(
+        &mut self,
+        builder: &CatalogBuilder,
+        variant: &'static str,
+        default: &'static str,
+        names: &[&'static str],
+    ) -> Result<(), BuildError> {
+        let key = &self.key;
         if !self.variants.contains(&variant) {
-            return self.fail(|key| BuildError::UndeclaredVariant {
+            return Err(BuildError::UndeclaredVariant {
                 flag: key.clone(),
-                key,
+                key: key.clone(),
                 variant,
             });
         }
         if variant == default {
-            return self.fail(|key| BuildError::RequiredSettingsOnDefault { key, variant });
+            return Err(BuildError::RequiredSettingsOnDefault {
+                key: key.clone(),
+                variant,
+            });
         }
         if self.requires_settings.iter().any(|r| r.variant == variant) {
-            return self.fail(|key| BuildError::DuplicateRequiresSettings { key, variant });
+            return Err(BuildError::DuplicateRequiresSettings {
+                key: key.clone(),
+                variant,
+            });
         }
         if names.is_empty() {
-            return self.fail(|key| BuildError::EmptyRequiredSettings { key, variant });
+            return Err(BuildError::EmptyRequiredSettings {
+                key: key.clone(),
+                variant,
+            });
         }
-        let mut checked: Vec<SettingName> = Vec::with_capacity(names.len());
+        let mut checked = Vec::with_capacity(names.len());
         for name in names {
-            let name = match SettingName::new(name) {
-                Ok(valid) => valid,
-                Err(cause) => {
-                    return self.fail(|key| BuildError::InvalidRequiredSetting {
-                        key,
-                        name: Box::from(*name),
-                        cause,
-                    });
-                }
-            };
-            if self.builder.prefix.covers(name.as_str()) {
-                return self.fail(|key| BuildError::RequiredSettingUnderPrefix { key, name });
+            let name =
+                SettingName::new(name).map_err(|cause| BuildError::InvalidRequiredSetting {
+                    key: key.clone(),
+                    name: Box::from(*name),
+                    cause,
+                })?;
+            if builder.prefix.covers(name.as_str()) {
+                return Err(BuildError::RequiredSettingUnderPrefix {
+                    key: key.clone(),
+                    name,
+                });
             }
             if checked.contains(&name) {
-                return self.fail(|key| BuildError::DuplicateRequiredSetting { key, name });
+                return Err(BuildError::DuplicateRequiredSetting {
+                    key: key.clone(),
+                    name,
+                });
             }
-            if self.builder.retired.contains_key(&name) {
-                return self.fail(|_| BuildError::RetiredNameInUse { name });
+            if builder.retired.contains_key(&name) {
+                return Err(BuildError::RetiredNameInUse { name });
             }
             checked.push(name);
         }
@@ -207,16 +304,13 @@ impl<'b> Draft<'b> {
             variant,
             names: checked.into_boxed_slice(),
         });
+        Ok(())
     }
 
     /// Validates the declaration against the catalog so far, records it and
     /// returns its handle.
-    pub(super) fn finish(self, shape: &Shape) -> Result<Handle, BuildError> {
-        let key = self.key?;
-        if let Some(error) = self.error {
-            return Err(error);
-        }
-        let builder = self.builder;
+    fn finish(self, builder: &mut CatalogBuilder, shape: &Shape) -> Result<Handle, BuildError> {
+        let key = self.key;
         if builder.keys.contains_key(&key) {
             return Err(BuildError::DuplicateKey { key });
         }
@@ -224,10 +318,10 @@ impl<'b> Draft<'b> {
         if builder.retired.contains_key(&setting_name) {
             return Err(BuildError::RetiredNameInUse { name: setting_name });
         }
-        let owners = self.owners.unwrap_or(OwnedOwners::All);
+        let owners = self.owners;
         let pinned_by = self.pinned_by.into_boxed_slice();
         check_pinned_by(&key, &owners, &pinned_by)?;
-        if let Some(switch) = &self.governed_by {
+        if let Governance::By(switch) = &self.governed_by {
             let switch_owners = &builder.entries[switch.index].owners;
             check_governing(&key, switch, switch_owners, &owners, &pinned_by)?;
         }
@@ -249,12 +343,18 @@ impl<'b> Draft<'b> {
             absence: self.absence,
             owners,
             pinned_by,
-            only_in: self.only_in,
+            only_in: match self.only_in {
+                EnvironmentPolicy::Any => None,
+                EnvironmentPolicy::Only(class) => Some(class),
+            },
             expiry: shape.expiry,
             flip_discipline: self.flip_discipline,
             safe_state: shape.safe_state,
             stale_rule: shape.stale_rule,
-            governed_by: self.governed_by,
+            governed_by: match self.governed_by {
+                Governance::Independent => None,
+                Governance::By(switch) => Some(switch),
+            },
             requires_settings: requires_settings.into_boxed_slice(),
             invariants: Box::default(),
             fingerprint,
@@ -267,18 +367,6 @@ impl<'b> Draft<'b> {
             fingerprint,
             (shape.kind, shape.value_type),
         ))
-    }
-
-    /// Records a kind of another catalog as this declaration's error.
-    fn foreign(&mut self, kind: &ProcessKind) -> bool {
-        let foreign = kind.catalog() != self.builder.id;
-        if foreign {
-            self.fail(|key| BuildError::ForeignProcessKind {
-                key,
-                kind: Box::from(kind.name()),
-            });
-        }
-        foreign
     }
 }
 

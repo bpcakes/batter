@@ -46,6 +46,39 @@ struct Scanner<'a> {
     at: usize,
 }
 
+/// The two required members, accepted in either order and exactly once.
+enum Members<'a> {
+    Empty,
+    Encoding,
+    Payload(Cow<'a, str>),
+    Complete(Cow<'a, str>),
+}
+
+impl<'a> Members<'a> {
+    fn encoding(self) -> Result<Self, Undecodable> {
+        match self {
+            Self::Empty => Ok(Self::Encoding),
+            Self::Payload(value) => Ok(Self::Complete(value)),
+            Self::Encoding | Self::Complete(_) => Err(Undecodable),
+        }
+    }
+
+    fn payload(self, value: Cow<'a, str>) -> Result<Self, Undecodable> {
+        match self {
+            Self::Empty => Ok(Self::Payload(value)),
+            Self::Encoding => Ok(Self::Complete(value)),
+            Self::Payload(_) | Self::Complete(_) => Err(Undecodable),
+        }
+    }
+
+    fn finish(self) -> Result<Cow<'a, str>, Undecodable> {
+        match self {
+            Self::Complete(value) => Ok(value),
+            Self::Empty | Self::Encoding | Self::Payload(_) => Err(Undecodable),
+        }
+    }
+}
+
 impl<'a> Scanner<'a> {
     fn peek(&self) -> Option<u8> {
         self.text.as_bytes().get(self.at).copied()
@@ -81,8 +114,7 @@ impl<'a> Scanner<'a> {
         };
         self.skip_whitespace();
         self.expect(b'{')?;
-        let mut encoding_seen = false;
-        let mut payload: Option<Cow<'a, str>> = None;
+        let mut members = Members::Empty;
         loop {
             self.skip_whitespace();
             let name = self.string()?;
@@ -90,15 +122,12 @@ impl<'a> Scanner<'a> {
             self.expect(b':')?;
             self.skip_whitespace();
             if name == "encoding" {
-                if encoding_seen || self.number_token()? != "1" {
+                if self.number_token()? != "1" {
                     return Err(Undecodable);
                 }
-                encoding_seen = true;
+                members = members.encoding()?;
             } else if name == payload_name {
-                if payload.is_some() {
-                    return Err(Undecodable);
-                }
-                payload = Some(self.string()?);
+                members = members.payload(self.string()?)?;
             } else {
                 return Err(Undecodable);
             }
@@ -112,7 +141,7 @@ impl<'a> Scanner<'a> {
         if self.peek().is_some() {
             return Err(Undecodable);
         }
-        let payload = payload.filter(|_| encoding_seen).ok_or(Undecodable)?;
+        let payload = members.finish()?;
         match expect {
             Expect::Flag => Ok(Decoded::Flag(payload)),
             Expect::Switch => match &*payload {

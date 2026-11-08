@@ -6,6 +6,7 @@ mod child_root;
 mod invariants;
 mod last_good;
 mod matrix;
+mod ownership;
 mod status;
 mod support;
 mod surfaces;

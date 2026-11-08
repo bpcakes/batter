@@ -6,7 +6,10 @@ mod relations;
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
-pub use kinds::{Everyone, ModeDeclaration, ReleaseDeclaration, Restricted, SwitchDeclaration};
+pub use kinds::{
+    Assigned, Everyone, ModeDeclaration, ReleaseDeclaration, Restricted, SwitchDeclaration,
+    Unassigned,
+};
 
 use crate::{
     catalog::{Catalog, Retired},

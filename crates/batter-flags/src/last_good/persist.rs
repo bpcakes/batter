@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
-use tokio::{sync::Semaphore, time::Instant};
+use tokio::time::Instant;
 
 use super::{
     PersistFailure, SnapshotFilePath,
@@ -39,6 +39,46 @@ enum Queue {
 struct State {
     written: Written,
     queue: Queue,
+    phase: Phase,
+}
+
+enum Phase {
+    Ready,
+    Writing,
+}
+
+/// Exclusive ownership of one selected write. Destruction releases admission
+/// even if encoding, blocking-task delivery or the write itself unwinds.
+struct Selected {
+    state: Arc<Mutex<State>>,
+    file: FileSnapshot,
+    written: Written,
+}
+
+impl Selected {
+    fn finish(
+        self,
+        outcome: Result<Persisted, PersistFailure>,
+    ) -> Result<Persisted, PersistFailure> {
+        if let Ok(done @ (Persisted::Written | Persisted::NewerOnDisk)) = outcome {
+            let mut state = lock(&self.state);
+            if done == Persisted::Written {
+                state.written = Written::At(self.file.version);
+            }
+            if let Queue::Waiting(waiting) = &state.queue
+                && waiting.version == self.file.version
+            {
+                state.queue = Queue::Idle;
+            }
+        }
+        outcome
+    }
+}
+
+impl Drop for Selected {
+    fn drop(&mut self) {
+        lock(&self.state).phase = Phase::Ready;
+    }
 }
 
 /// What an attempt did.
@@ -53,8 +93,6 @@ pub(crate) enum Persisted {
 
 pub(crate) struct Persister {
     path: SnapshotFilePath,
-    /// The library-owned bulkhead: one write at a time, the rest refused.
-    slot: Arc<Semaphore>,
     /// Shared with the blocking writer, which records its own success, so a
     /// write the deadline abandoned still counts once it completes.
     state: Arc<Mutex<State>>,
@@ -68,10 +106,10 @@ impl Persister {
     pub(crate) fn new(path: SnapshotFilePath) -> Self {
         Self {
             path,
-            slot: Arc::new(Semaphore::new(1)),
             state: Arc::new(Mutex::new(State {
                 written: Written::Never,
                 queue: Queue::Idle,
+                phase: Phase::Ready,
             })),
         }
     }
@@ -85,41 +123,39 @@ impl Persister {
         }
     }
 
+    /// Selection and exclusive admission happen under one lock. A completing
+    /// abandoned write cannot change the first-write rule between these steps.
+    fn select(&self) -> Result<Option<Selected>, PersistFailure> {
+        let mut state = lock(&self.state);
+        match state.phase {
+            Phase::Writing => return Err(PersistFailure::Busy),
+            Phase::Ready => {}
+        }
+        let file = match &state.queue {
+            Queue::Idle => return Ok(None),
+            Queue::Waiting(file) => file.clone(),
+        };
+        state.phase = Phase::Writing;
+        Ok(Some(Selected {
+            state: self.state.clone(),
+            file,
+            written: state.written,
+        }))
+    }
+
     /// Writes what is waiting, within `deadline`. A write the deadline
     /// abandons finishes in the background, holds the slot until it does and
     /// records its own outcome.
     pub(crate) async fn attempt(&self, deadline: Instant) -> Result<Persisted, PersistFailure> {
-        let (file, written) = {
-            let state = lock(&self.state);
-            match &state.queue {
-                Queue::Idle => return Ok(Persisted::Idle),
-                Queue::Waiting(file) => (file.clone(), state.written),
-            }
+        let selected = match self.select()? {
+            Some(selected) => selected,
+            None => return Ok(Persisted::Idle),
         };
-        let bytes = format::encode(&file).map_err(|_| PersistFailure::TooLarge)?;
-        let permit = self
-            .slot
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| PersistFailure::Busy)?;
+        let bytes = format::encode(&selected.file).map_err(|_| PersistFailure::TooLarge)?;
         let path = self.path.clone();
-        let state = self.state.clone();
-        let version = file.version;
         let task = tokio::task::spawn_blocking(move || {
-            let outcome = write(&path, &bytes, written, version);
-            if let Ok(done @ (Persisted::Written | Persisted::NewerOnDisk)) = outcome {
-                let mut state = lock(&state);
-                if done == Persisted::Written {
-                    state.written = Written::At(version);
-                }
-                if let Queue::Waiting(waiting) = &state.queue
-                    && waiting.version == version
-                {
-                    state.queue = Queue::Idle;
-                }
-            }
-            drop(permit);
-            outcome
+            let outcome = write(&path, &bytes, selected.written, selected.file.version);
+            selected.finish(outcome)
         });
         match tokio::time::timeout_at(deadline, task).await {
             Err(_) => Err(PersistFailure::Deadline),
@@ -175,3 +211,6 @@ fn write(
         .map_err(|_| PersistFailure::NotDurable)?;
     Ok(Persisted::Written)
 }
+
+#[cfg(test)]
+mod tests;

@@ -8,6 +8,9 @@
 
 use std::{fmt, marker::PhantomData};
 
+mod policy;
+pub use policy::{Assigned, Unassigned};
+
 use super::{
     CatalogBuilder,
     draft::{Draft, Shape},
@@ -18,7 +21,7 @@ use crate::{
     error::BuildError,
     handle::{KillSwitch, ModeFlag, ReleaseFlag},
     value::{FlagValue, ValueType, check_variants, is_aliased},
-    vocabulary::{EnvironmentClass, ProcessKind},
+    vocabulary::ProcessKind,
 };
 
 /// A declaration every process kind owns, which is every declaration until
@@ -59,16 +62,6 @@ macro_rules! common_setters {
 /// The setters release and mode flags share.
 macro_rules! flag_setters {
     () => {
-        /// Restricts the flag to one environment class, such as development.
-        ///
-        /// Such a flag is declared-only: a setting for it outside the class
-        /// fails startup, and the control plane never supplies it.
-        /// [`required`](Self::required) applies only inside the class.
-        pub fn only_in(mut self, class: &EnvironmentClass) -> Self {
-            self.draft.only_in(class);
-            self
-        }
-
         /// Names the settings an enabling `variant` needs, outside the flag
         /// prefix.
         ///
@@ -131,11 +124,16 @@ fn checked_draft<'b, T: FlagValue>(
 /// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts
 /// it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-pub struct ReleaseDeclaration<'b, T: FlagValue, O = Everyone> {
+/// Migration: `ReleaseDeclaration` now tracks environment and governance
+/// assignment in trailing type parameters. Infer builder types or preserve
+/// those parameters in helpers; `only_in` and `governed_by` cannot be repeated.
+pub struct ReleaseDeclaration<'b, T: FlagValue, O = Everyone, E = Unassigned, G = Unassigned> {
     draft: Draft<'b>,
     default: T,
     expiry: Expiry,
     ownership: PhantomData<fn() -> O>,
+    environment: PhantomData<fn() -> E>,
+    governance: PhantomData<fn() -> G>,
 }
 
 impl<'b, T: FlagValue> ReleaseDeclaration<'b, T> {
@@ -150,23 +148,32 @@ impl<'b, T: FlagValue> ReleaseDeclaration<'b, T> {
             default,
             expiry,
             ownership: PhantomData,
+            environment: PhantomData,
+            governance: PhantomData,
         }
     }
+}
 
+impl<'b, T: FlagValue, E, G> ReleaseDeclaration<'b, T, Everyone, E, G> {
     /// Restricts ownership to `kind`, which starts the list of owners. See
     /// [`ModeDeclaration::owned_only_by`].
-    pub fn owned_only_by(mut self, kind: &ProcessKind) -> ReleaseDeclaration<'b, T, Restricted> {
+    pub fn owned_only_by(
+        mut self,
+        kind: &ProcessKind,
+    ) -> ReleaseDeclaration<'b, T, Restricted, E, G> {
         self.draft.owned_only_by(kind);
         ReleaseDeclaration {
             draft: self.draft,
             default: self.default,
             expiry: self.expiry,
             ownership: PhantomData,
+            environment: PhantomData,
+            governance: PhantomData,
         }
     }
 }
 
-impl<T: FlagValue> ReleaseDeclaration<'_, T, Restricted> {
+impl<T: FlagValue, E, G> ReleaseDeclaration<'_, T, Restricted, E, G> {
     /// Adds an owner. See [`ModeDeclaration::and_owned_by`].
     pub fn and_owned_by(mut self, kind: &ProcessKind) -> Self {
         self.draft.add_owner(kind);
@@ -181,21 +188,9 @@ impl<T: FlagValue> ReleaseDeclaration<'_, T, Restricted> {
     }
 }
 
-impl<T: FlagValue, O> ReleaseDeclaration<'_, T, O> {
+impl<T: FlagValue, O, E, G> ReleaseDeclaration<'_, T, O, E, G> {
     common_setters!();
     flag_setters!();
-
-    /// Governs the flag by a kill switch of this catalog: while the switch is
-    /// engaged the flag serves its code default with reason `disabled`, over
-    /// a pin too.
-    ///
-    /// The build refuses a switch that some kind owning the flag or listed in
-    /// its `pinned_by` does not own, so every kind that evaluates or resolves
-    /// the flag reads the switch.
-    pub fn governed_by(mut self, switch: &KillSwitch) -> Self {
-        self.draft.governed_by(switch);
-        self
-    }
 
     /// Validates the declaration and mints its handle.
     ///
@@ -264,10 +259,13 @@ impl<T: FlagValue, O> ReleaseDeclaration<'_, T, O> {
 /// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts
 /// it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-pub struct ModeDeclaration<'b, T: FlagValue, O = Everyone> {
+/// Migration: `ModeDeclaration` now tracks environment assignment in its
+/// trailing type parameter. Infer builder types or preserve that parameter
+/// in helpers; `only_in` cannot be repeated.
+pub struct ModeDeclaration<'b, T: FlagValue, O = Everyone, E = Unassigned> {
     draft: Draft<'b>,
     default: T,
-    ownership: PhantomData<fn() -> O>,
+    ownership: PhantomData<fn() -> (O, E)>,
 }
 
 impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
@@ -278,7 +276,9 @@ impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
             ownership: PhantomData,
         }
     }
+}
 
+impl<'b, T: FlagValue, E> ModeDeclaration<'b, T, Everyone, E> {
     /// Restricts ownership to `kind`, which starts the list of owners; without
     /// this every process kind owns the declaration.
     ///
@@ -299,7 +299,7 @@ impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
     /// ```
     ///
     /// [`and_owned_by`](ModeDeclaration::and_owned_by) adds an owner afterwards.
-    pub fn owned_only_by(mut self, kind: &ProcessKind) -> ModeDeclaration<'b, T, Restricted> {
+    pub fn owned_only_by(mut self, kind: &ProcessKind) -> ModeDeclaration<'b, T, Restricted, E> {
         self.draft.owned_only_by(kind);
         ModeDeclaration {
             draft: self.draft,
@@ -309,7 +309,7 @@ impl<'b, T: FlagValue> ModeDeclaration<'b, T> {
     }
 }
 
-impl<T: FlagValue> ModeDeclaration<'_, T, Restricted> {
+impl<T: FlagValue, E> ModeDeclaration<'_, T, Restricted, E> {
     /// Adds an owner. Adding a kind already listed changes nothing.
     pub fn and_owned_by(mut self, kind: &ProcessKind) -> Self {
         self.draft.add_owner(kind);
@@ -341,7 +341,7 @@ impl<T: FlagValue> ModeDeclaration<'_, T, Restricted> {
     }
 }
 
-impl<T: FlagValue, O> ModeDeclaration<'_, T, O> {
+impl<T: FlagValue, O, E> ModeDeclaration<'_, T, O, E> {
     common_setters!();
     flag_setters!();
 
@@ -470,13 +470,13 @@ impl<O> SwitchDeclaration<'_, O> {
     }
 }
 
-impl<T: FlagValue, O> fmt::Debug for ReleaseDeclaration<'_, T, O> {
+impl<T: FlagValue, O, E, G> fmt::Debug for ReleaseDeclaration<'_, T, O, E, G> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         debug_draft(formatter, "ReleaseDeclaration", &self.draft)
     }
 }
 
-impl<T: FlagValue, O> fmt::Debug for ModeDeclaration<'_, T, O> {
+impl<T: FlagValue, O, E> fmt::Debug for ModeDeclaration<'_, T, O, E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         debug_draft(formatter, "ModeDeclaration", &self.draft)
     }
