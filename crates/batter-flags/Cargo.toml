@@ -59,5 +59,9 @@ name = "control_plane_live"
 required-features = ["postgres"]
 
 [[test]]
+name = "listen_live"
+required-features = ["postgres"]
+
+[[test]]
 name = "jobs_live"
 required-features = ["runledger", "postgres"]

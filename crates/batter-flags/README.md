@@ -46,8 +46,20 @@ publishes nothing, and `startup_file()` says which (`Disabled`, `Missing`,
 `Published`, `Unusable`); each control-plane
 publication is persisted under a directory lock, and a persist failure goes to
 `last_persist_failure()` and never changes a run's outcome. The file is a
-cache: deleting it is always safe. The LISTEN/NOTIFY wake arrives with a later
-delivery task of the flags epic. The catalog grammar and evaluation live in
+cache: deleting it is always safe. `LoadPolicy::with_listen(ListenEndpoint)`
+also wakes the refresh when an audited write commits: a listener, on a
+two-connection pool of its own for each session, LISTENs on the store's
+channel, wakes the refresh once after every LISTEN to catch what it missed, and
+again on every notification, never sooner than the wake spacing after the
+previous run. The spacing may not exceed the poll interval, so the poll stays
+the backstop and a lost listener delays a change by at most one poll. Each
+session's pool is closed within a bound when the session ends, so a connection
+a dead peer keeps busy never blocks the next one; at drain the listener
+unlistens first. Live tests cover delivery to every listening process within
+the spacing, coalesced bursts, a notification held by an uncommitted
+transaction, a terminated listener rebuilt on a new backend, poll-only
+convergence and drain. The standby refusal, a pool closed during a receive and
+the rebuild after a black-holed peer are unverified. The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).

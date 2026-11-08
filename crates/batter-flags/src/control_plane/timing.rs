@@ -92,6 +92,16 @@ impl RefreshTiming {
 pub struct LoadPolicy {
     policy: Policy,
     last_good: LastGood,
+    listen: Listen,
+}
+
+/// Whether the refresh is also woken by NOTIFY.
+#[derive(Clone, Debug)]
+pub(crate) enum Listen {
+    /// Poll only.
+    Off,
+    /// A listener wakes the refresh on every committed write.
+    On(Box<super::listen::ListenEndpoint>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,6 +124,7 @@ impl LoadPolicy {
         Self {
             policy: Policy::UnreadyUntilLoaded { timing, allowance },
             last_good: LastGood::Off,
+            listen: Listen::Off,
         }
     }
 
@@ -126,6 +137,7 @@ impl LoadPolicy {
         Self {
             policy: Policy::StartOnDefaults { timing },
             last_good: LastGood::Off,
+            listen: Listen::Off,
         }
     }
 
@@ -147,6 +159,23 @@ impl LoadPolicy {
 
     pub(crate) fn last_good(&self) -> &LastGood {
         &self.last_good
+    }
+
+    /// Also wakes the refresh when an audited write commits, through a
+    /// listener on its own two-connection pool to `endpoint`. A wake never
+    /// starts a refresh sooner than the endpoint's wake spacing after the
+    /// previous one; the poll stays the backstop, so a lost listener only
+    /// delays changes to the poll interval. LISTEN delivery is unverified
+    /// until the ignored live suite runs.
+    pub fn with_listen(self, endpoint: super::listen::ListenEndpoint) -> Self {
+        Self {
+            listen: Listen::On(Box::new(endpoint)),
+            ..self
+        }
+    }
+
+    pub(crate) fn listen(&self) -> &Listen {
+        &self.listen
     }
 
     pub(crate) fn timing(&self) -> RefreshTiming {

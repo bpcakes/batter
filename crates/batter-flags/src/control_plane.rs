@@ -70,6 +70,7 @@
 //! }
 //! ```
 
+mod listen;
 mod presence;
 mod refresh;
 mod source;
@@ -90,6 +91,7 @@ use batter_sqlx::PgProfiledPool;
 use tokio::time::Instant;
 
 pub use self::{
+    listen::ListenEndpoint,
     presence::{ApplicationName, BuildId, HeartbeatCadence, Presence, PresenceError},
     status::{Gate, LoadCause, RejectionCause, SnapshotStatus},
     timing::{LoadPolicy, RefreshTiming},
@@ -115,6 +117,7 @@ pub struct RegisteredFlags {
     process: ProcessId,
     presence: PeriodicReader,
     prune: PeriodicReader,
+    refresh: PeriodicReader,
     startup_file: StartupFile,
 }
 
@@ -198,6 +201,11 @@ impl RegisteredFlags {
         self.presence.snapshot()
     }
 
+    /// The refresh component's runs so far, woken ones included.
+    pub fn refresh(&self) -> PeriodicSummary {
+        self.refresh.snapshot()
+    }
+
     /// The prune component's runs so far.
     pub fn prune(&self) -> PeriodicSummary {
         self.prune.snapshot()
@@ -230,6 +238,12 @@ pub enum RegisterError {
     AllowanceTooShort {
         /// The shortest allowance the cadence and the store's timing allow.
         minimum: Duration,
+    },
+    /// The listener's wake spacing is longer than the poll interval.
+    #[error("the flags wake spacing must be at most the poll interval, {maximum:?}")]
+    WakeSpacingTooLong {
+        /// The poll interval.
+        maximum: Duration,
     },
     /// A presence input is out of range.
     #[error(transparent)]
@@ -291,6 +305,19 @@ fn register_with<T: RegistrationTarget + ?Sized>(
             publish_file(&mut writer, &shared, directory),
         ),
     };
+    let listening = match policy.listen() {
+        timing::Listen::Off => None,
+        timing::Listen::On(endpoint) => {
+            // A spacing longer than the poll would space out the polls too,
+            // and with them the confirmations freshness depends on.
+            if endpoint.wake_spacing() > timing.poll_interval() {
+                return Err(RegisterError::WakeSpacingTooLong {
+                    maximum: timing.poll_interval(),
+                });
+            }
+            Some((**endpoint).clone())
+        }
+    };
     let refresh = refresh::prepare(
         source,
         writer,
@@ -300,14 +327,20 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         timing.poll_interval(),
         budgets.refresh,
         startup,
+        listening.as_ref().map(ListenEndpoint::wake_spacing),
     )?;
     let process = presence.process();
+    // Cleanup runs in reverse: the stop marker, then the listener's pool, then
+    // the application's pool, which the root registered first.
     presence
         .reserve_stop(target)
         .map_err(RegisterError::Registration)?;
-    refresh
+    let registered = refresh
         .register(target)
         .map_err(RegisterError::Registration)?;
+    if let (Some(endpoint), refresh::Registered::Woken(_, wake)) = (listening, &registered) {
+        listen::register(target, endpoint, wake.clone()).map_err(RegisterError::Registration)?;
+    }
     let (presence, prune) = presence
         .register(target, shared.clone())
         .map_err(RegisterError::Registration)?;
@@ -317,6 +350,7 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         process,
         presence,
         prune,
+        refresh: registered.reader(),
         startup_file,
     })
 }

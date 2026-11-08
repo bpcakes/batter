@@ -315,3 +315,26 @@ async fn ending_the_loader_reports_loader_stopped() {
         "the last record stays served"
     );
 }
+
+#[tokio::test]
+async fn a_wake_spacing_longer_than_the_poll_is_refused() {
+    use crate::control_plane::ListenEndpoint;
+    let mut supervisor = supervisor();
+    let (input, _) = resolved(&[]);
+    let options = sqlx::postgres::PgConnectOptions::new_without_pgpass()
+        .host("127.0.0.1")
+        .username("flags");
+    let endpoint = ListenEndpoint::new(options, POLL + SECOND).unwrap();
+    let policy = LoadPolicy::start_on_defaults(timing()).with_listen(endpoint);
+    let error = register(
+        &mut supervisor,
+        input,
+        policy,
+        failing(LoadCause::Unavailable),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, RegisterError::WakeSpacingTooLong { maximum } if maximum == POLL),
+        "{error:?}"
+    );
+}

@@ -15,7 +15,8 @@ use batter_core::{
     RegistrationError,
     operation::{OperationContext, OperationError},
     periodic::{
-        PeriodicFailure, PeriodicPolicy, PeriodicShutdown, PeriodicStartup, register_periodic_in,
+        PeriodicFailure, PeriodicPolicy, PeriodicReader, PeriodicShutdown, PeriodicStartup,
+        PeriodicWake, WakeablePolicy, register_periodic_in, register_wakeable_in,
     },
     registration::RegistrationTarget,
 };
@@ -70,8 +71,29 @@ enum Tolerance {
 /// The refresh, validated and ready to register.
 pub(crate) struct Prepared {
     refresh: Arc<Refresh>,
-    policy: PeriodicPolicy,
+    schedule: Schedule,
     tolerance: Tolerance,
+}
+
+/// How the refresh is scheduled.
+enum Schedule {
+    Polled(PeriodicPolicy),
+    /// Polled, and woken no sooner than its spacing after the previous run.
+    Woken(WakeablePolicy),
+}
+
+/// What registering the refresh returned.
+pub(crate) enum Registered {
+    Polled(PeriodicReader),
+    Woken(PeriodicReader, PeriodicWake),
+}
+
+impl Registered {
+    pub(crate) fn reader(&self) -> PeriodicReader {
+        match self {
+            Self::Polled(reader) | Self::Woken(reader, _) => reader.clone(),
+        }
+    }
 }
 
 #[allow(
@@ -87,6 +109,7 @@ pub(crate) fn prepare(
     interval: Duration,
     budget: Duration,
     startup: Startup,
+    wake_spacing: Option<Duration>,
 ) -> Result<Prepared, super::RegisterError> {
     let policy = PeriodicPolicy::new(
         interval,
@@ -94,6 +117,10 @@ pub(crate) fn prepare(
         PeriodicStartup::after_first_success(startup.allowance)?,
         PeriodicShutdown::StopAtDrain,
     )?;
+    let schedule = match wake_spacing {
+        None => Schedule::Polled(policy),
+        Some(spacing) => Schedule::Woken(WakeablePolicy::new(policy, spacing)?),
+    };
     Ok(Prepared {
         refresh: Arc::new(Refresh {
             source,
@@ -102,7 +129,7 @@ pub(crate) fn prepare(
             shared,
             persistence,
         }),
-        policy,
+        schedule,
         tolerance: match startup.first_failure {
             FirstFailure::Tolerated => Tolerance::FirstRun,
             FirstFailure::Recoverable => Tolerance::Strict,
@@ -111,17 +138,17 @@ pub(crate) fn prepare(
 }
 
 impl Prepared {
-    /// Registers `flags.refresh`.
+    /// Registers `flags.refresh`, polled or also woken.
     pub(crate) fn register<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
-    ) -> Result<(), RegistrationError> {
+    ) -> Result<Registered, RegistrationError> {
         let Self {
             refresh,
-            policy,
+            schedule,
             mut tolerance,
         } = self;
-        register_periodic_in(target, "flags.refresh", policy, move |context| {
+        let work = move |context: OperationContext| {
             let refresh = refresh.clone();
             let this_run = std::mem::replace(&mut tolerance, Tolerance::Strict);
             async move {
@@ -140,8 +167,14 @@ impl Prepared {
                     ),
                 }
             }
-        })
-        .map(|_| ())
+        };
+        match schedule {
+            Schedule::Polled(policy) => {
+                register_periodic_in(target, "flags.refresh", policy, work).map(Registered::Polled)
+            }
+            Schedule::Woken(policy) => register_wakeable_in(target, "flags.refresh", policy, work)
+                .map(|(reader, wake)| Registered::Woken(reader, wake)),
+        }
     }
 }
 
