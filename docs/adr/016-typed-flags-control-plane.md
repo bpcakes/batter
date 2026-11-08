@@ -20,7 +20,7 @@ wording and its labels only, not for the overrides below: it extracted a rule
 all three roots hand-write, added a standalone leaf that changed no existing
 package API and was not SQLx-backed, and this record's control plane has none
 of those properties. Everything here is experimental; the
-[status](../status.md) rows carry the label.
+[status](../status.md) rows written by `batter-jkw6.27` carry the label.
 
 ## Context
 
@@ -129,8 +129,11 @@ answers 5 and 9), consolidating flags under the Batter name:
   presence, pruning and the fleet view, on `batter-sqlx` (owner answer 7).
 - `batter-flags` owns declared resolution, the process reader, the protected
   HTTP, job and periodic gates, `TestFlags`, the exact-role grant inventory and
-  `control_plane::register_in`, which registers the refresh, heartbeat, prune,
-  optional last-good file and optional LISTEN wake as process components.
+  `control_plane::register_in`, which registers the refresh, heartbeat, prune
+  and optional LISTEN wake as process components. The refresh persists the
+  optional last-good file at the end of a run, in a blocking write that can be
+  abandoned at its deadline and outlive the run, so joining the component does
+  not prove the write stopped; roots end with `Runtime::shutdown_timeout`.
 - `batter-flags-cli` is the operator command `batter-flags`, a Batter-consuming
   executable root that installs the redacting panic hook first, and stays
   `publish = false` until the release-train record (owner answer 8).
@@ -146,14 +149,20 @@ existing environment toggles. The settings floor only engages: a `released`
 literal is ignored, and a floor-engaged switch cannot be released through the
 control plane.
 
-The control plane publishes one validated snapshot per store version. A row
-that fails validation is held, never the whole candidate: a release or mode
-flag serves its declared base, a kill switch keeps its last published state,
-else its safe state. A published flag that would leave a `requires`,
+The control plane publishes one validated snapshot per store version. Only a
+structurally corrupt candidate (no version, a repeated key, a foreign scope)
+is rejected whole, and the previous publication stays served without renewing
+its freshness. A row naming no declaration, or one this process kind does not
+own, is ignored. Any other row that fails validation is held: a release or
+mode flag serves its declared base, a kill switch keeps its last published
+state, else its safe state. A published flag that would leave a `requires`,
 `conflicts` or `both_or_none` invariant between flags its kind owns unmet is
 held as well (`HoldCause::InvariantUnmet`), judged with a governed flag at its
-code default while its switch is engaged and separately for a stale view; the
-write path refuses such a write unless the hold is accepted. Staleness counts
+code default while its switch is engaged and separately for a stale view.
+`PooledStore::submit` with `WritePolicy::STRICT`, the operator command's
+default, refuses a flag write that would newly hold a flag unless the hold is
+accepted; `PooledStore::write` and `restore` accept it, and a kill switch is
+never refused for what engaging it holds. Staleness counts
 from registration until the first publication, and a file-served snapshot ages
 from registration, because the file carries no clock.
 
@@ -180,8 +189,10 @@ error it does not recognize.
   snapshot digest has no archival input.
 - A pin records the effective decision, a governing override included, and
   `pin` is infallible: a handle the view cannot answer for is pinned at its
-  code default. `Pinned::same_decision` is the strict keyed-idempotency
-  boundary.
+  code default. `Pinned::same_decision` compares key and variant only; the
+  keyed-idempotency boundary is the retained pin itself, which a replay must
+  enqueue unchanged, origin included, because Runledger compares the whole
+  payload (`keyed_pin_identity` shows equal decisions conflicting).
 - The held kill switch is the single history-dependent exception to "one
   (build, version, declared revision) denotes one rule set", and the reason
   `Candidate::carrying` exists; the D-06 revisit trigger was re-examined for it
@@ -193,8 +204,8 @@ error it does not recognize.
   in either mode: the other kind's value is unknowable there.
 - The expiry report is one WARN event per resolve, `flags.expired`.
 - `requires_settings` "present and non-empty" means not exactly empty.
-- `DeclaredError`'s `Debug` equals its `Display`; the only retained value is a
-  non-Unicode setting, reachable through `source()`.
+- `DeclaredError`'s `Debug` wraps its redacted `Display`; the only retained
+  value is a non-Unicode setting, reachable through `source()`.
 
 ## Overrides
 
@@ -207,9 +218,9 @@ error it does not recognize.
   external-harness and generic-test-support rules are not overridden.
 - The dynamic plane's failure semantics are not shared by the surveyed roots
   (above), so the control plane is owner-selected rather than extracted.
-- `batter-flags-core` has a normal `tracing` dependency, because the native
-  layer emits the evaluation and load events; tokio and `serde_json` stay out of
-  its closure without the `serde` feature.
+- `batter-flags-core` has a normal `tracing` dependency, because it emits the
+  evaluation event; the load events are `batter-flags`'. Tokio and
+  `serde_json` stay out of its closure without the `serde` feature.
 
 ## Distinctions
 
@@ -264,6 +275,9 @@ error it does not recognize.
 - Before the first publication without a last-good file, a restart during a
   control-plane outage loses every engagement that exists only in the control
   plane; `LoadPolicy::with_last_good` and the settings floor are the remedies.
+  Meanwhile every gated job fails each attempt with its awaiting recheck,
+  whatever its tripped policy, so a long outage can exhaust a job's attempts
+  without invoking its handler, and gated periodic components skip their runs.
 - ADR-014's reopening condition is noted: one consumer now composes through
   the lifecycle layer. The re-survey is deferred to `batter-8pn8` (owner
   answer 10).

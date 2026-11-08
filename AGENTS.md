@@ -252,8 +252,9 @@ writes with their ordered refusals and the write-side invariant judgement,
 history, presence, pruning and the fleet view, on `batter-sqlx`.
 `crates/batter-flags` owns declared resolution, the process reader, the HTTP,
 job and periodic gates, `TestFlags`, the exact-role grant inventory and
-`control_plane::register_in`, which registers the refresh, heartbeat, prune,
-last-good file and LISTEN wake as process components.
+`control_plane::register_in`, which registers the refresh, heartbeat, prune
+and LISTEN wake as process components; the refresh persists the last-good
+file in a blocking write that can outlive its run.
 `crates/batter-flags-cli` is the `batter-flags` operator command
 ([ADR-016](docs/adr/016-typed-flags-control-plane.md)).
 `crates/batter-test-support` contains dependency scripts and error combination.
@@ -341,7 +342,7 @@ Batter dependency is `batter-core`, behind its opt-in `operation` feature; it
 must never depend on the facade. `batter-flags-core` is a leaf with no Batter
 dependency; `batter-flags-postgres` depends on it, `batter-core` and
 `batter-sqlx`; `batter-flags` depends on it and `batter-core`, and optionally on
-`batter-flags-postgres`, `batter-axum` and `runledger-core`; the operator command
+`batter-flags-postgres`, `batter-sqlx`, `batter-axum` and `runledger-core`; the operator command
 depends on the store; none depends on the facade. Runlimit, Runledger, and postgres-test-harness must not
 depend on the batter facade. Keep their own
 supervision, persistence, policy validation, and provisioning responsibilities.

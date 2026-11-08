@@ -36,8 +36,8 @@ Fast jump index for agent-facing guidance in this repository.
   judgement, clock-free evaluation, pins and the manifest.
 - [Flags adapter](./crates/batter-flags/AGENTS.md): declared resolution, the
   process reader, HTTP, job and periodic gates, test flags, grants and the
-  control-plane registration with its refresh, heartbeat, prune, last-good file
-  and LISTEN wake.
+  control-plane registration with its refresh (which persists the last-good
+  file), heartbeat, prune and LISTEN wake.
 - [Flags store](./crates/batter-flags-postgres/AGENTS.md): the `flags` schema,
   audited writes and their refusals, history, presence, pruning and the fleet
   view.
