@@ -201,7 +201,7 @@ async fn ready_owner() -> RunningSupervisor {
     running
 }
 
-async fn interrupted_extensions(reason: Interruption) -> Extensions {
+pub(super) async fn interrupted_extensions(reason: Interruption) -> Extensions {
     let saved = Arc::new(Mutex::new(Extensions::new()));
     let store = saved.clone();
     let running = ready_owner().await;

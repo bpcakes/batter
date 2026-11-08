@@ -19,9 +19,12 @@ Windows support and non-Unix fallbacks are out of scope.
   admission consumes it into one core `ResolvedOutcome<Response>` before telemetry.
   Direct boundary interruptions render without handing evidence to another
   admission. Both paths return the exact response without a separate storage slot
-  or a second renderer invocation. Private `FailureRendering` owns every
-  policy failure response, including early admission rejection, and clears
-  recycled interruption evidence before the responder attaches a current reason.
+  or a second renderer invocation. Private `FailureRendering` owns request-policy
+  failure rendering, including early rejection. `src/rendering.rs` owns the opaque
+  `PolicyResponse` output of every stored failure, browser, probe and fallback
+  renderer. Its construction removes recycled interruption evidence before the
+  responder alone can attach a current reason; keep raw responses out of those
+  private callback signatures.
 - `src/low_level.rs` is the public `low_level` namespace: the physically
   relocated `observe_http`, `request_admission`, the combined `request_scope`
   compatibility entry point and the status-only `readiness`/`liveness` probe

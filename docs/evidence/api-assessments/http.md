@@ -30,12 +30,23 @@ The next independent panel reproduced stale evidence escaping through early
 admission rejection: `RequestPolicy::render_failure` bypassed the interruption
 renderer's cleanup. The recurrence assessment located an adapter ownership gap,
 not a consumer ordering obligation or a flaw in the typed core outcome. Private
-`FailureRendering` now owns captured metadata, renderer selection and evidence
-cleanup for every policy failure. The public responder alone attaches the
-current reason after that shared rendering step. This removes the separate
-sanitization obligation without a new public state or call shape. Recycled
-response-extension regressions cover rejection, deadline, forced cancellation
-and returned-handler paths with both old reasons, preserving unrelated metadata.
+`FailureRendering` centralized request-policy rendering, but the next review
+found that browser rejection still returned a raw response inside admission.
+Probes and unmatched fallback responses reproduced the same leak when returned
+through another admission. These distinct callback families exposed why an
+invocation-site cleanup obligation was insufficient.
+
+The final internal contract makes every stored synchronous renderer return an
+opaque `PolicyResponse`. Public callback registration wraps the native response
+in this value, whose sole constructor removes old interruption evidence. Failure,
+browser, liveness, readiness and fallback callbacks therefore cannot return a
+raw response to their adapter caller. The public interruption responder alone
+attaches the current reason afterward. Public signatures and ordinary handler
+responses are unchanged. Recycled response-extension regressions cover all
+renderer families, plus rejection, deadline, forced cancellation and returned
+handler paths with both old reasons. They retain unrelated metadata and the
+existing probe-owned status/severity decisions. This moves the invariant into
+the private output type rather than adding consumer instructions.
 
 Native Axum handlers return `Response`, so a private response extension remains
 the transport for a handler's interruption reason. This is an upstream response

@@ -32,6 +32,7 @@ mod boundary;
 mod correlation;
 mod observation;
 mod readiness;
+mod rendering;
 mod serving;
 
 pub mod low_level;
@@ -58,12 +59,13 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use batter_core::{ConfigurationError, lifecycle::OperationAdmission, operation::Interruption};
+use rendering::PolicyResponse;
 use serde::Serialize;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::Level;
 
-type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> Response + Send + Sync;
+type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> PolicyResponse + Send + Sync;
 
 /// Application-selected HTTP completion-event level, carried in response extensions.
 ///
@@ -174,17 +176,13 @@ impl FailureRendering {
     }
 
     fn render(&self, failure: HttpFailure) -> Response {
-        let mut response = match self {
+        match self {
             Self::Default => failure.into_response(),
             Self::Custom {
                 renderer,
                 original_parts,
-            } => renderer(failure, original_parts.as_ref()),
-        };
-        // Every policy-owned rendering starts without evidence from an older
-        // response, including early rejections that never enter the operation.
-        response.extensions_mut().remove::<RenderedInterruption>();
-        response
+            } => renderer(failure, original_parts.as_ref()).into_response(),
+        }
     }
 }
 
@@ -310,7 +308,9 @@ impl RequestPolicy {
     where
         F: Fn(HttpFailure, &Parts) -> Response + Send + Sync + 'static,
     {
-        self.failure_renderer = Some(Arc::new(renderer));
+        self.failure_renderer = Some(Arc::new(move |failure, parts| {
+            PolicyResponse::new(renderer(failure, parts))
+        }));
         self
     }
 

@@ -325,6 +325,12 @@ recycles response extensions from both interruption reasons through drain
 rejection, deadline, cancellation and handler rendering. It checks that stale
 evidence cannot classify the outer operation, the current handler reason wins,
 and custom status, headers, body and unrelated extensions survive.
+`observation::policy_rendering` recycles both reasons through browser rejection,
+liveness, readiness and unmatched-fallback callbacks. It returns each in-process
+response through an independent admission, checking successful construction,
+one callback and HTTP completion, retained application metadata and envelopes,
+and probe-owned status. All four scenarios failed on stale operation evidence
+before the private renderer-output contract was enforced.
 
 The core `resolved_value` target exercises every classified-value outcome,
 redaction, refusal before work, inert unpolled callbacks, borrowed/non-`Send`

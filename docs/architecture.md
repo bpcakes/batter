@@ -213,7 +213,11 @@ renders. Admission consumes that evidence into one
 response together. `run_resolved_value` shares the core execution boundary and
 observes that terminal value before returning the response. There is no separate
 retained-response slot. A boundary rendering its own interruption creates no
-handoff marker, so neither path leaks evidence to stacked admission. A discarded
+handoff marker. Every stored synchronous renderer returns the private
+`rendering::PolicyResponse`, whose constructor removes recycled interruption
+evidence. This covers failure, browser, probe and fallback callbacks without a
+cleanup step at each invocation site; the public interruption responder alone
+adds a current handoff reason afterward. A discarded
 rendering cannot classify another response, and an HTTP status alone is not
 evidence of an interruption. See the [invalid-state assessment](evidence/api-assessments/http.md#explicit-http-completion-batter-q1jl).
 

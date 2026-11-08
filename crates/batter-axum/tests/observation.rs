@@ -17,6 +17,8 @@ mod interruption;
 mod lifetime;
 #[path = "observation/placement.rs"]
 mod placement;
+#[path = "observation/policy_rendering.rs"]
+mod policy_rendering;
 #[path = "observation/rendering.rs"]
 mod rendering;
 #[path = "observation/severity.rs"]

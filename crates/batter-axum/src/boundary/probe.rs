@@ -1,14 +1,17 @@
-use crate::{HttpObservationLevel, ReadinessPolicy, correlation, readiness::ReadinessRenderer};
+use crate::{
+    HttpObservationLevel, ReadinessPolicy, correlation, readiness::ReadinessRenderer,
+    rendering::PolicyResponse,
+};
 use axum::{
     extract::Request,
     http::{StatusCode, request::Parts},
-    response::Response,
+    response::IntoResponse,
     routing::{MethodRouter, get},
 };
 use std::{error::Error, fmt, sync::Arc};
 
 /// An application renderer for liveness probe responses.
-type LivenessRenderer = dyn Fn(&Parts) -> Response + Send + Sync;
+type LivenessRenderer = dyn Fn(&Parts) -> PolicyResponse + Send + Sync;
 
 /// Serve liveness with the application's response and the empty-body probe's
 /// fixed 200 status and default completion severity.
@@ -16,7 +19,7 @@ pub(super) fn rendered_liveness(render: Arc<LivenessRenderer>) -> MethodRouter {
     get(move |request: Request| {
         let render = render.clone();
         async move {
-            let mut response = render(&renderer_parts(request));
+            let mut response = render(&renderer_parts(request)).into_response();
             // Answering at all is the liveness signal; no renderer can change
             // its status or, through an override, its completion severity.
             *response.status_mut() = StatusCode::OK;

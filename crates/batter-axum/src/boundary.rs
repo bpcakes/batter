@@ -300,9 +300,12 @@ impl HttpBoundary {
         F: Fn(&Parts) -> Response + Send + Sync + 'static,
     {
         self.reserve_probe(path)?;
-        self.probes = self
-            .probes
-            .route(path.as_str(), probe::rendered_liveness(Arc::new(render)));
+        self.probes = self.probes.route(
+            path.as_str(),
+            probe::rendered_liveness(Arc::new(move |parts| {
+                crate::rendering::PolicyResponse::new(render(parts))
+            })),
+        );
         Ok(self)
     }
 
@@ -424,7 +427,12 @@ impl HttpBoundary {
         self.reserve_probe(path)?;
         self.probes = self.probes.route(
             path.as_str(),
-            probe::rendered_readiness(policy, Arc::new(render)),
+            probe::rendered_readiness(
+                policy,
+                Arc::new(move |decision, parts| {
+                    crate::rendering::PolicyResponse::new(render(decision, parts))
+                }),
+            ),
         );
         Ok(self)
     }
