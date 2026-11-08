@@ -90,7 +90,7 @@ impl CandidateRow {
     /// let other_declaration = base.catalog().declarations().find(|d| d.key() == other.key()).unwrap();
     /// let stale = CandidateRow::flag(&fast, Toggle::On, at).written_for(other_declaration.fingerprint());
     /// let snapshot = Snapshot::validate(&scope, Candidate::from_last_good_file(&scope).at(at).row(stale))?;
-    /// assert!(snapshot.held().any(|(key, cause)| key.as_str() == "fast_path"
+    /// assert!(snapshot.held(batter_flags_core::Freshness::Fresh).any(|(key, cause)| key.as_str() == "fast_path"
     ///     && cause == HoldCause::EntryTypeMismatch));
     /// # Ok(())
     /// # }

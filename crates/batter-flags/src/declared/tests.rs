@@ -51,7 +51,7 @@ fn held_for_on(pairs: &[(&str, &str)]) -> Vec<(String, HoldCause)> {
         .row(CandidateRow::flag(&fast_path, Toggle::On, at));
     let snapshot = Snapshot::validate(&scope, candidate).unwrap();
     let held: Vec<_> = snapshot
-        .held()
+        .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.to_string(), cause))
         .collect();
     held

@@ -137,7 +137,10 @@ fn a_usable_file_loads_as_persisted_and_is_matched_entry_by_entry() {
     let snapshot = load(&base, &encode(&other_catalog).unwrap()).unwrap();
     assert_eq!(snapshot.provenance(), Provenance::LastGoodFile);
     assert_eq!(snapshot.version().get(), 9);
-    assert_eq!(snapshot.held().count(), 0);
+    assert_eq!(
+        snapshot.held(batter_flags_core::Freshness::Fresh).count(),
+        0
+    );
     assert_eq!(snapshot.unknown() + snapshot.not_owned(), 0);
 }
 
@@ -155,7 +158,7 @@ fn a_foreign_scope_a_changed_declaration_and_a_corrupt_entry_list_publish_nothin
     changed.fingerprint = [7; 32];
     let snapshot = load(&base, &encode(&file(&base, vec![changed])).unwrap()).unwrap();
     let held: Vec<_> = snapshot
-        .held()
+        .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.as_str().to_owned(), cause))
         .collect();
     assert_eq!(held, [("halt".to_owned(), HoldCause::EntryTypeMismatch)]);
@@ -178,7 +181,10 @@ fn an_entry_without_a_value_loads_as_absent() {
     let mut absent = halt(&base, "engaged");
     absent.value = EntryValue::Absent;
     let snapshot = load(&base, &encode(&file(&base, vec![absent])).unwrap()).unwrap();
-    assert_eq!(snapshot.held().count(), 0);
+    assert_eq!(
+        snapshot.held(batter_flags_core::Freshness::Fresh).count(),
+        0
+    );
     assert_eq!(snapshot.carried().count(), 0);
 }
 

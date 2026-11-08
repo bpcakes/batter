@@ -29,7 +29,7 @@ fn row(key: &str, kind: &str, value_type: &str, state: &str) -> CandidateRow {
 
 fn held(snapshot: &Snapshot) -> Vec<(String, HoldCause)> {
     snapshot
-        .held()
+        .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.as_str().to_owned(), cause))
         .collect()
 }

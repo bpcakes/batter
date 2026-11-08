@@ -171,12 +171,10 @@ impl RegisteredFlags {
         self.shared.last_rejection()
     }
 
-    /// How many keys the served snapshot holds.
+    /// How many keys a view captured now holds: the served snapshot's holds
+    /// for the view's freshness.
     pub fn held(&self) -> usize {
-        self.shared
-            .reader()
-            .record()
-            .map_or(0, |record| record.snapshot().held().count())
+        self.shared.reader().held_at(Instant::now()).len()
     }
 
     /// This process's id in the fleet view.
@@ -245,6 +243,22 @@ pub enum RegisterError {
         /// The poll interval.
         maximum: Duration,
     },
+    /// The declared base breaks a cross-flag invariant once a governing kill
+    /// switch overrides a flag to its code default, a combination no hold
+    /// could meet, since the control plane can engage the switch at any time.
+    /// The settings name a literal the invariant cannot keep under the
+    /// override; change the settings or the catalog.
+    #[error(
+        "the flags settings for {flag} break an invariant with {other} while a governing switch is engaged"
+    )]
+    GovernedInvariant {
+        /// The flag the invariant is declared on.
+        flag: batter_flags_core::FlagKey,
+        /// The other flag.
+        other: batter_flags_core::FlagKey,
+        /// The invariant.
+        invariant: Box<batter_flags_core::Invariant>,
+    },
     /// A presence input is out of range.
     #[error(transparent)]
     Presence(#[from] PresenceError),
@@ -288,6 +302,13 @@ fn register_with<T: RegistrationTarget + ?Sized>(
     let startup = policy.startup(budgets)?;
     let timing = policy.timing();
     let (base, class) = resolved.into_parts();
+    if let Some(invariant) = base.governed_invariant_breaks().into_iter().next() {
+        return Err(RegisterError::GovernedInvariant {
+            flag: invariant.flag().clone(),
+            other: invariant.other().clone(),
+            invariant: Box::new(invariant),
+        });
+    }
     let presence = presence::prepare(store, presence, &base, class.name(), budgets)?;
     let scope = base.validation_scope();
     let (mut writer, reader) = Reader::live(

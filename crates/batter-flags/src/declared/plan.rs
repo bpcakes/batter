@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 
 use batter_core::settings::SettingsSource;
-use batter_flags_core::{Catalog, FlagKey, Invariant, SettingName, low_level::BaseBuilder};
+use batter_flags_core::{
+    Catalog, FlagKey, Invariant, SafeState, SettingName, low_level::BaseBuilder,
+};
 
 use super::{
     applicability::{Applicability, Process},
@@ -29,6 +31,10 @@ struct Record {
     requires: Vec<(&'static str, Vec<SettingName>)>,
     /// The invariants declared on this flag.
     invariants: Vec<Invariant>,
+    /// The kill switch governing this release flag, if any.
+    governed_by: Option<FlagKey>,
+    /// A kill switch's safe state; none for a flag.
+    safe_state: Option<SafeState>,
     /// Enabling variants whose required settings are absent or empty here.
     settings_absent: Vec<&'static str>,
 }
@@ -83,6 +89,8 @@ impl Plan {
                     .map(|(variant, names)| (variant, names.to_vec()))
                     .collect(),
                 invariants: declared.invariants().to_vec(),
+                governed_by: declared.governed_by().cloned(),
+                safe_state: declared.safe_state(),
                 settings_absent: Vec::new(),
             });
         }
@@ -125,7 +133,8 @@ impl Plan {
     }
 
     /// The invariants between flags this process evaluates, over what each
-    /// resolved to.
+    /// serves: its code default while a governing kill switch resolves
+    /// engaged, else what it resolved to.
     ///
     /// An invariant whose other flag belongs to another kind is not checked:
     /// this process cannot know what that kind resolves, and the code default
@@ -133,11 +142,28 @@ impl Plan {
     /// to another class is checked at its code default, because that is what
     /// this process evaluates.
     fn invariants(&self) -> Result<(), DeclaredError> {
+        let engaged = |switch: &FlagKey| {
+            self.records
+                .iter()
+                .find(|record| &record.key == switch)
+                .is_some_and(|record| match record.literal {
+                    Some(Literal::Switch(state)) => state.is_engaged(),
+                    Some(Literal::Variant(_)) | None => {
+                        record.safe_state == Some(SafeState::Engaged)
+                    }
+                })
+        };
         let resolved: BTreeMap<&FlagKey, &'static str> = self
             .records
             .iter()
             .filter(|record| record.applicability.evaluates())
-            .filter_map(|record| record.variant().map(|variant| (&record.key, variant)))
+            .filter_map(|record| {
+                let served = match &record.governed_by {
+                    Some(switch) if engaged(switch) => record.default_variant,
+                    Some(_) | None => record.variant(),
+                };
+                served.map(|variant| (&record.key, variant))
+            })
             .collect();
         for record in &self.records {
             for invariant in &record.invariants {

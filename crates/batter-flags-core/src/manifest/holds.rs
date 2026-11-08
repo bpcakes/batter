@@ -2,7 +2,7 @@
 
 use super::{Manifest, ManifestEntry, ManifestInvariant, ManifestOwners};
 use crate::{
-    invariants::{Relation, Standing, judge},
+    invariants::{FlagStanding, Relation, judge},
     key::FlagKey,
 };
 
@@ -18,6 +18,17 @@ pub struct InvariantHold {
     pub invariant: ManifestInvariant,
 }
 
+/// What a process of one kind would make of the invariants it judges.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InvariantJudgement {
+    /// The flags it would hold, in the order it holds them.
+    pub holds: Vec<InvariantHold>,
+    /// The invariants it would leave unmet because neither flag can be held:
+    /// both stand fixed. Never any when every fixed standing is a code
+    /// default, which the catalog builder checks pairwise.
+    pub unresolved: Vec<(FlagKey, ManifestInvariant)>,
+}
+
 impl Manifest {
     /// The holds a process of `kind` would make for unmet invariants, given
     /// what each flag stands at before invariants are judged: the same
@@ -26,7 +37,7 @@ impl Manifest {
     /// An unknown `kind` owns only the flags every kind owns.
     ///
     /// ```
-    /// use batter_flags_core::{CatalogBuilder, SettingsPrefix, Standing, Toggle};
+    /// use batter_flags_core::{CatalogBuilder, SettingsPrefix, FlagStanding, Toggle};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
@@ -40,25 +51,26 @@ impl Manifest {
     /// // `ledger_v2` is published on; `ledger_audit` stands at its default.
     /// let holds = manifest.invariant_holds("serving", |entry| {
     ///     Some(match entry.key().as_str() {
-    ///         "ledger_v2" => Standing::Published { variant: "on", base: "off" },
-    ///         _ => Standing::Fixed("off"),
+    ///         "ledger_v2" => FlagStanding::Published { variant: "on", base: "off" },
+    ///         _ => FlagStanding::Fixed("off"),
     ///     })
     /// });
-    /// assert_eq!(holds.len(), 1);
-    /// assert_eq!(holds[0].held.as_str(), "ledger_v2");
+    /// assert_eq!(holds.holds.len(), 1);
+    /// assert_eq!(holds.holds[0].held.as_str(), "ledger_v2");
+    /// assert!(holds.unresolved.is_empty());
     /// # Ok(())
     /// # }
     /// ```
     pub fn invariant_holds<'a>(
         &'a self,
         kind: &str,
-        mut standing: impl FnMut(&'a ManifestEntry) -> Option<Standing<'a>>,
-    ) -> Vec<InvariantHold> {
+        mut standing: impl FnMut(&'a ManifestEntry) -> Option<FlagStanding<'a>>,
+    ) -> InvariantJudgement {
         let owned = |entry: &ManifestEntry| match entry.owners() {
             ManifestOwners::All => true,
             ManifestOwners::Only(kinds) => kinds.iter().any(|owner| owner == kind),
         };
-        let mut nodes: Vec<(&ManifestEntry, Standing<'a>)> = Vec::new();
+        let mut nodes: Vec<(&ManifestEntry, FlagStanding<'a>)> = Vec::new();
         for entry in self.flags() {
             if owned(entry)
                 && let Some(stands) = standing(entry)
@@ -85,16 +97,28 @@ impl Manifest {
         }
         let keys: Vec<_> = nodes.iter().map(|(entry, _)| entry.key()).collect();
         let standings: Vec<_> = nodes.iter().map(|(_, stands)| *stands).collect();
-        judge(&keys, &standings, &relations)
-            .into_iter()
-            .map(|hold| {
-                let (declared_on, invariant) = stated[hold.relation];
-                InvariantHold {
-                    held: keys[hold.flag].clone(),
-                    flag: declared_on.key().clone(),
-                    invariant: invariant.clone(),
-                }
-            })
-            .collect()
+        let judgement = judge(&keys, &standings, &relations);
+        InvariantJudgement {
+            holds: judgement
+                .holds
+                .into_iter()
+                .map(|hold| {
+                    let (declared_on, invariant) = stated[hold.relation];
+                    InvariantHold {
+                        held: keys[hold.flag].clone(),
+                        flag: declared_on.key().clone(),
+                        invariant: invariant.clone(),
+                    }
+                })
+                .collect(),
+            unresolved: judgement
+                .unresolved
+                .into_iter()
+                .map(|relation| {
+                    let (declared_on, invariant) = stated[relation];
+                    (declared_on.key().clone(), invariant.clone())
+                })
+                .collect(),
+        }
     }
 }

@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use batter_flags_core::{
-    FlagKey, InvariantHold, InvariantRule, Manifest, ManifestEntry, SafeState, Standing,
+    FlagKey, FlagStanding, InvariantHold, InvariantRule, Manifest, ManifestEntry, SafeState,
     SwitchState,
 };
 use batter_sqlx::PgScopedSql;
@@ -113,26 +113,21 @@ pub(crate) async fn judge(
         .collect();
     let rows = Rows(stored(sql, names.into_iter().collect()).await?);
     for manifest in &manifests {
-        for kind in manifest.process_kinds() {
-            let before = Judged::new(manifest, &rows, None);
-            let held_before: BTreeSet<FlagKey> = manifest
-                .invariant_holds(kind, |entry| before.standing(entry))
-                .into_iter()
-                .map(|hold| hold.held)
-                .collect();
-            let after = Judged::new(manifest, &rows, Some((key, written)));
-            for hold in manifest.invariant_holds(kind, |entry| after.standing(entry)) {
-                if hold.held == *key || !held_before.contains(&hold.held) {
-                    deferral.unmet.push(after.unmet(hold));
-                }
-            }
-        }
-        if let (Written::Flag(variant), Some(entry)) = (written, manifest.flag(key.as_str()))
-            && let Some(switch) = entry.governed_by()
-            && entry.default_variant() != Some(variant)
-            && Judged::new(manifest, &rows, None).engaged(switch)
-        {
-            deferral.overridden_by.push(switch.clone());
+        // A governing switch whose row readers hold serves whatever state each
+        // reader last published, so both are judged.
+        let held_switch = manifest
+            .flags()
+            .iter()
+            .filter_map(ManifestEntry::governed_by)
+            .filter_map(|switch| manifest.flag(switch.as_str()))
+            .any(|switch| matches!(rows.read(switch), Read::Undecodable));
+        let assumptions: &[SwitchState] = if held_switch {
+            &[SwitchState::Released, SwitchState::Engaged]
+        } else {
+            &[SwitchState::Released]
+        };
+        for &assumed in assumptions {
+            judge_catalog(manifest, &rows, key, written, assumed, &mut deferral);
         }
     }
     deferral.unmet.sort();
@@ -140,6 +135,45 @@ pub(crate) async fn judge(
     deferral.overridden_by.sort();
     deferral.overridden_by.dedup();
     Ok(deferral)
+}
+
+/// Adds to `deferral` what one catalog's processes would make of the write,
+/// with a held governing switch taken to serve `assumed`.
+fn judge_catalog(
+    manifest: &Manifest,
+    rows: &Rows,
+    key: &FlagKey,
+    written: Written<'_>,
+    assumed: SwitchState,
+    deferral: &mut Deferral,
+) {
+    for kind in manifest.process_kinds() {
+        let before = Judged::new(manifest, rows, None, assumed);
+        let held_before: BTreeSet<FlagKey> = manifest
+            .invariant_holds(kind, |entry| before.standing(entry))
+            .holds
+            .into_iter()
+            .map(|hold| hold.held)
+            .collect();
+        let after = Judged::new(manifest, rows, Some((key, written)), assumed);
+        // Every fixed standing here is a code default, so nothing is left
+        // unresolved.
+        for hold in manifest
+            .invariant_holds(kind, |entry| after.standing(entry))
+            .holds
+        {
+            if hold.held == *key || !held_before.contains(&hold.held) {
+                deferral.unmet.push(after.unmet(hold));
+            }
+        }
+    }
+    if let (Written::Flag(variant), Some(entry)) = (written, manifest.flag(key.as_str()))
+        && let Some(switch) = entry.governed_by()
+        && entry.default_variant() != Some(variant)
+        && Judged::new(manifest, rows, None, assumed).engaged(switch)
+    {
+        deferral.overridden_by.push(switch.clone());
+    }
 }
 
 /// The stored, unarchived rows of the judged keys, by name.
@@ -155,8 +189,14 @@ impl Rows {
     /// The row of `entry`'s key, decoded as a reader decodes it: its kind
     /// and value type the declaration's, state encoding 1 exactly, and a
     /// variant the declaration declares or a switch state.
-    fn served(&self, entry: &ManifestEntry) -> Option<Served<'_>> {
-        let row = self.0.get(entry.key().as_str())?;
+    fn read(&self, entry: &ManifestEntry) -> Read<'_> {
+        let Some(row) = self.0.get(entry.key().as_str()) else {
+            return Read::Absent;
+        };
+        Self::decode(row, entry).unwrap_or(Read::Undecodable)
+    }
+
+    fn decode<'r>(row: &'r StoredValue, entry: &ManifestEntry) -> Option<Read<'r>> {
         if row.kind != entry.kind().as_str() || row.value_type != entry.value_type().as_str() {
             return None;
         }
@@ -170,17 +210,23 @@ impl Rows {
                 .variants()
                 .iter()
                 .any(|declared| declared == variant)
-                .then_some(Served::Flag(variant));
+                .then_some(Read::Flag(variant));
         }
         match fields.get("switch")?.as_str()? {
-            "engaged" => Some(Served::Switch(SwitchState::Engaged)),
-            "released" => Some(Served::Switch(SwitchState::Released)),
+            "engaged" => Some(Read::Switch(SwitchState::Engaged)),
+            "released" => Some(Read::Switch(SwitchState::Released)),
             _ => None,
         }
     }
 }
 
-enum Served<'a> {
+/// What a reader makes of one stored row.
+enum Read<'a> {
+    /// No unarchived row.
+    Absent,
+    /// A row a reader holds: another kind or type, another encoding, or an
+    /// undeclared variant.
+    Undecodable,
     Flag(&'a str),
     Switch(SwitchState),
 }
@@ -190,6 +236,9 @@ struct Judged<'a> {
     manifest: &'a Manifest,
     rows: &'a Rows,
     written: Option<(&'a FlagKey, Written<'a>)>,
+    /// What a governing switch whose row readers hold is taken to serve: a
+    /// reader keeps whichever state it last published, which only it knows.
+    held_switch: SwitchState,
 }
 
 impl<'a> Judged<'a> {
@@ -197,29 +246,31 @@ impl<'a> Judged<'a> {
         manifest: &'a Manifest,
         rows: &'a Rows,
         written: Option<(&'a FlagKey, Written<'a>)>,
+        held_switch: SwitchState,
     ) -> Self {
         Self {
             manifest,
             rows,
             written,
+            held_switch,
         }
     }
 
     /// What `entry` serves before invariants, and whether a row or the
     /// write supplied it. `None` for a kill switch.
-    fn judged(&self, entry: &'a ManifestEntry) -> Option<(Standing<'a>, Basis)> {
+    fn judged(&self, entry: &'a ManifestEntry) -> Option<(FlagStanding<'a>, Basis)> {
         let default = entry.default_variant()?;
         if let Some(switch) = entry.governed_by()
             && self.engaged(switch)
         {
-            return Some((Standing::Fixed(default), Basis::CodeDefault));
+            return Some((FlagStanding::Fixed(default), Basis::CodeDefault));
         }
         let served = match self.written {
             Some((key, Written::Flag(variant))) if key == entry.key() => Some(variant),
             Some((key, _)) if key == entry.key() => None,
-            Some(_) | None => match self.rows.served(entry) {
-                Some(Served::Flag(variant)) => Some(variant),
-                Some(Served::Switch(_)) | None => None,
+            Some(_) | None => match self.rows.read(entry) {
+                Read::Flag(variant) => Some(variant),
+                Read::Switch(_) | Read::Absent | Read::Undecodable => None,
             },
         };
         let served = served.filter(|variant| {
@@ -227,17 +278,17 @@ impl<'a> Judged<'a> {
         });
         Some(match served {
             Some(variant) => (
-                Standing::Published {
+                FlagStanding::Published {
                     variant,
                     base: default,
                 },
                 Basis::StoredRows,
             ),
-            None => (Standing::Fixed(default), Basis::CodeDefault),
+            None => (FlagStanding::Fixed(default), Basis::CodeDefault),
         })
     }
 
-    fn standing(&self, entry: &'a ManifestEntry) -> Option<Standing<'a>> {
+    fn standing(&self, entry: &'a ManifestEntry) -> Option<FlagStanding<'a>> {
         self.judged(entry).map(|(standing, _)| standing)
     }
 
@@ -252,9 +303,10 @@ impl<'a> Judged<'a> {
         let Some(entry) = self.manifest.flag(key.as_str()) else {
             return false;
         };
-        match self.rows.served(entry) {
-            Some(Served::Switch(state)) => state.is_engaged(),
-            Some(Served::Flag(_)) | None => entry.safe_state() == Some(SafeState::Engaged),
+        match self.rows.read(entry) {
+            Read::Switch(state) => state.is_engaged(),
+            Read::Undecodable => self.held_switch.is_engaged(),
+            Read::Flag(_) | Read::Absent => entry.safe_state() == Some(SafeState::Engaged),
         }
     }
 

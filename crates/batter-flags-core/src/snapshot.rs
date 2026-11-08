@@ -8,7 +8,9 @@
 
 mod relations;
 
-pub(crate) use relations::{EntrySwitch, SwitchOverride, entry_switch, switch_override};
+pub(crate) use relations::{
+    EntrySwitch, SwitchOverride, entry_switch, governed_breaks, switch_override,
+};
 
 use std::{collections::HashSet, fmt, sync::Arc};
 
@@ -238,7 +240,7 @@ pub(crate) enum EntryState {
 ///
 /// assert_eq!(snapshot.version(), Version::new(7));
 /// assert_eq!(snapshot.unknown(), 1); // a key no declaration has is counted, never held
-/// assert_eq!(snapshot.held().count(), 0);
+/// assert_eq!(snapshot.held(batter_flags_core::Freshness::Fresh).count(), 0);
 /// # Ok(())
 /// # }
 /// ```
@@ -274,8 +276,8 @@ impl Snapshot {
     /// meets it. Invariants are visited by key, so the outcome never depends
     /// on declaration order. An invariant whose other flag this kind does not
     /// own is not judged, as in declared mode. A stale rule can engage a
-    /// governing switch, so a stale view is judged on its own;
-    /// [`held`](Self::held) reports a fresh view's holds.
+    /// governing switch, so a stale view is judged on its own, and
+    /// [`held`](Self::held) takes the view's freshness.
     ///
     /// # Errors
     ///
@@ -398,10 +400,15 @@ impl Snapshot {
             })
     }
 
-    /// The held entries of a fresh view, in declaration order, with why each
-    /// is held.
-    pub fn held(&self) -> impl Iterator<Item = (&FlagKey, HoldCause)> + '_ {
-        self.entries
+    /// The entries a view of `freshness` holds, in declaration order, with
+    /// why each is held. A stale view can hold more: a stale rule can engage
+    /// a governing switch and so leave an invariant unmet.
+    ///
+    /// Migration: `held()` took no argument and reported a fresh view's
+    /// holds; pass `Freshness::Fresh` for exactly that, or the freshness of
+    /// the view being reported on.
+    pub fn held(&self, freshness: Freshness) -> impl Iterator<Item = (&FlagKey, HoldCause)> + '_ {
+        self.entries_for(freshness)
             .iter()
             .zip(self.base.catalog.entries.iter())
             .filter_map(|(state, entry)| match state {

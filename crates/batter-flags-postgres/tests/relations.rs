@@ -438,3 +438,39 @@ async fn a_governed_flag_reports_its_engaged_switch_and_a_kill_switch_is_never_r
     );
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_governor_readers_hold_is_judged_both_engaged_and_released() {
+    let f = Fixture::migrated().await;
+    let _process = declarer(&f).await;
+    assert_eq!(
+        *deferral(&strict(&f, "new_checkout", "on").await),
+        Deferral::default()
+    );
+    // A newer build wrote the switch: readers hold it and keep whichever
+    // state each last published.
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','newer encoding',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
+        .execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) SELECT 'checkout_halt','switch','switch','{\"encoding\":2,\"switch\":\"engaged\"}',version,version FROM flags.flag_control")
+        .execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    // Engaged, `new_checkout` serves its default, so the report is held.
+    let refused = strict(&f, "checkout_report", "on").await;
+    assert_eq!(
+        refused_for(&refused),
+        [unmet(
+            "checkout_report",
+            InvariantRule::Requires,
+            ("checkout_report", "on"),
+            ("new_checkout", "on"),
+            Basis::CodeDefault,
+        )]
+    );
+    let rewritten = strict(&f, "new_checkout", "off").await;
+    assert_eq!(*deferral(&rewritten), Deferral::default());
+    let on = strict(&f, "new_checkout", "on").await;
+    assert_eq!(deferral(&on).overridden_by, [key("checkout_halt")]);
+    f.close().await;
+}

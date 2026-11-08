@@ -85,7 +85,11 @@ fn a_writer_emits_exactly_the_canonical_text_and_a_reader_reads_it_back() {
         };
         assert_eq!(row.state_text(), expected);
         let published = snapshot(&base, 3, [row]);
-        assert_eq!(published.held().count(), 0, "{expected}");
+        assert_eq!(
+            published.held(batter_flags_core::Freshness::Fresh).count(),
+            0,
+            "{expected}"
+        );
     }
 }
 
@@ -112,7 +116,7 @@ fn a_reader_publishes_or_holds_every_text_as_the_vectors_say() {
         let reads = &entry["reads"];
         let context = format!("{shape}: {name}");
         let held: Vec<_> = snapshot
-            .held()
+            .held(batter_flags_core::Freshness::Fresh)
             .map(|(key, cause)| (key.as_str().to_owned(), cause.as_str()))
             .collect();
         if let Some(cause) = reads["held"].as_str() {

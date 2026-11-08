@@ -14,7 +14,7 @@ use thiserror::Error;
 use crate::{
     Catalog,
     decision::{ErrorCause, SwitchState},
-    declaration::{Declared, Kind, OwnedOwners},
+    declaration::{Declared, Invariant, Kind, OwnedOwners},
     digest::Revision,
     events::ErrorTally,
     key::FlagKey,
@@ -92,6 +92,48 @@ impl Base {
     /// The catalog this base was built from.
     pub fn catalog(&self) -> &Catalog {
         &self.inner.catalog
+    }
+
+    /// The invariants between flags this base's kind owns that the base
+    /// itself breaks once a governing kill switch overrides a flag to its
+    /// code default. A control plane can engage any switch whose settings
+    /// floor does not, so no hold could meet such an invariant: a root in
+    /// control-plane mode refuses to start with one.
+    ///
+    /// ```
+    /// use batter_flags_core::{
+    ///     CatalogBuilder, CivilDate, Expiry, Flag, SafeState, SettingsPrefix, StaleRule, Toggle,
+    ///     low_level::BaseBuilder,
+    /// };
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
+    /// let serving = catalog.process_kind("serving")?;
+    /// catalog.environment_class("hosted")?;
+    /// let halt = catalog
+    ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
+    ///     .declare()?;
+    /// let governed = catalog
+    ///     .release_flag("governed", Toggle::Off, Expiry::on(CivilDate::new(2027, 3, 31)?))
+    ///     .governed_by(&halt)
+    ///     .declare()?;
+    /// let dependent = catalog.mode_flag("dependent", Toggle::Off).declare()?;
+    /// catalog.requires(&dependent, Toggle::On, &governed, Toggle::On)?;
+    ///
+    /// // Settings turn both on: engaging `halt` would serve `dependent` on alone.
+    /// let mut base = BaseBuilder::new(catalog.build()?, serving)?;
+    /// let (dependent, governed) = (dependent.key().clone(), governed.key().clone());
+    /// base.flag(&dependent, "on")?;
+    /// base.flag(&governed, "on")?;
+    /// assert_eq!(base.finish().governed_invariant_breaks().len(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn governed_invariant_breaks(&self) -> Vec<Invariant> {
+        crate::snapshot::governed_breaks(&self.inner)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// The process kind the settings were resolved for.

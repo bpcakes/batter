@@ -76,7 +76,10 @@ async fn stored_writer_vectors_validate_against_core_candidate() {
                 .candidate(&base.validation_scope()),
         )
         .unwrap();
-        assert_eq!(snapshot.held().count(), 0);
+        assert_eq!(
+            snapshot.held(batter_flags_core::Freshness::Fresh).count(),
+            0
+        );
         let snapshot = std::sync::Arc::new(snapshot);
         let view = base
             .control_plane_view(&snapshot, Freshness::Fresh)
@@ -212,5 +215,8 @@ async fn assert_held(f: &Fixture) {
         f.store.load(deadline()).await.unwrap().candidate(&scope),
     )
     .unwrap();
-    assert_eq!(snapshot.held().count(), 1);
+    assert_eq!(
+        snapshot.held(batter_flags_core::Freshness::Fresh).count(),
+        1
+    );
 }

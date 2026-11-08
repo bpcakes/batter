@@ -185,7 +185,7 @@ async fn a_row_needing_absent_settings_is_held_and_serves_the_base() {
     let record = flags.shared.reader().record().unwrap();
     let held: Vec<_> = record
         .snapshot()
-        .held()
+        .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.as_str().to_owned(), cause))
         .collect();
     assert_eq!(

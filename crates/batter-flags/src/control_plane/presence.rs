@@ -309,7 +309,15 @@ fn report(shared: &Shared, floor_engaged: KeySample) -> PresenceReport {
                 Standing::Persisted { version } => SnapshotReport::PersistedFile(version),
                 Standing::ControlPlane { version, .. } => SnapshotReport::ControlPlane(version),
             };
-            let held = KeySample::of(record.snapshot().held().map(|(key, _)| key.clone()));
+            // The holds a view captured now has, so a stale view's extra
+            // holds are reported while it is stale.
+            let held = KeySample::of(
+                shared
+                    .reader()
+                    .held_at(Instant::now())
+                    .into_iter()
+                    .map(|(key, _)| key),
+            );
             (snapshot, held)
         }
     };

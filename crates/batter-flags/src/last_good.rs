@@ -167,7 +167,10 @@ pub(crate) fn file_of(
     }
     let catalog = base.catalog();
     let owned: HashSet<FlagKey> = catalog.owned_by(base.process_kind()).ok()?.collect();
-    let held: HashSet<&str> = snapshot.held().map(|(key, _)| key.as_str()).collect();
+    let held: HashSet<&str> = snapshot
+        .held(batter_flags_core::Freshness::Fresh)
+        .map(|(key, _)| key.as_str())
+        .collect();
     let carried: Vec<_> = snapshot
         .carried()
         .filter(|carried| carried.provenance() == Provenance::ControlPlane)

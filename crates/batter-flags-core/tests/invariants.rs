@@ -98,7 +98,7 @@ fn relations() -> (Catalog, Flags) {
 
 fn held(snapshot: &Snapshot) -> Vec<(String, HoldCause)> {
     snapshot
-        .held()
+        .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.as_str().to_owned(), cause))
         .collect()
 }
@@ -306,113 +306,6 @@ fn a_held_entry_keeps_its_first_cause_before_any_invariant_is_judged() {
     );
 }
 
-/// `dependent` on requires `governed` on; `governed` is a release flag
-/// governed by `halt`, a switch that engages when stale.
-fn governed_world() -> (
-    Catalog,
-    ProcessKind,
-    ModeFlag<Toggle>,
-    batter_flags_core::ReleaseFlag<Toggle>,
-    batter_flags_core::KillSwitch,
-) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
-    let halt = builder
-        .kill_switch(
-            "halt",
-            batter_flags_core::SafeState::Released,
-            batter_flags_core::StaleRule::EngageWhenStale,
-        )
-        .declare()
-        .unwrap();
-    let governed = builder
-        .release_flag("governed", Toggle::Off, fixtures::expiry())
-        .governed_by(&halt)
-        .declare()
-        .unwrap();
-    let dependent = builder
-        .mode_flag("dependent", Toggle::Off)
-        .declare()
-        .unwrap();
-    builder
-        .requires(&dependent, Toggle::On, &governed, Toggle::On)
-        .unwrap();
-    (builder.build().unwrap(), serving, dependent, governed, halt)
-}
-
-#[test]
-fn a_flag_requiring_one_its_engaged_switch_overrides_is_held_too() {
-    let (catalog, serving, dependent, governed, halt) = governed_world();
-    let base = base(catalog, &serving, &[]);
-    let rows = |state| {
-        [
-            flag_row(&dependent, Toggle::On, 2),
-            flag_row(&governed, Toggle::On, 2),
-            world::switch_row(&halt, state, 3),
-        ]
-    };
-    // Released: both are served on.
-    let released = snapshot(&base, 3, rows(batter_flags_core::SwitchState::Released));
-    assert_eq!(held(&released), []);
-    // Engaged: `governed` serves its default, so `dependent` is held.
-    let engaged = snapshot(&base, 4, rows(batter_flags_core::SwitchState::Engaged));
-    assert_eq!(held(&engaged), unmet(&["dependent"]));
-    let view = base.control_plane_view(&engaged, Freshness::Fresh).unwrap();
-    assert_eq!(view.evaluate(&governed).value(), Toggle::Off);
-    assert_eq!(view.evaluate(&dependent).value(), Toggle::Off);
-    // A settings floor engages it the same way.
-    let (catalog, serving, dependent, governed, halt) = governed_world();
-    let floored = world::base(
-        catalog,
-        &serving,
-        &[Literal::Switch(
-            "halt",
-            batter_flags_core::SwitchState::Engaged,
-        )],
-    );
-    let read = snapshot(
-        &floored,
-        3,
-        [
-            flag_row(&dependent, Toggle::On, 2),
-            flag_row(&governed, Toggle::On, 2),
-            world::switch_row(&halt, batter_flags_core::SwitchState::Released, 3),
-        ],
-    );
-    assert_eq!(held(&read), unmet(&["dependent"]));
-}
-
-#[test]
-fn a_stale_rule_that_engages_a_governing_switch_holds_only_in_a_stale_view() {
-    let (catalog, serving, dependent, governed, halt) = governed_world();
-    let base = base(catalog, &serving, &[]);
-    let read = snapshot(
-        &base,
-        3,
-        [
-            flag_row(&dependent, Toggle::On, 2),
-            flag_row(&governed, Toggle::On, 2),
-            world::switch_row(&halt, batter_flags_core::SwitchState::Released, 3),
-        ],
-    );
-    assert_eq!(held(&read), [], "a fresh view's holds");
-    let fresh = base.control_plane_view(&read, Freshness::Fresh).unwrap();
-    assert_eq!(fresh.evaluate(&dependent).value(), Toggle::On);
-    let stale = base.control_plane_view(&read, Freshness::Stale).unwrap();
-    assert_eq!(
-        stale.switch(&halt).value(),
-        batter_flags_core::SwitchState::Engaged
-    );
-    assert_eq!(stale.evaluate(&governed).value(), Toggle::Off);
-    let decision = stale.evaluate(&dependent);
-    assert_eq!(
-        (decision.value(), decision.layer()),
-        (Toggle::Off, &Layer::Base),
-        "the dependent is held at its base while the switch is engaged by staleness"
-    );
-}
-
 /// `a` on conflicts with `b` on, and `b` on with `c` on, declared in `order`.
 fn chain_in(order: [&str; 3]) -> (Catalog, ProcessKind, Vec<ModeFlag<Toggle>>) {
     let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
@@ -462,4 +355,22 @@ fn which_flag_is_held_never_depends_on_declaration_order() {
         "one catalog, one outcome: {outcomes:?}"
     );
     assert_eq!(outcomes[0].1, unmet(&["a", "b"]));
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn a_judgement_that_no_hold_can_meet_is_reported_unresolved() {
+    use batter_flags_core::FlagStanding;
+    let (catalog, _) = relations();
+    let manifest = catalog.manifest();
+    // Both stand fixed on, so `fast_lane`'s conflict cannot be met.
+    let judgement = manifest.invariant_holds("serving", |entry| {
+        Some(match entry.key().as_str() {
+            "fast_lane" | "slow_lane" => FlagStanding::Fixed("on"),
+            _ => FlagStanding::Fixed("off"),
+        })
+    });
+    assert!(judgement.holds.is_empty());
+    assert_eq!(judgement.unresolved.len(), 1);
+    assert_eq!(judgement.unresolved[0].0.as_str(), "fast_lane");
 }

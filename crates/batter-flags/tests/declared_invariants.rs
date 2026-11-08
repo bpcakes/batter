@@ -157,3 +157,54 @@ fn a_both_or_none_invariant_fails_when_exactly_one_is_on() {
 }
 
 // R-06: a development-only flag outside its class.
+
+#[test]
+fn a_governed_flag_is_judged_at_its_default_while_its_switch_resolves_engaged() {
+    let resolve = |safe: batter_flags::core::SafeState, pairs: &[(&str, &str)]| {
+        let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+        let serving = builder.process_kind("serving").unwrap();
+        let hosted = builder.environment_class("hosted").unwrap();
+        let halt = builder
+            .kill_switch("halt", safe, batter_flags::core::StaleRule::HoldLastKnown)
+            .declare()
+            .unwrap();
+        let governed = builder
+            .release_flag(
+                "governed",
+                Toggle::Off,
+                batter_flags::core::Expiry::on(
+                    batter_flags::core::CivilDate::new(2027, 3, 31).unwrap(),
+                ),
+            )
+            .governed_by(&halt)
+            .declare()
+            .unwrap();
+        let dependent = builder
+            .mode_flag("dependent", Toggle::Off)
+            .declare()
+            .unwrap();
+        builder
+            .requires(&dependent, Toggle::On, &governed, Toggle::On)
+            .unwrap();
+        let source = SettingsSource::from_pairs(
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).into(), (*value).into())),
+        )
+        .unwrap();
+        declared::resolve(builder.build().unwrap(), &source, serving, hosted, today())
+    };
+    let both = [("FLAG_DEPENDENT", "on"), ("FLAG_GOVERNED", "on")];
+    let released = batter_flags::core::SafeState::Released;
+    assert!(resolve(released, &both).is_ok());
+    // Engaged by its literal, the switch serves `governed` at its default off.
+    let engaged = [both[0], both[1], ("FLAG_HALT", "engaged")];
+    let error = resolve(released, &engaged).unwrap_err();
+    assert!(
+        matches!(&error, DeclaredError::Invariant { flag, other, .. }
+            if flag.as_str() == "dependent" && other.as_str() == "governed"),
+        "{error}"
+    );
+    // Engaged by its safe state, with no literal, the same.
+    assert!(resolve(batter_flags::core::SafeState::Engaged, &both).is_err());
+}

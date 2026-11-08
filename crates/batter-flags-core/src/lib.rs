@@ -118,15 +118,16 @@ pub use digest::{
 };
 pub use error::{BuildError, ForeignKind};
 pub use handle::{Flag, KillSwitch, ModeFlag, ReleaseFlag};
-pub use invariants::Standing;
+pub use invariants::FlagStanding;
 pub use key::{
     FlagKey, KeyError, MAX_KEY_LENGTH, MAX_PREFIX_LENGTH, MAX_SETTING_NAME_LENGTH, PrefixError,
     SettingName, SettingNameError, SettingsPrefix,
 };
 #[cfg(feature = "serde")]
 pub use manifest::{
-    InvariantHold, Manifest, ManifestDiff, ManifestDiffError, ManifestEntry, ManifestInvariant,
-    ManifestOwners, ManifestRequiredSettings, ManifestRetired, Retype, manifest_diff,
+    InvariantHold, InvariantJudgement, Manifest, ManifestDiff, ManifestDiffError, ManifestEntry,
+    ManifestInvariant, ManifestOwners, ManifestRequiredSettings, ManifestRetired, Retype,
+    manifest_diff,
 };
 pub use pin::{PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution};
 pub use value::{FlagValue, Toggle, ValueType, VariantsError};

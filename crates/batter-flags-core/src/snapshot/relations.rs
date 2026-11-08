@@ -17,8 +17,8 @@ use super::{Carried, EntryState, HoldCause};
 use crate::{
     base::{BaseInner, BaseState},
     decision::{Freshness, SwitchState},
-    declaration::{Entry, StaleRule},
-    invariants::{Relation, Standing, judge},
+    declaration::{Entry, Invariant, StaleRule},
+    invariants::{FlagStanding, Relation, judge},
 };
 
 /// Why a kill switch of a control-plane view is engaged whatever its
@@ -126,7 +126,12 @@ pub(super) fn hold_unmet(base: &BaseInner, entries: &mut [EntryState], freshness
         .map(|&(index, _)| &catalog.entries[index].key)
         .collect();
     let standings: Vec<_> = nodes.iter().map(|&(_, standing)| standing).collect();
-    for hold in judge(&keys, &standings, &relations) {
+    // A relation left unresolved has both flags at a value no hold changes.
+    // Declared resolution checks the base, and control-plane registration
+    // refuses one an engaged governor breaks, so only a base built with the
+    // low-level `BaseBuilder` and never checked can leave one; nothing here
+    // can serve otherwise, so it is left as the base has it.
+    for hold in judge(&keys, &standings, &relations).holds {
         entries[nodes[hold.flag].0] = EntryState::Held {
             cause: HoldCause::InvariantUnmet,
             carried: None,
@@ -142,25 +147,95 @@ fn standing<'a>(
     entries: &[EntryState],
     index: usize,
     freshness: Freshness,
-) -> Option<Standing<'a>> {
+) -> Option<FlagStanding<'a>> {
     let entry = &base.catalog.entries[index];
     let default = entry.default_variant?;
-    let based = match base.states[index] {
-        BaseState::Flag(Some(chosen)) => entry.variants[chosen],
-        BaseState::Flag(None) | BaseState::Switch(_) => default,
-    };
+    let based = based(base, index);
     if let Some(governing) = &entry.governed_by
         && engaged(base, entries, governing.index, freshness)
     {
-        return Some(Standing::Fixed(default));
+        return Some(FlagStanding::Fixed(default));
     }
     Some(match entries[index] {
-        EntryState::Flag(chosen) => Standing::Published {
+        EntryState::Flag(chosen) => FlagStanding::Published {
             variant: entry.variants[chosen],
             base: based,
         },
         EntryState::Absent | EntryState::Switch(_) | EntryState::Held { .. } => {
-            Standing::Fixed(based)
+            FlagStanding::Fixed(based)
         }
     })
+}
+
+/// The invariants between flags this kind owns that the declared base itself
+/// breaks for some reachable state of the governing kill switches involved,
+/// a governed flag serving its code default while its switch is engaged.
+///
+/// In a control plane an operator can engage or release any switch at any
+/// time, unless its settings floor keeps it engaged, so no hold can meet
+/// such an invariant: every flag a hold could move already serves its base.
+pub(crate) fn governed_breaks(base: &BaseInner) -> Vec<&Invariant> {
+    let catalog = &base.catalog;
+    let judged = |index: usize| {
+        let entry = &catalog.entries[index];
+        entry.default_variant.is_some() && entry.owners.contains(&base.kind)
+    };
+    let floor =
+        |switch: usize| base.states[switch] == BaseState::Switch(Some(SwitchState::Engaged));
+    let mut breaks = Vec::new();
+    for (index, entry) in catalog.entries.iter().enumerate() {
+        if !judged(index) {
+            continue;
+        }
+        for invariant in &entry.invariants {
+            let Some(&other) = catalog.by_key.get(&invariant.other) else {
+                continue;
+            };
+            if !judged(other) {
+                continue;
+            }
+            // The governors whose state is open: at most one per flag.
+            let mut open: Vec<usize> = [index, other]
+                .iter()
+                .filter_map(|&flag| catalog.entries[flag].governed_by.as_ref())
+                .map(|governing| governing.index)
+                .filter(|&switch| !floor(switch))
+                .collect();
+            open.dedup();
+            let breaks_under = |engaged: &[usize]| {
+                let served = |flag: usize| {
+                    let entry = &catalog.entries[flag];
+                    match &entry.governed_by {
+                        Some(governing)
+                            if floor(governing.index) || engaged.contains(&governing.index) =>
+                        {
+                            entry.default_variant.unwrap_or_default()
+                        }
+                        Some(_) | None => based(base, flag),
+                    }
+                };
+                !invariant.holds(served(index), served(other))
+            };
+            // Every subset of the open governors engaged, the empty one first.
+            let assignments: Vec<&[usize]> = match open.len() {
+                0 => vec![&[]],
+                1 => vec![&[], &open[..1]],
+                _ => vec![&[], &open[..1], &open[1..2], &open[..2]],
+            };
+            if assignments.iter().any(|engaged| breaks_under(engaged)) {
+                breaks.push(invariant);
+            }
+        }
+    }
+    breaks
+}
+
+/// A release or mode flag's declared base: its literal, else its code
+/// default.
+fn based(base: &BaseInner, index: usize) -> &'static str {
+    let entry = &base.catalog.entries[index];
+    match base.states[index] {
+        BaseState::Flag(Some(chosen)) => entry.variants[chosen],
+        BaseState::Flag(None) | BaseState::Switch(_) => entry.default_variant.unwrap_or_default(),
+    }
 }

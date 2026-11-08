@@ -21,10 +21,10 @@
 use std::{sync::Arc, time::Duration};
 
 use batter_flags_core::{
-    Freshness, PrePublication, SnapshotView,
+    FlagKey, Freshness, PrePublication, SnapshotView,
     low_level::{
-        Base, Disposition, Provenance, Published, Refusal, Snapshot, SnapshotRejection, Standing,
-        ViewError,
+        Base, Disposition, HoldCause, Provenance, Published, Refusal, Snapshot, SnapshotRejection,
+        Standing, ViewError,
     },
 };
 use tokio::{sync::watch, time::Instant};
@@ -227,6 +227,26 @@ impl Reader {
         match &self.mode {
             Mode::Live(live) => live.receiver.borrow().clone(),
             Mode::Declared | Mode::Test { .. } => None,
+        }
+    }
+
+    /// The held keys of the record being served, as a view captured at
+    /// `now` holds them, with why each is held; empty before anything is
+    /// published. A stale view can hold more than a fresh one.
+    pub(crate) fn held_at(&self, now: Instant) -> Vec<(FlagKey, HoldCause)> {
+        match &self.mode {
+            Mode::Live(live) => match live.receiver.borrow().clone() {
+                Some(record) => {
+                    let freshness = live.freshness(*record.age_origin(), now);
+                    record
+                        .snapshot()
+                        .held(freshness)
+                        .map(|(key, cause)| (key.clone(), cause))
+                        .collect()
+                }
+                None => Vec::new(),
+            },
+            Mode::Declared | Mode::Test { .. } => Vec::new(),
         }
     }
 

@@ -233,7 +233,7 @@ fn without_a_usable_entry_the_base_is_served() {
     );
     assert_eq!((snapshot.unknown(), snapshot.not_owned()), (1, 1));
     let held: Vec<_> = snapshot
-        .held()
+        .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.as_str().to_owned(), cause))
         .collect();
     assert_eq!(

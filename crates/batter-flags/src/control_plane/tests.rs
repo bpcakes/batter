@@ -3,6 +3,7 @@
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 mod child_root;
+mod invariants;
 mod last_good;
 mod matrix;
 mod status;

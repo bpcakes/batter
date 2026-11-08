@@ -10,7 +10,7 @@ use crate::{declaration::InvariantRule, key::FlagKey};
 
 /// What a release or mode flag serves before invariants are judged.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Standing<'a> {
+pub enum FlagStanding<'a> {
     /// A published variant; holding the flag serves `base` in its place.
     Published {
         /// The published variant.
@@ -23,7 +23,7 @@ pub enum Standing<'a> {
     Fixed(&'a str),
 }
 
-impl<'a> Standing<'a> {
+impl<'a> FlagStanding<'a> {
     fn served(self) -> &'a str {
         match self {
             Self::Published { variant, .. } | Self::Fixed(variant) => variant,
@@ -62,6 +62,20 @@ pub(crate) struct Hold {
     pub(crate) relation: usize,
 }
 
+/// What the judgement decided: the holds it made, and the relations it left
+/// unmet because neither flag could be held.
+pub(crate) struct Judgement {
+    pub(crate) holds: Vec<Hold>,
+    #[cfg_attr(
+        not(feature = "serde"),
+        allow(
+            dead_code,
+            reason = "only the manifest replay, behind `serde`, reports them; a snapshot over a checked base leaves none"
+        )
+    )]
+    pub(crate) unresolved: Vec<usize>,
+}
+
 /// Holds published flags until every relation is met.
 ///
 /// Relations are visited in a canonical order, by the declaring flag's key,
@@ -72,12 +86,13 @@ pub(crate) struct Hold {
 /// holdable one whose base meets the relation against the other's served
 /// variant, else the first holdable one. A hold can leave another relation
 /// unmet, so the visit repeats; each round holds at least one more flag, so
-/// it ends. A relation no hold can meet is left unmet.
+/// it ends. A relation no hold can meet, both its flags fixed, is returned
+/// as unresolved.
 pub(crate) fn judge(
     keys: &[&FlagKey],
-    standings: &[Standing<'_>],
+    standings: &[FlagStanding<'_>],
     relations: &[Relation<'_>],
-) -> Vec<Hold> {
+) -> Judgement {
     let mut order: Vec<usize> = (0..relations.len()).collect();
     order.sort_by(|&a, &b| {
         let (a, b) = (&relations[a], &relations[b]);
@@ -112,14 +127,27 @@ pub(crate) fn judge(
             }
         }
         if holds.len() == before {
-            return holds;
+            let unresolved = order
+                .into_iter()
+                .filter(|&index| {
+                    let relation = &relations[index];
+                    !relation.holds(
+                        standings[relation.flag].served(),
+                        standings[relation.other].served(),
+                    )
+                })
+                .collect();
+            return Judgement { holds, unresolved };
         }
     }
 }
 
 /// The flag to hold for `relation`, with what the hold leaves it serving,
 /// if the relation is unmet and a hold is possible.
-fn unmet<'a>(relation: &Relation<'_>, standings: &[Standing<'a>]) -> Option<(usize, Standing<'a>)> {
+fn unmet<'a>(
+    relation: &Relation<'_>,
+    standings: &[FlagStanding<'a>],
+) -> Option<(usize, FlagStanding<'a>)> {
     let (variant, other_variant) = (
         standings[relation.flag].served(),
         standings[relation.other].served(),
@@ -129,7 +157,7 @@ fn unmet<'a>(relation: &Relation<'_>, standings: &[Standing<'a>]) -> Option<(usi
     }
     let candidates = [relation.flag, relation.other]
         .map(|index| standings[index].held().map(|held| (index, held)));
-    let meets = |&(index, held): &(usize, Standing<'a>)| {
+    let meets = |&(index, held): &(usize, FlagStanding<'a>)| {
         if index == relation.flag {
             relation.holds(held.served(), other_variant)
         } else {
