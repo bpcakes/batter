@@ -2489,16 +2489,21 @@ with more than four unreadable governing switches is reported unjudged.
 
 Executed 2026-11-08 against an oracle frozen before launch
 ([evidence](../evidence/flags-evaluation-2-2026-11-08/README.md)). A fresh agent
-given product requirements only built a service on the facade alone that meets
-all ten oracle items: protected control-plane registration over declared
-resolution, a kill switch with its safe state and stale rule, the route-group
-gate read through `AdmittedFlags`, a `gated_direct` job with explicit policies,
-a pin stored in the application's row in the enqueuing `run_atomic` and
-resolved with every `PinnedResolution` arm, and an operator script that retries
-an unknown commit with `--if-revision`. Nothing ran against a database. Its
-friction is evidence of remaining design debt on the canonical path: the flags
-example does not use protected startup (`batter-qrqy`), a gated handler cannot
-be driven in an offline test (`batter-alk2`), a flag-aware handler cannot use
-the protected invocation phases (`batter-31p9`), awaiting publication consumes
-attempts (`batter-owtx`), and the operator command's JSON and retry guidance are
+given product requirements, and a starting project that already declared the
+one `batter` dependency and installed the panic hook, built a service on the
+facade alone that meets nine of the ten oracle items: protected control-plane
+registration over declared resolution, a kill switch with its safe state and
+stale rule, the route-group gate read through `AdmittedFlags`, a `gated_direct`
+job with explicit policies, and a pin stored in the application's row in the
+enqueuing `run_atomic` and resolved with every `PinnedResolution` arm. The
+operator script partly meets the retry item: every write keeps the original
+`--if-revision` and none uses `--yes`, but an exit-4 report without a
+`proposed_version` is re-issued without reading history first. Nothing ran
+against a database. The friction the agent reported in this run, under its
+offline setup, signals remaining design debt on the canonical path rather than
+established API limits: the flags example does not use protected startup
+(`batter-qrqy`); the agent did not drive a gated handler in an offline test
+(`batter-alk2`); it found no protected invocation-phase composition for a
+flag-aware handler (`batter-31p9`); awaiting publication consumes attempts
+(`batter-owtx`); and the operator command's JSON and retry guidance are
 undocumented (`batter-xuv6`). One run of one agent is a signal, not a measure.
