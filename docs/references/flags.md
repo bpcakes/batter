@@ -117,3 +117,17 @@ The migration fixes the definer search path, schema-qualifies relation lookup,
 and revokes PUBLIC execute in the same transaction. Live tests use a fresh
 non-superuser writer login, not owner privilege, for enforcement claims.
 
+
+## PostgreSQL 18 schema search path, 2026-11-08
+
+PostgreSQL 18 [§5.10.3](https://www.postgresql.org/docs/18/ddl-schemas.html#DDL-SCHEMAS-PATH),
+fetched on 2026-11-08: the default `search_path` is `"$user", public`, whose
+first element names "a schema with the same name as the current user" and is
+ignored when no such schema exists; "the first schema in the search path that
+exists is the default location for creating new objects". For a role named
+`flags`, the flags schema therefore shadows `public` once it exists. The first
+hosted `native-flags-postgres` run, whose admin role was named `flags`, failed
+this way, and a local run under a temporary role named `flags` reproduced it
+and showed a host migrator that ignores missing versions writing into the
+flags schema and ledger unrefused by `PooledStore::migrate`
+(`batter-jkw6.34`). The store's own statements are schema-qualified.

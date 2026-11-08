@@ -139,6 +139,18 @@ Queries always qualify the flags schema; changing `search_path` cannot redirect
 writes. Rows are unscoped; environment is a heartbeat label. The salt column is
 reserved for deferred rollout work, not an implemented rollout feature.
 
+The reverse direction is the application's: PostgreSQL's default `search_path`
+is `"$user", public`, so for a role named `flags` the `flags` schema comes first
+once it exists. The host's unqualified names then resolve into it, SQLx's
+default `_sqlx_migrations` ledger included, and unqualified `CREATE TABLE`
+places tables there. A strict host migrator then fails with `VersionMissing`.
+One with `set_ignore_missing(true)` records its versions in the flags ledger
+and creates its tables in `flags` without error, and `PooledStore::migrate`,
+which also ignores versions it does not know, never refuses them; only the
+strict `MIGRATOR` does. Do not name a role `flags`, or give it an explicit
+`search_path`. Whether the store should refuse such a session is
+`batter-jkw6.34`.
+
 The migrator owns tables and functions. Serving writer logins must be non-owner,
 non-superuser and unable to set `session_replication_role`. They need schema
 USAGE, SELECT on control/state/catalog/entry/process tables, UPDATE(version) on

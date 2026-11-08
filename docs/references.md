@@ -25,6 +25,7 @@ have been removed; Git retains their history.
 
 - <a id="flags-control-plane-2026-11-08"></a>[Flags control plane, 2026-11-08](references/flags.md#flags-control-plane-2026-11-08)
 - <a id="flags-store-primary-source-recheck-t-12-2026-11-06"></a>[Flags store primary-source recheck (T-12, 2026-11-06)](references/flags.md#flags-store-primary-source-recheck-t-12-2026-11-06)
+- [PostgreSQL 18 schema search path, 2026-11-08](references/flags.md#postgresql-18-schema-search-path-2026-11-08)
 
 ## Inbound HTTP, browser policy and serving
 
