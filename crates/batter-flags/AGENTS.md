@@ -53,7 +53,7 @@ No protected surface accepts a caller-supplied view. Keep control-plane writer
 injection private to tests; public fixtures use `TestFlags`. Registration
 checks the pool's cleanup evidence against the same borrowed target before
 registering anything. Presence reservation consumes its preparation and retains
-that target through component registration. Persistence selects work and enters
+that target through component registration, lending only fresh reborrows. Persistence selects work and enters
 its writing phase under one lock; the selected owner lives in the blocking task.
 Registration validates every input before registering anything, and refuses a base an
 engaged governing switch would leave breaking an invariant. A heartbeat takes

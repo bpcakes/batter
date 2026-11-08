@@ -377,10 +377,10 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         .reserve_stop(target)
         .map_err(RegisterError::Registration)?;
     let registered = refresh
-        .register(presence.registration())
+        .register(&mut presence.registration())
         .map_err(RegisterError::Registration)?;
     if let (Some(endpoint), refresh::Registered::Woken(_, wake)) = (listening, &registered) {
-        listen::register(presence.registration(), endpoint, wake.clone())
+        listen::register(&mut presence.registration(), endpoint, wake.clone())
             .map_err(RegisterError::Registration)?;
     }
     let (presence, prune) = presence

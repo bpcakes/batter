@@ -164,8 +164,11 @@ pub(crate) struct Reserved<'a> {
 }
 
 impl<'a> Reserved<'a> {
-    pub(crate) fn registration(&mut self) -> &mut Registration<'a> {
-        &mut self.target
+    /// A fresh reborrow of the reserved owner. It is a value, not a reference
+    /// to the stored owner, so no caller can replace the owner the stop
+    /// marker was reserved on.
+    pub(crate) fn registration(&mut self) -> Registration<'_> {
+        self.target.registration()
     }
 
     /// Registers `flags.presence` and `flags.presence_prune`, and returns

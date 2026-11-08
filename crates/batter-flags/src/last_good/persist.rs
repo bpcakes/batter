@@ -23,7 +23,8 @@ enum Written {
     /// Nothing yet: the first write replaces even an equal or newer file,
     /// which may hold pre-restore state.
     Never,
-    /// This version: a later write skips a file newer than it.
+    /// This version replaced the file, durably or not: a later write skips a
+    /// file newer than it.
     At(u64),
 }
 
@@ -60,18 +61,31 @@ impl Selected {
         self,
         outcome: Result<Persisted, PersistFailure>,
     ) -> Result<Persisted, PersistFailure> {
-        if let Ok(done @ (Persisted::Written | Persisted::NewerOnDisk)) = outcome {
-            let mut state = lock(&self.state);
-            if done == Persisted::Written {
+        let mut state = lock(&self.state);
+        match outcome {
+            Ok(Persisted::Written) => {
                 state.written = Written::At(self.file.version);
+                self.settle(&mut state);
             }
-            if let Queue::Waiting(waiting) = &state.queue
-                && waiting.version == self.file.version
-            {
-                state.queue = Queue::Idle;
-            }
+            Ok(Persisted::NewerOnDisk) => self.settle(&mut state),
+            // The rename replaced the file and only its durability is in
+            // doubt, so the first-write authority is spent: the retry, which
+            // stays queued, must not replace a newer file another process
+            // writes meanwhile.
+            Err(PersistFailure::NotDurable) => state.written = Written::At(self.file.version),
+            Ok(Persisted::Idle) | Err(_) => {}
         }
+        drop(state);
         outcome
+    }
+
+    /// Clears the queue if it still holds this write's publication.
+    fn settle(&self, state: &mut State) {
+        if let Queue::Waiting(waiting) = &state.queue
+            && waiting.version == self.file.version
+        {
+            state.queue = Queue::Idle;
+        }
     }
 }
 
@@ -96,7 +110,22 @@ pub(crate) struct Persister {
     /// Shared with the blocking writer, which records its own success, so a
     /// write the deadline abandoned still counts once it completes.
     state: Arc<Mutex<State>>,
+    /// Test builds only: holds the next blocking write until the test sends,
+    /// so a test can abandon a write through [`Persister::attempt`].
+    #[cfg(test)]
+    hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    /// Test builds only: pauses the next attempt right after it selects, so
+    /// a test can show that no in-flight write can change what it selected.
+    #[cfg(test)]
+    pause: Mutex<Option<Pause>>,
 }
+
+/// Signals that an attempt reached the pause, and resumes it.
+#[cfg(test)]
+type Pause = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
     state.lock().unwrap_or_else(PoisonError::into_inner)
@@ -111,7 +140,39 @@ impl Persister {
                 queue: Queue::Idle,
                 phase: Phase::Ready,
             })),
+            #[cfg(test)]
+            hold: Mutex::new(None),
+            #[cfg(test)]
+            pause: Mutex::new(None),
         }
+    }
+
+    /// Pauses the next attempt right after its selection: the receiver
+    /// completes when it gets there, and sending resumes it.
+    #[cfg(test)]
+    fn pause_after_selection(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (reached, reached_rx) = tokio::sync::oneshot::channel();
+        let (resume, resume_rx) = tokio::sync::oneshot::channel();
+        *self.pause.lock().unwrap_or_else(PoisonError::into_inner) = Some((reached, resume_rx));
+        (reached_rx, resume)
+    }
+
+    /// A persister whose next blocking write waits until the returned sender
+    /// sends or is dropped.
+    #[cfg(test)]
+    fn held(path: SnapshotFilePath) -> (Self, std::sync::mpsc::Sender<()>) {
+        let (release, hold) = std::sync::mpsc::channel();
+        let persister = Self::new(path);
+        *persister
+            .hold
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(hold);
+        (persister, release)
     }
 
     /// Queues a control-plane publication, unless its version is the one
@@ -151,9 +212,32 @@ impl Persister {
             Some(selected) => selected,
             None => return Ok(Persisted::Idle),
         };
+        #[cfg(test)]
+        {
+            let pause = self
+                .pause
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some((reached, resume)) = pause {
+                let _ = reached.send(());
+                let _ = resume.await;
+            }
+        }
         let bytes = format::encode(&selected.file).map_err(|_| PersistFailure::TooLarge)?;
         let path = self.path.clone();
+        #[cfg(test)]
+        let hold = self
+            .hold
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         let task = tokio::task::spawn_blocking(move || {
+            #[cfg(test)]
+            if let Some(hold) = hold {
+                // A dropped sender releases the write too.
+                let _ = hold.recv();
+            }
             let outcome = write(&path, &bytes, selected.written, selected.file.version);
             selected.finish(outcome)
         });

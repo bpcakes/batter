@@ -3608,7 +3608,9 @@ state, and the settings floor only engages.
 The last-good file is written by the refresh after it publishes, only for
 values this process published from the control plane, under a directory lock,
 synced and renamed into place within the directory, and never changes a run's
-outcome or narrows readiness. A persist abandoned at its deadline can outlive
+outcome or narrows readiness. A replacement whose directory sync fails counts
+as this process's write for the rule that a later write keeps a newer file, and
+is retried. A persist abandoned at its deadline can outlive
 drain, so roots end with `Runtime::shutdown_timeout`. On macOS 27.2 arm64
 (APFS) a directory's `File::sync_all` returns `Ok`, probed on 2026-11-08 and
 exercised by the last-good tests; durability across power loss is not tested,

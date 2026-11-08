@@ -259,6 +259,9 @@ The last-good writer acquires its explicit Writing state and selects the queued
 snapshot and prior-write evidence under the same mutex. Its selected owner stays
 inside the blocking task until completion or destruction; dropping a waiter cannot
 reopen admission, and failed/abandoned selections retain the latest pending value.
+A write whose rename succeeded but whose directory sync failed (`NotDurable`)
+spends the first-write authority and stays queued, so its retry keeps a newer
+file another process wrote meanwhile (review repair, `batter-jkw6.37`).
 
 `CleanupSlot::register_tracked` mints opaque stack-identity evidence only after
 installing the hook. SQLx keeps that evidence privately with a protected pool;
@@ -269,8 +272,8 @@ it. This proves local registration ownership, not pool liveness, callback meanin
 or remote termination. Native pool access can still close a pool explicitly.
 
 Presence reservation consumes its preparation and holds that same target until
-components are installed, so internal helpers cannot omit or change the stop
-marker's owner. Encoding-1's two required fields transition through an exhaustive
+components are installed, and lends helpers only fresh reborrows of it, so
+internal helpers cannot omit or change the stop marker's owner. Encoding-1's two required fields transition through an exhaustive
 Empty/Encoding/Payload/Complete enum; duplicate and incomplete input is refused.
 No new public hard cut except the builder policy return types is needed; their
 old-type shim would reintroduce repeated assignment, so none is supplied.
