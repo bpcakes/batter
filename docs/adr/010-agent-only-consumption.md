@@ -141,6 +141,8 @@ The links below retain this ADR's existing assessment anchors.
 - <a id="flags-listen-wake-assessment-t-19-batter-jkw619"></a>[Flags LISTEN wake assessment (T-19, batter-jkw6.19)](../evidence/api-assessments/flags.md#flags-listen-wake-assessment-t-19-batter-jkw619)
 - <a id="control-plane-invariants-assessment-t-21-batter-jkw621"></a>[Control-plane invariants assessment (T-21, batter-jkw6.21)](../evidence/api-assessments/flags.md#control-plane-invariants-assessment-t-21-batter-jkw621)
 - <a id="flags-control-plane-fresh-agent-evaluation-t-24-batter-jkw624"></a>[Flags control-plane fresh-agent evaluation (T-24, batter-jkw6.24)](../evidence/api-assessments/flags.md#flags-control-plane-fresh-agent-evaluation-t-24-batter-jkw624)
+- <a id="branch-state-protocol-repairs-batter-jkw636"></a>[Branch state-protocol repairs (batter-jkw6.36)](../evidence/api-assessments/flags.md#branch-state-protocol-repairs-batter-jkw636)
+- <a id="search-path-refusal-batter-jkw634"></a>[Search-path refusal (batter-jkw6.34)](../evidence/api-assessments/flags.md#search-path-refusal-batter-jkw634)
 
 ## Recurring example review defects
 

@@ -286,3 +286,41 @@ and the assigned-state returns of both `only_in` methods and `governed_by`;
 the name-only walker cannot detect these cuts. The changelog covers reassignment,
 conditional finalization and helper return types; no compatibility shim can
 retain those old types without making repeat assignment possible again.
+
+## Search-path refusal (`batter-jkw6.34`)
+
+The first hosted run of the flags suites failed because the CI admin role was
+named `flags`: PostgreSQL's default `search_path`, `"$user", public`, then
+resolved the host migrator's unqualified `_sqlx_migrations` into the flags
+ledger. A local reproduction showed the silent form of the same state: a host
+migrator that ignores missing versions creates its tables in `flags` and
+records its versions in the flags ledger, and `PooledStore::migrate`, which
+also ignores unknown versions, never refused it.
+
+The store can see only its own sessions, so the protected path refuses there:
+`PooledStore::migrate` returns `ErrorClass::SearchPath` when a session of its
+pool has a default path that resolves into `flags`. PostgreSQL itself resolves
+the path from `reset_val`, the default that `DISCARD ALL` restores, including
+quoting and `"$user"`, so no client-side parser can disagree with the server. `current_schemas` lists only existing schemas, so the check
+runs before migrating when the schema exists and again after; a first
+migration has therefore run when the refusal arrives, and a rerun after the fix
+applies nothing twice. That order is the residual: the refusal is reported
+after, not instead of, a first migration.
+
+What types cannot express here is remote session state. The check samples one
+session before and one after migrating, on separate connections. Those of one
+pool share their defaults unless the login's role or database settings or the
+pool's connect options (`PgPool::set_connect_options`) changed while it held
+connections, so such a pool can pass while other sessions are hazardous.
+Inspecting the migrator's own connection would not close that gap: the flags
+migrator's statements are schema-qualified, and the hazard lies in the host's
+sessions, which the store cannot enumerate. A separate host migration login, a
+host migrator that keeps a `SET search_path` made after connecting, and the
+strict low-level `MIGRATOR` are outside the check, and stay application policy,
+documented in the store README. Any `migrate` failure can follow committed
+migrations, as the `StoreError` contract now states. The new class is a hard cut of the
+exhaustive `ErrorClass`, recorded with `Breaking:` and `Migration:` text and no
+shim. Evidence: the live `migrate_refuses_a_session_whose_search_path_resolves_into_flags`
+test (an explicit `flags` entry, refused after the first migration and before
+the second, and a reset path migrating with nothing applied twice), and a local
+run under a temporary role named `flags`, refused on both migrations.

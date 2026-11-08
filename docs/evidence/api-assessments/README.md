@@ -11,4 +11,4 @@ their owning Beads, executed evidence and unexecuted evaluation limits.
 | [HTTP assembly, browser policy and outbound exchange](http.md) | 12 |
 | [Managed objects, grants, fixtures and reconciliation](postgresql.md) | 7 |
 | [Native packages, invocation phases and consumer evaluations](native-runtime.md) | 6 |
-| [Typed flags control plane](flags.md) | 17 |
+| [Typed flags control plane](flags.md) | 19 |

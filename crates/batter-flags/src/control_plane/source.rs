@@ -75,10 +75,12 @@ fn classify(error: &StoreError) -> FetchFailure {
         ErrorClass::Standby => FetchFailure::Failed(LoadCause::Standby),
         ErrorClass::Deadline => FetchFailure::Failed(LoadCause::Deadline),
         ErrorClass::InvalidData => FetchFailure::Failed(LoadCause::InvalidData),
+        // Only a migration refuses for its search path; a load never does.
         ErrorClass::UnsupportedServer
         | ErrorClass::Database
         | ErrorClass::CommitUnknown
-        | ErrorClass::Interrupted => FetchFailure::Failed(LoadCause::Unavailable),
+        | ErrorClass::Interrupted
+        | ErrorClass::SearchPath => FetchFailure::Failed(LoadCause::Unavailable),
     }
 }
 

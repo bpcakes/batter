@@ -91,6 +91,39 @@ contracts, capability facts and validation history.
   share the executable-root inventory with the panic-hook scan
   (`batter-jkw6.3`).
 
+- **Breaking:** within the unreleased flags family, `batter_flags_postgres::ErrorClass`
+  gains `SearchPath`: `PooledStore::migrate` refuses when a session of the
+  store's pool resolves unqualified names into the `flags` schema, because its
+  `search_path` names `flags` or because `"$user"` resolves to a role named
+  `flags` (`batter-jkw6.34`). A host migrator on that login would otherwise put
+  its tables and ledger rows into `flags` without error. The check runs before
+  migrating when the schema exists and again after, so on a first migration
+  the flags migrations have run when it refuses; rerunning after fixing the
+  role or `search_path` applies nothing twice. `StoreError` now states that any
+  `migrate` failure can follow committed migrations. The check samples
+  sessions of the pool; sessions of other pools or logins remain the
+  application's to configure. No `#[deprecated]` shim: an
+  enum variant cannot be added behind one, and no released caller exists.
+
+  ```rust,ignore
+  // Before:
+  match error.class() {
+      ErrorClass::Deadline => retry_later(),
+      ErrorClass::UnsupportedServer | ErrorClass::Standby | ErrorClass::SchemaRevision
+      | ErrorClass::InvalidData | ErrorClass::Database | ErrorClass::Interrupted
+      | ErrorClass::CommitUnknown => fail(),
+  }
+
+  // After: an exhaustive match names the new class.
+  match error.class() {
+      ErrorClass::Deadline => retry_later(),
+      ErrorClass::SearchPath => fix_role_or_search_path(),
+      ErrorClass::UnsupportedServer | ErrorClass::Standby | ErrorClass::SchemaRevision
+      | ErrorClass::InvalidData | ErrorClass::Database | ErrorClass::Interrupted
+      | ErrorClass::CommitUnknown => fail(),
+  }
+  ```
+
 - **Breaking:** within the unreleased flags family, `batter_flags_postgres::PooledStore::submit`
   takes a `WritePolicy` in place of a `FlipPolicy`, so one argument decides
   both what a write refuses inside its transaction: a coordinated flip and a

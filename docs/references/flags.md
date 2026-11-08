@@ -131,3 +131,14 @@ this way, and a local run under a temporary role named `flags` reproduced it
 and showed a host migrator that ignores missing versions writing into the
 flags schema and ledger unrefused by `PooledStore::migrate`
 (`batter-jkw6.34`). The store's own statements are schema-qualified.
+
+PostgreSQL 18 [Table 9.71](https://www.postgresql.org/docs/18/functions-info.html),
+fetched on 2026-11-08: `current_schemas` "returns an array of the names of all
+schemas presently in the effective search path", omitting items "that do not
+correspond to existing, searchable schemas". The refusal in
+`PooledStore::migrate` (`batter-jkw6.34`) relies on both facts. Batter's
+read-only snapshot hardens its own path with `SET LOCAL search_path =
+pg_catalog, pg_temp` after `DISCARD ALL`, so the check sets the session default
+from `pg_settings.reset_val` for one fully qualified statement and restores the
+hardened path. A local run under a temporary role named `flags` (dropped after)
+was refused on the first migration, after it ran, and on the second, before.

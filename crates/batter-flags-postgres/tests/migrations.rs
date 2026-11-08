@@ -227,3 +227,65 @@ async fn v1_column_lists_and_definer_privileges_are_pinned() {
     }
     f.close().await;
 }
+
+const FLAGS_ON_PATH: &str = "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET search_path = public, flags', current_database()); END $$";
+const DEFAULT_PATH: &str =
+    "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I RESET search_path', current_database()); END $$";
+
+/// Sets or resets the leased database's `search_path` for new sessions.
+async fn database_search_path(f: &Fixture, statement: &'static str) {
+    sqlx::query(statement).execute(&f.pool).await.unwrap();
+}
+
+async fn fresh_pool(f: &Fixture) -> sqlx::PgPool {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(f.lease.database_url())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn migrate_refuses_a_session_whose_search_path_resolves_into_flags() {
+    let f = Fixture::new().await;
+    database_search_path(&f, FLAGS_ON_PATH).await;
+    let pool = fresh_pool(&f).await;
+    let store = PooledStore::new(pool.clone(), timing());
+    // No flags schema yet: the migration runs, and the check after it sees
+    // the path resolve into the new schema.
+    let first = store.migrate(deadline()).await.unwrap_err();
+    assert_eq!(first.class(), ErrorClass::SearchPath);
+    let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM flags._sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, 1);
+    // The schema exists now, so the check before migrating refuses as well.
+    // SQLx's migration lock is held elsewhere: only a refusal before the
+    // migrator can answer `SearchPath`, since the migrator itself would wait
+    // for the lock and fail on its lock budget.
+    {
+        use sqlx::migrate::Migrate;
+        let mut holder = f.pool.acquire().await.unwrap();
+        holder.lock().await.unwrap();
+        let again = store.migrate(deadline()).await.unwrap_err();
+        assert_eq!(again.class(), ErrorClass::SearchPath);
+        holder.unlock().await.unwrap();
+    }
+    pool.close().await;
+    // A session whose path leaves `flags` out migrates, applying nothing twice.
+    database_search_path(&f, DEFAULT_PATH).await;
+    let pool = fresh_pool(&f).await;
+    PooledStore::new(pool.clone(), timing())
+        .migrate(deadline())
+        .await
+        .unwrap();
+    let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM flags._sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, 1);
+    pool.close().await;
+    f.close().await;
+}

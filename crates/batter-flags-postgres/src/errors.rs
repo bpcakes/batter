@@ -10,10 +10,13 @@ impl fmt::Display for ValidationError {
     }
 }
 impl Error for ValidationError {}
-/// A store failure. Every class but [`ErrorClass::CommitUnknown`] is certain:
-/// a failure before COMMIT, or a database rejection of COMMIT, so nothing was
-/// written. `CommitUnknown` may have committed. All retained causes are
-/// available through `source()`; formatting is redacted.
+/// A store failure. For every operation but
+/// [`PooledStore::migrate`](crate::PooledStore::migrate), every class but
+/// [`ErrorClass::CommitUnknown`] is certain: a failure before COMMIT, or a
+/// database rejection of COMMIT, so nothing was written. `CommitUnknown` may
+/// have committed. A `migrate` failure of any class can follow committed
+/// migrations, since SQLx commits each migration on its own. All retained
+/// causes are available through `source()`; formatting is redacted.
 pub struct StoreError(pub(crate) ErrorKind);
 /// Stable failure category, without database messages or request contents.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -24,7 +27,9 @@ pub enum ErrorClass {
     Standby,
     /// Installed flags schema is too old.
     SchemaRevision,
-    /// A total operation deadline expired before commit.
+    /// A total operation deadline expired before commit. For
+    /// [`PooledStore::migrate`](crate::PooledStore::migrate), earlier
+    /// migrations may already have committed.
     Deadline,
     /// Invalid persisted data.
     InvalidData,
@@ -41,6 +46,17 @@ pub enum ErrorClass {
     /// [`StopFailure::Unknown`](crate::StopFailure::Unknown). Audited writes
     /// never use this class: theirs is `WriteOutcome::Uncertain`.
     CommitUnknown,
+    /// [`PooledStore::migrate`](crate::PooledStore::migrate) refused because
+    /// the store's own session resolves unqualified names into the `flags`
+    /// schema: its `search_path` names `flags`, or `"$user"` for a role named
+    /// `flags`. A host migrator on that login would put its tables and ledger
+    /// rows into `flags`. When the schema did not exist yet, the flags
+    /// migrations ran before the check could see it; rerunning after fixing
+    /// the role name or `search_path` applies nothing twice.
+    ///
+    /// Migration: an exhaustive `match` on `ErrorClass` needs an arm for
+    /// `SearchPath`; no other variant changed.
+    SearchPath,
 }
 pub(crate) enum ErrorKind {
     Class(ErrorClass),

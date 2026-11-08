@@ -147,9 +147,20 @@ places tables there. A strict host migrator then fails with `VersionMissing`.
 One with `set_ignore_missing(true)` records its versions in the flags ledger
 and creates its tables in `flags` without error, and `PooledStore::migrate`,
 which also ignores versions it does not know, never refuses them; only the
-strict `MIGRATOR` does. Do not name a role `flags`, or give it an explicit
-`search_path`. Whether the store should refuse such a session is
-`batter-jkw6.34`.
+strict `MIGRATOR` does. `PooledStore::migrate` therefore refuses with
+`ErrorClass::SearchPath` when a session of its pool would resolve into
+`flags` (`batter-jkw6.34`). PostgreSQL resolves that session's default path,
+which `DISCARD ALL` restores, and its `current_schemas` lists only existing
+schemas, so one session is checked before migrating when the schema exists and
+another after: on a first migration the flags migrations have run when it
+refuses, and a rerun applies nothing twice. Any `migrate` failure can follow
+committed migrations. The check samples separate connections: those of one
+pool share their defaults unless the login's role or database settings or the
+pool's connect options (`PgPool::set_connect_options`) changed while it held
+connections. Sessions of other pools or logins, including a separate host
+migration login, stay the application's to configure: do not name such a role
+`flags`, or give it an explicit `search_path` without `flags`. The strict
+`MIGRATOR` does not check.
 
 The migrator owns tables and functions. Serving writer logins must be non-owner,
 non-superuser and unable to set `session_replication_role`. They need schema

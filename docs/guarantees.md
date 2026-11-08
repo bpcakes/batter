@@ -3559,6 +3559,16 @@ mutations, including kill switches. Declared settings floors remain application
 containment. The [store README](../crates/batter-flags-postgres/README.md) records
 validation order, native API limits, authority and test coverage.
 
+`PooledStore::migrate` refuses with `ErrorClass::SearchPath` when a session of
+its pool has a default path that resolves unqualified names into `flags`: an
+explicit `flags` entry, or `"$user"` for a role named `flags`. It checks one
+session before migrating when the schema exists and another after, so a first
+migration has run when it refuses; any `migrate` failure can follow committed
+migrations. The checks sample separate connections, which share their defaults
+unless the login's role or database settings or the pool's connect options
+changed while it held connections, which the check cannot see, and it cannot see other pools' or logins' sessions; a host migrator
+on such a login remains the application's to configure.
+
 ## Typed flags (experimental, ADR-016)
 
 [ADR-016](adr/016-typed-flags-control-plane.md) records the design; every
