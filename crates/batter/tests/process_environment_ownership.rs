@@ -52,7 +52,7 @@ fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_n
             2,
         ),
         ("fn f() { let _ = std::env::temp_dir(); }", 1),
-        ("use std::env;\nfn f() { let _ = env::var(\"X\"); }", 1),
+        ("use std::env;\nfn f() { let _ = env::var(\"X\"); }", 2),
         (
             "use std::env::{self as e};\nfn f() { let _ = e::var(\"X\"); }",
             1,
@@ -62,7 +62,25 @@ fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_n
             1,
         ),
         ("use std::env::*;\nfn f() { let _ = var(\"X\"); }", 1),
-        ("use std::*;\nfn f() { let _ = env::var(\"X\"); }", 1),
+        ("use std::*;\nfn f() { let _ = env::var(\"X\"); }", 2),
+        (
+            "use std as platform;\nfn f() { let _ = platform::env::var(\"X\"); }",
+            2,
+        ),
+        ("extern crate std as platform;", 1),
+        (
+            "use{std::{env as e}};\nfn f() { let _ = e::var(\"X\"); }",
+            1,
+        ),
+        ("fn f() { let _ = std::r#env::var(\"X\"); }", 1),
+        (
+            "fn f() { let r#use = std::env::var(\"X\"); let _ = r#use; }",
+            1,
+        ),
+        (
+            "macro_rules! read { ($root:ident) => { $root::env::var(\"X\") }; }",
+            1,
+        ),
         (
             "use std::{\n    env as e,\n    fs,\n};\nfn f() { let _ = e::var(\"X\"); }",
             1,
@@ -80,6 +98,8 @@ fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_n
         "use std::{env::VarError, ffi::OsStr};",
         "use std::env::VarError;",
         "fn f() { let _ = std::env::args(); let _ = std::env::current_exe(); }",
+        "fn f(p: &str) { let _ = std::env::split_paths(p); let _ = std::env::join_paths([p]); }",
+        "fn f(_: std::env::SplitPaths<'_>, _: std::env::Vars, _: std::env::VarsOs) {}",
         "/// std::env::var is read by the root, never here.\nfn f() {}",
         "// use std::env;\nfn f() {}",
         "/* std::env::var(\"X\") */ fn f() {}",
@@ -96,6 +116,9 @@ fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_n
 /// Every read or mutation in the scanned production sources below `root`, by
 /// workspace-relative path, with how many lines read.
 fn scan(root: &Path) -> BTreeMap<String, usize> {
+    // Canonical, as the inventory's own root is, so a module a `#[path]`
+    // declaration loads compares equal to the file found below it.
+    let root = &root.canonicalize().unwrap();
     let roots = executable_roots(root);
     let mut found = BTreeMap::new();
     for member in members(root) {
@@ -167,7 +190,8 @@ impl Scratch {
             .as_nanos();
         let root =
             std::env::temp_dir().join(format!("batter-env-scan-{}-{nanos}", std::process::id()));
-        let scratch = Self(root);
+        fs::create_dir_all(&root).unwrap();
+        let scratch = Self(root.canonicalize().unwrap());
         scratch.write(
             "Cargo.toml",
             "[workspace]\nmembers = [\"crates/flags-core\", \"crates/tool\", \"runledger/native\"]\n",
@@ -231,13 +255,31 @@ fn a_planted_read_is_counted_and_everything_exempt_is_not() {
         found,
         BTreeMap::from([("crates/flags-core/src/reads.rs".to_owned(), 1)])
     );
-    // Importing the module is one reach, and a second path is another.
+    // The import, the `env::` call and the `std::env` path are three reaches.
     scratch.write(
         "crates/flags-core/src/reads.rs",
         "use std::env;\npub fn planted() -> bool {\n    env::var(\"FLAG_X\").is_ok() || std::env::var_os(\"Y\").is_some()\n}\n",
     );
     assert_eq!(
         scan(&scratch.0),
-        BTreeMap::from([("crates/flags-core/src/reads.rs".to_owned(), 2)])
+        BTreeMap::from([("crates/flags-core/src/reads.rs".to_owned(), 3)])
     );
+}
+
+#[test]
+fn a_file_a_production_path_declaration_loads_is_scanned_from_any_root_spelling() {
+    let scratch = Scratch::new();
+    // A test module and a production `#[path]` module load the same file.
+    scratch.write(
+        "crates/flags-core/src/lib.rs",
+        "#[cfg(test)]\nmod shared;\n#[path = \"shared.rs\"]\nmod production;\n",
+    );
+    scratch.write(
+        "crates/flags-core/src/shared.rs",
+        "pub fn planted() -> bool { std::env::var_os(\"X\").is_some() }\n",
+    );
+    let expected = BTreeMap::from([("crates/flags-core/src/shared.rs".to_owned(), 1)]);
+    assert_eq!(scan(&scratch.0), expected);
+    // A root spelled through `..` finds the same file.
+    assert_eq!(scan(&scratch.0.join("crates").join("..")), expected);
 }

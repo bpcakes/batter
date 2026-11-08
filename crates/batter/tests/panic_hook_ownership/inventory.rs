@@ -14,7 +14,12 @@ use super::modules;
 pub(crate) const EXTERNAL_SOURCES: [&str; 2] = ["consumers", "runlimit/smoke"];
 
 pub(crate) fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    // Canonical, so every path below it compares equal to the same path a
+    // module declaration resolves to.
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 /// Workspace members as listed in the root manifest's `members` array.

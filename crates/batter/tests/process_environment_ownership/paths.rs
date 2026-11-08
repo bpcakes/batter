@@ -4,23 +4,30 @@
 //! several lines and a macro fragment such as `std::env::$function` all
 //! count.
 //!
-//! The reader does not resolve names. It counts every `use` path and every
-//! expression path that starts with `std::env`, or that globs all of `std`,
-//! unless the segment after `env` is one of the items in [`ALLOWED`], which
-//! name types or read the process's arguments and executable, never its
-//! environment. It cannot see a read through `extern crate std as other;`, a
-//! path that a procedural macro generates or code that `include!` inserts.
+//! The reader does not resolve names, so it is conservative: an import or an
+//! alias of `std` itself, `extern crate std`, any path below `std::env` that
+//! names an item [`ALLOWED`] does not list, and any `env::` path to one of
+//! [`READS`] whatever names its root all count. Raw identifiers are read as
+//! their names and are never keywords. It cannot see a path that a
+//! procedural macro generates or code that `include!` inserts.
 
-/// Items of `std::env` that read nothing of the environment.
-pub(crate) const ALLOWED: [&str; 8] = [
+/// Items of `std::env` that read nothing of the environment: types, the
+/// process's arguments and executable, and the helpers that only transform
+/// values the caller supplies.
+pub(crate) const ALLOWED: [&str; 13] = [
     "VarError",
     "JoinPathsError",
+    "SplitPaths",
+    "Vars",
+    "VarsOs",
     "Args",
     "ArgsOs",
     "args",
     "args_os",
     "current_exe",
     "consts",
+    "join_paths",
+    "split_paths",
 ];
 
 /// `source` with every comment, string and character literal replaced by
@@ -122,170 +129,200 @@ fn is_identifier(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// The paths of every `use` item in `code`, each as its segments, groups
-/// expanded and aliases dropped: `use std::{env as e, fs};` gives
-/// `std::env` and `std::fs`.
-pub(crate) fn use_paths(code: &str) -> Vec<Vec<String>> {
-    let mut paths = Vec::new();
-    for (start, _) in code.match_indices("use") {
-        let before = code[..start].chars().next_back();
-        let after = code[start + 3..].chars().next();
-        if before.is_some_and(is_identifier) || after.is_none_or(|c| !c.is_whitespace()) {
-            continue;
-        }
-        let Some(end) = code[start..].find(';') else {
-            continue;
-        };
-        expand(
-            "",
-            &without_aliases(&code[start + 3..start + end]),
-            &mut paths,
-        );
-    }
-    paths
+/// One token of code with comments and literals removed.
+#[derive(Clone, Debug, PartialEq)]
+enum Token {
+    /// An identifier, a keyword or a macro fragment such as `$root`; a raw
+    /// identifier `r#name` keeps its name and is marked raw, so it is never
+    /// a keyword.
+    Ident {
+        name: String,
+        raw: bool,
+    },
+    /// `::`.
+    Path,
+    Punct(char),
 }
 
-/// A use tree's tokens joined without spaces, each `as name` dropped, so
-/// `env as e` reads as `env`.
-fn without_aliases(tree: &str) -> String {
-    let tokens = tokens(tree);
-    let mut joined = String::new();
-    let mut index = 0;
-    while index < tokens.len() {
-        if tokens[index] == "as" {
-            index += 2;
-            continue;
-        }
-        joined.push_str(&tokens[index]);
-        index += 1;
+impl Token {
+    fn named(&self, word: &str) -> bool {
+        matches!(self, Self::Ident { name, .. } if name == word)
     }
-    joined
-}
 
-/// Expands one use tree below `prefix` into its paths.
-fn expand(prefix: &str, tree: &str, paths: &mut Vec<Vec<String>>) {
-    let tree = tree.trim_start_matches("::");
-    let Some(open) = tree.find('{') else {
-        let full = match (prefix, tree) {
-            (_, "self") => prefix.to_owned(),
-            ("", _) => tree.to_owned(),
-            _ => format!("{prefix}::{tree}"),
-        };
-        paths.push(segments(&full));
-        return;
-    };
-    let head = tree[..open].trim_end_matches("::");
-    let inner = &tree[open + 1..tree.rfind('}').unwrap_or(tree.len())];
-    let prefix = match (prefix, head) {
-        (_, "") => prefix.to_owned(),
-        ("", _) => head.to_owned(),
-        _ => format!("{prefix}::{head}"),
-    };
-    let mut depth = 0;
-    let mut item = String::new();
-    for c in inner.chars().chain(std::iter::once(',')) {
-        match c {
-            '{' => depth += 1,
-            '}' => depth -= 1,
-            ',' if depth == 0 => {
-                if !item.is_empty() {
-                    expand(&prefix, &item, paths);
-                }
-                item.clear();
-                continue;
-            }
-            _ => {}
-        }
-        item.push(c);
+    fn keyword(&self, word: &str) -> bool {
+        matches!(self, Self::Ident { name, raw: false } if name == word)
     }
 }
 
-fn segments(path: &str) -> Vec<String> {
-    path.trim_start_matches("::")
-        .split("::")
-        .map(str::to_owned)
-        .collect()
-}
-
-/// Every expression path in `code` that names `std` followed by `env`,
-/// with the segment after `env` if there is one, however it is spaced.
-pub(crate) fn expression_paths(code: &str) -> Vec<Vec<String>> {
-    let tokens = tokens(code);
-    let mut paths = Vec::new();
-    for (index, token) in tokens.iter().enumerate() {
-        if token != "std" || tokens.get(index + 1).map(String::as_str) != Some("::") {
-            continue;
-        }
-        let mut path = vec!["std".to_owned()];
-        let mut at = index + 2;
-        while let Some(segment) = tokens.get(at) {
-            path.push(segment.clone());
-            if tokens.get(at + 1).map(String::as_str) != Some("::") || path.len() == 3 {
-                break;
-            }
-            at += 2;
-        }
-        paths.push(path);
-    }
-    paths
-}
-
-/// Identifiers, `$`-fragments, `::`, `*` and single punctuation.
-fn tokens(code: &str) -> Vec<String> {
+fn tokens(code: &str) -> Vec<Token> {
     let chars: Vec<char> = code.chars().collect();
     let mut tokens = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let c = chars[index];
+        let raw = chars[index..].starts_with(&['r', '#'])
+            && chars.get(index + 2).is_some_and(|c| is_identifier(*c));
         if c.is_whitespace() {
             index += 1;
-        } else if is_identifier(c) || c == '$' {
-            let start = index;
-            index += 1;
+        } else if raw || is_identifier(c) || c == '$' {
+            let start = if raw { index + 2 } else { index };
+            index = start + 1;
             while index < chars.len() && is_identifier(chars[index]) {
                 index += 1;
             }
-            tokens.push(chars[start..index].iter().collect());
+            tokens.push(Token::Ident {
+                name: chars[start..index].iter().collect(),
+                raw,
+            });
         } else if chars[index..].starts_with(&[':', ':']) {
-            tokens.push("::".to_owned());
+            tokens.push(Token::Path);
             index += 2;
         } else {
-            tokens.push(c.to_string());
+            tokens.push(Token::Punct(c));
             index += 1;
         }
     }
     tokens
 }
 
-/// Whether a path reaches the environment: it names `std::env` itself, a
-/// glob or group of it, or an item of it that [`ALLOWED`] does not list; or
-/// it globs all of `std`.
-pub(crate) fn reaches_environment(path: &[String]) -> bool {
+/// The functions that read or change the environment, or a directory found
+/// through it, counted below any `env` path, whatever names its root.
+pub(crate) const READS: [&str; 10] = [
+    "var",
+    "var_os",
+    "vars",
+    "vars_os",
+    "set_var",
+    "remove_var",
+    "current_dir",
+    "set_current_dir",
+    "home_dir",
+    "temp_dir",
+];
+
+/// The paths of one use tree starting at `tokens[*at]`, each as its
+/// segments, groups expanded, `self` resolved and aliases dropped.
+fn use_tree(tokens: &[Token], at: &mut usize, prefix: &[String], out: &mut Vec<Vec<String>>) {
+    let mut path = prefix.to_vec();
+    if tokens.get(*at) == Some(&Token::Path) {
+        *at += 1;
+    }
+    loop {
+        match tokens.get(*at) {
+            Some(Token::Ident { name, .. }) => {
+                if !(name == "self" && path.len() == prefix.len() && !prefix.is_empty()) {
+                    path.push(name.clone());
+                }
+                *at += 1;
+            }
+            Some(Token::Punct('*')) => {
+                path.push("*".to_owned());
+                *at += 1;
+                break;
+            }
+            Some(Token::Punct('{')) => {
+                *at += 1;
+                loop {
+                    match tokens.get(*at) {
+                        Some(Token::Punct('}')) | None => {
+                            *at += 1;
+                            return;
+                        }
+                        Some(Token::Punct(',')) => *at += 1,
+                        Some(_) => use_tree(tokens, at, &path, out),
+                    }
+                }
+            }
+            Some(_) | None => break,
+        }
+        if tokens.get(*at) == Some(&Token::Path) {
+            *at += 1;
+        } else {
+            break;
+        }
+    }
+    if tokens.get(*at).is_some_and(|token| token.keyword("as")) {
+        *at += 2;
+    }
+    out.push(path);
+}
+
+/// Whether a `use` path reaches the environment: it imports `std` itself or
+/// all of it, `std::env` itself, a glob or group of it, or an item of it that
+/// [`ALLOWED`] does not list.
+fn use_reaches(path: &[String]) -> bool {
     match path {
+        [std] => std == "std",
         [std, second] => std == "std" && (second == "*" || second == "env"),
         [std, env, item, ..] => std == "std" && env == "env" && !ALLOWED.contains(&item.as_str()),
-        _ => false,
+        [] => false,
     }
 }
 
-/// How many paths of `source` reach the environment.
+/// How many paths of `source` reach the environment: every `use` path that
+/// does, `extern crate std`, every expression path below `std::env` that
+/// names an item [`ALLOWED`] does not list, and every `env::` path to one of
+/// [`READS`] whatever its root, so a macro fragment such as `$root::env::var`
+/// or an alias of `std` is counted too.
 pub(crate) fn reads(source: &str) -> usize {
-    let code = code_of(source);
-    let uses = use_paths(&code);
-    // Expression paths inside `use` items are counted once, as use paths.
-    let mut expressions = code.clone();
-    for (start, _) in code.match_indices("use") {
-        let before = code[..start].chars().next_back();
-        let after = code[start + 3..].chars().next();
-        if before.is_some_and(is_identifier) || after.is_none_or(|c| !c.is_whitespace()) {
+    let tokens = tokens(&code_of(source));
+    let mut count = 0;
+    let mut index = 0;
+    while index < tokens.len() {
+        if tokens[index].keyword("use") {
+            let mut at = index + 1;
+            let mut paths = Vec::new();
+            while at < tokens.len() && tokens[at] != Token::Punct(';') {
+                let before = at;
+                use_tree(&tokens, &mut at, &[], &mut paths);
+                if at == before {
+                    at += 1;
+                }
+            }
+            count += paths.iter().filter(|path| use_reaches(path)).count();
+            index = at + 1;
             continue;
         }
-        if let Some(end) = code[start..].find(';') {
-            expressions.replace_range(start..start + end, &" ".repeat(end));
+        if tokens[index].keyword("extern")
+            && tokens
+                .get(index + 1)
+                .is_some_and(|token| token.keyword("crate"))
+            && tokens
+                .get(index + 2)
+                .is_some_and(|token| token.named("std"))
+        {
+            count += 1;
+            index += 3;
+            continue;
         }
+        let segment = |offset: usize| match tokens.get(index + offset) {
+            Some(Token::Ident { name, .. }) => Some(name.as_str()),
+            Some(_) | None => None,
+        };
+        let path_at = |offset: usize| tokens.get(index + offset) == Some(&Token::Path);
+        if tokens[index].named("std") && path_at(1) && segment(2) == Some("env") {
+            // `std::env` and the item after it, if any.
+            let reaches = if path_at(3) {
+                match tokens.get(index + 4) {
+                    Some(Token::Ident { name, .. }) => !ALLOWED.contains(&name.as_str()),
+                    Some(_) | None => true,
+                }
+            } else {
+                true
+            };
+            count += usize::from(reaches);
+            index += 3;
+            continue;
+        }
+        if tokens[index].named("env")
+            && path_at(1)
+            && segment(2).is_some_and(|item| READS.contains(&item))
+        {
+            count += 1;
+            index += 3;
+            continue;
+        }
+        index += 1;
     }
-    uses.iter()
-        .chain(expression_paths(&expressions).iter())
-        .filter(|path| reaches_environment(path))
-        .count()
+    count
 }
