@@ -317,6 +317,16 @@ inside one handler poll, before bulkhead work starts, and require a correlated
 deadline operation event under both normal and WARN-filtered telemetry. Controls
 cover cancellation, custom response retention, single renderer invocation and a
 discarded interruption rendering followed by an unrelated application 503.
+`observation::stacked_interruption` exercises both split and combined low-level
+layers: handler-returned interruption and the inner boundary's own deadline or
+forced cancellation retain the inner outcome and leave an active outer operation
+successful, with one custom render and one HTTP completion.
+
+The core `resolved_value` target exercises every classified-value outcome,
+redaction, refusal before work, inert unpolled callbacks, borrowed/non-`Send`
+values, `Send` preservation, panic propagation, child cancellation, one metric
+per completion, and abandoned work/resolver captures plus nested span destruction
+under the first-poll dispatcher. Rustdoc rejects a dropped-with-value variant.
 
 ## Typed settings verification
 

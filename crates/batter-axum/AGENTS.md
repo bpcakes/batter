@@ -16,8 +16,10 @@ Windows support and non-Unix fallbacks are out of scope.
   `ResponseConstructionBudget`, `HttpObservationLevel`, `HttpFailure` and
   `RequestInterruptionResponder`. It defines no request middleware.
   The responder attaches private interruption evidence to its returned response;
-  admission resolves that evidence before operation telemetry and retains the
-  response without invoking its renderer again.
+  admission consumes it into one core `ResolvedOutcome<Response>` before telemetry.
+  Direct boundary interruptions render without handing evidence to another
+  admission. Both paths return the exact response without a separate storage slot
+  or a second renderer invocation.
 - `src/low_level.rs` is the public `low_level` namespace: the physically
   relocated `observe_http`, `request_admission`, the combined `request_scope`
   compatibility entry point and the status-only `readiness`/`liveness` probe

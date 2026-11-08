@@ -2,11 +2,13 @@
 
 mod owner;
 mod phased;
+mod resolved;
 mod tracked;
 
 /// Adapter-facing execution seams with caller-owned lifetime obligations.
 pub mod low_level {
     pub use super::phased::scoped::{ScopedPhaseResult, ScopedPhases, drive_phases};
+    pub use super::resolved::{ResolvedOutcome, run_resolved_value};
 }
 
 pub use tracked::{NotStarted, TrackedOperationError};

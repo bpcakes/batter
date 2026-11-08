@@ -21,5 +21,7 @@ mod placement;
 mod rendering;
 #[path = "observation/severity.rs"]
 mod severity;
+#[path = "observation/stacked_interruption.rs"]
+mod stacked_interruption;
 #[path = "observation/support.rs"]
 mod support;

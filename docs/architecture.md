@@ -208,9 +208,14 @@ extensions cannot hold it, and the shared renderer filter removes the record
 at every application renderer boundary.
 
 The interruption responder attaches private outcome evidence to the response it
-renders. Admission resolves that evidence before operation telemetry, preserving
-the exact response. A discarded rendering cannot classify another response, and
-an HTTP status alone is not evidence of an interruption.
+renders. Admission consumes that evidence into one
+`operation::low_level::ResolvedOutcome<Response>`, carrying the classification and
+response together. `run_resolved_value` shares the core execution boundary and
+observes that terminal value before returning the response. There is no separate
+retained-response slot. A boundary rendering its own interruption creates no
+handoff marker, so neither path leaks evidence to stacked admission. A discarded
+rendering cannot classify another response, and an HTTP status alone is not
+evidence of an interruption. See the [invalid-state assessment](evidence/api-assessments/http.md#explicit-http-completion-batter-q1jl).
 
 The public `batter_axum::browser` namespace owns a separate synchronous HTTP
 transport boundary: validated configured origins, strict named-cookie scanning,

@@ -274,37 +274,39 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(responder.clone());
     let interruption = responder.clone();
-    let mut rendered = None;
-    match context
-        .run_resolved(
-            "http.response_construction",
-            |scope| async move {
-                admitted::record(request.extensions_mut(), scope.clone(), interruption);
-                request.extensions_mut().insert(scope);
-                Ok::<_, Infallible>(next.run(request).await)
+    batter_core::operation::low_level::run_resolved_value(
+        &context,
+        "http.response_construction",
+        |scope| async move {
+            admitted::record(request.extensions_mut(), scope.clone(), interruption);
+            request.extensions_mut().insert(scope);
+            Ok::<_, Infallible>(next.run(request).await)
+        },
+        |result| resolve_response(result, &responder),
+    )
+    .await
+}
+
+fn resolve_response(
+    result: Result<Response, OperationError<Infallible>>,
+    responder: &RequestInterruptionResponder,
+) -> batter_core::operation::low_level::ResolvedOutcome<Response> {
+    use batter_core::operation::low_level::ResolvedOutcome;
+    match result {
+        Ok(mut response) => match response
+            .extensions_mut()
+            .remove::<crate::RenderedInterruption>()
+        {
+            Some(crate::RenderedInterruption(reason)) => ResolvedOutcome::Interrupted {
+                reason,
+                value: response,
             },
-            |result| {
-                let mut response = result?;
-                let interruption = response
-                    .extensions_mut()
-                    .remove::<crate::RenderedInterruption>();
-                if let Some(crate::RenderedInterruption(reason)) = interruption {
-                    // A nested admission check can observe expiry within a poll
-                    // before our timer runs. Resolve its fact before telemetry,
-                    // retaining the exact response without rendering it twice.
-                    rendered = Some(response);
-                    Err(OperationError::Interrupted(reason))
-                } else {
-                    Ok(response)
-                }
-            },
-        )
-        .await
-    {
-        Ok(response) => response,
-        Err(OperationError::Interrupted(reason)) => {
-            rendered.unwrap_or_else(|| responder.render(reason))
-        }
+            None => ResolvedOutcome::Succeeded(response),
+        },
+        Err(OperationError::Interrupted(reason)) => ResolvedOutcome::Interrupted {
+            reason,
+            value: responder.render_response(reason),
+        },
         Err(OperationError::Failed(never)) => match never {},
     }
 }

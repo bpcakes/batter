@@ -182,6 +182,16 @@ impl RequestInterruptionResponder {
     /// response-construction operation's outcome, preserving the rendered body,
     /// headers and status. Rendering and discarding it changes no outcome.
     pub fn render(&self, reason: Interruption) -> Response {
+        let mut response = self.render_response(reason);
+        response
+            .extensions_mut()
+            .insert(RenderedInterruption(reason));
+        response
+    }
+
+    // A boundary that already owns the interruption renders directly, without
+    // creating evidence for another admission boundary to consume.
+    fn render_response(&self, reason: Interruption) -> Response {
         let failure = match reason {
             Interruption::Cancelled => HttpFailure::Cancelled,
             Interruption::DeadlineExceeded => HttpFailure::DeadlineExceeded,
@@ -193,9 +203,9 @@ impl RequestInterruptionResponder {
                 original_parts,
             } => renderer(failure, original_parts.as_ref()),
         };
-        response
-            .extensions_mut()
-            .insert(RenderedInterruption(reason));
+        // A custom renderer may reuse native response extensions. This boundary
+        // owns its evidence namespace, including evidence from an older response.
+        response.extensions_mut().remove::<RenderedInterruption>();
         response
     }
 }
