@@ -45,6 +45,7 @@ pub struct RequestDraft {
     url: Url,
     method: Method,
     segments: Vec<String>,
+    trailing_slash: bool,
     query: Vec<(String, String)>,
     headers: HeaderMap,
     body: Option<(HeaderValue, Bytes)>,
@@ -58,11 +59,21 @@ impl RequestDraft {
             url,
             method,
             segments,
+            trailing_slash: false,
             query: Vec::new(),
             headers: HeaderMap::new(),
             body: None,
             error: None,
         }
+    }
+
+    /// End the request path with a slash, for endpoints where `/items/` is
+    /// distinct from `/items`. Calling this repeatedly still adds only one
+    /// slash; the origin root remains `/`. Path segments must still be nonempty
+    /// and pass normal validation.
+    pub fn trailing_slash(mut self) -> Self {
+        self.trailing_slash = true;
+        self
     }
 
     /// Append a header. Its value is always marked sensitive, so it is hidden
@@ -147,6 +158,7 @@ impl RequestDraft {
             mut url,
             method,
             segments,
+            trailing_slash,
             query,
             mut headers,
             body,
@@ -174,9 +186,12 @@ impl RequestDraft {
         if !segments.is_empty() {
             let mut path = url.path_segments_mut().map_err(|()| PrepareError::Build)?;
             path.pop_if_empty().extend(&segments);
+            if trailing_slash {
+                path.push("");
+            }
         }
         // Every segment must survive URL normalization as exactly one segment.
-        let expected = segments.len().max(1);
+        let expected = (segments.len() + usize::from(trailing_slash)).max(1);
         if url.path_segments().map(Iterator::count) != Some(expected) {
             return Err(PrepareError::Build);
         }

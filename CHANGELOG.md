@@ -8,6 +8,9 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `RequestDraft::trailing_slash()` for provider endpoints whose exact path
+  ends in `/`. Segment validation, escaping and the origin root are preserved.
+
 - Direct facade consumers to owned work/finalization and supported native acquisition;
   identify manual phase and cleanup registration obligations at the selection points.
 
