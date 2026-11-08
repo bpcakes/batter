@@ -6,18 +6,22 @@ exist so the manifests those checks generate stay reviewable source in Git.
 
 - `single_facade_consumer.rs` is the acceptance consumer for the
   single-dependency recipe in [reference compatibility](../docs/reference-compatibility.md).
-  Its `JobExecutionHandler` runs under `batter::runledger::job_phases`, and an
-  independent task per invocation must observe the invocation's exit cancel the
-  derived work phase before the run counts as complete.
+  Its `PhasedJobHandler` is registered through `batter::runledger::PhasedJob`,
+  which owns work/finalization sequencing and borrows native checkpoint services
+  during finalization. An independent task per invocation observes native exit
+  and checks adapter-owned work cancellation before the run counts as complete.
+  This checks cancellation by the end of execution, not its cause: the driver
+  cancels work before finalization independently of the native exit hook. The
+  adapter's private phase tests separately prove native exit linkage.
   Work and recording interruptions have their own timeout-kind diagnostics;
   only application failures report an invalid payload or a closed observer.
   Its paused-time job tests drive that handler through
   `batter::runledger::test_support::HandlerInvocation`, selected by the same
   `batter` in `[dev-dependencies]` with `runledger-test-support`, which the
-  consumer binary never compiles: success with the exit cancelling the derived
-  phases, application failures, a budget inside the reserve, work expiry while
-  the reserve remains, recording at the invocation deadline, cancellation, and
-  recording after the invocation ended.
+  consumer binary never compiles: successful protected execution with a cancelled
+  work scope at native exit, application failures, plus protected callback checks
+  for a budget inside the reserve, work expiry while
+  the reserve remains, work-scope cancellation, and recording after the invocation ended.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly
   the property it proves.

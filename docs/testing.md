@@ -248,12 +248,46 @@ retained failures, endpoint prerequisites, cache identity and interruption.
 Fixture provisioning belongs to the external harness; fixture tests do not prove
 the termination of arbitrary server sessions or detached work.
 
+The process-ownership `bounded_refresh` tests exercise the migration's exhaustive
+bulkhead outcome mapping: fatal work drains with its original cause after receipt
+disposal, while refusal and interruption remain explicit nonfatal receipt values.
+
+The async bulkhead `dispatch` regression holds capacity, polls a waiter under
+one subscriber and drops it under another. It checks that both uncalled callback
+captures are destroyed exactly once, their nested spans close under the first
+subscriber, and neither the factory nor resolver runs.
+
 ## Provider lease and retry boundary probes
 
 Reference provider tests exercise application-owned idempotency, payload
 matching, lease fencing, lookup-before-replay and terminal outcomes against a
 loopback fixture. These protocols do not establish arbitrary provider behavior
 or exactly-once execution. Database-backed cases remain explicit live probes.
+
+The reference worker's `panic_policy` unit regression exercises its production
+failure classifier for construction, polling and destruction panics in either
+phase, including a retryable finalization error. The ignored
+`provider_state_lock_and_retry_boundaries` test also drives production work
+against a blocked dispatch-fence transaction, covering outer and nested deadline
+ordering. It verifies finalization of both an uncommitted fence and a committed
+fence whose work result was withheld. The latter models retained commit
+uncertainty; it does not emulate a lost wire-level COMMIT acknowledgement.
+The same live test expires work after admission but before callback entry,
+using a scoped tracing subscriber at the nested operation's preflight boundary.
+Awaiting and retryable-undispatched rows remain eligible for retry without a
+dispatch fence; reconciliation retains its existing fence. All three cases
+exercise the production handler and assert the native timeout classification.
+The admission and pending-fence wrappers delegate `settle_late` to that handler.
+They assert that retained admission and nested fence-interruption actions select
+late settlement without falling back to ordinary finalization, while outer
+interruption with no returned value uses ordinary finalization.
+
+The invariant-recovery probe corrupts a retained payload in its disposable
+database and observes the real recovery UPDATE waiting on an effect-row lock.
+It holds the lock beyond the entire work budget, then releases it while the
+original native deadline remains live. The last-attempt handler must return the
+manual-resolution failure and retain `retained_state_invariant` in the database.
+This checks phase placement, not wire-level commit acknowledgement loss.
 
 ## Outbound exchange facade example
 
@@ -369,3 +403,12 @@ Record the command, revision, toolchain, lockfile hash, platform, result and
 skipped prerequisites in the owning Bead. Source inspection is not a passing
 test, a successful build is not an operational audit, and a local timeout does
 not establish database rollback or provider non-dispatch.
+
+The `batter-f9kq.8` exchange refactor retains these interruption and settlement
+regressions. The committed-fence case now drives the actual production work and
+exchange, withholding acknowledgement after its real fence transaction commits;
+it no longer sets a recovery marker independently. Other probes observe admission
+and fence state read-only. Native handler tests cover the private driver's ready,
+work, ordinary-finalization and late-settlement paths, including callback
+construction, polling and destruction failures. Execution results belong to the
+owning Bead; no new fresh-agent usability evaluation is claimed.

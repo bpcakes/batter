@@ -4,6 +4,9 @@
 #[path = "process_ownership/error_sources.rs"]
 mod error_sources;
 
+#[path = "process_ownership/bounded_refresh.rs"]
+mod bounded_refresh;
+
 #[path = "process_ownership/report_usage.rs"]
 mod report_usage;
 
@@ -387,39 +390,6 @@ async fn normal_business_denial_is_a_typed_value_and_does_not_stop_process() {
         report.tasks.is_empty(),
         "successful task history must not grow without bound"
     );
-}
-
-#[tokio::test]
-async fn unobserved_task_failure_initiates_drain_and_retains_original_source() {
-    let supervisor = finite_supervisor(1);
-    let process = supervisor.process_handle().unwrap();
-    let running = supervisor.start();
-    running.status().wait_ready().await.unwrap();
-    let receipt = process
-        .try_spawn("failed-task", |_| async {
-            Err::<(), _>(Fatal(std::io::Error::other("private failure cause")))
-        })
-        .unwrap();
-    drop(receipt);
-    let report = running.wait().await.unwrap();
-    assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("failed-task"));
-    assert!(!report.is_success());
-    assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
-    let source = report.tasks[0]
-        .error
-        .as_ref()
-        .unwrap()
-        .source()
-        .unwrap()
-        .downcast_ref::<std::io::Error>()
-        .unwrap();
-    assert_eq!(source.to_string(), "private failure cause");
-    assert!(matches!(
-        process.try_spawn("after-failure", |_| async {
-            Ok::<_, Fatal<Infallible>>(())
-        }),
-        Err(ProcessAdmissionError::Closed)
-    ));
 }
 
 #[tokio::test]

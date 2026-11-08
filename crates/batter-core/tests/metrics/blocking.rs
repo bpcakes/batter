@@ -4,6 +4,7 @@
 //! runtime records none.
 
 use super::{assert_catalog, capture::Capture, owner};
+use crate::bulkhead_testing::BulkheadTestExt;
 use batter_core::{
     admission::{Admission, AdmissionError, BlockingError, Bulkhead, BulkheadCapacity},
     operation::{Interruption, OperationOwner},
@@ -114,7 +115,7 @@ async fn refused_calls_record_their_refusal_once() {
     let _recorder = facade::set_default_local_recorder(&capture);
     let context = owner().into_context();
     let bulkhead = bulkhead();
-    let held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
 
     let overloaded = bulkhead
         .run_blocking(&context, Admission::Reject, refused())
@@ -163,12 +164,19 @@ async fn refused_calls_record_their_refusal_once() {
         "{closed:?}"
     );
 
-    // `admitted` is the held `enter`; each refusal is recorded exactly once.
+    // `admitted` is the parked execution; each refusal is recorded exactly once.
     for decision in ["admitted", "overloaded", "cancelled", "dropped", "closed"] {
         assert_eq!(decisions(&capture, decision), 1.0, "{decision}");
     }
     assert_eq!(capture.samples(ADMISSION_DECISIONS).len(), 5);
-    assert_eq!(capture.samples(OPERATION_COMPLETIONS), []);
+    assert_eq!(capture.samples(OPERATION_COMPLETIONS).len(), 1);
+    assert_eq!(
+        capture.count(
+            OPERATION_COMPLETIONS,
+            &[("operation", "test.held_work"), ("outcome", "dropped")]
+        ),
+        1.0
+    );
     assert_catalog(&capture);
 }
 
@@ -189,7 +197,7 @@ async fn deadline_refusals_record_deadline_exceeded_not_admitted() {
 
     // The admission wait reaches its deadline. Paused time auto-advances
     // because no blocking task exists to inhibit it.
-    let held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     let short = OperationOwner::new(Duration::from_secs(1)).unwrap();
     let waited = bulkhead
         .run_blocking(short.context(), Admission::Wait, refused())
@@ -199,7 +207,7 @@ async fn deadline_refusals_record_deadline_exceeded_not_admitted() {
 
     // A permit granted after the deadline but before its timer fires is
     // refused by the post-admission check, and only that refusal is recorded.
-    let held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     let waiter = tokio::spawn({
         let bulkhead = bulkhead.clone();
         let context = OperationOwner::new(Duration::from_secs(1))
@@ -221,10 +229,17 @@ async fn deadline_refusals_record_deadline_exceeded_not_admitted() {
     assert!(expired(&rechecked), "{rechecked:?}");
 
     assert_eq!(decisions(&capture, "deadline_exceeded"), 2.0);
-    // Only the two held `enter` calls were admitted.
+    // Only the two parked executions were admitted.
     assert_eq!(decisions(&capture, "admitted"), 2.0);
     assert_eq!(capture.samples(ADMISSION_DECISIONS).len(), 4);
-    assert_eq!(capture.samples(OPERATION_COMPLETIONS), []);
+    assert_eq!(capture.samples(OPERATION_COMPLETIONS).len(), 2);
+    assert_eq!(
+        capture.count(
+            OPERATION_COMPLETIONS,
+            &[("operation", "test.held_work"), ("outcome", "dropped")]
+        ),
+        2.0
+    );
     assert_catalog(&capture);
 }
 
@@ -234,7 +249,7 @@ async fn run_blocking_destroyed_while_unwinding_records_panicked() {
     let _recorder = facade::set_default_local_recorder(&capture);
     let bulkhead = bulkhead();
     let context = owner().into_context();
-    let _held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let _held = bulkhead.hold(&context, Admission::Reject).await.unwrap();
     let waiting = tokio::spawn({
         let bulkhead = bulkhead.clone();
         async move {

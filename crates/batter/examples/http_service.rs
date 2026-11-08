@@ -28,7 +28,7 @@ use batter::axum::{
 };
 use batter::{
     BoxError,
-    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity, BulkheadError},
     health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::Supervisor,
     operation::OperationError,
@@ -69,36 +69,32 @@ struct AppState {
 /// request ID and the admission policy's interruption envelope.
 async fn work(State(state): State<AppState>, admitted: AdmittedRequest) -> Response {
     let id = admitted.correlation_id();
-    let _permit = match state
+    match state
         .outbound
-        .enter(admitted.context(), Admission::Reject)
-        .await
-    {
-        Ok(permit) => permit,
-        Err(AdmissionError::Overloaded) => {
-            return render_infrastructure_failure(HttpFailure::Overloaded, Some(id));
-        }
-        Err(AdmissionError::Closed) => {
-            return render_infrastructure_failure(HttpFailure::Unavailable, Some(id));
-        }
-        Err(AdmissionError::Interrupted(reason)) => {
-            return admitted.interruption_responder().render(reason);
-        }
-    };
-    // Demonstration only: replace this read with a real dependency call.
-    match admitted
-        .context()
-        .run("demo.read", |_scope| async {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            Ok::<_, Infallible>("ok\n")
-        })
+        .run(
+            admitted.context(),
+            Admission::Reject,
+            "demo.read",
+            |_scope| async {
+                // Demonstration only: replace this read with a real dependency call.
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                Ok::<_, Infallible>("ok\n")
+            },
+        )
         .await
     {
         Ok(body) => body.into_response(),
-        Err(OperationError::Interrupted(reason)) => {
-            admitted.interruption_responder().render(reason)
+        Err(BulkheadError::NotAdmitted(AdmissionError::Overloaded)) => {
+            render_infrastructure_failure(HttpFailure::Overloaded, Some(id))
         }
-        Err(OperationError::Failed(never)) => match never {},
+        Err(BulkheadError::NotAdmitted(AdmissionError::Closed)) => {
+            render_infrastructure_failure(HttpFailure::Unavailable, Some(id))
+        }
+        Err(
+            BulkheadError::NotAdmitted(AdmissionError::Interrupted(reason))
+            | BulkheadError::Operation(OperationError::Interrupted(reason)),
+        ) => admitted.interruption_responder().render(reason),
+        Err(BulkheadError::Operation(OperationError::Failed(never))) => match never {},
     }
 }
 

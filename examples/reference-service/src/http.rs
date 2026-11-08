@@ -25,10 +25,10 @@ use batter::axum::{
 };
 use batter::{
     RegistrationError,
-    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity, BulkheadError},
     health::HealthReader,
     lifecycle::{LifecycleStatus, OperationAdmission},
-    operation::{Interruption, OperationContext},
+    operation::{Interruption, OperationContext, OperationError},
     registration::RegistrationTarget,
 };
 use runledger_postgres::RunledgerDatabase;
@@ -402,10 +402,6 @@ async fn submit_delivery(
     Json(request): Json<SubmitDelivery>,
 ) -> Response {
     let context = admitted.context();
-    let _permit = match state.database.enter(context, Admission::Reject).await {
-        Ok(permit) => permit,
-        Err(error) => return admission_failure(error, &metadata),
-    };
     let command_context = match command_context(context) {
         Ok(context) => context,
         Err(interruption) => {
@@ -418,11 +414,17 @@ async fn submit_delivery(
     let key = request.idempotency_key.clone();
     match state
         .deliveries
-        .submit(&command_context, owner, record_id, request)
+        .submit_admitted(&command_context, &state.database, owner, record_id, request)
         .await
     {
         Ok(result) => accepted(result, &metadata),
-        Err(error) => submit_failure(error, &key, &metadata),
+        Err(BulkheadError::NotAdmitted(error)) => admission_failure(error, &metadata),
+        Err(BulkheadError::Operation(OperationError::Failed(error))) => {
+            submit_failure(error, &key, &metadata)
+        }
+        Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
+            submit_failure(SubmitError::Interrupted(reason), &key, &metadata)
+        }
     }
 }
 
@@ -553,18 +555,16 @@ async fn get_delivery(
     Path(delivery_id): Path<Uuid>,
 ) -> Response {
     let context = admitted.context();
-    let _permit = match state.database.enter(context, Admission::Reject).await {
-        Ok(permit) => permit,
-        Err(error) => return admission_failure(error, &metadata),
-    };
-    query_response(
-        state
-            .deliveries
-            .get_by_id(context, owner, delivery_id)
-            .await,
-        QueryProjection::Status,
-        &metadata,
-    )
+    let result = state
+        .database
+        .run(
+            context,
+            Admission::Reject,
+            "delivery.read",
+            |scope| async move { state.deliveries.get_by_id(&scope, owner, delivery_id).await },
+        )
+        .await;
+    admitted_query_response(result, QueryProjection::Status, &metadata)
 }
 
 async fn get_delivery_by_key(
@@ -575,18 +575,41 @@ async fn get_delivery_by_key(
     Path(idempotency_key): Path<String>,
 ) -> Response {
     let context = admitted.context();
-    let _permit = match state.database.enter(context, Admission::Reject).await {
-        Ok(permit) => permit,
-        Err(error) => return admission_failure(error, &metadata),
-    };
-    query_response(
-        state
-            .deliveries
-            .get_by_key(context, owner, &idempotency_key)
-            .await,
-        QueryProjection::Reconciliation,
-        &metadata,
-    )
+    let result = state
+        .database
+        .run(
+            context,
+            Admission::Reject,
+            "delivery.reconcile",
+            |scope| async move {
+                state
+                    .deliveries
+                    .get_by_key(&scope, owner, &idempotency_key)
+                    .await
+            },
+        )
+        .await;
+    admitted_query_response(result, QueryProjection::Reconciliation, &metadata)
+}
+
+fn admitted_query_response(
+    result: Result<Option<Delivery>, BulkheadError<QueryError>>,
+    projection: QueryProjection,
+    metadata: &TrustedRequestMetadata,
+) -> Response {
+    match result {
+        Ok(value) => query_response(Ok(value), projection, metadata),
+        Err(BulkheadError::NotAdmitted(error)) => admission_failure(error, metadata),
+        Err(BulkheadError::Operation(OperationError::Failed(error))) => {
+            query_response(Err(error), projection, metadata)
+        }
+        Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
+            render_infrastructure_failure(
+                interruption_failure(reason),
+                Some(metadata.correlation_id()),
+            )
+        }
+    }
 }
 
 #[derive(Serialize)]

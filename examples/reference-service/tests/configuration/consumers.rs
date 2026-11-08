@@ -1,3 +1,6 @@
+use batter as bulkhead_foundation;
+#[path = "../../../../crates/batter-core/tests/support/bulkhead.rs"]
+mod bulkhead_testing;
 use crate::load;
 use batter::lifecycle::Fatal;
 use batter::{
@@ -5,6 +8,7 @@ use batter::{
     cleanup::CleanupBudget,
     lifecycle::{ProcessAdmissionError, ShutdownBudget, ShutdownHandle},
 };
+use bulkhead_testing::BulkheadTestExt;
 use std::{convert::Infallible, time::Duration};
 
 fn budget() -> ShutdownBudget {
@@ -69,10 +73,10 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
             .into_context();
         let mut held = Vec::new();
         for _ in 0..bulk_limit {
-            held.push(bulkhead.enter(&context, Admission::Reject).await.unwrap());
+            held.push(bulkhead.hold(&context, Admission::Reject).await.unwrap());
         }
         assert!(matches!(
-            bulkhead.enter(&context, Admission::Reject).await,
+            bulkhead.hold(&context, Admission::Reject).await,
             Err(AdmissionError::Overloaded)
         ));
         let mut supervisor = root.supervisor(budget());
@@ -107,7 +111,7 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
         ));
         // Capacity remains separate: freeing one bulkhead permit cannot admit a finite task.
         held.pop();
-        let permit = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+        let permit = bulkhead.hold(&context, Admission::Reject).await.unwrap();
         assert!(matches!(
             process.try_spawn("still-full", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
             Err(ProcessAdmissionError::Full)

@@ -43,6 +43,8 @@ Unix-only application is not a reusable database framework.
 - `src/delivery/worker.rs` owns provider admission, durable dispatch uncertainty,
   lookup-before-replay, generation fencing and terminal outcome projection;
   `src/delivery/worker/state.rs` owns its lease-fenced SQL state transitions.
+  `worker/exchange.rs` owns admission, fence/provider execution and interruption
+  evidence together; do not restore caller-controlled progress markers.
   `src/delivery/worker/tests.rs` drives the handler, and through `in_invocation`
   each admission or state probe, with `batter::runledger::test_support`; its
   only custom services are negative controls for services without an exit
@@ -187,8 +189,8 @@ stale.
 The owner-scoped read boundary projects unresolved terminal jobs even when the
 handler could not write after storage failure or lease loss. Both routes and
 exact replay share one command loader and preserve acceptance facts; do not add
-best-effort writes that require lost authority. Provider exchange methods consume
-the permit, so post-response SQL cannot retain provider capacity. Keep send/body
+best-effort writes that require lost authority. `Bulkhead::run` owns each provider exchange; its result releases capacity before
+finalization persists post-response SQL. Keep send/body
 errors distinct, and map transport failures to bounded codes without error text.
 The 24-hour accepted retry lower bound is a separate application policy from
 retention; never clamp it down. Cleartext provider URLs require literal loopback.
@@ -197,9 +199,12 @@ scheduling result itself. The durable absolute eligibility timestamp commits wit
 the outcome and every dispatch authorization checks it under the effect-row lock.
 Admission failure has a separate narrow transition and cannot classify an
 uncertain provider result. Derive provider work only through
-`batter::runledger::job_phases` with the explicit 500 ms final-state reserve;
+`batter::runledger::PhasedJob` with the explicit 500 ms final-state reserve;
 never rebuild a fresh root from the remaining budget. Keep the explicit
-rejection-to-`JobFailure` mapping and the final-state SQL after work expiry. A recovered attempt may consume native retry budget
+rejection-to-`JobFailure` mapping and the final-state SQL after work expiry.
+Retained-state invariant detection returns an explicit action; both ordinary
+work and interrupted-fence reloads route its terminal write through finalization.
+A recovered attempt may consume native retry budget
 while deferring; there is no refund or replacement scheduler. A response never
 successfully persisted can still be lost on process death; no local type removes
 that external acknowledgement gap.
