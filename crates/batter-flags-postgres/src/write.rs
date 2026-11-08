@@ -68,17 +68,7 @@ impl PooledStore {
                 self.prepare(sql, &mutation, deadline).await
             })
             .await
-            .map_err(|e| match e {
-                batter_sqlx::PgDeadlineError::Elapsed => {
-                    StoreError::classified(ErrorClass::Deadline)
-                }
-                batter_sqlx::PgDeadlineError::Failed(e) => {
-                    StoreError(ErrorKind::Scope(Box::new(e)))
-                }
-                batter_sqlx::PgDeadlineError::RecoveryElapsed(error) => {
-                    RollbackFailure::deadline(error)
-                }
-            })?;
+            .map_err(crate::atomic::scope_error)?;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -89,10 +79,7 @@ impl PooledStore {
                 .await
                 {
                     Ok(_) => Err(error),
-                    Err(cleanup) => Err(StoreError(ErrorKind::Other(Box::new(RollbackFailure {
-                        error,
-                        cleanup,
-                    })))),
+                    Err(cleanup) => Err(RollbackFailure::both(error, cleanup)),
                 };
             }
         };
@@ -181,6 +168,9 @@ pub struct RollbackFailure {
     cleanup: StoreError,
 }
 impl RollbackFailure {
+    pub(crate) fn both(error: StoreError, cleanup: StoreError) -> StoreError {
+        StoreError(ErrorKind::Other(Box::new(Self { error, cleanup })))
+    }
     pub(crate) fn deadline(error: StoreError) -> StoreError {
         StoreError(ErrorKind::Other(Box::new(Self {
             error,

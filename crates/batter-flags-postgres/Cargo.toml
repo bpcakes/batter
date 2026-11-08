@@ -36,7 +36,7 @@ sqlx = { workspace = true, features = [
     "uuid",
 ] }
 tokio = { workspace = true, features = ["time"] }
-uuid = { version = "1.29.0", features = ["serde"] }
+uuid = { version = "1.29.0", features = ["serde", "v7"] }
 
 [dev-dependencies]
 postgres-test-harness = { version = "0.2.0", git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }

@@ -1,9 +1,9 @@
 # batter-flags-postgres
 
 Experimental PostgreSQL 18 flags store. `PooledStore` owns each acquisition,
-transaction, timeout and connection disposition through `batter-sqlx`. It does
-not publish snapshots, register process tasks, publish catalogs, heartbeat or
-prune. Those integrations have separate owners.
+transaction, timeout and connection disposition through `batter-sqlx`. It
+stores audited writes, catalogs, process presence and the fleet view; it does not
+publish snapshots or register process tasks, which `batter-flags` owns.
 
 ```rust
 use batter_flags_core::{FlagKey, SwitchState, Version};
@@ -45,6 +45,31 @@ core validator. Higher/extra-field encodings remain present so core can hold the
 A standby returns `ErrorClass::Standby` without a candidate. `history` returns
 at most 1000 rows strictly after a version, in counter order; only explicit fields
 expose actor, reason and row images. Default diagnostics do not print them.
+
+## Presence, prune and the fleet view (T-13)
+
+A `ProcessPresence` holds what does not change between heartbeats: a process id
+minted for it, its application, environment and build labels, its catalog as a
+`CatalogPublication`, the revisions it resolved and its `Cadence` (liveness and
+retention, whole seconds from 1 s to 24 h). `heartbeat(&presence, &report, deadline)`
+runs one READ COMMITTED transaction: it takes a key-share lock on the stored
+catalog, inserting the catalog and its entries only when none is stored, refreshes
+the catalog's reference at most once a day, and upserts the process row with a
+server-clock expiry and the row's own cadence. A heartbeat never clears a stop;
+`stop` records one and leaves the expiry alone. Neither is audited or retried, so
+an unknown commit is `ErrorClass::CommitUnknown` and the next heartbeat restates
+presence.
+
+`prune(PruneLimit, deadline)` deletes, with `FOR UPDATE SKIP LOCKED`, process rows
+whose expiry is older than the server clock minus their own retention, then
+catalogs unreferenced for 30 days that no process row references. A heartbeat
+waiting on a prune's lock publishes its catalog again once the delete commits.
+
+`fleet` and `fleet_declaring(&key)` read every process row (or every declarer of
+a key) with the head in one read-only snapshot, each as `ProcessState::{Live,
+Silent, Stopped}`. `Fleet::rollout(version)` answers whether every Live process
+applied a version: only a control-plane publication at or above it counts, never
+a persisted file or the declared base.
 
 ## Ordering and failure contract (T-12)
 

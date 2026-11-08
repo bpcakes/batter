@@ -10,8 +10,10 @@ impl fmt::Display for ValidationError {
     }
 }
 impl Error for ValidationError {}
-/// A certain failure before commit, or a database rejection of COMMIT.
-/// All retained causes are available through `source()`; formatting is redacted.
+/// A store failure. Every class but [`ErrorClass::CommitUnknown`] is certain:
+/// a failure before COMMIT, or a database rejection of COMMIT, so nothing was
+/// written. `CommitUnknown` may have committed. All retained causes are
+/// available through `source()`; formatting is redacted.
 pub struct StoreError(pub(crate) ErrorKind);
 /// Stable failure category, without database messages or request contents.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -28,11 +30,20 @@ pub enum ErrorClass {
     InvalidData,
     /// SQLx, acquisition, migration or boundary failure.
     Database,
+    /// An unaudited operation (heartbeat, stop or prune) may have committed:
+    /// its commit, including the native checks just before COMMIT, failed
+    /// without a database rejection or ran out of time. The next heartbeat
+    /// restates presence, and a prune that did commit deleted only rows that
+    /// were already due; an unknown stop is its own case,
+    /// [`StopFailure::Unknown`](crate::StopFailure::Unknown). Audited writes
+    /// never use this class: theirs is `WriteOutcome::Uncertain`.
+    CommitUnknown,
 }
 pub(crate) enum ErrorKind {
     Class(ErrorClass),
     Sql(SqlxFailure),
     Transaction(PgTransactionError),
+    Unconfirmed(PgTransactionError),
     Scope(Box<PgScopeFailure<StoreError>>),
     Snapshot(Box<PgSnapshotError<StoreError>>),
     Other(Box<dyn Error + Send + Sync>),
@@ -42,6 +53,7 @@ impl StoreError {
     pub fn class(&self) -> ErrorClass {
         match &self.0 {
             ErrorKind::Class(c) => *c,
+            ErrorKind::Unconfirmed(_) => ErrorClass::CommitUnknown,
             _ => ErrorClass::Database,
         }
     }
@@ -74,7 +86,7 @@ impl Error for StoreError {
         match &self.0 {
             ErrorKind::Class(_) => None,
             ErrorKind::Sql(e) => Some(e),
-            ErrorKind::Transaction(e) => Some(e),
+            ErrorKind::Transaction(e) | ErrorKind::Unconfirmed(e) => Some(e),
             ErrorKind::Scope(e) => Some(e.as_ref()),
             ErrorKind::Snapshot(e) => Some(e.as_ref()),
             ErrorKind::Other(e) => Some(e.as_ref()),

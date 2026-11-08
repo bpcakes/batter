@@ -31,24 +31,35 @@
 //! ```
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+mod atomic;
+mod catalogs;
 mod errors;
+mod fleet;
 mod history;
 mod load;
 mod migrate;
 mod outcome;
 mod prepared;
+mod presence;
+mod prune;
 mod request;
 mod state;
 mod store;
 mod validate;
 mod write;
 pub use errors::{ErrorClass, StoreError, ValidationError};
+pub use fleet::{Fleet, FleetProcess, ProcessState, Rollout};
 pub use history::HistoryEntry;
 pub use load::Loaded;
 pub use migrate::{CREATE_FLAGS_SQL, MIGRATOR, REQUIRED_SCHEMA_REVISION};
 pub use outcome::{
     BlockingBuild, CommitUncertainty, Presence, Refusal, StoredState, UndeclaredBasis, WriteOutcome,
 };
+pub use presence::{
+    Cadence, KeySample, PresenceReport, ProcessId, ProcessLabel, ProcessLabels, ProcessPresence,
+    SnapshotReport, StopFailure, StopOutcome,
+};
+pub use prune::{PruneLimit, Pruned};
 pub use request::{
     Actor, Archive, Change, ChangeReason, ExplicitValue, Precondition, Variant, Write,
 };
