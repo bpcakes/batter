@@ -214,7 +214,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if chosen & RUNLEDGER_SELECTORS:
-        lines.insert(1, "use batter::runledger::{JobPhasesRejection, NativeReport, job_phases, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
+        lines.insert(1, "use batter::runledger::{PhasedJob, PhasedJobHandler, PhasedJobFailure, JobWork, JobFinalization, JobPhasesRejection, NativeReport, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
         lines.insert(1, "use batter::runledger::native::core::jobs::{JobHandler, JobType};")
         lines.insert(1, "use batter::runledger::native::postgres::jobs::{JobEnqueue, JobEnqueueIntent};")
         lines.insert(1, "use batter::runledger::native::postgres::{MIGRATOR, migrate_after_idempotency_cutover};")
@@ -455,7 +455,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "fn runledger_identity(_: DirectNativeReport) {}",
             "const _: fn(NativeReport) = runledger_identity;",
             # The protected handler bridge is one item with direct native and core types.
-            "const _: for<'a> fn(runledger_core::jobs::JobExecution<'a>, std::time::Duration) -> Result<batter_core::operation::OperationPhases, batter_runledger::JobPhasesRejection> = batter::runledger::job_phases;",
+            "fn phased_identity<H: batter_runledger::PhasedJobHandler>(handler: H) -> Result<batter_runledger::PhasedJob<H>, batter_core::ConfigurationError> { batter::runledger::PhasedJob::new(handler, std::time::Duration::from_secs(1)) }",
             "const _: fn(batter::runledger::JobPhasesRejection) = |_: batter_runledger::JobPhasesRejection| {};",
             "const _: fn(batter::runledger::native::core::jobs::JobInvocation) = |_: runledger_core::jobs::JobInvocation| {};",
             "fn protected_registration(target: &mut batter::startup::ProtectedStartupScope, context: OperationContext, prepared: runledger_runtime::PreparedSupervisor) -> Result<(), batter::RegistrationError> { batter::runledger::register_in(target, \"worker\", context, prepared) }",

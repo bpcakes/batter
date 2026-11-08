@@ -1,6 +1,8 @@
 //! Owned sequencing, independent evidence and cancellation through the public API.
 #[path = "phased_operation/adversarial.rs"]
 mod adversarial;
+#[path = "phased_operation/scoped.rs"]
+mod scoped;
 
 use batter_core::{
     command::CommandCause,

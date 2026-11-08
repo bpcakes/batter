@@ -1,5 +1,49 @@
 use super::*;
+use batter::admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity, BulkheadError};
 use serde_json::json;
+
+fn capacity() -> Bulkhead {
+    Bulkhead::new(BulkheadCapacity::new(1).unwrap())
+}
+async fn is_free(capacity: &Bulkhead) -> bool {
+    let owner = batter::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+    capacity
+        .run(
+            owner.context(),
+            Admission::Reject,
+            "test.capacity",
+            |_| async { Ok::<_, ()>(()) },
+        )
+        .await
+        .is_ok()
+}
+async fn run_dispatch(
+    capacity: &Bulkhead,
+    context: &OperationContext,
+    prepared: PreparedDispatch,
+) -> Result<DispatchOutcome, ProviderCallError> {
+    match capacity
+        .run(
+            context,
+            Admission::Wait,
+            "test.dispatch",
+            |scope| async move { prepared.execute(&scope).await },
+        )
+        .await
+    {
+        Ok(outcome) => Ok(outcome),
+        Err(BulkheadError::NotAdmitted(AdmissionError::Interrupted(_))) => {
+            Ok(DispatchOutcome::KnownNotDispatched {
+                retry_not_before: Duration::ZERO,
+            })
+        }
+        Err(BulkheadError::NotAdmitted(error)) => panic!("unexpected refusal: {error:?}"),
+        Err(BulkheadError::Operation(OperationError::Failed(error))) => Err(error),
+        Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
+            Err(ProviderCallError::Interrupted(reason))
+        }
+    }
+}
 
 mod http2;
 mod tracked;
@@ -64,25 +108,19 @@ async fn truncated_body_is_uncertain_and_exchange_releases_capacity() {
         SecretString::new("fixture-secret".to_owned()),
     )
     .unwrap();
-    let capacity = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
-    let permit = capacity.clone().try_acquire_owned().unwrap();
+    let capacity = capacity();
     let request = request();
-    let result = client
+    let prepared = client
         .prepare_dispatch(&request.idempotency_key(), &request)
-        .unwrap()
-        .execute(
-            &batter::operation::OperationOwner::new(Duration::from_secs(2))
-                .unwrap()
-                .into_context(),
-            permit,
-        )
-        .await;
+        .unwrap();
+    let owner = batter::operation::OperationOwner::new(Duration::from_secs(2)).unwrap();
+    let result = run_dispatch(&capacity, owner.context(), prepared).await;
     server.await.unwrap();
     let error = result.unwrap_err();
     assert!(matches!(error, ProviderCallError::Body(_)));
     assert_eq!(error.code(), "delivery.provider_body_failed");
     assert!(
-        capacity.try_acquire_owned().is_ok(),
+        is_free(&capacity).await,
         "transport result retained the permit"
     );
 }
@@ -120,22 +158,15 @@ async fn native_transport_timeouts_keep_their_code_and_release_capacity() {
             base_url: Url::parse(&format!("http://{address}/")).unwrap(),
             token: SecretString::new("fixture-secret"),
         };
-        let capacity = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = capacity.clone().try_acquire_owned().unwrap();
+        let capacity = capacity();
         let request = request();
         let prepared = client
             .prepare_dispatch(&request.idempotency_key(), &request)
             .unwrap();
         let (release, released) = tokio::sync::oneshot::channel();
         let exchange = async {
-            let result = prepared
-                .execute(
-                    &batter::operation::OperationOwner::new(Duration::from_secs(3))
-                        .unwrap()
-                        .into_context(),
-                    permit,
-                )
-                .await;
+            let owner = batter::operation::OperationOwner::new(Duration::from_secs(3)).unwrap();
+            let result = run_dispatch(&capacity, owner.context(), prepared).await;
             let _ = release.send(());
             result
         };
@@ -167,7 +198,7 @@ async fn native_transport_timeouts_keep_their_code_and_release_capacity() {
         }
         assert_eq!(error.code(), "delivery.provider_timeout");
         assert!(
-            capacity.try_acquire_owned().is_ok(),
+            is_free(&capacity).await,
             "timeout retained provider capacity"
         );
     }
@@ -292,8 +323,7 @@ async fn connector_failure_is_known_not_dispatched() {
             .execute(
                 &batter::operation::OperationOwner::new(Duration::from_secs(2))
                     .unwrap()
-                    .into_context(),
-                test_permit()
+                    .into_context()
             )
             .await
             .unwrap(),

@@ -97,6 +97,9 @@ without credentials; only an admitted request can receive 401. Authentication
 runs within the request's operation deadline, and unmatched paths receive the
 404 only after admission. The repository owner selected this order on
 2026-09-28; authentication before admission is not a canonical composition.
+For an authenticated POST, application command validation precedes the database
+bulkhead. An invalid command returns 422 `invalid_delivery_command` even when
+database capacity is exhausted; a valid command can receive 503 `overloaded`.
 The separate `http::in_process_client` test seam awaits the same assembly,
 consumes it with `AssembledHttp::in_process` and wraps the adapter's opaque
 `InProcessClient`; it returns a request client rather than a `Router`, cannot
@@ -172,11 +175,11 @@ POSTing. That attempt still consumes native retry budget. Returned storage error
 retain known delay, but process death before any successful persistence can lose
 the remote response; this is not an exactly-once or remote-acknowledgement guarantee.
 
-The handler derives its provider work from the native invocation with
-`batter::runledger::job_phases(execution, FINAL_STATE_RESERVE)`, not a fresh
-root sized from the remaining budget. Provider work ends 500 ms before the
+The handler runs through `batter::runledger::PhasedJob` with
+`FINAL_STATE_RESERVE`; work returns the provider outcome as a typed action,
+and finalization persists it using borrowed native execution services. Provider work ends 500 ms before the
 worker's own deadline; the retained state SQL that records its outcome runs
-directly inside that native deadline, so the reserve remains for it after
+in the finalization callback under that native deadline, so the reserve remains for it after
 provider work expires. Each state transition is one awaited, lease-fenced
 transaction, so it needs no Batter boundary of its own. When the invocation exits, including timeout, lease loss
 or task abort, every provider operation still linked to it is cancelled. A
@@ -185,6 +188,22 @@ derivation with no provider time left keeps the explicit
 no invocation exit claim are refused as `delivery.operation_phases_unavailable`
 before any state or provider work. The reserve does not shield cleanup, join
 detached work or undo a provider effect.
+
+The handler opts into `settle_late` for a concrete action returned after the work
+deadline without cancellation or panic. Both normal and late values use the same
+exhaustive settlement function: acknowledged confirmation or business denial
+returns native success, known non-dispatch retains its retry delay, and conflict
+or stale acceptance records manual resolution with a terminal failure. Storage
+failure or unknown commit acknowledgement cannot produce recovered success.
+Progress markers classify only missing results; they never replace a retained
+action. The live state-boundary probe checks the returned native handler outcome
+and durable application rows, including confirmation/denial on the last attempt,
+lease loss and deferred commit failure. It does not exercise wire-level loss of
+a COMMIT acknowledgement. The admitted-submission probe uses the actual service
+transaction and injects cancellation after acknowledged retention, then verifies
+the response, durable rows and capacity through an exact replay. These probes do
+not make application settlement and native completion persistence atomic: death
+between those commits still relies on the existing durable reconciliation path.
 
 Provider admission waits on the purpose-specific `BATTER_PROVIDER_CAPACITY`
 inside the handler work deadline. Runledger necessarily claims and increments the

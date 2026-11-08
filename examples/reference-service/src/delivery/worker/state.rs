@@ -581,7 +581,8 @@ struct TerminalUpdate<'a> {
 
 /// A terminal write can consume unresolved truth, never overwrite terminal truth.
 /// Keep this private to the persistence boundary so callers cannot skip validation.
-enum UnresolvedEffectState {
+#[derive(Clone, Copy)]
+pub(super) enum UnresolvedEffectState {
     AwaitingAttempt,
     RetryableUndispatched,
     ReconcileNeeded,
@@ -604,7 +605,7 @@ impl TryFrom<ProviderEffectState> for UnresolvedEffectState {
 }
 
 impl UnresolvedEffectState {
-    fn retained(self) -> ProviderEffectState {
+    pub(super) fn retained(self) -> ProviderEffectState {
         match self {
             Self::AwaitingAttempt => ProviderEffectState::AwaitingAttempt,
             Self::RetryableUndispatched => ProviderEffectState::RetryableUndispatched,

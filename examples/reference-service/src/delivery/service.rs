@@ -1,7 +1,12 @@
 use super::*;
+#[cfg(test)]
+pub(super) mod live_tests;
 mod progress;
 
-use batter::operation::{OperationContext, OperationError};
+use batter::{
+    admission::{Admission, Bulkhead, BulkheadError},
+    operation::{OperationContext, OperationError},
+};
 use batter::{
     runledger::run_atomic,
     sqlx::{PgAtomicError, PgLease, PgScopeError, PgScopedSql, PgSession, SqlxFailure},
@@ -17,6 +22,8 @@ impl DeliveryService {
         Self {
             pool: database.pool().clone(),
             database,
+            #[cfg(test)]
+            after_settlement: None,
         }
     }
 
@@ -32,33 +39,76 @@ impl DeliveryService {
         record_id: Uuid,
         request: SubmitDelivery,
     ) -> Result<SubmitResult, SubmitError> {
-        let request = request.validate(record_id).map_err(SubmitError::Invalid)?;
+        match self
+            .submit_with_admission(context, None, owner, record_id, request)
+            .await
+        {
+            Ok(value) => Ok(value),
+            Err(BulkheadError::Operation(OperationError::Failed(error))) => Err(error),
+            Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
+                Err(SubmitError::Interrupted(reason))
+            }
+            Err(BulkheadError::NotAdmitted(_)) => unreachable!("no admission policy supplied"),
+        }
+    }
+
+    pub(crate) async fn submit_admitted(
+        &self,
+        context: &OperationContext,
+        bulkhead: &Bulkhead,
+        owner: OwnerId,
+        record_id: Uuid,
+        request: SubmitDelivery,
+    ) -> Result<SubmitResult, BulkheadError<SubmitError>> {
+        self.submit_with_admission(context, Some(bulkhead), owner, record_id, request)
+            .await
+    }
+
+    async fn submit_with_admission(
+        &self,
+        context: &OperationContext,
+        bulkhead: Option<&Bulkhead>,
+        owner: OwnerId,
+        record_id: Uuid,
+        request: SubmitDelivery,
+    ) -> Result<SubmitResult, BulkheadError<SubmitError>> {
+        let request = request.validate(record_id).map_err(|error| {
+            BulkheadError::Operation(OperationError::Failed(SubmitError::Invalid(error)))
+        })?;
         let progress = SubmissionProgress::new();
         let progress_in_operation = progress.clone();
         let database = self.database.clone();
-        let result = context
-            .run_resolved(
-                "delivery.submit",
-                move |scope| async move {
-                    attempt_submit(
-                        &database,
-                        &scope,
-                        &progress_in_operation,
-                        owner,
-                        record_id,
-                        &request,
-                    )
-                    .await
-                },
-                move |result| progress.resolve(result),
+        #[cfg(test)]
+        let after_settlement = self.after_settlement.clone();
+        let work = move |scope: OperationContext| async move {
+            let result = attempt_submit(
+                &database,
+                &scope,
+                &progress_in_operation,
+                owner,
+                record_id,
+                &request,
             )
             .await;
-        match result {
-            Ok(result) => Ok(result),
-            Err(OperationError::Interrupted(interruption)) => {
-                Err(SubmitError::Interrupted(interruption))
+            #[cfg(test)]
+            if result.is_ok()
+                && let Some(probe) = after_settlement
+            {
+                probe.interrupt().await;
             }
-            Err(OperationError::Failed(error)) => Err(error),
+            result
+        };
+        let resolve = move |result| progress.resolve(result);
+        match bulkhead {
+            Some(bulkhead) => {
+                bulkhead
+                    .run_resolved(context, Admission::Reject, "delivery.submit", work, resolve)
+                    .await
+            }
+            None => context
+                .run_resolved("delivery.submit", work, resolve)
+                .await
+                .map_err(BulkheadError::Operation),
         }
     }
 
