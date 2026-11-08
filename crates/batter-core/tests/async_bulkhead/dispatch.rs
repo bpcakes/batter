@@ -14,7 +14,10 @@ struct Logs(Arc<Mutex<Vec<u8>>>);
 
 impl Write for Logs {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        self.0
+            .lock()
+            .expect("log buffer lock is not poisoned")
+            .extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
@@ -38,7 +41,8 @@ impl Logs {
     }
 
     fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        let bytes = self.0.lock().expect("log buffer lock is not poisoned");
+        String::from_utf8(bytes.clone()).expect("tracing output is UTF-8")
     }
 }
 
