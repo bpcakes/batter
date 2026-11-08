@@ -2309,3 +2309,165 @@ consumers. These are deliberate limits; future narrower classifications or pool
 reuse belong in the upstream owner. Live failure scenarios cover deadline/drop,
 commit rejection/lost acknowledgement and concurrent first writes. Fresh-agent
 usability evaluations remain unexecuted.
+
+### Flags catalog and declarations assessment (T-04, `batter-jkw6.4`)
+
+Relationships are stated on `CatalogBuilder` with both handles, so a pair is
+reciprocal whichever flag was declared first, and each side names its variant:
+an implicit "enabled" would be ambiguous for enums and for toggles defaulting
+on. `both_or_none` exists only between toggles, which its signature enforces.
+Build refuses what pure construction can know: a self-relationship, an aliased
+or undeclared variant, code defaults that break an invariant, a catalog without
+a process kind or environment class, a duplicate key, a retired name in use.
+Single-assignment policy is a type state on the declaration (amendment A3).
+`Catalog::owned_by` refuses a foreign kind instead of answering it. Residual
+(ADR-016): a process kind can still name a handle it does not own; handles are
+catalog-wide, so the protected outcomes are refusal at gate and wrapper
+construction and `Reason::Error` at evaluation.
+
+### Flags snapshots, evaluation and pins assessment (T-05, `batter-jkw6.5`)
+
+Validation rejects a candidate whole only for structural corruption, and holds
+any other bad row on its own with an exhaustive `HoldCause`, so one row never
+takes the others down. A view is built from one immutable `Published` record,
+so freshness, standing and snapshot cannot be paired across publications, and
+`Authority::consider` is the only transition. `gate_switch` returns an
+exhaustive `GateReading`, so awaiting publication cannot be mistaken for open.
+`pin` is infallible and `PinnedResolution` exhaustive; `PinRefusal` must be
+answered. Residual (Q5): the disclosed `low_level` path builds a view with any
+caller-asserted `Source` and `Freshness`; only native code observes it, and no
+protected surface accepts one.
+
+### Declared mode, reader and test flags assessment (T-06, `batter-jkw6.6`)
+
+`declared::resolve` reads only the `SettingsSource` it is given and returns
+`Resolved`, the witness `into_flags` and `register_in` consume, so no flags exist
+before resolution. `Flags` has no view-returning method; the one live read is
+`low_level::capture_now`. `TestFlags::builder` takes a `ProcessKind`, and refuses
+a foreign, not-owned or repeated handle at build, so a fixture cannot evaluate
+what the process would not. The reader publishes one record through a `watch`.
+Residual: invariants across process kinds are unknowable at resolve and are not
+checked, in either mode.
+
+### Route-group gate seam assessment (T-07, `batter-jkw6.7`)
+
+`GroupGate` is accepted only by `GroupPolicy::gated` and `browser_gated`, so a
+gate cannot be installed outside the library-ordered boundary, and a disabled
+group renders `HttpFailure::Disabled` through its own request policy. The new
+variant is a recorded hard cut with no shim: a shim would need a wildcard that
+hides a disabled group. Probes and the metadata fallback stay outside the gate
+by construction.
+
+### HTTP flags assessment (T-08, `batter-jkw6.8`)
+
+`Flags::http_view`, `http_gate` and `http_gate_any` validate every handle at
+construction and capture one view per request; handlers read it only through
+`AdmittedFlags`, which never accepts a native or caller-built view, so a
+request cannot mix views or evaluate after a later publication. The reading is
+matched exhaustively in the gate builder; before publication the reader's
+`LoadPolicy` decides. Q5 residual: the explicitly native `low_level` path can
+still build a `SnapshotView` with any `Source`; only native code or an
+application-built `GroupGate` observes it, and `AdmittedFlags` never accepts it.
+
+### Job flags assessment (T-09, `batter-jkw6.9`)
+
+`gated_direct` and `gated_workflow_step` are separate constructors taking
+`DirectWhenTripped` or `StepWhenTripped`, so a deferral a workflow step cannot
+honour is unrepresentable rather than refused at run time. `GatePolicy` takes
+the awaiting-publication recheck explicitly, and `Drop` applies only to a
+tripped reading, so missing initial data never drops a job. `JobFlags` has no
+unrestricted live evaluation: unpinned facts report `UnpinnedBecause`. Batter
+never writes a pin into a Runledger payload; the application stores it.
+
+### Periodic flags assessment (T-10, `batter-jkw6.10`)
+
+`Flags::gate_periodic_in` takes a `GatedPeriodicPolicy` whose immediate startup
+and stop-at-drain are fixed, and runs work only on an `Open` reading of one
+captured view; awaiting and tripped readings skip. `StopAtDrain` is fixed: a
+switch that skipped work native settlement needs during drain would hold drain
+until forced cancellation; such work registers ungated through core
+`register_periodic_in`.
+
+### Flags presence, prune and fleet assessment (T-13, `batter-jkw6.13`)
+
+A heartbeat runs only through `PooledStore::heartbeat` with a `ProcessPresence`
+built from the process's own base, so a process cannot report another
+catalog's digest. `stop` consumes the presence, so a stopped process cannot
+heartbeat again. Prune deletes in bounded batches under an explicit
+`PruneLimit`. Fleet states are an exhaustive `ProcessState`. Residual: fleet
+completeness, clock skew between hosts and remote process liveness are
+database facts the store reports, not proves.
+
+### Control-plane loader assessment (T-14, `batter-jkw6.14`)
+
+`register_in` validates every input before registering anything and returns
+typed `RegisterError`s; the loader is the I/O shell around core's `Authority`,
+so an applied version and digest are always those of a judged snapshot, and
+`SnapshotStatus` is derived from one record at capture. `readiness_condition`
+returns the condition and its closure together under one name. The stop marker
+is a reserved cleanup that runs before the pool closes. Residual: a restart
+during an outage without a last-good file serves the declared base.
+
+### Last-good file assessment (T-15, `batter-jkw6.15`)
+
+The file is opened in the root's protected initializer as a
+`SnapshotDirectory`, so an unusable directory fails startup with a typed error,
+and `with_last_good` carries only an opened directory. Only control-plane
+values are persisted, a held entry first read from the file without a value;
+persistence runs after publish and never changes a run's outcome or readiness.
+A persist failure is retained as a `PersistFailure` for
+inspection. Residual: directory fsync on macOS and `flock` on tmpfs or overlayfs
+are unverified.
+
+### Operator command assessment (T-16, `batter-jkw6.16`)
+
+Every argument is validated into a `Plan` before any connection, so a usage
+error never depends on database state. Writes require an actor, a reason and
+exactly one of `--if-revision` or `--yes`; the coordinated-flip and invariant
+policies are typed `WritePolicy` fields the guard builds, never booleans on the
+store API. Exit codes and the JSON document are a closed contract, and an
+unknown commit outcome is its own exit with re-run guidance. A signal before
+COMMIT rolls back; after it, the real outcome is reported.
+
+### Flags facade and consumer assessment (T-17, `batter-jkw6.17`)
+
+The facade exposes the flags packages only behind `flags`, `flags-postgres`,
+`flags-axum` and `flags-runledger`, so one `batter` dependency reaches them
+without a direct declaration, and moves no ownership. `grant_fragment` refuses a
+schema other than `flags`. The rollout example separates the finite migration
+command from serving, which uses restricted credentials, and awaits cleanup on
+every failure path.
+
+### Wakeable periodic seam assessment (T-18, `batter-jkw6.18`)
+
+`periodic::register_wakeable_in` returns a `PeriodicWake` beside the reader; a
+wake only requests work, never bypasses admission, the stopping point or the
+allowance, and is inert after the component ends, so a holder needs no paired
+cancellation or join. Wakes coalesce and every start keeps the spacing, so a
+notification burst cannot overrun the budget. Wake counts live in the adapter;
+`PeriodicSummary` gains no field.
+
+### Flags LISTEN wake assessment (T-19, `batter-jkw6.19`)
+
+`ListenEndpoint::new` validates the spacing, its `Debug` is redacted and
+`register_in` refuses a spacing longer than the poll. The listener is a
+component on its own pool, owns rebuild, resync and drain-time unlisten, and
+reports an exhaustive health state; the application only supplies connection
+options. Residual: a standby refusal, a pool closed during a receive and a
+black-holed peer are unverified, and sqlx's detached `UNLISTEN *` is disclosed.
+
+### Control-plane invariants assessment (T-21, `batter-jkw6.21`)
+
+The invariant judgement is one function, shared by snapshot validation and the
+store's write-side replay through `Manifest::invariant_holds`, so the two
+cannot disagree about which flag a hold moves; it visits relations in
+canonical key order and reports what no hold can meet as `unresolved`.
+`register_in` refuses a base an engaged governing switch would break, so every
+fixed fallback is consistent. A strict write that would newly hold a flag is
+refused inside its transaction; accepting the hold is an explicit
+`InvariantPolicy::AcceptHeld`, and the outcome's `Deferral` lists what it
+accepted. `Snapshot::held` takes the view's freshness, so a stale view's holds
+cannot be reported as a fresh one's. Residual: the write side sees stored rows
+and code defaults, not a process's settings, floor or staleness, and a catalog
+with more than four unreadable governing switches is reported unjudged.
+

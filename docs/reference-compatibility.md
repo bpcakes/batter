@@ -145,6 +145,7 @@ the native layer needs, but never `batter-axum` or `batter::runlimit::http`.
 | `batter::runlimit::postgres` | `runlimit-postgres` | `runlimit-postgres` |
 | `batter::runlimit::native_transport::http` | `runlimit-http` | `runlimit-native-http` |
 | `batter::runlimit::native_transport::axum` | `runlimit-axum` | `runlimit-native-axum` |
+| `batter::flags::core` | `batter-flags-core` | `flags` |
 | `batter::flags::postgres` | `batter-flags-postgres` | `flags-postgres` |
 
 Each namespace is the native package itself, so a type reached through the

@@ -607,6 +607,8 @@ as Runlimit's protected assembly does.
 
 ## Route-group gates
 
+Experimental: the seam typed flags gate route groups through
+([ADR-016](../../docs/adr/016-typed-flags-control-plane.md)).
 `GroupGate::new(|| Gated::Serve(value))` captures one application value for each
 request admitted to a group. Returning `Gated::Disabled` drops its unread body
 and renders `HttpFailure::Disabled` through that group's `RequestPolicy`.

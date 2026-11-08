@@ -4323,6 +4323,30 @@ replaying the original request creates no duplicate. Compile-fail rustdoc checks
 that both removed getters stay unavailable. The external single-facade consumer
 also reads its own intent through the protected owner before queue transition.
 
+## Flags offline suites
+
+The workspace part (`cargo test --workspace --all-features --all-targets`) runs
+every offline flags target; the `flags-declared` part also runs `batter-flags`
+with no features (`cargo test -p batter-flags --no-default-features --locked`),
+which guards the declared-only build. `batter-flags-core` targets: catalog
+build, rules and queries, relations, handles and handle checks, digests,
+manifest and manifest decoding, snapshots, state encoding, revisions,
+resolutions, authority and published records, evaluation, governance, kill
+switch, gates, invariants and invariant governance, pins, pin refusal, pin
+serialization, events, event levels and events with pins. `batter-flags`
+targets: the declared literals, rules, revisions, redaction (its child
+re-executes the test binary with a cleared environment), events and
+invariants, the test flags and their errors, auto traits, grants and HTTP; its
+in-crate tests cover the reader, flags, declared mode, the jobs and periodic
+gates, the last-good file and the control-plane loader over a scripted source
+in paused time. `batter-flags-postgres` and `batter-flags-cli` run their offline
+tests and leave the live ones ignored. The evaluation hot path has an ignored
+micro-benchmark whose timings are unverified:
+
+```text
+cargo test --release -p batter-flags-core --test hot_path -- --ignored --nocapture
+```
+
 ## Flags control-plane PostgreSQL 18 suites
 
 The flags control plane's live suites are ignored tests against a disposable

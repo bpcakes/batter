@@ -3463,3 +3463,81 @@ retirement does not prove server termination. Full NOTIFY queues can reject all
 mutations, including kill switches. Declared settings floors remain application
 containment. The [store README](../crates/batter-flags-postgres/README.md) records
 validation order, native API limits, authority and test coverage.
+
+## Typed flags (experimental, ADR-016)
+
+[ADR-016](adr/016-typed-flags-control-plane.md) records the design; every
+contract below is experimental.
+
+### Declared mode
+
+`declared::resolve` reads only the `SettingsSource` the root supplies, once,
+into `Resolved`; values change by restart. Literals are strict: a toggle
+accepts `true`, `false`, `on` or `off` in any letter case, an enum only its
+declared variants, and anything else fails startup naming the setting, never
+the value. A value presented to a kind that does not own the flag, or in a
+class its `only_in` excludes, a retired name, an unknown name under the prefix,
+an enabling variant whose required settings are absent or empty, and a pair
+an invariant forbids fail startup; a governed flag is judged at its code
+default while its switch resolves engaged. Invariants across process kinds are
+not checked: the other kind's value is unknowable there. The startup report
+shows each key's source as `literal`, `absent` or `not_applicable`, so a
+narrowed source shows as every applicable key absent. No failure message
+carries a setting's value; the only retained value is a non-Unicode setting,
+reachable through `source()`. No library production source reads the process
+environment outside the declared seam
+(`crates/batter/tests/process_environment_ownership.rs`).
+
+### Gates and evaluation
+
+A gate reads every switch from one view captured at entry
+(`SwitchGate::enter`), and the reading is an exhaustive `GateReading`: awaiting
+publication is never mistaken for open. Evaluation reads no clock and does no
+I/O. An evaluation emits `feature_flag.evaluation` on target `batter::flags`:
+DEBUG ordinarily, INFO for an engaged gate, WARN for the first error per handle
+and cause. A request, job invocation or periodic run keeps the view it was
+admitted with; a later publication affects the next one.
+
+### Control plane
+
+`control_plane::register_in` validates every input before registering
+anything. The process writer publishes through core's `Authority`, so the
+version, drift and file rules are enforced by the writer, not left to the
+loader: a version below the applied one is refused as `Regressed`, a changed
+digest at the same version as drift, and a file after a control-plane
+publication is never applied. Staleness counts from registration until the
+first publication and from the last confirming read after it; a file-served
+snapshot ages from registration. A held kill switch keeps its last published
+state, and the settings floor only engages.
+
+The last-good file is written by the refresh after it publishes, only for
+values this process published from the control plane, under a directory lock,
+synced and renamed into place within the directory, and never changes a run's
+outcome or narrows readiness. A persist abandoned at its deadline can outlive
+drain, so roots end with `Runtime::shutdown_timeout`. Directory fsync on macOS
+and `flock` on tmpfs or overlayfs are unverified.
+
+With `LoadPolicy::with_listen`, a committed audited write's notification wakes
+the refresh; wakes coalesce, no refresh starts sooner than the wake spacing
+after the previous one, and the poll remains the backstop. Notifications are
+not durable and a notification's payload is never read. A rebuild after a lost
+session wakes a resync. A standby's refusal and a black-holed peer are
+unverified, and sqlx's detached `UNLISTEN *` on drop is disclosed.
+
+### Control-plane invariants
+
+A published flag that would leave a `requires`, `conflicts` or `both_or_none`
+invariant between flags the process kind owns unmet is held at its declared
+base (`HoldCause::InvariantUnmet`) until the invariant is met, judged with a
+governed flag at its code default while its switch is engaged, and separately
+for a stale view; the heartbeat's held keys and `RegisteredFlags::held` report
+the holds of a view captured at that moment. Which flag is held depends only
+on the catalog, never on declaration order. Registration refuses a base an
+engaged governing switch would leave breaking an invariant, so no fixed value
+can leave one unmet. `PooledStore::submit` with `WritePolicy::STRICT` refuses a
+flag write after which a running declarer's processes would newly hold a flag,
+or that a newer build's catalog cannot be judged for; the write-side judgement
+replays the processes' own over stored rows and code defaults and sees neither
+a process's settings nor its staleness, so it is advance notice and the
+process's own judgement is the enforcement. A kill switch is never refused for
+the flags engaging it holds.

@@ -22,6 +22,9 @@ pub enum Gated<V> {
 
 /// One flags-agnostic capture/decision for a guarded route group.
 ///
+/// Experimental: the seam typed flags gate route groups through, recorded in
+/// the repository's ADR-016.
+///
 /// The callback runs once after lifecycle/deadline admission, before browser
 /// mutation checks and application layers. It must be fast, nonblocking and
 /// non-panicking. A panic propagates like a handler panic: there is no automatic

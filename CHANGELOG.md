@@ -8,6 +8,29 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add experimental typed flags and kill switches
+  ([ADR-016](docs/adr/016-typed-flags-control-plane.md), `batter-jkw6`), through
+  the facade's `flags`, `flags-postgres`, `flags-axum` and `flags-runledger`
+  features and the `rollout` example. Declared mode: `batter-flags-core`'s
+  catalog, snapshots, clock-free evaluation, pins and evaluation events;
+  `batter-flags`' `declared::resolve`, startup report, `TestFlags`, and HTTP,
+  job and periodic gates. Control plane: `batter-flags-postgres`, the audited
+  store in a dedicated `flags` schema with presence, pruning and the fleet view;
+  `control_plane::register_in` with the last-good file and the exact-role
+  `grants`; and the `batter-flags` operator command (`publish = false`). Phase
+  3: the LISTEN/NOTIFY wake and control-plane invariant holds with the
+  write-side `WritePolicy`.
+
+- Changed: `batter-core`'s `periodic` module adds the experimental
+  `register_wakeable_in`, which returns a coalescing `PeriodicWake` beside the
+  reader; a wake spaces every start and never bypasses admission, the stopping
+  point or the allowance (`batter-jkw6.18`).
+
+- Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
+  library read of the process environment outside the one declared seam, and
+  share the executable-root inventory with the panic-hook scan
+  (`batter-jkw6.3`).
+
 - **Breaking:** within the unreleased flags family, `batter_flags_postgres::PooledStore::submit`
   takes a `WritePolicy` in place of a `FlipPolicy`, so one argument decides
   both what a write refuses inside its transaction: a coordinated flip and a
