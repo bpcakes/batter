@@ -33,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inventory::{executable_roots, members, production_sources, rust_sources, workspace_root};
+use inventory::{executable_roots, members, production_sources, workspace_root};
 
 /// The one seam, and how many reads it holds: the OpenTelemetry adapter
 /// refuses ambient `OTEL_*` settings, which its upstream builders would
@@ -108,6 +108,7 @@ fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_n
         "fn f<'a>(x: &'a str) -> char { let _ = x; 'e' }",
         "fn f() { let _ = my_env::var(\"X\"); let _ = environment::var(); }",
         "use crate::settings::source;",
+        "fn iter() -> impl Iterator<Item = u8> + use<> { [1].into_iter() }",
     ] {
         assert_eq!(paths::reads(allowed), 0, "{allowed}");
     }
@@ -120,30 +121,45 @@ fn scan(root: &Path) -> BTreeMap<String, usize> {
     // declaration loads compares equal to the file found below it.
     let root = &root.canonicalize().unwrap();
     let roots = executable_roots(root);
-    let mut found = BTreeMap::new();
+    // Every scoped crate's files in one set, so a file one crate loads only
+    // for tests and another loads for production is production.
+    let mut sources = Vec::new();
     for member in members(root) {
-        if !member.starts_with("crates/") {
-            continue;
-        }
         let source = root.join(&member).join("src");
-        if !source.is_dir() {
-            continue;
+        if member.starts_with("crates/") && source.is_dir() {
+            every_file(&source, &mut sources);
         }
-        let mut sources = Vec::new();
-        rust_sources(&source, &mut sources);
-        for (path, text) in production_sources(sources, &roots) {
-            let count = paths::reads(&text);
-            if count > 0 {
-                let relative = path
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
-                found.insert(relative, count);
-            }
+    }
+    let mut found = BTreeMap::new();
+    for (path, text) in production_sources(sources, &roots) {
+        let count = paths::reads(&text);
+        if count > 0 {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            found.insert(relative, count);
         }
     }
     found
+}
+
+/// Every UTF-8 file below `directory`, whatever its extension, so a module a
+/// `#[path]` declaration loads from a file not named `.rs` is read too.
+fn every_file(directory: &Path, found: &mut Vec<(PathBuf, String)>) {
+    let mut entries: Vec<_> = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            every_file(&path, found);
+        } else if let Ok(text) = fs::read_to_string(&path) {
+            found.push((path, text));
+        }
+    }
 }
 
 #[test]
@@ -282,4 +298,35 @@ fn a_file_a_production_path_declaration_loads_is_scanned_from_any_root_spelling(
     assert_eq!(scan(&scratch.0), expected);
     // A root spelled through `..` finds the same file.
     assert_eq!(scan(&scratch.0.join("crates").join("..")), expected);
+}
+
+#[test]
+fn a_file_another_crate_loads_for_production_and_a_non_rust_module_are_scanned() {
+    let scratch = Scratch::new();
+    // `flags-core` loads `shared.rs` only for tests, and `ambient.inc` as a
+    // production module whose file is not named `.rs`.
+    scratch.write(
+        "crates/flags-core/src/lib.rs",
+        "#[cfg(test)]\nmod shared;\n#[path = \"ambient.inc\"]\nmod ambient;\n",
+    );
+    scratch.write(
+        "crates/flags-core/src/shared.rs",
+        "pub fn planted() -> bool { std::env::var_os(\"X\").is_some() }\n",
+    );
+    scratch.write(
+        "crates/flags-core/src/ambient.inc",
+        "pub fn ambient() -> bool { std::env::var(\"Y\").is_ok() }\n",
+    );
+    // The executable root of `tool` loads `shared.rs` as a production module.
+    scratch.write(
+        "crates/tool/src/main.rs",
+        "#[path = \"../../flags-core/src/shared.rs\"]\nmod shared;\nfn main() {\n    let _ = shared::planted();\n}\n",
+    );
+    assert_eq!(
+        scan(&scratch.0),
+        BTreeMap::from([
+            ("crates/flags-core/src/ambient.inc".to_owned(), 1),
+            ("crates/flags-core/src/shared.rs".to_owned(), 1),
+        ])
+    );
 }

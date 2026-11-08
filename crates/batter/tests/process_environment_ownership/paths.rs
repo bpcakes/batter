@@ -229,7 +229,15 @@ fn use_tree(tokens: &[Token], at: &mut usize, prefix: &[String], out: &mut Vec<V
                             return;
                         }
                         Some(Token::Punct(',')) => *at += 1,
-                        Some(_) => use_tree(tokens, at, &path, out),
+                        Some(_) => {
+                            // A token no tree starts with, such as a macro
+                            // repetition, is skipped, so the walk always ends.
+                            let before = *at;
+                            use_tree(tokens, at, &path, out);
+                            if *at == before {
+                                *at += 1;
+                            }
+                        }
                     }
                 }
             }
@@ -248,9 +256,17 @@ fn use_tree(tokens: &[Token], at: &mut usize, prefix: &[String], out: &mut Vec<V
 }
 
 /// Whether a `use` path reaches the environment: it imports `std` itself or
-/// all of it, `std::env` itself, a glob or group of it, or an item of it that
-/// [`ALLOWED`] does not list.
+/// all of it, `std::env` itself, a glob or group of it, an item of it that
+/// [`ALLOWED`] does not list, or one of [`READS`] below any `env`.
 fn use_reaches(path: &[String]) -> bool {
+    // A reading function below any `env`, whatever names its root, as in a
+    // macro's `use $root::env::var`.
+    if path
+        .windows(2)
+        .any(|pair| pair[0] == "env" && READS.contains(&pair[1].as_str()))
+    {
+        return true;
+    }
     match path {
         [std] => std == "std",
         [std, second] => std == "std" && (second == "*" || second == "env"),
@@ -269,7 +285,8 @@ pub(crate) fn reads(source: &str) -> usize {
     let mut count = 0;
     let mut index = 0;
     while index < tokens.len() {
-        if tokens[index].keyword("use") {
+        // `use<..>` is a precise capture bound, not an import.
+        if tokens[index].keyword("use") && tokens.get(index + 1) != Some(&Token::Punct('<')) {
             let mut at = index + 1;
             let mut paths = Vec::new();
             while at < tokens.len() && tokens[at] != Token::Punct(';') {
