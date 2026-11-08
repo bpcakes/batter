@@ -12,12 +12,11 @@
 //! `batter_core::settings`, from a source the application root supplies, so
 //! naming a `VarError` type is not a read.
 //!
-//! A read or mutation is a whole-identifier `var`, `var_os`, `vars`,
-//! `vars_os`, `set_var`, `remove_var`, `current_dir` or `home_dir` right after
-//! a whole-identifier `env::`, or a `use std::` line that imports the `env`
-//! module itself or one of those functions; importing a type such as
-//! `env::VarError` is not one, and neither is a `//` comment, rustdoc
-//! included.
+//! A read is any path that reaches `std::env` in code, comments and literals
+//! removed: a `use` of the module, a glob, an alias or a group however it is
+//! wrapped, and any call or macro fragment below it, except the items that
+//! read nothing of the environment, such as `VarError` and `args`
+//! (`paths::ALLOWED`). `paths` says what the reader cannot see.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
@@ -25,6 +24,8 @@
 mod inventory;
 #[path = "panic_hook_ownership/modules.rs"]
 mod modules;
+#[path = "process_environment_ownership/paths.rs"]
+mod paths;
 
 use std::{
     collections::BTreeMap,
@@ -34,107 +35,61 @@ use std::{
 
 use inventory::{executable_roots, members, production_sources, rust_sources, workspace_root};
 
-/// The `std::env` functions that read or change the environment or a
-/// directory found through it.
-const READS: [&str; 8] = [
-    "var",
-    "var_os",
-    "vars",
-    "vars_os",
-    "set_var",
-    "remove_var",
-    "current_dir",
-    "home_dir",
-];
-
 /// The one seam, and how many reads it holds: the OpenTelemetry adapter
 /// refuses ambient `OTEL_*` settings, which its upstream builders would
 /// otherwise read, by checking that none is set. It never reads a value.
 const DECLARED_SEAMS: [(&str, usize); 1] = [("crates/batter-otlp/src/lib.rs", 1)];
 
-fn is_identifier(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-/// Whether `line` names `word` as a whole identifier at byte `start`.
-fn whole(line: &str, start: usize, word: &str) -> bool {
-    let bytes = line.as_bytes();
-    let end = start + word.len();
-    line[start..].starts_with(word)
-        && (start == 0 || !is_identifier(bytes[start - 1]))
-        && (end == bytes.len() || !is_identifier(bytes[end]))
-}
-
-/// Whether `line` is a read or mutation under the rule above.
-fn reads(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("//") {
-        return false;
-    }
-    if trimmed.starts_with("use std::") && imports_env(trimmed) {
-        return true;
-    }
-    line.match_indices("env::").any(|(start, matched)| {
-        let after = start + matched.len();
-        whole(line, start, "env") && READS.iter().any(|function| whole(line, after, function))
-    })
-}
-
-/// Whether a `use std::` line imports the `env` module itself, or a reading
-/// function through an `env::{..}` group; importing a type such as
-/// `env::VarError` does not.
-fn imports_env(line: &str) -> bool {
-    line.match_indices("env").any(|(start, _)| {
-        if !whole(line, start, "env") {
-            return false;
-        }
-        let rest = &line[start + "env".len()..];
-        match rest.strip_prefix("::{") {
-            Some(group) => {
-                let group = &group[..group.find('}').unwrap_or(group.len())];
-                group
-                    .split(',')
-                    .map(|name| name.split_whitespace().next().unwrap_or(""))
-                    .any(|name| READS.contains(&name))
-            }
-            None => !rest.starts_with("::"),
-        }
-    })
-}
-
 #[test]
-fn the_line_rule_counts_reads_and_mutations_and_keeps_types_and_comments() {
-    for read in [
-        "    let value = std::env::var(\"FLAG_FAST_PATH\");",
-        "    if env::var_os(CHILD).is_some() {",
-        "    for (key, _) in std::env::vars_os() {",
-        "    std::env::set_var(\"A\", \"b\");",
-        "    unsafe { env::remove_var(\"A\") };",
-        "    let here = std::env::current_dir()?;",
-        "    let home = std::env::home_dir();",
-        "use std::env;",
-        "use std::{env, fs};",
-        "use std::env as process_env;",
-        "use std::env::{var_os, VarError};",
-        "use std::env::var;",
-        "    run(); let _ = std::env::vars(); // trailing comment",
+fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_not() {
+    for (source, count) in [
+        ("fn f() { let _ = std::env::var(\"FLAG_X\"); }", 1),
+        ("fn f() { let _ = ::std::env::var_os(\"X\"); }", 1),
+        ("fn f() { for _ in std :: env :: vars_os() {} }", 1),
+        ("fn f() { unsafe { std::env::set_var(\"A\", \"b\") } }", 1),
+        (
+            "fn f() { let _ = std::env::current_dir(); let _ = std::env::home_dir(); }",
+            2,
+        ),
+        ("fn f() { let _ = std::env::temp_dir(); }", 1),
+        ("use std::env;\nfn f() { let _ = env::var(\"X\"); }", 1),
+        (
+            "use std::env::{self as e};\nfn f() { let _ = e::var(\"X\"); }",
+            1,
+        ),
+        (
+            "use ::std::env as process;\nfn f() { let _ = process::vars(); }",
+            1,
+        ),
+        ("use std::env::*;\nfn f() { let _ = var(\"X\"); }", 1),
+        ("use std::*;\nfn f() { let _ = env::var(\"X\"); }", 1),
+        (
+            "use std::{\n    env as e,\n    fs,\n};\nfn f() { let _ = e::var(\"X\"); }",
+            1,
+        ),
+        ("use std::env::{var_os, VarError};", 1),
+        (
+            "macro_rules! read { ($f:ident) => { std::env::$f(\"X\") }; }",
+            1,
+        ),
     ] {
-        assert!(reads(read), "{read}");
+        assert_eq!(paths::reads(source), count, "{source}");
     }
     for allowed in [
-        "        .with_cause(std::env::VarError::NotUnicode(value.to_owned()))",
-        "/// std::env::var is read by the root, never here.",
-        "    // env::var_os(CHILD) is the child's marker.",
-        "//! use std::env;",
-        "    let value = my_env::var(name);",
-        "    let all = env::variables();",
-        "    let args = std::env::args();",
-        "use std::environment;",
+        "fn f(e: std::env::VarError) {}",
         "use std::{env::VarError, ffi::OsStr};",
         "use std::env::VarError;",
-        "    let text = \"environment\";",
+        "fn f() { let _ = std::env::args(); let _ = std::env::current_exe(); }",
+        "/// std::env::var is read by the root, never here.\nfn f() {}",
+        "// use std::env;\nfn f() {}",
+        "/* std::env::var(\"X\") */ fn f() {}",
+        "fn f() -> &'static str { \"std::env::var\" }",
+        "fn f() -> &'static str { r#\"use std::env;\"# }",
+        "fn f<'a>(x: &'a str) -> char { let _ = x; 'e' }",
+        "fn f() { let _ = my_env::var(\"X\"); let _ = environment::var(); }",
+        "use crate::settings::source;",
     ] {
-        assert!(!reads(allowed), "{allowed}");
+        assert_eq!(paths::reads(allowed), 0, "{allowed}");
     }
 }
 
@@ -154,7 +109,7 @@ fn scan(root: &Path) -> BTreeMap<String, usize> {
         let mut sources = Vec::new();
         rust_sources(&source, &mut sources);
         for (path, text) in production_sources(sources, &roots) {
-            let count = text.lines().filter(|line| reads(line)).count();
+            let count = paths::reads(&text);
             if count > 0 {
                 let relative = path
                     .strip_prefix(root)
@@ -276,10 +231,10 @@ fn a_planted_read_is_counted_and_everything_exempt_is_not() {
         found,
         BTreeMap::from([("crates/flags-core/src/reads.rs".to_owned(), 1)])
     );
-    // A second read in the same file is counted too.
+    // Importing the module is one reach, and a second path is another.
     scratch.write(
         "crates/flags-core/src/reads.rs",
-        "use std::env;\npub fn planted() -> bool {\n    env::var(\"FLAG_X\").is_ok()\n}\n",
+        "use std::env;\npub fn planted() -> bool {\n    env::var(\"FLAG_X\").is_ok() || std::env::var_os(\"Y\").is_some()\n}\n",
     );
     assert_eq!(
         scan(&scratch.0),
