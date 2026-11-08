@@ -1,12 +1,8 @@
 //! Work returns a final-state action; the adapter runs its persistence afterward.
-use super::phased::{Action, Invocation, Progress};
+use super::phased::{Action, Invocation};
 use super::*;
+use super::{exchange::Sent, state::UnresolvedEffectState};
 use crate::provider::ProviderCallError;
-
-enum Sent {
-    GenerationChanged,
-    Outcome(Result<DispatchOutcome, ProviderCallError>),
-}
 
 impl Invocation<'_> {
     pub(super) async fn prepare(
@@ -40,21 +36,20 @@ impl Invocation<'_> {
             EffectPlan::DenyGeneration { expected } => {
                 return Ok(Action::Deny {
                     code: "target_generation_changed",
-                    expected,
+                    expected: expected.try_into().map_err(state_failure)?,
                 });
             }
             EffectPlan::ExpireReconciliation => {
                 return Ok(Action::Manual {
                     code: "provider_retention_expired",
                     message: "Provider retention expired before reconciliation.",
-                    expected: ProviderEffectState::ReconcileNeeded,
+                    expected: UnresolvedEffectState::ReconcileNeeded,
                 });
             }
             EffectPlan::Reconcile => {
                 if let Some(action) = self.reconcile(execution, operation, &snapshot).await? {
                     return Ok(action);
                 }
-                self.progress(Progress::Preparing);
                 let RetainedLoad::Snapshot(reloaded) =
                     worker.load_retained(execution, payload).await?
                 else {
@@ -67,7 +62,7 @@ impl Invocation<'_> {
                 if snapshot.current_generation != Some(payload.record_generation) {
                     return Ok(Action::Deny {
                         code: "target_generation_changed",
-                        expected: ProviderEffectState::ReconcileNeeded,
+                        expected: UnresolvedEffectState::ReconcileNeeded,
                     });
                 }
                 DispatchOrigin::ProvenAbsent
@@ -87,36 +82,21 @@ impl Invocation<'_> {
             snapshot.retention_active,
             "reconciliation is planned only during retention"
         );
-        self.progress(Progress::Admission(snapshot.state));
         let result = self
-            .worker
-            .admission
-            .run(
-                operation,
-                Admission::Wait,
-                "provider.reconcile.admitted",
-                |scope| async move {
-                    self.progress(Progress::Reconcile);
-                    Ok::<_, JobFailure>(
-                        self.worker
-                            .provider
-                            .reconcile(&scope, &snapshot.provider_key, &snapshot.provider_payload)
-                            .await,
-                    )
-                },
-            )
+            .exchange
+            .reconcile(self.worker, operation, snapshot)
             .await;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(BulkheadError::NotAdmitted(error)) => {
                 return Ok(Some(Action::Admission {
-                    state: snapshot.state,
+                    state: snapshot.state.try_into().map_err(state_failure)?,
                     error,
                 }));
             }
             Err(BulkheadError::Operation(OperationError::Failed(error))) => return Err(error),
             Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
-                return Ok(Some(self.interruption_action(Some(reason))));
+                return Ok(Some(self.exchange.interrupted(Some(reason))));
             }
         };
         Ok(match outcome {
@@ -127,12 +107,12 @@ impl Invocation<'_> {
             Ok(ReconcileOutcome::Expired) => Some(Action::Manual {
                 code: "provider_retention_expired",
                 message: "Provider lookup no longer retains a definitive outcome.",
-                expected: ProviderEffectState::ReconcileNeeded,
+                expected: UnresolvedEffectState::ReconcileNeeded,
             }),
             Ok(ReconcileOutcome::Conflict) => Some(Action::Manual {
                 code: "provider_payload_conflict",
                 message: "Provider lookup conflicted with the retained payload.",
-                expected: ProviderEffectState::ReconcileNeeded,
+                expected: UnresolvedEffectState::ReconcileNeeded,
             }),
             outcome @ (Ok(ReconcileOutcome::Unavailable) | Err(_)) => Some(Action::Uncertain {
                 code: outcome
@@ -153,43 +133,13 @@ impl Invocation<'_> {
     ) -> Result<Action, JobFailure> {
         let worker = self.worker;
         let payload = self.payload;
-        let dispatch = worker
-            .prepare_retained_dispatch(execution, payload, snapshot)
-            .await?;
-        self.progress(Progress::Admission(snapshot.state));
-        let result = worker
-            .admission
-            .run(
-                operation,
-                Admission::Wait,
-                "provider.dispatch.admitted",
-                |scope| async move {
-                    self.progress(Progress::StateChange);
-                    let marked = match origin {
-                        DispatchOrigin::Initial(expected) => {
-                            worker
-                                .mark_dispatch_possible(execution, payload, expected)
-                                .await
-                        }
-                        DispatchOrigin::ProvenAbsent => {
-                            worker
-                                .renew_dispatch_possible_after_absence(execution, payload)
-                                .await
-                        }
-                    }
-                    .map_err(state_failure)?;
-                    if !marked {
-                        return Ok(Sent::GenerationChanged);
-                    }
-                    self.progress(Progress::Dispatch);
-                    Ok(Sent::Outcome(dispatch.execute(&scope).await))
-                },
-            )
+        let result = self
+            .exchange
+            .dispatch(worker, execution, payload, operation, snapshot, origin)
             .await;
         let outcome = match result {
             Ok(Sent::Outcome(outcome)) => outcome,
             Ok(Sent::GenerationChanged) => {
-                self.progress(Progress::Preparing);
                 let RetainedLoad::Snapshot(snapshot) =
                     worker.load_retained(execution, payload).await?
                 else {
@@ -198,20 +148,20 @@ impl Invocation<'_> {
                 if snapshot.current_generation != Some(payload.record_generation) {
                     return Ok(Action::Deny {
                         code: "target_generation_changed",
-                        expected: snapshot.state,
+                        expected: snapshot.state.try_into().map_err(state_failure)?,
                     });
                 }
                 return Err(state_failure(StateError::Invariant));
             }
             Err(BulkheadError::NotAdmitted(error)) => {
                 return Ok(Action::Admission {
-                    state: snapshot.state,
+                    state: snapshot.state.try_into().map_err(state_failure)?,
                     error,
                 });
             }
             Err(BulkheadError::Operation(OperationError::Failed(error))) => return Err(error),
             Err(BulkheadError::Operation(OperationError::Interrupted(reason))) => {
-                return Ok(self.interruption_action(Some(reason)));
+                return Ok(self.exchange.interrupted(Some(reason)));
             }
         };
         Ok(match outcome {
@@ -223,12 +173,12 @@ impl Invocation<'_> {
             }
             Ok(DispatchOutcome::BusinessDenied) => Action::Deny {
                 code: "provider_business_denied",
-                expected: ProviderEffectState::ReconcileNeeded,
+                expected: UnresolvedEffectState::ReconcileNeeded,
             },
             Ok(DispatchOutcome::Conflict) => Action::Manual {
                 code: "provider_payload_conflict",
                 message: "Provider identity conflicted with the retained payload.",
-                expected: ProviderEffectState::ReconcileNeeded,
+                expected: UnresolvedEffectState::ReconcileNeeded,
             },
             outcome @ (Ok(DispatchOutcome::Indeterminate) | Err(_)) => Action::Uncertain {
                 code: outcome

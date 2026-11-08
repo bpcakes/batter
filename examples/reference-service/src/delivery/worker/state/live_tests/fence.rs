@@ -1,4 +1,4 @@
-use super::super::super::phased::{Action, Invocation, Progress};
+use super::super::super::phased::{Action, Invocation};
 use super::*;
 use batter::runledger::{LateJobFinalization, LateJobSettlement};
 use std::{
@@ -31,10 +31,7 @@ impl Future for BetweenPolls<'_> {
     type Output = Result<Action, JobFailure>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.nested && self.fence_waiting.load(Ordering::SeqCst) {
-            assert!(matches!(
-                self.invocation.current_progress(),
-                Progress::StateChange
-            ));
+            assert!(self.invocation.exchange.is_fencing());
             let after_deadline = Arc::new(AtomicBool::new(false));
             let signal = after_deadline.clone();
             let deadline = self.deadline + Duration::from_millis(10);
@@ -220,7 +217,10 @@ async fn committed_fence(worker: &DeliveryWorker) -> Result<(), BoxError> {
     // PostgreSQL's wire-level COMMIT response timing.
     let (context, payload) = claimed(&worker.pool).await?;
     let handler = PhasedJob::new(
-        CommittedFence(Invocation::new(worker, &payload)),
+        CommittedFence(Invocation {
+            exchange: super::super::super::exchange::Exchange::with_held_fence_ack(),
+            ..Invocation::new(worker, &payload)
+        }),
         PROBE_BUDGET - Duration::from_millis(500),
     )?;
     let run = HandlerInvocation::for_context(PROBE_BUDGET, context)?
@@ -246,19 +246,7 @@ impl PhasedJobHandler for CommittedFence<'_> {
         JobType::new(DELIVERY_JOB_TYPE)
     }
     async fn work(&self, scope: JobWork<'_>, _: Value) -> Result<Action, JobFailure> {
-        self.0.progress(Progress::StateChange);
-        assert!(
-            self.0
-                .worker
-                .mark_dispatch_possible(
-                    scope.execution(),
-                    self.0.payload,
-                    ProviderEffectState::AwaitingAttempt
-                )
-                .await
-                .map_err(state_failure)?
-        );
-        std::future::pending().await
+        self.0.work(scope, Value::Null).await
     }
     async fn finalize(
         &self,

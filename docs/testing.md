@@ -398,3 +398,12 @@ Record the command, revision, toolchain, lockfile hash, platform, result and
 skipped prerequisites in the owning Bead. Source inspection is not a passing
 test, a successful build is not an operational audit, and a local timeout does
 not establish database rollback or provider non-dispatch.
+
+The `batter-f9kq.8` exchange refactor retains these interruption and settlement
+regressions. The committed-fence case now drives the actual production work and
+exchange, withholding acknowledgement after its real fence transaction commits;
+it no longer sets a recovery marker independently. Other probes observe admission
+and fence state read-only. Native handler tests cover the private driver's ready,
+work, ordinary-finalization and late-settlement paths, including callback
+construction, polling and destruction failures. Execution results belong to the
+owning Bead; no new fresh-agent usability evaluation is claimed.

@@ -3206,7 +3206,13 @@ within finalization. The write still requires the live native lease and original
 deadline; failed storage or lost authority cannot establish recorded recovery.
 
 `Bulkhead::run` owns each provider exchange and releases its capacity before
-finalization persists the outcome. Send and body errors remain distinct, with static
+finalization persists the outcome. Application-private exchange methods own
+admission, dispatch-fence execution and provider entry together with their
+interruption evidence. There is no consumer progress setter. A returned fence
+error clears its recovery obligation before leaving that boundary; interrupted
+fence execution retains reload authority. Denial, manual-resolution and admission
+actions carry only unresolved source states. SQL still revalidates the live
+lease and current state; these local types cannot prove remote outcomes. Send and body errors remain distinct, with static
 diagnostic codes and connector-only known non-dispatch. One owner-scoped query
 boundary validates identity and projects unresolved terminal jobs from a single
 job/effect snapshot: spent dead-lettered attempts become exhausted, other native

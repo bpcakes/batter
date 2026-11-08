@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Own reference-worker interruption evidence inside exchange execution, remove
+  caller-set progress markers and constrain recovery actions to unresolved
+  source states. Represent the phased job adapter's private execution state
+  explicitly instead of combining optional payload and settlement flags
+  (`batter-f9kq.8`). Public APIs and persisted protocol states are unchanged.
+
 - Add explicit late-value settlement to `PhasedJobHandler`: the adapter issues
   `LateJobFinalization` only for clean successful work returns after the work
   deadline and accepts recovery only after checked settlement within native

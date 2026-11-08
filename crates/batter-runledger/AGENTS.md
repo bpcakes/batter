@@ -57,6 +57,9 @@ The optional `settle_late` callback receives only a retained successful value
 whose sole work failure is deadline expiry. Its opaque proposal is driven by
 the existing kernel; accept recovery only after clean finalization and a native
 authority recheck after future destruction. Default finalization stays strict.
+Keep the private driver in one explicit state (ready payload, work, ordinary
+finalization or late settlement), rather than independent payload/settlement
+flags. Do not wrap callback futures before the kernel captures their destruction.
 Do not infer application commit meaning or merge native completion persistence.
 Native invocation termination still ends authority; do not finalize after it.
 Private `job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the

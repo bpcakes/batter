@@ -1,4 +1,4 @@
-use super::super::super::phased::{Action, Invocation, Progress};
+use super::super::super::phased::{Action, Invocation};
 use super::*;
 use batter::runledger::{LateJobFinalization, LateJobSettlement};
 use std::sync::{
@@ -88,7 +88,7 @@ impl PhasedJobHandler for Probe<'_> {
         scope: LateJobFinalization<'a, Action>,
     ) -> LateJobSettlement<'a, JobFailure> {
         assert!(
-            matches!(self.invocation.current_progress(), Progress::Admission(_)),
+            self.invocation.exchange.is_admitting(),
             "neither fence nor provider callback started"
         );
         assert!(matches!(scope.value(), Action::Admission { .. }));

@@ -234,13 +234,12 @@ impl<H: PhasedJobHandler> JobHandler for PhasedJob<H> {
             let mut driver = Driver {
                 handler: &self.handler,
                 execution,
-                payload: Some(payload),
-                settling_late: false,
+                state: DriverState::Ready(payload),
             };
             match drive_phases(phases, &mut driver).await {
                 Ok((_work, completion)) => Ok(completion),
                 Err(error) => {
-                    if driver.settling_late
+                    if matches!(driver.state, DriverState::SettlingLate)
                         && let Some(recovered) = RecoveredCompletion::checked(&error, execution)
                     {
                         return Ok(recovered.into_completion());
@@ -259,9 +258,17 @@ impl<H: PhasedJobHandler> JobHandler for PhasedJob<H> {
 struct Driver<'a, H> {
     handler: &'a H,
     execution: JobExecution<'a>,
-    payload: Option<Value>,
-    settling_late: bool,
+    state: DriverState,
 }
+// The kernel owns entry into work and one finalizer (work preflight may refuse).
+// Keeping these states together excludes payload/settlement flag combinations.
+enum DriverState {
+    Ready(Value),
+    Working,
+    Finalizing,
+    SettlingLate,
+}
+
 impl<'a, H: PhasedJobHandler> ScopedPhases for Driver<'a, H> {
     type Work = H::Output;
     type WorkError = H::Error;
@@ -272,12 +279,16 @@ impl<'a, H: PhasedJobHandler> ScopedPhases for Driver<'a, H> {
         &'s mut self,
         context: &'s OperationContext,
     ) -> impl std::future::Future<Output = Result<H::Output, H::Error>> + Send + 's {
+        let DriverState::Ready(payload) = std::mem::replace(&mut self.state, DriverState::Working)
+        else {
+            unreachable!("phase kernel invokes work once");
+        };
         self.handler.work(
             JobWork {
                 execution: self.execution,
                 context,
             },
-            self.payload.take().expect("phase driver invokes work once"),
+            payload,
         )
     }
     fn finalize<'s>(
@@ -295,9 +306,10 @@ impl<'a, H: PhasedJobHandler> ScopedPhases for Driver<'a, H> {
                 })
                 .0
         {
-            self.settling_late = true;
+            self.state = DriverState::SettlingLate;
             return future;
         }
+        self.state = DriverState::Finalizing;
         self.handler.finalize(JobFinalization {
             execution: self.execution,
             context,

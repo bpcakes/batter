@@ -476,3 +476,33 @@ preflight boundary. Bulkhead's interruption result does not promise callback
 entry, and provider state transitions belong to this application, so no new
 core capability or native lifecycle is needed. This bounded consumer repair
 and the failed-before/passed-after evidence are recorded in `batter-f9kq.3`.
+
+## Application exchange recovery and private driver states (`batter-f9kq.8`)
+
+The shared interruption classifier still depended on callers setting `Progress`
+before admission, SQL and provider awaits, and resetting it before local planning.
+A misplaced or omitted setter compiled. `Action` also accepted terminal states
+that its intended persistence transition could only reject. These are local
+application composition gaps, even though the durable provider protocol itself
+remains application policy. Repeating marker instructions would not remove them.
+
+Application-private `Exchange` methods now own admission, the fence and provider
+execution together with retained recovery evidence. Its state and writes are
+private to that module; work planners can invoke operations and read interruption
+actions, but cannot mark a phase as entered. A returned fence error clears its
+obligation at the operation boundary, removing the finalizer's progress/error
+pairing rule. Denial, manual and admission actions carry `UnresolvedEffectState`,
+so terminal sources cannot be passed to those actions. SQL comparisons and live
+lease revalidation remain necessary against concurrent database changes.
+
+The native adapter replaces independent optional-payload and settlement flags
+with one private `DriverState`: ready with payload, working, finalizing or settling
+late. The existing kernel owns its transitions and still receives callback
+futures directly for separate return/destruction evidence. This is explicit
+internal runtime state, not public typestate or a new consumer protocol.
+
+No public signature, persisted state or native ownership changes. The lower-level
+phase seam retains its documented host-ownership obligations. Existing live
+interruption tests exercise the new owner; the committed-fence probe now withholds
+acknowledgement inside real exchange execution rather than setting a marker.
+Fresh-agent implementation/modification evaluation remains unexecuted.

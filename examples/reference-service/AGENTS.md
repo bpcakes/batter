@@ -43,6 +43,8 @@ Unix-only application is not a reusable database framework.
 - `src/delivery/worker.rs` owns provider admission, durable dispatch uncertainty,
   lookup-before-replay, generation fencing and terminal outcome projection;
   `src/delivery/worker/state.rs` owns its lease-fenced SQL state transitions.
+  `worker/exchange.rs` owns admission, fence/provider execution and interruption
+  evidence together; do not restore caller-controlled progress markers.
   `src/delivery/worker/tests.rs` drives the handler, and through `in_invocation`
   each admission or state probe, with `batter::runledger::test_support`; its
   only custom services are negative controls for services without an exit

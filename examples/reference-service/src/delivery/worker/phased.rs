@@ -1,11 +1,11 @@
 //! The native invocation owns borrowed work, retained intent and final-state SQL.
 use super::*;
+use super::{exchange::Exchange, state::UnresolvedEffectState};
 use batter::{
     command::CommandCause,
-    operation::{Interruption, PhaseOutcome, PhasedFailure},
+    operation::{PhaseOutcome, PhasedFailure},
     runledger::{LateJobFinalization, LateJobSettlement},
 };
-use std::sync::Mutex;
 
 pub(super) enum Action {
     Complete,
@@ -13,12 +13,12 @@ pub(super) enum Action {
     Confirm(String),
     Deny {
         code: &'static str,
-        expected: ProviderEffectState,
+        expected: UnresolvedEffectState,
     },
     Manual {
         code: &'static str,
         message: &'static str,
-        expected: ProviderEffectState,
+        expected: UnresolvedEffectState,
     },
     Undispatched(Duration),
     FenceInterrupted,
@@ -27,58 +27,22 @@ pub(super) enum Action {
         message: &'static str,
     },
     Admission {
-        state: ProviderEffectState,
+        state: UnresolvedEffectState,
         error: AdmissionError,
     },
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum Progress {
-    Preparing,
-    Admission(ProviderEffectState),
-    StateChange,
-    Reconcile,
-    Dispatch,
 }
 
 pub(super) struct Invocation<'a> {
     pub worker: &'a DeliveryWorker,
     pub payload: &'a DeliveryJobPayload,
-    progress: Mutex<Progress>,
+    pub(super) exchange: Exchange,
 }
 impl Invocation<'_> {
     pub fn new<'a>(worker: &'a DeliveryWorker, payload: &'a DeliveryJobPayload) -> Invocation<'a> {
         Invocation {
             worker,
             payload,
-            progress: Mutex::new(Progress::Preparing),
-        }
-    }
-
-    pub fn progress(&self, progress: Progress) {
-        *self.progress.lock().expect("invocation state") = progress;
-    }
-
-    pub fn current_progress(&self) -> Progress {
-        *self.progress.lock().expect("invocation state")
-    }
-
-    pub fn interruption_action(&self, interruption: Option<Interruption>) -> Action {
-        // Nested operation refusal and outer phase interruption must use the
-        // same evidence: admission alone proves neither callback entry nor send.
-        match self.current_progress() {
-            Progress::Preparing => Action::Complete,
-            Progress::Admission(state) => Action::Admission {
-                state,
-                error: AdmissionError::Interrupted(interruption.unwrap_or(Interruption::Cancelled)),
-            },
-            Progress::StateChange => Action::FenceInterrupted,
-            Progress::Reconcile | Progress::Dispatch => Action::Uncertain {
-                code: interruption.map_or(CODE_DISPATCH_INDETERMINATE, |reason| {
-                    crate::provider::ProviderCallError::Interrupted(reason).code()
-                }),
-                message: "Provider work ended without a definitive retained outcome.",
-            },
+            exchange: Exchange::new(),
         }
     }
 
@@ -95,7 +59,7 @@ impl Invocation<'_> {
             Action::Confirm(id) => worker.confirm(execution, payload, id.clone()).await,
             Action::Deny { code, expected } => {
                 worker
-                    .record_business_denial(execution, payload, code, *expected)
+                    .record_business_denial(execution, payload, code, expected.retained())
                     .await
                     .map_err(state_failure)?;
                 Ok(JobCompletion::success())
@@ -112,7 +76,7 @@ impl Invocation<'_> {
                         code,
                         None,
                         ProviderAcceptance::Possible,
-                        *expected,
+                        expected.retained(),
                     )
                     .await
                     .map_err(state_failure)?;
@@ -131,7 +95,7 @@ impl Invocation<'_> {
             }
             Action::Admission { state, error } => {
                 worker
-                    .admission_failure(execution, payload, *state, error)
+                    .admission_failure(execution, payload, state.retained(), error)
                     .await
             }
         }
@@ -246,14 +210,7 @@ impl PhasedJobHandler for Invocation<'_> {
             Err(CommandCause::Interrupted(reason)) => Some(*reason),
             _ => failure.interruption_after_return(),
         };
-        // A returned SQL/policy failure is already classified by work.
-        // In particular, RetryDeferred must not rewrite retained state.
-        if matches!(self.current_progress(), Progress::StateChange)
-            && matches!(failure.returned_result(), Err(CommandCause::Failed(_)))
-        {
-            return Ok(JobCompletion::success());
-        }
-        let action = self.interruption_action(interruption);
+        let action = self.exchange.interrupted(interruption);
         self.finish(scope.execution(), &action).await
     }
     fn failed(&self, failure: PhasedJobFailure<Action, JobFailure>) -> JobFailure {

@@ -1,5 +1,5 @@
 //! Actual final-state SQL and native handler outcomes for late retained actions.
-use super::super::super::phased::{Action, Invocation, Progress};
+use super::super::super::phased::{Action, Invocation};
 use super::*;
 use batter::runledger::{LateJobFinalization, LateJobSettlement, test_support::HandlerExit};
 use std::sync::{
@@ -137,17 +137,17 @@ fn action(case: Case) -> Action {
         Case::Confirm | Case::Stale => Action::Confirm("fixture-accepted".into()),
         Case::Deny | Case::LeaseLost => Action::Deny {
             code: "fixture_denied",
-            expected: ProviderEffectState::ReconcileNeeded,
+            expected: super::super::UnresolvedEffectState::ReconcileNeeded,
         },
         Case::CommitFailed => Action::Deny {
             code: "fixture_commit_failure",
-            expected: ProviderEffectState::ReconcileNeeded,
+            expected: super::super::UnresolvedEffectState::ReconcileNeeded,
         },
         Case::Undispatched => Action::Undispatched(Duration::from_secs(60)),
         Case::Manual => Action::Manual {
             code: "fixture_conflict",
             message: "Conflicting retained truth.",
-            expected: ProviderEffectState::ReconcileNeeded,
+            expected: super::super::UnresolvedEffectState::ReconcileNeeded,
         },
     }
 }
@@ -155,7 +155,6 @@ fn action(case: Case) -> Action {
 async fn check_case(worker: &DeliveryWorker, case: Case) -> Result<(), BoxError> {
     let (context, payload) = prepare_case(worker, case).await?;
     let invocation = Invocation::new(worker, &payload);
-    invocation.progress(Progress::Dispatch);
     let late = Arc::new(AtomicBool::new(false));
     let probe = Probe {
         invocation,
