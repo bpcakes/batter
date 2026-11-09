@@ -54,12 +54,14 @@ store that issued it. Only explicit fields expose actor, reason and row images. 
 A `ProcessPresence` holds what does not change between heartbeats: a process id
 minted for it, its application, environment and build labels, its catalog as a
 `CatalogPublication`, the revisions it resolved and its `Cadence` (liveness and
-retention, whole seconds from 1 s to 24 h). `heartbeat(&presence, &report, deadline)`
-runs one READ COMMITTED transaction: it takes a key-share lock on the stored
+retention, whole seconds from 1 s to 24 h). It is made from the store that
+heartbeats it (`ProcessPresence::new(&store, ...)`), and
+`presence.heartbeat(&report, deadline)` runs one READ COMMITTED transaction: it takes a key-share lock on the stored
 catalog, inserting the catalog and its entries only when none is stored, refreshes
 the catalog's reference at most once a day, and upserts the process row with a
 server-clock expiry and the row's own cadence. A heartbeat never clears a stop;
-`stop` records one and leaves the expiry alone. Neither is audited or retried, so
+`presence.stop(deadline)` consumes the presence, records the stop and leaves the
+expiry alone. Neither is audited or retried, so
 an unknown commit is `ErrorClass::CommitUnknown` and the next heartbeat restates
 presence.
 
@@ -172,7 +174,9 @@ The migrator owns tables and functions. Serving writer logins must be non-owner,
 non-superuser and unable to set `session_replication_role`. They need schema
 USAGE, SELECT on control/state/catalog/entry/process tables, UPDATE(version) on
 control and INSERT/UPDATE on state; history readers additionally need SELECT on
-audit. They receive **no** INSERT/UPDATE/DELETE on audit, no schema CREATE, and
+audit. Every operator read first reads control's `schema_revision` (with
+`singleton`) for its guard; `batter_flags::grants` lists each operation's exact
+privileges. They receive **no** INSERT/UPDATE/DELETE on audit, no schema CREATE, and
 no ownership membership. Database owners/superusers/replica-mode sessions are
 outside the guard claims. Schema creation does not grant application roles;
 fixture setup does, and the later adapter grants inventory owns production

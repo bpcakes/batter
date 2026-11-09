@@ -84,8 +84,9 @@ command in [`batter-flags-cli`](../batter-flags-cli/README.md).
 interval and run budget; startup is always immediate and work stops at drain.
 The callback receives an `OperationContext` and the one `SnapshotView` used to
 gate that run. Awaiting publication and tripped switches skip without calling
-the callback. `GatedPeriodicReader::skipped()` counts both; its `snapshot()`
-returns core's periodic evidence, where `succeeded` includes skipped runs.
+the callback. Each skip is core's `PeriodicOutcome::Skipped`:
+`GatedPeriodicReader::skipped()` reads core's `PeriodicSummary::skipped`, and
+its `snapshot().succeeded` counts only runs whose work succeeded.
 A publication during work reaches the next run and does not cancel active work.
 Work needed for native settlement during drain must register ungated through
 core. The method's rustdoc contains an executable registration example.
@@ -104,6 +105,11 @@ next invocation; it does not interrupt work already admitted. The native
 `on_dead_letter` callback forwards the original raw payload, including malformed
 payloads. Direct legacy `execute` is refused with
 `job.execution_services_required`.
+
+`Flags::flagged(inner, awaiting)` gates nothing, but under
+`LoadPolicy::unready_until_loaded` it defers an invocation made before the first
+publication with its `awaiting: Recheck`, as the gate constructors do;
+`start_on_defaults`, declared mode and test flags run every invocation.
 
 Both gate constructors require `GatePolicy { when_tripped, awaiting }`.
 `Recheck::after` accepts 30 seconds through one hour; deterministic per-job spread
