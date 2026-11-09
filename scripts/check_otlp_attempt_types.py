@@ -59,13 +59,22 @@ CASES = [
 ]
 
 
+def rust_string(value):
+    """Rust scalar escapes also cover quotes, backslashes and control characters."""
+    return '"' + ''.join('\\u{' + format(ord(char), 'x') + '}' for char in value) + '"'
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="batter-attempt-types-") as directory:
         root = Path(directory)
-        for name, snippet, expected in CASES:
+        alias = root / 'méthode-"\\\t.rs'
+        alias.symlink_to(ATTEMPT)
+        cases = [(name, snippet, expected, ATTEMPT) for name, snippet, expected in CASES]
+        cases.insert(1, ("unicode-path-positive", POSITIVE, None, alias))
+        for name, snippet, expected, attempt in cases:
             source = root / f"{name}.rs"
-            source.write_text(PREFIX + f"#[path = {json.dumps(str(ATTEMPT))}] mod attempt;\n"
-                              + snippet + "\n}\n")
+            source.write_text(PREFIX + f"#[path = {rust_string(str(attempt))}] mod attempt;\n"
+                              + snippet + "\n}\n", encoding="utf-8")
             outcome, = run_parallel(
                 [["rustc", "--edition=2024", "--crate-type=lib", "--crate-name=attempt_control",
                   "--emit=metadata", "--error-format=json", str(source), "-o", str(root / "check.rmeta")]],

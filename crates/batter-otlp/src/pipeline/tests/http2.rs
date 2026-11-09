@@ -35,6 +35,7 @@ async fn refused_streams(builder: reqwest::ClientBuilder) -> usize {
         client: builder.http2_prior_knowledge().build().unwrap(),
         gate: owner.gate(),
         profile: super::ResponseProfile::Otlp,
+        body_pending: None,
     };
     let request = http::Request::post(endpoint)
         .body(Bytes::from_static(b"metrics"))

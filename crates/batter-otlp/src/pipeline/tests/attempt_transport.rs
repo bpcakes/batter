@@ -5,7 +5,7 @@ use crate::diagnostics::{ExportFailure, ExportOutcome};
 use crate::tests::collector::{self, Behavior, Collector};
 use bytes::Bytes;
 use opentelemetry_http::HttpClient;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
 fn request(endpoint: &str, body: Vec<u8>) -> http::Request<Bytes> {
@@ -70,15 +70,33 @@ async fn dropping_stalled_exports_allows_a_fresh_attempt_without_replaying_the_o
         let collector = Collector::start(behavior).await.unwrap();
         let endpoint = collector.endpoint();
         let mut owner = Owner::default();
-        let client = BoundedClient::new(owner.gate(), ResponseProfile::Otlp).unwrap();
+        let mut client = BoundedClient::new(owner.gate(), ResponseProfile::Otlp).unwrap();
+        let body_pending = Arc::new(tokio::sync::Notify::new());
+        client.body_pending = Some(body_pending.clone());
         let mut pending = Box::pin(owner.run(Instant::now() + Duration::from_secs(3), || {
             client.send_bytes(request(&endpoint, vec![]))
         }));
+        let checkpoint = async {
+            match behavior {
+                Behavior::StallHeaders => {
+                    collector
+                        .wait_requests(1, Duration::from_secs(2))
+                        .await
+                        .unwrap();
+                }
+                Behavior::StallBody => {
+                    // Request receipt precedes headers. Wait for the actual body
+                    // future to return Pending before exercising its cancellation.
+                    tokio::time::timeout(Duration::from_secs(2), body_pending.notified())
+                        .await
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+        };
         tokio::select! {
             outcome = &mut pending => panic!("stalled attempt returned: {outcome:?}"),
-            received = collector.wait_requests(1, Duration::from_secs(2)) => {
-                received.unwrap();
-            }
+            () = checkpoint => {}
         }
         drop(pending);
         assert!(client.send_bytes(request(&endpoint, vec![])).await.is_err());

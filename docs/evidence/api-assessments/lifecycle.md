@@ -605,11 +605,14 @@ The runtime controls exercise simultaneous claims from OS threads, concurrent
 actual HTTP callbacks, no dispatch outside an attempt or for oversized input,
 expired authorization, cancellation and fresh exports after stalled headers/body,
 stale handles in every phase, factory panic, unpolled factories, and typed outcome
-versus outer deadline races. The original dual-profile response and protected
-service completion suites remain in place.
+versus outer deadline races. A test-only witness reports when polling the actual bounded body reader returns
+pending; body-cancellation waits for that witness rather than server request
+receipt. The original dual-profile response and protected service completion
+suites remain in place.
 
 `scripts/check_otlp_attempt_types.py` compiles the actual private attempt module
-with a positive control and expected compiler errors for reused/cloned phase
+with positive controls (including a non-ASCII/escaped source path) and expected
+compiler errors for reused/cloned phase
 handles, premature acknowledgement, fabricated state, overlapping owner borrows
 and the removed paired-call protocol. Its clock/diagnostic shims supply names for
 compilation only; runtime semantics use actual Tokio and HTTP in the Rust tests.

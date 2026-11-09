@@ -52,6 +52,8 @@ struct BoundedClient {
     client: reqwest::Client,
     gate: Arc<attempt::Gate>,
     profile: ResponseProfile,
+    #[cfg(test)]
+    body_pending: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl fmt::Debug for BoundedClient {
@@ -68,6 +70,8 @@ impl BoundedClient {
             client,
             gate,
             profile,
+            #[cfg(test)]
+            body_pending: None,
         })
     }
 
@@ -126,7 +130,23 @@ impl BoundedClient {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<mime::Mime>().ok())
             .is_some_and(|value| value.essence_str() == PROTOBUF);
-        let body = bounded_body(response).await?;
+        let body = bounded_body(response);
+        #[cfg(not(test))]
+        let body = body.await?;
+        #[cfg(test)]
+        let body = {
+            let mut body = std::pin::pin!(body);
+            std::future::poll_fn(|context| {
+                let result = body.as_mut().poll(context);
+                if result.is_pending()
+                    && let Some(pending) = &self.body_pending
+                {
+                    pending.notify_one();
+                }
+                result
+            })
+            .await?
+        };
         // Only this explicit profile accepts the backend's empty untyped 200.
         if self.profile == ResponseProfile::VictoriaMetrics
             && missing_content_type
