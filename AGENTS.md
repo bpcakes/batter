@@ -139,7 +139,9 @@ and below TLS; `transport/dial.rs` owns bounded address fallback, with at most
 two TCP candidates under the same setup deadline and losers dropped before
 TLS/HTTP; `send.rs` owns the immediate pre-`send_request` gate and drives
 hyper's low-level HTTP/1 connection inside the exchange future, never spawned.
-No pool, reuse, redirect or resend. `operation.rs`, behind opt-in `operation`,
+No pool, reuse, redirect or resend. `send/buffer.rs` owns response-body storage,
+zeroing each allocation before release and giving a complete body to `Bytes`
+through a zeroizing owner. `operation.rs`, behind opt-in `operation`,
 bridges OperationContext and is the package's only Batter dependency.
 Provider meaning, replay, idempotency, fences and reconciliation remain with
 the application. The facade only reexports `batter::outbound_http` behind

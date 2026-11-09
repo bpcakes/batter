@@ -554,6 +554,11 @@ The same owner drives bounded address fallback before TLS: at most two TCP
 candidates can be active under one setup deadline, and losing candidates are
 dropped before the single selected connection receives an HTTP request.
 
+Response bodies accumulate in a private buffer whose every allocation is zeroed
+before release, including partial bodies and allocations replaced by growth. A
+complete body gives that buffer to `Bytes`, so its last clone or slice wipes it.
+Upstream transport buffers and caller copies stay outside that guarantee.
+
 The fixed rustls configuration keeps explicit *ring*, TLS 1.3/1.2,
 `http/1.1` ALPN and the operating system verifier for HTTPS. Loopback HTTP does
 not load trust roots. Only the optional `operation` bridge depends on

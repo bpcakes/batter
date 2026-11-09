@@ -147,3 +147,49 @@ the API makes no such claim. Enforcement uses the inspected Tokio lookup
 result directly, followed by the existing bounded dialer, with no second DNS
 lookup. Literal and real localhost tests cover refusal before TCP; mixed-answer
 tests observe dialer calls rather than issuing traffic to public addresses.
+
+## Outbound response-body storage (2026-11-09)
+
+`batter-53nf` replaces the body read's growing `Vec` with a fixed zeroizing
+buffer. Cargo resolves bytes 1.12.1 and zeroize 1.9.1, and the exact downloaded
+registry sources were inspected; these are source observations.
+
+- [Bytes::from_owner](https://docs.rs/bytes/1.12.1/bytes/struct.Bytes.html#method.from_owner)
+  moves the owner into a reference-counted `Owned<T>` (`src/bytes.rs:254-290`).
+  `owned_clone` only increments that count (`:1114`), and clones, slices and
+  splits keep the owner. `owned_drop_impl` decrements with `Release`, and only the
+  last release takes an `Acquire` load and drops `Box<Owned<T>>` (`:1144-1160`).
+  The destructor therefore runs once, after every other view is finished.
+- `owned_is_unique` is always false (`:1140`), so `try_into_mut` returns `Err`.
+  `owned_to_vec` deep-copies with `to_vec` and then releases its share (`:1129`),
+  and `owned_to_mut` goes through it (`:1136`). Upstream documents that conversion
+  to `BytesMut` always creates a deep copy. A sole handle of a body built by
+  `Bytes::from(Vec)` is unique (`promotable_is_unique`, `:1306-1316`), so it could
+  be reclaimed without a copy; that no longer happens.
+- [`Zeroize for [Z]`](https://docs.rs/zeroize/1.9.1/zeroize/trait.Zeroize.html)
+  writes the default value through `ptr::write_volatile` for every element
+  (`src/lib.rs:452-467`, `:749-765`). Its `Vec` implementation is documented as
+  best effort because it cannot reach storage released by earlier reallocations
+  (`:512-533`), which is why the buffer does not grow a `Vec`. The `Zeroize for
+  [Z]` used here needs no `alloc` feature; this package disables default features.
+- [Incoming](https://docs.rs/hyper/1.11.1/hyper/body/struct.Incoming.html) frames
+  are hyper-owned `Bytes` that `read_mem` splits from its read buffer
+  (`src/proto/h1/io.rs:354-362`); the length, chunked and close-delimited decoders
+  return them as frames (`src/proto/h1/decode.rs:151-170`, `:476-504`, `:224-236`).
+  The package copies them out and cannot wipe that storage.
+
+Each protection was removed in turn and the private tests were rerun on Linux:
+the destructor's wipe (removed, limited to half the written bytes, and limited to
+the written bytes), the destructor on replaced allocations, `Bytes::from_owner`
+(copied out, then leaked), the growth ceiling, the absence of eager limit
+allocation, the preallocation cap and, one at a time, the size-limit, transport,
+cancellation and deadline paths. Each of the thirteen ablations failed the
+matching tests, and all passed once restored.
+
+In one release-build measurement on Linux x86-64, `zeroize` took 0.26 ms for
+1 MiB, 2.1 ms for 8 MiB and 18 ms for 64 MiB, against 0.36 ms, 4.2 ms and 38 ms for
+copying the same sizes into fresh zeroed memory. One growth step pays both for
+its old allocation, so the largest steps approach `RESERVE`. A protected final
+shrink would have paid both again in the exchange's last poll, which is why a
+completed body keeps the allocation it grew into. Execution details and platform
+limits are recorded in `batter-53nf`.
