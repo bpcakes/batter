@@ -198,8 +198,11 @@ failure test injects the server's 54000 ErrorResponse at COMMIT without exhausti
 the cluster's queue. Standby and older-server checks use injected server values;
 no actual replica or PostgreSQL 17 server is claimed. The standby refusal of
 `load`, `preflight` and the operator reads (`keys`, `key`, `history` and the
-fleet reads) is therefore proved only for the injected `check_primary` scalar
-and is unverified at those call sites: the read-only snapshot pins
-`search_path` to `pg_catalog, pg_temp`, so no session can stand in for a
-replica's `pg_is_in_recovery()`, and no suite runs one. Shared core encoding
+fleet reads) goes through one store check, which a test-only hook makes read
+as a standby: the ignored live unit test
+`every_read_and_the_load_refuse_a_standby_before_reading_anything` asserts
+`Standby` from each of them on an unmigrated store, before any schema or row
+is read. The read-only snapshot pins `search_path` to `pg_catalog, pg_temp`, so
+no session can stand in for a replica, and no suite runs one: a real replica's
+`pg_is_in_recovery()` stays unverified. Shared core encoding
 vectors, schema column lists and the initial migration checksum are pinned.

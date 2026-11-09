@@ -64,6 +64,11 @@ pub struct PooledStore {
     pub(crate) timing: StoreTiming,
     #[cfg(test)]
     pub(crate) pause: Option<std::sync::Arc<super::tests::Pause>>,
+    /// Test builds only: the recovery check reads as a standby, because no
+    /// suite runs a replica and a read snapshot pins `search_path`, so no
+    /// session can stand in for one.
+    #[cfg(test)]
+    pub(crate) standby: bool,
 }
 impl std::fmt::Debug for PooledStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -83,7 +88,24 @@ impl PooledStore {
             timing,
             #[cfg(test)]
             pause: None,
+            #[cfg(test)]
+            standby: false,
         }
+    }
+
+    /// Refuses a standby with `ErrorClass::Standby`: the first read `load`,
+    /// `preflight` and every operator read make in their snapshot, before any
+    /// schema or row.
+    pub(crate) async fn refuse_standby(
+        &self,
+        sql: &mut batter_sqlx::PgReadOnlySql<'_>,
+    ) -> Result<(), StoreError> {
+        let recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
+            .fetch_one(sql.executor())
+            .await?;
+        #[cfg(test)]
+        let recovery = recovery || self.standby;
+        crate::errors::check_primary(recovery)
     }
 }
 pub(crate) fn remaining(deadline: Instant) -> Result<Duration, StoreError> {

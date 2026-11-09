@@ -44,6 +44,9 @@ session's default path resolves into `flags`, decided before anything is
 migrated by a probe that creates the schema only in a transaction it always
 rolls back. Never move the check after the migrator: a refusal must mean
 nothing was applied.
+`load`, `preflight` and every operator read call `PooledStore::refuse_standby`
+first in their snapshot, before any schema or row; keep that one check, which
+the test-only `standby` hook exercises.
 The write interrupt retains its terminal state across preparation and commit
 validation. A closed sender disables interruption; it is never polled again.
 

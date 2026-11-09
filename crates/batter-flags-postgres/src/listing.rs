@@ -3,7 +3,6 @@
 
 use crate::{
     ErrorClass, PooledStore, REQUIRED_SCHEMA_REVISION, StoreError, StoredState,
-    errors::check_primary,
     load::{snapshot_error, version},
 };
 use batter_flags_core::{FlagKey, Version};
@@ -118,11 +117,7 @@ impl PooledStore {
         let [statement, lock, idle] = self.timing.settings(deadline)?;
         sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
             .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
-        check_primary(
-            sqlx::query_scalar("SELECT pg_is_in_recovery()")
-                .fetch_one(sql.executor())
-                .await?,
-        )?;
+        self.refuse_standby(sql).await?;
         let found: i32 =
             sqlx::query_scalar("SELECT schema_revision FROM flags.flag_control WHERE singleton")
                 .fetch_one(sql.executor())

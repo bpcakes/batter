@@ -215,3 +215,50 @@ fn a_schema_observation_survives_a_failed_cleanup() {
         None
     );
 }
+
+/// `load`, `preflight` and every operator read refuse a standby before they
+/// read any schema or row: on a store that was never migrated, the standby
+/// refusal wins over the schema refusal. The store's test hook makes the
+/// recovery check read as a standby, because no suite runs a replica and a
+/// read snapshot pins `search_path`, so no session can stand in for one; a
+/// real replica's `pg_is_in_recovery()` stays unexercised.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn every_read_and_the_load_refuse_a_standby_before_reading_anything() {
+    use fixture::*;
+    fn class<T>(outcome: Result<T, StoreError>) -> Option<ErrorClass> {
+        outcome.err().map(|error| error.class())
+    }
+    let f = Fixture::new().await;
+    let halt = key("halt");
+    let mut store = PooledStore::new(f.pool.clone(), timing());
+    for (standby, expected) in [
+        (true, ErrorClass::Standby),
+        (false, ErrorClass::SchemaRevision),
+    ] {
+        store.standby = standby;
+        let outcomes = [
+            ("load", class(store.load(deadline()).await)),
+            ("preflight", class(store.preflight(deadline()).await)),
+            ("keys", class(store.keys(deadline()).await)),
+            ("key", class(store.key(&halt, deadline()).await)),
+            (
+                "history",
+                class(
+                    store
+                        .history(Some(&halt), batter_flags_core::Version::new(0), deadline())
+                        .await,
+                ),
+            ),
+            ("fleet", class(store.fleet(deadline()).await)),
+            (
+                "fleet_declaring",
+                class(store.fleet_declaring(&halt, deadline()).await),
+            ),
+        ];
+        for (operation, outcome) in outcomes {
+            assert_eq!(outcome, Some(expected), "{operation} as standby={standby}");
+        }
+    }
+    f.close().await;
+}

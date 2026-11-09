@@ -1,7 +1,4 @@
-use crate::{
-    ErrorClass, PooledStore, REQUIRED_SCHEMA_REVISION, StoreError,
-    errors::{ErrorKind, check_primary},
-};
+use crate::{ErrorClass, PooledStore, REQUIRED_SCHEMA_REVISION, StoreError, errors::ErrorKind};
 use batter_flags_core::{
     Version,
     low_level::{Candidate, CandidateRow, ValidationScope},
@@ -61,9 +58,7 @@ impl PooledStore {
                 let [statement, lock, idle] = self.timing.settings(deadline)?;
                 sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
                     .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
-                let recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
-                    .fetch_one(sql.executor()).await?;
-                check_primary(recovery)?;
+                self.refuse_standby(sql).await?;
                 // No control relation means no flags migration has run yet.
                 let row = sqlx::query("SELECT version, schema_revision, channel FROM flags.flag_control WHERE singleton")
                     .fetch_one(sql.executor()).await.map_err(crate::errors::missing_schema)?;
