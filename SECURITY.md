@@ -40,6 +40,14 @@ bytes already accepted by the kernel remain remotely uncertain. The new
 transport's macOS behavior has not been executed; earlier local macOS evidence
 in `batter-8e8r` predates it. See [references](docs/references.md#owned-outbound-http1-connections-2026-11-04).
 
+The outbound exchange zeroes the response-body storage it allocates before
+releasing it, including partial bodies, replaced allocations and a returned
+body's last `Bytes` handle. This removes the plaintext from memory the package
+hands back to the allocator; it is not a secrecy boundary. hyper, rustls and
+kernel buffers, response headers, request bodies and application copies are not
+wiped, and a leak, an abort, swap, hibernation or a core dump bypasses the wipe.
+See the [contract](docs/guarantees.md#outbound-provider-exchange).
+
 Bulkhead does not bound its waiter count or request memory. HTTP deadlines stop
 at response construction and do not protect streaming sessions or every slow
 upload/connection path. Runtime-thread blocking can defeat cooperative timers.

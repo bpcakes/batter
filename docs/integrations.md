@@ -1261,6 +1261,12 @@ Map each outcome to an application decision:
   with neither `Content-Length` nor chunked framing ends when the peer closes
   the connection, so a `Body::Complete` of that kind cannot show that nothing
   was cut off.
+- The package zeroes the response-body storage it owns before releasing it, and
+  the guarantee ends there. For a sensitive body, keep `Bytes` handles instead
+  of copying: `to_vec`, `Vec::from(bytes)`, `BytesMut::from(bytes)` and parsed
+  values are the application's to wipe, and a returned body is never uniquely
+  owned, so those conversions always copy. See the
+  [contract](guarantees.md#outbound-provider-exchange).
 
 The facade's [`outbound_exchange` example](../crates/batter/examples/outbound_exchange.rs)
 is the consumer contract:

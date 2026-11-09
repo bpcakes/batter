@@ -158,6 +158,24 @@ Provider meaning, replay authorization, idempotency keys, Retry-After, dispatch
 fences and reconciliation remain with applications. No provider trait, retry
 owner, telemetry layer, connection pool or application framework is introduced.
 
+### Response-body storage
+
+Amended 2026-11-09 (`batter-53nf`). The body read accumulates into a private
+fixed boxed slice. It has no reserve or shrink, so replacing it during growth
+always goes through the destructor that zeroes the whole allocation. The same
+destructor covers every early return and a dropped exchange future.
+`Body::Complete` stays `Bytes` by giving that owner to `Bytes::from_owner`, which
+drops it once, with the last clone or slice. Two alternatives were rejected. A
+`Zeroizing<Vec<u8>>` can release populated storage unwiped when it reallocates. A
+protected final shrink would copy and wipe the whole body in the exchange's last
+poll, inside `RESERVE`, to reclaim less than half of the allocation, so a
+completed body keeps the allocation it grew into. Public signatures and outcome
+labels are unchanged, and
+`zeroize` is a private dependency already in this package's normal graph through
+rustls. The guarantee stops at storage this package owns. Transport and kernel
+buffers and caller copies stay outside it, and leaks, aborts, swap and core dumps
+bypass a destructor.
+
 ## Alternatives and limits
 
 A consumer poll_before wrapper can close late handoff only for its own polls;

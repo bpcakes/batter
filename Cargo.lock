@@ -455,6 +455,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
+ "zeroize",
 ]
 
 [[package]]
