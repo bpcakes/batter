@@ -8,6 +8,21 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Own SIGTERM with scoped record-only requests across the VictoriaMetrics test
+  fixture lifetime, protect bounded removal from repeated stop requests and
+  remove the Docker-listing prerequisite.
+  Preserve primary/cleanup error chains and add real-signal and failed-removal
+  regressions. Derive the matrix caller's grace from the complete fixture stop
+  path so outer escalation cannot preempt the allocated cleanup. Own complete
+  health/read-back polling in bounded children, including progressing HTTP
+  response cancellation regressions (`batter-pdfk`).
+
+- Add `batter::otlp::prepare_victoriametrics` for direct OTLP metrics ingestion,
+  with required producer instance identity, prefixed ingestion paths and an
+  explicit empty-response compatibility profile. Keep standard OTLP validation
+  strict. Add pinned Docker ingestion/read-back coverage to workspace verification
+  (`batter-cw5f`). Existing public call shapes are unchanged.
+
 - Preserve nested HTTP interruption outcomes in response-construction telemetry,
   including deadline expiry before bulkhead execution starts. Carry classification
   and response in `operation::low_level::ResolvedOutcome`, driven by the additive

@@ -244,6 +244,15 @@ non-yielding destructors are outside this guarantee, as for tracing subscribers.
 Nested recorder panics during unwinding can abort the process.
 These metrics are best-effort diagnostics, not authoritative audit records.
 
+The optional OTLP adapter's explicit VictoriaMetrics profile requires bounded
+service and instance identities before preparation and owns export through the
+same protected service completion. It permits only the backend-specific empty
+HTTP 200/missing-Content-Type exception in addition to typed Protobuf success;
+ordinary OTLP stays strict. Neither response proves storage or cross-process
+identity uniqueness. The live regression separately queries actual stored
+counters, histograms and final lifecycle observations; see
+[integration](integrations.md#opentelemetry-metrics-export-protected-adapter).
+
 `reserve_finalization` divides an existing context into sibling work/finalization
 contexts. Work ends at the original deadline minus the positive reserve;
 finalization keeps the original deadline. Cancelling/finishing work does not

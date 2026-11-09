@@ -30,6 +30,13 @@ pub(crate) const PAYLOAD_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const RESPONSE_MAX_BYTES: usize = 64 * 1024;
 const PROTOBUF: &str = "application/x-protobuf";
 
+/// Chosen by preparation, never inferred from a response or hostname.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResponseProfile {
+    Otlp,
+    VictoriaMetrics,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     /// The owner selected the deadline; the transport has not been invoked.
@@ -113,6 +120,7 @@ struct Unacknowledged;
 pub(crate) struct BoundedClient {
     client: reqwest::Client,
     slot: Arc<AttemptSlot>,
+    profile: ResponseProfile,
 }
 
 impl fmt::Debug for BoundedClient {
@@ -123,9 +131,16 @@ impl fmt::Debug for BoundedClient {
 
 impl BoundedClient {
     /// Build an inert client: no redirects, no proxy discovery, no connection.
-    pub(crate) fn new(slot: Arc<AttemptSlot>) -> Result<Self, reqwest::Error> {
+    pub(crate) fn new(
+        slot: Arc<AttemptSlot>,
+        profile: ResponseProfile,
+    ) -> Result<Self, reqwest::Error> {
         let client = client_builder().build()?;
-        Ok(Self { client, slot })
+        Ok(Self {
+            client,
+            slot,
+            profile,
+        })
     }
 
     async fn exchange(
@@ -149,9 +164,9 @@ impl BoundedClient {
             // The status is the whole retained evidence; the body is not read.
             return Err(ExportFailure::Status(status.as_u16()));
         }
-        let protobuf = response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
+        let content_type = response.headers().get(http::header::CONTENT_TYPE);
+        let missing_content_type = content_type.is_none();
+        let protobuf = content_type
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<mime::Mime>().ok())
             .is_some_and(|value| value.essence_str() == PROTOBUF);
@@ -160,6 +175,15 @@ impl BoundedClient {
             Err(_) => return Err(ExportFailure::BodyTimedOut),
             Ok(body) => body?,
         };
+        // VictoriaMetrics v1.156.0 acknowledges successful OTLP ingestion with
+        // an empty 200 and no Content-Type. Keep this exception backend-specific:
+        // a present wrong type or any untyped body still fails closed.
+        if self.profile == ResponseProfile::VictoriaMetrics
+            && missing_content_type
+            && body.is_empty()
+        {
+            return Ok(());
+        }
         if !protobuf {
             return Err(ExportFailure::MalformedResponse);
         }

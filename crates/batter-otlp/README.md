@@ -14,7 +14,54 @@ and exit policy. This crate reads no configuration values itself, but rejects
 ambient `OTEL_*` names because the selected native builder merges those values.
 Do not mutate the process environment during preparation. HTTP(S) endpoints must
 name `/v1/metrics` without URL credentials, query or fragment. The reference
-service adds its own literal-loopback, plain-HTTP restriction.
+service adds its own literal-loopback, plain-HTTP restriction. For direct
+VictoriaMetrics ingestion use the explicit profile below.
+
+## Direct VictoriaMetrics export
+
+With facade feature `otlp`, prepare the same protected lifecycle using:
+
+```rust,no_run
+let diagnostics = batter::otlp::prepare_victoriametrics(
+    "http://127.0.0.1:8428/opentelemetry/v1/metrics",
+    "example-service",
+    "worker-1",
+    batter::otlp::Schedule::new(
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(5),
+    )?,
+)?;
+let owner = batter::service::start(startup, diagnostics);
+let completion = owner.wait().await;
+// Inspect both completion.service() and completion.diagnostics().
+```
+
+Direct-package consumers use `batter_otlp::prepare_victoriametrics`. This profile
+requires a bounded nonempty `service.instance.id` in addition to `service.name`.
+Choose a distinct ID for each concurrent producer and retain it for that process's
+lifetime. The library validates syntax and length, not cross-process uniqueness.
+Keep these resource attributes when configuring backend label promotion.
+
+Endpoints must end in `/opentelemetry/v1/metrics`; nonempty prefix segments allow
+cluster URLs such as `/insert/0/opentelemetry/v1/metrics` and proxy prefixes.
+Credentials, query strings and fragments remain forbidden. Authentication and
+private-CA termination require an appropriately configured local proxy/collector;
+this API adds no authentication headers or custom trust roots.
+
+VictoriaMetrics v1.156.0 responds to successful ingestion with an empty HTTP 200
+and no Content-Type. Only this explicit profile accepts that response. A present
+wrong media type, nonempty untyped body, non-200 status, malformed Protobuf or
+partial rejection still fails. A typed Protobuf success remains accepted. The
+ordinary `prepare` profile keeps its strict endpoint and response requirements.
+
+`python3 scripts/check_victoriametrics.py` provisions a pinned Docker image on a
+random loopback port, exports from two isolated processes, queries stored
+counters/histograms and final cleanup/shutdown observations, and removes its
+container. It runs in the workspace verification matrix. Executed evidence covers
+Linux and single-node v1.156.0; cluster deployment, authentication and macOS Docker
+execution are not claimed. See the workspace
+[evidence](../../docs/evidence/victoriametrics-2026-11-09.md).
 
 The reqwest 0.13 transport uses an explicit rustls configuration with the ring
 provider, TLS 1.2/1.3 and bundled WebPKI roots. It neither reads the platform
@@ -42,8 +89,10 @@ its shared schema, caps complete keys before bridge allocation, uses fixed
 histogram buckets, and exports
 cumulative manual-reader snapshots with one serial owner. It has no queue or
 retry, limits requests to 2 MiB and responses to 64 KiB, and retains typed failure
-categories. A successful collector response must declare the Protobuf media type
-even when its body is empty; a lookalike media type cannot acknowledge an export.
+categories. An ordinary OTLP success must declare the Protobuf media type even
+when its body is empty; the explicit VictoriaMetrics profile additionally accepts
+the empty untyped 200 described above. A lookalike media type cannot acknowledge
+an export.
 It is a dedicated Batter-only pipeline; custom application metrics
 need an explicitly composed recorder elsewhere.
 

@@ -69,6 +69,14 @@ fn every_collector_response_maps_to_one_closed_outcome_without_retry() {
             ExportOutcome::Failed(MalformedResponse),
         ),
         (
+            Behavior::EmptyUntyped,
+            ExportOutcome::Failed(MalformedResponse),
+        ),
+        (
+            Behavior::NonemptyUntyped,
+            ExportOutcome::Failed(MalformedResponse),
+        ),
+        (
             Behavior::PrefixContentType,
             ExportOutcome::Failed(MalformedResponse),
         ),
@@ -90,18 +98,39 @@ fn every_collector_response_maps_to_one_closed_outcome_without_retry() {
         ),
         (Behavior::StallBody, ExportOutcome::Failed(BodyTimedOut)),
     ] {
-        let harness = Harness::new(behavior);
-        let (recorder, mut session) = harness.pipeline(SHORT);
-        let started = Instant::now();
-        let outcome = harness.run(&recorder, async {
-            record_one(&recorder);
-            session.attempt(Instant::now() + SHORT.attempt).await
-        });
-        assert_eq!(outcome, expected, "{behavior:?}");
-        assert!(started.elapsed() < SHORT.attempt + Duration::from_secs(1));
-        // One dispatch per attempt: partial success and failures are never retried.
-        assert_eq!(harness.collector().requests().len(), 1, "{behavior:?}");
-        assert!(!format!("{outcome:?}").contains(BODY_MARKER));
+        for victoria in [false, true] {
+            let harness = Harness::new(behavior);
+            let (recorder, mut session) = if victoria {
+                crate::prepare_victoriametrics(
+                    &harness
+                        .collector()
+                        .endpoint()
+                        .replace("/v1/metrics", "/insert/12:34/opentelemetry/v1/metrics"),
+                    super::super::SERVICE_NAME,
+                    "worker-1",
+                    SHORT,
+                )
+                .unwrap()
+                .into_parts()
+            } else {
+                harness.pipeline(SHORT)
+            };
+            let expected = if victoria && matches!(behavior, Behavior::EmptyUntyped) {
+                ExportOutcome::Acknowledged
+            } else {
+                expected
+            };
+            let started = Instant::now();
+            let outcome = harness.run(&recorder, async {
+                record_one(&recorder);
+                session.attempt(Instant::now() + SHORT.attempt).await
+            });
+            assert_eq!(outcome, expected, "{behavior:?}");
+            assert!(started.elapsed() < SHORT.attempt + Duration::from_secs(1));
+            // One dispatch per attempt: partial success and failures are never retried.
+            assert_eq!(harness.collector().requests().len(), 1, "{behavior:?}");
+            assert!(!format!("{outcome:?}").contains(BODY_MARKER));
+        }
     }
 }
 
@@ -130,7 +159,7 @@ fn oversized_payloads_and_requests_outside_an_attempt_are_never_sent() {
     let harness = Harness::new(Behavior::Accept);
     let endpoint = harness.collector().endpoint();
     let slot = Arc::new(AttemptSlot::default());
-    let client = BoundedClient::new(slot.clone()).unwrap();
+    let client = BoundedClient::new(slot.clone(), crate::transport::ResponseProfile::Otlp).unwrap();
     let request = |body: Vec<u8>| {
         http::Request::post(endpoint.as_str())
             .header(http::header::CONTENT_TYPE, "application/x-protobuf")

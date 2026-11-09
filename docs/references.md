@@ -70,6 +70,8 @@ have been removed; Git retains their history.
 
 ## Runtime, ownership, telemetry and settings
 
+- [VictoriaMetrics v1.156.0: reviewed 2026-11-09](references/runtime.md#victoriametrics-v11560-reviewed-2026-11-09)
+
 - <a id="native-cleanup-acquisition-2026-11-05"></a>[Native cleanup acquisition, 2026-11-05](references/runtime.md#native-cleanup-acquisition-2026-11-05)
 - <a id="rust-1981-panic-hooks-for-the-redacting-hook-2026-11-02"></a>[Rust 1.98.1 panic hooks for the redacting hook, 2026-11-02](references/runtime.md#rust-1981-panic-hooks-for-the-redacting-hook-2026-11-02)
 - <a id="tokio-1531-blocking-tasks-for-bounded-blocking-work-2026-10-31"></a>[Tokio 1.53.1 blocking tasks for bounded blocking work, 2026-10-31](references/runtime.md#tokio-1531-blocking-tasks-for-bounded-blocking-work-2026-10-31)

@@ -39,6 +39,30 @@ impl Schedule {
 }
 
 pub(crate) fn endpoint(value: &str) -> Result<url::Url, SettingsError> {
+    let url = http_endpoint(value)?;
+    if url.path() != "/v1/metrics" {
+        return Err(SettingsError::new(
+            "metrics.endpoint",
+            "expected /v1/metrics",
+        ));
+    }
+    Ok(url)
+}
+
+pub(crate) fn victoriametrics_endpoint(value: &str) -> Result<url::Url, SettingsError> {
+    let url = http_endpoint(value)?;
+    if !url.path().ends_with("/opentelemetry/v1/metrics")
+        || url.path().split('/').skip(1).any(str::is_empty)
+    {
+        return Err(SettingsError::new(
+            "metrics.endpoint",
+            "expected a path ending in /opentelemetry/v1/metrics without empty segments",
+        ));
+    }
+    Ok(url)
+}
+
+fn http_endpoint(value: &str) -> Result<url::Url, SettingsError> {
     let url = url::Url::parse(value)
         .map_err(|error| SettingsError::new("metrics.endpoint", "invalid URL").with_cause(error))?;
     if !matches!(url.scheme(), "http" | "https")
@@ -47,26 +71,33 @@ pub(crate) fn endpoint(value: &str) -> Result<url::Url, SettingsError> {
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || url.path() != "/v1/metrics"
     {
         return Err(SettingsError::new(
             "metrics.endpoint",
-            "expected HTTP(S) /v1/metrics without credentials, query or fragment",
+            "expected HTTP(S) without credentials, query or fragment",
         ));
     }
     Ok(url)
 }
 
 pub(crate) fn identity(value: &str) -> Result<(), SettingsError> {
+    bounded_identity(value, "metrics.service_name", 64)
+}
+
+pub(crate) fn instance_identity(value: &str) -> Result<(), SettingsError> {
+    bounded_identity(value, "metrics.instance_id", 128)
+}
+
+fn bounded_identity(value: &str, field: &'static str, max: usize) -> Result<(), SettingsError> {
     if value.is_empty()
-        || value.len() > 64
+        || value.len() > max
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     {
         return Err(SettingsError::new(
-            "metrics.service_name",
-            "expected 1 to 64 ASCII name bytes",
+            field,
+            "expected a nonempty bounded ASCII name",
         ));
     }
     Ok(())
@@ -75,6 +106,39 @@ pub(crate) fn identity(value: &str) -> Result<(), SettingsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn victoriametrics_profile_requires_its_ingestion_path_and_bounded_instance() {
+        for value in [
+            "http://localhost:8428/opentelemetry/v1/metrics",
+            "https://collector.example/insert/12:34/opentelemetry/v1/metrics",
+            "https://collector.example/proxy/opentelemetry/v1/metrics",
+        ] {
+            assert!(victoriametrics_endpoint(value).is_ok(), "{value}");
+            assert!(endpoint(value).is_err(), "generic OTLP remains strict");
+        }
+        for value in [
+            "http://localhost/v1/metrics",
+            "http://localhost//opentelemetry/v1/metrics",
+            "http://localhost/opentelemetry/v1/metrics/",
+            "http://localhost/opentelemetry/v1/metrics?tenant=1",
+            "http://localhost/opentelemetry/v1/metrics#fragment",
+            "http://user:secret@localhost/opentelemetry/v1/metrics",
+            "file:///opentelemetry/v1/metrics",
+        ] {
+            assert!(victoriametrics_endpoint(value).is_err(), "{value}");
+        }
+        for value in ["", "two words", "https://host", "秘密", &"a".repeat(129)] {
+            assert!(
+                instance_identity(value).is_err(),
+                "invalid instance accepted"
+            );
+        }
+        assert!(
+            instance_identity(&"a".repeat(128)).is_ok(),
+            "bounded ID accepted"
+        );
+    }
     #[test]
     fn configuration_rejects_unbounded_or_ambiguous_inputs() {
         for duration in [Duration::ZERO, Duration::MAX] {

@@ -45,6 +45,23 @@ def run(commands, **kwargs):
 
 
 class ParallelTests(unittest.TestCase):
+    def test_scoped_stop_rejects_new_work_and_remains_record_only_during_finalization(self):
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        with parallel.interrupt_scope() as stop:
+            # A stop before a nested batch must survive its handler handoff and
+            # prevent factory invocation; repeated signals cannot raise here.
+            os.kill(os.getpid(), signal.SIGTERM)
+            with mock.patch.object(parallel.subprocess, "Popen") as launch:
+                outcome, = parallel.run_parallel([python("pass")], timeout=1, output_limit=100)
+            launch.assert_not_called()
+            self.assertFalse(outcome.ok)
+            self.assertTrue(stop.requested)
+            os.kill(os.getpid(), signal.SIGTERM)
+            self.assertIs(signal.getsignal(signal.SIGTERM), stop)
+            with self.assertRaises(KeyboardInterrupt):
+                stop.check()
+        self.assertEqual({sig: signal.getsignal(sig) for sig in previous}, previous)
+
     def test_commands_overlap_and_preserve_ordered_results(self):
         with tempfile.TemporaryDirectory() as directory:
             commands = []
@@ -361,8 +378,8 @@ class MatrixTests(unittest.TestCase):
 
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
-                         {"workspace": [2, 2], "no-default-features": [4, 1, 1], "doctests": [1],
-                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 3]})
+                         {"workspace": [2, 2, 1], "no-default-features": [4, 1, 1], "doctests": [1],
+                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 4]})
         planned = matrix.parts()
         # Each part executes exactly the batches it plans, in the planned order.
         self.assertEqual({part: [commands for _, commands in plan] for part, plan in planned.items()},
@@ -379,9 +396,9 @@ class MatrixTests(unittest.TestCase):
             matrix.RUNLIMIT_GRAPH, matrix.RUNLIMIT_CONTROLS, matrix.RUNLIMIT_DEFAULT,
             matrix.RUNLIMIT_RELEASE, matrix.FACADE_FEATURES, matrix.FACADE_CACHE_CONTROLS,
             matrix.FUTURE_SIZE_RELEASE, matrix.SINGLE_FACADE_CONSUMER, matrix.SINGLE_FACADE_CONTROLS,
-            matrix.HTTP_SMOKE_CONTROLS,
+            matrix.HTTP_SMOKE_CONTROLS, matrix.VICTORIAMETRICS, matrix.VICTORIAMETRICS_CONTROLS,
         ])
-        self.assertEqual(len(commands), 30)
+        self.assertEqual(len(commands), 32)
         self.assertIn("--all-targets", commands["workspace-tests"])
         self.assertIn("--workspace", commands["workspace-tests"])
         hostile = commands["configuration-hostile-environment"]
@@ -395,6 +412,8 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("--release", future_sizes)
         self.assertIn("test_reference_live.py", commands["reference-runner-controls"])
         self.assertIn("test_smoke_http.py", commands["http-smoke-controls"])
+        self.assertIn("scripts/check_victoriametrics.py", commands["victoriametrics-live"])
+        self.assertIn("test_victoriametrics*.py", commands["victoriametrics-controls"])
         self.assertTrue(all("--no-default-features" in command
                             for batch in batches["no-default-features"] for command in batch))
         self.assertIn("--doc", batches["doctests"][0][0])
@@ -507,6 +526,8 @@ artifact.write_text('default')
              self.peer_fixture(directory, "reference-runner-controls")),
             ("FUTURE_SIZE_RELEASE", "release-future-sizes",
              self.peer_fixture(directory, "release-future-sizes")),
+            ("VICTORIAMETRICS", "victoriametrics-live",
+             self.peer_fixture(directory, "victoriametrics-live")),
         ]
         labels_by_command = {tuple(command): label for _, label, command in fixtures}
 

@@ -8,7 +8,8 @@ Unix only; Linux/macOS execution claims require actual recorded checks.
 
 ## Key entrypoints
 
-- `src/lib.rs`: inert preparation, canonical diagnostic installation, serial export and closure.
+- `src/lib.rs`: canonical diagnostic installation, serial export and closure.
+- `src/preparation.rs`: inert standard OTLP and explicit VictoriaMetrics profiles.
 - `src/config.rs`: validated explicit endpoint, identity and timing.
 - `src/pipeline/guard.rs`: bounded recorder using core's shared catalog schema.
 - `src/pipeline/transport.rs`: bounded HTTP and typed response evidence.
@@ -38,9 +39,15 @@ one serial owner, cumulative snapshots, no queue/retry, and typed failure eviden
 Coalesce missed intervals in constant time. Preserve native service outcomes on
 any diagnostic failure. Closure runs once on normal finalization; do not claim
 panics, non-yielding SDK calls or runtime death satisfy that guarantee.
+Only the explicit VictoriaMetrics profile permits an empty HTTP 200 without a
+Content-Type; never infer this exception from an endpoint hostname or weaken
+ordinary OTLP response validation. Require its bounded instance ID before
+preparation and preserve service/instance resource labels. Cross-process identity
+uniqueness and remote storage remain outside local proof.
 
 ## Common commands
 
 - `cargo test -p batter-otlp --locked`
 - `cargo clippy -p batter-otlp --all-targets --locked -- -D warnings`
 - `bash scripts/verify.sh`
+- `python3 scripts/check_victoriametrics.py` (pinned Docker ingestion and read-back)

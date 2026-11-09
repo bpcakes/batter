@@ -34,6 +34,7 @@ async fn refused_streams(builder: reqwest::ClientBuilder) -> usize {
         // transport policy comes from the same builder used by production.
         client: builder.http2_prior_knowledge().build().unwrap(),
         slot: slot.clone(),
+        profile: super::ResponseProfile::Otlp,
     };
     slot.begin(Instant::now() + Duration::from_secs(2));
     let request = http::Request::post(endpoint)

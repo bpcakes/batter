@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from parallel_process import render_outcomes, run_parallel
+from check_victoriametrics import STOP_GRACE as VICTORIAMETRICS_STOP_GRACE
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-features", "--locked"]
@@ -60,6 +61,9 @@ RUNLIMIT_RELEASE = ["cargo", "test", "-p", "runlimit-memory", "--release", "--lo
                     "corrupt_quota_state_fails_closed_in_release_builds"]
 FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
+VICTORIAMETRICS = [sys.executable, "scripts/check_victoriametrics.py"]
+VICTORIAMETRICS_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                          "-p", "test_victoriametrics*.py", "-v"]
 
 # Cargo uplifts one debug executable per binary target, and reference-service
 # integration tests spawn it through CARGO_BIN_EXE_*. Cargo releases the build
@@ -120,7 +124,8 @@ def parts():
         "workspace": [(["workspace-tests", "reference-runner-controls"],
                        [WORKSPACE_TESTS, REFERENCE_RUNNER_TESTS]),
                       (["configuration-hostile-environment", "release-future-sizes"],
-                       [HOSTILE_CONFIGURATION, FUTURE_SIZE_RELEASE])],
+                       [HOSTILE_CONFIGURATION, FUTURE_SIZE_RELEASE]),
+                      (["victoriametrics-live"], [VICTORIAMETRICS])],
         # The outbound leaf's tests assert tight timing, so they run alone in
         # their own batch after its library check compiled with the others. The
         # shipped-feature example build excludes the dev-only control client,
@@ -143,8 +148,8 @@ def parts():
                       [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
-                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls"],
-                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS])],
+                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls", "victoriametrics-controls"],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS, VICTORIAMETRICS_CONTROLS])],
     })
 
 
@@ -154,8 +159,12 @@ def main():
     selected = parser.parse_args().part
     for labels, commands in parts()[selected]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)
+        # The fixture may need to settle its producer, collect diagnostics and
+        # remove Docker resources after interruption. Derive its caller grace
+        # from those owned allowances; the generic runner's defaults stay put.
+        grace = VICTORIAMETRICS_STOP_GRACE if "victoriametrics-live" in labels else 10
         outcomes = run_parallel(commands, timeout=1500, output_limit=8 * 1024 * 1024,
-                                cwd=ROOT, retain_tail=True)
+                                cwd=ROOT, retain_tail=True, grace=grace)
         render_outcomes(labels, outcomes)
         if not all(outcome.ok for outcome in outcomes):
             return 1

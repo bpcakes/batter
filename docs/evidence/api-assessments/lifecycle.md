@@ -507,3 +507,31 @@ The deadline does not bound shutdown/diagnostics or preempt non-yielding work.
 Application approval policy, remote effects and runtime survival remain outside
 this local protocol. A typed output transferred to the caller has normal Rust
 ownership; holding it cannot be claimed to prove resource cleanup or quiescence.
+
+
+## Direct VictoriaMetrics metrics export (batter-cw5f)
+
+`prepare_victoriametrics` is an additive, explicit backend profile. It validates
+endpoint scheme/path/credential exclusions, service identity and a required
+nonempty bounded instance identity before native construction. It returns the
+same inert non-cloneable `Prepared` owner, so the service lifecycle still owns
+installation, periodic work, final collection and closure. There are no new
+paired calls, arbitrary future runners or independently selectable response
+relaxations. The profile's missing-Content-Type exception accepts only an empty
+HTTP 200; nonempty/untyped and wrong-type bodies, malformed Protobuf, partial
+rejection, timeouts and oversized responses retain typed failures.
+
+Local syntax cannot establish that two processes chose distinct IDs, that a
+proxy preserves resource labels, or that an acknowledged request reached durable
+storage. Those remain deployment policy and remote effects, explicitly stated in
+rustdoc. The profile supplies `service.name` and `service.instance.id` itself;
+it does not ask consumers to rebuild the SDK resource or coordinate flushing.
+The existing `prepare` remains valid for standard collectors and has unchanged
+public signatures and strict response semantics. No compatibility shim is
+needed: no public name or call shape is removed.
+
+Executed evidence: dual-profile failure matrix and two isolated processes whose
+cumulative metrics and final lifecycle observations are queried from pinned
+Docker-hosted VictoriaMetrics. See [the evidence record](../victoriametrics-2026-11-09.md).
+Fresh independent agent implementation/modification evaluations are unexecuted;
+no agent-usability claim follows from these tests alone.

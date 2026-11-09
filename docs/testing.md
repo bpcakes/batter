@@ -351,6 +351,52 @@ exercise bounded export, final collection, retained failures and cleanup order.
 The reference package's opt-in metrics cases are compiled by the matrix; its
 database-backed export cases run only in the explicit reference live suite.
 
+`python3 scripts/check_victoriametrics.py` builds the isolated OTLP producer and
+runs VictoriaMetrics v1.156.0 pinned by image digest on a random loopback Docker
+port. Two producer processes exercise periodic and final export; backend queries
+assert separate instance labels, cumulative counts, histogram count/bucket/sum,
+cleanup and shutdown observations. The fixture explicitly selects the private
+runner's scoped, record-only stop owner through work and finalization. Signals
+set a persistent request; controlled work checkpoints raise, and nested runner
+batches retain the same request. No asynchronous stop exception can interrupt
+the transition into cleanup. Prior dispositions are restored after finalization.
+Initial Docker commands and entire health/read-back polling attempts use the
+bounded runner. A private polling child runs native urllib and query assertions
+under a five-second work timeout, with the same stop/reap allowances as other
+work children. Its response body is capped at 2 MiB and captured output at 64 KiB.
+Socket-idle timeouts are not treated as complete-exchange deadlines. Only a
+completed not-ready probe is retried; a crashed, timed-out or interrupted polling
+process retains failure evidence and fails the run.
+The fixture attempts forced removal directly by its unique name, with a
+ten-second limit. Diagnostics/removal run in separate Unix sessions so repeated
+process-group stop signals cannot interrupt their commands. Docker
+treats an absent container as success, while genuine removal failures fail the
+check and retain any original failure through Python exception chaining.
+SIGKILL, runtime death, daemon unavailability and an unsettled ambiguous launch
+cannot establish successful cleanup. Real-signal subprocess controls exercise
+both polling phases, cleanup entry, nested runner restoration and repeated
+process-group stop signals (including a real removal-command surrogate); error
+controls cover removal failure with and without a primary failure (`batter-pdfk`).
+The matrix imports the harness's derived 32-second stop allowance: one work child's
+10-second stop plus 5-second reap, 2-second diagnostics, 10-second removal and
+5 seconds of scheduling headroom. The shared runner keeps its existing defaults
+for other batches. A real outer-runner cancellation control scales these budgets
+while retaining their ratios and delays diagnostics/removal; it covers polling
+and an active producer. Restoring the old outer grace reproduces SIGKILL before
+removal completes, so the test checks the composition as well as the standalone
+harness.
+Actual loopback HTTP regressions trickle headers and chunked bodies while
+cancelling health/read-back polling, and verify a whole-attempt timeout despite
+continued response progress. The controls command discovers
+`test_victoriametrics*.py`, including these HTTP cases and the lifecycle controls.
+This check is included in the `workspace` matrix part, so complete local and Linux
+CI verification require Docker access and the image (or registry access to pull
+it). Plain `cargo test` compiles but ignores the fixture-dependent test; the
+script explicitly executes it and fails on Docker, export or read-back failure.
+The scripted response matrix also exercises both backend profiles against
+malformed, rejected, oversized and stalled responses without relaxing the
+standard OTLP contract. See [recorded evidence](evidence/victoriametrics-2026-11-09.md).
+
 ## Native lifecycle and offline retirement acceptance
 
 Core managed-component tests and Runledger adapter tests distinguish inert
