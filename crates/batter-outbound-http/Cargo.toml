@@ -37,6 +37,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "time"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
 url.workspace = true
+zeroize = { version = "1.9.1", default-features = false }
 
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }

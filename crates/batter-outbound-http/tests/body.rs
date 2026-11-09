@@ -99,6 +99,46 @@ async fn complete_response_keeps_status_sensitive_headers_and_body() {
     assert!(matches!(body, Body::Complete(bytes) if bytes == "hello"));
 }
 
+/// `Bytes` handles of a complete body stay readable after everything else from
+/// the exchange is gone.
+#[tokio::test]
+async fn complete_body_clones_and_slices_outlive_the_exchange() {
+    let outcome = respond(vec![
+        Step::Read,
+        write("HTTP/1.1 200 OK\r\ncontent-length: 11\r\n\r\nhello world"),
+    ])
+    .await;
+    let Exchange::Responded(response) = outcome else {
+        unreachable!("checked by respond");
+    };
+    let (_, _, Body::Complete(bytes)) = response.into_parts() else {
+        panic!("expected a complete body");
+    };
+    let clone = bytes.clone();
+    let slice = bytes.slice(6..);
+    drop(bytes);
+    assert_eq!(clone, "hello world");
+    drop(clone);
+    assert_eq!(slice, "world");
+}
+
+/// Every position has a distinct neighbor, so a copy misplaced when the buffer
+/// grows cannot go unnoticed.
+#[tokio::test]
+async fn chunked_body_growing_across_allocations_keeps_its_exact_bytes() {
+    let body: Vec<u8> = (0..LIMIT).map(|index| (index % 251) as u8).collect();
+    let chunks: Vec<&[u8]> = body.chunks(97).collect();
+    let script = vec![
+        Step::Read,
+        write([chunked(&chunks), LAST_CHUNK.to_vec()].concat()),
+    ];
+    let outcome = respond(script).await;
+    assert_eq!(
+        response(&outcome).body().complete().map(|b| &b[..]),
+        Some(&body[..])
+    );
+}
+
 #[tokio::test]
 async fn bodyless_status_is_complete_and_empty() {
     let outcome = respond(vec![Step::Read, write("HTTP/1.1 204 No Content\r\n\r\n")]).await;

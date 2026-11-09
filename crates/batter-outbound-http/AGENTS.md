@@ -24,6 +24,10 @@ ownership and deadline correction belong to `batter-u387`.
   candidates drop before TLS/HTTP.
 - `src/send.rs`: pre-start window, setup timeout, immediate pre-send_request
   gate, inline hyper HTTP/1 driver, phase classification and bounded body.
+- `src/send/buffer.rs`: response-body storage. A fixed boxed slice whose `Drop`
+  wipes the whole allocation; growth replaces it, and
+  `Bytes::from_owner` gives it to a complete body. `buffer/probe.rs` is the
+  `cfg(test)` destructor observer.
 - `src/exchange.rs`: exhaustive must-use Exchange, opaque unsent evidence,
   stable labels, status/body retention and redacted formatting.
 - `src/operation.rs`: optional OperationContext bridge; only Batter dependency.
@@ -31,6 +35,8 @@ ownership and deadline correction belong to `batter-u387`.
 - `src/transport/tls_write_tests.rs`: real TLS buffered-request/error-read
   regressions using the same TLS assembly and driver as production.
 - `src/send/tests.rs`: a ready setup poll that consumes its connect budget.
+- `src/send/body_storage_tests.rs`: body storage wiped on every exchange outcome,
+  through real hyper over controlled I/O and a paused clock.
 - `tests/`: preparation, before-head, body, operation, wire, redaction,
   ClientHello and Linux trust-store integration suites.
 
@@ -64,6 +70,10 @@ NotStarted, setup failure/timeout is NotDispatched. Both carry opaque evidence.
 Preserve one head/body deadline, bounded body buffering, status retention,
 sensitive header values and value-free formatting. Keep request ownership,
 exhaustive outcomes and twelve stable labels. No provider policy or telemetry.
+`ZeroizingBuffer` is the only owner of response-body allocations: never
+accumulate a body in a growable container or release one past its destructor.
+Keep the wipe claim to that storage, not hyper, rustls, kernel buffers or caller
+copies.
 Do not generalize this ready-result precedence to arbitrary application futures.
 No core dependency outside `operation`; never depend on the facade/adapters.
 New Linux/macOS claims require executed evidence; historical macOS checks in

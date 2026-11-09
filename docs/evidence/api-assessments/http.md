@@ -616,6 +616,20 @@ address rules; endpoint/neighbor tests cover its range boundaries, and dialer
 tests reject these blocks before any connection attempt. This corrects the
 classification data without adding a caller obligation or a new API state.
 
+## Response-body storage invalid-state review (`batter-53nf`)
+
+`Body::Complete(Bytes)` keeps its signature, but what owns its allocation
+changed, so the review applies. Callers cannot construct the storage or reach
+its allocation: the buffer is private, has no reserve or shrink, and
+`Bytes::from_owner` transfers it so that the last handle's release wipes it. No
+ordering, paired call or cleanup step exists for a caller to forget on the
+supported path. What remains is application policy the type cannot own. `Bytes`
+derefs to `[u8]`, so a caller can always copy the plaintext; an opaque body type
+could withhold that, but parsing or persisting a body needs the plaintext, so it
+would burden normal use without removing the obligation. The upstream and host
+boundaries stay explicit: hyper, rustls and kernel buffers, destructor-skipping
+exits, swap and core dumps.
+
 ## Outbound exchange assessment (`batter-3s1a`)
 
 Amended 2026-11-04, `batter-u387`. The original extraction removed repeated

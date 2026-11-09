@@ -8,6 +8,18 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Zero the response-body storage `batter-outbound-http` allocates before
+  releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
+  future is dropped, when growth replaces an allocation, and when the last
+  `Bytes` clone or slice of a `Body::Complete` is released (`batter-53nf`).
+  Public signatures are unchanged, so callers compile as before. Behavior change:
+  a returned body is never uniquely owned, even through its only handle.
+  `try_into_mut` now always returns `Err`, so code that unwraps it panics, and
+  `Vec::from` and `BytesMut::from` always copy, leaving that copy for the caller
+  to wipe. A completed body also keeps the allocation it grew into, at most twice
+  its length, instead of being shrunk. Hyper, rustls and kernel buffers, response
+  headers and request bodies are not covered.
+
 - Preserve nested HTTP interruption outcomes in response-construction telemetry,
   including deadline expiry before bulkhead execution starts. Carry classification
   and response in `operation::low_level::ResolvedOutcome`, driven by the additive

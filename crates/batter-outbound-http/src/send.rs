@@ -22,9 +22,14 @@ use std::{
 };
 use tokio::time::{Instant, Sleep, sleep_until};
 
+mod buffer;
+
+use buffer::ZeroizingBuffer;
+
 /// Time kept free at the end of the caller's deadline, apart from scheduling
-/// delay and blocking polls such as macOS certificate verification. This lets
-/// classification precede an outer timer. Reserve recording time separately.
+/// delay and blocking polls such as macOS certificate verification or growing a
+/// large response buffer. This lets classification precede an outer timer.
+/// Reserve recording time separately.
 pub const RESERVE: Duration = Duration::from_millis(50);
 
 /// The shortest window in which connection establishment will begin.
@@ -236,27 +241,20 @@ async fn read_body<C: Future<Output = ()>, D: Future>(
         return Body::TooLarge;
     }
     let capacity = declared.map_or(0, |length| (length as usize).min(PREALLOCATE_MAX));
-    let mut buffer = Vec::with_capacity(capacity);
+    // Every path out of this loop, and dropping this future, releases `buffer`
+    // through its wiping destructor unless `into_bytes` has given it to the body.
+    let mut buffer = ZeroizingBuffer::with_capacity(capacity);
     loop {
         tokio::select! {
             biased;
             frame = drive(body.frame(), driver) => match frame {
                 Some(Ok(frame)) => {
                     let Ok(chunk) = frame.into_data() else { continue };
-                    let needed = buffer.len().saturating_add(chunk.len());
-                    if needed > limit {
+                    if buffer.append(&chunk, limit).is_err() {
                         return Body::TooLarge;
                     }
-                    if needed > buffer.capacity() {
-                        let target = needed.max(buffer.capacity().saturating_mul(2)).min(limit);
-                        buffer.reserve_exact(target - buffer.len());
-                    }
-                    buffer.extend_from_slice(&chunk);
                 }
-                None => {
-                    buffer.shrink_to_fit();
-                    return Body::Complete(Bytes::from(buffer));
-                }
+                None => return Body::Complete(buffer.into_bytes()),
                 Some(Err(_)) => return Body::Failed(BodyFailure::Transport),
             },
             () = &mut cancelled => return Body::Failed(BodyFailure::Cancelled),
@@ -265,5 +263,7 @@ async fn read_body<C: Future<Output = ()>, D: Future>(
     }
 }
 
+#[cfg(test)]
+mod body_storage_tests;
 #[cfg(test)]
 mod tests;

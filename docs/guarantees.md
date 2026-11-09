@@ -498,6 +498,15 @@ production handoff and driver with controlled I/O and a paused Tokio clock:
   control over TLS 1.2/1.3, including a readable body at expiry.
 - `clones_open_independent_connections` and
   `a_closed_previous_connection_is_never_reused` check fresh connections.
+- The private `send/buffer/tests.rs` and `send/body_storage_tests.rs` observe
+  each body allocation from its own destructor, after the wipe and before
+  deallocation, through a `cfg(test)` probe that reads no freed memory. They
+  cover replaced allocations, `Bytes` clones and slices released in every order
+  and on another thread, streamed size-limit failure, truncated
+  length and chunked bodies, deadline, cancellation, a dropped exchange future
+  and the initial allocation, with status and single-request checks on the real
+  hyper path. Each protection was temporarily removed and the matching tests
+  failed; see [references](references.md#outbound-response-body-storage-2026-11-09).
 
 The facade feature runner checks type identity and `send_in`, rejects imports
 without `outbound-http`, and checks that both the normal leaf graph and the
@@ -508,9 +517,30 @@ standalone no-default-features tests use no batter-core.
 - `ResponseLimit` accepts 1 byte to 64 MiB. A declared or streamed length above
   it returns `TooLarge`; chunked framing is removed and content codings remain
   encoded. Preallocation is capped at 1 MiB and buffer growth stays within the
-  limit. A body delimited only by connection close cannot reveal truncation.
-- Deadlines are cooperative. Scheduling delay or synchronous certificate
-  verification on macOS can delay return beyond `RESERVE`. A gate cannot
+  limit. Growth copies into a new allocation before releasing the old one, so two
+  allocations briefly coexist, together below twice the limit. A completed body
+  keeps the allocation it grew into, at most twice its length and never above the
+  limit, until its last handle is released. A body delimited only by connection
+  close cannot reveal truncation.
+- Response-body storage the package allocates is zeroed before release: after
+  `TooLarge` and every `Body::Failed`, when the exchange future is dropped while
+  reading, when growth replaces an allocation, and for
+  `Body::Complete` when the last `Bytes` clone or slice is released. The buffer
+  is a fixed boxed slice, so no `reserve` or shrink can release populated memory
+  unwiped; the returned `Bytes` comes from `Bytes::from_owner` on that same
+  owner. hyper, rustls and kernel buffers, response headers, request bodies and
+  copies made by the caller are outside the guarantee, including `to_vec`,
+  `Vec::from(bytes)` and `BytesMut::from(bytes)`. A returned body is never
+  uniquely owned, so `try_into_mut` returns `Err` and those conversions always
+  copy. A destructor performs the wipe: a leaked or forgotten handle, an abort
+  and process exit skip it, and live bytes can reach swap, hibernation images
+  or core dumps. The wipe is proportional to the allocation and does not yield
+  (about 18 ms for 64 MiB in one release-build measurement).
+- Deadlines are cooperative. Scheduling delay, synchronous certificate
+  verification on macOS or growing a large body's buffer can delay return beyond
+  `RESERVE`. One growth step copies and wipes the old allocation without
+  yielding. Separate release-build measurements of copying and wiping 64 MiB
+  give an estimated combined cost of about 56 ms (38 ms + 18 ms). A gate cannot
   interrupt an already-entered poll or eliminate thread preemption between a
   clock check and a socket operation. The handoff and write checks have no
   intervening await. Bytes already accepted by the kernel can arrive later,
@@ -532,9 +562,9 @@ standalone no-default-features tests use no batter-core.
   destinations remain unsupported.
 
 Unexecuted cases include DNS failure, a TCP setup timeout, production platform
-verification against a public CA, the preallocation cap's allocation behavior,
-and fresh-agent adoption tasks. New macOS and hosted execution evidence are
-not claimed. Actual verification outcomes belong to `batter-u387`.
+verification against a public CA and fresh-agent adoption tasks. New macOS and
+hosted execution evidence are not claimed. Actual verification outcomes belong
+to `batter-u387`, and those for response-body storage to `batter-53nf`.
 
 ## Admission contract
 
