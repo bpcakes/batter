@@ -173,12 +173,14 @@ from registration, because the file carries no clock.
 Every public enum in `batter-flags-core` and `batter-flags-postgres` is
 exhaustive, errors included, so a new variant is a recorded hard cut. In
 `batter-flags` the outcome and status enums (`LoaderState`, `Served`,
-`LatestRead`, `Gate`, `StartupFile`, `ValueSource`, `UnpinnedBecause` and the
-`WhenTripped` policies) are exhaustive, while `FlagsOperation` and the error and
-failure enums (`DeclaredError`, `GateError`, `GateRegistrationError`,
-`RegisterError`, `PresenceError`, `LoadCause`, `PersistFailure` and the file
-and grant errors) are `#[non_exhaustive]`, like `RunlimitOperation` and
-`RouteGroupError`: a consumer matches an outcome completely and reports an
+`LatestRead`, `Gate`, `LastGoodStatus`, `StartupFile`, `ValueSource`,
+`UnpinnedBecause` and the `WhenTripped` policies) are exhaustive, while the
+grant vocabularies `FlagsOperation` and `FlagsRole` and the error and failure
+enums (`DeclaredError`, `ValueProblem`, `GateError`, `GateRegistrationError`,
+`RegisterError`, `PresenceError`, `LoadCause`, `PersistFailure`, the file
+errors `DirectoryError` and `FileProblem`, `FlagsGrantError` and the test
+fixtures' `FixtureError`) are `#[non_exhaustive]`, like `RunlimitOperation`
+and `RouteGroupError`: a consumer matches an outcome completely and reports an
 error it does not recognize.
 
 ### Decisions recorded from delivery
