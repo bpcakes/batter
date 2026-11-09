@@ -196,6 +196,16 @@ async fn serving(options: PgConnectOptions) -> (RegisteredFlags, RunningSupervis
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
+    // Readiness follows the first load, not the first heartbeat: wait until
+    // a heartbeat has published the declaring catalog, or a write could find
+    // no declarer and be refused as undeclared.
+    for _ in 0..100 {
+        if flags.presence().succeeded > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(flags.presence().succeeded > 0, "{:?}", flags.presence());
     (flags, running, f)
 }
 
