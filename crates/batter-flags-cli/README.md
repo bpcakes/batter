@@ -31,9 +31,9 @@ Writes require `--actor`, `--reason` and exactly one of `--if-revision N` or
 `kill` write only keys a retained catalog declares. `archive` and `restore`
 also act on a key no retained catalog declares any more, because archiving a
 key whose declarations were all pruned is the cleanup archive exists for. A
-flip a retained catalog marks coordinated is refused, inside the write's own
-transaction, unless `--accept-rolling-flip` is given, because processes apply
-it poll by poll. A flag write after which processes of a running declarer
+flip a retained catalog marks coordinated, by `set`, `kill` or `restore`, is
+refused, inside the write's own transaction, unless `--accept-rolling-flip` is
+given, because processes apply it poll by poll. A flag write after which processes of a running declarer
 would newly hold a flag for an unmet `requires`, `conflicts` or
 `both_or_none` invariant is refused the same way (`invariant_unmet`, each held
 flag and its invariant under `data.unmet`), and so is one a running

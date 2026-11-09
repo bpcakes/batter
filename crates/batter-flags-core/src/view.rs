@@ -33,7 +33,8 @@ use crate::{
     base::{Base, BaseInner},
     check::{HandleRefusal, Reach},
     decision::{
-        Decision, Freshness, KillSwitchKey, Layer, PrePublication, Reason, Source, SwitchState,
+        Decision, ErrorCause, Freshness, KillSwitchKey, Layer, PrePublication, Reason, Source,
+        SwitchState,
     },
     events::{self, Evaluation, EventContext, Surface},
     handle::{Flag, Handle, KillSwitch},
@@ -220,15 +221,31 @@ impl SnapshotView {
     ///
     /// [`Unpinnable`] when the decision is an error: a handle this view cannot
     /// answer for, such as another catalog's, or a view captured before the
-    /// first publication under a load policy that withholds readiness. The
-    /// error is counted and reported as [`evaluate`](Self::evaluate) does.
+    /// first publication under a load policy that withholds readiness, even
+    /// when an engaged governing switch would answer `evaluate`. The error is
+    /// counted and reported as [`evaluate`](Self::evaluate) counts one.
     ///
     /// Migration: `pin` returned the `Pinned` directly and pinned an error
     /// decision at its code default, which a replay then honoured as cached;
     /// handle the `Result`, deferring the work on `ProviderNotReady`.
     pub fn pin<F: Pinnable>(&self, flag: &F) -> Result<Pinned<F::Value>, Unpinnable> {
         let handle = flag.handle();
-        let decision = self.evaluate_handle(handle, flag.code_default());
+        let default = flag.code_default();
+        let decision = match &self.mode {
+            // Nothing is published and readiness is withheld: a governed
+            // decision is not one to replay as cached once the switch is
+            // released, so the view's not-ready error is what is reported.
+            Mode::Control(Control::NotLoaded(PrePublication::Unready)) => Decision::failed(
+                (default, default.variant()),
+                ErrorCause::ProviderNotReady,
+                self.source(),
+                Layer::Base,
+            ),
+            Mode::Declared
+            | Mode::Control(Control::NotLoaded(PrePublication::ServeDefaults))
+            | Mode::Control(Control::Loaded { .. }) => self.flag_decision(handle, default),
+        };
+        self.report(handle, &decision, Surface::Ordinary);
         if let Some(cause) = decision.error() {
             return Err(Unpinnable::new(cause));
         }

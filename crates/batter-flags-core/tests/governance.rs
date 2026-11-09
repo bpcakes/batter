@@ -11,8 +11,8 @@ mod world;
 use std::sync::Arc;
 
 use batter_flags_core::{
-    CatalogBuilder, Freshness, Layer, PrePublication, Reason, SafeState, SettingsPrefix, StaleRule,
-    SwitchState, Toggle,
+    CatalogBuilder, ErrorCause, Freshness, Layer, PrePublication, Reason, SafeState,
+    SettingsPrefix, StaleRule, SwitchState, Toggle,
     low_level::{Candidate, Snapshot},
 };
 use fixtures::Checkout;
@@ -202,4 +202,45 @@ fn a_stale_view_overrides_when_the_governors_rule_engages_it() {
         (held.value(), held.reason()),
         (Checkout::Classic, Reason::Stale)
     );
+}
+
+/// Before the first publication under `Unready`, an engaged governor still
+/// answers `evaluate`, but `pin` refuses: the code default it would record is
+/// not a published decision, and a replay would honour it as cached once the
+/// switch is released.
+#[test]
+fn an_unready_view_pins_no_governed_flag() {
+    // A settings floor engages the governor before anything is published.
+    let (catalog, h) = world();
+    let floor = base(
+        catalog,
+        &h.serving,
+        &[Literal::Switch("checkout_halt", SwitchState::Engaged)],
+    );
+    let unready = floor.not_loaded_view(PrePublication::Unready, Freshness::Fresh);
+    assert_eq!(unready.evaluate(&h.new_checkout).reason(), Reason::Disabled);
+    let refused = unready.pin(&h.new_checkout).unwrap_err();
+    assert_eq!(refused.cause(), ErrorCause::ProviderNotReady);
+    assert_eq!(floor.error_count(ErrorCause::ProviderNotReady), 1);
+    // Serving defaults is a decision, so the governed default pins.
+    let defaults = floor.not_loaded_view(PrePublication::ServeDefaults, Freshness::Fresh);
+    assert!(defaults.pin(&h.new_checkout).is_ok());
+
+    // A governor whose safe state is engaged serves it before publication.
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
+    let halt = builder
+        .kill_switch("halt", SafeState::Engaged, StaleRule::HoldLastKnown)
+        .declare()
+        .unwrap();
+    let gated = builder
+        .release_flag("gated", Toggle::Off, fixtures::expiry())
+        .governed_by(&halt)
+        .declare()
+        .unwrap();
+    let safe = base(builder.build(), &serving, &[]);
+    let unready = safe.not_loaded_view(PrePublication::Unready, Freshness::Fresh);
+    assert_eq!(unready.evaluate(&gated).reason(), Reason::Disabled);
+    let refused = unready.pin(&gated).unwrap_err();
+    assert_eq!(refused.cause(), ErrorCause::ProviderNotReady);
 }

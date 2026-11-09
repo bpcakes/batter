@@ -194,7 +194,8 @@ error it does not recognize.
 - A pin records the effective decision, a governing override included. `pin`
   refuses an error decision with `Unpinnable` (`batter-jkw6.45`): a handle the
   view cannot answer for, or a view before the first publication under
-  `unready_until_loaded`. It was infallible and pinned such a decision at its
+  `unready_until_loaded`, even where an engaged governing switch answers
+  `evaluate` with the code default. It was infallible and pinned such a decision at its
   code default, which a replay then honoured as cached, losing the error.
   `Pinned::same_decision` compares key and variant only; the
   keyed-idempotency boundary is the retained pin itself, which a replay must

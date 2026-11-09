@@ -307,7 +307,8 @@ fn preflight(
 
 /// What the retained declarations, read in this transaction after the
 /// counter lock, refuse: an environment restriction, an undeclared value
-/// write, then a coordinated flip the request did not accept.
+/// write, then a coordinated flip the request did not accept. A restore is a
+/// flip too: declaring processes move to the restored value poll by poll.
 fn declaration_refusal(
     mutation: &Mutation,
     flip: FlipPolicy,
@@ -324,7 +325,8 @@ fn declaration_refusal(
     {
         return Some(Refusal::Undeclared);
     }
-    if let (Mutation::Write(_), FlipPolicy::RefuseCoordinated) = (mutation, flip)
+    if let (Mutation::Write(_) | Mutation::Restore(_), FlipPolicy::RefuseCoordinated) =
+        (mutation, flip)
         && declarations
             .iter()
             .any(|r| r.get::<String, _>("flip_discipline") == "coordinated")

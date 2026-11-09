@@ -31,7 +31,8 @@ impl Mutation {
         }
     }
 }
-/// Whether a write may flip a key a retained catalog declares coordinated.
+/// Whether a write or a restore may flip a key a retained catalog declares
+/// coordinated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FlipPolicy {
     /// Refuse it with [`Refusal::CoordinatedFlip`](crate::Refusal::CoordinatedFlip),

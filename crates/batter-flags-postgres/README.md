@@ -96,8 +96,9 @@ head blocks writes; a persisted-file or not-loaded heartbeat does not.
 A written outcome's `Deferral` names what processes will not serve as written
 yet: each hold the write accepted, each engaged governing kill switch, each
 catalog it could not judge, and `flip`, `Coordinated` when a retained catalog
-declares the key's flips coordinated. Such a flip is written only under a policy
-that accepts a rolling flip; `WritePolicy::STRICT` refuses it.
+declares the key's flips coordinated. Such a flip, a write or a restore, is
+written only under a policy that accepts a rolling flip; `WritePolicy::STRICT`
+refuses it.
 
 The counter and audit versions have no allocation gaps and follow commit order.
 Triggers reject unaudited writes, stale/future row versions, counter decrement,

@@ -265,7 +265,8 @@ contracts, capability facts and validation history.
   `Result<Pinned<V>, Unpinnable>` and refuses a decision that is an error: a
   handle the view cannot answer for (`ErrorCause::ForeignCatalog`, `NotOwned`)
   or a view captured before the first publication under a policy that
-  withholds readiness (`ProviderNotReady`) (`batter-jkw6.45`). It pinned such a
+  withholds readiness (`ProviderNotReady`), a flag an engaged governor
+  overrides included (`batter-jkw6.45`). It pinned such a
   decision at its code default, which a replay then honoured as cached, so the
   error was lost. The pin's wire format is unchanged. No shim: an infallible
   `pin` is the lossy behaviour.

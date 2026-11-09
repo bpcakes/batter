@@ -68,3 +68,55 @@ async fn an_accepted_coordinated_flip_is_recorded_and_strict_refuses_it() {
     );
     f.close().await;
 }
+
+/// A restore moves declaring processes to the restored value poll by poll,
+/// so `WritePolicy::STRICT` refuses it for a coordinated key as it refuses a
+/// write; accepting the rolling flip restores it and says so.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn strict_refuses_restoring_a_coordinated_key_until_the_flip_is_accepted() {
+    let f = Fixture::migrated().await;
+    declare(&f, "together", "coordinated").await;
+    let written = f
+        .store
+        .write(set("together", "on", None), deadline())
+        .await
+        .unwrap();
+    assert_eq!(deferral(&written).flip, Coordination::Coordinated);
+    let archived = f
+        .store
+        .archive(Archive::new(key("together"), change(None)), deadline())
+        .await
+        .unwrap();
+    assert!(
+        !matches!(archived, WriteOutcome::Refused(_)),
+        "{archived:?}"
+    );
+    let head = f.head().await;
+    let restore = || Request::Restore(Archive::new(key("together"), change(None)));
+
+    let (_keep, interrupt) = tokio::sync::oneshot::channel();
+    let refused = f
+        .store
+        .submit(restore(), WritePolicy::STRICT, deadline(), interrupt)
+        .await
+        .unwrap();
+    assert!(
+        matches!(refused, WriteOutcome::Refused(Refusal::CoordinatedFlip)),
+        "{refused:?}"
+    );
+    assert_eq!(f.head().await, head, "a refused restore writes nothing");
+
+    let accept = WritePolicy {
+        flip: FlipPolicy::AcceptRolling,
+        ..WritePolicy::STRICT
+    };
+    let (_keep, interrupt) = tokio::sync::oneshot::channel();
+    let restored = f
+        .store
+        .submit(restore(), accept, deadline(), interrupt)
+        .await
+        .unwrap();
+    assert_eq!(deferral(&restored).flip, Coordination::Coordinated);
+    f.close().await;
+}
