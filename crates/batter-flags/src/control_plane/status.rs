@@ -349,3 +349,6 @@ fn cause(refusal: Refusal) -> LoadCause {
         Refusal::Rejected(_) | Refusal::FileAfterPublication => LoadCause::Rejected,
     }
 }
+
+#[cfg(test)]
+mod tests;

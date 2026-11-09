@@ -216,8 +216,11 @@ contracts, capability facts and validation history.
   silently capped at 1000 rows (`batter-jkw6.47`). The `batter-flags history`
   command reads every page, so the newest event an uncertain write points to is
   always shown. `KeyListing::kind` and `value_type` are `Option<String>`, `None`
-  for a key neither stored nor declared, instead of empty strings. No shim: a
-  `Vec` cannot say whether rows were cut off.
+  for a key neither stored nor declared, instead of empty strings, and the
+  command's JSON for such a key (`show`, `list`) reports `"kind": null` and
+  `"value_type": null` where it printed `""`, as it already reports an absent
+  `expiry`. No shim: a `Vec` cannot say whether rows were cut off, and an empty
+  string is the sentinel the `Option` removes.
 
   ```rust,ignore
   // Before:

@@ -157,6 +157,14 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
         0,
         "an absent key is revision 0"
     );
+    // A key neither stored nor declared has no kind or value type: null, not
+    // an empty string.
+    let unknown = db.cli_args(&["show", "never_declared"]);
+    assert_eq!(unknown.code, 0, "{unknown:?}");
+    let unknown = unknown.json();
+    assert_eq!(unknown["data"]["kind"], Value::Null, "{unknown}");
+    assert_eq!(unknown["data"]["value_type"], Value::Null, "{unknown}");
+    assert_eq!(unknown["data"]["revision"], 0);
     let rolling = db
         .cli_args(&[
             "set",
