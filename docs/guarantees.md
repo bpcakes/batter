@@ -2194,7 +2194,9 @@ lifecycle/deadline admission, group gate, browser checks, application layers.
 The synchronous gate captures once and either shares its value with every
 `GateView<V>` extraction or drops the body and renders `HttpFailure::Disabled`
 through the group's renderer. A missing or wrong-typed view yields a sanitized
-500. Renderer metadata strips the private type-erased gate record for every `V`.
+500, and its completion records `gate_outcome="unmatched_view"`, so the wiring
+error is told apart from a server fault; the pairing of a view with its group's
+gate is not checked at compile time. Renderer metadata strips the private type-erased gate record for every `V`.
 An already captured value remains the request's value during later engagement;
 application interior mutability is not an immutable-snapshot guarantee.
 

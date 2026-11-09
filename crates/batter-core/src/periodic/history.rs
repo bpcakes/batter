@@ -65,8 +65,8 @@ pub enum PeriodicCompletion {
 ///
 /// Counters saturate instead of wrapping, and saturation is reported rather
 /// than hidden. A recorded nonfatal outcome contributes to one of `succeeded`,
-/// `recoverable_failures`, `deadline_exceeded` or `stop_interrupted`; fatal run
-/// evidence is retained separately. Later success never erases earlier
+/// `skipped`, `recoverable_failures`, `deadline_exceeded` or
+/// `stop_interrupted`; fatal run evidence is retained separately. Later success never erases earlier
 /// evidence. Only the library-owned sample count is bounded here: application
 /// error payload size and caller-retained clones remain the caller's own.
 ///
@@ -117,8 +117,8 @@ pub struct PeriodicSummary {
     /// destroyed. It carries an escalated run's original error or the library's
     /// own initialization-expiry error.
     /// For initialization expiry, `invocation` counts admitted runs before the
-    /// expiry, including successful or recoverably failed runs; it is zero when
-    /// expiry precedes the first admission. It does not identify a failing run.
+    /// expiry, including successful, skipped or recoverably failed runs; it is
+    /// zero when expiry precedes the first admission. It does not identify a failing run.
     pub terminal_failure: Option<PeriodicFailureSample>,
     /// Whether this component acknowledged its registered startup.
     pub acknowledged: bool,

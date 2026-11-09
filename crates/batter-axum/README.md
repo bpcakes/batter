@@ -645,7 +645,10 @@ therefore returns disablement for unmatched paths too. Prefer named groups when
 that is unwanted. Probes and metadata-rendered fallbacks remain outside gates.
 `GateView<V>` has no constructor and is not `Clone`; repeated extraction shares
 one captured value even while the source changes. Missing or wrong-typed views
-answer a sanitized 500. The value itself need not implement `Clone`. Application
+answer a sanitized 500, and the request's completion event carries
+`gate_outcome="unmatched_view"`, telling the wiring error apart from a server
+fault. The pairing is not checked at compile time, so keep gate views in routes
+of the group whose gate captures them. The value itself need not implement `Clone`. Application
 interior mutability is still application policy; pass an immutable snapshot to
 freeze decisions. Requests captured before an engagement finish with their old
 value. Renderer metadata never carries the private gate record.
