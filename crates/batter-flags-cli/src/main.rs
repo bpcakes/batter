@@ -132,10 +132,7 @@ fn run(cli: Cli) -> Report {
             }
             let _ = interrupt.send(());
         });
-        let report = match store.preflight(deadline).await {
-            Ok(()) => commands::run(plan, &store, deadline, interrupted).await,
-            Err(error) => writes::preflight_failed(name, &error),
-        };
+        let report = commands::run(plan, &store, deadline, interrupted).await;
         pool.close().await;
         report
     })

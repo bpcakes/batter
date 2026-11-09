@@ -422,8 +422,9 @@ The flags control plane's live suites are ignored tests against a disposable
 PostgreSQL 18 server, which `scripts/verify.sh` does not run. Hosted CI's
 `native-flags-postgres` job runs the store, loader and operator-command suites
 below against a PostgreSQL 18 service whenever `scripts/ci_plan.py` selects it
-(`flags_postgres`, the flags packages' local closure); no hosted run of it is
-recorded yet. `scripts/sqlx_live.py` runs the facade's `flags_live` target and
+(`flags_postgres`, the flags packages' local closure). Its first hosted run
+failed on an admin role named `flags` (`batter-jkw6.34`); a later hosted run
+passed the store, loader and operator-command suites (`batter-jkw6.28`). `scripts/sqlx_live.py` runs the facade's `flags_live` target and
 the `grants_live` flags case; `jobs_live` needs a dedicated database and runs
 by hand. Each run is recorded on the owning Bead.
 

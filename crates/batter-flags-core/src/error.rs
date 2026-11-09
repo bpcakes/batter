@@ -10,9 +10,9 @@ use crate::{
 
 /// Why a vocabulary value, declaration, retired name or catalog was refused.
 ///
-/// Every variant names declared, non-secret identifiers only. A declaration
-/// reports the first error it met; [`CatalogBuilder::build`] reports the first
-/// catalog-wide error.
+/// Every variant names declared, non-secret identifiers only. Each
+/// vocabulary, declaring, retiring and relation method reports the first
+/// error it met; [`CatalogBuilder::build`] cannot fail.
 ///
 /// [`CatalogBuilder::build`]: crate::CatalogBuilder::build
 #[derive(Clone, Debug, Error, Eq, PartialEq)]

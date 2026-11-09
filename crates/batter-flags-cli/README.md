@@ -56,10 +56,11 @@ retried. The pool holds at most one connection at a time, but each store
 operation retires its connection when it ends, so a command that reads before
 it writes opens one connection per operation, and connection establishment
 follows SQLx's own retry within the timeout. Every command first refuses a
-standby and a schema older than it requires. SIGINT or SIGTERM before COMMIT
-is sent, including during the continuity check just before it, rolls the
-write back; once COMMIT is sent the signal waits and the real outcome is
-reported.
+standby and a schema older than it requires. SIGINT or SIGTERM during that
+check or a read ends the command at once with `interrupted` (exit 1). During a
+write, a signal before COMMIT is sent, including during the continuity check
+just before it, rolls the write back; once COMMIT is sent the signal waits and
+the real outcome is reported.
 
 Exit codes: 0 ok, 1 failed with nothing written (a database rejection of
 COMMIT included), 2 usage, 3 precondition not met (a revision mismatch, every

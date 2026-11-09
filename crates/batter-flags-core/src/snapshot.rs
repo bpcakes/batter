@@ -1,7 +1,7 @@
 //! Snapshots: a candidate that was validated entry by entry.
 //!
-//! Validation rejects a whole candidate only for structural corruption: no
-//! version, a repeated key, or a candidate read for another scope. Everything
+//! Validation rejects a whole candidate only for structural corruption: a
+//! repeated key, or a candidate read for another scope. Everything
 //! else is decided per entry, because one bad row must never take the other
 //! flags down with it. Cross-flag invariants are judged last, over what the
 //! entries would serve, and hold the entry that leaves one unmet.

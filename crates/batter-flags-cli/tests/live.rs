@@ -361,3 +361,60 @@ fn arguments_are_validated_before_any_connection() {
         assert_eq!(run.json()["outcome"], "usage");
     }
 }
+
+#[test]
+fn a_signal_during_a_stalled_preflight_ends_the_command_at_once() {
+    // A server that accepts and never answers holds the preflight open.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!(
+        "postgres://ops@{}/flags?sslmode=disable",
+        listener.local_addr().unwrap()
+    );
+    let (accepted, connected) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming() {
+            held.push(stream);
+            if accepted.send(()).is_err() {
+                return;
+            }
+        }
+    });
+    let read = ["--output", "json", "--timeout", "60", "show", "fast_path"];
+    let write = [
+        "--output",
+        "json",
+        "--timeout",
+        "60",
+        "kill",
+        "halt",
+        "engage",
+        "--actor",
+        "ops",
+        "--reason",
+        "x",
+        "--yes",
+    ];
+    for args in [&read[..], &write[..]] {
+        let child = std::process::Command::new(env!("CARGO_BIN_EXE_batter-flags"))
+            .env_clear()
+            .env("BATTER_FLAGS_DATABASE_URL", &url)
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        connected
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("the preflight connects");
+        let signalled = std::time::Instant::now();
+        signal(&child, "-INT");
+        let run = finish(child);
+        assert!(
+            signalled.elapsed() < std::time::Duration::from_secs(20),
+            "the signal ended the command, not its 60 s timeout: {run:?}"
+        );
+        assert_eq!(run.code, 1, "{run:?}");
+        assert_eq!(run.json()["outcome"], "interrupted", "{run:?}");
+    }
+}

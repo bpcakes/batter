@@ -152,7 +152,7 @@ literal is ignored, and a floor-engaged switch cannot be released through the
 control plane.
 
 The control plane publishes one validated snapshot per store version. Only a
-structurally corrupt candidate (no version, a repeated key, a foreign scope)
+structurally corrupt candidate (a repeated key, a foreign scope)
 is rejected whole, and the previous publication stays served without renewing
 its freshness. A row naming no declaration, or one this process kind does not
 own, is ignored. Any other row that fails validation is held: a release or

@@ -7,8 +7,8 @@
 //! schema, before the build that needs it serves. Serving with `DATABASE_URL`
 //! never migrates: it registers the control plane over the pool `pool_in`
 //! owns, under a serving login granted only `FlagsRole::ServingProcess`, with a
-//! last-good file in `FLAGS_LAST_GOOD_DIR` (default: the system temporary
-//! directory), and serves on defaults, or on its last-good file, through an
+//! last-good file in the required `FLAGS_LAST_GOOD_DIR`, a directory this
+//! process owns, and serves on defaults, or on its last-good file, through an
 //! outage. In both modes a maintenance run is gated by the kill switch.
 #![forbid(unsafe_code)]
 
@@ -18,6 +18,7 @@ mod tests;
 
 use std::{
     ffi::OsString,
+    path::PathBuf,
     process::ExitCode,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -201,9 +202,9 @@ async fn run_control_plane(settings: &SettingsSource, url: &str) -> Result<(), B
         options,
         profile,
     )?;
-    let directory = settings
-        .text("FLAGS_LAST_GOOD_DIR")?
-        .map_or_else(std::env::temp_dir, Into::into);
+    // Required: the file restores kill-switch states at startup, so it lives
+    // in a directory this process owns, never a shared temporary one.
+    let directory = PathBuf::from(settings.required("FLAGS_LAST_GOOD_DIR")?);
     let last_good = SnapshotDirectory::open(SnapshotFilePath::new(directory, "rollout.bfsn")?)?;
     let policy = LoadPolicy::start_on_defaults(RefreshTiming::new(second * 5, second * 60)?)
         .with_last_good(last_good);

@@ -20,5 +20,5 @@ cargo test -p batter-flags-core --all-features --locked
 Experimental. The catalog, validated snapshots, evaluation, pinned decisions,
 the evaluation event and the construction-time handle checks are implemented,
 and views are built through the disclosed `low_level` path. Declared-mode
-resolution, the reader and the test flags are in `batter-flags`; the loaders
-arrive with later delivery tasks of the flags epic.
+resolution, the reader, the test flags and the control-plane and last-good
+loaders (`control_plane::register_in`) are in `batter-flags`.

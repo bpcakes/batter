@@ -178,8 +178,9 @@ impl LoadPolicy {
     /// starts a refresh sooner than the endpoint's wake spacing after the
     /// previous one; the poll stays the backstop, so a lost listener only
     /// delays changes to the poll interval. LISTEN delivery is exercised by
-    /// the ignored `listen_live` suite against PostgreSQL 18; hosted CI does
-    /// not run it.
+    /// the ignored `listen_live` suite against PostgreSQL 18, which hosted
+    /// CI's `native-flags-postgres` job runs when `scripts/ci_plan.py`
+    /// selects it.
     ///
     /// # Errors
     ///

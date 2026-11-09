@@ -219,9 +219,14 @@ pub(crate) fn file_of(
         .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, _)| key.as_str())
         .collect();
+    // Only an engagement is carried into the file: a held switch that carries
+    // a release is written without a value, so a restart serves its safe
+    // state rather than a release the current row no longer supports.
     let carried: Vec<_> = snapshot
         .carried()
-        .filter(|carried| carried.provenance() == Provenance::ControlPlane)
+        .filter(|carried| {
+            carried.provenance() == Provenance::ControlPlane && carried.state().is_engaged()
+        })
         .collect();
     let mut entries = Vec::with_capacity(rows.len());
     for row in rows {

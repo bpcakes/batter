@@ -37,7 +37,7 @@ The default feature set is empty. The available feature/module pairs are:
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
 
-The four `flags*` features are experimental. `flags` alone is declared mode,
+The five `flags*` features are experimental. `flags` alone is declared mode,
 with no database; the [`rollout` example](examples/rollout.rs) runs in both
 declared and control-plane mode. The `batter-flags` operator command is the
 unpublished [`batter-flags-cli`](../batter-flags-cli/README.md) package.

@@ -29,8 +29,9 @@ A new flag on writes goes on `Guard` in `src/commands.rs`.
 Exit codes are 0 ok, 1 failed with nothing written, 2 usage, 3 precondition, 4
 commit outcome unknown and 101 panic; under `--output json` every exit except
 the argument parser's own and a panic writes exactly one document whose field
-names are a public contract. No operation is retried. A signal before COMMIT
-rolls back; after it, the real outcome is reported. The command never prints a
+names are a public contract. No operation is retried. A signal during the
+preflight or a read ends the command with `interrupted`; during a write, one
+before COMMIT rolls back and one after it waits for the real outcome. The command never prints a
 connection string or a stored value it did not ask for.
 
 ## Common commands

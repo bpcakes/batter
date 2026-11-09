@@ -268,3 +268,56 @@ fn only_owned_declared_rows_are_written_and_a_held_one_without_its_value() {
         .collect();
     assert_eq!(written, [("mine", true), ("broken", false)]);
 }
+
+#[test]
+fn a_held_switch_is_written_with_its_carried_state_only_when_engaged() {
+    use batter_flags_core::{
+        SwitchState, Version,
+        low_level::{Candidate, CandidateRow, Disposition},
+    };
+    let base = base();
+    let scope = base.validation_scope();
+    for (state, expected) in [
+        (SwitchState::Released, EntryValue::Absent),
+        (
+            SwitchState::Engaged,
+            EntryValue::State("{\"encoding\":1,\"switch\":\"engaged\"}".into()),
+        ),
+    ] {
+        let mut publisher = Publisher::new(&scope, 0_u64);
+        let first = Version::new(1);
+        let published = CandidateRow::new(
+            "halt",
+            "switch",
+            "switch",
+            first,
+            &format!("{{\"encoding\":1,\"switch\":\"{}\"}}", state.as_str()),
+        );
+        let candidate = Candidate::new(&scope, first).rows(vec![published]);
+        assert_eq!(publisher.judge(candidate).publish(1), Disposition::Applied);
+        // Version 2 retags halt, so it is held, carrying the published state.
+        let at = Version::new(2);
+        let rows = vec![CandidateRow::new(
+            "halt",
+            "release",
+            "toggle",
+            at,
+            "{\"encoding\":1,\"variant\":\"on\"}",
+        )];
+        let candidate = Candidate::new(&scope, at).rows(rows.clone());
+        assert_eq!(publisher.judge(candidate).publish(2), Disposition::Applied);
+        let Record::Published(published) = publisher.record() else {
+            panic!("version 2 is published");
+        };
+        let snapshot = published.snapshot();
+        let carried: Vec<_> = snapshot.carried().map(|kept| kept.state()).collect();
+        assert_eq!(carried, [state], "the hold carries the published state");
+        let file = super::file_of(&base, snapshot, &rows).unwrap();
+        // EntryValue has no Debug, so a failure never prints a state.
+        let [entry] = file.entries.as_slice() else {
+            panic!("only halt is written");
+        };
+        assert_eq!(entry.key, "halt");
+        assert!(entry.value == expected, "{state:?} is written wrongly");
+    }
+}

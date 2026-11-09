@@ -240,11 +240,6 @@ fn deferral_data(deferral: &Deferral) -> Value {
     })
 }
 
-/// The report when the preflight refuses the store.
-pub(crate) fn preflight_failed(name: &'static str, error: &StoreError) -> Report {
-    failed(name, error)
-}
-
 /// A store failure: certain, so nothing was written, except an unknown commit.
 pub(crate) fn failed(name: &'static str, error: &StoreError) -> Report {
     match (error.class(), error.sqlstate()) {

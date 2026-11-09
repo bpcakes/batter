@@ -120,23 +120,53 @@ impl Command {
     }
 }
 
-/// Runs `plan` against `store` within `deadline`; `interrupt` stops a
-/// write before its COMMIT.
+/// Refuses a standby or an older schema, then runs `plan` against `store`
+/// within `deadline`. `interrupt` ends the preflight or a read at once and
+/// stops a write before its COMMIT; once COMMIT is sent the write reports
+/// its real outcome.
 pub(crate) async fn run(
     plan: Plan,
     store: &PooledStore,
     deadline: Instant,
-    interrupt: oneshot::Receiver<()>,
+    mut interrupt: oneshot::Receiver<()>,
 ) -> Report {
     let name = plan.name();
-    match execute(plan, store, deadline, interrupt).await {
+    let preflight = async { Ok(store.preflight(deadline).await?) };
+    let outcome = match interruptible(&mut interrupt, preflight).await {
+        Ok(()) => execute(plan, store, deadline, interrupt).await,
+        Err(failure) => Err(failure),
+    };
+    match outcome {
         Ok(report) => report,
         Err(Failure::Store(error)) => crate::writes::failed(name, &error),
+        Err(Failure::Interrupted) => Report::new(
+            name,
+            Exit::Failed,
+            "interrupted",
+            "interrupted before any write; nothing written",
+        ),
     }
 }
 
+/// Why a command ended without its report.
 pub(crate) enum Failure {
+    /// The store refused or failed an operation.
     Store(StoreError),
+    /// SIGINT or SIGTERM arrived during the preflight or a read.
+    Interrupted,
+}
+
+/// Runs `work` until it ends or `interrupt` fires, whichever is first. A
+/// closed sender never counts as an interrupt.
+async fn interruptible<T>(
+    interrupt: &mut oneshot::Receiver<()>,
+    work: impl Future<Output = Result<T, Failure>>,
+) -> Result<T, Failure> {
+    tokio::select! {
+        biased;
+        Ok(()) = interrupt => Err(Failure::Interrupted),
+        outcome = work => outcome,
+    }
 }
 
 impl From<StoreError> for Failure {
@@ -149,23 +179,27 @@ async fn execute(
     plan: Plan,
     store: &PooledStore,
     deadline: Instant,
-    interrupt: oneshot::Receiver<()>,
+    mut interrupt: oneshot::Receiver<()>,
 ) -> Result<Report, Failure> {
     match plan {
-        Plan::List(filter) => list(store, deadline, &filter).await,
+        Plan::List(filter) => interruptible(&mut interrupt, list(store, deadline, &filter)).await,
         Plan::Show(key) => {
-            let listing = store.key(&key, deadline).await?;
-            Ok(Report::new(
-                "show",
-                Exit::Ok,
-                "ok",
-                format!("revision {}", listing.revision.get()),
-            )
-            .with_data(listed(&listing)))
+            interruptible(&mut interrupt, async {
+                let listing = store.key(&key, deadline).await?;
+                Ok(Report::new(
+                    "show",
+                    Exit::Ok,
+                    "ok",
+                    format!("revision {}", listing.revision.get()),
+                )
+                .with_data(listed(&listing)))
+            })
+            .await
         }
-        Plan::History(key) => history(store, deadline, &key).await,
+        Plan::History(key) => interruptible(&mut interrupt, history(store, deadline, &key)).await,
         Plan::Fleet { version, flag } => {
-            crate::fleet::report::<Failure>(store, deadline, version, flag.as_ref()).await
+            let fleet = crate::fleet::report::<Failure>(store, deadline, version, flag.as_ref());
+            interruptible(&mut interrupt, fleet).await
         }
         Plan::Write {
             name,
