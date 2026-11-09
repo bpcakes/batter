@@ -192,5 +192,10 @@ isolated databases. Docker provisioning stays outside this library. The wire
 proxy test suppresses an actual successful COMMIT acknowledgement; the queue
 failure test injects the server's 54000 ErrorResponse at COMMIT without exhausting
 the cluster's queue. Standby and older-server checks use injected server values;
-no actual replica or PostgreSQL 17 server is claimed. Shared core encoding
+no actual replica or PostgreSQL 17 server is claimed. The standby refusal of
+`load`, `preflight` and the operator reads (`keys`, `key`, `history` and the
+fleet reads) is therefore proved only for the injected `check_primary` scalar
+and is unverified at those call sites: the read-only snapshot pins
+`search_path` to `pg_catalog, pg_temp`, so no session can stand in for a
+replica's `pg_is_in_recovery()`, and no suite runs one. Shared core encoding
 vectors, schema column lists and the initial migration checksum are pinned.

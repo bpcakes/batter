@@ -427,6 +427,13 @@ recorded yet. `scripts/sqlx_live.py` runs the facade's `flags_live` target and
 the `grants_live` flags case; `jobs_live` needs a dedicated database and runs
 by hand. Each run is recorded on the owning Bead.
 
+Unverified: no suite runs against a hot standby, so the standby refusal of the
+store's `load`, `preflight` and operator reads is proved only through the
+injected `check_primary` scalar, not at those call sites. A session cannot
+stand in for a replica, because the read-only snapshot pins `search_path` to
+`pg_catalog, pg_temp`. The schema half of the same guard is proved live by
+`every_read_and_write_refuses_an_unmigrated_store_as_revision_zero`.
+
 ```text
 # The admin URL of the disposable server; each test leases its own database.
 export BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL=postgres://...

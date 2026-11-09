@@ -225,7 +225,9 @@ impl RegisteredFlags {
     }
 
     /// The heartbeat component's runs so far. A heartbeat skipped while the
-    /// schema is behind succeeds without reaching the store.
+    /// schema is behind, or after the stop marker recorded the stop, counts in
+    /// [`skipped`](PeriodicSummary::skipped), never in `succeeded`: it did not
+    /// reach the store, so `succeeded` counts heartbeats the store recorded.
     pub fn presence(&self) -> PeriodicSummary {
         self.presence.snapshot()
     }

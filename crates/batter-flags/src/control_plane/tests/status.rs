@@ -391,6 +391,15 @@ async fn presence_skips_its_heartbeat_while_the_schema_is_behind_and_prunes_ever
         after.recoverable_failures, before.recoverable_failures,
         "no heartbeat reached the store"
     );
+    // Each skip is a skip, never a success.
+    assert!(
+        after.skipped > before.skipped,
+        "a heartbeat while the schema is behind is skipped"
+    );
+    assert_eq!(
+        after.succeeded, before.succeeded,
+        "a skipped heartbeat is not a success"
+    );
     assert_eq!(
         after.deadline_exceeded, 0,
         "every store call returned within its run"

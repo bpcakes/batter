@@ -169,7 +169,10 @@ contracts, capability facts and validation history.
   keeps out is `PeriodicSummary::skipped`, and `succeeded` counts only runs
   whose work succeeded; it counted skips too, beside a count kept outside core
   and the completion report. `GatedPeriodicReader::skipped()` reads core's
-  count.
+  count. The control plane's heartbeat skips through core too: a heartbeat
+  that does not reach the store, while the schema is behind or after the stop
+  marker recorded the stop, counts in `RegisteredFlags::presence().skipped`
+  instead of `succeeded`, so `succeeded` counts heartbeats the store recorded.
 
 - **Breaking:** a `batter_flags_postgres::ProcessPresence` is bound to the
   store that issued it (`batter-jkw6.49`). `ProcessPresence::new` takes the

@@ -7,8 +7,8 @@ use std::{sync::Arc, time::Duration};
 use batter_core::{
     BoxError, RegistrationError,
     periodic::{
-        PeriodicFailure, PeriodicPolicy, PeriodicReader, PeriodicShutdown, PeriodicStartup,
-        register_periodic_in,
+        PeriodicFailure, PeriodicOutcome, PeriodicPolicy, PeriodicReader, PeriodicShutdown,
+        PeriodicStartup, register_periodic_in, register_skippable_in,
     },
     registration::{Registration, RegistrationTarget},
 };
@@ -186,8 +186,10 @@ impl<'a> Reserved<'a> {
             prune,
             ..
         } = self.prepared;
+        // A heartbeat that does not reach the store is a skip, never a
+        // success: core counts it in `skipped`.
         let presence =
-            register_periodic_in(&mut target, super::PRESENCE, heartbeat, move |context| {
+            register_skippable_in(&mut target, super::PRESENCE, heartbeat, move |context| {
                 let slot = slot.clone();
                 let shared = shared.clone();
                 let floor = floor.clone();
@@ -202,7 +204,7 @@ impl<'a> Reserved<'a> {
                             batter.flags.presence.cause = "schema_behind",
                             "flags heartbeat skipped",
                         );
-                        return Ok(());
+                        return Ok(PeriodicOutcome::Skipped);
                     }
                     let report = report(&shared, floor);
                     let mut slot = slot.lock().await;
@@ -210,8 +212,10 @@ impl<'a> Reserved<'a> {
                         Slot::Active(presence) => presence
                             .heartbeat(&report, work_deadline(context.deadline()))
                             .await
+                            .map(|()| PeriodicOutcome::Ran)
                             .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error))),
-                        Slot::Stopped => Ok(()),
+                        // The stop marker has recorded the stop.
+                        Slot::Stopped => Ok(PeriodicOutcome::Skipped),
                     }
                 }
             })?;
