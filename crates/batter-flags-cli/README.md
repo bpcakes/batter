@@ -19,11 +19,11 @@ a SQLSTATE at most.
 | Command | Does |
 | --- | --- |
 | `list [--expired \| --orphaned \| --declared-only]` | every stored or declared key, with its `revision` |
-| `show <key>` | one key; an absent key is revision 0 |
+| `show <key>` | one key; an absent key is revision 0, and a key neither stored nor declared reports `kind` and `value_type` as `null` |
 | `set <key> <variant>` | sets a release or mode flag |
 | `kill <switch> engage\|release` | engages or releases a kill switch |
 | `archive <key>`, `restore <key>` | archives or restores a key |
-| `history <key>` | the key's audited history |
+| `history <key>` | the key's whole audited history, read page by page, so the newest event is always shown |
 | `fleet [--version N \| --flag KEY]` | the fleet, a rollout check, or a key's declarers |
 
 Writes require `--actor`, `--reason` and exactly one of `--if-revision N` or
@@ -46,7 +46,9 @@ staleness, and each process judges again when it loads. Change a
 accepted on the first write. Kill switches are never refused for what
 engaging one holds. A write reports each accepted hold, each engaged kill
 switch governing the written flag and each unjudged catalog under
-`data.deferral` and as a warning. Releasing a kill switch warns with the
+`data.deferral` and as a warning. `data.deferral.flip` is `rolling` or
+`coordinated`; a coordinated flip written with `--accept-rolling-flip` also
+warns that processes apply the write poll by poll, not together. Releasing a kill switch warns with the
 number of Live processes whose settings floor keeps it engaged.
 
 There is one end-to-end `--timeout` (1 to 60 s) and no operation is ever

@@ -27,7 +27,9 @@ Experimental. Declared mode is implemented: `declared::resolve` consumes a
 catalog and the root's captured `SettingsSource` once and returns a `Resolved`
 with strict literals, ownership, retired and unknown names, required settings
 and invariants, a redacted startup report and two revisions; `Resolved::into_flags`
-enters declared mode. `test::TestFlags`, behind the `test-support` feature
+enters declared mode. A source narrowed by `select_dedicated` or
+`select_environment` is refused with `DeclaredError::NarrowedSource`, because
+the narrowing may have dropped the flag names; pass the root's capture. `test::TestFlags`, behind the `test-support` feature
 so a production build cannot serve `Source::Test`, is the fixture path, and
 `low_level::capture_now` is the disclosed, non-canonical live read. The
 protected periodic, `axum` HTTP and `runledger` job gates are implemented.
@@ -40,7 +42,8 @@ snapshots on a `RefreshTiming` cadence under a `LoadPolicy`
 `flags.presence_prune` keep the fleet view current; and the
 `flags.presence.stopped` cleanup records the stop before the application's
 pool closes. Registration refuses caller-owned, foreign-owner and
-extracted-cleanup pools before adding any component. `RegisteredFlags::status()` reports a `SnapshotStatus` of three
+extracted-cleanup pools, and a component or cleanup name already taken on the
+target, before adding any component. `RegisteredFlags::status()` reports a `SnapshotStatus` of three
 separate facts read together: `loader` (running or stopped), `served` (the
 declared base, the persisted file, or a control-plane version and its
 freshness) and `latest_read` (none yet, loaded, schema behind, or refused with
@@ -64,7 +67,8 @@ also wakes the refresh when an audited write commits: a listener, on a
 two-connection pool of its own for each session, LISTENs on the store's
 channel, wakes the refresh once after every LISTEN to catch what it missed, and
 again on every notification, never sooner than the wake spacing after the
-previous run. The spacing may not exceed the poll interval, so the poll stays
+previous run. The spacing may not exceed the poll interval (`with_listen`
+returns `WakeSpacingTooLong` when the policy is built), so the poll stays
 the backstop and a lost listener delays a change by at most one poll. Each
 session's pool is closed within a bound when the session ends, so a connection
 a dead peer keeps busy never blocks the next one; at drain the listener
@@ -129,7 +133,10 @@ application policy. Scheduled jobs still materialize while a gate is tripped.
 The complete durable-effects matrix and its execution-evidence label live in
 [`jobs` rustdoc](src/jobs.rs).
 
-For pinned flags, match all `PinnedResolution` arms. `Honoured` replays the pin,
+`SnapshotView::pin` refuses an error decision with `Unpinnable`, for example a
+view captured before the first publication under `unready_until_loaded`
+(`ErrorCause::ProviderNotReady`), so an error is never pinned as its code
+default; defer such work. For pinned flags, match all `PinnedResolution` arms. `Honoured` replays the pin,
 `Overridden` applies its governing switch, and `Incompatible` carries a
 `PinRefusal` bound to that view and flag. Consume the refusal with
 `fall_back_to_live()` only if application policy permits live fallback;

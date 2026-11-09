@@ -93,6 +93,12 @@ retained catalogs yield `Orphaned`, and explicit writes without any retained
 catalog yield `NeverDeclared`. A live control-plane snapshot above the database
 head blocks writes; a persisted-file or not-loaded heartbeat does not.
 
+A written outcome's `Deferral` names what processes will not serve as written
+yet: each hold the write accepted, each engaged governing kill switch, each
+catalog it could not judge, and `flip`, `Coordinated` when a retained catalog
+declares the key's flips coordinated. Such a flip is written only under a policy
+that accepts a rolling flip; `WritePolicy::STRICT` refuses it.
+
 The counter and audit versions have no allocation gaps and follow commit order.
 Triggers reject unaudited writes, stale/future row versions, counter decrement,
 unpaired counter advances at COMMIT, state deletion, audit mutation and table
