@@ -10,6 +10,7 @@ have been removed; Git retains their history.
 
 ## Dependency selection and Effect v4 rationale
 
+- [OTLP attempt callback boundary, 2026-11-09](references/runtime.md#otlp-attempt-callback-boundary-rechecked-2026-11-09)
 - <a id="dependency-refresh-2026-11-04"></a>[Dependency refresh, 2026-11-04](references/ecosystem.md#dependency-refresh-2026-11-04)
 - <a id="macos-refusal-fixture-repair"></a>[macOS refusal fixture repair](references/ecosystem.md#macos-refusal-fixture-repair)
 - <a id="facade-feature-and-resolver-semantics-reviewed-2026-09-18-resolver-rechecked-2026-09-30"></a>[Facade feature and resolver semantics: reviewed 2026-09-18; resolver rechecked 2026-09-30](references/ecosystem.md#facade-feature-and-resolver-semantics-reviewed-2026-09-18-resolver-rechecked-2026-09-30)

@@ -368,6 +368,11 @@ work children. Its response body is capped at 2 MiB and captured output at 64 Ki
 Socket-idle timeouts are not treated as complete-exchange deadlines. Only a
 completed not-ready probe is retried; a crashed, timed-out or interrupted polling
 process retains failure evidence and fails the run.
+The parent retries only the dedicated `PollingNotReady` result; unexpected I/O,
+configuration and assertion failures from the parent propagate immediately.
+`run_fixture` owns work, diagnostics and removal together. Docker work always
+uses the interruptible runner; fixed diagnostics/removal operations own their
+protected subprocess paths, with no caller-selected cancellation boolean.
 The fixture attempts forced removal directly by its unique name, with a
 ten-second limit. Diagnostics/removal run in separate Unix sessions so repeated
 process-group stop signals cannot interrupt their commands. Docker
@@ -378,10 +383,12 @@ cannot establish successful cleanup. Real-signal subprocess controls exercise
 both polling phases, cleanup entry, nested runner restoration and repeated
 process-group stop signals (including a real removal-command surrogate); error
 controls cover removal failure with and without a primary failure (`batter-pdfk`).
-The matrix imports the harness's derived 32-second stop allowance: one work child's
+The matrix attaches the harness's derived 32-second stop allowance to its command
+specification, independent of the display label: one work child's
 10-second stop plus 5-second reap, 2-second diagnostics, 10-second removal and
 5 seconds of scheduling headroom. The shared runner keeps its existing defaults
-for other batches. A real outer-runner cancellation control scales these budgets
+for other batches; mixed batches allow the maximum declared command grace.
+A real outer-runner cancellation control uses a renamed label and scales these budgets
 while retaining their ratios and delays diagnostics/removal; it covers polling
 and an active producer. Restoring the old outer grace reproduces SIGKILL before
 removal completes, so the test checks the composition as well as the standalone
@@ -389,7 +396,8 @@ harness.
 Actual loopback HTTP regressions trickle headers and chunked bodies while
 cancelling health/read-back polling, and verify a whole-attempt timeout despite
 continued response progress. The controls command discovers
-`test_victoriametrics*.py`, including these HTTP cases and the lifecycle controls.
+`test_victoriametrics*.py`, including these HTTP cases, lifecycle controls and
+execution-policy controls (`batter-kwfa`).
 This check is included in the `workspace` matrix part, so complete local and Linux
 CI verification require Docker access and the image (or registry access to pull
 it). Plain `cargo test` compiles but ignores the fixture-dependent test; the

@@ -53,7 +53,9 @@ class EvidenceTests(unittest.TestCase):
 
             with (self.subTest(launch_failure=launch_failure),
                   patch.object(live, "build", return_value="producer"),
-                  patch.object(live, "docker", side_effect=docker),
+                  patch.object(live, "docker_work", side_effect=docker),
+                  patch.object(live, "_fixture_logs", side_effect=lambda name: docker("logs", name)),
+                  patch.object(live, "_remove_fixture", side_effect=lambda name: docker("rm", "--force", "--volumes", name)),
                   patch.object(live, "poll", return_value=None),
                   patch.object(live, "run_parallel", return_value=[SimpleNamespace(ok=False)]),
                   patch.object(live, "render_outcomes"),
@@ -70,46 +72,55 @@ class EvidenceTests(unittest.TestCase):
         primary.__cause__ = cause
         cleanup = subprocess.CalledProcessError(1, ["docker", "rm"], stderr="daemon failed")
         before = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
-        with patch.object(live, "docker", side_effect=cleanup) as docker:
+        with patch.object(live, "_exercise", side_effect=primary), \
+                patch.object(live, "_fixture_logs"), \
+                patch.object(live, "_remove_fixture", side_effect=cleanup) as remove:
             with self.assertRaises(subprocess.CalledProcessError) as raised:
-                with live.fixture() as (name, _stop):
-                    raise primary
+                live.run_fixture("producer")
         self.assertIs(raised.exception, cleanup)
         self.assertIs(cleanup.__context__, primary)
         self.assertIs(primary.__cause__, cause)
-        docker.assert_called_once_with("rm", "--force", "--volumes", name, timeout=10)
+        remove.assert_called_once()
+        self.assertTrue(remove.call_args.args[0].startswith("batter-victoriametrics-"))
         self.assertEqual({sig: signal.getsignal(sig) for sig in before}, before)
 
     def test_cleanup_failure_cannot_turn_success_into_a_pass(self):
         cleanup = subprocess.TimeoutExpired(["docker", "rm"], 10)
-        with patch.object(live, "docker", side_effect=cleanup):
+        with patch.object(live, "_exercise"), \
+                patch.object(live, "_remove_fixture", side_effect=cleanup):
             with self.assertRaises(subprocess.TimeoutExpired) as raised:
-                with live.fixture():
-                    pass
+                live.run_fixture("producer")
         self.assertIs(raised.exception, cleanup)
         self.assertIsNone(cleanup.__context__)
 
     def test_native_success_for_an_absent_container_needs_no_special_error_parser(self):
         before = signal.getsignal(signal.SIGTERM)
-        with patch.object(live, "docker", return_value="") as docker:
-            with live.fixture() as (name, stop):
-                self.assertIs(signal.getsignal(signal.SIGTERM), stop)
-        docker.assert_called_once_with("rm", "--force", "--volumes", name, timeout=10)
+
+        def work(_binary, _name, stop):
+            self.assertIs(signal.getsignal(signal.SIGTERM), stop)
+
+        with patch.object(live, "_exercise", side_effect=work), \
+                patch.object(live.subprocess, "run", return_value=SimpleNamespace(stdout="")) as command:
+            live.run_fixture("producer")
+        command.assert_called_once()
+        self.assertEqual(command.call_args.args[0][:4], ["docker", "rm", "--force", "--volumes"])
+        self.assertEqual(command.call_args.kwargs["timeout"], live.REMOVE_TIMEOUT)
+        self.assertTrue(command.call_args.kwargs["start_new_session"])
         self.assertEqual(signal.getsignal(signal.SIGTERM), before)
 
     def test_late_stop_is_checked_after_cleanup_without_interrupting_removal(self):
         removed = []
 
-        def remove(*args, **_kwargs):
+        def remove(name):
             os.kill(os.getpid(), signal.SIGTERM)
             os.kill(os.getpid(), signal.SIGTERM)
-            removed.append(args)
+            removed.append(name)
 
-        with patch.object(live, "docker", side_effect=remove):
+        with patch.object(live, "_exercise"), \
+                patch.object(live, "_remove_fixture", side_effect=remove):
             with self.assertRaises(KeyboardInterrupt):
-                with live.fixture() as (name, _stop):
-                    pass
-        self.assertEqual(removed, [("rm", "--force", "--volumes", name)])
+                live.run_fixture("producer")
+        self.assertEqual(len(removed), 1)
 
     def test_interruptible_docker_preserves_failed_process_evidence(self):
         from scheduling_process import ProcessOutcome
@@ -118,7 +129,7 @@ class EvidenceTests(unittest.TestCase):
         with patch.object(live, "run_parallel", return_value=[outcome]), \
                 patch.object(live.subprocess, "run", side_effect=AssertionError("unbounded path")):
             with self.assertRaises(live.DockerCommandFailure) as raised:
-                live.docker("run", "fixture", timeout=180, interruptible=True)
+                live.docker_work("run", "fixture", timeout=180)
         self.assertIs(raised.exception.outcome, outcome)
         self.assertNotIn("native stderr", str(raised.exception))
 
@@ -151,9 +162,7 @@ def docker(*args, **kwargs):
     global owned
     if args[0] == "run":
         owned = args[args.index("--name") + 1]
-        assert kwargs["interruptible"]
     elif args[0] == "inspect":
-        assert kwargs["interruptible"]
         return json.dumps([{"NetworkSettings": {"Ports": {"8428/tcp": [
             {"HostIp": "127.0.0.1", "HostPort": "1234"}]}}}])
     elif args[0] == "ps":
@@ -195,7 +204,9 @@ def producer(_commands, **_kwargs):
     assert results[0].ok == (stage != "producer"), results[0]
     return results
 
-live.docker = docker
+live.docker_work = docker
+live._fixture_logs = lambda name: docker("logs", "--tail", "30", name, timeout=live.LOG_TIMEOUT)
+live._remove_fixture = lambda name: docker("rm", "--force", "--volumes", name, timeout=live.REMOVE_TIMEOUT)
 live.poll = lambda base, mode: health(base) if mode == "health" else checkpoint()
 live.run_parallel = producer
 live.render_outcomes = lambda *_args: None
@@ -222,7 +233,9 @@ signal.signal(signal.SIGTERM, signal.SIG_DFL)
 control, stage, policy = Path(sys.argv[2]), sys.argv[3], sys.argv[4]
 command = [sys.executable, "-B", "-u", "-c", SIGNAL_CHILD,
            sys.argv[1], stage, str(control)]
-matrix.parts = lambda: {"workspace": [(["victoriametrics-live"], [command])]}
+# Renamed label must retain the command's required teardown allowance.
+matrix.parts = lambda: {"workspace": [(["backend-acceptance"],
+    [matrix.Command(command, stop_grace=matrix.VICTORIAMETRICS.stop_grace)])]}
 original = matrix.run_parallel
 
 def scaled(commands, **kwargs):
@@ -268,12 +281,16 @@ def substitute_command(command, **kwargs):
     return native_run([sys.executable, "-B", "-u", "-c", worker, str(control)], **kwargs)
 
 live.subprocess.run = substitute_command
+def work(_binary, _name, stop):
+    (control / "polling").touch()
+    while True:
+        stop.check()
+        time.sleep(0.01)
+
+live._exercise = work
+live._fixture_logs = lambda _name: None
 try:
-    with live.fixture() as (_name, stop):
-        (control / "polling").touch()
-        while True:
-            stop.check()
-            time.sleep(0.01)
+    live.run_fixture("producer")
 except KeyboardInterrupt:
     raise SystemExit(130)
 '''
@@ -311,7 +328,7 @@ class SignalTests(unittest.TestCase):
                 child.communicate(timeout=5)
 
     def test_matrix_grace_is_derived_from_the_complete_owned_stop_path(self):
-        self.assertEqual(matrix.VICTORIAMETRICS_STOP_GRACE, live.STOP_GRACE)
+        self.assertEqual(matrix.VICTORIAMETRICS.stop_grace, live.STOP_GRACE)
         self.assertGreater(live.STOP_GRACE, live.WORK_GRACE +
                            live.WORK_REAP_ALLOWANCE + live.LOG_TIMEOUT + live.REMOVE_TIMEOUT)
 

@@ -146,3 +146,32 @@ signal restoration. A separate test proves that continued body progress cannot
 extend the entire polling attempt. These tests exercise the real parser and
 worker instead of replacing HTTP work with a cooperative checkpoint. Required
 verification discovers the full `test_victoriametrics*.py` control family.
+
+## Explicit tooling execution contracts
+
+Owning Bead: `batter-kwfa`; follow-up to committed branch head `04766294`.
+`run_fixture` now owns work, failure diagnostics and removal, without exposing
+a caller-managed fixture context. Work always uses the bounded interruptible
+runner; fixed diagnostics/removal operations retain their separate sessions
+and deadlines. Matrix command specifications carry their stop grace independently
+of labels, and batches preserve the largest declared allowance. Only
+`PollingNotReady` authorizes another polling attempt.
+
+Executed focused checks passed on Linux: all 36 private runner controls, the
+complete scripts matrix with 19 VictoriaMetrics controls, and actual pinned
+Docker ingestion/read-back for both producers. New controls exercise renamed
+labels and regrouped commands, reject unexpected parent errors without retry,
+require clean settlement for retryable child results, and prevent work launch
+after a recorded stop while still removing the fixture. Existing real-signal,
+progressing-HTTP and primary/cleanup failure controls remain in place.
+The owning Bead records final verification for this follow-up. No Rust API,
+dependency or lockfile change is involved.
+
+The complete `bash scripts/verify.sh` also passed on Rust 1.98.1 after these
+tooling changes: formatting, file budgets, all four Clippy configurations, all
+six matrix parts, rustdoc and all five HTTP smoke profiles. The workspace batch
+took 747.493 seconds; its actual Docker ingestion/read-back took 11.916 seconds.
+The final scripts matrix ran all 19 VictoriaMetrics controls successfully.
+
+The [export-attempt assessment](api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa)
+records a proposed Rust representation change; it is investigated, not implemented.

@@ -7,11 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from contextlib import contextmanager
 from dataclasses import replace
 
 from parallel_process import interrupt_scope, render_outcomes, run_parallel
@@ -40,18 +38,35 @@ class DockerCommandFailure(RuntimeError):
         self.outcome = outcome
 
 
-def docker(*args, timeout=60, interruptible=False):
-    if interruptible:
-        outcome, = run_parallel(
-            [["docker", *args]], cwd=ROOT, timeout=timeout, output_limit=1024 * 1024,
-            grace=WORK_GRACE, reap_allowance=WORK_REAP_ALLOWANCE,
+def docker_work(*args, timeout=60):
+    """Fixture work always participates in the scoped stop and bounded settlement."""
+    outcome, = run_parallel(
+        [["docker", *args]], cwd=ROOT, timeout=timeout, output_limit=1024 * 1024,
+        grace=WORK_GRACE, reap_allowance=WORK_REAP_ALLOWANCE,
+    )
+    if not outcome.ok:
+        raise DockerCommandFailure(outcome)
+    return outcome.stdout.decode().strip()
+
+
+def _fixture_logs(name):
+    """Best-effort diagnostics remain bounded after a stop request."""
+    try:
+        result = subprocess.run(
+            ["docker", "logs", "--tail", "30", name], cwd=ROOT, check=True,
+            timeout=LOG_TIMEOUT, capture_output=True, text=True, start_new_session=True,
         )
-        if not outcome.ok:
-            raise DockerCommandFailure(outcome)
-        return outcome.stdout.decode().strip()
-    result = subprocess.run(["docker", *args], cwd=ROOT, check=True, timeout=timeout,
-                            capture_output=True, text=True, start_new_session=True)
-    return result.stdout.strip()
+        print(result.stdout.strip(), file=sys.stderr)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _remove_fixture(name):
+    """Only the fixture owner starts this protected, bounded removal command."""
+    subprocess.run(
+        ["docker", "rm", "--force", "--volumes", name], cwd=ROOT, check=True,
+        timeout=REMOVE_TIMEOUT, capture_output=True, text=True, start_new_session=True,
+    )
 
 
 def get(url):
@@ -64,7 +79,7 @@ def get(url):
         return body
 
 
-class PollingNotReady(AssertionError):
+class PollingNotReady(RuntimeError):
     """An expected, completed read-only probe that did not establish readiness."""
 
     def __init__(self, outcome):
@@ -145,7 +160,7 @@ def eventually(action, stop, seconds=20):
             result = action()
             stop.check()
             return result
-        except (OSError, ValueError, AssertionError, urllib.error.URLError):
+        except PollingNotReady:
             stop.check()
             if time.monotonic() >= deadline:
                 raise
@@ -185,9 +200,8 @@ def build():
     return executables.pop()
 
 
-@contextmanager
-def fixture():
-    """Own termination and one bounded removal attempt for our unique name.
+def run_fixture(binary):
+    """Own work, failure diagnostics and one bounded removal for our unique name.
 
     Docker's forced removal accepts an already-absent container. Other failures
     propagate; if work also failed, Python preserves it as exception context.
@@ -196,58 +210,52 @@ def fixture():
     name = "batter-victoriametrics-" + uuid.uuid4().hex[:12]
     with interrupt_scope() as stop:
         try:
-            yield name, stop
+            _exercise(binary, name, stop)
+        except BaseException:
+            _fixture_logs(name)
+            raise
         finally:
             # The handler only records requests throughout the scope. There is
             # no exception-raising signal transition on entry to finalization.
-            docker("rm", "--force", "--volumes", name, timeout=REMOVE_TIMEOUT)
+            _remove_fixture(name)
         stop.check()  # A late stop cannot turn an otherwise successful run into a pass.
 
 
 def main():
-    binary = build()
-    with fixture() as (name, stop):
-        exercise(binary, name, stop)
+    run_fixture(build())
 
 
-def exercise(binary, name, stop):
+def _exercise(binary, name, stop):
     """Run the real producers while fixture owns signals and finalization."""
-    try:
+    stop.check()
+    docker_work("run", "--detach", "--name", name, "--publish", "127.0.0.1::8428",
+                IMAGE, "-storageDataPath=/storage", "-retentionPeriod=1d", "-search.latencyOffset=0",
+                timeout=180)
+    stop.check()
+    info = json.loads(docker_work("inspect", name))[0]
+    stop.check()
+    binding = info["NetworkSettings"]["Ports"]["8428/tcp"][0]
+    if binding["HostIp"] != "127.0.0.1":
+        raise RuntimeError("fixture must bind only to loopback")
+    base = "http://127.0.0.1:" + binding["HostPort"]
+    eventually(lambda: poll(base, "health"), stop)
+    print(f"VictoriaMetrics fixture: {IMAGE}", flush=True)
+    clean = [item for key in os.environ if key.startswith("OTEL_") for item in ("-u", key)]
+    for instance, count in INSTANCES.items():
         stop.check()
-        docker("run", "--detach", "--name", name, "--publish", "127.0.0.1::8428",
-               IMAGE, "-storageDataPath=/storage", "-retentionPeriod=1d", "-search.latencyOffset=0",
-               timeout=180, interruptible=True)
-        stop.check()
-        info = json.loads(docker("inspect", name, interruptible=True))[0]
-        stop.check()
-        binding = info["NetworkSettings"]["Ports"]["8428/tcp"][0]
-        if binding["HostIp"] != "127.0.0.1":
-            raise RuntimeError("fixture must bind only to loopback")
-        base = "http://127.0.0.1:" + binding["HostPort"]
-        eventually(lambda: poll(base, "health"), stop)
-        print(f"VictoriaMetrics fixture: {IMAGE}", flush=True)
-        clean = [item for key in os.environ if key.startswith("OTEL_") for item in ("-u", key)]
-        for instance, count in INSTANCES.items():
-            stop.check()
-            outcome = run_parallel(
-                [["env", *clean, f"BATTER_TEST_VM_ENDPOINT={base}/opentelemetry/v1/metrics",
-                  f"BATTER_TEST_VM_INSTANCE={instance}", f"BATTER_TEST_VM_COUNT={count}",
-                  binary, "--ignored", "--exact", TEST, "--nocapture"]],
-                timeout=30, output_limit=1024 * 1024, cwd=ROOT,
-                grace=WORK_GRACE, reap_allowance=WORK_REAP_ALLOWANCE,
-            )[0]
-            render_outcomes([instance], [outcome])
-            if not outcome.ok:
-                raise RuntimeError(f"producer {instance} failed")
-        eventually(lambda: poll(base, "metrics"), stop)
-        print("VictoriaMetrics read-back passed: two distinct instances, cumulative counters, "
-              "histogram counts/buckets/sums, cleanup and final shutdown metrics.", flush=True)
-    except BaseException:
-        try:
-            print(docker("logs", "--tail", "30", name, timeout=LOG_TIMEOUT), file=sys.stderr)
-        except (OSError, subprocess.SubprocessError):
-            pass
-        raise
+        outcome = run_parallel(
+            [["env", *clean, f"BATTER_TEST_VM_ENDPOINT={base}/opentelemetry/v1/metrics",
+              f"BATTER_TEST_VM_INSTANCE={instance}", f"BATTER_TEST_VM_COUNT={count}",
+              binary, "--ignored", "--exact", TEST, "--nocapture"]],
+            timeout=30, output_limit=1024 * 1024, cwd=ROOT,
+            grace=WORK_GRACE, reap_allowance=WORK_REAP_ALLOWANCE,
+        )[0]
+        render_outcomes([instance], [outcome])
+        if not outcome.ok:
+            raise RuntimeError(f"producer {instance} failed")
+    eventually(lambda: poll(base, "metrics"), stop)
+    print("VictoriaMetrics read-back passed: two distinct instances, cumulative counters, "
+          "histogram counts/buckets/sums, cleanup and final shutdown metrics.", flush=True)
 
 
 if __name__ == "__main__":

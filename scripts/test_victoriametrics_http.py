@@ -98,7 +98,9 @@ def without_rust_producers(commands, **kwargs):
     # cooperative get/verify checkpoint substituted by this fixture.
     return runner(commands, **kwargs)
 
-live.docker = docker
+live.docker_work = docker
+live._fixture_logs = lambda name: docker("logs", "--tail", "30", name)
+live._remove_fixture = lambda name: docker("rm", "--force", "--volumes", name)
 live.run_parallel = without_rust_producers
 live.render_outcomes = lambda *_args: None
 try:

@@ -465,6 +465,27 @@ interval nor the per-run deadline preempts a factory, poll or destructor that
 blocks its runtime thread, and dropping a run's future proves nothing about a
 remote effect it already started.
 
+### OTLP attempt callback boundary, rechecked 2026-11-09
+
+Owning Bead: `batter-kwfa`. `Cargo.lock` still resolves `opentelemetry-otlp`
+0.31.1 and `opentelemetry-http` 0.31.0. Their downloaded registry sources and
+the matching immutable upstream revisions were inspected for the export-attempt
+state assessment:
+
+- [HTTP metrics export](https://github.com/open-telemetry/opentelemetry-rust/blob/febe718fa9ad80c281a82f754e399d3ba6c40c26/opentelemetry-otlp/src/exporter/http/metrics.rs)
+  encodes/builds the request before calling the client, awaits one `send_bytes`
+  inline, and formats client errors into native error strings. A failure before
+  dispatch supplies no custom-client observation.
+- [HTTP client trait](https://github.com/open-telemetry/opentelemetry-rust/blob/285dc925f98403ff426acc70968f104dc820d4f2/opentelemetry-http/src/lib.rs)
+  receives shared `&self` and a request, without an attempt ownership token.
+  Exclusive attempt ownership must therefore remain in Batter's private driver;
+  the callback boundary requires a checked claim rather than relying on the trait
+  to enforce single dispatch.
+
+The revisions come from each published crate's `.cargo_vcs_info.json`. This
+supports the [proposed representation](../evidence/api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa),
+not a claim that the Rust redesign or its proposed regressions have been executed.
+
 ### Runledger invocation phases, 2026-10-09
 
 Cargo.lock still resolves Tokio 1.53.1. Its

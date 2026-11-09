@@ -8,6 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Give the VictoriaMetrics fixture ownership of work, diagnostics and removal,
+  replacing the Docker cancellation-mode boolean with separate operations.
+  Attach stop grace to matrix command metadata so renamed labels retain their
+  shutdown behavior, and retry only explicit completed-not-ready polling
+  outcomes. Preserve actual Docker read-back and signal/error-retention controls
+  (`batter-kwfa`).
+
 - Zero the response-body storage `batter-outbound-http` allocates before
   releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
   future is dropped, when growth replaces an allocation, and when the last
