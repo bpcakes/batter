@@ -539,7 +539,8 @@ standalone no-default-features tests use no batter-core.
 - Deadlines are cooperative. Scheduling delay, synchronous certificate
   verification on macOS or growing a large body's buffer can delay return beyond
   `RESERVE`. One growth step copies and wipes the old allocation without
-  yielding, about 56 ms for 64 MiB in one release-build measurement. A gate cannot
+  yielding. Separate release-build measurements of copying and wiping 64 MiB
+  give an estimated combined cost of about 56 ms (38 ms + 18 ms). A gate cannot
   interrupt an already-entered poll or eliminate thread preemption between a
   clock check and a socket operation. The handoff and write checks have no
   intervening await. Bytes already accepted by the kernel can arrive later,
