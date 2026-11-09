@@ -538,110 +538,82 @@ no agent-usability claim follows from these tests alone.
 
 ## Export-attempt state representation (batter-kwfa)
 
-Assessment date: 2026-11-09. Source: branch head `04766294`; the associated
-tooling repair changes no Rust files. This is an investigated design proposal,
-not an implemented state transition or an executed usability evaluation.
-It refines O02 in the [existing state-machine audit](../implicit-state-machines-2026-11-05.md).
-The implementation scope and acceptance contract are tracked in `batter-fzw1`.
+The assessment at branch head `04766294` identified constructible internal
+invalid states; implementation is now owned by `batter-fzw1`. This updates O02
+in the [state-machine audit](../implicit-state-machines-2026-11-05.md). Public
+preparation, service completion and diagnostic call shapes remain unchanged.
 
-### Constructible invalid states and transitions
+### Removed representations
 
-`pipeline/transport.rs` represents an attempt as `Option<Attempt>`, with
-independent `phase` and `outcome` fields. `Evidence` exposes the same product
-within the crate. `Session::attempt` currently supplies the correct serial
-ordering, but the representation permits the following internal mistakes:
+The former `Option<Attempt>` combined independent phase and optional outcome
+fields. `Evidence { phase, outcome }` could claim acknowledgement before dispatch;
+`begin` could overwrite an active slot; `finish` could be called without an owner;
+and `deadline()` observed send permission without consuming it. The canonical
+serial caller avoided these cases, but its private helpers did not enforce them.
 
-| Mechanism | Representable mistake | Consequence |
-| --- | --- | --- |
-| `Evidence { phase, outcome }` | `Prepared` with `Some(Ok(()))` | `classify` accepts acknowledgement even though this phase precedes dispatch. |
-| `begin(&self)` | Begin while another attempt remains installed | The previous deadline and evidence are overwritten. |
-| `finish(&self)` | Finish without beginning, or finish twice | Missing ownership is projected as ordinary prepared/no-outcome evidence. |
-| `enter(Phase)` / `record(Result)` | Regress a phase or replace a terminal result | Neither transition validity nor single completion is enforced by the methods. |
-| `deadline()` before asynchronous exchange | Two callbacks obtain the same active deadline before either records completion | Permission to send is observed rather than claimed; the slot alone does not prevent duplicate dispatch. |
+`pipeline/exporter.rs::Exporter` now groups the native SDK exporter and its
+exclusive attempt owner. Its `export(&mut self, snapshot, deadline)` owns
+arming, SDK execution, timeout evidence and revocation. The old crate-visible
+`AttemptSlot`, `Evidence`, generic phase setter and paired `begin`/`finish` calls
+are removed. `Resources` owns this one exporter and consumes it on shutdown.
+No public hard cut or compatibility shim is involved.
 
-These are source-established representability problems. No current canonical
-consumer failure was reproduced. `Session::attempt(&mut self)` serializes
-production exports and the pinned SDK invokes the callback once. Current tests
-exercise timeout classification, response failures and no-request-outside-attempt;
-they do not establish that arbitrary future crate-internal callers cannot misuse
-the slot.
+### Enforced transitions
 
-### Upstream boundary
+`pipeline/attempt.rs` keeps the observation private in one exhaustive enum:
+encoding, preparing, sending, receiving, completed outcome, or closed. Terminal
+outcomes carry no independently selectable phase. The SDK-facing gate is closed
+or armed; an atomic claim consumes its sole authorization. Duplicate, concurrent,
+unarmed and completed-attempt callback calls cannot obtain another dispatch.
 
-Rechecked the exact resolved sources: `opentelemetry-otlp` 0.31.1 and
-`opentelemetry-http` 0.31.0. The SDK encodes the request, then directly awaits one
-`HttpClient::send_bytes(&self, request)` call. Encoding can fail before that call.
-The callback has no invocation token or exclusive receiver; the SDK converts
-client failures into formatted native errors. Therefore the adapter still needs
-a narrowly scoped bridge for deadline authority and typed evidence. See the
-[versioned primary-source record](../../references/runtime.md#otlp-attempt-callback-boundary-rechecked-2026-11-09).
+The non-cloneable preparing, sending and receiving capabilities have private
+constructors. Advancing consumes the previous capability. Sending checks the
+absolute deadline before network I/O; only receiving can publish an acknowledgement
+witness from the bounded response validator. No general writable evidence or
+success setter is available to ordinary crate callers.
 
-### Recommended design
+The owner method borrows exclusively, so overlapping runs cannot compile. It
+arms and invokes the SDK factory only when polled. Its synchronous guard revokes
+unclaimed authorization and closes that attempt's observation when the future
+returns, is dropped or unwinds. Every invocation has a distinct observation;
+old preparing/sending/receiving capabilities fail closed and cannot update a
+later invocation. This is local revocation, not asynchronous cleanup, remote
+rollback or proof that detached upstream work stopped.
 
-Keep the native exporter, encoding and protected service lifecycle. Put attempt
-execution behind one private owner method that borrows its driver exclusively:
-`export(&mut self, snapshot, deadline) -> ExportOutcome`. That method owns arming,
-the SDK future, timeout/destruction, evidence resolution and disarming. Remove
-the crate-wide independently callable `begin`/`finish` pair.
+The native exporter and encoding remain unchanged. Typed completion evidence
+still wins an outer deadline race; missing completion retains the distinction
+between encoding, headers timeout and body timeout. Collector statuses, response
+bounds, ordinary OTLP strictness and the explicit VictoriaMetrics exception remain
+in the transport validator, not in the state machine.
 
-Use one explicit per-attempt observation enum instead of the phase/outcome
-cross-product. A suitable conceptual shape is:
+### Upstream boundary and limits
 
-```rust,ignore
-enum AttemptObservation {
-    Encoding,
-    AwaitingHeaders,
-    ReceivingBody,
-    Completed(ExportOutcome),
-}
-```
+Rechecked `Cargo.lock` and the published implementation of `opentelemetry-otlp`
+0.31.1 and `opentelemetry-http` 0.31.0: the SDK encodes then directly awaits one
+shared-reference `send_bytes` callback. The callback carries no invocation token,
+so admission is necessarily a checked atomic transition. The protected owner and
+consuming capabilities enforce the surrounding local protocol. An arbitrarily
+changed SDK that detaches callbacks would need a separate integration assessment;
+our types do not prove such external behavior. See the
+[immutable primary sources](../../references/runtime.md#otlp-attempt-callback-boundary-rechecked-2026-11-09).
+Non-yielding SDK collection/encoding/closure and runtime death retain their
+existing limits; pending-before-callback tests do not claim CPU preemption.
 
-The observation is read-only outside its owning module. Enum replacement alone
-does not enforce legal transitions: do not retain an unrestricted `enter` or
-`record` setter. Give the callback a non-cloneable dispatch capability obtained
-by atomically claiming an armed gate. Claiming consumes that authorization;
-another callback must fail before network I/O. Model the gate explicitly as
-closed or armed, separately from observation of an already claimed attempt.
+### Executable evidence
 
-Inside the transport, consume phase capabilities when advancing from request
-preparation to sending to receiving, and consume the final capability when
-publishing a result. Only successful bounded body validation can produce the
-acknowledgement evidence. Keep constructors and terminal publication private;
-the observation enum must not become a new writable crate-wide status field.
+The runtime controls exercise simultaneous claims from OS threads, concurrent
+actual HTTP callbacks, no dispatch outside an attempt or for oversized input,
+expired authorization, cancellation and fresh exports after stalled headers/body,
+stale handles in every phase, factory panic, unpolled factories, and typed outcome
+versus outer deadline races. The original dual-profile response and protected
+service completion suites remain in place.
 
-Each attempt owns a distinct observation identity. A consumed or dropped guard
-seals that identity and removes any unclaimed authorization. An old completion
-cannot publish into a later attempt. Synchronous destruction may revoke local
-permission and retain interruption evidence; it must not claim asynchronous
-cleanup, remote rollback or stopped server-side work.
-
-Retain existing observable outcomes: encoding failure before a callback,
-headers/body timeout distinction, precise typed transport failures, and completed
-transport evidence winning the outer deadline race. Do not collapse all missing
-acknowledgements into a generic transport error. Public types and call shapes
-need not change, and neither dependency upgrades nor new runtime tasks are needed.
-
-The SDK trait cannot express our linear ownership statically. Its callback
-admission therefore needs a checked atomic transition. The protected local owner
-and consuming capabilities can prevent ordinary internal misuse; they cannot
-identify an arbitrary detached callback from an altered upstream exporter, whose
-request carries no attempt token. The verified inline SDK behavior remains an
-explicit boundary that dependency upgrades must recheck.
-
-An enum-only patch would remove invalid field combinations while retaining the
-paired-call and duplicate-dispatch protocol. Replacing the SDK exporter with
-hand-built OTLP transport would expand ownership into native encoding and closure
-semantics. Neither is the recommended correction.
-
-### Required evidence for a later implementation
-
-Prove that duplicate/concurrent callback claims dispatch at most one request,
-unarmed/closed calls dispatch none, and an old attempt cannot change a new result.
-Exercise cancellation before first poll and during encoding, headers and body;
-then start the next attempt and verify it has a fresh deadline and observation.
-Retain typed-result/deadline-race controls and the dual-profile response matrix.
-Use compile-fail or module-privacy checks for reused consumed capabilities and
-fabricated acknowledgement where the design makes those errors static.
-Run the full pinned `scripts/verify.sh`, including actual VictoriaMetrics Docker
-ingestion/read-back. These additional state-transition controls are proposed and
-unexecuted until the Rust implementation exists.
+`scripts/check_otlp_attempt_types.py` compiles the actual private attempt module
+with a positive control and expected compiler errors for reused/cloned phase
+handles, premature acknowledgement, fabricated state, overlapping owner borrows
+and the removed paired-call protocol. Its clock/diagnostic shims supply names for
+compilation only; runtime semantics use actual Tokio and HTTP in the Rust tests.
+The compiler controls are included in the scripts matrix. Final full verification
+and actual Docker ingestion/read-back outcomes are recorded in `batter-fzw1`.
+Independent agent implementation/modification usability evaluations remain
+unexecuted; passing these controls is not a general agent-usability claim.

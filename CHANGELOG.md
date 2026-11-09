@@ -8,6 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Make OTLP attempt execution library-owned inside the private exporter. Replace
+  the phase/outcome product and paired begin/finish helpers with an exclusive
+  owner, single-use dispatch and phase capabilities, and isolated observations
+  revoked on return/drop. Preserve native encoding, response profiles and typed
+  deadline evidence; add adversarial runtime and compiler controls (`batter-fzw1`).
+  Public call shapes and dependencies are unchanged.
+
 - Give the VictoriaMetrics fixture ownership of work, diagnostics and removal,
   replacing the Docker cancellation-mode boolean with separate operations.
   Attach stop grace to matrix command metadata so renamed labels retain their

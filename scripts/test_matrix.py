@@ -78,6 +78,7 @@ FACADE_CACHE_CONTROLS = Command([sys.executable, "scripts/test_facade_features.p
 VICTORIAMETRICS = Command([sys.executable, "scripts/check_victoriametrics.py"], stop_grace=VICTORIAMETRICS_STOP_GRACE)
 VICTORIAMETRICS_CONTROLS = Command([sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_victoriametrics*.py", "-v"])
+OTLP_ATTEMPT_TYPES = Command([sys.executable, "scripts/check_otlp_attempt_types.py"])
 
 # Cargo uplifts one debug executable per binary target, and reference-service
 # integration tests spawn it through CARGO_BIN_EXE_*. Cargo releases the build
@@ -163,7 +164,8 @@ def parts():
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
                     (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls", "victoriametrics-controls"],
-                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS, VICTORIAMETRICS_CONTROLS])],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS, VICTORIAMETRICS_CONTROLS]),
+                    (["otlp-attempt-types"], [OTLP_ATTEMPT_TYPES])],
     })
 
 

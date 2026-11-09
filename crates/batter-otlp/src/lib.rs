@@ -38,12 +38,11 @@ use crate::diagnostics::{
 };
 use guard::{CatalogRecorder, GuardState};
 use metrics_exporter_otel::OpenTelemetryRecorder;
-use opentelemetry_otlp::MetricExporter;
 use opentelemetry_sdk::{
     error::{OTelSdkError, OTelSdkResult},
     metrics::{
         InstrumentKind, ManualReader, Pipeline, SdkMeterProvider, Temporality,
-        data::ResourceMetrics, exporter::PushMetricExporter, reader::MetricReader,
+        data::ResourceMetrics, reader::MetricReader,
     },
 };
 use std::{
@@ -51,7 +50,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::watch, time::Instant};
-use transport::{AttemptSlot, Evidence, Phase};
+use transport::Exporter;
 
 /// Fixed bucket boundaries, in seconds, for both catalog histograms: twelve
 /// boundaries and therefore thirteen buckets per histogram series.
@@ -93,8 +92,7 @@ struct Resources {
     state: Arc<GuardState>,
     provider: SdkMeterProvider,
     reader: Arc<ManualReader>,
-    exporter: MetricExporter,
-    slot: Arc<AttemptSlot>,
+    exporter: Exporter,
 }
 
 impl Resources {
@@ -188,17 +186,10 @@ impl Session {
         if self.resources.reader.collect(&mut self.snapshot).is_err() {
             return ExportOutcome::Failed(ExportFailure::Collection);
         }
-        self.resources.slot.begin(deadline);
-        let exported =
-            tokio::time::timeout_at(deadline, self.resources.exporter.export(&self.snapshot)).await;
-        classify(
-            if exported.is_err() {
-                ExportTiming::TimedOut
-            } else {
-                ExportTiming::Returned
-            },
-            self.resources.slot.finish(),
-        )
+        self.resources
+            .exporter
+            .export(&self.snapshot, deadline)
+            .await
     }
 
     /// Drive `service` to completion while exporting periodically, then export
@@ -285,20 +276,6 @@ impl Session {
     }
 }
 
-/// Combine the typed transport evidence with the outer deadline. Upstream
-/// error text is never inspected.
-fn classify(expired: ExportTiming, evidence: Evidence) -> ExportOutcome {
-    let expired = expired == ExportTiming::TimedOut;
-    match (evidence.outcome, evidence.phase) {
-        (Some(Ok(())), _) => ExportOutcome::Acknowledged,
-        (Some(Err(failure)), _) => ExportOutcome::Failed(failure),
-        (None, Phase::Receiving) if expired => ExportOutcome::Failed(ExportFailure::BodyTimedOut),
-        (None, _) if expired => ExportOutcome::Failed(ExportFailure::HeadersTimedOut),
-        // Upstream finished without invoking the bounded transport.
-        (None, _) => ExportOutcome::Failed(ExportFailure::Encoding),
-    }
-}
-
 trait Record {
     fn record(&mut self, outcome: ExportOutcome);
 }
@@ -337,10 +314,4 @@ impl batter_core::service::Diagnostics for Prepared {
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExportTiming {
-    TimedOut,
-    Returned,
 }

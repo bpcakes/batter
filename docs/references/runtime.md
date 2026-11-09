@@ -482,9 +482,9 @@ state assessment:
   the callback boundary requires a checked claim rather than relying on the trait
   to enforce single dispatch.
 
-The revisions come from each published crate's `.cargo_vcs_info.json`. This
-supports the [proposed representation](../evidence/api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa),
-not a claim that the Rust redesign or its proposed regressions have been executed.
+The revisions come from each published crate's `.cargo_vcs_info.json`. These exact sources were rechecked for `batter-fzw1` and support
+the [owned representation](../evidence/api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa),
+not a substitute for the implementation validation recorded in `batter-fzw1`.
 
 ### Runledger invocation phases, 2026-10-09
 

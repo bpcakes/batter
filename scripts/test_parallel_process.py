@@ -381,7 +381,7 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
                          {"workspace": [2, 2, 1], "no-default-features": [4, 1, 1], "doctests": [1],
-                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 4]})
+                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 4, 1]})
         planned = matrix.parts()
         # Each part executes exactly the batches it plans, in the planned order.
         self.assertEqual({part: [[command.argv for command in commands] for _, commands in plan]
@@ -400,9 +400,10 @@ class MatrixTests(unittest.TestCase):
             matrix.RUNLIMIT_RELEASE, matrix.FACADE_FEATURES, matrix.FACADE_CACHE_CONTROLS,
             matrix.FUTURE_SIZE_RELEASE, matrix.SINGLE_FACADE_CONSUMER, matrix.SINGLE_FACADE_CONTROLS,
             matrix.HTTP_SMOKE_CONTROLS, matrix.VICTORIAMETRICS, matrix.VICTORIAMETRICS_CONTROLS,
+            matrix.OTLP_ATTEMPT_TYPES,
         ])
         commands = {label: command.argv for label, command in commands.items()}
-        self.assertEqual(len(commands), 32)
+        self.assertEqual(len(commands), 33)
         self.assertIn("--all-targets", commands["workspace-tests"])
         self.assertIn("--workspace", commands["workspace-tests"])
         hostile = commands["configuration-hostile-environment"]
@@ -418,6 +419,7 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("test_smoke_http.py", commands["http-smoke-controls"])
         self.assertIn("scripts/check_victoriametrics.py", commands["victoriametrics-live"])
         self.assertIn("test_victoriametrics*.py", commands["victoriametrics-controls"])
+        self.assertIn("scripts/check_otlp_attempt_types.py", commands["otlp-attempt-types"])
         self.assertTrue(all("--no-default-features" in command
                             for batch in batches["no-default-features"] for command in batch))
         self.assertIn("--doc", batches["doctests"][0][0])

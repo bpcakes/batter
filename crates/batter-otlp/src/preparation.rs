@@ -4,18 +4,15 @@ use super::{
     CatalogRecorder, GuardState, HISTOGRAM_BOUNDS, Prepared, Resources, Schedule, SharedReader,
     config, guard,
 };
-use crate::transport::{AttemptSlot, BoundedClient, ResponseProfile};
+use crate::transport::{Exporter, ResponseProfile};
 use batter_core::{settings::SettingsError, telemetry::metrics::facade::KeyName};
 use metrics_exporter_otel::OpenTelemetryRecorder;
 use opentelemetry::{InstrumentationScope, KeyValue, metrics::MeterProvider as _};
-use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
     Resource,
     metrics::{ManualReader, SdkMeterProvider, Temporality},
 };
 use std::sync::Arc;
-
-const ENDPOINT: &str = "metrics.endpoint";
 
 /// Reject ambient OpenTelemetry configuration at the native builder boundary.
 ///
@@ -127,21 +124,7 @@ fn build(
     schedule: Schedule,
     profile: ResponseProfile,
 ) -> Result<Prepared, SettingsError> {
-    let slot = Arc::new(AttemptSlot::default());
-    let client = BoundedClient::new(slot.clone(), profile).map_err(|error| {
-        SettingsError::new(ENDPOINT, "native client construction failed").with_cause(error)
-    })?;
-    let exporter = MetricExporter::builder()
-        .with_temporality(Temporality::Cumulative)
-        .with_http()
-        .with_http_client(client)
-        .with_endpoint(endpoint.as_str())
-        .with_protocol(Protocol::HttpBinary)
-        .with_timeout(schedule.attempt)
-        .build()
-        .map_err(|error| {
-            SettingsError::new(ENDPOINT, "native exporter construction failed").with_cause(error)
-        })?;
+    let exporter = Exporter::new(&endpoint, schedule.attempt, profile)?;
     let reader = Arc::new(
         ManualReader::builder()
             .with_temporality(Temporality::Cumulative)
@@ -172,7 +155,6 @@ fn build(
             provider,
             reader,
             exporter,
-            slot,
         },
         schedule,
     })

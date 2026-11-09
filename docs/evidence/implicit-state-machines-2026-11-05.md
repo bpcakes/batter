@@ -94,7 +94,8 @@ make this a type-state transition.
 
 Three particularly clear internal representations are the periodic driver's
 `pending`/`running` pair, `FixtureRun`'s `driver`/`result` pair, and OTLP's
-`Option<Attempt>` plus `phase` and optional `outcome`. Their legal combinations
+former `Option<Attempt>` plus `phase` and optional `outcome` (replaced by
+owned transitions in `batter-fzw1`). At audit time their legal combinations
 depend on the owning code. The TUI's requested/in-flight/applied generations are
 another substantial implicit protocol. These are assessment candidates, not
 demonstrated externally reachable failures. Lifecycle's orthogonal flags should
@@ -163,7 +164,7 @@ OTLP adds separate execution, transport, and recorder lifetimes.
 | ID | Machine | Representation and transitions | Source |
 | --- | --- | --- | --- |
 | O01 | Export-session lifetime | Protocol. Install resources → serial periodic attempts → service-completion signal → settle current attempt → final snapshot/export → consume resources and close exporter/provider. Installation rejection follows a separate closure path. | [lib.rs](../../crates/batter-otlp/src/lib.rs), lines 94, 306, 332, 371 |
-| O02 | Export transport evidence slot | Mixed. `None` means no attempt; `Some(Attempt)` combines `Prepared/Sending/Receiving` with `outcome: None/Some`. `begin` opens the slot, transport updates it, and `finish` takes it. Serial ownership enforces ordering. | [pipeline/transport.rs](../../crates/batter-otlp/src/pipeline/transport.rs), line 43 |
+| O02 | Export attempt ownership | Updated by `batter-fzw1`: one private exporter owns an exclusive attempt run; an atomic gate grants one dispatch, consuming capabilities advance phases, and a private exhaustive observation is sealed on return/drop. The former phase/outcome product and paired `begin`/`finish` helpers are removed. | [pipeline/attempt.rs](../../crates/batter-otlp/src/pipeline/attempt.rs); [assessment](api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa) |
 | O03 | Recorder closure and delegated calls | Implicit. `closed` and `active` encode open-idle/open-busy → closing with calls outstanding → closed-idle. Close rejects new calls and waits for active guards to release. | [pipeline/guard.rs](../../crates/batter-otlp/src/pipeline/guard.rs), lines 50, 102 |
 | O04 | Metric-series admission | Implicit. Absent key → admitted key; full registry rejects new keys while retaining existing ones. The key set and capacity enforce this monotonic transition under the registration lock. | [pipeline/guard.rs](../../crates/batter-otlp/src/pipeline/guard.rs), line 123 |
 

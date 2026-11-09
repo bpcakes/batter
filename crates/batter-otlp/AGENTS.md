@@ -13,6 +13,8 @@ Unix only; Linux/macOS execution claims require actual recorded checks.
 - `src/config.rs`: validated explicit endpoint, identity and timing.
 - `src/pipeline/guard.rs`: bounded recorder using core's shared catalog schema.
 - `src/pipeline/transport.rs`: bounded HTTP and typed response evidence.
+- `src/pipeline/exporter.rs`: exclusive native export execution and closure.
+- `src/pipeline/attempt.rs`: single-use dispatch/phase authority and per-attempt observations.
 - `src/diagnostics.rs`: redacted report types.
 - `src/pipeline/tests.rs`, its child modules and `tests/service.rs`: native collector and public composition acceptance.
 
@@ -44,6 +46,11 @@ Content-Type; never infer this exception from an endpoint hostname or weaken
 ordinary OTLP response validation. Require its bounded instance ID before
 preparation and preserve service/instance resource labels. Cross-process identity
 uniqueness and remote storage remain outside local proof.
+Keep attempt state and constructors private to the transport boundary. The
+exclusive exporter owns the entire invocation; do not restore a crate-visible
+begin/finish pair, writable phase/outcome product, cloneable permission or
+non-consuming dispatch check. Dropping an attempt revokes only local authority;
+it does not establish remote rollback or asynchronous cleanup.
 
 ## Common commands
 
@@ -51,3 +58,4 @@ uniqueness and remote storage remain outside local proof.
 - `cargo clippy -p batter-otlp --all-targets --locked -- -D warnings`
 - `bash scripts/verify.sh`
 - `python3 scripts/check_victoriametrics.py` (pinned Docker ingestion and read-back)
+- `python3 scripts/check_otlp_attempt_types.py` (private ownership/privacy controls)

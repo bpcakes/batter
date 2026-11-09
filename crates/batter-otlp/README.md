@@ -93,6 +93,11 @@ categories. An ordinary OTLP success must declare the Protobuf media type even
 when its body is empty; the explicit VictoriaMetrics profile additionally accepts
 the empty untyped 200 described above. A lookalike media type cannot acknowledge
 an export.
+Each attempt is executed by an exclusive private owner. The SDK callback must
+claim single-use dispatch permission; consuming phase capabilities and isolated
+observations prevent duplicate dispatch and stale completion from changing a
+later result. Dropping the attempt revokes its local authority. This does not
+prove remote rollback or preempt non-yielding native work.
 It is a dedicated Batter-only pipeline; custom application metrics
 need an explicitly composed recorder elsewhere.
 

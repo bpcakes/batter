@@ -349,6 +349,12 @@ ambient environment. Applications still own their settings schema.
 
 The OTLP package tests use a local collector and protected service completion to
 exercise bounded export, final collection, retained failures and cleanup order.
+Private attempt controls additionally test single-use admission under concurrent
+callbacks/threads, stale capabilities, cancellation and fresh exports, factory
+panic and deadline/result races. `scripts/check_otlp_attempt_types.py`, included
+in the scripts matrix, compiles the actual attempt module with a positive control
+and ownership/privacy rejection cases. Its compile-only shims do not replace
+the actual Tokio and HTTP runtime tests.
 The reference package's opt-in metrics cases are compiled by the matrix; its
 database-backed export cases run only in the explicit reference live suite.
 

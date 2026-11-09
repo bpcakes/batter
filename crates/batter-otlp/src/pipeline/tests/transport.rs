@@ -1,20 +1,10 @@
 //! Typed collector outcomes, transport bounds and noninterference.
 
-use crate::ExportTiming;
-
 use super::collector::{BODY_MARKER, Behavior};
-use super::{
-    super::{
-        Schedule, classify,
-        transport::{AttemptSlot, BoundedClient, Evidence, PAYLOAD_MAX_BYTES, Phase},
-    },
-    Harness, key, pipeline,
-};
+use super::{super::Schedule, Harness, key, pipeline};
 use crate::diagnostics::{ExportFailure, ExportOutcome};
 use batter_core::telemetry::metrics::{self as catalog, facade::Recorder};
-use bytes::Bytes;
-use opentelemetry_http::HttpClient;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::time::Instant;
 
 const SHORT: Schedule = Schedule {
@@ -152,71 +142,6 @@ fn refused_connection_is_a_known_non_dispatch() {
         session.attempt(Instant::now() + SHORT.attempt).await
     });
     assert_eq!(outcome, ExportOutcome::Failed(ExportFailure::Refused));
-}
-
-#[test]
-fn oversized_payloads_and_requests_outside_an_attempt_are_never_sent() {
-    let harness = Harness::new(Behavior::Accept);
-    let endpoint = harness.collector().endpoint();
-    let slot = Arc::new(AttemptSlot::default());
-    let client = BoundedClient::new(slot.clone(), crate::transport::ResponseProfile::Otlp).unwrap();
-    let request = |body: Vec<u8>| {
-        http::Request::post(endpoint.as_str())
-            .header(http::header::CONTENT_TYPE, "application/x-protobuf")
-            .body(Bytes::from(body))
-            .unwrap()
-    };
-    harness.runtime.block_on(async {
-        // No open attempt: only the export owner may authorize a send.
-        assert!(client.send_bytes(request(Vec::new())).await.is_err());
-        slot.begin(Instant::now() + Duration::from_secs(1));
-        let oversized = request(vec![0; PAYLOAD_MAX_BYTES + 1]);
-        let error = client.send_bytes(oversized).await.unwrap_err();
-        assert!(!format!("{error:?} {error}").contains(BODY_MARKER));
-        assert_eq!(
-            slot.finish(),
-            Evidence {
-                phase: Phase::Prepared,
-                outcome: Some(Err(ExportFailure::PayloadTooLarge)),
-            }
-        );
-    });
-    assert!(harness.collector().requests().is_empty());
-}
-
-#[test]
-fn outer_deadline_classification_uses_only_typed_evidence() {
-    let evidence = |phase, outcome| Evidence { phase, outcome };
-    let failed = ExportOutcome::Failed;
-    assert_eq!(
-        classify(ExportTiming::TimedOut, evidence(Phase::Receiving, None)),
-        failed(ExportFailure::BodyTimedOut)
-    );
-    for phase in [Phase::Prepared, Phase::Sending] {
-        assert_eq!(
-            classify(ExportTiming::TimedOut, evidence(phase, None)),
-            failed(ExportFailure::HeadersTimedOut)
-        );
-    }
-    assert_eq!(
-        classify(ExportTiming::Returned, evidence(Phase::Prepared, None)),
-        failed(ExportFailure::Encoding)
-    );
-    // Typed transport evidence wins over the outer race.
-    assert_eq!(
-        classify(
-            ExportTiming::TimedOut,
-            evidence(Phase::Receiving, Some(Ok(())))
-        ),
-        ExportOutcome::Acknowledged
-    );
-    assert_eq!(
-        classify(
-            ExportTiming::Returned,
-            evidence(Phase::Sending, Some(Err(ExportFailure::Refused)))
-        ),
-        failed(ExportFailure::Refused)
-    );
 }
 
 #[test]

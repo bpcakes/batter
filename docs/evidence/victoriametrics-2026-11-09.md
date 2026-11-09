@@ -174,4 +174,8 @@ took 747.493 seconds; its actual Docker ingestion/read-back took 11.916 seconds.
 The final scripts matrix ran all 19 VictoriaMetrics controls successfully.
 
 The [export-attempt assessment](api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa)
-records a proposed Rust representation change; it is investigated, not implemented.
+now records the implemented Rust ownership/transition change (`batter-fzw1`),
+including its private compiler controls and runtime cancellation/dispatch tests.
+That follow-up changes the internal attempt representation; its final verification
+is recorded separately in its owning Bead. The prior timing measurements above
+remain evidence for their stated tooling snapshot.
