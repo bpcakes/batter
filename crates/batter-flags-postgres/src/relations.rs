@@ -69,6 +69,16 @@ pub struct Deferral {
     /// Catalogs of Live or Silent declarers whose manifest this writer cannot
     /// decode, a newer build's, so nothing of theirs was judged.
     pub unjudged_catalogs: usize,
+    /// Whether a retained catalog declares the written key's flips
+    /// coordinated. A policy that accepts it, as [`PooledStore::write`],
+    /// `archive` and `restore` do, writes the flip anyway, and processes apply
+    /// it poll by poll, not together.
+    ///
+    /// Migration: a struct literal or exhaustive pattern of `Deferral` adds
+    /// `flip`, or ends in `..`.
+    ///
+    /// [`PooledStore::write`]: crate::PooledStore::write
+    pub flip: crate::Coordination,
 }
 
 /// The state a write leaves its key in, as judged.

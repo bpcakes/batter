@@ -8,10 +8,11 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
+use batter_flags_core::Version;
 use tokio::time::Instant;
 
 use super::{
-    PersistFailure, SnapshotFilePath,
+    LastGoodStatus, PersistFailure, SnapshotFilePath,
     format::{self, FileSnapshot},
     path::{Initial, read_bounded},
 };
@@ -31,29 +32,45 @@ enum Written {
 /// What is waiting to be written.
 enum Queue {
     Idle,
-    /// The latest publication not yet written. It is retried every run,
-    /// whatever that run read, until it is written or a newer one replaces
-    /// it.
-    Waiting(FileSnapshot),
+    /// The latest publication not yet written, and why the last attempt at it
+    /// failed. It is retried every run, whatever that run read, until it is
+    /// written or a newer one replaces it.
+    Waiting {
+        file: FileSnapshot,
+        failure: Option<PersistFailure>,
+    },
+    /// The latest publication does not fit the file, so it is never retried;
+    /// a newer publication replaces it.
+    TooLarge {
+        version: u64,
+    },
 }
 
 struct State {
     written: Written,
     queue: Queue,
     phase: Phase,
+    /// The number the next selection takes.
+    selections: u64,
 }
 
+/// Whether a write is in flight, which selection owns it and the version it
+/// writes.
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum Phase {
     Ready,
-    Writing,
+    Writing { selection: u64, version: u64 },
 }
 
-/// Exclusive ownership of one selected write. Destruction releases admission
-/// even if encoding, blocking-task delivery or the write itself unwinds.
+/// Exclusive ownership of one selected write. Finishing records the outcome
+/// and releases admission in one critical section; destruction releases it
+/// only if this selection still holds it, even if encoding, blocking-task
+/// delivery or the write itself unwinds.
 struct Selected {
     state: Arc<Mutex<State>>,
     file: FileSnapshot,
     written: Written,
+    selection: u64,
 }
 
 impl Selected {
@@ -65,33 +82,70 @@ impl Selected {
         match outcome {
             Ok(Persisted::Written) => {
                 state.written = Written::At(self.file.version);
-                self.settle(&mut state);
+                self.settle(&mut state, Queue::Idle);
             }
-            Ok(Persisted::NewerOnDisk) => self.settle(&mut state),
+            Ok(Persisted::NewerOnDisk) => self.settle(&mut state, Queue::Idle),
             // The rename replaced the file and only its durability is in
             // doubt, so the first-write authority is spent: the retry, which
             // stays queued, must not replace a newer file another process
             // writes meanwhile.
-            Err(PersistFailure::NotDurable) => state.written = Written::At(self.file.version),
-            Ok(Persisted::Idle) | Err(_) => {}
+            Err(PersistFailure::NotDurable) => {
+                state.written = Written::At(self.file.version);
+                self.failed(&mut state, PersistFailure::NotDurable);
+            }
+            Err(failure) => self.failed(&mut state, failure),
+            Ok(Persisted::Idle) => {}
         }
+        self.release(&mut state);
         drop(state);
         outcome
     }
 
-    /// Clears the queue if it still holds this write's publication.
-    fn settle(&self, state: &mut State) {
-        if let Queue::Waiting(waiting) = &state.queue
-            && waiting.version == self.file.version
+    /// Records that this publication can never be written to the file.
+    fn too_large(self) {
+        let mut state = lock(&self.state);
+        let version = self.file.version;
+        self.settle(&mut state, Queue::TooLarge { version });
+        self.release(&mut state);
+    }
+
+    /// Replaces the queue with `next` if it still holds this write's
+    /// publication.
+    fn settle(&self, state: &mut State, next: Queue) {
+        if let Queue::Waiting { file, .. } = &state.queue
+            && file.version == self.file.version
         {
-            state.queue = Queue::Idle;
+            state.queue = next;
+        }
+    }
+
+    /// Records why this attempt failed, if the queue still holds its
+    /// publication.
+    fn failed(&self, state: &mut State, failure: PersistFailure) {
+        if let Queue::Waiting {
+            file,
+            failure: last,
+        } = &mut state.queue
+            && file.version == self.file.version
+        {
+            *last = Some(failure);
+        }
+    }
+
+    /// Releases admission if this selection still holds it.
+    fn release(&self, state: &mut State) {
+        if let Phase::Writing { selection, .. } = state.phase
+            && selection == self.selection
+        {
+            state.phase = Phase::Ready;
         }
     }
 }
 
 impl Drop for Selected {
     fn drop(&mut self) {
-        lock(&self.state).phase = Phase::Ready;
+        let mut state = lock(&self.state);
+        self.release(&mut state);
     }
 }
 
@@ -139,6 +193,7 @@ impl Persister {
                 written: Written::Never,
                 queue: Queue::Idle,
                 phase: Phase::Ready,
+                selections: 0,
             })),
             #[cfg(test)]
             hold: Mutex::new(None),
@@ -180,8 +235,22 @@ impl Persister {
     pub(crate) fn offer(&self, file: FileSnapshot) {
         let mut state = lock(&self.state);
         if state.written != Written::At(file.version) {
-            state.queue = Queue::Waiting(file);
+            state.queue = Queue::Waiting {
+                file,
+                failure: None,
+            };
         }
+    }
+
+    /// What the persister is doing now, read under its one lock.
+    #[cfg(test)]
+    pub(crate) fn status(&self) -> LastGoodStatus {
+        status(&lock(&self.state))
+    }
+
+    /// A reader of [`status`](Self::status) that outlives no write.
+    pub(crate) fn reader(&self) -> StatusReader {
+        StatusReader(self.state.clone())
     }
 
     /// Selection and exclusive admission happen under one lock. A completing
@@ -189,18 +258,24 @@ impl Persister {
     fn select(&self) -> Result<Option<Selected>, PersistFailure> {
         let mut state = lock(&self.state);
         match state.phase {
-            Phase::Writing => return Err(PersistFailure::Busy),
+            Phase::Writing { .. } => return Err(PersistFailure::Busy),
             Phase::Ready => {}
         }
         let file = match &state.queue {
-            Queue::Idle => return Ok(None),
-            Queue::Waiting(file) => file.clone(),
+            Queue::Idle | Queue::TooLarge { .. } => return Ok(None),
+            Queue::Waiting { file, .. } => file.clone(),
         };
-        state.phase = Phase::Writing;
+        let selection = state.selections;
+        state.selections = selection.wrapping_add(1);
+        state.phase = Phase::Writing {
+            selection,
+            version: file.version,
+        };
         Ok(Some(Selected {
             state: self.state.clone(),
             file,
             written: state.written,
+            selection,
         }))
     }
 
@@ -224,7 +299,11 @@ impl Persister {
                 let _ = resume.await;
             }
         }
-        let bytes = format::encode(&selected.file).map_err(|_| PersistFailure::TooLarge)?;
+        let Ok(bytes) = format::encode(&selected.file) else {
+            // It can never fit, so it is not retried; a newer one replaces it.
+            selected.too_large();
+            return Err(PersistFailure::TooLarge);
+        };
         let path = self.path.clone();
         #[cfg(test)]
         let hold = self
@@ -246,6 +325,39 @@ impl Persister {
             Ok(Err(_)) => Err(PersistFailure::Io),
             Ok(Ok(outcome)) => outcome,
         }
+    }
+}
+
+/// A shared reader of a persister's status.
+#[derive(Clone)]
+pub(crate) struct StatusReader(Arc<Mutex<State>>);
+
+impl StatusReader {
+    pub(crate) fn status(&self) -> LastGoodStatus {
+        status(&lock(&self.0))
+    }
+}
+
+fn status(state: &State) -> LastGoodStatus {
+    let written = match state.written {
+        Written::Never => None,
+        Written::At(version) => Some(Version::new(version)),
+    };
+    match (&state.phase, &state.queue) {
+        (Phase::Writing { version, .. }, _) => LastGoodStatus::Writing {
+            version: Version::new(*version),
+            written,
+        },
+        (Phase::Ready, Queue::Waiting { file, failure }) => LastGoodStatus::Waiting {
+            version: Version::new(file.version),
+            written,
+            last_failure: *failure,
+        },
+        (Phase::Ready, Queue::TooLarge { version }) => LastGoodStatus::TooLarge {
+            version: Version::new(*version),
+            written,
+        },
+        (Phase::Ready, Queue::Idle) => LastGoodStatus::UpToDate { written },
     }
 }
 

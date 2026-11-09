@@ -133,7 +133,11 @@ fn a_snapshot_or_view_for_another_base_is_refused() {
     );
     assert!(first_base.test_view(&foreign, Freshness::Fresh).is_err());
     let scope = first_base.validation_scope();
-    assert!(Candidate::new(&scope).carrying(&foreign).is_err());
+    assert!(
+        Candidate::new(&scope, batter_flags_core::Version::new(1))
+            .carrying(&foreign)
+            .is_err()
+    );
 }
 
 #[test]

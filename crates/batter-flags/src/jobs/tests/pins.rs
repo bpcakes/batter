@@ -26,9 +26,8 @@ fn pin_world() -> (
     batter_flags_core::ModeFlag<Toggle>,
     batter_flags_core::ReleaseFlag<Toggle>,
 ) {
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = b.process_kind("serving").unwrap();
-    b.environment_class("hosted").unwrap();
+    let (mut b, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let worker = b.process_kind("worker").unwrap();
     let other = b.process_kind("other").unwrap();
     let halt = b
@@ -47,15 +46,7 @@ fn pin_world() -> (
         .governed_by(&halt)
         .declare()
         .unwrap();
-    (
-        b.build().unwrap(),
-        serving,
-        worker,
-        other,
-        halt,
-        mode,
-        release,
-    )
+    (b.build(), serving, worker, other, halt, mode, release)
 }
 
 #[tokio::test]
@@ -68,8 +59,9 @@ async fn pins_round_trip_cross_kind_override_refusal_and_explicit_fallback() {
         .build()
         .unwrap();
     let mode_pin: Pinned<Toggle> =
-        serde_json::from_value(serde_json::to_value(source.view().pin(&mode)).unwrap()).unwrap();
-    let pin = source.view().pin(&release);
+        serde_json::from_value(serde_json::to_value(source.view().pin(&mode).unwrap()).unwrap())
+            .unwrap();
+    let pin = source.view().pin(&release).unwrap();
     let (catalog, _, worker, _, _, mode, release) = pin_world();
     let worker_flags = TestFlags::builder(catalog, worker)
         .unwrap()
@@ -88,7 +80,7 @@ async fn pins_round_trip_cross_kind_override_refusal_and_explicit_fallback() {
             }
             _ => panic!("wrong key honoured"),
         }
-    }))).await.unwrap();
+    }), recheck())).await.unwrap();
     let (catalog, _, worker, _, halt, _, release) = pin_world();
     let tripped = TestFlags::builder(catalog, worker)
         .unwrap()
@@ -97,26 +89,32 @@ async fn pins_round_trip_cross_kind_override_refusal_and_explicit_fallback() {
         .unwrap();
     invoke(&tripped.flags().flagged(Check(|flags: &JobFlags| {
         assert!(matches!(flags.resolve_pinned(&release, &pin), PinnedResolution::Overridden {decision, by} if decision.value() == Toggle::Off && by.as_str() == "halt"));
-    }))).await.unwrap();
+    }), recheck())).await.unwrap();
     let (catalog, _, _, other, _, _, release) = pin_world();
     let foreign_kind = TestFlags::builder(catalog, other).unwrap().build().unwrap();
-    invoke(&foreign_kind.flags().flagged(Check(|flags: &JobFlags| {
-        assert_eq!(
-            flags.resolve_pinned(&release, &pin).rejection(),
-            Some(PinRejection::NotOwned)
-        );
-    })))
+    invoke(&foreign_kind.flags().flagged(
+        Check(|flags: &JobFlags| {
+            assert_eq!(
+                flags.resolve_pinned(&release, &pin).rejection(),
+                Some(PinRejection::NotOwned)
+            );
+        }),
+        recheck(),
+    ))
     .await
     .unwrap();
     let (catalog, _, worker, _, _, mode, _) = pin_world();
     let base = BaseBuilder::new(catalog, worker).unwrap().finish();
     let declared = Flags::new(Reader::declared(base));
-    invoke(&declared.flagged(Check(|flags: &JobFlags| {
-        assert_eq!(
-            flags.resolve_pinned(&mode, &mode_pin).rejection(),
-            Some(PinRejection::TestProvenance)
-        );
-    })))
+    invoke(&declared.flagged(
+        Check(|flags: &JobFlags| {
+            assert_eq!(
+                flags.resolve_pinned(&mode, &mode_pin).rejection(),
+                Some(PinRejection::TestProvenance)
+            );
+        }),
+        recheck(),
+    ))
     .await
     .unwrap();
 }

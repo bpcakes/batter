@@ -118,7 +118,7 @@ pub(crate) fn register<T: RegistrationTarget + ?Sized>(
 ) -> Result<(), RegistrationError> {
     target
         .registration()
-        .register("flags.listen", move |startup| async move {
+        .register(super::LISTEN, move |startup| async move {
             let running = startup.acknowledge_started();
             let mut health = Health::Starting;
             loop {

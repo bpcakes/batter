@@ -7,6 +7,13 @@
 //! stale rule when the injected freshness is stale, so `EngageWhenStale` is
 //! testable without a database. This is the fixture path; the escape hatch in
 //! `low_level` is not.
+//!
+//! The module exists only with the `test-support` feature, or the facade's
+//! `flags-test-support`, so a production root cannot serve `Source::Test`.
+//!
+//! Migration: `batter_flags::test::TestFlags` was always compiled; enable
+//! `test-support` (facade: `flags-test-support`) in the dev-dependency that
+//! uses it.
 
 use std::collections::BTreeSet;
 
@@ -36,12 +43,10 @@ type Row = Box<dyn FnOnce(Version) -> CandidateRow + Send + Sync>;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let build = || -> Result<_, Box<dyn std::error::Error>> {
-///     let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-///     let serving = catalog.process_kind("serving")?;
-///     catalog.environment_class("hosted")?;
+///     let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 ///     let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 ///     let flag = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-///     Ok((catalog.build()?, serving, flag))
+///     Ok((catalog.build(), serving, flag))
 /// };
 /// let (catalog, serving, _flag) = build()?;
 /// let (_other_catalog, _other_kind, foreign_flag) = build()?;
@@ -104,15 +109,13 @@ pub enum FixtureError {
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
 /// let halt = catalog
 ///     .kill_switch("checkout_halt", SafeState::Released, StaleRule::EngageWhenStale)
 ///     .declare()?;
-/// let catalog = catalog.build()?;
+/// let catalog = catalog.build();
 ///
 /// let flags = TestFlags::builder(catalog, serving)?
 ///     .set(&new_checkout, Toggle::On)
@@ -308,8 +311,8 @@ impl TestFlagsBuilder {
         let scope = base.validation_scope();
         let version = self.version;
         let rows = self.rows.into_iter().map(|row| row(version));
-        let candidate = Candidate::new(&scope).at(version).rows(rows);
-        let snapshot = Snapshot::validate(&scope, candidate).map_err(FixtureError::Rejected)?;
+        let candidate = Candidate::new(&scope, version).rows(rows);
+        let snapshot = Snapshot::validate(candidate).map_err(FixtureError::Rejected)?;
         let reader = Reader::test(base, std::sync::Arc::new(snapshot), self.freshness);
         Ok(TestFlags {
             flags: Flags::new(reader),

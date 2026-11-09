@@ -29,7 +29,23 @@ fn release<'b>(builder: &'b mut CatalogBuilder, key: &str) -> ReleaseDeclaration
 
 #[test]
 fn vocabulary_names_follow_the_grammar_and_are_unique() {
-    let mut builder = builder();
+    let prefix = || batter_flags_core::SettingsPrefix::new("FLAG_").unwrap();
+    // The constructor names the first kind and class by the same grammar.
+    assert!(matches!(
+        CatalogBuilder::new(prefix(), "Serving", "hosted"),
+        Err(BuildError::InvalidProcessKind {
+            cause: KeyError::InvalidStart { character: 'S' },
+            ..
+        })
+    ));
+    assert!(matches!(
+        CatalogBuilder::new(prefix(), "serving", "hosted-eu"),
+        Err(BuildError::InvalidEnvironmentClass {
+            cause: KeyError::InvalidCharacter { .. },
+            ..
+        })
+    ));
+    let (mut builder, serving, _) = builder("serving", "hosted");
     assert!(matches!(
         builder.process_kind("Serving"),
         Err(BuildError::InvalidProcessKind {
@@ -44,7 +60,6 @@ fn vocabulary_names_follow_the_grammar_and_are_unique() {
             ..
         })
     ));
-    let serving = builder.process_kind("serving").unwrap();
     assert_eq!(serving.name(), "serving");
     assert_eq!(
         builder.process_kind("serving"),
@@ -52,7 +67,6 @@ fn vocabulary_names_follow_the_grammar_and_are_unique() {
             name: "serving".into()
         })
     );
-    builder.environment_class("hosted").unwrap();
     assert_eq!(
         builder.environment_class("hosted"),
         Err(BuildError::DuplicateEnvironmentClass {
@@ -63,26 +77,19 @@ fn vocabulary_names_follow_the_grammar_and_are_unique() {
     builder.environment_class("serving").unwrap();
 }
 
+/// A catalog is started with both vocabularies, so an empty one cannot be
+/// built; the smallest catalog builds with no declarations.
 #[test]
-fn a_catalog_needs_both_vocabularies() {
-    assert_eq!(builder().build().unwrap_err(), BuildError::NoProcessKind);
-    let mut only_kind = builder();
-    only_kind.process_kind("serving").unwrap();
-    assert_eq!(
-        only_kind.build().unwrap_err(),
-        BuildError::NoEnvironmentClass
-    );
-    let mut both = builder();
-    both.process_kind("serving").unwrap();
-    both.environment_class("hosted").unwrap();
-    assert_eq!(both.build().unwrap().declarations().count(), 0);
+fn a_catalog_starts_with_both_vocabularies() {
+    let (both, serving, hosted) = builder("serving", "hosted");
+    let catalog = both.build();
+    assert_eq!(catalog.declarations().count(), 0);
+    assert_eq!((serving.name(), hosted.name()), ("serving", "hosted"));
 }
 
 #[test]
 fn vocabulary_values_from_another_catalog_are_build_errors() {
-    let mut other = builder();
-    let foreign_kind = other.process_kind("serving").unwrap();
-    let foreign_class = other.environment_class("development").unwrap();
+    let (_other, foreign_kind, foreign_class) = builder("serving", "development");
     let mut builder = vocabulary_builder();
     let owners = builder
         .mode_flag("strict_mode", Toggle::Off)
@@ -133,8 +140,7 @@ fn keys_follow_the_grammar_and_are_unique_across_kinds() {
 
 #[test]
 fn an_invalid_key_outranks_every_later_error() {
-    let mut other = builder();
-    let foreign_kind = other.process_kind("serving").unwrap();
+    let (_other, foreign_kind, _) = builder("serving", "development");
     let mut builder = vocabulary_builder();
     let result = builder
         .mode_flag("bad-key", Toggle::Off)
@@ -154,10 +160,8 @@ fn an_invalid_key_outranks_every_later_error() {
 /// A catalog with one flag whose every setter with a single possible meaning is
 /// applied `times` times.
 fn repeated(times: usize) -> batter_flags_core::Catalog {
-    let mut builder = builder();
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, _) = builder("serving", "hosted");
     let worker = builder.process_kind("worker").unwrap();
-    builder.environment_class("hosted").unwrap();
     let mut flag = strict_mode(&mut builder).owned_only_by(&serving);
     for _ in 0..times {
         flag = flag
@@ -167,7 +171,7 @@ fn repeated(times: usize) -> batter_flags_core::Catalog {
             .coordinated();
     }
     flag.declare().unwrap();
-    builder.build().unwrap()
+    builder.build()
 }
 
 /// Repeating a setter that can mean only one thing is not an error: there is
@@ -185,9 +189,7 @@ fn setters_with_one_possible_meaning_are_idempotent() {
 #[test]
 fn assignment_and_ownership_order_preserve_the_same_catalog() {
     let build = |policy_first| {
-        let mut catalog = builder();
-        let serving = catalog.process_kind("serving").unwrap();
-        let hosted = catalog.environment_class("hosted").unwrap();
+        let (mut catalog, serving, hosted) = builder("serving", "hosted");
         let switch = halt(&mut catalog);
         if policy_first {
             catalog
@@ -208,7 +210,7 @@ fn assignment_and_ownership_order_preserve_the_same_catalog() {
                 .declare()
                 .unwrap();
         }
-        catalog.build().unwrap()
+        catalog.build()
     };
     assert_eq!(build(true).digest(), build(false).digest());
 }
@@ -216,8 +218,7 @@ fn assignment_and_ownership_order_preserve_the_same_catalog() {
 #[test]
 fn invalid_drafts_preserve_the_first_error_across_later_valid_mutations() {
     let mut catalog = vocabulary_builder();
-    let mut foreign_catalog = builder();
-    let foreign = foreign_catalog.process_kind("foreign").unwrap();
+    let (_foreign_catalog, foreign, _) = builder("foreign", "development");
     let class = catalog.environment_class("staging").unwrap();
     let switch = halt(&mut catalog);
     let outcome = catalog
@@ -232,7 +233,7 @@ fn invalid_drafts_preserve_the_first_error_across_later_valid_mutations() {
         outcome,
         Err(BuildError::ForeignProcessKind { .. })
     ));
-    assert!(catalog.build().unwrap().declaration("fast").is_none());
+    assert!(catalog.build().declaration("fast").is_none());
 }
 
 /// Empty owner lists, pin readers without a restriction and a second
@@ -240,10 +241,8 @@ fn invalid_drafts_preserve_the_first_error_across_later_valid_mutations() {
 /// `pinned_by`). What is left to check is a relation between values.
 #[test]
 fn owners_and_pin_readers_are_validated() {
-    let mut builder = builder();
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, _) = builder("serving", "hosted");
     let worker = builder.process_kind("worker").unwrap();
-    builder.environment_class("hosted").unwrap();
 
     // A kind cannot both own the flag and be a pin reader, whichever came first.
     let owner_pins = strict_mode(&mut builder)
@@ -270,7 +269,7 @@ fn owners_and_pin_readers_are_validated() {
         .pinned_by(&worker)
         .declare()
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let declared = catalog.declaration("strict_mode").unwrap();
     assert_eq!(
         declared.owners(),
@@ -290,17 +289,13 @@ fn owners_and_pin_readers_are_validated() {
 #[test]
 fn owners_are_canonical_whatever_order_they_were_added_in() {
     let build = |worker_first: &[&str]| {
-        let mut builder = builder();
-        let kinds: Vec<_> = ["serving", "worker"]
-            .into_iter()
-            .map(|name| builder.process_kind(name).unwrap())
-            .collect();
-        builder.environment_class("hosted").unwrap();
+        let (mut builder, serving, _) = builder("serving", "hosted");
+        let kinds = [serving, builder.process_kind("worker").unwrap()];
         let by_name = |name: &str| kinds.iter().find(|kind| kind.name() == name).unwrap();
         let mut flag = strict_mode(&mut builder).owned_only_by(by_name(worker_first[0]));
         flag = flag.and_owned_by(by_name(worker_first[1]));
         flag.declare().unwrap();
-        builder.build().unwrap()
+        builder.build()
     };
     let (forward, reversed) = (build(&["serving", "worker"]), build(&["worker", "serving"]));
     assert_eq!(forward.digest(), reversed.digest());
@@ -335,10 +330,8 @@ fn a_governing_switch_must_belong_to_this_catalog() {
 
 #[test]
 fn every_kind_that_evaluates_or_resolves_a_flag_reads_its_switch() {
-    let mut builder = builder();
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, _) = builder("serving", "hosted");
     let worker = builder.process_kind("worker").unwrap();
-    builder.environment_class("hosted").unwrap();
     let serving_switch = builder
         .kill_switch(
             "serving_halt",
@@ -385,7 +378,7 @@ fn every_kind_that_evaluates_or_resolves_a_flag_reads_its_switch() {
         .governed_by(&everywhere)
         .declare()
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     assert_eq!(
         catalog
             .declaration("a")

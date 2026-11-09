@@ -61,9 +61,8 @@ impl FlagValue for Long {
 }
 
 fn builder() -> (CatalogBuilder, ProcessKind, EnvironmentClass) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    let hosted = builder.environment_class("hosted").unwrap();
+    let (builder, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     (builder, serving, hosted)
 }
 
@@ -80,12 +79,12 @@ fn resolve_empty(
 fn the_revision_frames_the_key_apart_from_the_variant() {
     let (mut ab, serving, hosted) = builder();
     ab.mode_flag("ab", Short).declare().unwrap();
-    let ab = resolve_empty(ab.build().unwrap(), serving, hosted);
+    let ab = resolve_empty(ab.build(), serving, hosted);
     assert_eq!(ab.revision().to_hex(), KEY_AB_VARIANT_C);
 
     let (mut a, serving, hosted) = builder();
     a.mode_flag("a", Long).declare().unwrap();
-    let a = resolve_empty(a.build().unwrap(), serving, hosted);
+    let a = resolve_empty(a.build(), serving, hosted);
     assert_eq!(a.revision().to_hex(), KEY_A_VARIANT_BC);
 
     // ("ab", "c") and ("a", "bc") concatenate alike and must not collide.
@@ -95,7 +94,7 @@ fn the_revision_frames_the_key_apart_from_the_variant() {
 #[test]
 fn a_catalog_with_nothing_declared_has_the_empty_revision() {
     let (empty, serving, hosted) = builder();
-    let resolved = resolve_empty(empty.build().unwrap(), serving, hosted);
+    let resolved = resolve_empty(empty.build(), serving, hosted);
     assert_eq!(resolved.revision().to_hex(), EMPTY);
     assert_eq!(resolved.shared_revision().to_hex(), EMPTY);
 }
@@ -149,7 +148,7 @@ fn core_vectors_catalog() -> (Catalog, ProcessKind, ProcessKind, EnvironmentClas
         .owned_only_by(&worker)
         .declare()
         .unwrap();
-    (builder.build().unwrap(), serving, worker, hosted)
+    (builder.build(), serving, worker, hosted)
 }
 
 /// (settings, revision over every declaration, revision over `Owners::All`).

@@ -20,8 +20,8 @@ and `batter-flags-postgres` ([ADR-016](../../docs/adr/016-typed-flags-control-pl
   manifest by `manifest/holds.rs`.
 - `src/view.rs`, `view/decide.rs`: evaluation into layered `Decision`s and the
   one kill-switch function every surface reads a switch through.
-- `src/published.rs`, `src/authority.rs`: the one immutable record a loader
-  publishes and the transitions it may take.
+- `src/published.rs`, `src/authority.rs`: the `Publisher` that owns the one
+  immutable `Record` a loader publishes, and the transitions it may take.
 - `src/pin.rs`, `pin/`: pinned decisions and their replay.
 - `src/low_level.rs`: the disclosed, weaker publication path.
 
@@ -41,7 +41,11 @@ validation transitions to an absorbing error state; declaration policy
 assignment is consuming (`only_in` and `governed_by` are each available once).
 The encoding parser tracks required-member progress with an exhaustive enum.
 Only a structurally corrupt candidate is rejected whole; every other row is published or held on
-its own. Holding never releases an engaged switch. The invariant judgement
+its own. Holding never releases an engaged switch: the `Publisher` carries
+what it serves into every read it judges and replaces whatever a candidate
+carried, and a first publication carries nothing. Only a `Publisher` makes a
+`Published` record; a file enters only through `Publisher::restore`, and a
+judged read changes nothing until it is published. The invariant judgement
 visits relations in canonical key order, so declaration order changes nothing.
 Debug never prints a setting's value. Without `serde` the normal closure holds
 no serialization library.

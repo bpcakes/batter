@@ -2,7 +2,7 @@
 
 use super::SnapshotView;
 use crate::{
-    decision::{Decision, Layer, Source, SwitchState},
+    decision::{Decision, ErrorCause, Layer, Source, SwitchState},
     events::Surface,
     handle::KillSwitch,
 };
@@ -23,13 +23,11 @@ use crate::{
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let halt = catalog
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 ///     .declare()?;
-/// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+/// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
 ///
 /// // Nothing is published yet, so the gate is waiting, not tripped.
 /// let view = base.not_loaded_view(PrePublication::Unready, Freshness::Fresh);
@@ -54,7 +52,10 @@ pub enum GateReading {
     /// The switch is released.
     Open(Decision<SwitchState>),
     /// The switch is engaged by a published state, the settings floor or its
-    /// stale rule.
+    /// stale rule, or the view cannot answer for it at all: another catalog's
+    /// switch, or one this process kind does not own. A gate fails closed on
+    /// such a switch; its decision keeps the safe state it serves and the
+    /// error cause, so the two are told apart.
     Tripped(Decision<SwitchState>),
 }
 
@@ -78,8 +79,14 @@ impl GateReading {
     }
 
     fn classify(decision: Decision<SwitchState>) -> Self {
+        let unanswerable = matches!(
+            decision.error(),
+            Some(ErrorCause::ForeignCatalog | ErrorCause::NotOwned)
+        );
         let unpublished = matches!(decision.source(), Source::NotLoaded { .. });
-        if unpublished && decision.layer() != &Layer::Floor {
+        if unanswerable {
+            Self::Tripped(decision)
+        } else if unpublished && decision.layer() != &Layer::Floor {
             Self::AwaitingPublication(decision)
         } else if decision.value().is_engaged() {
             Self::Tripped(decision)
@@ -97,17 +104,17 @@ impl GateReading {
 /// its switch through this one function, so they agree on the value, on the
 /// reading and on the event.
 ///
-/// # Caller obligations
+/// A switch the view's base cannot answer for, another catalog's or one the
+/// base's process kind does not own, reads as
+/// [`Tripped`](GateReading::Tripped) whatever its safe state, so the gate
+/// withholds work; the decision keeps the safe state and the error cause, and
+/// one WARN event is emitted. A gate is built once, so it should still check
+/// its switches with
+/// [`Base::check_switch`](crate::low_level::Base::check_switch) when it is
+/// built and refuse them at startup; the gates of `batter-flags` do.
 ///
-/// The switch must be one the view's base can answer for: this catalog's, and
-/// owned by the base's process kind, which
-/// [`Base::check_switch`](crate::low_level::Base::check_switch) tests. This
-/// function does not refuse any other. Such a switch reads as its safe state,
-/// classified like any other reading (engaged is
-/// [`Tripped`](GateReading::Tripped), released is
-/// [`Open`](GateReading::Open)), and only the decision's error cause and one
-/// WARN event say that it was never read. A gate is built once, so it should
-/// check its switches when it is built; the gates of `batter-flags` do.
+/// Migration: such a switch whose safe state is released read as
+/// [`Open`](GateReading::Open); it now reads as `Tripped`.
 pub fn gate_switch(view: &SnapshotView, switch: &KillSwitch) -> GateReading {
     let decision = view.switch_decision(switch);
     let surface = if decision.value().is_engaged() {

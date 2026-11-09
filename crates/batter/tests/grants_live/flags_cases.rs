@@ -11,7 +11,7 @@ use batter::flags::core::{
     CatalogBuilder, FlagKey, SafeState, SettingsPrefix, StaleRule, SwitchState, Toggle, Version,
     low_level::BaseBuilder,
 };
-use batter::flags::grants::FlagsOperation;
+use batter::flags::grants::{FlagsOperation, FlagsRole};
 use batter::flags::postgres::{
     Actor, Archive, Cadence, Change, ChangeReason, KeySample, PooledStore, Precondition,
     PresenceReport, ProcessLabel, ProcessLabels, ProcessPresence, PruneLimit, Refusal, Request,
@@ -20,12 +20,8 @@ use batter::flags::postgres::{
 use sqlx::PgPool;
 use tokio::time::Instant;
 
-const SERVING: &[FlagsOperation] = &[
-    FlagsOperation::SnapshotRead,
-    FlagsOperation::Presence,
-    FlagsOperation::PresencePrune,
-];
-const OPERATOR: &[FlagsOperation] = &[FlagsOperation::OperatorCli];
+const SERVING: &[FlagsOperation] = FlagsRole::ServingProcess.operations();
+const OPERATOR: &[FlagsOperation] = FlagsRole::OperatorCli.operations();
 const WRITER: &[FlagsOperation] = &[FlagsOperation::AuditedWrite];
 
 fn deadline() -> Instant {
@@ -42,24 +38,23 @@ fn timing() -> Result<StoreTiming> {
     )?)
 }
 
-fn presence() -> Result<ProcessPresence> {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    let serving = catalog.process_kind("serving")?;
-    catalog.environment_class("hosted")?;
+fn presence(store: &PooledStore) -> Result<ProcessPresence> {
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     catalog
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()?;
     let ledger_v2 = catalog.mode_flag("ledger_v2", Toggle::Off).declare()?;
     let ledger_audit = catalog.mode_flag("ledger_audit", Toggle::Off).declare()?;
     catalog.requires(&ledger_v2, Toggle::On, &ledger_audit, Toggle::On)?;
-    let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+    let base = BaseBuilder::new(catalog.build(), serving)?.finish();
     let labels = ProcessLabels {
         application: ProcessLabel::new("service")?,
         environment: ProcessLabel::new("hosted")?,
         build: ProcessLabel::new("1.0.0")?,
     };
     let cadence = Cadence::new(Duration::from_secs(600), Duration::from_secs(600))?;
-    Ok(ProcessPresence::new(labels, &base, cadence))
+    Ok(ProcessPresence::new(store, labels, &base, cadence))
 }
 
 /// Names a failed store step by its class and SQLSTATE, never its message.
@@ -205,19 +200,16 @@ async fn provision(fixture: &mut Fixture, database: &str) -> Result<Logins> {
 async fn serve(pool: &PgPool) -> Result<ProcessPresence> {
     let store = PooledStore::new(pool.clone(), timing()?);
     step("serving load", store.load(deadline()).await)?;
-    let mut process = presence()?;
+    let mut process = presence(&store)?;
     let report = PresenceReport {
         snapshot: SnapshotReport::ControlPlane(Version::new(0)),
         held: KeySample::default(),
         floor_engaged: KeySample::default(),
     };
-    step(
-        "heartbeat",
-        store.heartbeat(&mut process, &report, deadline()).await,
-    )?;
+    step("heartbeat", process.heartbeat(&report, deadline()).await)?;
     step(
         "second heartbeat",
-        store.heartbeat(&mut process, &report, deadline()).await,
+        process.heartbeat(&report, deadline()).await,
     )?;
     step(
         "prune",
@@ -292,8 +284,8 @@ async fn operate(logins: &Logins, process: ProcessPresence) -> Result {
         "a declared key is not archived"
     )?;
     // The declaring process records its stop, as a deploy would stop it.
-    PooledStore::new(logins.serving.clone(), timing()?)
-        .stop(process, deadline())
+    process
+        .stop(deadline())
         .await
         .map_err(|_| super::support::fail("stop"))?;
     let archived = step(
@@ -323,6 +315,7 @@ async fn operate(logins: &Logins, process: ProcessPresence) -> Result {
                 .history(Some(&halt), Version::new(0), deadline())
                 .await
         )?
+        .entries
         .len()
             == 4,
         "four audited changes"

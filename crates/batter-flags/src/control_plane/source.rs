@@ -34,7 +34,7 @@ impl Fetched {
     }
 
     pub(crate) fn candidate(self, scope: &ValidationScope) -> Candidate {
-        Candidate::new(scope).at(self.version).rows(self.rows)
+        Candidate::new(scope, self.version).rows(self.rows)
     }
 }
 

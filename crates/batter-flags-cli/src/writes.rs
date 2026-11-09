@@ -4,8 +4,8 @@
 
 use batter_flags_core::FlagKey;
 use batter_flags_postgres::{
-    Basis, Deferral, ErrorClass, PooledStore, Refusal, Request, StoreError, UndeclaredBasis,
-    UnmetInvariant, WriteOutcome, WritePolicy,
+    Basis, Coordination, Deferral, ErrorClass, PooledStore, Refusal, Request, StoreError,
+    UndeclaredBasis, UnmetInvariant, WriteOutcome, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
@@ -169,6 +169,15 @@ fn refused(name: &'static str, key: &FlagKey, refusal: Refusal) -> Report {
 /// The written report, with one warning for each reason processes will not
 /// serve the state as written for now.
 fn deferred(mut report: Report, key: &FlagKey, deferral: &Deferral) -> Report {
+    match deferral.flip {
+        Coordination::Rolling => {}
+        Coordination::Coordinated => {
+            report = report.warn(format!(
+                "{key} is declared coordinated: processes apply this write poll by poll, not together",
+                key = key.as_str()
+            ));
+        }
+    }
     for unmet in &deferral.unmet {
         report = report.warn(format!("held until met: {}", described(unmet)));
     }
@@ -224,6 +233,10 @@ fn deferral_data(deferral: &Deferral) -> Value {
         "unmet": deferral.unmet.iter().map(unmet_data).collect::<Vec<_>>(),
         "overridden_by": deferral.overridden_by.iter().map(FlagKey::as_str).collect::<Vec<_>>(),
         "unjudged_catalogs": deferral.unjudged_catalogs,
+        "flip": match deferral.flip {
+            Coordination::Rolling => "rolling",
+            Coordination::Coordinated => "coordinated",
+        },
     })
 }
 

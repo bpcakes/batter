@@ -138,8 +138,10 @@ answers 5 and 9), consolidating flags under the Batter name:
   executable root that installs the redacting panic hook first, and stays
   `publish = false` until the release-train record (owner answer 8).
 
-The facade reaches them through `flags`, `flags-postgres`, `flags-axum` and
-`flags-runledger`; `crates/batter/examples/rollout.rs` shows both modes.
+The facade reaches them through `flags`, `flags-postgres`, `flags-axum`,
+`flags-runledger` and, for test builds, `flags-test-support`, which alone
+reaches `TestFlags` (`batter-jkw6.54`); `crates/batter/examples/rollout.rs`
+shows both modes.
 
 Declared mode resolves a catalog once from the application's
 `SettingsSource` and changes by restart. In control-plane mode the same
@@ -170,8 +172,8 @@ from registration, because the file carries no clock.
 
 Every public enum in `batter-flags-core` and `batter-flags-postgres` is
 exhaustive, errors included, so a new variant is a recorded hard cut. In
-`batter-flags` the outcome and status enums (`SnapshotStatus`, `Gate`,
-`StartupFile`, `RejectionCause`, `ValueSource`, `UnpinnedBecause` and the
+`batter-flags` the outcome and status enums (`LoaderState`, `Served`,
+`LatestRead`, `Gate`, `StartupFile`, `ValueSource`, `UnpinnedBecause` and the
 `WhenTripped` policies) are exhaustive, while `FlagsOperation` and the error and
 failure enums (`DeclaredError`, `GateError`, `GateRegistrationError`,
 `RegisterError`, `PresenceError`, `LoadCause`, `PersistFailure` and the file
@@ -187,16 +189,32 @@ error it does not recognize.
   not the row's write version.
 - Archived keys load as absent: a candidate row has no archived state and the
   snapshot digest has no archival input.
-- A pin records the effective decision, a governing override included, and
-  `pin` is infallible: a handle the view cannot answer for is pinned at its
-  code default. `Pinned::same_decision` compares key and variant only; the
+- A pin records the effective decision, a governing override included. `pin`
+  refuses an error decision with `Unpinnable` (`batter-jkw6.45`): a handle the
+  view cannot answer for, or a view before the first publication under
+  `unready_until_loaded`. It was infallible and pinned such a decision at its
+  code default, which a replay then honoured as cached, losing the error.
+  `Pinned::same_decision` compares key and variant only; the
   keyed-idempotency boundary is the retained pin itself, which a replay must
   enqueue unchanged, origin included, because Runledger compares the whole
   payload (`keyed_pin_identity` shows equal decisions conflicting).
 - The held kill switch is the single history-dependent exception to "one
   (build, version, declared revision) denotes one rule set", and the reason
-  `Candidate::carrying` exists; the D-06 revisit trigger was re-examined for it
-  and stands.
+  core's `Publisher` carries what it serves into each read it judges; the D-06
+  revisit trigger was re-examined for it and stands.
+- `SnapshotStatus` is a struct of three separate facts, `loader`, `served` and
+  `latest_read`, read in one critical section with the publication they
+  describe, and `Gate` is judged from one status (`batter-jkw6.40`). The earlier
+  precedence enum let a refusal hide what was served, so `Gate::Published`
+  needed a second read of the publication, and reported an impossible standing
+  as `NotLoaded` with a zero duration.
+- One `low_level::Publisher` owns the published record through its whole
+  lifecycle (`batter-jkw6.39`): it starts unpublished or restored from the
+  last-good file, judges each read and publishes it as a second step, and is
+  not `Clone`, so no stale copy of a record can be advanced. The earlier public
+  `Published::first`/`next`/`rejected` and the loader's own `carrying` call
+  left the first-versus-later choice, the file's age origin and carrying to
+  the loader.
 - `TestFlags::builder` takes the catalog and a `ProcessKind`, because
   ownership decides what a process evaluates; a fixture that injects a
   foreign, not-owned or repeated handle is refused at build.

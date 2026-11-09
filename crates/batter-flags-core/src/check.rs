@@ -33,15 +33,13 @@ pub(crate) enum Reach {
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let worker = catalog.process_kind("worker")?;
-/// catalog.environment_class("hosted")?;
 /// let halt = catalog
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 ///     .owned_only_by(&serving)
 ///     .declare()?;
-/// let base = BaseBuilder::new(catalog.build()?, worker)?.finish();
+/// let base = BaseBuilder::new(catalog.build(), worker)?.finish();
 ///
 /// // The worker does not own the switch, and a gate over it is refused up front.
 /// assert_eq!(base.check_switch(&halt), Err(HandleRefusal::NotOwned));

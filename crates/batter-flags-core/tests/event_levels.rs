@@ -64,7 +64,7 @@ fn levels_follow_the_surface_and_only_an_error_is_warn() {
     capture.clear();
 
     // A pin, a replay and an override are ordinary evaluations.
-    let pin = engaged.pin(&h.fast_path);
+    let pin = engaged.pin(&h.fast_path).unwrap();
     assert_eq!(level_of(&capture), Level::DEBUG);
     capture.clear();
     let _ = released.resolve_pinned(&h.fast_path, &pin);

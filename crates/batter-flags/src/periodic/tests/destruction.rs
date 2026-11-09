@@ -96,7 +96,7 @@ async fn retained_despite_destruction(
 #[tokio::test(start_paused = true)]
 async fn recoverable_error_survives_application_future_drop_panic() {
     let (summary, reader) = retained_despite_destruction(Returned::Recoverable).await;
-    assert_eq!(summary.succeeded, 1);
+    assert_eq!((summary.succeeded, summary.skipped), (0, 1));
     assert_eq!(summary.recoverable_failures, 1);
     assert_eq!(reader.snapshot().recoverable_failures, 1);
     let sample = summary.first_failure.as_ref().unwrap();
@@ -108,7 +108,7 @@ async fn recoverable_error_survives_application_future_drop_panic() {
 #[tokio::test(start_paused = true)]
 async fn fatal_error_survives_application_future_drop_panic() {
     let (summary, reader) = retained_despite_destruction(Returned::Fatal).await;
-    assert_eq!(summary.succeeded, 1);
+    assert_eq!((summary.succeeded, summary.skipped), (0, 1));
     assert_eq!(summary.recoverable_failures, 0);
     assert!(summary.first_failure.is_none());
     let sample = summary.terminal_failure.as_ref().unwrap();
@@ -120,8 +120,8 @@ async fn fatal_error_survives_application_future_drop_panic() {
 #[tokio::test(start_paused = true)]
 async fn success_count_survives_application_future_drop_panic() {
     let (summary, reader) = retained_despite_destruction(Returned::Success).await;
-    assert_eq!(summary.succeeded, 2);
-    assert_eq!(reader.snapshot().succeeded, 2);
+    assert_eq!((summary.succeeded, summary.skipped), (1, 1));
+    assert_eq!(reader.snapshot().succeeded, 1);
     assert_eq!(summary.recoverable_failures, 0);
     assert!(summary.first_failure.is_none());
     assert!(summary.terminal_failure.is_none());

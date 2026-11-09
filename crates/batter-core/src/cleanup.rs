@@ -272,11 +272,17 @@ impl CleanupStack {
     /// [`Self::push`] retains its original consume-on-error behavior; use this
     /// method when acquisition must not precede a possible registration failure.
     pub fn reserve(&mut self, name: &'static str) -> Result<CleanupSlot<'_>, RegistrationError> {
+        self.check_name(name)?;
+        Ok(CleanupSlot { stack: self, name })
+    }
+
+    /// Whether [`reserve`](Self::reserve) would accept `name` now.
+    pub(crate) fn check_name(&self, name: &'static str) -> Result<(), RegistrationError> {
         validation::name(name)?;
         if self.hooks.iter().any(|hook| hook.name == name) {
             return Err(RegistrationError::Duplicate(name));
         }
-        Ok(CleanupSlot { stack: self, name })
+        Ok(())
     }
 
     /// Number of pending hooks.

@@ -146,12 +146,20 @@ pub(crate) async fn apply(
         )));
     }
     let written = plan.written();
-    let deferral = match written {
+    let mut deferral = match written {
         Some(written) if !active.is_empty() => {
             crate::relations::judge(sql, mutation.key(), written).await?
         }
         Some(_) | None => crate::Deferral::default(),
     };
+    // A policy that refuses a coordinated flip refused it above; one that
+    // accepts it says so in the outcome.
+    if declarations
+        .iter()
+        .any(|r| r.get::<String, _>("flip_discipline") == "coordinated")
+    {
+        deferral.flip = crate::Coordination::Coordinated;
+    }
     // A kill switch is never refused for what it holds: engaging one is the
     // emergency path, and its holds are reported instead.
     if let (InvariantPolicy::RefuseUnmet, Some(Written::Flag(_))) = (policy.invariants, written)

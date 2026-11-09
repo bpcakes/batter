@@ -33,6 +33,7 @@ pub mod low_level;
 pub mod periodic;
 mod reader;
 mod report;
+#[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
 pub use flags::Flags;

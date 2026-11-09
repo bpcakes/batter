@@ -43,7 +43,7 @@ impl Loaded {
 
     /// Attach this database read to the consumer's validation scope.
     pub fn candidate(self, scope: &ValidationScope) -> Candidate {
-        Candidate::new(scope).at(self.version).rows(self.rows)
+        Candidate::new(scope, self.version).rows(self.rows)
     }
     /// Raw candidate rows for persistence or inspection; formatting is redacted.
     pub fn rows(&self) -> &[CandidateRow] {
@@ -66,10 +66,7 @@ impl PooledStore {
                 check_primary(recovery)?;
                 // No control relation means no flags migration has run yet.
                 let row = sqlx::query("SELECT version, schema_revision, channel FROM flags.flag_control WHERE singleton")
-                    .fetch_one(sql.executor()).await.map_err(|error| match error.as_database_error().and_then(|e| e.code()) {
-                        Some(code) if code == "42P01" || code == "3F000" => StoreError::schema_behind(0),
-                        _ => StoreError::from(error),
-                    })?;
+                    .fetch_one(sql.executor()).await.map_err(crate::errors::missing_schema)?;
                 let version = version(row.try_get("version")?)?;
                 let schema_revision: i32 = row.try_get("schema_revision")?;
                 if schema_revision < REQUIRED_SCHEMA_REVISION { return Err(StoreError::schema_behind(schema_revision)); }

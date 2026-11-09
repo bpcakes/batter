@@ -95,7 +95,7 @@ fn catalog_with(declare: impl FnOnce(&mut batter_flags_core::CatalogBuilder)) ->
     let mut builder = vocabulary_builder();
     builder.mode_flag("steady", Toggle::Off).declare().unwrap();
     declare(&mut builder);
-    builder.build().unwrap()
+    builder.build()
 }
 
 #[test]

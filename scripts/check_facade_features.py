@@ -41,6 +41,7 @@ EXPECTED_FEATURES = {
     "flags-postgres",
     "flags-axum",
     "flags-runledger",
+    "flags-test-support",
 }
 # A case directory is one path component, and the label naming every feature
 # at once exceeds the 255-byte NAME_MAX of macOS and Linux file systems. Short
@@ -64,7 +65,8 @@ RUNLIMIT_BRIDGES = ("runlimit-memory", "runlimit-postgres", "runlimit-axum",
                     "runlimit-native-http", "runlimit-native-axum")
 # Facade features that select the Runledger adapter and its native packages.
 RUNLEDGER_SELECTORS = {"runledger", "runledger-test-support"}
-FLAGS_SELECTORS = {"flags", "flags-postgres", "flags-axum", "flags-runledger"}
+FLAGS_SELECTORS = {"flags", "flags-postgres", "flags-axum", "flags-runledger",
+                   "flags-test-support"}
 # Native Runlimit packages each bridge additionally declares in the identity
 # fixture, so a facade path is compared against a direct dependency.
 BRIDGE_NATIVES = {
@@ -160,6 +162,7 @@ def feature_cases() -> list[tuple[str, ...]]:
         ("flags-postgres",),
         ("flags-axum",),
         ("flags-runledger",),
+        ("flags-test-support",),
         ("axum", "sqlx"),
         ("axum", "runlimit"),
         ("sqlx", "runlimit-postgres"),
@@ -242,7 +245,9 @@ def facade_source(selected: tuple[str, ...]) -> str:
         # An exhaustive match: a new failure variant is a visible facade change.
         lines.append("#[allow(dead_code)]\nfn failure_name(failure: batter::axum::HttpFailure) -> &'static str { match failure { batter::axum::HttpFailure::Unavailable => \"unavailable\", batter::axum::HttpFailure::Cancelled => \"cancelled\", batter::axum::HttpFailure::DeadlineExceeded => \"deadline\", batter::axum::HttpFailure::Overloaded => \"overloaded\", batter::axum::HttpFailure::Internal => \"internal\", batter::axum::HttpFailure::Disabled => \"disabled\" } }")
     if chosen & FLAGS_SELECTORS:
-        lines.insert(1, "use batter::flags::{Flags, GateError, declared::resolve, core::CatalogBuilder, test::TestFlags};")
+        lines.insert(1, "use batter::flags::{Flags, GateError, declared::resolve, core::CatalogBuilder};")
+    if "flags-test-support" in chosen:
+        lines.insert(1, "use batter::flags::test::TestFlags;")
     if "flags-postgres" in chosen:
         lines.insert(1, "use batter::flags::{control_plane::{ControlPlaneStore, LoadPolicy, register_in as register_flags_in}, grants::FlagsOperation, postgres::PooledStore};")
     if "flags-axum" in chosen:
@@ -731,6 +736,9 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
         (("flags",), "flags-postgres", "batter::flags::control_plane"),
         (("flags",), "flags-axum", "batter::flags::http"),
         (("flags",), "flags-runledger", "batter::flags::jobs"),
+        # Test flags serve `Source::Test` through every surface, so a
+        # production `flags` dependency cannot reach them.
+        (("flags",), "flags-test-support", "batter::flags::test::TestFlags"),
     ]
 
 
@@ -754,6 +762,7 @@ def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
         "flags-postgres": ("batter-flags", "postgres"),
         "flags-axum": ("batter-flags", "axum"),
         "flags-runledger": ("batter-flags", "runledger"),
+        "flags-test-support": ("batter-flags", "test-support"),
     }
     if disabled in adapter_features:
         package, feature = adapter_features[disabled]

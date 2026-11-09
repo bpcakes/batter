@@ -6,7 +6,7 @@ use crate::{reader::Reader, test::TestFlags};
 use batter_flags_core::{
     Catalog, CatalogBuilder, PrePublication, ProcessKind, SafeState, SettingsPrefix, StaleRule,
     SwitchState, Version,
-    low_level::{BaseBuilder, Candidate, CandidateRow, Snapshot},
+    low_level::{BaseBuilder, Candidate, CandidateRow},
 };
 use batter_runledger::test_support::{HandlerExit, HandlerInvocation};
 use runledger_core::jobs::{
@@ -26,14 +26,13 @@ mod pins;
 mod timing;
 
 fn world() -> (Catalog, ProcessKind, KillSwitch) {
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let worker = b.process_kind("worker").unwrap();
-    b.environment_class("hosted").unwrap();
+    let (mut b, worker, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "worker", "hosted").unwrap();
     let halt = b
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
         .unwrap();
-    (b.build().unwrap(), worker, halt)
+    (b.build(), worker, halt)
 }
 fn recheck() -> Recheck {
     Recheck::after(Duration::from_secs(30)).unwrap()
@@ -170,7 +169,7 @@ async fn workflow_policies_and_open_and_ungated_dispatch() {
             StepWhenTripped::Drop => assert_eq!(failure.code, "flags.job_type_dropped"),
         }
     }
-    invoke(&test.flags().flagged(Probe(calls.clone())))
+    invoke(&test.flags().flagged(Probe(calls.clone()), recheck()))
         .await
         .unwrap();
     let (catalog, worker, halt) = world();
@@ -204,16 +203,15 @@ fn construction_refuses_foreign_and_unowned_switches() {
             .gated_direct(probe(), &foreign, policy(DirectWhenTripped::Drop)),
         Err(GateError::ForeignHandle { .. })
     ));
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let worker = b.process_kind("worker").unwrap();
+    let (mut b, worker, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "worker", "hosted").unwrap();
     let serving = b.process_kind("serving").unwrap();
-    b.environment_class("hosted").unwrap();
     let halt = b
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .owned_only_by(&serving)
         .declare()
         .unwrap();
-    let test = TestFlags::builder(b.build().unwrap(), worker)
+    let test = TestFlags::builder(b.build(), worker)
         .unwrap()
         .build()
         .unwrap();
@@ -253,7 +251,9 @@ async fn missing_publication_always_retries_even_drop_and_defer() {
         assert_retry(invoke(&handler).await.unwrap_err(), Duration::from_secs(60));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         // An ungated handler remains callable before publication.
-        invoke(&flags.flagged(Probe(calls.clone()))).await.unwrap();
+        invoke(&flags.flagged(Probe(calls.clone()), recheck()))
+            .await
+            .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
@@ -345,7 +345,7 @@ async fn typed_decode_is_after_gate_and_dead_letter_receives_raw_payload() {
         .unwrap()
         .build()
         .unwrap();
-    let handler = test.flags().flagged(typed());
+    let handler = test.flags().flagged(typed(), recheck());
     let run = HandlerInvocation::new(Duration::from_secs(5))
         .unwrap()
         .execute(&handler, 42.into())
@@ -369,7 +369,7 @@ async fn legacy_dispatch_refuses_without_entering_inner_and_spread_is_stable() {
         .build()
         .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
-    let flagged = test.flags().flagged(Probe(calls.clone()));
+    let flagged = test.flags().flagged(Probe(calls.clone()), recheck());
     let gated = test
         .flags()
         .gated_direct(Probe(calls.clone()), &halt, policy(DirectWhenTripped::Drop))
@@ -418,28 +418,19 @@ async fn an_admitted_invocation_keeps_its_view_across_publication() {
     }
     let (catalog, worker, halt) = world();
     let base = BaseBuilder::new(catalog, worker).unwrap().finish();
-    let snapshot = |version, state| {
-        let scope = base.validation_scope();
+    let candidate = |version, state| {
         let v = Version::new(version);
-        Arc::new(
-            Snapshot::validate(
-                &scope,
-                Candidate::new(&scope)
-                    .at(v)
-                    .row(CandidateRow::switch(&halt, state, v)),
-            )
-            .unwrap(),
-        )
+        Candidate::new(&base.validation_scope(), v).row(CandidateRow::switch(&halt, state, v))
     };
-    let open = snapshot(1, SwitchState::Released);
-    let tripped = snapshot(2, SwitchState::Engaged);
+    let open = candidate(1, SwitchState::Released);
+    let tripped = candidate(2, SwitchState::Engaged);
     let (mut writer, reader) = Reader::live(
         base,
         PrePublication::ServeDefaults,
         Duration::from_secs(100),
         Instant::now(),
     );
-    writer.apply(open, Instant::now());
+    writer.read_at(open, Instant::now());
     let entered = Arc::new(tokio::sync::Notify::new());
     let resume = Arc::new(tokio::sync::Notify::new());
     let handler = Flags::new(reader)
@@ -456,7 +447,7 @@ async fn an_admitted_invocation_keeps_its_view_across_publication() {
     let run = invoke(&handler);
     let publish = async {
         entered.notified().await;
-        writer.apply(tripped, Instant::now());
+        writer.read_at(tripped, Instant::now());
         resume.notify_one();
     };
     let (result, ()) = tokio::join!(run, publish);
@@ -488,3 +479,5 @@ async fn explicit_settings_floor_can_drop_before_publication() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+mod unready;

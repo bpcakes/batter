@@ -79,7 +79,7 @@ fn a_pin_records_the_decision_and_the_origin_of_the_view_it_was_taken_from() {
         ),
     ];
     for (label, view, origin, class) in cases {
-        let pin = view.pin(&h.checkout_style);
+        let pin = view.pin(&h.checkout_style).unwrap();
         assert_eq!(pin.key(), Some("checkout_style"), "{label}");
         assert_eq!(pin.variant(), Some("express"), "{label}");
         assert_eq!(pin.origin(), Some(origin), "{label}");
@@ -103,7 +103,7 @@ fn an_honoured_pin_is_cached_and_keeps_its_origin_as_data() {
     );
     let taken = base.control_plane_view(&early, Freshness::Fresh).unwrap();
     let replaying = base.control_plane_view(&late, Freshness::Stale).unwrap();
-    let pin = taken.pin(&h.checkout_style);
+    let pin = taken.pin(&h.checkout_style).unwrap();
 
     let PinnedResolution::Honoured(decision) = replaying.resolve_pinned(&h.checkout_style, &pin)
     else {
@@ -154,7 +154,8 @@ fn a_governing_switch_engaged_where_the_pin_replays_overrides_an_honoured_pin() 
     let pin = base
         .control_plane_view(&released, Freshness::Fresh)
         .unwrap()
-        .pin(&h.new_checkout);
+        .pin(&h.new_checkout)
+        .unwrap();
     assert_eq!(pin.variant(), Some("on"));
 
     let view = base.control_plane_view(&engaged, Freshness::Fresh).unwrap();
@@ -173,7 +174,7 @@ fn a_governing_switch_engaged_where_the_pin_replays_overrides_an_honoured_pin() 
     );
 
     // A flag no switch governs is never overridden.
-    let ungoverned = view.pin(&h.fast_path);
+    let ungoverned = view.pin(&h.fast_path).unwrap();
     assert!(matches!(
         view.resolve_pinned(&h.fast_path, &ungoverned),
         PinnedResolution::Honoured(_)
@@ -193,7 +194,7 @@ fn a_pin_taken_while_the_governing_switch_is_engaged_records_the_code_default() 
         ],
     );
     let view = base.control_plane_view(&engaged, Freshness::Fresh).unwrap();
-    let pin = view.pin(&h.new_checkout);
+    let pin = view.pin(&h.new_checkout).unwrap();
     assert_eq!(
         pin.variant(),
         Some("off"),
@@ -202,14 +203,28 @@ fn a_pin_taken_while_the_governing_switch_is_engaged_records_the_code_default() 
 }
 
 #[test]
-fn a_pin_taken_for_a_handle_the_view_cannot_answer_for_records_its_code_default() {
+fn an_error_decision_is_never_pinned() {
     let (catalog, h) = world();
     let (_other_catalog, other) = world();
     let base = base(catalog, &h.serving, &[]);
-    let view = base.declared_view();
-    let pin = view.pin(&other.fast_path);
-    assert_eq!(pin.variant(), Some("off"));
-    assert_eq!(base.error_count(ErrorCause::ForeignCatalog), 1);
+    // A handle the view cannot answer for used to be pinned at its code
+    // default, which a replay then honoured as a cached decision.
+    let refused = base.declared_view().pin(&other.fast_path).unwrap_err();
+    assert_eq!(refused.cause(), ErrorCause::ForeignCatalog);
+    assert_eq!(
+        base.error_count(ErrorCause::ForeignCatalog),
+        1,
+        "it is still counted"
+    );
+    // Before the first publication under a policy that withholds readiness.
+    let unready = base.not_loaded_view(PrePublication::Unready, Freshness::Fresh);
+    assert_eq!(
+        unready.pin(&h.fast_path).unwrap_err().cause(),
+        ErrorCause::ProviderNotReady
+    );
+    // Serving defaults is a decision, so it pins.
+    let defaults = base.not_loaded_view(PrePublication::ServeDefaults, Freshness::Fresh);
+    assert!(defaults.pin(&h.fast_path).is_ok());
 }
 
 /// Each arm a pin the library itself took can reach.
@@ -222,13 +237,13 @@ fn the_arms_reachable_from_a_pin_the_library_took() {
     let view = base.declared_view();
 
     // The handle is checked first: another catalog's handle.
-    let pin = view.pin(&h.fast_path);
+    let pin = view.pin(&h.fast_path).unwrap();
     assert_eq!(
         view.resolve_pinned(&other.fast_path, &pin).rejection(),
         Some(PinRejection::ForeignHandle)
     );
     // A kind that neither owns the flag nor may resolve its pins.
-    let worker_pin = other_base.declared_view().pin(&other.worker_mode);
+    let worker_pin = other_base.declared_view().pin(&other.worker_mode).unwrap();
     assert_eq!(
         view.resolve_pinned(&h.worker_mode, &worker_pin).rejection(),
         Some(PinRejection::NotOwned)
@@ -243,7 +258,7 @@ fn the_arms_reachable_from_a_pin_the_library_took() {
     let published = snapshot(&base, 3, []);
     let restored = file_snapshot(&base, 3, []);
     let test = base.test_view(&published, Freshness::Fresh).unwrap();
-    let test_pin = test.pin(&h.fast_path);
+    let test_pin = test.pin(&h.fast_path).unwrap();
     assert_eq!(
         test_pin.origin(),
         Some(PinOrigin::Test {
@@ -293,12 +308,12 @@ fn incompatible_is_decided_before_the_governing_switch() {
     let view = base.control_plane_view(&engaged, Freshness::Fresh).unwrap();
     // `new_checkout` is governed by an engaged switch, yet each mismatched pin
     // is reported as what is wrong with it.
-    let pin = view.pin(&h.fast_path);
+    let pin = view.pin(&h.fast_path).unwrap();
     assert_eq!(
         view.resolve_pinned(&h.new_checkout, &pin).rejection(),
         Some(PinRejection::KeyMismatch)
     );
-    let foreign = other_base.declared_view().pin(&other.new_checkout);
+    let foreign = other_base.declared_view().pin(&other.new_checkout).unwrap();
     assert!(
         matches!(
             view.resolve_pinned(&h.new_checkout, &foreign),
@@ -320,7 +335,7 @@ fn a_pinned_by_kind_replays_a_pin_but_never_evaluates_the_flag_live() {
     let (worker_catalog, worker) = world();
     let serving_base = base(catalog, &h.serving, &[Literal::Flag("new_checkout", "on")]);
     let worker_base = base(worker_catalog, &worker.worker, &[]);
-    let pin = serving_base.declared_view().pin(&h.new_checkout);
+    let pin = serving_base.declared_view().pin(&h.new_checkout).unwrap();
     assert_eq!(pin.variant(), Some("on"));
 
     let view = worker_base.declared_view();
@@ -345,6 +360,7 @@ fn pins_compare_by_decision_and_by_envelope() {
         base.control_plane_view(snapshot, Freshness::Fresh)
             .unwrap()
             .pin(&h.fast_path)
+            .unwrap()
     };
     let (a, b, c) = (pin(&first), pin(&second), pin(&off));
     assert!(

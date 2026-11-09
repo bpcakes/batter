@@ -34,10 +34,9 @@ use support::report;
 /// | `checkout_report` | `on` requires `new_checkout` `on` |
 /// | `gated` | release flag governed by `gate_halt` (safe state engaged) |
 async fn declarer_with(f: &Fixture, liveness: u64) -> ProcessPresence {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let worker = catalog.process_kind("worker").unwrap();
-    catalog.environment_class("hosted").unwrap();
     let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     let mut toggle = |key: &str| catalog.mode_flag(key, Toggle::Off).declare().unwrap();
     let ledger_v2 = toggle("ledger_v2");
@@ -96,18 +95,16 @@ async fn declarer_with(f: &Fixture, liveness: u64) -> ProcessPresence {
     catalog
         .requires(&serving_side, Toggle::On, &worker_side, Toggle::On)
         .unwrap();
-    let base = BaseBuilder::new(catalog.build().unwrap(), serving)
-        .unwrap()
-        .finish();
+    let base = BaseBuilder::new(catalog.build(), serving).unwrap().finish();
     let labels = ProcessLabels {
         application: ProcessLabel::new("service").unwrap(),
         environment: ProcessLabel::new("hosted").unwrap(),
         build: ProcessLabel::new("relations").unwrap(),
     };
     let cadence = Cadence::new(Duration::from_secs(liveness), Duration::from_secs(600)).unwrap();
-    let mut process = ProcessPresence::new(labels, &base, cadence);
-    f.store
-        .heartbeat(&mut process, &report(SnapshotReport::NotLoaded), deadline())
+    let mut process = ProcessPresence::new(&f.store, labels, &base, cadence);
+    process
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     process
@@ -328,7 +325,7 @@ async fn conflicts_and_both_or_none_pairs_need_an_accepted_hold_or_the_right_ord
 async fn only_running_declarers_are_judged_and_a_silent_ones_holds_are_still_reported() {
     let f = Fixture::migrated().await;
     let process = declarer(&f).await;
-    f.store.stop(process, deadline()).await.unwrap();
+    process.stop(deadline()).await.unwrap();
     let written = strict(&f, "ledger_v2", "on").await;
     assert!(
         matches!(&written, WriteOutcome::WrittenUndeclared { deferral, .. } if *deferral == Deferral::default()),
@@ -490,9 +487,8 @@ async fn unreadable_switch(f: &Fixture, name: &str) {
 async fn independently_held_governors_are_judged_in_every_combination() {
     let f = Fixture::migrated().await;
     // `pair_x` and `pair_y` are both or none, each governed by its own switch.
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     let mut governed = |flag: &str, switch: &str| {
         let switch = catalog
@@ -508,18 +504,16 @@ async fn independently_held_governors_are_judged_in_every_combination() {
     let pair_x = governed("pair_x", "halt_x");
     let pair_y = governed("pair_y", "halt_y");
     catalog.both_or_none(&pair_x, &pair_y).unwrap();
-    let base = BaseBuilder::new(catalog.build().unwrap(), serving)
-        .unwrap()
-        .finish();
+    let base = BaseBuilder::new(catalog.build(), serving).unwrap().finish();
     let labels = ProcessLabels {
         application: ProcessLabel::new("service").unwrap(),
         environment: ProcessLabel::new("hosted").unwrap(),
         build: ProcessLabel::new("pairs").unwrap(),
     };
     let cadence = Cadence::new(Duration::from_secs(60), Duration::from_secs(600)).unwrap();
-    let mut process = ProcessPresence::new(labels, &base, cadence);
-    f.store
-        .heartbeat(&mut process, &report(SnapshotReport::NotLoaded), deadline())
+    let mut process = ProcessPresence::new(&f.store, labels, &base, cadence);
+    process
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     let _ = submit(&f, set("pair_x", "on", None), InvariantPolicy::AcceptHeld).await;

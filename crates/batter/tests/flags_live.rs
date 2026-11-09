@@ -16,7 +16,7 @@ mod support;
 use std::time::Duration;
 
 use batter::flags::{
-    control_plane::{SnapshotStatus, StartupFile},
+    control_plane::{Gate, LatestRead, StartupFile},
     core::{Source, SwitchState, Version},
     low_level::capture_now,
     postgres::{PooledStore, Refusal, Write, WriteOutcome},
@@ -165,9 +165,12 @@ async fn fail_over_under_the_running_process(
         )
         .await;
     until(|| {
-        flags.status()
-            == SnapshotStatus::Regressed {
-                applied: Version::new(100),
+        flags.status().latest_read
+            == LatestRead::Refused {
+                refusal: batter::flags::core::low_level::Refusal::Regressed {
+                    applied: Version::new(100),
+                    observed: Version::new(90),
+                },
                 observed: Version::new(90),
             }
     })
@@ -199,7 +202,11 @@ async fn restart_over_the_file(database: &Database, directory: &std::path::Path)
         }
     );
     until(|| matches!(capture_now(&flags).source(), Source::ControlPlane { version, .. } if version == Version::new(90))).await;
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(
+        flags.status().satisfies(Gate::Fresh),
+        "{:?}",
+        flags.status()
+    );
     until(|| {
         std::fs::read(directory.join("flags.bfsn"))
             .is_ok_and(|bytes| bytes.windows(8).any(|w| w == 90u64.to_be_bytes()))

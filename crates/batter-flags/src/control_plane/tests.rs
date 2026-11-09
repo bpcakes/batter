@@ -17,7 +17,7 @@ use batter_core::{RegistrationError, lifecycle::Readiness};
 use batter_flags_core::{ErrorCause, Freshness, Reason, Source, SwitchState, Toggle, Version};
 use tokio::time::sleep;
 
-use super::{LoadCause, LoadPolicy, RegisterError, SnapshotStatus};
+use super::{LoadCause, LoadPolicy, LoaderState, RegisterError, Served};
 use crate::low_level::capture_now;
 use support::*;
 
@@ -161,7 +161,7 @@ async fn start_on_defaults_acknowledges_after_a_failed_or_hung_first_attempt() {
         // The allowance is the 4 s run budget plus a second.
         assert!(started.elapsed() <= Duration::from_secs(5));
         assert!(fake.reads() >= 1);
-        assert!(matches!(flags.status(), SnapshotStatus::NotLoaded { .. }));
+        assert!(matches!(flags.status().served, Served::DeclaredBase { .. }));
         let decision = capture_now(&flags).evaluate(&handles.flag);
         assert_eq!(decision.reason(), Reason::Default);
         assert!(matches!(decision.source(), Source::NotLoaded { .. }));
@@ -190,7 +190,7 @@ async fn unready_until_loaded_withholds_readiness_until_a_read_is_published() {
 
     fake.set(serve(&handles, 3, SwitchState::Released, Toggle::On));
     running.status().wait_ready().await.unwrap();
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     let decision = capture_now(&flags).evaluate(&handles.flag);
     assert_eq!(decision.value(), Toggle::On);
     assert_eq!(decision.reason(), Reason::Static);
@@ -213,9 +213,8 @@ async fn a_quiet_control_plane_stays_fresh_and_an_outage_ages_into_stale_rules()
     running.status().wait_ready().await.unwrap();
     for _ in 0..30 {
         sleep(SECOND).await;
-        assert_eq!(
-            flags.status(),
-            SnapshotStatus::Fresh,
+        assert!(
+            is_fresh(flags.status()),
             "three maximum ages of confirmations"
         );
     }
@@ -226,7 +225,7 @@ async fn a_quiet_control_plane_stays_fresh_and_an_outage_ages_into_stale_rules()
 
     fake.set(failing(LoadCause::Unavailable));
     sleep(MAXIMUM_AGE + POLL).await;
-    assert_eq!(flags.status(), SnapshotStatus::Stale);
+    assert!(is_stale(flags.status()), "{:?}", flags.status());
     let view = capture_now(&flags);
     assert_eq!(view.freshness(), Freshness::Stale);
     assert_eq!(
@@ -256,7 +255,7 @@ async fn a_boot_time_outage_ages_the_declared_base_into_stale_rules() {
     running.status().wait_ready().await.unwrap();
     sleep(MAXIMUM_AGE + SECOND).await;
     assert!(
-        matches!(flags.status(), SnapshotStatus::NotLoaded { since_registration } if since_registration > MAXIMUM_AGE)
+        matches!(flags.status().served, Served::DeclaredBase { since_registration } if since_registration > MAXIMUM_AGE)
     );
     let view = capture_now(&flags);
     assert_eq!(view.freshness(), Freshness::Stale);
@@ -287,7 +286,7 @@ async fn the_settings_floor_engages_a_switch_before_and_after_publication() {
     );
     fake.set(serve(&handles, 2, SwitchState::Released, Toggle::Off));
     sleep(POLL + SECOND).await;
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     assert_eq!(
         capture_now(&flags).switch(&handles.halt).value(),
         SwitchState::Engaged
@@ -309,34 +308,80 @@ async fn ending_the_loader_reports_loader_stopped() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     let _ = running.shutdown().await;
-    assert_eq!(flags.status(), SnapshotStatus::LoaderStopped);
+    assert_eq!(flags.status().loader, LoaderState::Stopped);
     assert!(
         matches!(capture_now(&flags).source(), Source::ControlPlane { version, .. } if version == Version::new(1)),
         "the last record stays served"
     );
 }
 
-#[tokio::test]
-async fn a_wake_spacing_longer_than_the_poll_is_refused() {
+/// The policy refuses the spacing when it is built, so registration never
+/// sees it.
+#[test]
+fn a_wake_spacing_longer_than_the_poll_is_refused_by_the_policy() {
     use crate::control_plane::ListenEndpoint;
+    let options = || {
+        sqlx::postgres::PgConnectOptions::new_without_pgpass()
+            .host("127.0.0.1")
+            .username("flags")
+    };
+    let long = ListenEndpoint::new(options(), POLL + SECOND).unwrap();
+    let refused = LoadPolicy::start_on_defaults(timing())
+        .with_listen(long)
+        .unwrap_err();
+    assert_eq!(refused.maximum(), POLL);
+    let exact = ListenEndpoint::new(options(), POLL).unwrap();
+    assert!(
+        LoadPolicy::start_on_defaults(timing())
+            .with_listen(exact)
+            .is_ok()
+    );
+}
+
+/// A taken name is refused before anything is registered, so a root that
+/// ignores the error cannot start a partial loader: every name is still free
+/// afterwards but the one the application took.
+#[tokio::test]
+async fn a_taken_name_refuses_registration_before_anything_is_installed() {
+    use batter_core::{
+        periodic::{
+            PeriodicFailure, PeriodicPolicy, PeriodicShutdown, PeriodicStartup,
+            register_periodic_in,
+        },
+        registration::RegistrationTarget,
+    };
     let mut supervisor = supervisor();
+    let policy = PeriodicPolicy::new(
+        SECOND,
+        SECOND,
+        PeriodicStartup::immediate(),
+        PeriodicShutdown::StopAtDrain,
+    )
+    .unwrap();
+    register_periodic_in(&mut supervisor, super::PRESENCE, policy, |_| async {
+        Ok::<(), PeriodicFailure<std::convert::Infallible>>(())
+    })
+    .unwrap();
     let (input, _) = resolved(&[]);
-    let options = sqlx::postgres::PgConnectOptions::new_without_pgpass()
-        .host("127.0.0.1")
-        .username("flags");
-    let endpoint = ListenEndpoint::new(options, POLL + SECOND).unwrap();
-    let policy = LoadPolicy::start_on_defaults(timing()).with_listen(endpoint);
     let error = register(
         &mut supervisor,
         input,
-        policy,
+        LoadPolicy::start_on_defaults(timing()),
         failing(LoadCause::Unavailable),
     )
     .unwrap_err();
     assert!(
-        matches!(error, RegisterError::WakeSpacingTooLong { maximum } if maximum == POLL),
+        matches!(
+            error,
+            RegisterError::Registration(batter_core::RegistrationError::Duplicate(name))
+                if name == super::PRESENCE
+        ),
         "{error:?}"
     );
+    supervisor
+        .registration()
+        .check_names(&[super::REFRESH, super::PRUNE], &[super::STOP_MARKER])
+        .expect("nothing of the loader was installed");
 }

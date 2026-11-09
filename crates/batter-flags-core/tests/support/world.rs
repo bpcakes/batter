@@ -37,10 +37,13 @@ pub struct Handles {
 
 /// Builds the catalog and its handles.
 pub fn world() -> (Catalog, Handles) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, development) = CatalogBuilder::new(
+        SettingsPrefix::new("FLAG_").unwrap(),
+        "serving",
+        "development",
+    )
+    .unwrap();
     let worker = builder.process_kind("worker").unwrap();
-    let development = builder.environment_class("development").unwrap();
     builder.environment_class("hosted").unwrap();
     let checkout_halt = builder
         .kill_switch(
@@ -85,7 +88,7 @@ pub fn world() -> (Catalog, Handles) {
         .owned_only_by(&worker)
         .declare()
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let handles = Handles {
         serving,
         worker,
@@ -147,8 +150,8 @@ pub fn snapshot(
     rows: impl IntoIterator<Item = CandidateRow>,
 ) -> Arc<Snapshot> {
     let scope = base.validation_scope();
-    let candidate = Candidate::new(&scope).at(version(at)).rows(rows);
-    Arc::new(Snapshot::validate(&scope, candidate).unwrap())
+    let candidate = Candidate::new(&scope, version(at)).rows(rows);
+    Arc::new(Snapshot::validate(candidate).unwrap())
 }
 
 /// Validates `rows` read at `at` from the last-good file for `base`.
@@ -158,10 +161,8 @@ pub fn file_snapshot(
     rows: impl IntoIterator<Item = CandidateRow>,
 ) -> Arc<Snapshot> {
     let scope = base.validation_scope();
-    let candidate = Candidate::from_last_good_file(&scope)
-        .at(version(at))
-        .rows(rows);
-    Arc::new(Snapshot::validate(&scope, candidate).unwrap())
+    let candidate = Candidate::from_last_good_file(&scope, version(at)).rows(rows);
+    Arc::new(Snapshot::validate(candidate).unwrap())
 }
 
 /// A switch row at encoding 1.

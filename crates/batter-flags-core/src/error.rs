@@ -45,12 +45,6 @@ pub enum BuildError {
         /// The repeated name.
         name: Box<str>,
     },
-    /// The catalog declared no process kind, so no process could resolve it.
-    #[error("a catalog needs at least one process kind")]
-    NoProcessKind,
-    /// The catalog declared no environment class, so no process could resolve it.
-    #[error("a catalog needs at least one environment class")]
-    NoEnvironmentClass,
     /// The key broke the key grammar.
     #[error("flag key {key:?}: {cause}")]
     InvalidKey {
@@ -64,15 +58,6 @@ pub enum BuildError {
     DuplicateKey {
         /// The repeated key.
         key: FlagKey,
-    },
-    /// A setter that can be set once, `only_in` or `governed_by`, was called
-    /// twice. A second value would silently replace the first, so it is refused.
-    #[error("flag {key}: {method} was called twice")]
-    RepeatedCall {
-        /// The declaration being built.
-        key: FlagKey,
-        /// The setter called twice.
-        method: &'static str,
     },
     /// The flag value type's variant list was refused.
     #[error("flag {key}: {cause}")]

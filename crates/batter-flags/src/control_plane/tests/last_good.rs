@@ -9,8 +9,8 @@ use batter_flags_core::{
 };
 
 use super::super::{
-    FileProblem, Gate, LoadCause, LoadPolicy, PersistFailure, SnapshotDirectory, SnapshotFilePath,
-    SnapshotStatus, StartupFile, source::fake::Script,
+    FileProblem, Gate, LastGoodStatus, LoadCause, LoadPolicy, PersistFailure, Served,
+    SnapshotDirectory, SnapshotFilePath, StartupFile, source::fake::Script,
 };
 use super::support::*;
 use crate::{
@@ -107,8 +107,8 @@ async fn a_usable_file_is_published_before_the_driver_starts_and_served_through_
 
     // Before the driver starts, every surface already sees the file.
     assert_eq!(
-        flags.status(),
-        SnapshotStatus::ServingPersisted {
+        flags.status().served,
+        Served::PersistedFile {
             version: Version::new(100)
         }
     );
@@ -141,8 +141,8 @@ async fn a_usable_file_is_published_before_the_driver_starts_and_served_through_
     );
     assert_eq!(view.switch(&handles.halt).value(), SwitchState::Engaged);
     assert_eq!(
-        flags.status(),
-        SnapshotStatus::ServingPersisted {
+        flags.status().served,
+        Served::PersistedFile {
             version: Version::new(100)
         }
     );
@@ -169,7 +169,7 @@ async fn a_damaged_or_foreign_file_publishes_nothing_and_says_why() {
         flags.startup_file(),
         StartupFile::Unusable(FileProblem::Foreign)
     );
-    assert!(matches!(flags.status(), SnapshotStatus::NotLoaded { .. }));
+    assert!(matches!(flags.status().served, Served::DeclaredBase { .. }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -185,7 +185,7 @@ async fn the_first_publication_rewrites_a_newer_file_and_later_ones_skip_a_newer
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
     until(|| directory.read().is_some_and(|file| file.version == 90)).await;
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     assert_eq!(
         capture_now(&flags).switch(&handles.halt).value(),
         SwitchState::Released
@@ -197,7 +197,13 @@ async fn the_first_publication_rewrites_a_newer_file_and_later_ones_skip_a_newer
     until(|| matches!(capture_now(&flags).source(), Source::ControlPlane { version, .. } if version == Version::new(91))).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(directory.read().unwrap().version, 200);
-    assert_eq!(flags.last_persist_failure(), None);
+    assert_eq!(
+        flags.last_good(),
+        LastGoodStatus::UpToDate {
+            written: Some(Version::new(90))
+        },
+        "the skipped publication is settled, not a failure"
+    );
     let _ = running.shutdown().await;
 }
 
@@ -264,9 +270,25 @@ async fn a_persist_that_fails_never_withholds_readiness() {
     let (flags, _) = register(&mut supervisor, input, policy, script).unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    until(|| flags.last_persist_failure().is_some()).await;
-    assert_eq!(flags.last_persist_failure(), Some(PersistFailure::Io));
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    until(|| {
+        matches!(
+            flags.last_good(),
+            LastGoodStatus::Waiting {
+                last_failure: Some(_),
+                ..
+            }
+        )
+    })
+    .await;
+    assert_eq!(
+        flags.last_good(),
+        LastGoodStatus::Waiting {
+            version: Version::new(3),
+            written: None,
+            last_failure: Some(PersistFailure::Io)
+        }
+    );
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     let _ = running.shutdown().await;
 }
 
@@ -288,8 +310,23 @@ async fn a_held_directory_lock_is_busy_and_residue_is_removed() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    until(|| flags.last_persist_failure().is_some()).await;
-    assert_eq!(flags.last_persist_failure(), Some(PersistFailure::Busy));
+    until(|| {
+        matches!(
+            flags.last_good(),
+            LastGoodStatus::Waiting {
+                last_failure: Some(_),
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(matches!(
+        flags.last_good(),
+        LastGoodStatus::Waiting {
+            last_failure: Some(PersistFailure::Busy),
+            ..
+        }
+    ));
     assert!(directory.read().is_none());
 
     lock.unlock().unwrap();
@@ -377,9 +414,26 @@ async fn a_waiting_persist_is_retried_through_an_outage() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    until(|| flags.last_persist_failure() == Some(PersistFailure::Busy)).await;
+    until(|| {
+        matches!(
+            flags.last_good(),
+            LastGoodStatus::Waiting {
+                last_failure: Some(PersistFailure::Busy),
+                ..
+            }
+        )
+    })
+    .await;
     fake.set(failing(LoadCause::Unavailable));
     lock.unlock().unwrap();
     until(|| directory.read().is_some_and(|file| file.version == 3)).await;
+    // The failure does not outlive the write that replaced it.
+    until(|| {
+        flags.last_good()
+            == LastGoodStatus::UpToDate {
+                written: Some(Version::new(3)),
+            }
+    })
+    .await;
     let _ = running.shutdown().await;
 }

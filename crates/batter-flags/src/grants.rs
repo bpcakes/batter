@@ -6,18 +6,24 @@
 //! the store's statements for this source version; a store query change is
 //! expected to change the inventory.
 //!
+//! A login is granted a [`FlagsRole`], the exact operations one kind of login
+//! runs, or a [`FlagsGrant`] of at least one operation.
+//!
 //! ```
-//! use batter_flags::grants::{FlagsOperation, SCHEMA, grant_fragment};
+//! use batter_flags::grants::{FlagsGrant, FlagsOperation, FlagsRole, SCHEMA, grant_fragment};
 //! use batter_sqlx::verification::{FragmentObjectPolicy, Identifier};
 //!
 //! let policy = FragmentObjectPolicy::new(Identifier::new(SCHEMA).unwrap());
-//! let serving = grant_fragment(
-//!     &policy,
-//!     [FlagsOperation::SnapshotRead, FlagsOperation::Presence, FlagsOperation::PresencePrune],
-//! )
-//! .unwrap();
-//! # let _ = serving;
+//! let serving = grant_fragment(&policy, &FlagsRole::ServingProcess.into()).unwrap();
+//! let history = grant_fragment(&policy, &FlagsGrant::operations(FlagsOperation::HistoryRead, [])).unwrap();
+//! # let _ = (serving, history);
 //! ```
+//!
+//! Migration: `grant_fragment(&policy, [operations])` takes a `&FlagsGrant`,
+//! `FlagsOperation::OperatorCli` is `FlagsRole::OperatorCli`, and the serving
+//! selection of `SnapshotRead`, `Presence` and `PresencePrune` is
+//! `FlagsRole::ServingProcess`. `FlagsGrantError::EmptySelection` is gone: a
+//! grant names at least one operation.
 
 mod inventory;
 
@@ -32,13 +38,79 @@ pub use inventory::FlagsOperation;
 /// The schema every flags table lives in.
 pub const SCHEMA: &str = "flags";
 
+/// The exact operations one kind of login runs.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum FlagsRole {
+    /// A process with a registered control plane: the refresh's read, the
+    /// heartbeat and stop marker, and the prune, which
+    /// `control_plane::register_in` always registers. A login missing one of
+    /// them heartbeats or prunes with recoverable failures forever.
+    ServingProcess,
+    /// The `batter-flags` operator command: every write and read it runs.
+    OperatorCli,
+}
+
+impl FlagsRole {
+    /// The operations this role runs.
+    pub const fn operations(self) -> &'static [FlagsOperation] {
+        match self {
+            Self::ServingProcess => &[
+                FlagsOperation::SnapshotRead,
+                FlagsOperation::Presence,
+                FlagsOperation::PresencePrune,
+            ],
+            Self::OperatorCli => &[
+                FlagsOperation::AuditedWrite,
+                FlagsOperation::SnapshotRead,
+                FlagsOperation::CatalogRead,
+                FlagsOperation::HistoryRead,
+                FlagsOperation::FleetRead,
+            ],
+        }
+    }
+}
+
+/// A selection of at least one operation to grant one login.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlagsGrant {
+    operations: BTreeSet<FlagsOperation>,
+}
+
+impl FlagsGrant {
+    /// The operations `role` runs.
+    pub fn role(role: FlagsRole) -> Self {
+        let operations = role.operations().iter().copied().collect();
+        Self { operations }
+    }
+
+    /// `first` and every operation of `rest`.
+    pub fn operations(
+        first: FlagsOperation,
+        rest: impl IntoIterator<Item = FlagsOperation>,
+    ) -> Self {
+        let operations = std::iter::once(first).chain(rest).collect();
+        Self { operations }
+    }
+
+    /// The operations of both grants, for a login that plays two roles.
+    #[must_use]
+    pub fn and(mut self, other: Self) -> Self {
+        self.operations.extend(other.operations);
+        self
+    }
+}
+
+impl From<FlagsRole> for FlagsGrant {
+    fn from(role: FlagsRole) -> Self {
+        Self::role(role)
+    }
+}
+
 /// Why a fragment could not be built.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FlagsGrantError {
-    /// No operation was selected.
-    #[error("a flags grant selection must name at least one operation")]
-    EmptySelection,
     /// The object policy names a schema other than `flags`.
     #[error("the flags grant object policy must name the `flags` schema")]
     WrongSchema,
@@ -47,24 +119,22 @@ pub enum FlagsGrantError {
     Declaration(#[from] ManifestError),
 }
 
-/// The privileges `operations` need, and no others. None grants INSERT,
-/// UPDATE or DELETE on `flag_audit`: its trigger writes it as the table owner.
+/// The privileges `grant` needs, and no others. None grants INSERT, UPDATE or
+/// DELETE on `flag_audit`: its trigger writes it as the table owner.
+///
+/// # Errors
+///
+/// [`FlagsGrantError::WrongSchema`] when `policy` names another schema, and
+/// [`FlagsGrantError::Declaration`] when the manifest cannot express it.
 pub fn grant_fragment(
     policy: &FragmentObjectPolicy,
-    operations: impl IntoIterator<Item = FlagsOperation>,
+    grant: &FlagsGrant,
 ) -> Result<GrantFragment, FlagsGrantError> {
     if policy.schema().as_str() != SCHEMA {
         return Err(FlagsGrantError::WrongSchema);
     }
-    let operations: BTreeSet<_> = operations
-        .into_iter()
-        .flat_map(FlagsOperation::expand)
-        .collect();
-    if operations.is_empty() {
-        return Err(FlagsGrantError::EmptySelection);
-    }
     let mut fragment = policy.declare_schema(GrantFragment::new())?;
-    for operation in operations {
+    for &operation in &grant.operations {
         for requirement in inventory::requirements(operation) {
             fragment = policy.declare_relations(
                 fragment,

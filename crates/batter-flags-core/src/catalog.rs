@@ -21,11 +21,9 @@ use crate::{
 ///
 /// ```compile_fail,E0599
 /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-/// # builder.process_kind("serving").unwrap();
-/// # builder.environment_class("hosted").unwrap();
-/// let catalog = builder.build().unwrap();
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
+/// let catalog = builder.build();
 /// let _copy = catalog.clone();
 /// ```
 ///
@@ -33,13 +31,11 @@ use crate::{
 ///
 /// ```compile_fail,E0382
 /// # use batter_flags_core::{Catalog, CatalogBuilder, SettingsPrefix};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-/// # builder.process_kind("serving").unwrap();
-/// # builder.environment_class("hosted").unwrap();
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// fn consume(_catalog: Catalog) {}
 ///
-/// let catalog = builder.build().unwrap();
+/// let catalog = builder.build();
 /// consume(catalog);
 /// consume(catalog);
 /// ```
@@ -172,12 +168,10 @@ impl Catalog {
     /// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix, Toggle};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    /// builder.process_kind("serving")?;
-    /// builder.environment_class("hosted")?;
+    /// let (mut builder, _, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     /// let expiry = Expiry::on(CivilDate::new(2026, 12, 31)?);
     /// builder.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-    /// let catalog = builder.build()?;
+    /// let catalog = builder.build();
     ///
     /// assert_eq!(catalog.expired(CivilDate::new(2026, 12, 31)?).count(), 0);
     /// let expired: Vec<_> = catalog.expired(CivilDate::new(2027, 1, 1)?).collect();

@@ -86,7 +86,9 @@ async fn both_unpublished_policies_and_tripped_runs_skip_without_calling_the_fac
         sleep(Duration::from_millis(2500)).await;
         assert_eq!(reader.skipped(), 3);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert_eq!(reader.snapshot().succeeded, 3);
+        // A skip is core's own evidence, not a success.
+        assert_eq!(reader.snapshot().succeeded, 0);
+        assert_eq!(reader.snapshot().skipped, 3);
         assert_eq!(running.status().readiness(), Readiness::Ready);
 
         f.publish(1, SwitchState::Engaged, Toggle::Off);
@@ -101,7 +103,7 @@ async fn both_unpublished_policies_and_tripped_runs_skip_without_calling_the_fac
         let success = running.shutdown_checked().await.unwrap();
         let summary = &success.report().periodic[0].summary;
         assert_eq!(summary.invocations, 5);
-        assert_eq!(summary.succeeded, 5);
+        assert_eq!((summary.succeeded, summary.skipped), (1, 4));
         assert_eq!(summary.completion, PeriodicCompletion::Stopped);
         assert_eq!(observer.skipped(), 4);
         assert_eq!(observer.name(), "storage.pruning");
@@ -344,7 +346,7 @@ async fn recoverable_and_fatal_errors_keep_native_history_across_skips() {
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
     let summary = &report.periodic[0].summary;
     assert_eq!(summary.invocations, 4);
-    assert_eq!(summary.succeeded, 2);
+    assert_eq!((summary.succeeded, summary.skipped), (0, 2));
     assert_eq!(summary.recoverable_failures, 1);
     assert_eq!(summary.completion, PeriodicCompletion::Fatal);
     assert_eq!(
@@ -424,12 +426,4 @@ async fn deadline_and_drain_destroy_active_work_and_cleanup_observes_destruction
     assert_eq!(reader.snapshot().completion, PeriodicCompletion::Stopped);
     assert_eq!(reader.skipped(), 0);
     assert_eq!(success.report().cleanup.records.len(), 1);
-}
-
-#[test]
-fn skip_count_saturates_instead_of_wrapping() {
-    let count = std::sync::atomic::AtomicU64::new(u64::MAX - 1);
-    super::record_skip(&count);
-    super::record_skip(&count);
-    assert_eq!(count.load(Ordering::Relaxed), u64::MAX);
 }

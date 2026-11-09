@@ -12,6 +12,8 @@ mod schedule;
 mod settlement;
 #[path = "periodic/shutdown.rs"]
 mod shutdown;
+#[path = "periodic/skips.rs"]
+mod skips;
 #[path = "periodic/startup.rs"]
 mod startup;
 #[path = "periodic/support.rs"]

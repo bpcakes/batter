@@ -162,15 +162,14 @@ fn a_held_switch_keeps_the_provenance_of_where_its_state_was_first_read() {
     let base = base(catalog, &h.serving, &[]);
     let scope = base.validation_scope();
     let hold = |previous: &Snapshot, at: u64| {
-        let candidate = Candidate::new(&scope)
-            .at(version(at))
+        let candidate = Candidate::new(&scope, version(at))
             .rows([
                 flag_row(&h.fast_path, Toggle::On, at - 1),
                 undecodable_row("checkout_halt", "switch", "switch", at - 1),
             ])
             .carrying(previous)
             .unwrap();
-        Arc::new(Snapshot::validate(&scope, candidate).unwrap())
+        Arc::new(Snapshot::validate(candidate).unwrap())
     };
     let carried = |snapshot: &Snapshot| -> Vec<(String, SwitchState, u64, Provenance)> {
         snapshot
@@ -301,12 +300,11 @@ fn carrying_a_snapshot_that_served_no_switch_state_carries_nothing() {
     let base = base(catalog, &h.serving, &[]);
     let scope = base.validation_scope();
     let empty = snapshot(&base, 10, []);
-    let candidate = Candidate::new(&scope)
-        .at(version(11))
+    let candidate = Candidate::new(&scope, version(11))
         .row(undecodable_row("checkout_halt", "switch", "switch", 11))
         .carrying(&empty)
         .unwrap();
-    let held = Arc::new(Snapshot::validate(&scope, candidate).unwrap());
+    let held = Arc::new(Snapshot::validate(candidate).unwrap());
     assert_eq!(held.carried().count(), 0);
     let view = base.control_plane_view(&held, Freshness::Fresh).unwrap();
     let decision = view.switch(&h.checkout_halt);

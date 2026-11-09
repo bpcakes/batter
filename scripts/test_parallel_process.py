@@ -401,6 +401,8 @@ class MatrixTests(unittest.TestCase):
                             for batch in batches["no-default-features"] for command in batch))
         flags_declared = commands["flags-declared"]
         self.assertEqual(flags_declared[flags_declared.index("-p") + 1], "batter-flags")
+        self.assertEqual(flags_declared.count("--features"), 1)
+        self.assertEqual(flags_declared[flags_declared.index("--features") + 1], "test-support")
         self.assertEqual(batches["no-default-features"][3], [flags_declared])
         self.assertIn("--doc", batches["doctests"][0][0])
         self.assertIn("test_parallel_process.py", batches["scripts"][0][0])

@@ -18,16 +18,14 @@ use crate::{declaration::Kind, key::FlagKey, value::ValueType};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// fn catalog(release: bool) -> Result<batter_flags_core::Catalog, Box<dyn std::error::Error>> {
-///     let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-///     builder.process_kind("serving")?;
-///     builder.environment_class("hosted")?;
+///     let (mut builder, _, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 ///     if release {
 ///         let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 ///         builder.release_flag("checkout", Toggle::Off, expiry).declare()?;
 ///     } else {
 ///         builder.mode_flag("checkout", Toggle::Off).declare()?;
 ///     }
-///     Ok(builder.build()?)
+///     Ok(builder.build())
 /// }
 ///
 /// let previous = catalog(true)?.manifest();

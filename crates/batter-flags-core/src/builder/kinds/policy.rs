@@ -18,8 +18,8 @@ impl<'b, T: FlagValue, O, G> ReleaseDeclaration<'b, T, O, Unassigned, G> {
     ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle, Expiry, CivilDate};
-    /// # let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    /// # let class = b.environment_class("hosted").unwrap();
+    /// # let (mut b, _serving, class) =
+    /// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     /// b.release_flag("fast", Toggle::Off, Expiry::on(CivilDate::new(2027, 1, 1).unwrap()))
     ///     .only_in(&class).only_in(&class);
     /// ```
@@ -48,8 +48,8 @@ impl<'b, T: FlagValue, O> ModeDeclaration<'b, T, O, Unassigned> {
     ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
-    /// # let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    /// # let class = b.environment_class("hosted").unwrap();
+    /// # let (mut b, _serving, class) =
+    /// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     /// b.mode_flag("fast", Toggle::Off).only_in(&class).only_in(&class);
     /// ```
     pub fn only_in(mut self, class: &EnvironmentClass) -> ModeDeclaration<'b, T, O, Assigned> {
@@ -71,7 +71,7 @@ impl<'b, T: FlagValue, O, E> ReleaseDeclaration<'b, T, O, E, Unassigned> {
     ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle, Expiry, CivilDate, SafeState, StaleRule};
-    /// # let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+    /// # let (mut b, _serving, _hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     /// # let halt = b.kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown).declare().unwrap();
     /// b.release_flag("fast", Toggle::Off, Expiry::on(CivilDate::new(2027, 1, 1).unwrap()))
     ///     .governed_by(&halt).governed_by(&halt);

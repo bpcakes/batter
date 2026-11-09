@@ -13,6 +13,7 @@ mod capability;
 pub(crate) use capability::StartupPhase;
 mod driver;
 mod managed;
+mod names;
 mod process;
 mod report;
 mod state;
@@ -339,13 +340,14 @@ impl Supervisor {
 
     /// Register one library-owned serial periodic component. See
     /// [`crate::periodic::register_periodic_in`] for the public entry point.
-    pub(crate) fn register_periodic<F, Fut, E>(
+    pub(crate) fn register_periodic<F, Fut, S, E>(
         &mut self,
         registration: crate::periodic::Registration<F>,
     ) -> Result<crate::periodic::PeriodicReader, RegistrationError>
     where
         F: FnMut(crate::operation::OperationContext) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), crate::periodic::PeriodicFailure<E>>> + Send + 'static,
+        Fut: Future<Output = Result<S, crate::periodic::PeriodicFailure<E>>> + Send + 'static,
+        S: crate::periodic::PeriodicSuccess,
         E: std::error::Error + Send + Sync + 'static,
     {
         let name = registration.name;
@@ -382,7 +384,7 @@ impl Supervisor {
         Ok(reader)
     }
 
-    fn check_component_name(&self, name: &'static str) -> Result<(), RegistrationError> {
+    pub(super) fn check_component_name(&self, name: &'static str) -> Result<(), RegistrationError> {
         validation::name(name)?;
         if self.managed.iter().any(|component| component.name == name)
             || self.reserved_components.contains(&name)

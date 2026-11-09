@@ -32,16 +32,11 @@ use crate::{
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
-/// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
+/// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
 /// let scope = base.validation_scope();
-/// let read = |at: u64| Snapshot::validate(&scope, Candidate::new(&scope).at(Version::new(at)));
-/// let file = Snapshot::validate(
-///     &scope,
-///     Candidate::from_last_good_file(&scope).at(Version::new(100)),
-/// )?;
+/// let read = |at: u64| Snapshot::validate(Candidate::new(&scope, Version::new(at)));
+/// let file = Snapshot::validate(Candidate::from_last_good_file(&scope, Version::new(100)))?;
 ///
 /// // A file is the first publication, and confirms nothing.
 /// let Transition::Apply(authority) = Authority::unpublished().consider(&file) else { unreachable!() };
@@ -127,12 +122,14 @@ pub enum Refusal {
         /// The version both reads carry.
         version: Version,
     },
-    /// A snapshot read from the file arrived after something was published.
-    /// The file is read once, first; a loader that reaches this has a bug.
+    /// A snapshot read from the file was offered after the publisher started.
+    /// The file is read once, first, through
+    /// [`Publisher::restore`](crate::low_level::Publisher::restore); a loader
+    /// that reaches this has a bug.
     FileAfterPublication,
     /// The candidate was structurally corrupt, so it never became a snapshot to
-    /// judge. A loader records this itself, with
-    /// [`Published::rejected`](crate::low_level::Published::rejected).
+    /// judge. A [`Publisher`](crate::low_level::Publisher) records it as the
+    /// latest refusal, before or after the first publication.
     Rejected(SnapshotRejection),
 }
 

@@ -41,6 +41,8 @@ flags = ["dep:batter-flags"]
 flags-postgres = ["flags", "sqlx", "batter-flags/postgres"]
 flags-axum = ["flags", "axum", "batter-flags/axum"]
 flags-runledger = ["flags", "runledger", "batter-flags/runledger"]
+# `flags::test::TestFlags` for test builds; never a production root.
+flags-test-support = ["flags", "batter-flags/test-support"]
 sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 
 [dependencies]

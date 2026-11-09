@@ -34,13 +34,11 @@
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // The catalog is declared once, in code.
-//! let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-//! let serving = catalog.process_kind("serving")?;
-//! let hosted = catalog.environment_class("hosted")?;
+//! let (mut catalog, serving, hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 //! let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 //! let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
 //! catalog.kill_switch("checkout_halt", SafeState::Released, StaleRule::HoldLastKnown).declare()?;
-//! let catalog = catalog.build()?;
+//! let catalog = catalog.build();
 //!
 //! // The root captures its settings and resolves before narrowing them.
 //! let source = SettingsSource::from_pairs([("FLAG_NEW_CHECKOUT".into(), "On".into())])?;
@@ -64,7 +62,8 @@
 //! use batter_core::settings::SecretString;
 //! use batter_flags::core::{CatalogBuilder, SettingsPrefix};
 //!
-//! let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+//! let (mut catalog, _serving, _hosted) =
+//!     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 //! let _flag = catalog.mode_flag("api_key", SecretString::new("x")).declare();
 //! ```
 
@@ -75,7 +74,7 @@ mod read;
 
 use std::fmt;
 
-use batter_core::settings::SettingsSource;
+use batter_core::settings::{SettingsSelection, SettingsSource};
 use batter_flags_core::{
     Catalog, CivilDate, Decision, EnvironmentClass, Flag, ProcessKind, Revision, SettingName,
     low_level::{Base, BaseBuilder},
@@ -93,11 +92,15 @@ use crate::{flags::Flags, reader::Reader, report::StartupReport};
 /// serves only the expiry report. The call never reads the process
 /// environment or the clock.
 ///
-/// `source` is the root's unnarrowed capture, or an overlay of layers that each
-/// kept the flag names; resolve before the root narrows its own settings to
-/// the names its application schema declares, or the flag names are gone and
-/// every flag falls back to its default. [`StartupReport`] shows that
-/// symptom as `absent` for every key a value may be presented for.
+/// `source` is the root's unnarrowed capture, or an overlay of captures. A
+/// source any layer of which passed through `select_dedicated` or
+/// `select_environment` is refused with [`DeclaredError::NarrowedSource`]: the
+/// selection may have dropped the flag names, which would then read as absent
+/// and serve every flag's default.
+///
+/// Migration: a narrowed source used to resolve with every dropped flag at its
+/// default, visible only as `absent` in the [`StartupReport`]; pass the root's
+/// capture instead.
 ///
 /// Expiry never changes a decision and never fails startup: release flags
 /// whose last valid day is before `today` are reported once, in one WARN event
@@ -118,11 +121,9 @@ use crate::{flags::Flags, reader::Reader, report::StartupReport};
 /// use batter_flags::{declared::{self, DeclaredError}, core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix, Toggle}};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// let hosted = catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// catalog.release_flag("new_checkout", Toggle::Off, Expiry::on(CivilDate::new(2027, 3, 31)?)).declare()?;
-/// let catalog = catalog.build()?;
+/// let catalog = catalog.build();
 ///
 /// // `1` is not a toggle value: the flag's key is named, the value never is.
 /// let source = SettingsSource::from_pairs([("FLAG_NEW_CHECKOUT".into(), "1".into())])?;
@@ -143,6 +144,12 @@ pub fn resolve(
     class: EnvironmentClass,
     today: CivilDate,
 ) -> Result<Resolved, DeclaredError> {
+    // A narrowed source drops the flag names silently: every flag would read
+    // as absent and serve its default.
+    match source.selection() {
+        SettingsSelection::Captured => {}
+        SettingsSelection::Selected => return Err(DeclaredError::NarrowedSource),
+    }
     if !catalog.environment_classes().contains(&class) {
         return Err(DeclaredError::ForeignClass {
             class: class.name().to_owned(),

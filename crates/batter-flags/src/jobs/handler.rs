@@ -55,7 +55,8 @@ pub trait FlagAwareHandler: Send + Sync {
 ///     }
 /// }
 /// fn wrap(flags: &Flags) {
-///     let handler = flags.flagged(Handler.into_flag_aware());
+///     let recheck = batter_flags::jobs::Recheck::after(std::time::Duration::from_secs(60)).unwrap();
+///     let handler = flags.flagged(Handler.into_flag_aware(), recheck);
 ///     # let _ = handler;
 /// }
 /// ```

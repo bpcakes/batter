@@ -38,9 +38,8 @@ fn governed_world() -> (
     batter_flags_core::ReleaseFlag<Toggle>,
     batter_flags_core::KillSwitch,
 ) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let halt = builder
         .kill_switch(
             "halt",
@@ -61,7 +60,7 @@ fn governed_world() -> (
     builder
         .requires(&dependent, Toggle::On, &governed, Toggle::On)
         .unwrap();
-    (builder.build().unwrap(), serving, dependent, governed, halt)
+    (builder.build(), serving, dependent, governed, halt)
 }
 
 #[test]

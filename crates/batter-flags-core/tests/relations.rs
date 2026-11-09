@@ -46,7 +46,7 @@ fn a_pair_is_reciprocal_whichever_flag_was_declared_first() {
         .requires(&ledger_audit, Toggle::On, &ledger_v2, Toggle::On)
         .unwrap();
 
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     assert_eq!(
         rules(&catalog, "ledger_v2"),
         [(InvariantRule::Requires, "on".into(), "ledger_audit".into())]
@@ -73,7 +73,7 @@ fn an_enum_flag_and_a_toggle_can_require_each_other() {
         .requires(&express_lane, Toggle::On, &style, Checkout::Express)
         .unwrap();
 
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let forward = &catalog.declaration("checkout_style").unwrap().invariants()[0];
     let backward = &catalog.declaration("express_lane").unwrap().invariants()[0];
     assert!(forward.holds("express", "on") && !forward.holds("express", "off"));
@@ -93,7 +93,7 @@ fn the_order_of_declarations_and_of_statements_changes_no_digest() {
             .conflicts(&second, Toggle::On, &first, Toggle::Off)
             .unwrap();
         builder.both_or_none(&first, &second).unwrap();
-        builder.build().unwrap()
+        builder.build()
     };
     let reversed = {
         let mut builder = vocabulary_builder();
@@ -106,7 +106,7 @@ fn the_order_of_declarations_and_of_statements_changes_no_digest() {
         builder
             .requires(&first, Toggle::On, &second, Toggle::On)
             .unwrap();
-        builder.build().unwrap()
+        builder.build()
     };
     assert_eq!(forward.digest(), reversed.digest());
     assert_eq!(rules(&forward, "first"), rules(&reversed, "first"));
@@ -140,7 +140,7 @@ fn a_symmetric_relationship_may_be_stated_from_both_sides() {
     let right = flag(&mut builder, "right", Toggle::Off);
     builder.both_or_none(&left, &right).unwrap();
     builder.both_or_none(&right, &left).unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     assert_eq!(rules(&catalog, "left").len(), 1);
     assert_eq!(rules(&catalog, "right").len(), 1);
 }
@@ -163,7 +163,7 @@ fn a_refused_relationship_leaves_the_catalog_as_it_was() {
                     .is_err()
             );
         }
-        builder.build().unwrap()
+        builder.build()
     };
     assert_eq!(build(true).digest(), build(false).digest());
     assert!(rules(&build(true), "first").is_empty());

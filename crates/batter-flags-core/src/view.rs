@@ -37,7 +37,7 @@ use crate::{
     },
     events::{self, Evaluation, EventContext, Surface},
     handle::{Flag, Handle, KillSwitch},
-    pin::{PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution},
+    pin::{PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution, Unpinnable},
     snapshot::{Provenance, Snapshot},
     value::FlagValue,
 };
@@ -122,13 +122,11 @@ enum Mode {
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
 ///
-/// let mut base = BaseBuilder::new(catalog.build()?, serving)?;
+/// let mut base = BaseBuilder::new(catalog.build(), serving)?;
 /// base.flag(new_checkout.key(), "on")?;
 /// let base = base.finish();
 ///
@@ -215,14 +213,26 @@ impl SnapshotView {
     ///
     /// The pin records the effective decision, so a flag whose governing
     /// switch is engaged is pinned at its code default. A replay still checks
-    /// the governing switch of the view it runs under. A handle this view
-    /// cannot answer for, such as another catalog's, is pinned at its code
-    /// default and counts and reports its error as
-    /// [`evaluate`](Self::evaluate) does. Emits one evaluation event.
-    pub fn pin<F: Pinnable>(&self, flag: &F) -> Pinned<F::Value> {
+    /// the governing switch of the view it runs under. Emits one evaluation
+    /// event.
+    ///
+    /// # Errors
+    ///
+    /// [`Unpinnable`] when the decision is an error: a handle this view cannot
+    /// answer for, such as another catalog's, or a view captured before the
+    /// first publication under a load policy that withholds readiness. The
+    /// error is counted and reported as [`evaluate`](Self::evaluate) does.
+    ///
+    /// Migration: `pin` returned the `Pinned` directly and pinned an error
+    /// decision at its code default, which a replay then honoured as cached;
+    /// handle the `Result`, deferring the work on `ProviderNotReady`.
+    pub fn pin<F: Pinnable>(&self, flag: &F) -> Result<Pinned<F::Value>, Unpinnable> {
         let handle = flag.handle();
         let decision = self.evaluate_handle(handle, flag.code_default());
-        Pinned::taken(
+        if let Some(cause) = decision.error() {
+            return Err(Unpinnable::new(cause));
+        }
+        Ok(Pinned::taken(
             (
                 flag.key().as_str(),
                 handle.kind().as_str(),
@@ -230,7 +240,7 @@ impl SnapshotView {
             ),
             decision.variant(),
             PinOrigin::of(self.source()),
-        )
+        ))
     }
 
     /// Replays a stored pin and emits one evaluation event.

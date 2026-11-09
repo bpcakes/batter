@@ -294,12 +294,11 @@ fn a_held_switch_keeps_the_state_it_last_published() {
         [switch_row(&h.checkout_halt, SwitchState::Engaged, 3)],
     );
     let scope = base.validation_scope();
-    let held = Candidate::new(&scope)
-        .at(version(9))
+    let held = Candidate::new(&scope, version(9))
         .row(undecodable_row("checkout_halt", "switch", "switch", 9))
         .carrying(&first)
         .unwrap();
-    let held = Arc::new(Snapshot::validate(&scope, held).unwrap());
+    let held = Arc::new(Snapshot::validate(held).unwrap());
     let view = base.control_plane_view(&held, Freshness::Fresh).unwrap();
     let switch = view.switch(&h.checkout_halt);
     assert_eq!(
@@ -318,12 +317,11 @@ fn a_held_switch_keeps_the_state_it_last_published() {
         "the source is the view's snapshot whichever layer supplied the value"
     );
     // The carried state survives a second held read, keeping its original `since`.
-    let again = Candidate::new(&scope)
-        .at(version(12))
+    let again = Candidate::new(&scope, version(12))
         .row(undecodable_row("checkout_halt", "switch", "switch", 12))
         .carrying(&held)
         .unwrap();
-    let again = Arc::new(Snapshot::validate(&scope, again).unwrap());
+    let again = Arc::new(Snapshot::validate(again).unwrap());
     let view = base.control_plane_view(&again, Freshness::Fresh).unwrap();
     assert_eq!(
         view.switch(&h.checkout_halt).layer(),

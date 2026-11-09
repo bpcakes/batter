@@ -13,6 +13,9 @@ use batter_flags_core::{FlagKey, low_level::HandleRefusal};
 /// Every variant that names a switch carries its key, a declared name and never
 /// application data.
 ///
+/// Migration: `GateError::DeferOnWorkflowStep` is removed; no constructor
+/// returned it, so a match arm for it can be deleted.
+///
 /// ```
 /// use batter_flags::GateError;
 /// use batter_flags::core::FlagKey;
@@ -49,12 +52,6 @@ pub enum GateError {
         /// The switch's key.
         key: FlagKey,
     },
-    /// Legacy scaffold refusal retained for source compatibility. The job
-    /// constructors now accept separate direct/step policy types, so they
-    /// never emit this variant: a step policy cannot express `Defer`.
-    /// Keeping an error value cannot construct an invalid handler.
-    #[error("a job that may run as a workflow step cannot defer while its switch is engaged")]
-    DeferOnWorkflowStep,
 }
 
 impl GateError {

@@ -50,9 +50,8 @@ const DECLARED: [Declared; 4] = [
 
 /// A catalog of the four switches, which every process kind owns.
 fn switches() -> (Catalog, ProcessKind, Vec<KillSwitch>) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let handles = DECLARED
         .iter()
         .map(|switch| {
@@ -62,7 +61,7 @@ fn switches() -> (Catalog, ProcessKind, Vec<KillSwitch>) {
                 .unwrap()
         })
         .collect();
-    (builder.build().unwrap(), serving, handles)
+    (builder.build(), serving, handles)
 }
 
 /// What the process's settings supplied for every switch.
@@ -130,27 +129,26 @@ fn snapshot_for(
     provenance: Provenance,
 ) -> Arc<Snapshot> {
     let scope = base.validation_scope();
-    let candidate = || match provenance {
-        Provenance::ControlPlane => Candidate::new(&scope),
-        Provenance::LastGoodFile => Candidate::from_last_good_file(&scope),
+    let candidate = |at| match provenance {
+        Provenance::ControlPlane => Candidate::new(&scope, at),
+        Provenance::LastGoodFile => Candidate::from_last_good_file(&scope, at),
     };
-    let validate = |candidate: Candidate| Arc::new(Snapshot::validate(&scope, candidate).unwrap());
+    let validate = |candidate: Candidate| Arc::new(Snapshot::validate(candidate).unwrap());
     let rows = |state| {
         handles
             .iter()
             .map(move |handle| switch_row(handle, state, WRITTEN_AT))
     };
     match row {
-        Row::Absent => validate(candidate().at(version(20))),
-        Row::Published(state) => validate(candidate().at(version(PUBLISHED_AT)).rows(rows(state))),
-        Row::HeldFresh => validate(candidate().at(version(12)).rows(held_rows(12))),
+        Row::Absent => validate(candidate(version(20))),
+        Row::Published(state) => validate(candidate(version(PUBLISHED_AT)).rows(rows(state))),
+        Row::HeldFresh => validate(candidate(version(12)).rows(held_rows(12))),
         Row::HeldAfter(state, reads) => {
-            let mut current = validate(candidate().at(version(PUBLISHED_AT)).rows(rows(state)));
+            let mut current = validate(candidate(version(PUBLISHED_AT)).rows(rows(state)));
             for read in 0..reads {
                 let at = 12 + 3 * read;
                 current = validate(
-                    candidate()
-                        .at(version(at))
+                    candidate(version(at))
                         .rows(held_rows(at))
                         .carrying(&current)
                         .unwrap(),
@@ -414,9 +412,7 @@ fn holding_keeps_the_last_state_and_a_later_row_replaces_it() {
     );
     let held = Arc::new(
         Snapshot::validate(
-            &scope,
-            Candidate::new(&scope)
-                .at(version(11))
+            Candidate::new(&scope, version(11))
                 .row(undecodable_row("engaged_hold", "switch", "switch", 11))
                 .carrying(&engaged)
                 .unwrap(),
@@ -430,9 +426,7 @@ fn holding_keeps_the_last_state_and_a_later_row_replaces_it() {
     // A published row replaces what was carried, and a later hold carries that.
     let released = Arc::new(
         Snapshot::validate(
-            &scope,
-            Candidate::new(&scope)
-                .at(version(12))
+            Candidate::new(&scope, version(12))
                 .row(switch_row(engaged_hold, SwitchState::Released, 12))
                 .carrying(&held)
                 .unwrap(),
@@ -445,9 +439,7 @@ fn holding_keeps_the_last_state_and_a_later_row_replaces_it() {
     );
     let held_again = Arc::new(
         Snapshot::validate(
-            &scope,
-            Candidate::new(&scope)
-                .at(version(13))
+            Candidate::new(&scope, version(13))
                 .row(undecodable_row("engaged_hold", "switch", "switch", 13))
                 .carrying(&released)
                 .unwrap(),

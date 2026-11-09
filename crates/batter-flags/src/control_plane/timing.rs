@@ -88,7 +88,19 @@ impl RefreshTiming {
 /// `Source::NotLoaded`. Every gate reads its switch as awaiting publication:
 /// gated jobs defer, gated periodic runs are skipped, and HTTP admission
 /// follows the policy below.
-#[derive(Clone, Debug)]
+///
+/// A policy is not `Clone`: [`with_last_good`](Self::with_last_good) moves an
+/// opened directory into it, and one directory serves one registration, so
+/// two loaders never share its initial bytes or its first-write authority.
+///
+/// Migration: `LoadPolicy` was `Clone`; build one policy per registration.
+///
+/// ```compile_fail,E0599
+/// fn twice(policy: batter_flags::control_plane::LoadPolicy) {
+///     let _copy = policy.clone();
+/// }
+/// ```
+#[derive(Debug)]
 pub struct LoadPolicy {
     policy: Policy,
     last_good: LastGood,
@@ -168,11 +180,28 @@ impl LoadPolicy {
     /// delays changes to the poll interval. LISTEN delivery is exercised by
     /// the ignored `listen_live` suite against PostgreSQL 18; hosted CI does
     /// not run it.
-    pub fn with_listen(self, endpoint: super::listen::ListenEndpoint) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// [`WakeSpacingTooLong`] when the endpoint's wake spacing is longer than
+    /// this policy's poll interval: a spacing that long would space out the
+    /// polls too, and with them the confirmations freshness depends on.
+    ///
+    /// Migration: `with_listen` returned the policy directly and
+    /// `register_in` refused the spacing with
+    /// `RegisterError::WakeSpacingTooLong`; handle the `Result` here.
+    pub fn with_listen(
+        self,
+        endpoint: super::listen::ListenEndpoint,
+    ) -> Result<Self, WakeSpacingTooLong> {
+        let maximum = self.timing().poll_interval();
+        if endpoint.wake_spacing() > maximum {
+            return Err(WakeSpacingTooLong { maximum });
+        }
+        Ok(Self {
             listen: Listen::On(Box::new(endpoint)),
             ..self
-        }
+        })
     }
 
     pub(crate) fn listen(&self) -> &Listen {
@@ -279,5 +308,18 @@ impl Budgets {
             presence: statements(7),
             prune: statements(3),
         }
+    }
+}
+/// A listener's wake spacing is longer than the policy's poll interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("the flags wake spacing must be at most the poll interval, {maximum:?}")]
+pub struct WakeSpacingTooLong {
+    maximum: Duration,
+}
+
+impl WakeSpacingTooLong {
+    /// The poll interval, the longest spacing the policy accepts.
+    pub fn maximum(&self) -> Duration {
+        self.maximum
     }
 }

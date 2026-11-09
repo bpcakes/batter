@@ -15,9 +15,9 @@ use fixture::*;
 use std::num::NonZeroUsize;
 use support::*;
 
-async fn beat(f: &Fixture, process: &mut ProcessPresence, snapshot: SnapshotReport) {
-    f.store
-        .heartbeat(process, &report(snapshot), deadline())
+async fn beat(process: &mut ProcessPresence, snapshot: SnapshotReport) {
+    process
+        .heartbeat(&report(snapshot), deadline())
         .await
         .unwrap();
 }
@@ -38,20 +38,15 @@ fn builds(blocking: &[BlockingBuild]) -> Vec<(&str, Presence)> {
 async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
     let f = Fixture::migrated().await;
     let ahead = || SnapshotReport::ControlPlane(Version::new(50));
-    let mut silent = process(Build::Base, "silent", 1, 600);
-    let mut stopped = process(Build::Base, "stopped", 60, 600);
-    beat(&f, &mut silent, ahead()).await;
-    beat(&f, &mut stopped, ahead()).await;
-    f.store.stop(stopped, deadline()).await.unwrap();
-    let mut file = process(Build::Base, "file", 60, 600);
-    let mut base = process(Build::Base, "base", 60, 600);
-    beat(
-        &f,
-        &mut file,
-        SnapshotReport::PersistedFile(Version::new(50)),
-    )
-    .await;
-    beat(&f, &mut base, SnapshotReport::NotLoaded).await;
+    let mut silent = process(&f.store, Build::Base, "silent", 1, 600);
+    let mut stopped = process(&f.store, Build::Base, "stopped", 60, 600);
+    beat(&mut silent, ahead()).await;
+    beat(&mut stopped, ahead()).await;
+    stopped.stop(deadline()).await.unwrap();
+    let mut file = process(&f.store, Build::Base, "file", 60, 600);
+    let mut base = process(&f.store, Build::Base, "base", 60, 600);
+    beat(&mut file, SnapshotReport::PersistedFile(Version::new(50))).await;
+    beat(&mut base, SnapshotReport::NotLoaded).await;
     until_silent().await;
 
     // A persisted file, the declared base, a Silent and a Stopped process
@@ -72,8 +67,8 @@ async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
         "{written:?}"
     );
 
-    let mut live = process(Build::Base, "live", 60, 600);
-    beat(&f, &mut live, ahead()).await;
+    let mut live = process(&f.store, Build::Base, "live", 60, 600);
+    beat(&mut live, ahead()).await;
     assert!(matches!(
         f.store
             .write(set("fast_path", "off", None), deadline())
@@ -82,7 +77,7 @@ async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
         WriteOutcome::Refused(Refusal::StoreBehindFleet)
     ));
     // At or below the head, the same Live process does not block.
-    beat(&f, &mut live, SnapshotReport::ControlPlane(Version::new(1))).await;
+    beat(&mut live, SnapshotReport::ControlPlane(Version::new(1))).await;
     assert!(matches!(
         f.store.write(set("fast_path", "off", None), deadline()).await.unwrap(),
         WriteOutcome::Written { version, .. } if version == Version::new(2)
@@ -94,13 +89,13 @@ async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn decoding_and_the_archive_gate_count_live_and_silent_declarers_only() {
     let f = Fixture::migrated().await;
-    let mut live = process(Build::Base, "live", 60, 600);
-    let mut silent = process(Build::Base, "silent", 1, 600);
-    let mut stopped = process(Build::Base, "stopped", 60, 600);
+    let mut live = process(&f.store, Build::Base, "live", 60, 600);
+    let mut silent = process(&f.store, Build::Base, "silent", 1, 600);
+    let mut stopped = process(&f.store, Build::Base, "stopped", 60, 600);
     for process in [&mut live, &mut silent, &mut stopped] {
-        beat(&f, process, SnapshotReport::NotLoaded).await;
+        beat(process, SnapshotReport::NotLoaded).await;
     }
-    f.store.stop(stopped, deadline()).await.unwrap();
+    stopped.stop(deadline()).await.unwrap();
     until_silent().await;
 
     let written = f
@@ -147,8 +142,8 @@ async fn decoding_and_the_archive_gate_count_live_and_silent_declarers_only() {
 
     // Once only Stopped rows declare it, the key is archived, and the write
     // that only Stopped and Silent rows declared is no longer Live-declared.
-    f.store.stop(live, deadline()).await.unwrap();
-    f.store.stop(silent, deadline()).await.unwrap();
+    live.stop(deadline()).await.unwrap();
+    silent.stop(deadline()).await.unwrap();
     assert!(matches!(
         f.store
             .write(set("fast_path", "off", None), deadline())
@@ -201,17 +196,17 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
         Rollout::NoLiveProcess
     );
 
-    let mut early = process(Build::Base, "a-early", 60, 600);
-    let mut late = process(Build::Extended, "b-late", 60, 600);
-    let mut file = process(Build::Base, "c-file", 60, 600);
-    let mut silent = process(Build::Base, "d-silent", 1, 600);
-    let mut stopped = process(Build::Base, "e-stopped", 60, 600);
-    beat(&f, &mut early, SnapshotReport::ControlPlane(v(3))).await;
-    beat(&f, &mut late, SnapshotReport::ControlPlane(v(5))).await;
-    beat(&f, &mut file, SnapshotReport::PersistedFile(v(9))).await;
-    beat(&f, &mut silent, SnapshotReport::NotLoaded).await;
-    beat(&f, &mut stopped, SnapshotReport::NotLoaded).await;
-    f.store.stop(stopped, deadline()).await.unwrap();
+    let mut early = process(&f.store, Build::Base, "a-early", 60, 600);
+    let mut late = process(&f.store, Build::Extended, "b-late", 60, 600);
+    let mut file = process(&f.store, Build::Base, "c-file", 60, 600);
+    let mut silent = process(&f.store, Build::Base, "d-silent", 1, 600);
+    let mut stopped = process(&f.store, Build::Base, "e-stopped", 60, 600);
+    beat(&mut early, SnapshotReport::ControlPlane(v(3))).await;
+    beat(&mut late, SnapshotReport::ControlPlane(v(5))).await;
+    beat(&mut file, SnapshotReport::PersistedFile(v(9))).await;
+    beat(&mut silent, SnapshotReport::NotLoaded).await;
+    beat(&mut stopped, SnapshotReport::NotLoaded).await;
+    stopped.stop(deadline()).await.unwrap();
     until_silent().await;
 
     let fleet = f.store.fleet(deadline()).await.unwrap();
@@ -232,8 +227,8 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
             behind: vec![early.process(), file.process()]
         }
     );
-    beat(&f, &mut early, SnapshotReport::ControlPlane(v(5))).await;
-    beat(&f, &mut file, SnapshotReport::ControlPlane(v(5))).await;
+    beat(&mut early, SnapshotReport::ControlPlane(v(5))).await;
+    beat(&mut file, SnapshotReport::ControlPlane(v(5))).await;
     let fleet = f.store.fleet(deadline()).await.unwrap();
     assert_eq!(
         fleet.rollout(v(5)),

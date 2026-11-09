@@ -99,7 +99,7 @@ fn surfaces(label: &str, view: &SnapshotView, h: &Handles) {
     time("gate_switch", || {
         let _ = black_box(gate_switch(view, black_box(&h.checkout_halt)));
     });
-    let pin = view.pin(&h.fast_path);
+    let pin = view.pin(&h.fast_path).unwrap();
     time("resolve_pinned (honoured)", || {
         let _ = black_box(view.resolve_pinned(black_box(&h.fast_path), black_box(&pin)));
     });

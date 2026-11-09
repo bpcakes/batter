@@ -25,9 +25,8 @@ struct Fixture {
 }
 
 fn base() -> (Base, Fixture) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     let flag = builder
         .release_flag("fast_path", Toggle::Off, expiry)
@@ -45,9 +44,7 @@ fn base() -> (Base, Fixture) {
         )
         .declare()
         .unwrap();
-    let base = BaseBuilder::new(builder.build().unwrap(), serving)
-        .unwrap()
-        .finish();
+    let base = BaseBuilder::new(builder.build(), serving).unwrap().finish();
     (
         base,
         Fixture {
@@ -71,14 +68,13 @@ fn content(version: u64) -> (Toggle, SwitchState) {
 fn candidate(scope: &ValidationScope, fixture: &Fixture, version: u64) -> Candidate {
     let at = Version::new(version);
     let (flag, halt) = content(version);
-    Candidate::new(scope)
-        .at(at)
+    Candidate::new(scope, at)
         .row(CandidateRow::flag(&fixture.flag, flag, at))
         .row(CandidateRow::switch(&fixture.halt, halt, at))
 }
 
 fn snapshot(scope: &ValidationScope, fixture: &Fixture, version: u64) -> Arc<Snapshot> {
-    Arc::new(Snapshot::validate(scope, candidate(scope, fixture, version)).unwrap())
+    Arc::new(Snapshot::validate(candidate(scope, fixture, version)).unwrap())
 }
 
 #[test]
@@ -121,7 +117,7 @@ fn a_published_record_is_judged_by_the_evidence_it_carries() {
 
     let confirmed_at = registered + Duration::from_secs(40);
     assert_eq!(
-        writer.apply(snapshot(&scope, &f, 6), confirmed_at),
+        writer.read_at(candidate(&scope, &f, 6), confirmed_at),
         Disposition::Applied
     );
     let view = reader.capture_at(confirmed_at + MAX_AGE);
@@ -140,7 +136,7 @@ fn a_published_record_is_judged_by_the_evidence_it_carries() {
     // what is served untouched.
     let reconfirmed_at = confirmed_at + Duration::from_secs(90);
     assert_eq!(
-        writer.apply(snapshot(&scope, &f, 6), reconfirmed_at),
+        writer.read_at(candidate(&scope, &f, 6), reconfirmed_at),
         Disposition::Confirmed
     );
     let renewed = reader.capture_at(confirmed_at + Duration::from_secs(150));
@@ -149,13 +145,10 @@ fn a_published_record_is_judged_by_the_evidence_it_carries() {
 }
 
 #[test]
-fn a_file_publication_is_served_as_a_persisted_file() {
+fn a_restored_file_is_served_as_a_persisted_file() {
     let (base, f) = base();
-    let scope = base.validation_scope();
     let registered = Instant::now();
-    let (mut writer, reader) = Reader::live(base, PrePublication::Unready, MAX_AGE, registered);
-    let file = file_snapshot(&scope, &f, 3);
-    assert_eq!(writer.apply(file, registered), Disposition::Applied);
+    let (_writer, reader) = restored(base, &f, 3, registered);
     let view = reader.capture_at(registered);
     assert_eq!(
         view.source(),
@@ -166,22 +159,23 @@ fn a_file_publication_is_served_as_a_persisted_file() {
     assert_eq!(view.switch(&f.halt).value(), SwitchState::Engaged);
 }
 
-fn file_snapshot(scope: &ValidationScope, fixture: &Fixture, version: u64) -> Arc<Snapshot> {
+/// A reader whose publisher was restored from a file at `version` with the
+/// switch engaged, as registration restores one.
+fn restored(base: Base, fixture: &Fixture, version: u64, registered: Instant) -> (Writer, Reader) {
     let at = Version::new(version);
-    let file = Candidate::from_last_good_file(scope)
-        .at(at)
-        .row(CandidateRow::switch(
+    let (publisher, restored) = Publisher::restore(
+        &base.validation_scope(),
+        registered,
+        at,
+        [CandidateRow::switch(
             &fixture.halt,
             SwitchState::Engaged,
             at,
-        ));
-    Arc::new(Snapshot::validate(scope, file).unwrap())
-}
-
-#[test]
-fn a_reader_without_a_control_plane_has_no_writer_to_lose() {
-    let (base, _f) = base();
-    assert!(!Reader::declared(base).writer_gone());
+        )],
+    );
+    assert_eq!(restored, batter_flags_core::low_level::Restored::Published);
+    let (writer, reader, _) = Reader::publishing(base, PrePublication::Unready, MAX_AGE, publisher);
+    (writer, reader)
 }
 
 #[tokio::test(start_paused = true)]
@@ -189,7 +183,7 @@ async fn capture_follows_the_runtimes_clock() {
     let (base, f) = base();
     let scope = base.validation_scope();
     let (mut writer, reader) = Reader::live(base, PrePublication::Unready, MAX_AGE, Instant::now());
-    writer.apply(snapshot(&scope, &f, 2), Instant::now());
+    writer.read_at(candidate(&scope, &f, 2), Instant::now());
     assert_eq!(reader.capture().freshness(), Freshness::Fresh);
     tokio::time::advance(MAX_AGE).await;
     assert_eq!(reader.capture().freshness(), Freshness::Fresh);
@@ -233,8 +227,8 @@ fn under_a_concurrent_writer_every_view_matches_its_own_publication() {
     let origin = Instant::now();
     let (mut writer, reader) = Reader::live(base, PrePublication::ServeDefaults, MAX_AGE, origin);
     let reader = Arc::new(reader);
-    let snapshots: Vec<Arc<Snapshot>> = (1..=VERSIONS)
-        .map(|version| snapshot(&scope, &f, version))
+    let candidates: Vec<Candidate> = (1..=VERSIONS)
+        .map(|version| candidate(&scope, &f, version))
         .collect();
 
     let done = AtomicBool::new(false);
@@ -276,9 +270,9 @@ fn under_a_concurrent_writer_every_view_matches_its_own_publication() {
                 );
             });
         }
-        for (index, snapshot) in snapshots.iter().enumerate() {
+        for (index, candidate) in candidates.into_iter().enumerate() {
             let at = origin + Duration::from_secs(index as u64 + 1);
-            let disposition = writer.apply(Arc::clone(snapshot), at);
+            let disposition = writer.read_at(candidate, at);
             assert_eq!(disposition, Disposition::Applied);
         }
         done.store(true, Ordering::Release);

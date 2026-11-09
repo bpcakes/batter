@@ -14,8 +14,10 @@ impl Error for ValidationError {}
 /// [`PooledStore::migrate`](crate::PooledStore::migrate), every class but
 /// [`ErrorClass::CommitUnknown`] is certain: a failure before COMMIT, or a
 /// database rejection of COMMIT, so nothing was written. `CommitUnknown` may
-/// have committed. A `migrate` failure of any class can follow committed
-/// migrations, since SQLx commits each migration on its own. All retained
+/// have committed. A `migrate` refusal (`UnsupportedServer`, `SearchPath`)
+/// or a failure of its probe migrated nothing; a failure while migrating, of
+/// any class, can follow committed migrations, since SQLx commits each
+/// migration on its own. All retained
 /// causes are available through `source()`; formatting is redacted.
 pub struct StoreError(pub(crate) ErrorKind);
 /// Stable failure category, without database messages or request contents.
@@ -28,8 +30,8 @@ pub enum ErrorClass {
     /// Installed flags schema is too old.
     SchemaRevision,
     /// A total operation deadline expired before commit. For
-    /// [`PooledStore::migrate`](crate::PooledStore::migrate), earlier
-    /// migrations may already have committed.
+    /// [`PooledStore::migrate`](crate::PooledStore::migrate), a deadline while
+    /// migrating can follow earlier migrations that committed.
     Deadline,
     /// Invalid persisted data.
     InvalidData,
@@ -50,9 +52,9 @@ pub enum ErrorClass {
     /// the store's own session resolves unqualified names into the `flags`
     /// schema: its `search_path` names `flags`, or `"$user"` for a role named
     /// `flags`. A host migrator on that login would put its tables and ledger
-    /// rows into `flags`. When the schema did not exist yet, the flags
-    /// migrations ran before the check could see it; rerunning after fixing
-    /// the role name or `search_path` applies nothing twice.
+    /// rows into `flags`. The check runs before anything is migrated, the
+    /// first migration included, so nothing was applied; migrate again after
+    /// fixing the role name or `search_path`.
     ///
     /// Migration: an exhaustive `match` on `ErrorClass` needs an arm for
     /// `SearchPath`; no other variant changed.
@@ -189,6 +191,15 @@ pub(crate) fn check_server(version: i32) -> Result<(), StoreError> {
         Ok(())
     }
 }
+/// A missing flags table or schema reads as schema revision 0, the same for
+/// every read and write; any other error is kept as it is.
+pub(crate) fn missing_schema(error: sqlx::Error) -> StoreError {
+    match error.as_database_error().and_then(|e| e.code()) {
+        Some(code) if code == "42P01" || code == "3F000" => StoreError::schema_behind(0),
+        _ => StoreError::from(error),
+    }
+}
+
 #[allow(
     clippy::fn_params_excessive_bools,
     reason = "private injected PostgreSQL pg_is_in_recovery scalar, not a public policy flag"

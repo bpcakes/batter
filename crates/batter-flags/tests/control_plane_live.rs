@@ -13,8 +13,8 @@ use batter_core::{
 };
 use batter_flags::{
     control_plane::{
-        ApplicationName, BuildId, ControlPlaneStore, HeartbeatCadence, LoadPolicy, Presence,
-        RefreshTiming, SnapshotStatus, register_in,
+        ApplicationName, BuildId, ControlPlaneStore, Gate, HeartbeatCadence, LoadPolicy,
+        LoaderState, Presence, RefreshTiming, register_in,
     },
     core::{CatalogBuilder, CivilDate, SafeState, SettingsPrefix, StaleRule},
     declared,
@@ -91,12 +91,16 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
     running.status().wait_ready().await.unwrap();
     // Give the first load and heartbeat a moment to commit.
     for _ in 0..50 {
-        if flags.status() == SnapshotStatus::Fresh && flags.presence().succeeded > 0 {
+        if flags.status().satisfies(Gate::Fresh) && flags.presence().succeeded > 0 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(
+        flags.status().satisfies(Gate::Fresh),
+        "{:?}",
+        flags.status()
+    );
     assert!(flags.presence().succeeded > 0, "{:?}", flags.presence());
 
     assert_heartbeat_row(&migrator, flags.process().as_uuid()).await;
@@ -112,21 +116,20 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
     .await
     .unwrap();
     assert!(stopped, "the stop marker ran before the pool closed");
-    assert_eq!(flags.status(), SnapshotStatus::LoaderStopped);
+    assert_eq!(flags.status().loader, LoaderState::Stopped);
     migrator.close().await;
     lease.cleanup().await.unwrap();
     harness.shutdown().await.unwrap();
 }
 
 fn resolved() -> declared::Resolved {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     catalog
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
         .unwrap();
-    let halt_handle_catalog = catalog.build().unwrap();
+    let halt_handle_catalog = catalog.build();
     let source = SettingsSource::from_pairs([("FLAG_HALT".into(), "engaged".into())]).unwrap();
     declared::resolve(
         halt_handle_catalog,

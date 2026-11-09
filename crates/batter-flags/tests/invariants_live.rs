@@ -54,9 +54,8 @@ struct Flags {
 /// governed by `halt`, and `outbound` on needs `OUTBOUND_URL`, which this
 /// process lacks.
 fn resolved() -> (declared::Resolved, Flags) {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     let mut toggle = |key: &str| catalog.mode_flag(key, Toggle::Off).declare().unwrap();
     let ledger_v2 = toggle("ledger_v2");
@@ -87,7 +86,7 @@ fn resolved() -> (declared::Resolved, Flags) {
         .unwrap();
     catalog.both_or_none(&pair_a, &pair_b).unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &SettingsSource::from_pairs([]).unwrap(),
         serving,
         hosted,

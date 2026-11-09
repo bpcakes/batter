@@ -18,7 +18,7 @@ use batter_core::lifecycle::ShutdownHandle;
 use batter_flags_core::{
     CatalogBuilder, KillSwitch, ModeFlag, PrePublication, SafeState, SettingsPrefix, Source,
     StaleRule, SwitchState, Toggle, Version,
-    low_level::{Base, BaseBuilder, Candidate, CandidateRow, Snapshot},
+    low_level::{Base, BaseBuilder, Candidate, CandidateRow},
 };
 use tokio::{sync::Notify, time::Instant};
 
@@ -35,9 +35,8 @@ struct World {
 }
 
 fn world() -> World {
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let kind = b.process_kind("serving").unwrap();
-    b.environment_class("hosted").unwrap();
+    let (mut b, kind, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let released = b
         .kill_switch("released", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
@@ -55,7 +54,7 @@ fn world() -> World {
         .declare()
         .unwrap();
     let flag = b.mode_flag("fast_path", Toggle::Off).declare().unwrap();
-    let mut base = BaseBuilder::new(b.build().unwrap(), kind).unwrap();
+    let mut base = BaseBuilder::new(b.build(), kind).unwrap();
     base.switch(floor.key(), SwitchState::Engaged).unwrap();
     World {
         base: base.finish(),
@@ -170,28 +169,21 @@ async fn unpublished_defaults_apply_stale_rules_even_after_a_released_switch() {
 async fn publication_after_admission_changes_only_the_next_request() {
     let w = world();
     let scope = w.base.validation_scope();
-    let snapshot = |version, state, value| {
+    let candidate = |version, state, value| {
         let at = Version::new(version);
-        Arc::new(
-            Snapshot::validate(
-                &scope,
-                Candidate::new(&scope)
-                    .at(at)
-                    .row(CandidateRow::switch(&w.released, state, at))
-                    .row(CandidateRow::flag(&w.flag, value, at)),
-            )
-            .unwrap(),
-        )
+        Candidate::new(&scope, at)
+            .row(CandidateRow::switch(&w.released, state, at))
+            .row(CandidateRow::flag(&w.flag, value, at))
     };
-    let first = snapshot(1, SwitchState::Released, Toggle::On);
-    let second = snapshot(2, SwitchState::Engaged, Toggle::Off);
+    let first = candidate(1, SwitchState::Released, Toggle::On);
+    let second = candidate(2, SwitchState::Engaged, Toggle::Off);
     let (mut writer, reader) = Reader::live(
         w.base,
         PrePublication::Unready,
         Duration::from_secs(60),
         Instant::now(),
     );
-    writer.apply(first, Instant::now());
+    writer.read_at(first, Instant::now());
     let flags = Flags::new(reader);
     let entered = Arc::new(Notify::new());
     let resume = Arc::new(Notify::new());
@@ -222,7 +214,7 @@ async fn publication_after_admission_changes_only_the_next_request() {
     let in_flight = app.request(request());
     let publication = async {
         entered.notified().await;
-        writer.apply(second, Instant::now());
+        writer.read_at(second, Instant::now());
         resume.notify_one();
     };
     let (response, ()) = tokio::time::timeout(Duration::from_secs(2), async {

@@ -177,26 +177,42 @@ impl Cadence {
 }
 
 /// Everything about a process that does not change between heartbeats, and
-/// the capability to send them.
+/// the capability to send them to the store that issued it.
 ///
 /// Its process id is minted here, and its catalog and both revisions come
 /// from one [`Base`], so a process cannot share another's row or report a
-/// catalog it did not resolve. It is not `Clone`: heartbeats take it by
-/// `&mut`, so one process sends one heartbeat at a time, and
-/// [`PooledStore::stop`] consumes it, so nothing can heartbeat a stopped
-/// process back to life.
+/// catalog it did not resolve. It keeps the store it was made for, so its
+/// heartbeats and its stop reach that store and no other. It is not `Clone`:
+/// [`heartbeat`](Self::heartbeat) takes it by `&mut`, so one process sends one
+/// heartbeat at a time, and [`stop`](Self::stop) consumes it, so nothing can
+/// heartbeat a stopped process back to life.
+///
+/// Migration: `store.heartbeat(&mut presence, &report, deadline)` is
+/// `presence.heartbeat(&report, deadline)`, `store.stop(presence, deadline)` is
+/// `presence.stop(deadline)`, and `ProcessPresence::new` takes the store first.
+/// A presence could be stopped against another store, which found no row and
+/// left the real one live.
 ///
 /// ```compile_fail,E0382
-/// # async fn example(store: batter_flags_postgres::PooledStore,
-/// #     mut presence: batter_flags_postgres::ProcessPresence,
+/// # async fn example(mut presence: batter_flags_postgres::ProcessPresence,
 /// #     report: batter_flags_postgres::PresenceReport) {
 /// # let deadline = tokio::time::Instant::now();
-/// let _ = store.stop(presence, deadline).await;
-/// let _ = store.heartbeat(&mut presence, &report, deadline).await;
+/// let _ = presence.stop(deadline).await;
+/// let _ = presence.heartbeat(&report, deadline).await;
 /// # }
 /// ```
-#[derive(Debug)]
+///
+/// A store cannot be handed a presence another store issued:
+///
+/// ```compile_fail,E0599
+/// # async fn example(other: batter_flags_postgres::PooledStore,
+/// #     presence: batter_flags_postgres::ProcessPresence) {
+/// # let deadline = tokio::time::Instant::now();
+/// let _ = other.stop(presence, deadline).await;
+/// # }
+/// ```
 pub struct ProcessPresence {
+    store: PooledStore,
     process: ProcessId,
     application: ProcessLabel,
     environment: ProcessLabel,
@@ -218,11 +234,26 @@ pub struct ProcessLabels {
     pub build: ProcessLabel,
 }
 
+impl std::fmt::Debug for ProcessPresence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProcessPresence")
+            .field("process", &self.process)
+            .field("application", &self.application)
+            .field("environment", &self.environment)
+            .field("build", &self.build)
+            .field("cadence", &self.cadence)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ProcessPresence {
-    /// Mints a process id for the process whose declared base is `base`:
-    /// its catalog's manifest and both of its revisions are taken from it.
-    pub fn new(labels: ProcessLabels, base: &Base, cadence: Cadence) -> Self {
+    /// Mints a process id, for `store`, for the process whose declared base
+    /// is `base`: its catalog's manifest and both of its revisions are taken
+    /// from it.
+    pub fn new(store: &PooledStore, labels: ProcessLabels, base: &Base, cadence: Cadence) -> Self {
         Self {
+            store: store.clone(),
             process: ProcessId(Uuid::now_v7()),
             application: labels.application,
             environment: labels.environment,
@@ -251,24 +282,26 @@ pub struct PresenceReport {
     pub floor_engaged: KeySample,
 }
 
-impl PooledStore {
-    /// Sends one heartbeat: publishes the catalog if the store does not keep
-    /// it, refreshes its reference at most once a day, and upserts the
-    /// process row. Its expiry is stamped from the server clock when the row
-    /// is written, after any wait for the row's lock, so a slow heartbeat
-    /// never commits an already expired row. A heartbeat never clears a
-    /// recorded stop. It is not audited and not retried; the next heartbeat
-    /// restates presence, so [`ErrorClass::CommitUnknown`] needs no repair.
+impl ProcessPresence {
+    /// Sends one heartbeat to the store that issued this presence: publishes
+    /// the catalog if the store does not keep it, refreshes its reference at
+    /// most once a day, and upserts the process row. Its expiry is stamped
+    /// from the server clock when the row is written, after any wait for the
+    /// row's lock, so a slow heartbeat never commits an already expired row.
+    /// A heartbeat never clears a recorded stop. It is not audited and not
+    /// retried; the next heartbeat restates presence, so
+    /// [`ErrorClass::CommitUnknown`] needs no repair.
     pub async fn heartbeat(
-        &self,
-        presence: &mut ProcessPresence,
+        &mut self,
         report: &PresenceReport,
         deadline: Instant,
     ) -> Result<(), StoreError> {
         let (source, version) = report.snapshot.columns()?;
         let (held, held_overflow) = report.held.columns()?;
         let (floor, floor_overflow) = report.floor_engaged.columns()?;
-        self.atomically(deadline, async |sql| {
+        let store = self.store.clone();
+        let presence = self;
+        store.atomically(deadline, async |sql| {
             let digest = &presence.catalog.manifest_digest()[..];
             // A concurrent prune may delete the catalog between an insert that
             // found it and the read that locks it; publishing again settles it.

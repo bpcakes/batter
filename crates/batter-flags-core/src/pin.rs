@@ -95,6 +95,31 @@ impl PinOrigin {
     }
 }
 
+/// Why a view refused to pin a flag: the decision it serves is an error, which
+/// a pin cannot carry, so a replay would honour a default nobody chose.
+///
+/// The causes a pin can meet are [`ErrorCause::ForeignCatalog`] and
+/// [`ErrorCause::NotOwned`] for a handle the view cannot answer for, and
+/// [`ErrorCause::ProviderNotReady`] before the first publication under a load
+/// policy that withholds readiness: defer the work and pin once a snapshot is
+/// published.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("the flag cannot be pinned: its decision is an error ({})", .cause.error_type())]
+pub struct Unpinnable {
+    cause: ErrorCause,
+}
+
+impl Unpinnable {
+    pub(crate) fn new(cause: ErrorCause) -> Self {
+        Self { cause }
+    }
+
+    /// The decision's error.
+    pub fn cause(&self) -> ErrorCause {
+        self.cause
+    }
+}
+
 /// Why a stored pin cannot be replayed against the running declaration.
 ///
 /// No variant carries text from the stored pin.
@@ -212,17 +237,15 @@ impl<T: FlagValue> PinnedResolution<'_, T> {
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// let fast_path = catalog.release_flag("fast_path", Toggle::Off, expiry).declare()?;
 /// let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-/// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+/// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
 /// let view = base.declared_view();
 ///
 /// // A pin of another flag of the same type cannot be replayed here.
-/// let wrong_row: Pinned<Toggle> = view.pin(&fast_path);
+/// let wrong_row: Pinned<Toggle> = view.pin(&fast_path)?;
 /// match view.resolve_pinned(&new_checkout, &wrong_row) {
 ///     PinnedResolution::Incompatible(refusal) => {
 ///         assert_eq!(refusal.rejection(), PinRejection::KeyMismatch);

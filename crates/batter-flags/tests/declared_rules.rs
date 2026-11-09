@@ -63,9 +63,9 @@ fn a_required_flag_is_judged_only_in_owning_kinds_and_inside_its_class() {
 #[test]
 fn a_required_kill_switch_must_be_present_and_is_never_inferred() {
     let build = || {
-        let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-        let serving = builder.process_kind("serving").unwrap();
-        let hosted = builder.environment_class("hosted").unwrap();
+        let (mut builder, serving, hosted) =
+            CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted")
+                .unwrap();
         builder
             .kill_switch(
                 "payments_halt",
@@ -75,7 +75,7 @@ fn a_required_kill_switch_must_be_present_and_is_never_inferred() {
             .required()
             .declare()
             .unwrap();
-        (builder.build().unwrap(), serving, hosted)
+        (builder.build(), serving, hosted)
     };
     let (catalog, serving, hosted) = build();
     let empty = SettingsSource::from_pairs([]).unwrap();

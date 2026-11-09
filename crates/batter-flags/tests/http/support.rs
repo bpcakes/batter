@@ -26,10 +26,9 @@ pub struct World {
 }
 
 pub fn world() -> (Catalog, World) {
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = b.process_kind("serving").unwrap();
+    let (mut b, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let worker = b.process_kind("worker").unwrap();
-    b.environment_class("hosted").unwrap();
     let halt = b
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
@@ -49,7 +48,7 @@ pub fn world() -> (Catalog, World) {
         .unwrap();
     let flag = b.mode_flag("fast_path", Toggle::Off).declare().unwrap();
     (
-        b.build().unwrap(),
+        b.build(),
         World {
             serving,
             halt,

@@ -8,6 +8,332 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
+  extracted where no gate of the route's group captured its value still
+  rejects with the sanitized 500, and the completion event now carries
+  `gate_outcome="unmatched_view"`, telling the wiring error apart from a server
+  fault (`batter-jkw6.57`). A compile-time pairing is not offered: it would
+  need a gate-owned router state, and `State<AppState>` could then not be
+  extracted beside it. The observation's gate fact is an explicit enum.
+
+- **Breaking:** `batter_flags::Flags::flagged` takes an `awaiting: Recheck`
+  (`batter-jkw6.56`). Under `LoadPolicy::unready_until_loaded`, an ungated job
+  invoked before the first publication is deferred by it, as a gated job's is;
+  it ran on the declared defaults while the process was still unready, which
+  only the decisions' `provider_not_ready` reason showed. `start_on_defaults`,
+  declared mode and test flags run every invocation, as before.
+
+  ```rust,ignore
+  // Before:
+  let handler = flags.flagged(inner);
+  // After:
+  let handler = flags.flagged(inner, Recheck::after(Duration::from_secs(60))?);
+  ```
+
+- **Breaking:** `batter_flags::grants::grant_fragment` takes a `&FlagsGrant`,
+  built from a `FlagsRole` or from at least one `FlagsOperation`
+  (`batter-jkw6.55`). The new `FlagsRole::ServingProcess` is exactly what
+  `control_plane::register_in` runs; a serving login granted only part of it
+  heartbeated or pruned with recoverable failures forever. `FlagsOperation::OperatorCli`
+  is `FlagsRole::OperatorCli`, and `FlagsGrantError::EmptySelection` is removed:
+  a grant cannot be empty. No shim: a slice argument is the empty selection.
+
+  ```rust,ignore
+  // Before:
+  grant_fragment(&policy, [SnapshotRead, Presence, PresencePrune])?;
+  grant_fragment(&policy, [FlagsOperation::OperatorCli])?;
+  // After:
+  grant_fragment(&policy, &FlagsRole::ServingProcess.into())?;
+  grant_fragment(&policy, &FlagsRole::OperatorCli.into())?;
+  grant_fragment(&policy, &FlagsGrant::operations(FlagsOperation::HistoryRead, []))?;
+  ```
+
+- **Breaking:** `batter_flags::test` (`TestFlags`) is behind the new
+  `test-support` feature, and the facade's `flags::test` behind
+  `flags-test-support` (`batter-jkw6.54`). Test flags serve `Source::Test`
+  through every protected surface, and a production root could reach them
+  through plain `flags`. `GateError::DeferOnWorkflowStep`, which no
+  constructor returned, is removed. No shim: an always-compiled `test` module is
+  the exposure this removes.
+
+  ```toml
+  # Before:
+  batter = { version = "...", features = ["flags"] }
+  # After, for tests that use TestFlags:
+  [dev-dependencies]
+  batter = { version = "...", features = ["flags", "flags-test-support"] }
+  ```
+
+- `batter_core::settings::SettingsSource` records whether any layer was
+  narrowed by `select_dedicated` or `select_environment`
+  (`SettingsSource::selection()`, `SettingsSelection::{Captured, Selected}`);
+  `overlay` keeps `Selected` from either layer (`batter-jkw6.53`).
+- **Breaking:** `batter_flags::declared::resolve` refuses a narrowed source with
+  the new `DeclaredError::NarrowedSource`. A root that narrowed its settings to
+  its own schema before resolving dropped the flag names, and every flag served
+  its default with only `absent` in the startup report to show it. Pass the
+  root's capture, before narrowing.
+
+  ```rust,ignore
+  // Before: silently served every flag's default.
+  let app = capture.select_environment(&APP_NAMES, &["APP_"])?;
+  let resolved = declared::resolve(catalog, &app, kind, class, today)?;
+  // After:
+  let resolved = declared::resolve(catalog, &capture, kind, class, today)?;
+  let app = capture.select_environment(&APP_NAMES, &["APP_"])?;
+  ```
+
+- **Breaking:** `batter_flags::control_plane::RegisteredFlags::last_good()`
+  returns the new `LastGoodStatus` (`Disabled`, `UpToDate`, `Waiting` with its
+  `last_failure`, `Writing`, `TooLarge`), read under the persister's lock, and
+  replaces `last_persist_failure()`, which kept the last failure forever, even
+  after a later write succeeded (`batter-jkw6.52`). A publication too large for
+  the file is reported once and no longer retried every run; a finished write
+  releases its admission with its outcome, and a late destruction of an older
+  write can no longer release a newer one. `LoadPolicy` is no longer `Clone`, so
+  an opened `SnapshotDirectory` serves one registration and its first-write
+  authority is never duplicated.
+
+  ```rust,ignore
+  // Before:
+  if let Some(failure) = flags.last_persist_failure() { alert(failure); }
+  // After:
+  if let LastGoodStatus::Waiting { last_failure: Some(failure), .. } = flags.last_good() {
+      alert(failure);
+  }
+  ```
+
+- **Breaking:** `batter_flags::control_plane::LoadPolicy::with_listen` returns
+  `Result<LoadPolicy, WakeSpacingTooLong>`, refusing a wake spacing longer than
+  the policy's poll interval when the policy is built; `register_in` refused it
+  only at registration, and `RegisterError::WakeSpacingTooLong` is removed
+  (`batter-jkw6.51`). `register_in` now checks every component and finalizer
+  name with the new `batter_core::registration::Registration::check_names`
+  before registering anything, so a taken name, such as an application
+  component named `flags.presence`, installs nothing instead of leaving the
+  stop marker, refresh and listener registered.
+
+  ```rust,ignore
+  // Before:
+  let policy = LoadPolicy::start_on_defaults(timing).with_listen(endpoint);
+  // After:
+  let policy = LoadPolicy::start_on_defaults(timing).with_listen(endpoint)?;
+  ```
+
+- Add `batter_core::periodic::register_skippable_in` and `PeriodicOutcome`: a
+  run registered there returns `Ok(PeriodicOutcome::Ran)` or
+  `Ok(PeriodicOutcome::Skipped)`, and a skip is counted in the new
+  `PeriodicSummary::skipped` and the completion report, never as a success, and
+  never acknowledges first-success startup (`batter-jkw6.50`).
+  `register_periodic_in` and `register_wakeable_in` are unchanged. A struct
+  literal or exhaustive pattern of `PeriodicSummary` adds `skipped` or ends in
+  `..`.
+- `batter_flags::Flags::gate_periodic_in` skips through core: a run the gate
+  keeps out is `PeriodicSummary::skipped`, and `succeeded` counts only runs
+  whose work succeeded; it counted skips too, beside a count kept outside core
+  and the completion report. `GatedPeriodicReader::skipped()` reads core's
+  count.
+
+- **Breaking:** a `batter_flags_postgres::ProcessPresence` is bound to the
+  store that issued it (`batter-jkw6.49`). `ProcessPresence::new` takes the
+  `PooledStore` first, and heartbeats and the stop are presence methods. A
+  presence could be stopped against another store, which found no row
+  (`NotRegistered`) and left the real row live, blocking archive and
+  incompatible writes. No shim: a store method taking any presence is the
+  mismatch this removes.
+
+  ```rust,ignore
+  // Before:
+  let mut presence = ProcessPresence::new(labels, &base, cadence);
+  store.heartbeat(&mut presence, &report, deadline).await?;
+  store.stop(presence, deadline).await?;
+  // After:
+  let mut presence = ProcessPresence::new(&store, labels, &base, cadence);
+  presence.heartbeat(&report, deadline).await?;
+  presence.stop(deadline).await?;
+  ```
+
+- **Breaking:** `batter_flags_postgres::Deferral` gains `flip: Coordination`,
+  `Coordinated` when a retained catalog declares the written key's flips
+  coordinated (`batter-jkw6.48`). `PooledStore::write`, `archive` and `restore`
+  accept such a flip, and their outcome used to look exactly like a rolling
+  write's; `WritePolicy::STRICT` still refuses it. The `batter-flags` command
+  warns on it and reports `"flip"` in its output. A struct literal or exhaustive
+  pattern of `Deferral` adds the field or ends in `..`.
+
+- **Breaking:** `batter_flags_postgres::PooledStore::history` returns a
+  `HistoryPage` of at most `HISTORY_PAGE` (1000) entries with
+  `next: Continuation` (`Complete` or `After(version)`), instead of a `Vec`
+  silently capped at 1000 rows (`batter-jkw6.47`). The `batter-flags history`
+  command reads every page, so the newest event an uncertain write points to is
+  always shown. `KeyListing::kind` and `value_type` are `Option<String>`, `None`
+  for a key neither stored nor declared, instead of empty strings. No shim: a
+  `Vec` cannot say whether rows were cut off.
+
+  ```rust,ignore
+  // Before:
+  let rows: Vec<HistoryEntry> = store.history(key, after, deadline).await?;
+  // After:
+  let mut after = Version::new(0);
+  loop {
+      let page = store.history(key, after, deadline).await?;
+      handle(page.entries);
+      match page.next {
+          Continuation::Complete => break,
+          Continuation::After(last) => after = last,
+      }
+  }
+  ```
+
+- `PooledStore::keys`, `key`, `history` and the fleet reads refuse a standby
+  and a schema this build cannot read inside their own snapshot, as `load` and
+  `preflight` do, so a command need not run `preflight` first; a missing flags
+  table or schema reads as schema revision 0 (`ErrorClass::SchemaRevision`,
+  `installed_schema_revision() == Some(0)`) for every read and for `write`,
+  which reported it as `Database` (`batter-jkw6.46`).
+
+- **Breaking:** `batter_flags_core::SnapshotView::pin` returns
+  `Result<Pinned<V>, Unpinnable>` and refuses a decision that is an error: a
+  handle the view cannot answer for (`ErrorCause::ForeignCatalog`, `NotOwned`)
+  or a view captured before the first publication under a policy that
+  withholds readiness (`ProviderNotReady`) (`batter-jkw6.45`). It pinned such a
+  decision at its code default, which a replay then honoured as cached, so the
+  error was lost. The pin's wire format is unchanged. No shim: an infallible
+  `pin` is the lossy behaviour.
+
+  ```rust,ignore
+  // Before:
+  let pin = view.pin(&flag);
+  // After: defer the work when nothing is published yet.
+  let pin = match view.pin(&flag) {
+      Ok(pin) => pin,
+      Err(refused) if refused.cause() == ErrorCause::ProviderNotReady => return defer(),
+      Err(refused) => return Err(refused.into()),
+  };
+  ```
+
+- **Breaking:** `batter_flags_core::CatalogBuilder::new` takes the catalog's
+  first process kind and environment class and returns their handles with the
+  builder, and `CatalogBuilder::build` returns the `Catalog` directly
+  (`batter-jkw6.44`). A catalog without either vocabulary could never resolve,
+  and that was `build`'s only failure. `BuildError::NoProcessKind`,
+  `BuildError::NoEnvironmentClass` and the unreachable `BuildError::RepeatedCall`
+  (set-once policies are type states) are removed. No shim: a one-argument
+  constructor would restore the empty catalog.
+
+  ```rust,ignore
+  // Before:
+  let mut catalog = CatalogBuilder::new(prefix);
+  let serving = catalog.process_kind("serving")?;
+  let hosted = catalog.environment_class("hosted")?;
+  let built = catalog.build()?;
+  // After:
+  let (mut catalog, serving, hosted) = CatalogBuilder::new(prefix, "serving", "hosted")?;
+  let built = catalog.build();
+  // Further kinds and classes are still added with `process_kind` and
+  // `environment_class`.
+  ```
+
+- **Breaking:** a `batter_flags_core::low_level::Candidate` takes its version
+  when it is made, and `Snapshot::validate` takes only the candidate, which
+  keeps the scope it was read for (`batter-jkw6.43`). `Candidate::at` and
+  `SnapshotRejection::MissingVersion` are removed; a candidate offered to a
+  `Publisher` of another scope is still refused as `ForeignScope`. No shim:
+  `at` would restore the versionless candidate and a second scope argument the
+  disagreement this removes.
+
+  ```rust,ignore
+  // Before:
+  let candidate = Candidate::new(&scope).at(version).rows(rows);
+  let file = Candidate::from_last_good_file(&scope).at(version);
+  let snapshot = Snapshot::validate(&scope, candidate)?;
+  // After:
+  let candidate = Candidate::new(&scope, version).rows(rows);
+  let file = Candidate::from_last_good_file(&scope, version);
+  let snapshot = Snapshot::validate(candidate)?;
+  ```
+
+- `batter_flags_core::low_level::gate_switch` fails closed: a switch the view's
+  base cannot answer for (another catalog's, or one its process kind does not
+  own) reads as `GateReading::Tripped` whatever its safe state, with the safe
+  state and error cause kept in the decision (`batter-jkw6.42`). A released
+  safe state used to read as `Open`, so unchecked gated work ran. No signature
+  changes; the `batter-flags` gates check their switches at construction and
+  are unaffected.
+
+- `batter_flags_postgres::PooledStore::migrate` decides its search-path refusal
+  before anything is migrated, the first migration included (`batter-jkw6.41`).
+  The probe creates the `flags` schema, if absent, only inside a transaction it
+  always rolls back, so PostgreSQL resolves the session's default path against
+  it; the check after migrating is removed. An `ErrorClass::SearchPath` refusal
+  now always means nothing was created or applied, where a refused first
+  migration used to have committed. No signature changes.
+
+- **Breaking:** `batter_flags::control_plane::SnapshotStatus` is a struct of
+  three separate facts, `loader: LoaderState`, `served: Served` and
+  `latest_read: LatestRead`, read together with the publication they describe
+  (`batter-jkw6.40`). The precedence enum let a refusal or a schema behind hide
+  what was served. `RejectionCause` is removed: a refusal is core's `Refusal`,
+  with the store's version always present. `SnapshotStatus::satisfies(Gate)`
+  judges a gate from one status. No deprecated shim: the old variants cannot
+  carry the `served` fact they dropped.
+
+  ```rust,ignore
+  // Before:
+  if flags.status() == SnapshotStatus::Fresh { /* ... */ }
+  if flags.status() == SnapshotStatus::LoaderStopped { /* ... */ }
+  if let SnapshotStatus::Regressed { applied, observed } = flags.status() { /* ... */ }
+  if let SnapshotStatus::Rejected { observed: Some(v), cause: RejectionCause::DigestDrift } = flags.status() { /* ... */ }
+  if let SnapshotStatus::ServingPersisted { version } = flags.status() { /* ... */ }
+  if let SnapshotStatus::NotLoaded { since_registration } = flags.status() { /* ... */ }
+  // After:
+  if flags.status().satisfies(Gate::Fresh) { /* ... */ }
+  if flags.status().loader == LoaderState::Stopped { /* ... */ }
+  if let LatestRead::Refused { refusal: Refusal::Regressed { applied, observed }, .. } =
+      flags.status().latest_read { /* ... */ }
+  if let LatestRead::Refused { refusal: Refusal::DigestDrift { .. }, observed: v } =
+      flags.status().latest_read { /* ... */ }
+  if let Served::PersistedFile { version } = flags.status().served { /* ... */ }
+  if let Served::DeclaredBase { since_registration } = flags.status().served { /* ... */ }
+  // `SchemaBehind { required, found }` and `Stale` become
+  // `LatestRead::SchemaBehind { required, found }` and
+  // `Served::ControlPlane { freshness: Freshness::Stale, .. }`.
+  ```
+
+- **Breaking:** `batter_flags_core::low_level` publishes through one
+  `Publisher`, which owns the `Record` (`Unpublished` or `Published`) through
+  its whole lifecycle (`batter-jkw6.39`). `Published::first`, `Published::next`
+  and `Published::rejected` are no longer public. The publisher takes the
+  `Candidate`, not a validated `Snapshot`: it refuses a regression before
+  judging rows, carries the kill-switch states it serves into every read
+  (replacing whatever the candidate carried; a first publication carries
+  nothing), validates, applies the `Authority` rules and records a refusal even
+  before the first publication. The last-good file enters only through
+  `Publisher::restore`, whose age counts from registration; a file candidate
+  offered to `judge` is refused with `Refusal::FileAfterPublication`, also
+  before anything is published. `judge` returns a `Judged` that changes nothing
+  until `publish`, so a loader can drop it when its deadline passes.
+  `Base::record_view` builds a view of either state. No deprecated shim: the
+  removed calls accept a snapshot that skipped carrying and the authority's
+  first-versus-later choice, which is the state this change removes.
+
+  ```rust,ignore
+  // Before: the loader chose first or next, carried and validated itself.
+  let record = Published::first(Arc::new(Snapshot::validate(&scope, file)?), registered);
+  let candidate = candidate.carrying(record.snapshot())?;
+  let (record, disposition) = record.next(Arc::new(Snapshot::validate(&scope, candidate)?), at);
+  let record = record.rejected(rejection);
+  let view = base.published_view(&record, recent)?;
+  // After: one publisher owns every step.
+  let (mut publisher, restored) = Publisher::restore(&scope, registered, version, rows);
+  // or, with no file: let mut publisher = Publisher::new(&scope, registered);
+  let disposition = publisher.judge(candidate).publish(at);
+  let view = base.record_view(publisher.record(), pre_publication, recent)?;
+  ```
+
+  `Candidate::carrying` remains for standalone snapshots whose views the caller
+  assembles; a loader no longer calls it.
+
 - Fix the flags write interrupt protocol: dropping its sender disables interruption
   across preparation and commit validation instead of polling a completed receiver.
   Persistence now owns selection through blocking-write completion, including after
@@ -65,8 +391,8 @@ contracts, capability facts and validation history.
   Generic helpers must preserve the new policy parameters, including across
   `owned_only_by`, rather than defaulting them back to `Unassigned`. Calls that
   previously repeated a setter and expected `BuildError::RepeatedCall` must
-  choose one policy before construction. The variant remains available for
-  internal validation; no persisted format changes.
+  choose one policy before construction. No persisted format changes. (A later
+  entry removes the variant, which nothing could return.)
 
 - Add experimental typed flags and kill switches
   ([ADR-016](docs/adr/016-typed-flags-control-plane.md), `batter-jkw6`), through

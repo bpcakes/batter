@@ -20,9 +20,7 @@ use batter_core::{
     },
     registration::RegistrationTarget,
 };
-use batter_flags_core::low_level::{
-    CandidateRow, Disposition, Refusal, Snapshot, Standing, ValidationScope,
-};
+use batter_flags_core::low_level::{CandidateRow, ValidationScope};
 use tokio::time::Instant;
 
 use super::{
@@ -170,9 +168,9 @@ impl Prepared {
         };
         match schedule {
             Schedule::Polled(policy) => {
-                register_periodic_in(target, "flags.refresh", policy, work).map(Registered::Polled)
+                register_periodic_in(target, super::REFRESH, policy, work).map(Registered::Polled)
             }
-            Schedule::Woken(policy) => register_wakeable_in(target, "flags.refresh", policy, work)
+            Schedule::Woken(policy) => register_wakeable_in(target, super::REFRESH, policy, work)
                 .map(|(reader, wake)| Registered::Woken(reader, wake)),
         }
     }
@@ -212,78 +210,40 @@ impl Refresh {
         let Persistence::File(persister) = &self.persistence else {
             return;
         };
-        let Some(record) = self.shared.reader().record() else {
+        let record = self.shared.live().current();
+        let Some(snapshot) = record.snapshot() else {
             return;
         };
-        if let Some(file) = last_good::file_of(self.shared.reader().base(), record.snapshot(), rows)
-        {
+        if let Some(file) = last_good::file_of(self.shared.reader().base(), snapshot, rows) {
             persister.offer(file);
         }
     }
 
-    /// Writes what waits for the last-good file. A failure is recorded and
-    /// never changes the run's outcome.
+    /// Writes what waits for the last-good file. The persister records a
+    /// failure against the publication still waiting, for
+    /// `RegisteredFlags::last_good`, and it never changes the run's outcome.
     async fn persist(&self, deadline: Instant) {
         let Persistence::File(persister) = &self.persistence else {
             return;
         };
         let by = (Instant::now() + FILE_SUBDEADLINE).min(work_deadline(deadline));
-        if let Err(failure) = persister.attempt(by).await {
-            self.shared.persist_failed(failure);
-        }
+        let _ = persister.attempt(by).await;
     }
 
-    /// Judges one read and publishes it if it may be published: a version
-    /// below the applied one is a regression whatever its rows hold, then
-    /// the rows are validated, then the writer decides. Nothing is published
-    /// once the run's deadline has passed, however long validation took.
+    /// Judges one read and publishes it if it may be published. Core's
+    /// publisher refuses a version below the applied one whatever its rows
+    /// hold, carries the held switch states it serves, validates the rows and
+    /// decides. Nothing is published once the run's deadline has passed,
+    /// however long judging took.
     fn publish(&self, fetched: Fetched, deadline: Instant) -> (LastRun, Result<(), LoadCause>) {
         let observed = fetched.version;
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let current = writer.published();
-        if let Some(record) = &current
-            && let Standing::ControlPlane {
-                version: applied, ..
-            } = record.authority().standing()
-            && observed < applied
-        {
-            let (previous, cause) = self
-                .shared
-                .refused(Refusal::Regressed { applied, observed }, Some(observed));
-            return (previous, Err(cause));
-        }
-        let mut candidate = fetched.candidate(&self.scope);
-        if let Some(record) = &current {
-            // Carrying keeps a held, engaged switch engaged. The writer only
-            // ever publishes this base's snapshots, so carrying cannot fail.
-            match candidate.carrying(record.snapshot()) {
-                Ok(carried) => candidate = carried,
-                Err(_) => {
-                    return (
-                        self.shared.failed(LoadCause::InvalidData),
-                        Err(LoadCause::InvalidData),
-                    );
-                }
-            }
-        }
-        let validated = Snapshot::validate(&self.scope, candidate);
-        if Instant::now() >= deadline {
-            return (
-                self.shared.failed(LoadCause::Deadline),
-                Err(LoadCause::Deadline),
-            );
-        }
-        let disposition = match validated {
-            Err(rejection) => writer.reject(rejection),
-            Ok(snapshot) => writer.apply(Arc::new(snapshot), Instant::now()),
-        };
-        match disposition {
-            Disposition::Applied | Disposition::Confirmed => (self.shared.loaded(), Ok(())),
-            Disposition::Refused(refusal) => {
-                let (previous, cause) = self.shared.refused(refusal, Some(observed));
-                (previous, Err(cause))
-            }
-        }
+        self.shared.publish(
+            &mut writer,
+            fetched.candidate(&self.scope),
+            deadline,
+            observed,
+        )
     }
 }
 

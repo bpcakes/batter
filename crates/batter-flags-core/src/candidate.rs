@@ -77,19 +77,17 @@ impl CandidateRow {
     /// };
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    /// let serving = catalog.process_kind("serving")?;
-    /// catalog.environment_class("hosted")?;
+    /// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
     /// let fast = catalog.release_flag("fast_path", Toggle::Off, expiry).declare()?;
     /// let other = catalog.release_flag("other_path", Toggle::Off, expiry).declare()?;
-    /// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+    /// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
     /// let scope = base.validation_scope();
     ///
     /// let at = Version::new(3);
     /// let other_declaration = base.catalog().declarations().find(|d| d.key() == other.key()).unwrap();
     /// let stale = CandidateRow::flag(&fast, Toggle::On, at).written_for(other_declaration.fingerprint());
-    /// let snapshot = Snapshot::validate(&scope, Candidate::from_last_good_file(&scope).at(at).row(stale))?;
+    /// let snapshot = Snapshot::validate(Candidate::from_last_good_file(&scope, at).row(stale))?;
     /// assert!(snapshot.held(batter_flags_core::Freshness::Fresh).any(|(key, cause)| key.as_str() == "fast_path"
     ///     && cause == HoldCause::EntryTypeMismatch));
     /// # Ok(())
@@ -169,32 +167,34 @@ impl fmt::Debug for CandidateRow {
 /// Everything one read of the control plane or the last-good file returned:
 /// the version it was read at and its rows.
 ///
-/// A candidate is read *for* one scope; validating it against another is a
-/// [`SnapshotRejection::ForeignScope`](crate::low_level::SnapshotRejection).
-/// Without a version it is structurally corrupt.
+/// A candidate is read *for* one scope, which it keeps, and at one version,
+/// given when it is made, so neither can be missing or validated against
+/// another scope; a [`Publisher`](crate::low_level::Publisher) refuses one
+/// read for another scope.
+///
+/// Migration: `Candidate::new(&scope).at(version)` is
+/// `Candidate::new(&scope, version)`, and `Candidate::at` is gone, with
+/// `SnapshotRejection::MissingVersion`.
 ///
 /// ```
 /// use batter_flags_core::{
 ///     CatalogBuilder, SettingsPrefix, Version,
-///     low_level::{BaseBuilder, Candidate, SnapshotRejection, Snapshot},
+///     low_level::{BaseBuilder, Candidate, Snapshot},
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
-/// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
+/// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
 /// let scope = base.validation_scope();
 ///
-/// let versionless = Candidate::new(&scope);
-/// assert_eq!(Snapshot::validate(&scope, versionless).unwrap_err(), SnapshotRejection::MissingVersion);
-/// assert!(Snapshot::validate(&scope, Candidate::new(&scope).at(Version::new(1))).is_ok());
+/// let snapshot = Snapshot::validate(Candidate::new(&scope, Version::new(1)))?;
+/// assert_eq!(snapshot.version(), Version::new(1));
 /// # Ok(())
 /// # }
 /// ```
 pub struct Candidate {
     pub(crate) base: Arc<BaseInner>,
-    pub(crate) version: Option<Version>,
+    pub(crate) version: Version,
     pub(crate) provenance: Provenance,
     pub(crate) rows: Vec<CandidateRow>,
     /// Per declaration, the state a held kill switch keeps serving.
@@ -202,37 +202,32 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    /// An empty candidate read from the control plane for `scope`, with no
-    /// version yet.
-    pub fn new(scope: &ValidationScope) -> Self {
-        Self::read_from(scope, Provenance::ControlPlane)
+    /// An empty candidate read from the control plane for `scope` at
+    /// `version`.
+    pub fn new(scope: &ValidationScope, version: Version) -> Self {
+        Self::read_from(scope, version, Provenance::ControlPlane)
     }
 
-    /// An empty candidate read from the last-good file for `scope`, with no
-    /// version yet.
+    /// An empty candidate read from the last-good file for `scope` at
+    /// `version`.
     ///
-    /// A snapshot validated from it can only be the first publication: it
-    /// never confirms or replaces a control-plane snapshot, and no state it
-    /// serves is last-good again.
-    pub fn from_last_good_file(scope: &ValidationScope) -> Self {
-        Self::read_from(scope, Provenance::LastGoodFile)
+    /// A snapshot validated from it serves only a standalone view: a
+    /// [`Publisher`](crate::low_level::Publisher) publishes a file only
+    /// through [`restore`](crate::low_level::Publisher::restore), as its first
+    /// publication, never confirms or replaces a control-plane snapshot with
+    /// one, and no state it serves is last-good again.
+    pub fn from_last_good_file(scope: &ValidationScope, version: Version) -> Self {
+        Self::read_from(scope, version, Provenance::LastGoodFile)
     }
 
-    fn read_from(scope: &ValidationScope, provenance: Provenance) -> Self {
+    fn read_from(scope: &ValidationScope, version: Version, provenance: Provenance) -> Self {
         Self {
             base: Arc::clone(&scope.base),
-            version: None,
+            version,
             provenance,
             rows: Vec::new(),
             carried: vec![None; scope.base.catalog.entries.len()],
         }
-    }
-
-    /// Sets the version the candidate was read at.
-    #[must_use]
-    pub fn at(mut self, version: Version) -> Self {
-        self.version = Some(version);
-        self
     }
 
     /// Adds a row.
@@ -254,6 +249,11 @@ impl Candidate {
     /// state instead of falling back to its safe state: holding an entry never
     /// releases an engaged switch.
     ///
+    /// This is for a standalone snapshot whose view the caller assembles. A
+    /// [`Publisher`](crate::low_level::Publisher) carries from what it serves
+    /// into every read it judges and replaces whatever a candidate carried, so
+    /// a loader never calls this.
+    ///
     /// # Errors
     ///
     /// [`ForeignSnapshot`] when `previous` was validated for another base.
@@ -261,6 +261,17 @@ impl Candidate {
         if !Arc::ptr_eq(&self.base, &previous.base) {
             return Err(ForeignSnapshot);
         }
+        self.carry_from(previous);
+        Ok(self)
+    }
+
+    /// Replaces every carried state with what `previous`, of this
+    /// candidate's own base, serves.
+    pub(crate) fn carry_from(&mut self, previous: &Snapshot) {
+        debug_assert!(
+            Arc::ptr_eq(&self.base, &previous.base),
+            "a publisher carries only from a snapshot of its own scope"
+        );
         for (slot, state) in self.carried.iter_mut().zip(previous.entries.iter()) {
             *slot = match state {
                 EntryState::Switch(state) => Some(Carried {
@@ -272,7 +283,11 @@ impl Candidate {
                 EntryState::Absent | EntryState::Flag(_) => None,
             };
         }
-        Ok(self)
+    }
+
+    /// Drops every carried state, as a first publication has none.
+    pub(crate) fn carry_nothing(&mut self) {
+        self.carried.fill(None);
     }
 }
 

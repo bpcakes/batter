@@ -81,8 +81,15 @@ pub enum PeriodicCompletion {
 pub struct PeriodicSummary {
     /// Admitted runs, including the run that ended the loop.
     pub invocations: u64,
-    /// Runs that returned success.
+    /// Runs that returned success after doing their work.
     pub succeeded: u64,
+    /// Runs that returned [`PeriodicOutcome::Skipped`](super::PeriodicOutcome::Skipped):
+    /// admitted and counted in [`invocations`](Self::invocations), but they did
+    /// not do their work, so they are not successes.
+    ///
+    /// Migration: a struct literal or exhaustive pattern of `PeriodicSummary`
+    /// adds `skipped`, or ends in `..`.
+    pub skipped: u64,
     /// Runs that returned a recoverable application failure.
     pub recoverable_failures: u64,
     /// Runs whose own deadline expired before they returned.
@@ -286,6 +293,12 @@ impl History {
         let mut guard = self.lock();
         let state = &mut *guard;
         bump(&mut state.succeeded, &mut state.saturated);
+    }
+
+    pub(super) fn skipped(&self) {
+        let mut guard = self.lock();
+        let state = &mut *guard;
+        bump(&mut state.skipped, &mut state.saturated);
     }
 
     pub(super) fn deadline_exceeded(&self) {

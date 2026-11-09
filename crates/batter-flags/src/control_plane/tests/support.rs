@@ -14,8 +14,8 @@ use batter_flags_core::{
 use batter_flags_postgres::{PooledStore, StoreTiming};
 
 use super::super::{
-    ApplicationName, BuildId, HeartbeatCadence, LoadPolicy, Presence, RefreshTiming, RegisterError,
-    RegisteredFlags, register_with,
+    ApplicationName, BuildId, Gate, HeartbeatCadence, LatestRead, LoadPolicy, LoaderState,
+    Presence, RefreshTiming, RegisterError, RegisteredFlags, Served, SnapshotStatus, register_with,
     source::{
         FetchFailure, LoadSource,
         fake::{Fake, Script},
@@ -29,6 +29,25 @@ pub(super) const SECOND: Duration = Duration::from_secs(1);
 pub(super) const POLL: Duration = Duration::from_secs(5);
 pub(super) const MAXIMUM_AGE: Duration = Duration::from_secs(10);
 
+/// A running loader whose latest read loaded and whose control-plane
+/// publication is served fresh: the old `SnapshotStatus::Fresh`.
+pub(super) fn is_fresh(status: SnapshotStatus) -> bool {
+    status.satisfies(Gate::Fresh)
+}
+
+/// The same with the publication served stale: the old `SnapshotStatus::Stale`.
+pub(super) fn is_stale(status: SnapshotStatus) -> bool {
+    status.loader == LoaderState::Running
+        && status.latest_read == LatestRead::Loaded
+        && matches!(
+            status.served,
+            Served::ControlPlane {
+                freshness: batter_flags_core::Freshness::Stale,
+                ..
+            }
+        )
+}
+
 pub(super) struct Handles {
     pub(super) flag: ReleaseFlag<Toggle>,
     pub(super) halt: KillSwitch,
@@ -38,9 +57,8 @@ pub(super) struct Handles {
 /// A catalog with a toggle, a held-last-known switch and an engage-when-stale
 /// switch, resolved against `settings`.
 pub(super) fn resolved(settings: &[(&str, &str)]) -> (Resolved, Handles) {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let flag = catalog
         .release_flag(
             "fast_path",
@@ -68,7 +86,7 @@ pub(super) fn resolved(settings: &[(&str, &str)]) -> (Resolved, Handles) {
     )
     .unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &source,
         serving,
         hosted,

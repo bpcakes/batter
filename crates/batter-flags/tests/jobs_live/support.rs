@@ -92,13 +92,12 @@ impl FlagAwareHandler for Probe {
 }
 
 pub fn flags(state: batter_flags::core::SwitchState) -> Result<(Flags, KillSwitch)> {
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    let worker = b.process_kind("worker")?;
-    b.environment_class("hosted")?;
+    let (mut b, worker, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "worker", "hosted")?;
     let halt = b
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()?;
-    let builder = TestFlags::builder(b.build()?, worker)?;
+    let builder = TestFlags::builder(b.build(), worker)?;
     let test = match state {
         batter_flags::core::SwitchState::Engaged => builder.engage(&halt),
         batter_flags::core::SwitchState::Released => builder.release(&halt),

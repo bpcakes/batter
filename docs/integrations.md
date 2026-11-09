@@ -1671,8 +1671,9 @@ LISTEN component on its own two-connection pool whose connection options the
 root supplies (`batter-jkw6.19`). Every audited write notifies the store's
 channel; a notification only wakes a refresh, its payload is never read, and
 the poll remains the backstop. The application owns the connection options,
-the login's grants (select `FlagsOperation` operations for its exact-role
-manifest; `AuditedWrite` covers what a write judges) and its settings.
+the login's grants (a `FlagsRole`, `ServingProcess` for a serving login, or a
+`FlagsGrant` of `FlagsOperation`s for its exact-role manifest; `AuditedWrite`
+covers what a write judges) and its settings.
 
 Cross-flag invariants are enforced where the state is served: every process
 judges the snapshot it loads and holds what an invariant leaves unmet

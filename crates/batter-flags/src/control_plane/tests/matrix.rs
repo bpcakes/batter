@@ -9,7 +9,7 @@ use batter_flags_core::{
 };
 use tokio::time::sleep;
 
-use super::super::{LoadCause, LoadPolicy, SnapshotStatus, source::fake::Script};
+use super::super::{LoadCause, LoadPolicy, source::fake::Script};
 use super::support::*;
 use crate::{declared, flags::gate::SwitchGate};
 
@@ -65,9 +65,8 @@ enum Row {
 
 #[tokio::test(start_paused = true)]
 async fn every_publication_safe_state_and_literal_reads_as_declared() {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let mut switches = Vec::new();
     let mut settings = Vec::new();
     for safe in SAFE {
@@ -85,7 +84,7 @@ async fn every_publication_safe_state_and_literal_reads_as_declared() {
     }
     let source = SettingsSource::from_pairs(settings).unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &source,
         serving,
         hosted,
@@ -128,7 +127,7 @@ async fn every_publication_safe_state_and_literal_reads_as_declared() {
                 rows,
             });
             sleep(POLL + SECOND).await;
-            assert_eq!(flags.status(), SnapshotStatus::Fresh, "{row:?}");
+            assert!(is_fresh(flags.status()), "{row:?}");
         }
         for (safe, literal, switch) in &switches {
             assert_eq!(
@@ -145,9 +144,8 @@ async fn every_publication_safe_state_and_literal_reads_as_declared() {
 
 #[tokio::test(start_paused = true)]
 async fn a_row_needing_absent_settings_is_held_and_serves_the_base() {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let outbound = catalog
         .release_flag(
             "outbound",
@@ -158,7 +156,7 @@ async fn a_row_needing_absent_settings_is_held_and_serves_the_base() {
         .declare()
         .unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &SettingsSource::from_pairs([]).unwrap(),
         serving,
         hosted,
@@ -180,11 +178,12 @@ async fn a_row_needing_absent_settings_is_held_and_serves_the_base() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     assert_eq!(flags.held(), 1);
-    let record = flags.shared.reader().record().unwrap();
+    let record = flags.shared.live().current();
     let held: Vec<_> = record
         .snapshot()
+        .unwrap()
         .held(batter_flags_core::Freshness::Fresh)
         .map(|(key, cause)| (key.as_str().to_owned(), cause))
         .collect();

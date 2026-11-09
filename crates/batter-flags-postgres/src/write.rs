@@ -256,9 +256,11 @@ impl PooledStore {
             "SELECT version, schema_revision FROM flags.flag_control WHERE singleton FOR UPDATE",
         )
         .fetch_one(sql.executor())
-        .await?;
-        if row.try_get::<i32, _>("schema_revision")? < crate::REQUIRED_SCHEMA_REVISION {
-            return Err(StoreError::classified(ErrorClass::SchemaRevision));
+        .await
+        .map_err(crate::errors::missing_schema)?;
+        let found: i32 = row.try_get("schema_revision")?;
+        if found < crate::REQUIRED_SCHEMA_REVISION {
+            return Err(StoreError::schema_behind(found));
         }
         let head: i64 = row.try_get("version")?;
         crate::load::version(head)?;

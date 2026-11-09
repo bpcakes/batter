@@ -994,11 +994,11 @@ let timing = RefreshTiming::new(Duration::from_secs(30), Duration::from_secs(120
 // The listener's own connection options, supplied by the root, and the
 // shortest spacing between two refreshes a wake may start.
 let listen = ListenEndpoint::new(listener_options, Duration::from_secs(1))?;
-let policy = LoadPolicy::start_on_defaults(timing).with_listen(listen);
+let policy = LoadPolicy::start_on_defaults(timing).with_listen(listen)?;
 ```
 
-`register_in` refuses a wake spacing longer than the poll interval
-(`RegisterError::WakeSpacingTooLong`). The listener is a component on a private
+`with_listen` refuses a wake spacing longer than the poll interval
+(`WakeSpacingTooLong`) when the policy is built. The listener is a component on a private
 two-connection pool; it never reads a payload, and its `Debug` is redacted.
 
 ### Cross-flag invariants in control-plane mode (experimental, `batter-jkw6.21`)

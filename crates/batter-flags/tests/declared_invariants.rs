@@ -58,9 +58,12 @@ fn an_invariant_whose_other_flag_belongs_to_another_kind_is_not_checked() {
 #[test]
 fn an_invariant_is_judged_over_a_flag_restricted_to_another_class_at_its_default() {
     let build = || {
-        let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-        let serving = builder.process_kind("serving").unwrap();
-        let development = builder.environment_class("development").unwrap();
+        let (mut builder, serving, development) = CatalogBuilder::new(
+            SettingsPrefix::new("FLAG_").unwrap(),
+            "serving",
+            "development",
+        )
+        .unwrap();
         let hosted = builder.environment_class("hosted").unwrap();
         let debug_panel = builder
             .mode_flag("debug_panel", Toggle::Off)
@@ -74,7 +77,7 @@ fn an_invariant_is_judged_over_a_flag_restricted_to_another_class_at_its_default
         builder
             .requires(&ledger_v2, Toggle::On, &debug_panel, Toggle::On)
             .unwrap();
-        (builder.build().unwrap(), serving, development, hosted)
+        (builder.build(), serving, development, hosted)
     };
     let resolve = |class: &str, pairs: &[(&str, &str)]| {
         let (catalog, serving, development, hosted) = build();
@@ -161,9 +164,9 @@ fn a_both_or_none_invariant_fails_when_exactly_one_is_on() {
 #[test]
 fn a_governed_flag_is_judged_at_its_default_while_its_switch_resolves_engaged() {
     let resolve = |safe: batter_flags::core::SafeState, pairs: &[(&str, &str)]| {
-        let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-        let serving = builder.process_kind("serving").unwrap();
-        let hosted = builder.environment_class("hosted").unwrap();
+        let (mut builder, serving, hosted) =
+            CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted")
+                .unwrap();
         let halt = builder
             .kill_switch("halt", safe, batter_flags::core::StaleRule::HoldLastKnown)
             .declare()
@@ -192,7 +195,7 @@ fn a_governed_flag_is_judged_at_its_default_while_its_switch_resolves_engaged() 
                 .map(|(name, value)| ((*name).into(), (*value).into())),
         )
         .unwrap();
-        declared::resolve(builder.build().unwrap(), &source, serving, hosted, today())
+        declared::resolve(builder.build(), &source, serving, hosted, today())
     };
     let both = [("FLAG_DEPENDENT", "on"), ("FLAG_GOVERNED", "on")];
     let released = batter_flags::core::SafeState::Released;

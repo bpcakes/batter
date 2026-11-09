@@ -39,10 +39,8 @@ fn the_reference_catalog_digest_is_pinned() {
 
 #[test]
 fn an_empty_catalog_digest_is_pinned() {
-    let mut builder = fixtures::builder();
-    builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
-    assert_eq!(builder.build().unwrap().digest().to_hex(), EMPTY_CATALOG);
+    let (builder, _, _) = fixtures::builder("serving", "hosted");
+    assert_eq!(builder.build().digest().to_hex(), EMPTY_CATALOG);
 }
 
 #[test]
@@ -177,9 +175,7 @@ fn the_manifest_digest_covers_what_the_catalog_digest_leaves_out() {
 /// order `order` lists them.
 fn mixed_invariants(order: [batter_flags_core::InvariantRule; 3]) -> batter_flags_core::Catalog {
     use batter_flags_core::InvariantRule;
-    let mut builder = fixtures::builder();
-    builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, _, _) = fixtures::builder("serving", "hosted");
     let base = builder.mode_flag("base", Toggle::Off).declare().unwrap();
     let other = builder.mode_flag("other", Toggle::Off).declare().unwrap();
     let subject = builder.mode_flag("subject", Toggle::Off).declare().unwrap();
@@ -191,7 +187,7 @@ fn mixed_invariants(order: [batter_flags_core::InvariantRule; 3]) -> batter_flag
         }
         .unwrap();
     }
-    builder.build().unwrap()
+    builder.build()
 }
 
 #[test]

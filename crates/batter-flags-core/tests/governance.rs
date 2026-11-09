@@ -114,9 +114,7 @@ fn a_held_or_stale_engaged_governor_overrides_like_a_published_one() {
     );
     let held = Arc::new(
         Snapshot::validate(
-            &scope,
-            Candidate::new(&scope)
-                .at(version(9))
+            Candidate::new(&scope, version(9))
                 .rows([
                     flag_row(&h.new_checkout, Toggle::On, 4),
                     undecodable_row("checkout_halt", "switch", "switch", 9),
@@ -146,9 +144,8 @@ fn a_held_or_stale_engaged_governor_overrides_like_a_published_one() {
 
 #[test]
 fn a_stale_view_overrides_when_the_governors_rule_engages_it() {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let halt = builder
         .kill_switch("halt", SafeState::Released, StaleRule::EngageWhenStale)
         .declare()
@@ -169,7 +166,7 @@ fn a_stale_view_overrides_when_the_governors_rule_engages_it() {
         .governed_by(&hold)
         .declare()
         .unwrap();
-    let base = base(builder.build().unwrap(), &serving, &[]);
+    let base = base(builder.build(), &serving, &[]);
     let published = snapshot(
         &base,
         4,

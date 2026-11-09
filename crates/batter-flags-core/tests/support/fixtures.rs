@@ -69,18 +69,17 @@ pub fn expiry() -> Expiry {
     Expiry::on(date(2027, 3, 31))
 }
 
-/// A builder under `FLAG_` with no vocabulary.
-pub fn builder() -> CatalogBuilder {
-    CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap())
+/// A builder under `FLAG_` whose first process kind and environment class
+/// are `kind` and `class`.
+pub fn builder(kind: &str, class: &str) -> (CatalogBuilder, ProcessKind, EnvironmentClass) {
+    CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), kind, class).unwrap()
 }
 
 /// A builder with the process kinds `serving` and `worker` and the
 /// environment classes `development` and `hosted`.
 pub fn vocabulary_builder() -> CatalogBuilder {
-    let mut builder = builder();
-    builder.process_kind("serving").unwrap();
+    let (mut builder, _, _) = builder("serving", "development");
     builder.process_kind("worker").unwrap();
-    builder.environment_class("development").unwrap();
     builder.environment_class("hosted").unwrap();
     builder
 }
@@ -127,19 +126,25 @@ pub fn reference(change: Change) -> Catalog {
         _ => "FLAG_",
     };
     let prefix = SettingsPrefix::new(prefix).unwrap();
-    let mut builder = CatalogBuilder::new(prefix);
     let reversed = change == Change::ReversedOrder;
+    // The reversed catalog declares its vocabulary in the other order too.
+    let (first_kind, first_class) = if reversed {
+        ("worker", "hosted")
+    } else {
+        ("serving", "development")
+    };
+    let (mut builder, first, first_class) =
+        CatalogBuilder::new(prefix, first_kind, first_class).unwrap();
     let (serving, worker, development);
     if reversed {
-        worker = builder.process_kind("worker").unwrap();
+        worker = first;
         serving = builder.process_kind("serving").unwrap();
-        builder.environment_class("hosted").unwrap();
         development = builder.environment_class("development").unwrap();
         retire(&mut builder, change);
     } else {
-        serving = builder.process_kind("serving").unwrap();
+        serving = first;
         worker = builder.process_kind("worker").unwrap();
-        development = builder.environment_class("development").unwrap();
+        development = first_class;
         builder.environment_class("hosted").unwrap();
     }
     if change == Change::ExtraKind {
@@ -174,7 +179,7 @@ pub fn reference(change: Change) -> Catalog {
             .retired("LEGACY_EXPORT", "remove it; exports are always on")
             .unwrap();
     }
-    builder.build().unwrap()
+    builder.build()
 }
 
 fn retire(builder: &mut CatalogBuilder, change: Change) {

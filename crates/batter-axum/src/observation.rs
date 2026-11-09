@@ -29,7 +29,30 @@ pub(super) struct ObservationState(Arc<Mutex<ObservationFacts>>);
 struct ObservationFacts {
     quota: Option<crate::quota_observation::QuotaObservation>,
     correlation: Option<CorrelationId>,
-    gate_disabled: bool,
+    gate: GateFact,
+}
+
+/// What a group gate did to this request, for its completion event.
+#[derive(Clone, Copy, Default)]
+enum GateFact {
+    /// No gate disabled the request and no gate view went unmatched.
+    #[default]
+    None,
+    /// The group's gate disabled the request.
+    Disabled,
+    /// A handler extracted a gate view no gate of its group captured: the
+    /// sanitized 500 is an application wiring error, not a server fault.
+    Unmatched,
+}
+
+impl GateFact {
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Disabled => Some("disabled"),
+            Self::Unmatched => Some("unmatched_view"),
+        }
+    }
 }
 
 impl ObservationState {
@@ -40,7 +63,7 @@ impl ObservationState {
         Self(Arc::new(Mutex::new(ObservationFacts {
             quota,
             correlation,
-            gate_disabled: false,
+            gate: GateFact::None,
         })))
     }
 
@@ -62,7 +85,14 @@ impl ObservationState {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .gate_disabled = true;
+            .gate = GateFact::Disabled;
+    }
+
+    pub(crate) fn record_gate_unmatched(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .gate = GateFact::Unmatched;
     }
 
     fn facts(&self) -> ObservationFacts {
@@ -215,7 +245,7 @@ impl HttpObservation {
                         status = status.map(|status| status.as_u16()),
                         http_outcome = outcome,
                         latency_ms,
-                        gate_outcome = facts.gate_disabled.then_some("disabled"),
+                        gate_outcome = facts.gate.label(),
                         quota_outcome = quota.map(|facts| facts.outcome()),
                         quota_consumption = quota.map(|facts| facts.consumption().label()),
                         "HTTP response boundary finished"

@@ -291,7 +291,7 @@ fn a_pin_and_each_replay_emit_one_event() {
     let (_other_catalog, other) = world();
     let view = &views[3].1;
 
-    let pin = view.pin(&h.fast_path);
+    let pin = view.pin(&h.fast_path).unwrap();
     assert_eq!(only(&capture).field("feature_flag.key"), Some("fast_path"));
     capture.clear();
 

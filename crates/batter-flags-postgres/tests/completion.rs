@@ -87,6 +87,7 @@ async fn deferred_notify_queue_sqlstate_is_known_failure_and_retires() {
             .history(None, batter_flags_core::Version::new(0), deadline())
             .await
             .unwrap()
+            .entries
             .is_empty()
     );
     pool.close().await;

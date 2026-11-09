@@ -84,10 +84,8 @@ fn kill_switches_report_their_safe_state_and_stale_rule() {
 
 #[test]
 fn ownership_is_queried_per_kind() {
-    let mut builder = builder();
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, _) = builder("serving", "hosted");
     let worker = builder.process_kind("worker").unwrap();
-    builder.environment_class("hosted").unwrap();
     builder
         .mode_flag("everywhere", Toggle::Off)
         .declare()
@@ -97,7 +95,7 @@ fn ownership_is_queried_per_kind() {
         .owned_only_by(&serving)
         .declare()
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let owned = |kind| {
         catalog
             .owned_by(kind)
@@ -140,7 +138,7 @@ fn expiry_is_compared_with_the_date_the_caller_passes() {
         .release_flag("stale_release", Toggle::Off, ancient)
         .declare()
         .unwrap();
-    assert_eq!(builder.build().unwrap().expired(date(1, 1, 2)).count(), 1);
+    assert_eq!(builder.build().expired(date(1, 1, 2)).count(), 1);
 }
 
 #[test]

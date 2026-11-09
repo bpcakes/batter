@@ -1,18 +1,31 @@
-//! Every status arm, each gate's answer, and the load events.
+//! Every status field, each gate's answer, and the load events.
 
 use std::time::Duration;
 
 use batter_flags_core::{
-    SwitchState, Toggle, Version,
+    Freshness, SwitchState, Toggle, Version,
     low_level::{CandidateRow, Refusal, SnapshotRejection},
 };
 use tokio::time::sleep;
 
 use super::super::{
-    Gate, LoadCause, LoadPolicy, RejectionCause, SnapshotStatus, source::fake::Script,
+    Gate, LatestRead, LoadCause, LoadPolicy, LoaderState, Served, SnapshotStatus,
+    source::fake::Script,
 };
 use super::support::*;
 use crate::low_level::capture_now;
+
+/// A running loader serving control-plane version 5 at `freshness`.
+fn serving_five(freshness: Freshness, latest_read: LatestRead) -> SnapshotStatus {
+    SnapshotStatus {
+        loader: LoaderState::Running,
+        served: Served::ControlPlane {
+            version: Version::new(5),
+            freshness,
+        },
+        latest_read,
+    }
+}
 
 fn gates(flags: &super::super::RegisteredFlags) -> (bool, bool) {
     let (published, published_ok) = flags.readiness_condition(Gate::Published);
@@ -36,19 +49,25 @@ async fn regression_drift_and_rejection_never_renew_freshness() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
-    assert_eq!(gates(&flags), (true, true));
-
-    // A read below the applied version is a regression.
-    fake.set(serve(&handles, 4, SwitchState::Released, Toggle::Off));
-    sleep(POLL + SECOND).await;
     assert_eq!(
         flags.status(),
-        SnapshotStatus::Regressed {
-            applied: Version::new(5),
-            observed: Version::new(4)
-        }
+        serving_five(Freshness::Fresh, LatestRead::Loaded)
     );
+    assert_eq!(gates(&flags), (true, true));
+
+    // A read below the applied version is a regression, and the status still
+    // says what is served: the applied version, fresh until it ages.
+    fake.set(serve(&handles, 4, SwitchState::Released, Toggle::Off));
+    sleep(POLL + SECOND).await;
+    let regressed = LatestRead::Refused {
+        refusal: Refusal::Regressed {
+            applied: Version::new(5),
+            observed: Version::new(4),
+        },
+        observed: Version::new(4),
+    };
+    assert_eq!(flags.status(), serving_five(Freshness::Fresh, regressed));
+    assert_eq!(gates(&flags), (true, false), "published, but not loaded");
     assert!(matches!(
         flags.last_rejection(),
         Some(Refusal::Regressed { .. })
@@ -64,15 +83,18 @@ async fn regression_drift_and_rejection_never_renew_freshness() {
         "no renewal"
     );
     assert_eq!(gates(&flags), (true, false));
+    assert_eq!(flags.status(), serving_five(Freshness::Stale, regressed));
 
     // The applied version with other content is drift.
     fake.set(serve(&handles, 5, SwitchState::Released, Toggle::On));
     sleep(POLL + SECOND).await;
     assert_eq!(
-        flags.status(),
-        SnapshotStatus::Rejected {
-            observed: Some(Version::new(5)),
-            cause: RejectionCause::DigestDrift
+        flags.status().latest_read,
+        LatestRead::Refused {
+            refusal: Refusal::DigestDrift {
+                version: Version::new(5)
+            },
+            observed: Version::new(5),
         }
     );
     assert_eq!(
@@ -90,20 +112,18 @@ async fn regression_drift_and_rejection_never_renew_freshness() {
         ],
     });
     sleep(POLL + SECOND).await;
-    assert_eq!(
-        flags.status(),
-        SnapshotStatus::Rejected {
-            observed: Some(at),
-            cause: RejectionCause::Structural(SnapshotRejection::DuplicateKey { row: 1 })
-        }
-    );
+    let rejected = LatestRead::Refused {
+        refusal: Refusal::Rejected(SnapshotRejection::DuplicateKey { row: 1 }),
+        observed: at,
+    };
+    assert_eq!(flags.status().latest_read, rejected);
     // An outage does not clear a rejection; a publication does.
     fake.set(failing(LoadCause::Unavailable));
     sleep(POLL + SECOND).await;
-    assert!(matches!(flags.status(), SnapshotStatus::Rejected { .. }));
+    assert_eq!(flags.status().latest_read, rejected);
     fake.set(serve(&handles, 7, SwitchState::Released, Toggle::Off));
     sleep(POLL + SECOND).await;
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     assert!(
         matches!(flags.last_rejection(), Some(Refusal::Rejected(_))),
         "the history stays"
@@ -132,13 +152,19 @@ async fn a_rejection_before_any_publication_says_why_nothing_loads() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert!(matches!(
-        flags.status(),
-        SnapshotStatus::Rejected {
-            cause: RejectionCause::Structural(_),
-            ..
+    // The refusal and what is served are separate: the declared base serves.
+    let status = flags.status();
+    assert!(
+        matches!(status.served, Served::DeclaredBase { .. }),
+        "{status:?}"
+    );
+    assert_eq!(
+        status.latest_read,
+        LatestRead::Refused {
+            refusal: Refusal::Rejected(SnapshotRejection::DuplicateKey { row: 1 }),
+            observed: at,
         }
-    ));
+    );
     assert_eq!(gates(&flags), (false, false), "nothing is published");
     let _ = running.shutdown().await;
 }
@@ -156,31 +182,29 @@ async fn a_store_behind_the_schema_reports_it_before_and_after_a_publication() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert_eq!(
-        flags.status(),
-        SnapshotStatus::SchemaBehind {
-            required: 1,
-            found: 0
-        }
-    );
+    let behind = LatestRead::SchemaBehind {
+        required: 1,
+        found: 0,
+    };
+    let status = flags.status();
+    assert_eq!(status.latest_read, behind);
+    assert!(matches!(status.served, Served::DeclaredBase { .. }));
     assert_eq!(gates(&flags), (false, false));
 
     fake.set(serve(&handles, 1, SwitchState::Released, Toggle::On));
     sleep(POLL + SECOND).await;
-    assert_eq!(
-        flags.status(),
-        SnapshotStatus::Fresh,
+    assert!(
+        is_fresh(flags.status()),
         "the first run after migration recovers"
     );
     assert_eq!(gates(&flags), (true, true));
     fake.set(schema_behind(0));
     sleep(POLL + SECOND).await;
-    assert_eq!(
-        flags.status(),
-        SnapshotStatus::SchemaBehind {
-            required: 1,
-            found: 0
-        }
+    let status = flags.status();
+    assert_eq!(status.latest_read, behind);
+    assert!(
+        matches!(status.served, Served::ControlPlane { version, .. } if version == Version::new(1)),
+        "what is served stays visible: {status:?}"
     );
     assert_eq!(
         gates(&flags),
@@ -203,7 +227,13 @@ async fn not_loaded_is_unready_for_both_gates_and_a_publication_satisfies_both()
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert!(matches!(flags.status(), SnapshotStatus::NotLoaded { .. }));
+    let status = flags.status();
+    assert!(matches!(status.served, Served::DeclaredBase { .. }));
+    assert_eq!(
+        status.latest_read,
+        LatestRead::NoRead,
+        "a failed read is not judged"
+    );
     assert_eq!(gates(&flags), (false, false));
     fake.set(serve(&handles, 1, SwitchState::Released, Toggle::On));
     sleep(POLL + SECOND).await;
@@ -211,7 +241,7 @@ async fn not_loaded_is_unready_for_both_gates_and_a_publication_satisfies_both()
     // A standby read never renews: the view ages into Stale but stays published.
     fake.set(failing(LoadCause::Standby));
     sleep(MAXIMUM_AGE + POLL).await;
-    assert_eq!(flags.status(), SnapshotStatus::Stale);
+    assert!(is_stale(flags.status()), "{:?}", flags.status());
     assert_eq!(gates(&flags), (true, false));
     let _ = running.shutdown().await;
 }
@@ -283,16 +313,19 @@ async fn a_confirming_read_clears_a_refusal_and_a_regression_outranks_corruption
     });
     sleep(POLL + SECOND).await;
     assert_eq!(
-        flags.status(),
-        SnapshotStatus::Regressed {
-            applied: Version::new(5),
-            observed: Version::new(4)
+        flags.status().latest_read,
+        LatestRead::Refused {
+            refusal: Refusal::Regressed {
+                applied: Version::new(5),
+                observed: Version::new(4)
+            },
+            observed: Version::new(4),
         }
     );
     // The applied snapshot read again confirms it and clears the refusal.
     fake.set(serve(&handles, 5, SwitchState::Engaged, Toggle::On));
     sleep(POLL).await;
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     let _ = running.shutdown().await;
 }
 
@@ -390,6 +423,8 @@ async fn a_drain_that_destroys_a_hung_run_publishes_nothing() {
     sleep(Duration::from_millis(5_500)).await;
     assert!(fake.reads() >= 2, "a second run is in flight");
     let _ = running.shutdown().await;
-    assert_eq!(flags.status(), SnapshotStatus::LoaderStopped);
-    assert!(!flags.shared.reader().has_publication());
+    let status = flags.status();
+    assert_eq!(status.loader, LoaderState::Stopped);
+    assert!(matches!(status.served, Served::DeclaredBase { .. }));
+    assert_eq!(gates(&flags), (false, false), "a stopped loader is unready");
 }

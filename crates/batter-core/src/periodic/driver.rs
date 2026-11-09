@@ -6,8 +6,8 @@
 use crate::lifecycle::StartupPhase;
 
 use super::{
-    History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, history::Cause,
-    schedule::Schedule,
+    History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, PeriodicOutcome,
+    history::Cause, schedule::Schedule,
 };
 use crate::{
     BoxError,
@@ -93,10 +93,17 @@ enum Due {
 /// recorded by the loop, which is the only place that observes them.
 enum Run {
     Succeeded,
+    Skipped,
     Recoverable,
     DeadlineExceeded,
     Interrupted,
     Fatal(Cause),
+}
+
+/// What a run that returned `Ok` did, already retained in bounded history.
+enum Ran {
+    Worked,
+    Skipped,
 }
 
 /// A run's own outcome, already retained in bounded history.
@@ -105,7 +112,7 @@ enum Classified {
     Fatal(Cause),
 }
 
-pub(super) async fn drive<F, Fut, E>(
+pub(super) async fn drive<F, Fut, S, E>(
     registration: super::Registration<F>,
     startup: ComponentStartup,
     admission: PeriodicAdmission,
@@ -113,7 +120,8 @@ pub(super) async fn drive<F, Fut, E>(
 ) -> Result<ComponentExit, BoxError>
 where
     F: FnMut(OperationContext) -> Fut,
-    Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
+    Fut: Future<Output = Result<S, PeriodicFailure<E>>>,
+    S: crate::periodic::PeriodicSuccess,
     E: std::error::Error + Send + Sync + 'static,
 {
     let super::Registration {
@@ -202,8 +210,9 @@ where
                     component = component.acknowledge(&history, &obligation);
                 }
             }
-            // Already retained while its run future was alive.
-            Run::Recoverable => {}
+            // Already retained while its run future was alive. A skipped run
+            // did no work, so it never acknowledges startup.
+            Run::Skipped | Run::Recoverable => {}
             Run::DeadlineExceeded => history.deadline_exceeded(),
             Run::Interrupted => {
                 history.stop_interrupted();
@@ -235,17 +244,24 @@ where
 /// The boundary's own outcomes, an expired run deadline and a stop
 /// interruption, are not visible here and carry no application cause; the loop
 /// counts those instead.
-async fn retained<Fut, E>(work: Fut, retention: Retention<'_>) -> Result<(), Classified>
+async fn retained<Fut, S, E>(work: Fut, retention: Retention<'_>) -> Result<Ran, Classified>
 where
-    Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
+    Fut: Future<Output = Result<S, PeriodicFailure<E>>>,
+    S: crate::periodic::PeriodicSuccess,
     E: Error + Send + Sync + 'static,
 {
     tokio::pin!(work);
     match work.as_mut().await {
-        Ok(()) => {
-            retention.history.succeeded();
-            Ok(())
-        }
+        Ok(success) => match success.outcome() {
+            PeriodicOutcome::Ran => {
+                retention.history.succeeded();
+                Ok(Ran::Worked)
+            }
+            PeriodicOutcome::Skipped => {
+                retention.history.skipped();
+                Ok(Ran::Skipped)
+            }
+        },
         Err(PeriodicFailure::Recoverable(error)) => {
             retention
                 .history
@@ -372,7 +388,7 @@ fn run_deadline(
     deadline
 }
 
-async fn execute<F, Fut, E>(
+async fn execute<F, Fut, S, E>(
     name: &'static str,
     work: &mut F,
     deadline: Instant,
@@ -382,7 +398,8 @@ async fn execute<F, Fut, E>(
 ) -> Run
 where
     F: FnMut(OperationContext) -> Fut,
-    Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
+    Fut: Future<Output = Result<S, PeriodicFailure<E>>>,
+    S: crate::periodic::PeriodicSuccess,
     E: Error + Send + Sync + 'static,
 {
     let initializing = initializing == StartupPhase::Initializing;
@@ -400,7 +417,8 @@ where
         _ = admission.draining(), if initializing => Run::Interrupted,
         _ = admission.stopping(), if !initializing => Run::Interrupted,
         result = &mut attempt => match result {
-            Ok(()) => Run::Succeeded,
+            Ok(Ran::Worked) => Run::Succeeded,
+            Ok(Ran::Skipped) => Run::Skipped,
             Err(OperationError::Failed(Classified::Recoverable)) => Run::Recoverable,
             Err(OperationError::Failed(Classified::Fatal(error))) => Run::Fatal(error),
             Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {

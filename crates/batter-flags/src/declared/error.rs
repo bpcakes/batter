@@ -47,12 +47,10 @@ pub enum ValueProblem {
 /// use batter_core::settings::SettingsSource;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// let hosted = catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-/// let catalog = catalog.build()?;
+/// let catalog = catalog.build();
 ///
 /// // A mistyped name under the prefix never resolves silently to a default.
 /// let source = SettingsSource::from_pairs([("FLAG_NEW_CHECKOT".into(), "on".into())])?;
@@ -68,6 +66,12 @@ pub enum ValueProblem {
 #[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum DeclaredError {
+    /// The source was narrowed by `select_dedicated` or `select_environment`,
+    /// in any layer, so names the catalog reads may have been dropped and
+    /// would read as absent. Resolve from the root's capture, before it
+    /// narrows its own settings.
+    #[error("the flags settings source was narrowed; resolve from the unnarrowed capture")]
+    NarrowedSource,
     /// The process kind was declared by another catalog.
     #[error("process kind `{kind}` belongs to another catalog")]
     ForeignKind {

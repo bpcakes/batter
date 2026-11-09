@@ -59,14 +59,12 @@ pub(crate) struct BaseInner {
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
 /// catalog.kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown).declare()?;
 ///
-/// let mut base = BaseBuilder::new(catalog.build()?, serving)?;
+/// let mut base = BaseBuilder::new(catalog.build(), serving)?;
 /// base.flag(new_checkout.key(), "on")?;
 /// let base = base.finish();
 ///
@@ -107,9 +105,7 @@ impl Base {
     /// };
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    /// let serving = catalog.process_kind("serving")?;
-    /// catalog.environment_class("hosted")?;
+    /// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     /// let halt = catalog
     ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
     ///     .declare()?;
@@ -121,7 +117,7 @@ impl Base {
     /// catalog.requires(&dependent, Toggle::On, &governed, Toggle::On)?;
     ///
     /// // Settings turn both on: engaging `halt` would serve `dependent` on alone.
-    /// let mut base = BaseBuilder::new(catalog.build()?, serving)?;
+    /// let mut base = BaseBuilder::new(catalog.build(), serving)?;
     /// let (dependent, governed) = (dependent.key().clone(), governed.key().clone());
     /// base.flag(&dependent, "on")?;
     /// base.flag(&governed, "on")?;

@@ -21,12 +21,12 @@ async fn count(f: &Fixture, sql: &'static str) -> i64 {
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn each_row_is_pruned_by_its_own_expiry_and_retention() {
     let f = Fixture::migrated().await;
-    let mut brief = process(Build::Base, "brief", 1, 1);
-    let mut kept = process(Build::Base, "kept", 1, 3600);
-    let mut live = process(Build::Base, "live", 3600, 1);
+    let mut brief = process(&f.store, Build::Base, "brief", 1, 1);
+    let mut kept = process(&f.store, Build::Base, "kept", 1, 3600);
+    let mut live = process(&f.store, Build::Base, "live", 3600, 1);
     for process in [&mut brief, &mut kept, &mut live] {
-        f.store
-            .heartbeat(process, &report(SnapshotReport::NotLoaded), deadline())
+        process
+            .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
             .await
             .unwrap();
     }
@@ -70,11 +70,11 @@ async fn each_row_is_pruned_by_its_own_expiry_and_retention() {
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn prune_deletes_only_catalogs_unreferenced_for_thirty_days() {
     let f = Fixture::migrated().await;
-    let mut old = process(Build::Base, "old", 60, 600);
-    let mut current = process(Build::Extended, "current", 60, 600);
+    let mut old = process(&f.store, Build::Base, "old", 60, 600);
+    let mut current = process(&f.store, Build::Extended, "current", 60, 600);
     for process in [&mut old, &mut current] {
-        f.store
-            .heartbeat(process, &report(SnapshotReport::NotLoaded), deadline())
+        process
+            .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
             .await
             .unwrap();
     }
@@ -112,8 +112,8 @@ async fn prune_deletes_only_catalogs_unreferenced_for_thirty_days() {
     );
 
     // A heartbeat refreshes a reference older than a day.
-    f.store
-        .heartbeat(&mut current, &report(SnapshotReport::NotLoaded), deadline())
+    current
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     assert_eq!(count(&f, "SELECT count(*) FROM flags.flag_catalogs WHERE last_referenced_at > clock_timestamp() - interval '1 minute'").await, 1);
@@ -125,9 +125,9 @@ async fn prune_deletes_only_catalogs_unreferenced_for_thirty_days() {
 async fn prune_deletes_at_most_its_limit_and_passes_locked_rows_by() {
     let f = Fixture::migrated().await;
     for n in 0..3 {
-        let mut brief = process(Build::Base, &format!("brief-{n}"), 1, 1);
-        f.store
-            .heartbeat(&mut brief, &report(SnapshotReport::NotLoaded), deadline())
+        let mut brief = process(&f.store, Build::Base, &format!("brief-{n}"), 1, 1);
+        brief
+            .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
             .await
             .unwrap();
     }

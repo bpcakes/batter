@@ -245,6 +245,22 @@ async fn fresh_pool(f: &Fixture) -> sqlx::PgPool {
         .unwrap()
 }
 
+async fn flags_schema_exists(f: &Fixture) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT FROM pg_catalog.pg_namespace WHERE nspname = 'flags')",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap()
+}
+
+async fn applied(f: &Fixture) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM flags._sqlx_migrations")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn migrate_refuses_a_session_whose_search_path_resolves_into_flags() {
@@ -252,16 +268,8 @@ async fn migrate_refuses_a_session_whose_search_path_resolves_into_flags() {
     database_search_path(&f, FLAGS_ON_PATH).await;
     let pool = fresh_pool(&f).await;
     let store = PooledStore::new(pool.clone(), timing());
-    // No flags schema yet: the migration runs, and the check after it sees
-    // the path resolve into the new schema.
-    let first = store.migrate(deadline()).await.unwrap_err();
-    assert_eq!(first.class(), ErrorClass::SearchPath);
-    let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM flags._sqlx_migrations")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(applied, 1);
-    // The schema exists now, so the check before migrating refuses as well.
+    // No flags schema yet. The probe creates one only inside a transaction it
+    // rolls back, so even the first migration is refused before it runs.
     // SQLx's migration lock is held elsewhere: only a refusal before the
     // migrator can answer `SearchPath`, since the migrator itself would wait
     // for the lock and fail on its lock budget.
@@ -269,23 +277,39 @@ async fn migrate_refuses_a_session_whose_search_path_resolves_into_flags() {
         use sqlx::migrate::Migrate;
         let mut holder = f.pool.acquire().await.unwrap();
         holder.lock().await.unwrap();
-        let again = store.migrate(deadline()).await.unwrap_err();
-        assert_eq!(again.class(), ErrorClass::SearchPath);
+        let first = store.migrate(deadline()).await.unwrap_err();
+        assert_eq!(first.class(), ErrorClass::SearchPath);
         holder.unlock().await.unwrap();
     }
+    let first = store.migrate(deadline()).await.unwrap_err();
+    assert_eq!(first.class(), ErrorClass::SearchPath);
+    assert!(
+        !flags_schema_exists(&f).await,
+        "a refused first migration creates and applies nothing"
+    );
     pool.close().await;
-    // A session whose path leaves `flags` out migrates, applying nothing twice.
+
+    // A session whose path leaves `flags` out migrates.
     database_search_path(&f, DEFAULT_PATH).await;
     let pool = fresh_pool(&f).await;
     PooledStore::new(pool.clone(), timing())
         .migrate(deadline())
         .await
         .unwrap();
-    let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM flags._sqlx_migrations")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(applied, 1);
+    assert_eq!(applied(&f).await, 1);
     pool.close().await;
+
+    // With the schema in place, the path is refused before the next
+    // migration as well, and nothing is applied twice.
+    database_search_path(&f, FLAGS_ON_PATH).await;
+    let pool = fresh_pool(&f).await;
+    let again = PooledStore::new(pool.clone(), timing())
+        .migrate(deadline())
+        .await
+        .unwrap_err();
+    assert_eq!(again.class(), ErrorClass::SearchPath);
+    assert_eq!(applied(&f).await, 1);
+    pool.close().await;
+    database_search_path(&f, DEFAULT_PATH).await;
     f.close().await;
 }

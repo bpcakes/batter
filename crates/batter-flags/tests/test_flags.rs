@@ -213,7 +213,7 @@ fn a_pin_taken_from_test_flags_replays_only_under_a_test_view() {
         .set(&h.fast_path, Toggle::On)
         .build()
         .unwrap();
-    let pin = test.view().pin(&h.fast_path);
+    let pin = test.view().pin(&h.fast_path).unwrap();
     // Under a test view it replays.
     let view = test.view();
     assert!(matches!(

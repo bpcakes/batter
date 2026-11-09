@@ -225,7 +225,7 @@ finished. The reserve neither ignores parent cancellation nor extends total time
 
 Run `PooledStore::migrate` as a finite command under a login that is neither the
 serving nor the operator login, before the build that needs it serves. A build
-deployed ahead of its migration reports `SnapshotStatus::SchemaBehind`, reads
+deployed ahead of its migration reports `LatestRead::SchemaBehind` in its status, reads
 nothing and skips its heartbeat until the migration runs; under
 `Gate::Published` it never becomes ready.
 

@@ -4,9 +4,9 @@
 //! source and the freshness its publisher computed. The reader is the
 //! publisher. In declared mode it has nothing to publish; for injected test
 //! flags it holds one fixed snapshot; behind a control plane it follows one
-//! immutable [`Published`] record, replaced whole by a single writer, so the
-//! evidence that decides freshness is always the evidence of the snapshot
-//! being served.
+//! immutable [`Record`], replaced whole by the single writer's [`Publisher`],
+//! so the evidence that decides freshness is always the evidence of the
+//! snapshot being served.
 //!
 //! Publication is a `tokio::sync::watch` channel. Capturing a view clones the
 //! `Arc` of the current record and releases the channel's read lock before it
@@ -20,23 +20,24 @@
 
 use std::{sync::Arc, time::Duration};
 
+#[cfg(any(test, feature = "test-support"))]
+use batter_flags_core::low_level::Snapshot;
 use batter_flags_core::{
     FlagKey, Freshness, PrePublication, SnapshotView,
-    low_level::{
-        Base, Disposition, HoldCause, Provenance, Published, Refusal, Snapshot, SnapshotRejection,
-        Standing, ViewError,
-    },
+    low_level::{Base, Candidate, Disposition, HoldCause, Publisher, Record, ViewError},
 };
 use tokio::{sync::watch, time::Instant};
 
-/// What the control plane has published, if anything.
-type Record = Option<Arc<Published<Instant>>>;
+/// What the control plane's publisher serves now.
+type Current = Arc<Record<Instant>>;
 
 /// Where a reader's views come from.
 enum Mode {
     /// Declared mode: the settings read at startup, no control plane.
     Declared,
-    /// Injected test flags: one fixed snapshot and freshness.
+    /// Injected test flags: one fixed snapshot and freshness, only in builds
+    /// with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     Test {
         snapshot: Arc<Snapshot>,
         freshness: Freshness,
@@ -53,11 +54,17 @@ enum Mode {
 }
 
 struct Live {
-    receiver: watch::Receiver<Record>,
+    record: LiveRecord,
     pre_publication: PrePublication,
+}
+
+/// The control plane's side of a live reader: the record it serves, whether
+/// its writer remains and how old a confirmation may be. Only a live reader
+/// has one, so no other mode answers these questions with a stand-in.
+#[derive(Clone)]
+pub(crate) struct LiveRecord {
+    receiver: watch::Receiver<Current>,
     maximum_age: Duration,
-    /// Age counts from registration until something is published.
-    registered: Instant,
 }
 
 /// The shared half of the reader: what every clone of the flags captures from.
@@ -69,14 +76,13 @@ pub(crate) struct Reader {
 /// The only way to publish: held by the component that loads snapshots, and
 /// dropped when it ends.
 ///
-/// It owns the publication protocol instead of leaving it to its caller. What
-/// readers serve is a [`Published`] record, and the writer derives every new
-/// record from the one being served, through [`Published::next`], so core's
-/// rules apply to every read: a version never goes backwards, a repeated version
-/// with other content is drift, and a file read can only be first. Nothing can
-/// publish a record the writer did not derive. The mutating methods take
-/// `&mut self`, so there is one writer at a time, and the record it derives
-/// from cannot change between reading it and replacing it.
+/// It owns core's [`Publisher`], which owns the publication protocol: what
+/// readers serve is the publisher's [`Record`], and every read goes through
+/// [`Publisher::judge`], so core's rules apply to every read: a version never
+/// goes backwards, a repeated version with other content is drift, a held
+/// kill switch keeps the state it served, and a file is only ever restored,
+/// first. Nothing can publish a record the publisher did not derive. The
+/// mutating methods take `&mut self`, so there is one writer at a time.
 #[cfg_attr(
     not(feature = "postgres"),
     allow(
@@ -85,10 +91,29 @@ pub(crate) struct Reader {
     )
 )]
 pub(crate) struct Writer {
-    sender: watch::Sender<Record>,
-    /// Where age counts from for what carries no clock of its own.
-    registered: Instant,
+    sender: watch::Sender<Current>,
+    publisher: Publisher<Instant>,
 }
+
+/// What ungated work may run on.
+#[cfg_attr(
+    not(feature = "runledger"),
+    allow(
+        dead_code,
+        reason = "only the job surface, behind `runledger`, defers ungated work"
+    )
+)]
+pub(crate) enum WorkCapture {
+    /// A view to run on.
+    Serve(SnapshotView),
+    /// Nothing is published and the load policy withholds readiness.
+    Unready,
+}
+
+/// The run's deadline passed while its read was judged, so nothing was
+/// published or recorded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Late;
 
 impl Reader {
     /// A reader for declared mode.
@@ -100,6 +125,7 @@ impl Reader {
     }
 
     /// A reader of one fixed snapshot, as the fixture path serves it.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn test(base: Base, snapshot: Arc<Snapshot>, freshness: Freshness) -> Self {
         Self {
             base,
@@ -110,10 +136,26 @@ impl Reader {
         }
     }
 
-    /// A reader over a control plane, and the writer that publishes to it.
+    /// A reader over a control plane that has published nothing, and the
+    /// writer that publishes to it.
     ///
     /// `registered` is where age counts from until the first publication,
     /// and `maximum_age` is how long a confirmation keeps a view fresh.
+    #[cfg(test)]
+    pub(crate) fn live(
+        base: Base,
+        pre_publication: PrePublication,
+        maximum_age: Duration,
+        registered: Instant,
+    ) -> (Writer, Self) {
+        let publisher = Publisher::new(&base.validation_scope(), registered);
+        let (writer, reader, _) = Self::publishing(base, pre_publication, maximum_age, publisher);
+        (writer, reader)
+    }
+
+    /// A reader over a control plane whose publisher already exists, as one
+    /// restored from the last-good file, the writer that owns it and the
+    /// control plane's side of the reader.
     #[cfg_attr(
         not(feature = "postgres"),
         allow(
@@ -121,23 +163,25 @@ impl Reader {
             reason = "only the control plane, behind `postgres`, publishes outside tests"
         )
     )]
-    pub(crate) fn live(
+    pub(crate) fn publishing(
         base: Base,
         pre_publication: PrePublication,
         maximum_age: Duration,
-        registered: Instant,
-    ) -> (Writer, Self) {
-        let (sender, receiver) = watch::channel(None);
+        publisher: Publisher<Instant>,
+    ) -> (Writer, Self, LiveRecord) {
+        let (sender, receiver) = watch::channel(Arc::new(publisher.record().clone()));
+        let record = LiveRecord {
+            receiver,
+            maximum_age,
+        };
         let reader = Self {
             base,
             mode: Mode::Live(Live {
-                receiver,
+                record: record.clone(),
                 pre_publication,
-                maximum_age,
-                registered,
             }),
         };
-        (Writer { sender, registered }, reader)
+        (Writer { sender, publisher }, reader, record)
     }
 
     /// The base every view of this reader is over.
@@ -160,6 +204,46 @@ impl Reader {
         self.capture_at(Instant::now())
     }
 
+    /// One view for work that is not gated by a switch, unless the load
+    /// policy withholds readiness and nothing is published: such work has no
+    /// state to run on, and would otherwise run on the declared defaults the
+    /// process is not yet ready to serve. Decided from the same record the
+    /// view would be built from.
+    #[cfg_attr(
+        not(feature = "runledger"),
+        allow(
+            dead_code,
+            reason = "only the job surface, behind `runledger`, defers ungated work"
+        )
+    )]
+    pub(crate) fn capture_for_work(&self) -> WorkCapture {
+        match &self.mode {
+            Mode::Live(live) => {
+                let record = live.record.current();
+                match (&*record, live.pre_publication) {
+                    (Record::Unpublished(_), PrePublication::Unready) => WorkCapture::Unready,
+                    (Record::Unpublished(_), PrePublication::ServeDefaults)
+                    | (Record::Published(_), _) => {
+                        let now = Instant::now();
+                        let view = self
+                            .base
+                            .record_view(&record, live.pre_publication, |origin| {
+                                live.record.recent(*origin, now)
+                            })
+                            .unwrap_or_else(|_: ViewError| {
+                                self.base
+                                    .not_loaded_view(PrePublication::Unready, Freshness::Stale)
+                            });
+                        WorkCapture::Serve(view)
+                    }
+                }
+            }
+            Mode::Declared => WorkCapture::Serve(self.capture()),
+            #[cfg(any(test, feature = "test-support"))]
+            Mode::Test { .. } => WorkCapture::Serve(self.capture()),
+        }
+    }
+
     /// One view, with freshness judged at `now`.
     ///
     /// A snapshot that no longer matches this reader's base cannot happen by
@@ -169,6 +253,7 @@ impl Reader {
     pub(crate) fn capture_at(&self, now: Instant) -> SnapshotView {
         let view = match &self.mode {
             Mode::Declared => Ok(self.base.declared_view()),
+            #[cfg(any(test, feature = "test-support"))]
             Mode::Test {
                 snapshot,
                 freshness,
@@ -180,21 +265,16 @@ impl Reader {
                 .not_loaded_view(PrePublication::Unready, Freshness::Stale)
         })
     }
+}
 
-    /// Whether the control plane's writer has been dropped, so nothing will
-    /// ever publish again. Declared and test readers have no writer to lose.
-    #[cfg_attr(
-        not(feature = "postgres"),
-        allow(
-            dead_code,
-            reason = "only the control plane, behind `postgres`, publishes outside tests"
-        )
-    )]
-    pub(crate) fn writer_gone(&self) -> bool {
-        match &self.mode {
-            Mode::Live(live) => live.receiver.has_changed().is_err(),
-            Mode::Declared | Mode::Test { .. } => false,
-        }
+impl Live {
+    fn capture(&self, base: &Base, now: Instant) -> Result<SnapshotView, ViewError> {
+        // Clone the `Arc`; the read lock is released at the end of the
+        // statement, before any evaluation.
+        let record = self.record.current();
+        base.record_view(&record, self.pre_publication, |origin| {
+            self.record.recent(*origin, now)
+        })
     }
 }
 
@@ -205,37 +285,28 @@ impl Reader {
         reason = "only the control plane, behind `postgres`, publishes outside tests"
     )
 )]
-/// What a control-plane reader serves, for status and presence.
-pub(crate) enum Publication {
-    /// Nothing is published, and this long has passed since registration.
-    Unpublished { since_registration: Duration },
-    /// A record is published: what it stands on, and whether its age is
-    /// within the maximum.
-    Published { standing: Standing, fresh: bool },
-}
+impl LiveRecord {
+    /// The record being served.
+    pub(crate) fn current(&self) -> Current {
+        self.receiver.borrow().clone()
+    }
 
-#[cfg_attr(
-    not(feature = "postgres"),
-    allow(
-        dead_code,
-        reason = "only the control plane, behind `postgres`, publishes outside tests"
-    )
-)]
-impl Reader {
-    /// The record being served, behind a control plane.
-    pub(crate) fn record(&self) -> Record {
-        match &self.mode {
-            Mode::Live(live) => live.receiver.borrow().clone(),
-            Mode::Declared | Mode::Test { .. } => None,
-        }
+    /// Whether the writer has been dropped, so nothing will ever publish
+    /// again.
+    pub(crate) fn writer_gone(&self) -> bool {
+        self.receiver.has_changed().is_err()
+    }
+
+    /// The freshness a view of `record` captured at `now` has.
+    pub(crate) fn freshness(&self, record: &Record<Instant>, now: Instant) -> Freshness {
+        record.freshness(|origin| self.recent(*origin, now))
     }
 
     /// The held keys of the record being served, as a view captured at
     /// `now` holds them, with why each is held; empty before anything is
     /// published. A stale view can hold more than a fresh one.
     pub(crate) fn held_at(&self, now: Instant) -> Vec<(FlagKey, HoldCause)> {
-        self.record()
-            .map_or_else(Vec::new, |record| self.held_in(&record, now))
+        self.held_in(&self.current(), now)
     }
 
     /// The held keys of `record`, as a view of it captured at `now` holds
@@ -243,68 +314,20 @@ impl Reader {
     /// own holds.
     pub(crate) fn held_in(
         &self,
-        record: &Published<Instant>,
+        record: &Record<Instant>,
         now: Instant,
     ) -> Vec<(FlagKey, HoldCause)> {
-        let freshness = match &self.mode {
-            Mode::Live(live) => live.freshness(*record.age_origin(), now),
-            Mode::Declared | Mode::Test { .. } => Freshness::Fresh,
+        let Some(snapshot) = record.snapshot() else {
+            return Vec::new();
         };
-        record
-            .snapshot()
-            .held(freshness)
+        snapshot
+            .held(self.freshness(record, now))
             .map(|(key, cause)| (key.clone(), cause))
             .collect()
     }
 
-    /// Whether anything, a control-plane read or a file, is published.
-    pub(crate) fn has_publication(&self) -> bool {
-        self.record().is_some()
-    }
-
-    /// What is served at `now`. Declared and test readers have no control
-    /// plane and report as never published.
-    pub(crate) fn publication(&self, now: Instant) -> Publication {
-        match &self.mode {
-            Mode::Live(live) => match live.receiver.borrow().clone() {
-                Some(record) => Publication::Published {
-                    standing: record.authority().standing(),
-                    fresh: live.recent(*record.age_origin(), now),
-                },
-                None => Publication::Unpublished {
-                    since_registration: now.saturating_duration_since(live.registered),
-                },
-            },
-            Mode::Declared | Mode::Test { .. } => Publication::Unpublished {
-                since_registration: Duration::ZERO,
-            },
-        }
-    }
-}
-
-impl Live {
-    fn capture(&self, base: &Base, now: Instant) -> Result<SnapshotView, ViewError> {
-        // Clone the `Arc`; the read lock is released at the end of the
-        // statement, before any evaluation.
-        let record: Record = self.receiver.borrow().clone();
-        match record {
-            Some(published) => base.published_view(&published, |origin| self.recent(*origin, now)),
-            None => Ok(
-                base.not_loaded_view(self.pre_publication, self.freshness(self.registered, now))
-            ),
-        }
-    }
-
     fn recent(&self, origin: Instant, now: Instant) -> bool {
         now.saturating_duration_since(origin) <= self.maximum_age
-    }
-
-    fn freshness(&self, origin: Instant, now: Instant) -> Freshness {
-        if self.recent(origin, now) {
-            Freshness::Fresh
-        } else {
-            Freshness::Stale
-        }
     }
 }
 
@@ -316,51 +339,53 @@ impl Live {
     )
 )]
 impl Writer {
-    /// Publishes what one read returned, and says what that did.
+    /// Judges one read and publishes it unless the run's `deadline` passed
+    /// while it was judged, and says what that did.
     ///
-    /// `at` is the instant the read vouches for. For a control-plane snapshot it
-    /// is where age counts from. A snapshot read from the last-good file cannot
-    /// vouch for itself, because the file carries no clock: its age counts from
-    /// registration whatever `at` says, so a file never makes the process look
-    /// fresher than it is.
+    /// The read vouches for the instant it is published at. Core's publisher
+    /// counts a file's age from registration and refuses a file offered as a
+    /// read. A snapshot that is [`Refused`](Disposition::Refused) changes only
+    /// the recorded refusal: the snapshot served and its age are untouched.
     ///
-    /// A snapshot that is [`Refused`](Disposition::Refused) changes only the
-    /// recorded refusal: the snapshot served and its age are untouched.
-    pub(crate) fn apply(&mut self, snapshot: Arc<Snapshot>, at: Instant) -> Disposition {
-        let (next, disposition) = match self.published() {
-            None => {
-                let origin = match snapshot.provenance() {
-                    Provenance::LastGoodFile => self.registered,
-                    Provenance::ControlPlane => at,
-                };
-                (Published::first(snapshot, origin), Disposition::Applied)
-            }
-            Some(current) => current.next(snapshot, at),
-        };
-        self.install(next);
+    /// # Errors
+    ///
+    /// [`Late`] when the deadline passed while the read was judged: nothing is
+    /// published or recorded.
+    pub(crate) fn read(
+        &mut self,
+        candidate: Candidate,
+        deadline: Instant,
+    ) -> Result<Disposition, Late> {
+        let judged = self.publisher.judge(candidate);
+        let at = Instant::now();
+        if at >= deadline {
+            return Err(Late);
+        }
+        let disposition = judged.publish(at);
+        self.install();
+        Ok(disposition)
+    }
+
+    /// Judges and publishes one read that vouches for `at`, with no deadline.
+    #[cfg(test)]
+    pub(crate) fn read_at(&mut self, candidate: Candidate, at: Instant) -> Disposition {
+        let disposition = self.publisher.judge(candidate).publish(at);
+        self.install();
         disposition
     }
 
-    /// Records that a read was structurally corrupt, so it never became a
-    /// snapshot to judge. The refusal is carried by the record being served;
-    /// before the first publication there is none to carry it, and the caller
-    /// keeps the returned disposition.
-    pub(crate) fn reject(&mut self, rejection: SnapshotRejection) -> Disposition {
-        if let Some(current) = self.published() {
-            self.install(current.rejected(rejection));
-        }
-        Disposition::Refused(Refusal::Rejected(rejection))
-    }
-
     /// The record readers capture now.
-    pub(crate) fn published(&self) -> Record {
-        self.sender.borrow().clone()
+    #[cfg(test)]
+    pub(crate) fn published(&self) -> &Record<Instant> {
+        self.publisher.record()
     }
 
-    fn install(&mut self, record: Published<Instant>) {
+    fn install(&mut self) {
         // `send_replace` returns the replaced record once its lock is
         // released; it is dropped here, never under the lock.
-        let replaced = self.sender.send_replace(Some(Arc::new(record)));
+        let replaced = self
+            .sender
+            .send_replace(Arc::new(self.publisher.record().clone()));
         drop(replaced);
     }
 }

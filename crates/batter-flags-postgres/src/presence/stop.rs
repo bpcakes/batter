@@ -1,6 +1,6 @@
 //! Recording a process stop: the transition that consumes a presence.
 use super::ProcessPresence;
-use crate::{ErrorClass, PooledStore, StoreError};
+use crate::{ErrorClass, StoreError};
 use tokio::time::Instant;
 
 /// Why a stop was not recorded, and whether the process may still be Live.
@@ -53,18 +53,17 @@ pub enum StopOutcome {
     NotRegistered,
 }
 
-impl PooledStore {
-    /// Records that the process stopped, consuming its presence. Its expiry
-    /// is left as it was, so a stopped row is pruned on the same schedule as
-    /// a silent one. The row is locked and read in the statement that marks
-    /// it, so the outcome describes the row it changed.
-    pub async fn stop(
-        &self,
-        presence: ProcessPresence,
-        deadline: Instant,
-    ) -> Result<StopOutcome, StopFailure> {
+impl ProcessPresence {
+    /// Records, in the store that issued this presence, that the process
+    /// stopped, consuming the presence. Its expiry is left as it was, so a
+    /// stopped row is pruned on the same schedule as a silent one. The row is
+    /// locked and read in the statement that marks it, so the outcome
+    /// describes the row it changed.
+    pub async fn stop(self, deadline: Instant) -> Result<StopOutcome, StopFailure> {
+        let presence = self;
         let process = presence.process.as_uuid();
-        let marked = self
+        let store = presence.store.clone();
+        let marked = store
             .atomically(deadline, async |sql| {
                 let stopped: Option<bool> = sqlx::query_scalar("WITH target AS (SELECT process_id, stopped_at IS NOT NULL AS stopped FROM flags.flag_processes WHERE process_id = $1 FOR UPDATE), \
                     marked AS (UPDATE flags.flag_processes p SET stopped_at = clock_timestamp() FROM target WHERE p.process_id = target.process_id AND NOT target.stopped RETURNING p.process_id) \

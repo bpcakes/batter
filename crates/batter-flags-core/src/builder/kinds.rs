@@ -116,8 +116,8 @@ fn checked_draft<'b, T: FlagValue>(
 ///
 /// ```compile_fail,E0061
 /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// let _flag = builder.release_flag("new_checkout", Toggle::Off).declare();
 /// ```
 ///
@@ -217,9 +217,7 @@ impl<T: FlagValue, O, E, G> ReleaseDeclaration<'_, T, O, E, G> {
 /// use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// builder.process_kind("serving")?;
-/// let development = builder.environment_class("development")?;
+/// let (mut builder, _, development) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "development")?;
 /// builder.environment_class("hosted")?;
 ///
 /// let ledger_v2 = builder
@@ -237,7 +235,7 @@ impl<T: FlagValue, O, E, G> ReleaseDeclaration<'_, T, O, E, G> {
 /// builder.both_or_none(&ledger_audit, &ledger_v2)?;
 /// builder.requires(&debug_panel, Toggle::On, &ledger_audit, Toggle::On)?;
 /// builder.conflicts(&debug_panel, Toggle::On, &ledger_v2, Toggle::Off)?;
-/// let catalog = builder.build()?;
+/// let catalog = builder.build();
 /// assert_eq!(catalog.declaration("debug_panel").unwrap().invariants().len(), 2);
 /// # Ok(())
 /// # }
@@ -247,8 +245,8 @@ impl<T: FlagValue, O, E, G> ReleaseDeclaration<'_, T, O, E, G> {
 ///
 /// ```compile_fail,E0599
 /// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, Toggle};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// let halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 ///     .declare()
@@ -289,8 +287,8 @@ impl<'b, T: FlagValue, E> ModeDeclaration<'b, T, Everyone, E> {
     ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
-    /// # let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    /// # let serving = builder.process_kind("serving").unwrap();
+    /// # let (mut builder, serving, _hosted) =
+    /// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     /// # let worker = builder.process_kind("worker").unwrap();
     /// let _ = builder
     ///     .mode_flag("strict_mode", Toggle::Off)
@@ -329,7 +327,7 @@ impl<T: FlagValue, E> ModeDeclaration<'_, T, Restricted, E> {
     ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
-    /// # let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+    /// # let (mut builder, _serving, _hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     /// # let worker = builder.process_kind("worker").unwrap();
     /// let _ = builder
     ///     .mode_flag("strict_mode", Toggle::Off)
@@ -368,8 +366,8 @@ impl<T: FlagValue, O, E> ModeDeclaration<'_, T, O, E> {
 ///
 /// ```compile_fail,E0599
 /// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 ///     .percentage(50)
@@ -378,8 +376,8 @@ impl<T: FlagValue, O, E> ModeDeclaration<'_, T, O, E> {
 ///
 /// ```compile_fail,E0599
 /// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// # let worker = builder.process_kind("worker").unwrap();
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
@@ -390,8 +388,8 @@ impl<T: FlagValue, O, E> ModeDeclaration<'_, T, O, E> {
 ///
 /// ```compile_fail,E0599
 /// # use batter_flags_core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule};
-/// # let mut builder =
-/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// # let (mut builder, _serving, _hosted) =
+/// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// # let development = builder.environment_class("development").unwrap();
 /// let _halt = builder
 ///     .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)

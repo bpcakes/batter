@@ -2,9 +2,9 @@
 
 use batter_flags_core::{FlagKey, Version};
 use batter_flags_postgres::{
-    Actor, Change, ChangeReason, Coordination, Declaration, Expiry, FlipPolicy, InvariantPolicy,
-    KeyListing, PooledStore, Precondition, ProcessState, Reference, SnapshotReport, StoreError,
-    Stored, WritePolicy,
+    Actor, Change, ChangeReason, Continuation, Coordination, Declaration, Expiry, FlipPolicy,
+    InvariantPolicy, KeyListing, PooledStore, Precondition, ProcessState, Reference,
+    SnapshotReport, StoreError, Stored, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
@@ -206,9 +206,19 @@ async fn list(
 }
 
 async fn history(store: &PooledStore, deadline: Instant, key: &FlagKey) -> Result<Report, Failure> {
-    let entries: Vec<Value> = store
-        .history(Some(key), Version::new(0), deadline)
-        .await?
+    // Every page, so the newest event, the one an uncertain write points the
+    // operator to, is always shown.
+    let mut events = Vec::new();
+    let mut after = Version::new(0);
+    loop {
+        let page = store.history(Some(key), after, deadline).await?;
+        events.extend(page.entries);
+        match page.next {
+            Continuation::Complete => break,
+            Continuation::After(last) => after = last,
+        }
+    }
+    let entries: Vec<Value> = events
         .iter()
         .map(|entry| {
             json!({

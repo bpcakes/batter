@@ -59,11 +59,10 @@ impl FlagValue for Long {
 
 /// The revision of a catalog that declares one mode flag.
 fn single<T: FlagValue>(key: &str, default: T) -> Revision {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     builder.mode_flag(key, default).declare().unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     base(catalog, &serving, &[]).revision()
 }
 
@@ -73,10 +72,9 @@ fn revisions_frame_the_key_apart_from_the_variant() {
     assert_eq!(single("a", Long).to_hex(), KEY_A_VARIANT_BC);
     assert_ne!(KEY_AB_VARIANT_C, KEY_A_VARIANT_BC);
 
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
-    let empty = base(builder.build().unwrap(), &serving, &[]);
+    let (builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
+    let empty = base(builder.build(), &serving, &[]);
     assert_eq!(empty.revision().to_hex(), EMPTY);
     assert_eq!(empty.shared_revision().to_hex(), EMPTY);
 }
@@ -305,9 +303,7 @@ fn two_processes_at_one_version_serve_identical_shared_values_whatever_their_sta
     let a_early = snapshot(&a_base, 3, early(&a));
     let a_late = Arc::new(
         Snapshot::validate(
-            &scope,
-            Candidate::new(&scope)
-                .at(version(9))
+            Candidate::new(&scope, version(9))
                 .rows(latest(&a))
                 .carrying(&a_early)
                 .unwrap(),
@@ -362,9 +358,7 @@ fn the_held_kill_switch_is_the_one_history_dependent_exception() {
     );
     let a_late = Arc::new(
         Snapshot::validate(
-            &scope,
-            Candidate::new(&scope)
-                .at(version(9))
+            Candidate::new(&scope, version(9))
                 .rows(held(&a, 9))
                 .carrying(&saw_engaged)
                 .unwrap(),

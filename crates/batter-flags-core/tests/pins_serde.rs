@@ -104,7 +104,7 @@ fn a_pin_a_view_took_stores_and_replays_unchanged() {
     let view = base
         .control_plane_view(&published, Freshness::Fresh)
         .unwrap();
-    let pin = view.pin(&h.checkout_style);
+    let pin = view.pin(&h.checkout_style).unwrap();
     let stored = serde_json::to_value(&pin).unwrap();
     assert_eq!(stored, envelope(control_plane()));
     let replayed: Pinned<Checkout> = serde_json::from_value(stored).unwrap();

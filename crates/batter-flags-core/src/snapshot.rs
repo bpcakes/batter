@@ -107,18 +107,19 @@ impl HoldCause {
 /// Why a whole candidate was rejected: structural corruption only.
 ///
 /// No variant carries text from the candidate.
+///
+/// Migration: `SnapshotRejection::MissingVersion` is gone, because a
+/// candidate takes its version when it is made; a match drops its arm.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SnapshotRejection {
-    /// The candidate carries no version.
-    #[error("the candidate carries no version")]
-    MissingVersion,
     /// A row repeats the key of an earlier row.
     #[error("row {row} repeats the key of an earlier row")]
     DuplicateKey {
         /// The position of the repeating row.
         row: usize,
     },
-    /// The candidate was read for another scope.
+    /// The candidate was read for another scope than the
+    /// [`Publisher`](crate::low_level::Publisher) it was offered to.
     #[error("the candidate was read for another scope")]
     ForeignScope,
 }
@@ -227,19 +228,16 @@ pub(crate) enum EntryState {
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-/// let base = BaseBuilder::new(catalog.build()?, serving)?.finish();
+/// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
 ///
 /// let scope = base.validation_scope();
-/// let candidate = Candidate::new(&scope)
-///     .at(Version::new(7))
+/// let candidate = Candidate::new(&scope, Version::new(7))
 ///     .row(CandidateRow::flag(&new_checkout, Toggle::On, Version::new(7)))
 ///     .row(CandidateRow::new("retired_flag", "mode", "toggle", Version::new(3), r#"{"encoding":1,"variant":"on"}"#));
-/// let snapshot = Snapshot::validate(&scope, candidate)?;
+/// let snapshot = Snapshot::validate(candidate)?;
 ///
 /// assert_eq!(snapshot.version(), Version::new(7));
 /// assert_eq!(snapshot.unknown(), 1); // a key no declaration has is counted, never held
@@ -262,7 +260,11 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Validates `candidate` against `scope`.
+    /// Validates `candidate` against the scope it was read for.
+    ///
+    /// Migration: `Snapshot::validate(&scope, candidate)` is
+    /// `Snapshot::validate(candidate)`: a candidate keeps its scope, so a
+    /// second one could only disagree.
     ///
     /// A row is ignored when it names no declaration (counted as
     /// [`unknown`](Self::unknown)) or names a declaration this process kind
@@ -285,10 +287,7 @@ impl Snapshot {
     /// # Errors
     ///
     /// [`SnapshotRejection`] for a candidate that is structurally corrupt.
-    pub fn validate(
-        scope: &ValidationScope,
-        candidate: Candidate,
-    ) -> Result<Self, SnapshotRejection> {
+    pub fn validate(candidate: Candidate) -> Result<Self, SnapshotRejection> {
         let Candidate {
             base,
             version,
@@ -296,10 +295,6 @@ impl Snapshot {
             rows,
             carried,
         } = candidate;
-        if !Arc::ptr_eq(&base, &scope.base) {
-            return Err(SnapshotRejection::ForeignScope);
-        }
-        let version = version.ok_or(SnapshotRejection::MissingVersion)?;
         let mut keys = HashSet::with_capacity(rows.len());
         if let Some(row) = rows.iter().position(|row| !keys.insert(&*row.key)) {
             return Err(SnapshotRejection::DuplicateKey { row });

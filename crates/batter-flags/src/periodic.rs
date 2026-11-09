@@ -2,17 +2,14 @@
 //!
 //! [`Flags::gate_periodic_in`] captures one view per scheduled run and admits
 //! application work only on an open gate. Before the first publication and
-//! while tripped, it records a skip without invoking the work factory. Core
-//! still owns the serial schedule, run budgets, failure retention and shutdown.
+//! while tripped, the run returns core's `PeriodicOutcome::Skipped` without
+//! invoking the work factory. Core owns the serial schedule, run budgets,
+//! failure retention, shutdown and the skip count, kept apart from successes.
 //! A switch change reaches the next run; it does not cancel an admitted run.
 
 use std::{
     future::Future,
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -21,8 +18,8 @@ use batter_core::{
     ConfigurationError, RegistrationError,
     operation::OperationContext,
     periodic::{
-        PeriodicFailure, PeriodicPolicy, PeriodicReader, PeriodicShutdown, PeriodicStartup,
-        PeriodicSummary, register_periodic_in,
+        PeriodicFailure, PeriodicOutcome, PeriodicPolicy, PeriodicReader, PeriodicShutdown,
+        PeriodicStartup, PeriodicSummary, register_skippable_in,
     },
     registration::RegistrationTarget,
 };
@@ -48,7 +45,8 @@ use crate::{Flags, flags::gate::SwitchGate};
 /// ```
 ///
 /// Support work required for native settlement must register ungated through
-/// [`register_periodic_in`]. A tripped switch must not withhold that work
+/// [`register_periodic_in`](batter_core::periodic::register_periodic_in). A
+/// tripped switch must not withhold that work
 /// during drain, so support-through-drain is also excluded:
 ///
 /// ```compile_fail,E0061
@@ -125,15 +123,17 @@ pub enum GateRegistrationError {
 
 /// Read-only evidence for one gated component; owns no work or stop authority.
 ///
-/// Cloning or dropping a reader does not affect execution. Core's summary
-/// counts skipped runs as successes; [`Self::skipped`] distinguishes them from
-/// successful application work. The skip count is retained by these readers,
-/// independently of the runner, and is not added to core's completion report.
+/// Cloning or dropping a reader does not affect execution. Skips are core's
+/// own evidence, counted under the same lock as every other run and kept in
+/// the completion report, so a skip is never counted as a success.
+///
+/// Migration: `snapshot().succeeded` counted skipped runs too, beside a count
+/// these readers kept apart from core's; it now counts only runs whose work
+/// succeeded, and `snapshot().skipped` holds the skips.
 /// See [`Flags::gate_periodic_in`] for usage.
 #[derive(Clone, Debug)]
 pub struct GatedPeriodicReader {
     periodic: PeriodicReader,
-    skipped: Arc<AtomicU64>,
 }
 
 impl GatedPeriodicReader {
@@ -142,18 +142,16 @@ impl GatedPeriodicReader {
         self.periodic.name()
     }
 
-    /// Core's current retained evidence, including skipped runs in `succeeded`.
-    ///
-    /// This and [`Self::skipped`] are separate observations while work runs;
-    /// neither reading is an atomic snapshot of both counters.
+    /// Core's current retained evidence: `succeeded` counts runs whose work
+    /// succeeded and `skipped` the runs the gate kept out.
     pub fn snapshot(&self) -> PeriodicSummary {
         self.periodic.snapshot()
     }
 
     /// Runs skipped while awaiting publication or tripped, saturating at
-    /// `u64::MAX`. Reading or cloning never clears the count.
+    /// `u64::MAX`; the same as `snapshot().skipped`.
     pub fn skipped(&self) -> u64 {
-        self.skipped.load(Ordering::Relaxed)
+        self.periodic.snapshot().skipped
     }
 }
 
@@ -162,8 +160,9 @@ impl Flags {
     ///
     /// Only an open gate invokes `work`, with the same frozen view used to
     /// admit it. Awaiting publication and tripped readings both skip, even
-    /// when pre-publication reads otherwise serve defaults. Skips count as
-    /// core successes, not proof that application maintenance succeeded.
+    /// when pre-publication reads otherwise serve defaults. Core counts skips
+    /// in `PeriodicSummary::skipped` and the completion report, never as
+    /// successes, so `succeeded` counts only runs whose work succeeded.
     /// A later switch change does not interrupt an active run. Core destroys
     /// that future on its deadline or drain, with no remote rollback claim.
     /// Ordinary errors remain recoverable; [`PeriodicFailure::Fatal`] drains.
@@ -184,12 +183,10 @@ impl Flags {
     /// use std::{convert::Infallible, time::Duration};
     /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
     /// # async fn main() -> Result<(), batter_core::BoxError> {
-    /// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    /// let serving = catalog.process_kind("serving")?;
-    /// let hosted = catalog.environment_class("hosted")?;
+    /// let (mut catalog, serving, hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     /// let halt = catalog.kill_switch("prune_halt", SafeState::Engaged, StaleRule::HoldLastKnown).declare()?;
     /// let source = SettingsSource::from_pairs([])?;
-    /// let flags = declared::resolve(catalog.build()?, &source, serving, hosted, CivilDate::new(2026, 11, 6)?)?.into_flags();
+    /// let flags = declared::resolve(catalog.build(), &source, serving, hosted, CivilDate::new(2026, 11, 6)?)?.into_flags();
     /// let second = Duration::from_secs(1);
     /// let mut supervisor = Supervisor::new(ShutdownBudget::new(
     ///     second, second, second, CleanupBudget::new(second, second, second)?,
@@ -202,9 +199,10 @@ impl Flags {
     /// running.status().wait_ready().await.unwrap();
     /// let success = running.shutdown_checked().await?;
     /// assert_eq!(reader.name(), "storage.pruning");
-    /// assert!(reader.skipped() >= 1);
-    /// assert_eq!(reader.snapshot().succeeded, reader.skipped());
-    /// assert_eq!(success.report().periodic[0].summary.succeeded, reader.skipped());
+    /// let summary = &success.report().periodic[0].summary;
+    /// assert!(summary.skipped >= 1);
+    /// assert_eq!(summary.succeeded, 0, "a skip is not a success");
+    /// assert_eq!(reader.skipped(), summary.skipped);
     /// # Ok(()) }
     /// ```
     ///
@@ -240,13 +238,10 @@ impl Flags {
                 key: switch.key().clone(),
             },
         })?;
-        let skipped = Arc::new(AtomicU64::new(0));
-        let count = skipped.clone();
-        let periodic = register_periodic_in(target, name, policy.inner, move |context| {
+        let periodic = register_skippable_in(target, name, policy.inner, move |context| {
             let entered = gate.enter();
             match entered.reading {
                 GateReading::AwaitingPublication(_) | GateReading::Tripped(_) => {
-                    record_skip(&count);
                     Invocation::Skipped
                 }
                 GateReading::Open(_) => Invocation::Work {
@@ -254,7 +249,7 @@ impl Flags {
                 },
             }
         })?;
-        Ok(GatedPeriodicReader { periodic, skipped })
+        Ok(GatedPeriodicReader { periodic })
     }
 }
 
@@ -273,20 +268,16 @@ impl<F, E> Future for Invocation<F>
 where
     F: Future<Output = Result<(), PeriodicFailure<E>>>,
 {
-    type Output = Result<(), PeriodicFailure<E>>;
+    type Output = Result<PeriodicOutcome, PeriodicFailure<E>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            InvocationProjection::Skipped => Poll::Ready(Ok(())),
-            InvocationProjection::Work { future } => future.poll(cx),
+            InvocationProjection::Skipped => Poll::Ready(Ok(PeriodicOutcome::Skipped)),
+            InvocationProjection::Work { future } => future
+                .poll(cx)
+                .map(|result| result.map(|()| PeriodicOutcome::Ran)),
         }
     }
-}
-
-fn record_skip(count: &AtomicU64) {
-    let _ = count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-        value.checked_add(1)
-    });
 }
 
 #[cfg(test)]

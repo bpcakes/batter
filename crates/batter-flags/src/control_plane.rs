@@ -85,7 +85,7 @@ use batter_core::{
     readiness::ReadinessCondition,
     registration::RegistrationTarget,
 };
-use batter_flags_core::low_level::Refusal;
+use batter_flags_core::low_level::{Base, Publisher, Refusal, Restored, ValidationScope};
 use batter_flags_postgres::{PooledStore, ProcessId, StoreTiming};
 use batter_sqlx::PgProfiledPool;
 use tokio::time::Instant;
@@ -93,19 +93,27 @@ use tokio::time::Instant;
 pub use self::{
     listen::ListenEndpoint,
     presence::{ApplicationName, BuildId, HeartbeatCadence, Presence, PresenceError},
-    status::{Gate, LoadCause, RejectionCause, SnapshotStatus},
-    timing::{LoadPolicy, RefreshTiming},
+    status::{Gate, LatestRead, LoadCause, LoaderState, Served, SnapshotStatus},
+    timing::{LoadPolicy, RefreshTiming, WakeSpacingTooLong},
 };
 use self::{refresh::Persistence, source::LoadSource, status::Shared, timing::Budgets};
 pub use crate::last_good::{
-    DirectoryError, FileProblem, PersistFailure, SnapshotDirectory, SnapshotFilePath, StartupFile,
+    DirectoryError, FileProblem, LastGoodStatus, PersistFailure, SnapshotDirectory,
+    SnapshotFilePath, StartupFile,
 };
 use crate::{
     Flags,
     declared::Resolved,
     last_good::{self, Initial, LastGood, Persister},
-    reader::{Reader, Writer},
+    reader::Reader,
 };
+
+/// The component and finalizer names the control plane registers.
+pub(crate) const REFRESH: &str = "flags.refresh";
+pub(crate) const LISTEN: &str = "flags.listen";
+pub(crate) const PRESENCE: &str = "flags.presence";
+pub(crate) const PRUNE: &str = "flags.presence_prune";
+pub(crate) const STOP_MARKER: &str = "flags.presence.stopped";
 
 /// Flags whose values a registered loader keeps current.
 ///
@@ -119,6 +127,13 @@ pub struct RegisteredFlags {
     prune: PeriodicReader,
     refresh: PeriodicReader,
     startup_file: StartupFile,
+    last_good: LastGoodReader,
+}
+
+/// Where a registered loader's last-good status is read.
+enum LastGoodReader {
+    Disabled,
+    File(last_good::StatusReader),
 }
 
 /// The store a registered control plane reads and heartbeats through.
@@ -151,7 +166,8 @@ impl Deref for RegisteredFlags {
 }
 
 impl RegisteredFlags {
-    /// The loader's status now, in [`SnapshotStatus`]'s precedence order.
+    /// The loader's status now: whether it runs, what views serve and what
+    /// the latest judged read did, read together.
     pub fn status(&self) -> SnapshotStatus {
         self.shared.status(Instant::now())
     }
@@ -180,7 +196,7 @@ impl RegisteredFlags {
     /// How many keys a view captured now holds: the served snapshot's holds
     /// for the view's freshness.
     pub fn held(&self) -> usize {
-        self.shared.reader().held_at(Instant::now()).len()
+        self.shared.live().held_at(Instant::now()).len()
     }
 
     /// This process's id in the fleet view.
@@ -194,9 +210,18 @@ impl RegisteredFlags {
         self.startup_file
     }
 
-    /// The most recent persist that did not write, if there has been one.
-    pub fn last_persist_failure(&self) -> Option<PersistFailure> {
-        self.shared.last_persist_failure()
+    /// What last-good persistence is doing now: disabled, up to date, a
+    /// publication waiting and why its last write failed, a write in flight,
+    /// or a publication too large for the file.
+    ///
+    /// Migration: `last_persist_failure()` returned the last failure forever,
+    /// even after a later write succeeded; match `LastGoodStatus::Waiting {
+    /// last_failure, .. }` for a failure that still matters.
+    pub fn last_good(&self) -> LastGoodStatus {
+        match &self.last_good {
+            LastGoodReader::Disabled => LastGoodStatus::Disabled,
+            LastGoodReader::File(reader) => reader.status(),
+        }
     }
 
     /// The heartbeat component's runs so far. A heartbeat skipped while the
@@ -246,12 +271,6 @@ pub enum RegisterError {
         /// The shortest allowance the cadence and the store's timing allow.
         minimum: Duration,
     },
-    /// The listener's wake spacing is longer than the poll interval.
-    #[error("the flags wake spacing must be at most the poll interval, {maximum:?}")]
-    WakeSpacingTooLong {
-        /// The poll interval.
-        maximum: Duration,
-    },
     /// The declared base breaks a cross-flag invariant once a governing kill
     /// switch overrides a flag to its code default, a combination no hold
     /// could meet, since the control plane can engage the switch at any time.
@@ -282,11 +301,14 @@ pub enum RegisterError {
 
 /// Registers the control plane for `resolved` and returns its flags.
 ///
-/// Every input is validated before anything is registered. The components
-/// are registered in this order: the stop marker's cleanup slot, the
-/// refresh, the heartbeat and the prune. Core has no all-or-nothing
-/// registration, so a root that ignores an `Err` from a manual supervisor can
-/// run a partly registered loader; `Startup::protected` prevents that.
+/// Every input is validated, and every component and finalizer name checked,
+/// before anything is registered, so registration installs the whole loader
+/// or nothing: the stop marker's cleanup slot, the refresh, the listener when
+/// one is configured, the heartbeat and the prune.
+///
+/// Migration: a taken name, such as an application component already named
+/// `flags.presence`, used to be refused after the stop marker, the refresh and
+/// the listener were installed.
 pub fn register_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     store: ControlPlaneStore,
@@ -331,33 +353,38 @@ fn register_with<T: RegistrationTarget + ?Sized>(
     }
     let presence = presence::prepare(store, presence, &base, class.name(), budgets)?;
     let scope = base.validation_scope();
-    let (mut writer, reader) = Reader::live(
+    let registered = Instant::now();
+    let (persistence, startup_file, publisher, last_good) = match policy.last_good() {
+        LastGood::Off => (
+            Persistence::Off,
+            StartupFile::Disabled,
+            Publisher::new(&scope, registered),
+            LastGoodReader::Disabled,
+        ),
+        LastGood::File(directory) => {
+            let (publisher, startup_file) = restore_file(&base, &scope, registered, directory);
+            let persister = Persister::new(directory.path().clone());
+            let reader = LastGoodReader::File(persister.reader());
+            (
+                Persistence::File(persister),
+                startup_file,
+                publisher,
+                reader,
+            )
+        }
+    };
+    let (writer, reader, live) = Reader::publishing(
         base,
         policy.pre_publication(),
         timing.maximum_age(),
-        Instant::now(),
+        publisher,
     );
     let reader = Arc::new(reader);
-    let shared = Arc::new(Shared::new(reader.clone()));
-    let (persistence, startup_file) = match policy.last_good() {
-        LastGood::Off => (Persistence::Off, StartupFile::Disabled),
-        LastGood::File(directory) => (
-            Persistence::File(Persister::new(directory.path().clone())),
-            publish_file(&mut writer, &shared, directory),
-        ),
-    };
+    let shared = Arc::new(Shared::new(reader.clone(), live));
+    // `LoadPolicy::with_listen` already refused a spacing longer than the poll.
     let listening = match policy.listen() {
         timing::Listen::Off => None,
-        timing::Listen::On(endpoint) => {
-            // A spacing longer than the poll would space out the polls too,
-            // and with them the confirmations freshness depends on.
-            if endpoint.wake_spacing() > timing.poll_interval() {
-                return Err(RegisterError::WakeSpacingTooLong {
-                    maximum: timing.poll_interval(),
-                });
-            }
-            Some((**endpoint).clone())
-        }
+        timing::Listen::On(endpoint) => Some((**endpoint).clone()),
     };
     let refresh = refresh::prepare(
         source,
@@ -370,6 +397,16 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         startup,
         listening.as_ref().map(ListenEndpoint::wake_spacing),
     )?;
+    // Every name is checked while this exclusive authority is held, so the
+    // registrations below cannot be refused part way.
+    let components: &[&'static str] = match &listening {
+        Some(_) => &[REFRESH, LISTEN, PRESENCE, PRUNE],
+        None => &[REFRESH, PRESENCE, PRUNE],
+    };
+    target
+        .registration()
+        .check_names(components, &[STOP_MARKER])
+        .map_err(RegisterError::Registration)?;
     let process = presence.process();
     // Cleanup runs in reverse: the stop marker, then the listener's pool, then
     // the application's pool, which the root registered first.
@@ -394,29 +431,43 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         prune,
         refresh: registered.reader(),
         startup_file,
+        last_good,
     })
 }
 
-/// Publishes a usable last-good file before the driver starts, so the first
-/// view of every surface sees it. A file that cannot be used is recorded and
-/// publishes nothing.
-fn publish_file(
-    writer: &mut Writer,
-    shared: &Shared,
+/// The publisher, restored from a usable last-good file before the driver
+/// starts, so the first view of every surface sees it. A file that cannot be
+/// used is recorded and publishes nothing.
+fn restore_file(
+    base: &Base,
+    scope: &ValidationScope,
+    registered: Instant,
     directory: &SnapshotDirectory,
-) -> StartupFile {
+) -> (Publisher<Instant>, StartupFile) {
+    let unusable = |problem| {
+        (
+            Publisher::new(scope, registered),
+            StartupFile::Unusable(problem),
+        )
+    };
     let bytes = match directory.initial() {
-        Initial::Absent => return StartupFile::Missing,
-        Initial::Unreadable => return StartupFile::Unusable(FileProblem::Unreadable),
+        Initial::Absent => return (Publisher::new(scope, registered), StartupFile::Missing),
+        Initial::Unreadable => return unusable(FileProblem::Unreadable),
         Initial::Read(bytes) => bytes,
     };
-    match last_good::load(shared.reader().base(), bytes) {
-        Ok(snapshot) => {
-            let version = snapshot.version();
-            writer.apply(Arc::new(snapshot), Instant::now());
-            StartupFile::Published { version }
+    match last_good::read_file(base, bytes) {
+        Ok(file) => {
+            let version = file.version;
+            let (publisher, restored) = Publisher::restore(scope, registered, version, file.rows);
+            let startup_file = match restored {
+                Restored::Published => StartupFile::Published { version },
+                Restored::Rejected(rejection) => {
+                    StartupFile::Unusable(FileProblem::Rejected(rejection))
+                }
+            };
+            (publisher, startup_file)
         }
-        Err(problem) => StartupFile::Unusable(problem),
+        Err(problem) => unusable(problem),
     }
 }
 

@@ -90,6 +90,7 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
             .history(None, Version::new(0), deadline())
             .await
             .unwrap()
+            .entries
             .len(),
         5
     );
@@ -138,7 +139,8 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
         .store
         .history(Some(&key("stopped_flag")), Version::new(0), deadline())
         .await
-        .unwrap();
+        .unwrap()
+        .entries;
     assert_eq!(
         audit
             .iter()
@@ -258,7 +260,12 @@ async fn concurrent_first_writes_and_poller_observe_gapless_commit_order() {
     let mut last = Version::new(0);
     let mut seen = Vec::new();
     while !tasks.is_empty() {
-        let rows = f.store.history(None, last, deadline()).await.unwrap();
+        let rows = f
+            .store
+            .history(None, last, deadline())
+            .await
+            .unwrap()
+            .entries;
         for row in rows {
             assert_eq!(row.version.get(), last.get() + 1);
             last = row.version;
@@ -271,7 +278,13 @@ async fn concurrent_first_writes_and_poller_observe_gapless_commit_order() {
             ));
         }
     }
-    for row in f.store.history(None, last, deadline()).await.unwrap() {
+    for row in f
+        .store
+        .history(None, last, deadline())
+        .await
+        .unwrap()
+        .entries
+    {
         assert_eq!(row.version.get(), last.get() + 1);
         last = row.version;
         seen.push(last);
@@ -305,6 +318,7 @@ async fn absent_row_cas_and_lower_encoding_declarers_are_refused_without_consumi
             .history(None, Version::new(0), deadline())
             .await
             .unwrap()
+            .entries
             .is_empty()
     );
     sqlx::query("UPDATE flags.flag_processes SET stopped_at=clock_timestamp()")
@@ -368,7 +382,8 @@ async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
             .store
             .history(None, Version::new(0), deadline())
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(before.len(), 2);
         assert!(matches!(
             f.store.restore(Archive::new(key("archived_flag"), change(Some(2))), deadline()).await.unwrap(),
@@ -386,6 +401,7 @@ async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
                 .history(None, Version::new(0), deadline())
                 .await
                 .unwrap()
+                .entries
                 .len(),
             before.len()
         );
@@ -410,7 +426,8 @@ async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
             .store
             .history(None, Version::new(0), deadline())
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(
             after
                 .iter()

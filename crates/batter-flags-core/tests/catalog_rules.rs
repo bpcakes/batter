@@ -80,7 +80,7 @@ fn required_settings_are_validated_names_outside_the_prefix() {
         .requires_settings(Toggle::On, &["PAYMENT_URL", "FLAGSHIP_URL"])
         .declare()
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let declared = catalog.declaration("new_checkout").unwrap();
     let required: Vec<_> = declared.requires_settings().collect();
     assert_eq!(required.len(), 1);
@@ -136,7 +136,7 @@ fn retired_names_are_validated_and_never_in_use() {
         builder.retired("PAYMENT_URL", "note"),
         Err(BuildError::RetiredNameInUse { .. })
     ));
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let retired: Vec<&str> = catalog
         .retired()
         .iter()
@@ -269,7 +269,7 @@ fn relationships_are_stored_sorted_on_the_flag_they_were_stated_on() {
     builder
         .conflicts(&checkout, Checkout::Express, &on_by_default, Toggle::On)
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let invariants = catalog.declaration("checkout_style").unwrap().invariants();
     assert_eq!(invariants.len(), 2);
     // Invariants sort by rule tag text: conflicts before requires.
@@ -461,10 +461,8 @@ fn typed_values_keep_their_identity() {
 
 #[test]
 fn required_absence_combines_with_ownership_and_class_restrictions() {
-    let mut builder = fixtures::builder();
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, development) = fixtures::builder("serving", "development");
     builder.process_kind("worker").unwrap();
-    let development = builder.environment_class("development").unwrap();
     builder.environment_class("hosted").unwrap();
     builder
         .mode_flag("debug_panel", Toggle::Off)
@@ -478,7 +476,7 @@ fn required_absence_combines_with_ownership_and_class_restrictions() {
         .required()
         .declare()
         .unwrap();
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let required = catalog
         .declarations()
         .filter(|declared| declared.absence() == batter_flags_core::Absence::Required)

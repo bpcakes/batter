@@ -30,7 +30,7 @@ fn a_refused_pin_reads_live_only_through_its_refusal_with_an_event_of_its_own() 
         base.control_plane_view(&published, Freshness::Fresh)
             .unwrap()
     });
-    let wrong_row = view.pin(&h.fast_path);
+    let wrong_row = view.pin(&h.fast_path).unwrap();
     capture.clear();
 
     let PinnedResolution::Incompatible(refusal) = view.resolve_pinned(&h.new_checkout, &wrong_row)
@@ -68,7 +68,7 @@ fn the_fallback_reads_the_view_that_refused_the_pin() {
     let refusing = base.control_plane_view(&early, Freshness::Fresh).unwrap();
     let other = base.control_plane_view(&late, Freshness::Fresh).unwrap();
 
-    let wrong_row = refusing.pin(&h.fast_path);
+    let wrong_row = refusing.pin(&h.fast_path).unwrap();
     let PinnedResolution::Incompatible(refusal) =
         refusing.resolve_pinned(&h.new_checkout, &wrong_row)
     else {
@@ -95,7 +95,7 @@ fn a_governed_flag_falls_back_to_its_override_not_around_it() {
         ],
     );
     let view = base.control_plane_view(&engaged, Freshness::Fresh).unwrap();
-    let wrong_row = view.pin(&h.fast_path);
+    let wrong_row = view.pin(&h.fast_path).unwrap();
     let PinnedResolution::Incompatible(refusal) = view.resolve_pinned(&h.new_checkout, &wrong_row)
     else {
         panic!("another flag's pin is refused, even where the governor is engaged");
@@ -112,7 +112,7 @@ fn a_kind_that_only_resolves_pins_cannot_read_the_flag_live_even_through_a_refus
     let worker = base(catalog, &h.worker, &[]);
     let view = worker.declared_view();
     // `new_checkout` is owned by `serving` and pinned by `worker`.
-    let wrong_row = view.pin(&h.fast_path);
+    let wrong_row = view.pin(&h.fast_path).unwrap();
     let PinnedResolution::Incompatible(refusal) = view.resolve_pinned(&h.new_checkout, &wrong_row)
     else {
         panic!("another flag's pin is refused");
@@ -128,7 +128,7 @@ fn only_a_refusal_carries_the_fallback() {
     let (catalog, h) = world();
     let base = base(catalog, &h.serving, &[]);
     let view = base.declared_view();
-    let pin = view.pin(&h.fast_path);
+    let pin = view.pin(&h.fast_path).unwrap();
     let honoured = view.resolve_pinned(&h.fast_path, &pin);
     assert_eq!(honoured.rejection(), None);
     // An honoured pin has no refusal to give; the match has nowhere to get one.

@@ -8,8 +8,8 @@
 //! uses: `at-rest`, `axum`, `metrics`, `otlp`, `outbound-http`, `sqlx`, `runledger`, `runlimit`,
 //! `flags`, `test-support`, or the narrower bridge features `runlimit-memory`,
 //! `runlimit-postgres`, `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
-//! `runledger-test-support`, `sqlx-test-support`, `flags-postgres`, `flags-axum`, and
-//! `flags-runledger`.
+//! `runledger-test-support`, `sqlx-test-support`, `flags-postgres`, `flags-axum`,
+//! `flags-runledger` and `flags-test-support`.
 //!
 //! # Important limits
 //!
@@ -397,7 +397,8 @@ pub mod runlimit {
 /// protected `flags::control_plane` registration, the `flags::grants`
 /// inventory and selects `sqlx`, so `batter::sqlx::pool_in` owns the pool the
 /// control plane takes; `flags-axum` adds `flags::http` and selects `axum`;
-/// `flags-runledger` adds `flags::jobs` and selects `runledger`. The
+/// `flags-runledger` adds `flags::jobs` and selects `runledger`;
+/// `flags-test-support` adds `flags::test::TestFlags`, for test builds only. The
 /// `rollout` example shows declared mode and the control plane.
 #[cfg(feature = "flags")]
 pub mod flags {

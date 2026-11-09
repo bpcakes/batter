@@ -169,15 +169,14 @@ pub async fn drop_and_workflow_refusal(pool: &PgPool) -> Result {
 }
 
 fn pinned(value: Toggle, version: u64) -> Result<batter_flags::core::Pinned<Toggle>> {
-    let mut b = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    let worker = b.process_kind("worker")?;
-    b.environment_class("hosted")?;
+    let (mut b, worker, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "worker", "hosted")?;
     let mode = b.mode_flag("mode", Toggle::Off).declare()?;
-    let test = TestFlags::builder(b.build()?, worker)?
+    let test = TestFlags::builder(b.build(), worker)?
         .set(&mode, value)
         .version(Version::new(version))
         .build()?;
-    Ok(test.view().pin(&mode))
+    Ok(test.view().pin(&mode)?)
 }
 pub async fn keyed_pin_identity(pool: &PgPool) -> Result {
     const NAME: &str = "flags.live.pin";

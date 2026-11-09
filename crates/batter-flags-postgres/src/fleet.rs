@@ -2,7 +2,6 @@
 //! head, classified on the server's clock.
 use crate::{
     ErrorClass, KeySample, PooledStore, ProcessId, SnapshotReport, StoreError,
-    errors::check_primary,
     load::{snapshot_error, version},
 };
 use batter_flags_core::{FlagKey, Version};
@@ -200,13 +199,11 @@ impl PooledStore {
     async fn read_fleet(&self, key: Option<&str>, deadline: Instant) -> Result<Fleet, StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
         PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
-            let [statement, lock, idle] = self.timing.settings(deadline)?;
-            sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
-                .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
             // A standby can lag: a process still heartbeating on the primary
             // may read as expired or be missing, which would let a pending
-            // rollout read as reached.
-            check_primary(sqlx::query_scalar("SELECT pg_is_in_recovery()").fetch_one(sql.executor()).await?)?;
+            // rollout read as reached. The guard refuses it, and a schema
+            // this build cannot read.
+            self.read_guard(sql, deadline).await?;
             let head = version(sqlx::query_scalar("SELECT version FROM flags.flag_control WHERE singleton").fetch_one(sql.executor()).await?)?;
             let processes = sqlx::query("SELECT p.process_id, p.application, p.environment, p.build, \
                 CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > clock_timestamp() THEN 'live' ELSE 'silent' END AS state, \

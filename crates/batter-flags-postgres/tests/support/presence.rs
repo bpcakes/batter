@@ -17,10 +17,15 @@ pub enum Build {
 }
 
 /// A process of `build`, named `label`, with its own cadence in seconds.
-pub fn process(build: Build, label: &str, liveness: u64, retention: u64) -> ProcessPresence {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    catalog.environment_class("hosted").unwrap();
+pub fn process(
+    store: &PooledStore,
+    build: Build,
+    label: &str,
+    liveness: u64,
+    retention: u64,
+) -> ProcessPresence {
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     catalog
         .release_flag("fast_path", Toggle::Off, expiry)
@@ -36,9 +41,7 @@ pub fn process(build: Build, label: &str, liveness: u64, retention: u64) -> Proc
             .declare()
             .unwrap();
     }
-    let base = BaseBuilder::new(catalog.build().unwrap(), serving)
-        .unwrap()
-        .finish();
+    let base = BaseBuilder::new(catalog.build(), serving).unwrap().finish();
     let labels = ProcessLabels {
         application: ProcessLabel::new("service").unwrap(),
         environment: ProcessLabel::new("hosted").unwrap(),
@@ -49,7 +52,7 @@ pub fn process(build: Build, label: &str, liveness: u64, retention: u64) -> Proc
         Duration::from_secs(retention),
     )
     .unwrap();
-    ProcessPresence::new(labels, &base, cadence)
+    ProcessPresence::new(store, labels, &base, cadence)
 }
 
 /// A heartbeat reporting `snapshot`, holding nothing.

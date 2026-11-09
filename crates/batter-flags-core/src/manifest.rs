@@ -43,12 +43,10 @@ use crate::{
 /// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, Manifest, SettingsPrefix, Toggle};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// builder.process_kind("serving")?;
-/// builder.environment_class("hosted")?;
+/// let (mut builder, _, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// builder.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-/// let catalog = builder.build()?;
+/// let catalog = builder.build();
 ///
 /// let manifest = catalog.manifest();
 /// let bytes = manifest.to_canonical_json();

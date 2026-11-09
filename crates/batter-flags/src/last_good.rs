@@ -12,13 +12,13 @@ use std::{collections::HashSet, sync::Arc};
 
 use batter_flags_core::{
     DeclarationFingerprint, FlagKey, Version,
-    low_level::{Base, Candidate, CandidateRow, Provenance, Snapshot, SnapshotRejection},
+    low_level::{Base, CandidateRow, Provenance, Snapshot, SnapshotRejection},
 };
 
 use self::format::EntryValue;
 pub(crate) use self::path::Initial;
 pub use self::path::{SnapshotDirectory, SnapshotFilePath};
-pub(crate) use self::persist::Persister;
+pub(crate) use self::persist::{Persister, StatusReader};
 
 /// Why a snapshot directory cannot be used. Startup fails on these.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -97,6 +97,48 @@ pub enum PersistFailure {
     TooLarge,
 }
 
+/// What a registered loader's last-good persistence is doing now.
+///
+/// Read under the persister's one lock, so it is the persister's own state,
+/// not a remembered failure: a failure is reported only while the publication
+/// it failed to write is still waiting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LastGoodStatus {
+    /// No snapshot directory was configured.
+    Disabled,
+    /// Nothing waits to be written. `written` is the version this process
+    /// last wrote, if it wrote one.
+    UpToDate {
+        /// The version this process last wrote.
+        written: Option<Version>,
+    },
+    /// A publication waits to be written by a later run.
+    Waiting {
+        /// The waiting publication's version.
+        version: Version,
+        /// The version this process last wrote.
+        written: Option<Version>,
+        /// Why the last attempt to write it failed, if one did.
+        last_failure: Option<PersistFailure>,
+    },
+    /// A write is in flight, possibly one a run's deadline abandoned that is
+    /// still finishing in the background.
+    Writing {
+        /// The version being written.
+        version: Version,
+        /// The version this process last wrote.
+        written: Option<Version>,
+    },
+    /// The latest publication does not fit the file, so it is not retried;
+    /// a newer publication replaces it.
+    TooLarge {
+        /// The publication's version.
+        version: Version,
+        /// The version this process last wrote.
+        written: Option<Version>,
+    },
+}
+
 /// What the last-good file did at startup.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StartupFile {
@@ -123,13 +165,19 @@ pub(crate) fn scope_label(base: &Base) -> String {
     )
 }
 
-/// The snapshot the file found at startup holds, judged against `base`.
-pub(crate) fn load(base: &Base, bytes: &[u8]) -> Result<Snapshot, FileProblem> {
+/// What the file found at startup holds, for core's publisher to restore.
+pub(crate) struct FileRead {
+    pub(crate) version: Version,
+    pub(crate) rows: Vec<CandidateRow>,
+}
+
+/// Decodes the file found at startup and checks it was written for `base`'s
+/// scope; core's publisher validates its rows when it restores them.
+pub(crate) fn read_file(base: &Base, bytes: &[u8]) -> Result<FileRead, FileProblem> {
     let file = format::decode(bytes)?;
     if file.scope != scope_label(base) {
         return Err(FileProblem::Foreign);
     }
-    let scope = base.validation_scope();
     // An entry written without a value is absent: the declared base serves.
     let rows = file.entries.iter().filter_map(|entry| match &entry.value {
         EntryValue::Absent => None,
@@ -144,10 +192,10 @@ pub(crate) fn load(base: &Base, bytes: &[u8]) -> Result<Snapshot, FileProblem> {
             .written_for(DeclarationFingerprint::from_bytes(entry.fingerprint)),
         ),
     });
-    let candidate = Candidate::from_last_good_file(&scope)
-        .at(Version::new(file.version))
-        .rows(rows);
-    Snapshot::validate(&scope, candidate).map_err(FileProblem::Rejected)
+    Ok(FileRead {
+        version: Version::new(file.version),
+        rows: rows.collect(),
+    })
 }
 
 /// What to write for a control-plane publication: the rows it was read

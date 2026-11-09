@@ -21,9 +21,7 @@
 //! };
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-//! let serving = builder.process_kind("serving")?;
-//! builder.environment_class("hosted")?;
+//! let (mut builder, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 //! let halt = builder
 //!     .kill_switch("checkout_halt", SafeState::Released, StaleRule::HoldLastKnown)
 //!     .declare()?;
@@ -32,7 +30,7 @@
 //!     .owned_only_by(&serving)
 //!     .governed_by(&halt)
 //!     .declare()?;
-//! let catalog = builder.build()?;
+//! let catalog = builder.build();
 //! assert_eq!(catalog.declarations().count(), 2);
 //! # Ok(())
 //! # }
@@ -132,7 +130,9 @@ pub use manifest::{
     ManifestInvariant, ManifestOwners, ManifestRequiredSettings, ManifestRetired, Retype,
     manifest_diff,
 };
-pub use pin::{PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution};
+pub use pin::{
+    PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution, Unpinnable,
+};
 pub use value::{FlagValue, Toggle, ValueType, VariantsError};
 pub use version::Version;
 pub use view::SnapshotView;

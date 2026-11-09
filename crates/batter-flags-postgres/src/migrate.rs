@@ -1,10 +1,12 @@
 use crate::{
     PooledStore, StoreError,
+    atomic::scope_error,
     errors::{ErrorKind, check_server},
-    store::remaining,
+    store::{bounded, remaining},
+    write::RollbackFailure,
 };
 use batter_core::operation::OperationOwner;
-use batter_sqlx::{PgDeadlineError, PgLease, PgMigrationTimeouts, PgReadOnlySnapshot};
+use batter_sqlx::{PgDeadlineError, PgLease, PgMigrationTimeouts, low_level::PgAtomicTransaction};
 use sqlx::migrate::Migrator;
 use std::sync::LazyLock;
 use tokio::time::Instant;
@@ -21,7 +23,8 @@ pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {
     migrator.create_schema("flags");
     migrator
 });
-/// Where the store's own session resolves unqualified names.
+/// Where the store's own session resolves unqualified names once the `flags`
+/// schema exists. The probe makes it exist, so there is no "cannot tell".
 enum Resolution {
     /// The effective search path does not include the `flags` schema.
     Elsewhere,
@@ -30,7 +33,7 @@ enum Resolution {
     IntoFlags,
 }
 
-/// The store's session, as one read-only inspection sees it.
+/// The store's session, as one rolled-back probe sees it.
 struct Session {
     version: i32,
     resolution: Resolution,
@@ -42,22 +45,28 @@ impl PooledStore {
     ///
     /// Refuses with [`ErrorClass::SearchPath`](crate::ErrorClass::SearchPath)
     /// when a session of the store's pool resolves unqualified names into the
-    /// `flags` schema. PostgreSQL's `current_schemas` lists only existing
-    /// schemas, so one session is checked before migrating, when the schema
-    /// already exists, and another after. These are separate connections:
-    /// those of one pool share their default path unless the login's role or
-    /// database settings or the pool's connect options changed while it held
-    /// connections, which the check cannot see. Sessions of other
-    /// pools or logins are the application's to configure.
+    /// `flags` schema, before anything is migrated. PostgreSQL's
+    /// `current_schemas` lists only existing schemas, so the probe creates the
+    /// schema if it is absent, inside a transaction that it always rolls
+    /// back, and lets PostgreSQL resolve the session's default path against
+    /// it; a first migration is judged exactly like a later one. The probe
+    /// needs only the database `CREATE` privilege SQLx's own
+    /// `CREATE SCHEMA IF NOT EXISTS` needs on every run.
     ///
-    /// Any failure can follow committed migrations, whatever its class: SQLx
-    /// commits each migration on its own, and the check after migrating can
-    /// itself refuse, fail or run out of time once they have committed. A
-    /// rerun applies nothing twice.
+    /// The probe and the migration use separate connections: those of one
+    /// pool share their default path unless the login's role or database
+    /// settings or the pool's connect options changed while it held
+    /// connections, which the check cannot see. Sessions of other pools or
+    /// logins are the application's to configure.
+    ///
+    /// A server, schema-revision or search-path refusal applies nothing. A
+    /// failure while migrating can follow committed migrations, whatever its
+    /// class, because SQLx commits each migration on its own; a rerun applies
+    /// nothing twice.
     pub async fn migrate(&self, deadline: Instant) -> Result<(), StoreError> {
-        let before = self.inspect_session(deadline).await?;
-        check_server(before.version)?;
-        refuse_flags_path(&before.resolution)?;
+        let session = self.inspect_session(deadline).await?;
+        check_server(session.version)?;
+        refuse_flags_path(&session.resolution)?;
         let owner = OperationOwner::new(remaining(deadline)?.min(self.timing.acquire))
             .map_err(|e| StoreError(ErrorKind::Other(Box::new(e))))?;
         let lease = PgLease::acquire(&self.pool, owner.context())
@@ -82,64 +91,89 @@ impl PooledStore {
                 PgDeadlineError::Elapsed => StoreError::classified(crate::ErrorClass::Deadline),
                 PgDeadlineError::Failed(e) => e.into(),
                 PgDeadlineError::RecoveryElapsed(never) => match never {},
-            })?;
-        // The schema exists now, so this sees a path that resolves into it
-        // even on the first migration.
-        let after = self.inspect_session(deadline).await?;
-        refuse_flags_path(&after.resolution)
+            })
     }
 
-    /// Reads the server version and where this session resolves unqualified
-    /// names, in one bounded read-only snapshot.
+    /// Reads the server version and where this pool's sessions resolve
+    /// unqualified names once a `flags` schema exists, in one transaction
+    /// that is always rolled back, so the schema it may create is never
+    /// committed.
     async fn inspect_session(&self, deadline: Instant) -> Result<Session, StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
-        PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
-            let [statement, lock, idle] = self.timing.settings(deadline)?;
-            sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
-                .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
-            let version = sqlx::query_scalar::<_, i32>(
-                "SELECT current_setting('server_version_num')::integer",
-            )
-            .fetch_one(sql.executor())
-            .await
-            .map_err(StoreError::from)?;
-            // The snapshot hardens its own path to `pg_catalog, pg_temp`.
-            // Acquisition ran DISCARD ALL, so the session default `reset_val`
-            // is the path, and `current_user` the login, that this session's
-            // statements outside the snapshot use; sessions of one pool share
-            // them unless role, database or connect-option defaults changed
-            // while the pool held connections.
-            // Let PostgreSQL resolve it (quoting, `"$user"`, existing schemas
-            // only) for one fully qualified statement, then restore the
-            // hardened path.
-            sqlx::query(
-                "SELECT pg_catalog.set_config('search_path', reset_val, true) \
-                 FROM pg_catalog.pg_settings WHERE name OPERATOR(pg_catalog.=) 'search_path'",
-            )
-            .execute(sql.executor())
-            .await?;
-            let into_flags = sqlx::query_scalar::<_, bool>(
-                "SELECT 'flags'::pg_catalog.name OPERATOR(pg_catalog.=) \
-                 ANY (pg_catalog.current_schemas(false))",
-            )
-            .fetch_one(sql.executor())
-            .await
-            .map_err(StoreError::from)?;
-            sqlx::query("SELECT pg_catalog.set_config('search_path', 'pg_catalog, pg_temp', true)")
+        let tx = bounded(deadline, async {
+            PgAtomicTransaction::begin(&self.pool)
+                .await
+                .map_err(StoreError::from)
+        })
+        .await?;
+        let (tx, probed) = tx
+            .operation_until(deadline, async |sql| {
+                self.limit(sql, deadline).await?;
+                sqlx::query("SET LOCAL search_path = pg_catalog, pg_temp")
+                    .execute(sql.executor())
+                    .await?;
+                let version = sqlx::query_scalar::<_, i32>(
+                    "SELECT pg_catalog.current_setting('server_version_num')::integer",
+                )
+                .fetch_one(sql.executor())
+                .await
+                .map_err(StoreError::from)?;
+                // `current_schemas` names only schemas that exist, so make
+                // `flags` exist here: the transaction rolls back below, and
+                // a schema that already exists is left as it is.
+                sqlx::query("CREATE SCHEMA IF NOT EXISTS flags")
+                    .execute(sql.executor())
+                    .await?;
+                // Acquisition ran DISCARD ALL, so the session default
+                // `reset_val` is the path, and `current_user` the login, that
+                // this pool's sessions use; sessions of one pool share them
+                // unless role, database or connect-option defaults changed
+                // while the pool held connections. Let PostgreSQL resolve it
+                // (quoting, `"$user"`, existing schemas only) for one fully
+                // qualified statement, then restore the hardened path.
+                sqlx::query(
+                    "SELECT pg_catalog.set_config('search_path', reset_val, true) \
+                     FROM pg_catalog.pg_settings WHERE name OPERATOR(pg_catalog.=) 'search_path'",
+                )
                 .execute(sql.executor())
                 .await?;
-            let resolution = if into_flags {
-                Resolution::IntoFlags
-            } else {
-                Resolution::Elsewhere
-            };
-            Ok(Session {
-                version,
-                resolution,
+                let into_flags = sqlx::query_scalar::<_, bool>(
+                    "SELECT 'flags'::pg_catalog.name OPERATOR(pg_catalog.=) \
+                     ANY (pg_catalog.current_schemas(false))",
+                )
+                .fetch_one(sql.executor())
+                .await
+                .map_err(StoreError::from)?;
+                sqlx::query(
+                    "SELECT pg_catalog.set_config('search_path', 'pg_catalog, pg_temp', true)",
+                )
+                .execute(sql.executor())
+                .await?;
+                let resolution = if into_flags {
+                    Resolution::IntoFlags
+                } else {
+                    Resolution::Elsewhere
+                };
+                Ok(Session {
+                    version,
+                    resolution,
+                })
             })
+            .await
+            .map_err(scope_error)?;
+        // Roll back everything the probe did, a schema it created included.
+        // If the rollback cannot be confirmed in time, dropping the owner
+        // retires its connection, which ends the transaction uncommitted.
+        let rolled_back = bounded(deadline, async {
+            tx.rollback().await.map_err(StoreError::from)
         })
-        .await
-        .map_err(crate::load::snapshot_error)
+        .await;
+        match (probed, rolled_back) {
+            (Ok(session), Ok(_)) => Ok(session),
+            (Err(error), Ok(_)) => Err(error),
+            (Ok(_), Err(cleanup)) => Err(cleanup),
+            (Err(error), Err(cleanup)) => Err(RollbackFailure::both(error, cleanup)),
+        }
     }
 }
 

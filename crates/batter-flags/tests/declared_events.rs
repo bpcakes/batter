@@ -26,9 +26,8 @@ fn expiring() -> (
     batter_flags::core::ProcessKind,
     batter_flags::core::EnvironmentClass,
 ) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    let hosted = builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let on = |year, month, day| Expiry::on(CivilDate::new(year, month, day).unwrap());
     builder
         .release_flag("new_checkout", Toggle::Off, on(2027, 3, 31))
@@ -46,7 +45,7 @@ fn expiring() -> (
         .mode_flag("strict_mode", Toggle::Off)
         .declare()
         .unwrap();
-    (builder.build().unwrap(), serving, hosted)
+    (builder.build(), serving, hosted)
 }
 
 fn resolve_on(date: CivilDate, capture: &Capture) -> Vec<capture::Event> {

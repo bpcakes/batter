@@ -40,8 +40,10 @@ writes/archive. Uncertain commit never becomes ordinary failure or automatic
 replay. The private mutation callback cannot accept arbitrary caller SQL.
 Default formatting does not expose values or native error contents.
 `PooledStore::migrate` refuses (`ErrorClass::SearchPath`) when its own
-session's default path resolves into `flags`, checked before and after
-migrating.
+session's default path resolves into `flags`, decided before anything is
+migrated by a probe that creates the schema only in a transaction it always
+rolls back. Never move the check after the migrator: a refusal must mean
+nothing was applied.
 The write interrupt retains its terminal state across preparation and commit
 validation. A closed sender disables interruption; it is never polled again.
 

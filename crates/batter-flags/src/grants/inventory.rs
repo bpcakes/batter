@@ -22,24 +22,6 @@ pub enum FlagsOperation {
     HistoryRead,
     /// The fleet view: process rows, the head and which catalogs declare a key.
     FleetRead,
-    /// What the operator CLI needs: every write and read above.
-    OperatorCli,
-}
-
-impl FlagsOperation {
-    /// The operations a selection stands for.
-    pub(super) fn expand(self) -> Vec<Self> {
-        match self {
-            Self::OperatorCli => vec![
-                Self::AuditedWrite,
-                Self::SnapshotRead,
-                Self::CatalogRead,
-                Self::HistoryRead,
-                Self::FleetRead,
-            ],
-            other => vec![other],
-        }
-    }
 }
 
 pub(super) struct Requirement {
@@ -66,8 +48,6 @@ pub(super) const fn requirements(operation: FlagsOperation) -> &'static [Require
         FlagsOperation::CatalogRead => CATALOG_READ,
         FlagsOperation::HistoryRead => HISTORY_READ,
         FlagsOperation::FleetRead => FLEET_READ,
-        // Expanded before the inventory is read.
-        FlagsOperation::OperatorCli => &[],
     }
 }
 

@@ -2,29 +2,46 @@
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
+use std::sync::Arc;
+
 use batter_flags_core::{
     CatalogBuilder, SafeState, SettingsPrefix, StaleRule,
-    low_level::{Base, BaseBuilder, HoldCause, Provenance, SnapshotRejection},
+    low_level::{
+        Base, BaseBuilder, HoldCause, Provenance, Publisher, Record, Restored, Snapshot,
+        SnapshotRejection,
+    },
 };
 use sha2::{Digest, Sha256};
 
 use super::{
     FileProblem,
     format::{EntryValue, FileEntry, FileSnapshot, LIMIT, decode, encode},
-    load, scope_label,
+    read_file, scope_label,
 };
 
+/// The snapshot a file restores, through the same read and restore that
+/// registration uses.
+fn load(base: &Base, bytes: &[u8]) -> Result<Arc<Snapshot>, FileProblem> {
+    let file = read_file(base, bytes)?;
+    let (publisher, restored) =
+        Publisher::restore(&base.validation_scope(), 0_u64, file.version, file.rows);
+    match (restored, publisher.record()) {
+        (Restored::Published, Record::Published(published)) => Ok(Arc::clone(published.snapshot())),
+        (Restored::Rejected(rejection), Record::Unpublished(_)) => {
+            Err(FileProblem::Rejected(rejection))
+        }
+        (restored, record) => panic!("{restored:?} left {record:?}"),
+    }
+}
+
 fn base() -> Base {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     catalog
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
         .unwrap();
-    BaseBuilder::new(catalog.build().unwrap(), serving)
-        .unwrap()
-        .finish()
+    BaseBuilder::new(catalog.build(), serving).unwrap().finish()
 }
 
 fn halt(base: &Base, state: &str) -> FileEntry {
@@ -204,10 +221,9 @@ fn only_owned_declared_rows_are_written_and_a_held_one_without_its_value() {
         CivilDate, Expiry, Toggle, Version,
         low_level::{Candidate, CandidateRow, Snapshot},
     };
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let worker = catalog.process_kind("worker").unwrap();
-    catalog.environment_class("hosted").unwrap();
     let expiry = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     let mine = catalog
         .release_flag("mine", Toggle::Off, expiry)
@@ -222,9 +238,7 @@ fn only_owned_declared_rows_are_written_and_a_held_one_without_its_value() {
         .release_flag("broken", Toggle::Off, expiry)
         .declare()
         .unwrap();
-    let base = BaseBuilder::new(catalog.build().unwrap(), serving)
-        .unwrap()
-        .finish();
+    let base = BaseBuilder::new(catalog.build(), serving).unwrap().finish();
     let scope = base.validation_scope();
     let at = Version::new(5);
     let rows = vec![
@@ -240,8 +254,7 @@ fn only_owned_declared_rows_are_written_and_a_held_one_without_its_value() {
         ),
     ];
     let _ = broken;
-    let snapshot =
-        Snapshot::validate(&scope, Candidate::new(&scope).at(at).rows(rows.clone())).unwrap();
+    let snapshot = Snapshot::validate(Candidate::new(&scope, at).rows(rows.clone())).unwrap();
     let file = super::file_of(&base, &snapshot, &rows).unwrap();
     let written: Vec<_> = file
         .entries

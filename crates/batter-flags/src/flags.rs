@@ -10,7 +10,7 @@ use crate::reader::Reader;
 /// their views from.
 ///
 /// In declared mode it comes from [`Resolved::into_flags`](crate::declared::Resolved::into_flags);
-/// the fixture path is [`TestFlags`](crate::test::TestFlags). Cloning is cheap
+/// the fixture path is `test::TestFlags`, behind the `test-support` feature. Cloning is cheap
 /// and every clone reads the same flags, so each gate or component that needs
 /// them takes its own clone.
 ///
@@ -22,10 +22,8 @@ use crate::reader::Reader;
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// let hosted = catalog.environment_class("hosted")?;
-/// let catalog = catalog.build()?;
+/// let (mut catalog, serving, hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
+/// let catalog = catalog.build();
 ///
 /// let source = SettingsSource::from_pairs([])?;
 /// let flags = declared::resolve(catalog, &source, serving, hosted, CivilDate::new(2026, 11, 5)?)?
@@ -73,6 +71,18 @@ impl Flags {
     /// One view, frozen now: the only way a surface reads these flags.
     pub(crate) fn capture(&self) -> SnapshotView {
         self.reader.capture()
+    }
+
+    /// See [`Reader::capture_for_work`](crate::reader::Reader::capture_for_work).
+    #[cfg_attr(
+        not(feature = "runledger"),
+        allow(
+            dead_code,
+            reason = "only the job surface, behind `runledger`, defers ungated work"
+        )
+    )]
+    pub(crate) fn capture_for_work(&self) -> crate::reader::WorkCapture {
+        self.reader.capture_for_work()
     }
 }
 

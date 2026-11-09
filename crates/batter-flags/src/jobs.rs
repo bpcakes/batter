@@ -72,7 +72,7 @@ pub use handler::{FlagAwareHandler, FlagAwareTypedHandler, TypedFlagAware};
 pub use policy::{DirectWhenTripped, GatePolicy, Recheck, RecheckError, StepWhenTripped};
 pub use view::{JobFlags, UnpinnedBecause};
 
-use crate::{Flags, GateError, flags::gate::SwitchGate};
+use crate::{Flags, GateError, flags::gate::SwitchGate, reader::WorkCapture};
 use batter_flags_core::{KillSwitch, low_level::GateReading};
 use runledger_core::{
     jobs::{
@@ -86,6 +86,7 @@ use serde_json::Value;
 pub struct FlaggedHandler<H> {
     flags: Flags,
     inner: H,
+    awaiting: Recheck,
 }
 
 /// Checked switch and view wrapper, constructed solely by the two gate methods
@@ -98,10 +99,21 @@ pub struct GatedHandler<H> {
 
 impl Flags {
     /// Capture one view for each invocation without gating the job type.
-    pub fn flagged<H: FlagAwareHandler>(&self, inner: H) -> FlaggedHandler<H> {
+    ///
+    /// Under `LoadPolicy::unready_until_loaded`, an invocation before the
+    /// first publication is deferred by `awaiting`, as a gated job's is: the
+    /// process has no state to run it on and does not serve its declared
+    /// defaults. Under `start_on_defaults`, in declared mode and with test
+    /// flags, every invocation runs.
+    ///
+    /// Migration: `flagged(inner)` ran such an invocation on the declared
+    /// defaults while the process was still unready; pass the recheck to defer
+    /// it with.
+    pub fn flagged<H: FlagAwareHandler>(&self, inner: H, awaiting: Recheck) -> FlaggedHandler<H> {
         FlaggedHandler {
             flags: self.clone(),
             inner,
+            awaiting,
         }
     }
 
@@ -175,8 +187,14 @@ impl<H: FlagAwareHandler> JobHandler for FlaggedHandler<H> {
         execution: JobExecution<'_>,
         payload: Value,
     ) -> Result<JobCompletion, JobFailure> {
-        let flags = JobFlags(self.flags.capture());
-        self.inner.execute(execution, &flags, payload).await
+        match self.flags.capture_for_work() {
+            WorkCapture::Serve(view) => {
+                self.inner
+                    .execute(execution, &JobFlags(view), payload)
+                    .await
+            }
+            WorkCapture::Unready => Err(deferred(self.awaiting, execution.context())),
+        }
     }
     async fn on_dead_letter(&self, context: JobContext, payload: Value, info: JobDeadLetterInfo) {
         self.inner.on_dead_letter(context, payload, info).await;

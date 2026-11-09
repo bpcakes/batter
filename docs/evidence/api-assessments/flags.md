@@ -75,12 +75,14 @@ construction and `Reason::Error` at evaluation.
 
 Validation rejects a candidate whole only for structural corruption, and holds
 any other bad row on its own with an exhaustive `HoldCause`, so one row never
-takes the others down. A view is built from one immutable `Published` record,
-so freshness, standing and snapshot cannot be paired across publications, and
-`Authority::consider` is the only transition. `gate_switch` returns an
+takes the others down. A view is built from one immutable `Record` that only a
+`Publisher` advances, so freshness, standing and snapshot cannot be paired
+across publications, and `Authority::consider` is the only standing transition
+(`batter-jkw6.39` moved the record's lifecycle into the publisher). `gate_switch` returns an
 exhaustive `GateReading`, so awaiting publication cannot be mistaken for open.
-`pin` is infallible and `PinnedResolution` exhaustive; `PinRefusal` must be
-answered. Residual (Q5): the disclosed `low_level` path builds a view with any
+`pin` refuses an error decision with `Unpinnable` (`batter-jkw6.45`; it used
+to pin the code default, and a replay honoured it as cached), and
+`PinnedResolution` is exhaustive; `PinRefusal` must be answered. Residual (Q5): the disclosed `low_level` path builds a view with any
 caller-asserted `Source` and `Freshness`; only native code observes it, and no
 protected surface accepts one.
 
@@ -151,11 +153,12 @@ database facts the store reports, not proves.
 ## Control-plane loader assessment (T-14, `batter-jkw6.14`)
 
 `register_in` validates every input before registering anything and returns
-typed `RegisterError`s; the loader is the I/O shell around core's `Authority`,
+typed `RegisterError`s; the loader is the I/O shell around core's `Publisher`,
 so an applied version and digest are always those of a judged snapshot. One
 published record carries the snapshot, its authority and its age evidence;
-`SnapshotStatus` combines that record with the loader's separately held schema
-and refusal state and the writer's liveness. `readiness_condition`
+`SnapshotStatus` reports the writer's liveness, what that record serves and the
+latest judged read as separate fields, read under the lock the refresh
+publishes under (`batter-jkw6.40`). `readiness_condition`
 returns the condition and its closure together under one name. The stop marker
 is a reserved cleanup that runs before the pool closes. Residual: a restart
 during an outage without a last-good file serves the declared base.
@@ -302,10 +305,15 @@ The store can see only its own sessions, so the protected path refuses there:
 pool has a default path that resolves into `flags`. PostgreSQL itself resolves
 the path from `reset_val`, the default that `DISCARD ALL` restores, including
 quoting and `"$user"`, so no client-side parser can disagree with the server. `current_schemas` lists only existing schemas, so the check
-runs before migrating when the schema exists and again after; a first
-migration has therefore run when the refusal arrives, and a rerun after the fix
-applies nothing twice. That order is the residual: the refusal is reported
-after, not instead of, a first migration.
+first ran before migrating when the schema existed and again after, and a
+refused first migration had already committed. The second implicit-state audit
+(`batter-jkw6.38`) counted that as a hidden third state, "schema absent, cannot
+tell", folded into `Elsewhere`, and an outcome a caller could not tell from a
+refusal that applied nothing. Since `batter-jkw6.41` the probe creates the
+schema, if absent, inside a transaction it always rolls back, so PostgreSQL
+resolves the path against it and the decision precedes the migrator on every
+run; the check after migrating is gone. The probe needs no privilege beyond
+the database `CREATE` that SQLx's own `CREATE SCHEMA IF NOT EXISTS` needs.
 
 What types cannot express here is remote session state. The check samples one
 session before and one after migrating, on separate connections. Those of one
@@ -317,10 +325,138 @@ migrator's statements are schema-qualified, and the hazard lies in the host's
 sessions, which the store cannot enumerate. A separate host migration login, a
 host migrator that keeps a `SET search_path` made after connecting, and the
 strict low-level `MIGRATOR` are outside the check, and stay application policy,
-documented in the store README. Any `migrate` failure can follow committed
-migrations, as the `StoreError` contract now states. The new class is a hard cut of the
+documented in the store README. A failure while migrating can follow
+committed migrations, as the `StoreError` contract states; a refusal cannot. The new class is a hard cut of the
 exhaustive `ErrorClass`, recorded with `Breaking:` and `Migration:` text and no
 shim. Evidence: the live `migrate_refuses_a_session_whose_search_path_resolves_into_flags`
 test (an explicit `flags` entry, refused after the first migration and before
 the second, and a reset path migrating with nothing applied twice), and a local
 run under a temporary role named `flags`, refused on both migrations.
+
+## Publication lifecycle (`batter-jkw6.39`)
+
+The second implicit-state audit (`batter-jkw6.38`) found the publication record
+was a state machine its loader drove by hand. `Published` could not represent
+"nothing published", so the writer kept `Option<Published>` and chose the
+public `Published::first` or `next` itself; `first` could be called at any time
+and skipped the authority, accepting a regression; `Candidate::carrying` was a
+paired call `next` never checked, so a loader that omitted it released a held,
+engaged switch; a refusal before the first publication was dropped; and the
+regression check, carrying, validation, deadline check and first-versus-later
+choice were split between the refresh and the writer.
+
+`low_level::Publisher` now owns the record through its lifecycle: `new` or
+`restore` (the last-good file, aged from registration) creates it, `judge`
+refuses a foreign scope, a file and a regression before looking at rows,
+carries what it serves into the candidate (replacing whatever it carried; a
+first publication carries nothing) and validates, and `Judged::publish` records
+the outcome, or dropping the judgement records nothing. The publisher is not
+`Clone`, so a superseded copy of a record cannot be advanced; `Record` is the
+cloneable read side with an explicit `Unpublished` state that keeps a refusal.
+The refresh calls one `Writer::read(candidate, deadline)`.
+
+The publisher cannot prove the candidate's rows are the store's: a loader that
+reads the wrong rows still publishes them, which stays the I/O shell's
+responsibility. Standalone snapshots and the `*_view` constructors remain for
+evaluation over a snapshot no publisher judged; they assert their own
+freshness, as the module's caller obligations state. The removed calls get no
+shim, because each accepted a snapshot that skipped carrying or the
+first-versus-later choice. Evidence: `batter-flags-core/tests/published.rs`
+(the carrying test fails with carrying removed from `judge`, checked by
+mutation) and the writer tests in `batter-flags/src/reader/tests/writer.rs`.
+
+## Snapshot status (`batter-jkw6.40`)
+
+The same audit found `SnapshotStatus` was a precedence enum over three state
+dimensions, loader liveness, what is served and the latest read's verdict, so
+`Regressed`, `Rejected` and `SchemaBehind` dropped what was served. The crate's
+own `Gate::Published` then needed a second read of the publication at another
+instant, a published record whose standing read `Unpublished` was reported as
+`NotLoaded` with a zero duration, and `Rejected.observed` was an `Option` that
+was always `Some`.
+
+`SnapshotStatus` is now a struct of `loader: LoaderState`, `served: Served`
+and `latest_read: LatestRead`, refused reads carrying core's `Refusal` and the
+store's version, and `satisfies(gate)` is a pure function of one status. The
+refresh publishes and records its verdict in one critical section of the
+shared state, and the status is read under it, so the fields belong to the
+same read. Live-only questions moved from the reader, which answered them with
+stand-ins in declared and test modes, to a `LiveRecord` only a control-plane
+reader has; served state and the heartbeat's report are derived from the
+record's own state and its snapshot's provenance, with no impossible arm.
+Residual: the fields are public, so a caller can build a status no loader
+reports, such as a control-plane publication with no judged read; a status
+grants nothing, and the nested alternative was judged too costly for a report.
+`RejectionCause` is removed. No shim: an enum alias cannot reproduce the
+dropped `served` fact without the precedence that hid it.
+
+Public-surface check for `batter-jkw6.39`/`.40`/`.41` against branch commit
+`04627167`, with the repository's rustdoc JSON walker on cargo 1.100.0-nightly
+(b2e9d5f9d 2026-09-02): `batter-flags-core` 1,253 -> 1,289 entries, removing
+`Published::first`, `Published::next` and `Published::rejected` and adding the
+`Publisher`, `Judged`, `Record`, `Unpublished` and `Restored` items and
+`Base::record_view`; `batter-flags` 517 -> 536, removing `RejectionCause` and
+the `SnapshotStatus` enum's variants and adding the struct's three fields, its
+`satisfies`, and `LoaderState`, `Served` and `LatestRead`; `batter-flags-postgres`
+517 -> 517 with nothing removed or added. Each removal has a `Breaking:`
+changelog entry with before/after code, a `Migration:` sentence naming it on
+the replacement and a recorded no-shim decision. The name-only walker cannot
+see that `PooledStore::migrate` kept its signature while its refusal moved
+before the migrator; the changelog records that behaviour change.
+
+## Remaining audit items (`batter-jkw6.42` to `.57`)
+
+The second audit's other findings were repaired as follows; each bead records
+its tests and live evidence.
+
+- `low_level::gate_switch` fails closed: a switch the view cannot answer for
+  reads as `Tripped` (`.42`). A witness type was not added because every
+  protected gate checks its switches at construction, and a new `GateReading`
+  variant would force impossible arms on every surface.
+- A `Candidate` takes its version when it is made and keeps its scope, so
+  `MissingVersion` and a second scope argument are gone (`.43`).
+- `CatalogBuilder::new` names the first process kind and environment class, so
+  `build` cannot fail (`.44`); `BuildError::RepeatedCall` is gone.
+- `pin` refuses an error decision with `Unpinnable` (`.45`).
+- Every operator read runs the store's primary and schema guard in its own
+  snapshot (`.46`); `history` returns a page with an explicit continuation
+  (`.47`); write outcomes record an accepted coordinated flip (`.48`); a
+  process presence is bound to the store that issued it (`.49`).
+- Core counts gated periodic skips itself (`register_skippable_in`,
+  `PeriodicSummary::skipped`), never as successes (`.50`).
+- `register_in` checks every name before registering anything, and
+  `with_listen` refuses its spacing when the policy is built (`.51`).
+- `RegisteredFlags::last_good()` reports the persister's state, a stale
+  selection cannot release a newer one, an oversized snapshot is not retried,
+  and a `LoadPolicy` is not `Clone` (`.52`).
+- `declared::resolve` refuses a narrowed settings source (`.53`). A type split
+  of core's `SettingsSource` was weighed and judged too costly for every root;
+  the source records its narrowing and the refusal is explicit at startup.
+- `TestFlags` is behind `test-support` (`.54`); `FlagsRole::ServingProcess`
+  names the serving grant and a `FlagsGrant` cannot be empty (`.55`); an
+  ungated job defers before publication under `unready_until_loaded` (`.56`).
+- `GateView`/`AdmittedFlags` outside a matching gated group (`.57`) is not made
+  a compile-time error: the extractor would have to require a gate-owned router
+  state, and the orphan rule forbids the `FromRef` that would let a handler
+  extract `State<AppState>` beside it. The misuse stays a sanitized 500, now
+  named `gate_outcome="unmatched_view"` in the completion event.
+
+Public-surface check of the whole working tree, `.39` to `.57` together,
+against branch commit `04627167`, with the same walker and nightly toolchain and
+every feature enabled: `batter-core` 1,343 -> 1,368 entries (0 removed, 25
+added); `batter-axum` 606 -> 606 (none); `batter-flags-core` 1,253 -> 1,295 (8
+removed, 50 added); `batter-flags` 517 -> 580 (25 removed, 88 added);
+`batter-flags-postgres` 517 -> 536 (2 removed, 21 added); the `batter` facade's
+23 re-export entries are unchanged. This round's removals are `Candidate::at`,
+`BuildError::NoProcessKind`, `NoEnvironmentClass` and `RepeatedCall`,
+`SnapshotRejection::MissingVersion`, `LoadPolicy: Clone`,
+`RegisteredFlags::last_persist_failure`, `GateError::DeferOnWorkflowStep`,
+`RegisterError::WakeSpacingTooLong`, `FlagsGrantError::EmptySelection`,
+`FlagsOperation::OperatorCli` and `PooledStore::heartbeat` and `stop`. Each one
+has a `Breaking:` changelog entry and a `Migration:` sentence naming it. The
+walker compares names only and runs with every feature enabled, so the
+signature changes (`CatalogBuilder::new` and `build`, `Candidate::new`,
+`SnapshotView::pin`, `LoadPolicy::with_listen`, `grant_fragment`,
+`Flags::flagged`, `PooledStore::history`, `KeyListing::kind` and `value_type`,
+`Deferral::flip`, `PeriodicSummary::skipped`) and the `test-support` gate on
+`batter_flags::test` were checked against the changelog by hand.

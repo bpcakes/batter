@@ -15,13 +15,11 @@
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-//! let serving = catalog.process_kind("serving")?;
-//! catalog.environment_class("hosted")?;
+//! let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 //! let fast = catalog.mode_flag("fast_path", Toggle::Off).declare()?;
 //! let halt = catalog.kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 //!     .declare()?;
-//! let fixture = TestFlags::builder(catalog.build()?, serving)?.set(&fast, Toggle::On).build()?;
+//! let fixture = TestFlags::builder(catalog.build(), serving)?.set(&fast, Toggle::On).build()?;
 //! let (control, approval) = ShutdownHandle::new_with_readiness_approval();
 //! approval.approve();
 //! let policy = RequestPolicy::new(control.operation_admission(),
@@ -88,7 +86,11 @@ pub struct RequestFlags(SnapshotView);
 ///
 /// Repeated extractions borrow the same view. An absent record or an
 /// application-built gate over any other type rejects with the fixed sanitized
-/// 500 [`HttpFailure::Internal`], regardless of the group's custom renderer.
+/// 500 [`HttpFailure::Internal`], regardless of the group's custom renderer,
+/// and the completion event carries `gate_outcome="unmatched_view"`. The
+/// pairing with a flags-gated group is not a compile-time property: see
+/// `batter_axum::GateView` for why. Extract it only in routes of a group
+/// installed with `http_view`, `http_gate` or `http_gate_any`.
 /// There is no public constructor, conversion or `Clone` implementation.
 /// See the [module example](self) for use in a handler.
 ///

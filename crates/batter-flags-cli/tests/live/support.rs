@@ -93,14 +93,18 @@ fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(10)
 }
 
-fn process(catalog_keys: &[&str], build: &str) -> ProcessPresence {
-    process_with(catalog_keys, build, 3_600)
+fn process(store: &PooledStore, catalog_keys: &[&str], build: &str) -> ProcessPresence {
+    process_with(store, catalog_keys, build, 3_600)
 }
 
-fn process_with(catalog_keys: &[&str], build: &str, liveness: u64) -> ProcessPresence {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    catalog.environment_class("hosted").unwrap();
+fn process_with(
+    store: &PooledStore,
+    catalog_keys: &[&str],
+    build: &str,
+    liveness: u64,
+) -> ProcessPresence {
+    let (mut catalog, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let later = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
     let past = Expiry::on(CivilDate::new(2020, 1, 1).unwrap());
     for key in catalog_keys {
@@ -146,16 +150,14 @@ fn process_with(catalog_keys: &[&str], build: &str, liveness: u64) -> ProcessPre
             }
         }
     }
-    let base = BaseBuilder::new(catalog.build().unwrap(), serving)
-        .unwrap()
-        .finish();
+    let base = BaseBuilder::new(catalog.build(), serving).unwrap().finish();
     let labels = ProcessLabels {
         application: ProcessLabel::new("service").unwrap(),
         environment: ProcessLabel::new("hosted").unwrap(),
         build: ProcessLabel::new(build).unwrap(),
     };
     let cadence = Cadence::new(Duration::from_secs(liveness), Duration::from_secs(3_600)).unwrap();
-    ProcessPresence::new(labels, &base, cadence)
+    ProcessPresence::new(store, labels, &base, cadence)
 }
 
 fn report(floor: &[&str]) -> PresenceReport {
@@ -200,27 +202,21 @@ impl Database {
             .await
             .unwrap();
         let keys = ["fast_path", "halt", "rollout", "old_path"];
-        let mut first = process(&keys, "build-a");
-        let mut second_live = process(&keys, "build-a");
-        let mut stopped = process(&keys, "build-a");
-        store
-            .heartbeat(&mut first, &report(&["halt"]), deadline())
+        let mut first = process(&store, &keys, "build-a");
+        let mut second_live = process(&store, &keys, "build-a");
+        let mut stopped = process(&store, &keys, "build-a");
+        first
+            .heartbeat(&report(&["halt"]), deadline())
             .await
             .unwrap();
-        store
-            .heartbeat(&mut second_live, &report(&[]), deadline())
+        second_live
+            .heartbeat(&report(&[]), deadline())
             .await
             .unwrap();
-        store
-            .heartbeat(&mut stopped, &report(&[]), deadline())
-            .await
-            .unwrap();
-        store.stop(stopped, deadline()).await.unwrap();
-        let mut orphan = process(&["orphan_path"], "build-b");
-        store
-            .heartbeat(&mut orphan, &report(&[]), deadline())
-            .await
-            .unwrap();
+        stopped.heartbeat(&report(&[]), deadline()).await.unwrap();
+        stopped.stop(deadline()).await.unwrap();
+        let mut orphan = process(&store, &["orphan_path"], "build-b");
+        orphan.heartbeat(&report(&[]), deadline()).await.unwrap();
         sqlx::query("DELETE FROM flags.flag_processes WHERE build = 'build-b'")
             .execute(&pool)
             .await
@@ -334,30 +330,24 @@ impl Database {
 
     /// Adds a Live process of `build` declaring `keys`.
     pub async fn live(&self, keys: &[&str], build: &str) {
-        let mut live = process(keys, build);
         let second = Duration::from_secs(1);
         let store = PooledStore::new(
             self.pool.clone(),
             StoreTiming::new(second * 3, second * 3, second * 3, second * 3).unwrap(),
         );
-        store
-            .heartbeat(&mut live, &report(&[]), deadline())
-            .await
-            .unwrap();
+        let mut live = process(&store, keys, build);
+        live.heartbeat(&report(&[]), deadline()).await.unwrap();
     }
 
     /// Adds a Silent process of `build` declaring `fast_path`.
     pub async fn silent(&self, build: &str) {
-        let mut silent = process_with(&["fast_path"], build, 1);
         let second = Duration::from_secs(1);
         let store = PooledStore::new(
             self.pool.clone(),
             StoreTiming::new(second * 3, second * 3, second * 3, second * 3).unwrap(),
         );
-        store
-            .heartbeat(&mut silent, &report(&[]), deadline())
-            .await
-            .unwrap();
+        let mut silent = process_with(&store, &["fast_path"], build, 1);
+        silent.heartbeat(&report(&[]), deadline()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(1_500)).await;
     }
 

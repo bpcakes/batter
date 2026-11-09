@@ -133,10 +133,13 @@ fn declare_relationships(builder: &mut CatalogBuilder, worker: &ProcessKind) {
 
 /// Builds the catalog and its handles.
 pub fn world() -> (Catalog, Handles) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, development) = CatalogBuilder::new(
+        SettingsPrefix::new("FLAG_").unwrap(),
+        "serving",
+        "development",
+    )
+    .unwrap();
     let worker = builder.process_kind("worker").unwrap();
-    let development = builder.environment_class("development").unwrap();
     let hosted = builder.environment_class("hosted").unwrap();
     let checkout_halt = builder
         .kill_switch(
@@ -199,7 +202,7 @@ pub fn world() -> (Catalog, Handles) {
         .declare()
         .unwrap();
     declare_relationships(&mut builder, &worker);
-    let catalog = builder.build().unwrap();
+    let catalog = builder.build();
     let handles = Handles {
         serving,
         worker,

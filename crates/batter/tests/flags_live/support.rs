@@ -182,16 +182,15 @@ pub async fn start(
     options: &PgConnectOptions,
     directory: &std::path::Path,
 ) -> (RegisteredFlags, RunningSupervisor) {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     catalog
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
         .unwrap();
     let today = CivilDate::new(2026, 11, 8).unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &SettingsSource::from_pairs([]).unwrap(),
         serving,
         hosted,

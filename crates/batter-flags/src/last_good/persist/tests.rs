@@ -287,3 +287,109 @@ async fn bounded<F: std::future::Future>(future: F) -> F::Output {
         .await
         .expect("the attempt finished within five seconds")
 }
+
+/// A selection's late destruction cannot release a newer selection's
+/// admission: finishing releases it with the outcome, and destruction
+/// releases only the selection that still holds it. The phase used to be
+/// reset unconditionally in `Drop`, after `finish` had already published the
+/// outcome under an earlier lock.
+#[test]
+fn a_stale_selection_cannot_release_a_newer_one() {
+    let directory = Directory::new();
+    let persister = Persister::new(directory.path());
+    persister.offer(snapshot(1));
+    let first = persister.select().unwrap().unwrap();
+    let stale = Selected {
+        state: first.state.clone(),
+        file: first.file.clone(),
+        written: first.written,
+        selection: first.selection,
+    };
+    assert_eq!(first.finish(Ok(Persisted::Written)), Ok(Persisted::Written));
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::UpToDate {
+            written: Some(Version::new(1))
+        }
+    );
+    persister.offer(snapshot(2));
+    let second = persister.select().unwrap().unwrap();
+    drop(stale);
+    assert!(
+        matches!(persister.select(), Err(PersistFailure::Busy)),
+        "the newer selection still holds admission"
+    );
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::Writing {
+            version: Version::new(2),
+            written: Some(Version::new(1))
+        }
+    );
+    drop(second);
+    assert!(persister.select().unwrap().is_some());
+}
+
+/// A publication too large for the file is reported and not retried every
+/// run; a newer publication replaces it.
+#[tokio::test]
+async fn a_publication_too_large_for_the_file_is_not_retried() {
+    let directory = Directory::new();
+    let persister = Persister::new(directory.path());
+    let mut large = snapshot(4);
+    large.entries.push(format::FileEntry {
+        key: "huge".into(),
+        kind: "mode".into(),
+        value_type: "toggle".into(),
+        fingerprint: [0; 32],
+        updated_version: 4,
+        value: format::EntryValue::State("x".repeat(format::LIMIT + 1)),
+    });
+    persister.offer(large);
+    assert_eq!(
+        persister.attempt(deadline()).await,
+        Err(PersistFailure::TooLarge)
+    );
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::TooLarge {
+            version: Version::new(4),
+            written: None
+        }
+    );
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Idle));
+    persister.offer(snapshot(5));
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+}
+
+/// A failure is reported only while the publication it failed is waiting.
+#[tokio::test]
+async fn a_failure_is_reported_while_its_publication_waits_and_cleared_by_a_write() {
+    let directory = Directory::new();
+    let path = directory.path();
+    let persister = Persister::new(path.clone());
+    persister.offer(snapshot(7));
+    // Another holder of the directory lock makes the write busy.
+    let lock = std::fs::File::open(path.directory()).unwrap();
+    lock.lock().unwrap();
+    assert_eq!(
+        persister.attempt(deadline()).await,
+        Err(PersistFailure::Busy)
+    );
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::Waiting {
+            version: Version::new(7),
+            written: None,
+            last_failure: Some(PersistFailure::Busy)
+        }
+    );
+    lock.unlock().unwrap();
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::UpToDate {
+            written: Some(Version::new(7))
+        }
+    );
+}

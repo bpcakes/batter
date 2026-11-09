@@ -9,7 +9,7 @@ use batter_flags_core::{
 };
 use tokio::time::sleep;
 
-use super::super::{LoadCause, LoadPolicy, RegisterError, SnapshotStatus, source::fake::Script};
+use super::super::{LoadCause, LoadPolicy, RegisterError, source::fake::Script};
 use super::support::*;
 use crate::{declared, low_level::capture_now};
 
@@ -23,9 +23,8 @@ fn governed(
     ReleaseFlag<Toggle>,
     KillSwitch,
 ) {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let halt = catalog
         .kill_switch("halt", SafeState::Released, StaleRule::EngageWhenStale)
         .declare()
@@ -53,7 +52,7 @@ fn governed(
     )
     .unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &source,
         serving,
         hosted,
@@ -112,7 +111,7 @@ async fn a_hold_only_a_stale_view_makes_is_counted_while_stale() {
     .unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
-    assert_eq!(flags.status(), SnapshotStatus::Fresh);
+    assert!(is_fresh(flags.status()), "{:?}", flags.status());
     assert_eq!(flags.held(), 0);
     assert_eq!(capture_now(&flags).evaluate(&dependent).value(), Toggle::On);
 
@@ -120,7 +119,7 @@ async fn a_hold_only_a_stale_view_makes_is_counted_while_stale() {
     // serves its default and `dependent` is held, and counted, meanwhile.
     fake.set(failing(LoadCause::Unavailable));
     sleep(MAXIMUM_AGE + POLL).await;
-    assert_eq!(flags.status(), SnapshotStatus::Stale);
+    assert!(is_stale(flags.status()), "{:?}", flags.status());
     assert_eq!(flags.held(), 1);
     assert_eq!(
         capture_now(&flags).evaluate(&dependent).value(),

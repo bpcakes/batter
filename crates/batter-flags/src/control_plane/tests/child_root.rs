@@ -8,8 +8,7 @@ use batter_flags_core::SwitchState;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use super::super::{
-    ControlPlaneStore, Gate, LoadPolicy, SnapshotDirectory, SnapshotFilePath, SnapshotStatus,
-    register_in,
+    ControlPlaneStore, Gate, LoadPolicy, Served, SnapshotDirectory, SnapshotFilePath, register_in,
 };
 use super::support::*;
 use crate::low_level::capture_now;
@@ -83,7 +82,7 @@ fn child() {
             published(),
             view.switch(&handles.halt).value().as_str(),
             view.switch(&handles.stale_halt).value().as_str(),
-            matches!(flags.status(), SnapshotStatus::ServingPersisted { .. }),
+            matches!(flags.status().served, Served::PersistedFile { .. }),
         );
         let _ = running.shutdown().await;
     });

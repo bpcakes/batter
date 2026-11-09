@@ -161,10 +161,7 @@ impl<'b> Draft<'b> {
             match fields.only_in {
                 EnvironmentPolicy::Any => fields.only_in = EnvironmentPolicy::Only(class.clone()),
                 EnvironmentPolicy::Only(_) => {
-                    return Err(BuildError::RepeatedCall {
-                        key: fields.key.clone(),
-                        method: "only_in",
-                    });
+                    unreachable!("a declaration's type state assigns only_in once")
                 }
             }
             Ok(())
@@ -202,10 +199,7 @@ impl<'b> Draft<'b> {
                     })
                 }
                 Governance::By(_) => {
-                    return Err(BuildError::RepeatedCall {
-                        key: fields.key.clone(),
-                        method: "governed_by",
-                    });
+                    unreachable!("a release declaration's type state assigns governed_by once")
                 }
             }
             Ok(())

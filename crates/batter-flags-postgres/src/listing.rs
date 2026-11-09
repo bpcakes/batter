@@ -1,5 +1,5 @@
 //! What an operator reads: every key the store holds or a retained catalog
-//! declares, and the check every command runs first.
+//! declares, and the guard every read runs inside its own snapshot.
 
 use crate::{
     ErrorClass, PooledStore, REQUIRED_SCHEMA_REVISION, StoreError, StoredState,
@@ -7,7 +7,7 @@ use crate::{
     load::{snapshot_error, version},
 };
 use batter_flags_core::{FlagKey, Version};
-use batter_sqlx::PgReadOnlySnapshot;
+use batter_sqlx::{PgReadOnlySnapshot, PgReadOnlySql};
 use sqlx::{Row, postgres::PgRow};
 use tokio::time::Instant;
 
@@ -39,9 +39,10 @@ pub enum Declaration {
 }
 
 /// Whether a flip may be rolled out poll by poll.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Coordination {
     /// Every declaring catalog allows a rolling flip.
+    #[default]
     Rolling,
     /// A declaring catalog requires every process to flip together.
     Coordinated,
@@ -72,10 +73,14 @@ pub enum Reference {
 pub struct KeyListing {
     /// The key.
     pub key: String,
-    /// The stored kind, else the newest declaring catalog's.
-    pub kind: String,
-    /// The stored value type, else the newest declaring catalog's.
-    pub value_type: String,
+    /// The stored kind, else the newest declaring catalog's; `None` for a key
+    /// neither stored nor declared.
+    ///
+    /// Migration: `kind` and `value_type` were empty strings for such a key.
+    pub kind: Option<String>,
+    /// The stored value type, else the newest declaring catalog's; `None` for
+    /// a key neither stored nor declared.
+    pub value_type: Option<String>,
     /// The row's `updated_version`, 0 for an absent row; the value
     /// `UnchangedSince` takes.
     pub revision: Version,
@@ -88,25 +93,45 @@ pub struct KeyListing {
 impl PooledStore {
     /// Refuses a standby and a schema older than this build requires, by one
     /// plain read with no explicit lock. An absent schema reads as revision 0.
+    ///
+    /// [`keys`](Self::keys), [`key`](Self::key), [`history`](Self::history)
+    /// and the fleet reads make the same checks inside their own snapshot, so
+    /// a command need not call this first; it answers "can this store be
+    /// used" without reading anything else.
     pub async fn preflight(&self, deadline: Instant) -> Result<(), StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
         PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
-            let [statement, lock, idle] = self.timing.settings(deadline)?;
-            sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
-                .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
-            check_primary(sqlx::query_scalar("SELECT pg_is_in_recovery()").fetch_one(sql.executor()).await?)?;
-            let found: i32 = sqlx::query_scalar("SELECT schema_revision FROM flags.flag_control WHERE singleton")
-                .fetch_one(sql.executor()).await.map_err(|error| match error.as_database_error().and_then(|e| e.code()) {
-                    Some(code) if code == "42P01" || code == "3F000" => StoreError::schema_behind(0),
-                    _ => StoreError::from(error),
-                })?;
-            if found < REQUIRED_SCHEMA_REVISION {
-                return Err(StoreError::schema_behind(found));
-            }
-            Ok(())
+            self.read_guard(sql, deadline).await
         })
         .await
         .map_err(snapshot_error)
+    }
+
+    /// The checks every operator read makes first, in the snapshot it reads:
+    /// the store's timeouts, a primary, and an installed schema this build can
+    /// read. A missing table or schema reads as revision 0.
+    pub(crate) async fn read_guard(
+        &self,
+        sql: &mut PgReadOnlySql<'_>,
+        deadline: Instant,
+    ) -> Result<(), StoreError> {
+        let [statement, lock, idle] = self.timing.settings(deadline)?;
+        sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
+            .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
+        check_primary(
+            sqlx::query_scalar("SELECT pg_is_in_recovery()")
+                .fetch_one(sql.executor())
+                .await?,
+        )?;
+        let found: i32 =
+            sqlx::query_scalar("SELECT schema_revision FROM flags.flag_control WHERE singleton")
+                .fetch_one(sql.executor())
+                .await
+                .map_err(crate::errors::missing_schema)?;
+        if found < REQUIRED_SCHEMA_REVISION {
+            return Err(StoreError::schema_behind(found));
+        }
+        Ok(())
     }
 
     /// Every key the store holds or a retained catalog declares, in key
@@ -120,8 +145,8 @@ impl PooledStore {
         let mut listed = self.list(Some(key.as_str()), deadline).await?;
         Ok(listed.pop().unwrap_or_else(|| KeyListing {
             key: key.as_str().to_owned(),
-            kind: String::new(),
-            value_type: String::new(),
+            kind: None,
+            value_type: None,
             revision: Version::new(0),
             stored: Stored::Absent,
             declaration: Declaration::Undeclared,
@@ -135,9 +160,7 @@ impl PooledStore {
     ) -> Result<Vec<KeyListing>, StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
         PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
-            let [statement, lock, idle] = self.timing.settings(deadline)?;
-            sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
-                .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
+            self.read_guard(sql, deadline).await?;
             sqlx::query("WITH declared AS ( \
                     SELECT e.key, \
                       bool_or(e.flip_discipline = 'coordinated') AS coordinated, \
@@ -204,12 +227,8 @@ fn listing(row: &PgRow) -> Result<KeyListing, StoreError> {
         key: row
             .try_get::<Option<String>, _>("key")?
             .ok_or_else(invalid)?,
-        kind: row
-            .try_get::<Option<String>, _>("kind")?
-            .unwrap_or_default(),
-        value_type: row
-            .try_get::<Option<String>, _>("value_type")?
-            .unwrap_or_default(),
+        kind: row.try_get("kind")?,
+        value_type: row.try_get("value_type")?,
         revision: version(row.try_get("revision")?)?,
         stored,
         declaration,

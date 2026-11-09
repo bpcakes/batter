@@ -51,7 +51,8 @@ use crate::key::KeyError;
 /// ```compile_fail,E0277
 /// use batter_flags_core::{CatalogBuilder, CivilDate, Expiry, SettingsPrefix};
 ///
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// let (mut builder, _serving, _hosted) =
+///     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// let expiry = Expiry::on(CivilDate::new(2027, 1, 1).unwrap());
 /// let _flag = builder
 ///     .release_flag::<String>("greeting", String::from("hello"), expiry)
@@ -63,7 +64,8 @@ use crate::key::KeyError;
 /// ```compile_fail,E0277
 /// use batter_flags_core::{CatalogBuilder, SettingsPrefix};
 ///
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+/// let (mut builder, _serving, _hosted) =
+///     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
 /// let _flag = builder.mode_flag("strict_mode", false).declare();
 /// ```
 pub trait FlagValue: Copy + Eq + Hash + fmt::Debug + Send + Sync + 'static {

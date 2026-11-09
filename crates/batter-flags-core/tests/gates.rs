@@ -123,12 +123,12 @@ fn declared_mode_has_no_waiting_window() {
     assert_eq!(name(&gate_switch(&view, &h.export_halt)), "tripped");
 }
 
-/// The disclosed obligation of the low-level read: a switch this base cannot
-/// answer for is not refused here. It reads as its safe state, classified like
-/// any other reading, and the decision carries the cause. Gates built by
-/// `batter-flags` check the switch first, so they never reach this.
+/// The low-level read fails closed: a switch this base cannot answer for is
+/// tripped whatever its safe state, and the decision carries the safe state
+/// and the cause. Gates built by `batter-flags` check the switch first, so
+/// they never reach this.
 #[test]
-fn a_switch_the_base_cannot_answer_for_reads_as_its_safe_state_with_an_error() {
+fn a_switch_the_base_cannot_answer_for_reads_as_tripped_with_an_error() {
     let (catalog, h) = world();
     let (_other_catalog, other) = world();
     let base = base(catalog, &h.serving, &[]);
@@ -138,10 +138,18 @@ fn a_switch_the_base_cannot_answer_for_reads_as_its_safe_state_with_an_error() {
     let not_owned = gate_switch(&view, &h.export_halt);
     assert!(matches!(&not_owned, GateReading::Tripped(_)));
     assert_eq!(not_owned.decision().error(), Some(ErrorCause::NotOwned));
-    // Another catalog's `checkout_halt`: its safe state is released.
+    // Another catalog's `checkout_halt`: its safe state is released, and it
+    // used to read as open, so the gated work ran.
     let foreign = gate_switch(&view, &other.checkout_halt);
-    assert!(matches!(&foreign, GateReading::Open(_)));
+    assert!(matches!(&foreign, GateReading::Tripped(_)));
+    assert_eq!(foreign.decision().value(), SwitchState::Released);
     assert_eq!(foreign.decision().error(), Some(ErrorCause::ForeignCatalog));
+    // Before publication too: unanswerable outranks awaiting.
+    let unpublished = base.not_loaded_view(PrePublication::ServeDefaults, Freshness::Fresh);
+    assert!(matches!(
+        gate_switch(&unpublished, &other.checkout_halt),
+        GateReading::Tripped(_)
+    ));
 
     // The check that a gate constructor makes refuses both.
     assert_eq!(

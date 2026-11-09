@@ -37,10 +37,8 @@ use crate::{
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = builder.process_kind("serving")?;
+/// let (mut builder, serving, _hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let worker = builder.process_kind("worker")?;
-/// let _hosted = builder.environment_class("hosted")?;
 ///
 /// let checkout_halt = builder
 ///     .kill_switch("checkout_halt", SafeState::Released, StaleRule::HoldLastKnown)
@@ -54,7 +52,7 @@ use crate::{
 ///     .declare()?;
 /// builder.retired("ENABLE_NEW_CHECKOUT", "set FLAG_NEW_CHECKOUT instead")?;
 ///
-/// let catalog = builder.build()?;
+/// let catalog = builder.build();
 /// assert_eq!(catalog.declaration("new_checkout").unwrap().setting_name().as_str(), "FLAG_NEW_CHECKOUT");
 /// assert_eq!(catalog.owned_by(&serving)?.count(), 2);
 /// # let _ = new_checkout;
@@ -73,12 +71,34 @@ pub struct CatalogBuilder {
 }
 
 impl CatalogBuilder {
-    /// Starts a catalog whose flags read settings under `prefix`.
+    /// Starts a catalog whose flags read settings under `prefix`, with its
+    /// first process kind and environment class, and returns their handles.
     ///
-    /// The prefix is part of the catalog digest and the manifest. Declared mode
-    /// refuses every name under the prefix that the catalog does not declare.
-    pub fn new(prefix: SettingsPrefix) -> Self {
-        Self {
+    /// A catalog without either could never be resolved by a process, so it
+    /// cannot be started without them; add more with
+    /// [`process_kind`](Self::process_kind) and
+    /// [`environment_class`](Self::environment_class). The prefix is part of
+    /// the catalog digest and the manifest. Declared mode refuses every name
+    /// under the prefix that the catalog does not declare.
+    ///
+    /// Migration: `CatalogBuilder::new(prefix)` followed by
+    /// `process_kind(kind)` and `environment_class(class)` is
+    /// `CatalogBuilder::new(prefix, kind, class)`, and `build` no longer
+    /// fails, so `BuildError::NoProcessKind` and
+    /// `BuildError::NoEnvironmentClass` are gone. `BuildError::RepeatedCall`
+    /// is gone too: each set-once policy is a type state, so a repeat does
+    /// not compile.
+    ///
+    /// # Errors
+    ///
+    /// As for [`process_kind`](Self::process_kind) and
+    /// [`environment_class`](Self::environment_class).
+    pub fn new(
+        prefix: SettingsPrefix,
+        process_kind: &str,
+        environment_class: &str,
+    ) -> Result<(Self, ProcessKind, EnvironmentClass), BuildError> {
+        let mut builder = Self {
             id: CatalogId::mint(),
             prefix,
             process_kinds: Vec::new(),
@@ -86,7 +106,10 @@ impl CatalogBuilder {
             entries: Vec::new(),
             keys: BTreeMap::new(),
             retired: BTreeMap::new(),
-        }
+        };
+        let kind = builder.process_kind(process_kind)?;
+        let class = builder.environment_class(environment_class)?;
+        Ok((builder, kind, class))
     }
 
     /// Declares a process kind and returns the only value that names it.
@@ -205,21 +228,14 @@ impl CatalogBuilder {
         Ok(())
     }
 
-    /// Validates the whole catalog and returns it.
+    /// Returns the catalog. Every declaration and relationship was validated
+    /// as it was stated, and the constructor named a process kind and an
+    /// environment class, so nothing is left to refuse.
     ///
-    /// # Errors
-    ///
-    /// [`BuildError::NoProcessKind`] or [`BuildError::NoEnvironmentClass`]
-    /// when a vocabulary is empty, because no process could then resolve the
-    /// catalog.
-    pub fn build(self) -> Result<Catalog, BuildError> {
-        if self.process_kinds.is_empty() {
-            return Err(BuildError::NoProcessKind);
-        }
-        if self.environment_classes.is_empty() {
-            return Err(BuildError::NoEnvironmentClass);
-        }
-        Ok(Catalog::assemble(self))
+    /// Migration: `build()` returned `Result<Catalog, BuildError>`; drop the
+    /// `?` or `unwrap()` after it.
+    pub fn build(self) -> Catalog {
+        Catalog::assemble(self)
     }
 
     fn name_in_use(&self, name: &SettingName) -> bool {

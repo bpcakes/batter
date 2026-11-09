@@ -68,7 +68,6 @@ async fn stored_writer_vectors_validate_against_core_candidate() {
             serde_json::from_str::<serde_json::Value>(vector["text"].as_str().unwrap()).unwrap()
         );
         let snapshot = Snapshot::validate(
-            &base.validation_scope(),
             f.store
                 .load(deadline())
                 .await
@@ -210,11 +209,8 @@ async fn assert_held(f: &Fixture) {
     let (catalog, handles) = world::world();
     let base = world::base(catalog, &handles.serving, &[]);
     let scope = base.validation_scope();
-    let snapshot = Snapshot::validate(
-        &scope,
-        f.store.load(deadline()).await.unwrap().candidate(&scope),
-    )
-    .unwrap();
+    let snapshot =
+        Snapshot::validate(f.store.load(deadline()).await.unwrap().candidate(&scope)).unwrap();
     assert_eq!(
         snapshot.held(batter_flags_core::Freshness::Fresh).count(),
         1

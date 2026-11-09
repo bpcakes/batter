@@ -48,16 +48,14 @@ impl CatalogBuilder {
     /// use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    /// builder.process_kind("serving")?;
-    /// builder.environment_class("hosted")?;
+    /// let (mut builder, _, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     /// let ledger_v2 = builder.mode_flag("ledger_v2", Toggle::Off).declare()?;
     /// let ledger_audit = builder.mode_flag("ledger_audit", Toggle::Off).declare()?;
     ///
     /// builder.requires(&ledger_v2, Toggle::On, &ledger_audit, Toggle::On)?;
     /// builder.requires(&ledger_audit, Toggle::On, &ledger_v2, Toggle::On)?;
     ///
-    /// let catalog = builder.build()?;
+    /// let catalog = builder.build();
     /// assert_eq!(catalog.declaration("ledger_v2").unwrap().invariants().len(), 1);
     /// assert_eq!(catalog.declaration("ledger_audit").unwrap().invariants().len(), 1);
     /// # Ok(())
@@ -120,7 +118,8 @@ impl CatalogBuilder {
     /// #     fn variant(self) -> &'static str { match self { Self::Classic => "classic", Self::Express => "express" } }
     /// #     fn from_variant(v: &str) -> Option<Self> { match v { "classic" => Some(Self::Classic), "express" => Some(Self::Express), _ => None } }
     /// # }
-    /// # let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
+    /// # let (mut builder, _serving, _hosted) =
+    /// #     CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     /// let toggle = builder.mode_flag("toggle", Toggle::Off).declare().unwrap();
     /// let checkout = builder.mode_flag("checkout", Checkout::Classic).declare().unwrap();
     /// let _ = builder.both_or_none(&toggle, &checkout);

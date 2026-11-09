@@ -43,8 +43,11 @@ Archive/restore take `Archive::new(key, change)`; archives load as absent.
 snapshot. `loaded.candidate(&validation_scope)` passes all rows to the existing
 core validator. Higher/extra-field encodings remain present so core can hold them.
 A standby returns `ErrorClass::Standby` without a candidate. `history` returns
-at most 1000 rows strictly after a version, in counter order; only explicit fields
-expose actor, reason and row images. Default diagnostics do not print them.
+a `HistoryPage` of at most `HISTORY_PAGE` (1000) rows strictly after a version,
+in counter order, with `next: Continuation` saying whether more follow; `keys`,
+`key`, `history` and the fleet reads refuse a standby and an unusable schema in
+their own snapshot. A `ProcessPresence` heartbeats and stops only through the
+store that issued it. Only explicit fields expose actor, reason and row images. Default diagnostics do not print them.
 
 ## Presence, prune and the fleet view (T-13)
 
@@ -149,12 +152,15 @@ and creates its tables in `flags` without error, and `PooledStore::migrate`,
 which also ignores versions it does not know, never refuses them; only the
 strict `MIGRATOR` does. `PooledStore::migrate` therefore refuses with
 `ErrorClass::SearchPath` when a session of its pool would resolve into
-`flags` (`batter-jkw6.34`). PostgreSQL resolves that session's default path,
-which `DISCARD ALL` restores, and its `current_schemas` lists only existing
-schemas, so one session is checked before migrating when the schema exists and
-another after: on a first migration the flags migrations have run when it
-refuses, and a rerun applies nothing twice. Any `migrate` failure can follow
-committed migrations. The check samples separate connections: those of one
+`flags` (`batter-jkw6.34`), before anything is migrated (`batter-jkw6.41`).
+PostgreSQL resolves that session's default path, which `DISCARD ALL` restores,
+and its `current_schemas` lists only existing schemas, so the probe creates the
+schema if it is absent inside a transaction it always rolls back: a refused
+first migration creates and applies nothing. The probe needs only the database
+`CREATE` privilege that SQLx's own `CREATE SCHEMA IF NOT EXISTS` needs on every
+run. A server or search-path refusal applies nothing; a failure while
+migrating can follow committed migrations, and a rerun applies nothing twice.
+The probe and the migration use separate connections: those of one
 pool share their defaults unless the login's role or database settings or the
 pool's connect options (`PgPool::set_connect_options`) changed while it held
 connections. Sessions of other pools or logins, including a separate host

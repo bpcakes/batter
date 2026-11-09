@@ -23,6 +23,9 @@ postgres = ["dep:batter-flags-postgres", "dep:batter-sqlx", "dep:sqlx", "dep:uui
 axum = ["dep:batter-axum", "dep:axum"]
 # Job-handler gates and pinned decisions over the native Runledger job types.
 runledger = ["dep:runledger-core"]
+# Injected test flags (`test::TestFlags`), which serve `Source::Test` through
+# every protected surface; for test builds only, never a production root.
+test-support = []
 
 [dependencies]
 batter-core.workspace = true
@@ -68,4 +71,22 @@ required-features = ["postgres"]
 
 [[test]]
 name = "jobs_live"
-required-features = ["runledger", "postgres"]
+required-features = ["runledger", "postgres", "test-support"]
+
+# The targets that build `TestFlags` fixtures. A dependency of this crate on
+# itself would break the flags graph rule, so they name the feature here.
+[[test]]
+name = "test_flags"
+required-features = ["test-support"]
+
+[[test]]
+name = "test_flags_errors"
+required-features = ["test-support"]
+
+[[test]]
+name = "auto_traits"
+required-features = ["test-support"]
+
+[[test]]
+name = "http"
+required-features = ["axum", "test-support"]

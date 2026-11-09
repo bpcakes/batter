@@ -13,9 +13,8 @@ use crate::{Flags, GateError, declared};
 
 /// Flags of a one-switch catalog, resolved from `pairs` as `serving`.
 fn declared_flags(pairs: &[(&str, &str)]) -> (Flags, KillSwitch) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    let hosted = builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let halt = builder
         .kill_switch("shared_halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
@@ -27,8 +26,7 @@ fn declared_flags(pairs: &[(&str, &str)]) -> (Flags, KillSwitch) {
     )
     .unwrap();
     let today = CivilDate::new(2026, 11, 5).unwrap();
-    let resolved =
-        declared::resolve(builder.build().unwrap(), &source, serving, hosted, today).unwrap();
+    let resolved = declared::resolve(builder.build(), &source, serving, hosted, today).unwrap();
     (resolved.into_flags(), halt)
 }
 
@@ -73,10 +71,6 @@ fn the_refusals_say_what_to_change() {
         .to_string(),
         "kill switch `shared_halt` is listed more than once"
     );
-    assert_eq!(
-        GateError::DeferOnWorkflowStep.to_string(),
-        "a job that may run as a workflow step cannot defer while its switch is engaged"
-    );
 }
 
 mod fixture_order {
@@ -93,11 +87,12 @@ mod fixture_order {
 
     /// One fixture, built with the version set first or last.
     fn digest(order: Placement, version: u64) -> batter_flags_core::SnapshotDigest {
-        let mut catalog = batter_flags_core::CatalogBuilder::new(
+        let (mut catalog, serving, _hosted) = batter_flags_core::CatalogBuilder::new(
             batter_flags_core::SettingsPrefix::new("FLAG_").unwrap(),
-        );
-        let serving = catalog.process_kind("serving").unwrap();
-        catalog.environment_class("hosted").unwrap();
+            "serving",
+            "hosted",
+        )
+        .unwrap();
         let expiry =
             batter_flags_core::Expiry::on(batter_flags_core::CivilDate::new(2027, 3, 31).unwrap());
         let flag = catalog
@@ -112,7 +107,7 @@ mod fixture_order {
             )
             .declare()
             .unwrap();
-        let builder = TestFlags::builder(catalog.build().unwrap(), serving).unwrap();
+        let builder = TestFlags::builder(catalog.build(), serving).unwrap();
         let built = match order {
             Placement::First => builder
                 .version(Version::new(version))

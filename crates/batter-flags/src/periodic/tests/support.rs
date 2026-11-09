@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use batter_core::{
     cleanup::CleanupBudget,
@@ -8,7 +8,7 @@ use batter_core::{
 use batter_flags_core::{
     CatalogBuilder, CivilDate, Expiry, KillSwitch, PrePublication, ReleaseFlag, SafeState,
     SettingsPrefix, StaleRule, SwitchState, Toggle, Version,
-    low_level::{BaseBuilder, Candidate, CandidateRow, Disposition, Snapshot, ValidationScope},
+    low_level::{BaseBuilder, Candidate, CandidateRow, Disposition, ValidationScope},
 };
 use tokio::time::Instant;
 
@@ -46,10 +46,10 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new(pre_publication: PrePublication) -> Self {
-        let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-        let serving = catalog.process_kind("serving").unwrap();
+        let (mut catalog, serving, _) =
+            CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted")
+                .unwrap();
         let worker = catalog.process_kind("worker").unwrap();
-        catalog.environment_class("hosted").unwrap();
         let halt = catalog
             .kill_switch("prune_halt", SafeState::Released, StaleRule::HoldLastKnown)
             .declare()
@@ -67,9 +67,7 @@ impl Fixture {
             )
             .declare()
             .unwrap();
-        let base = BaseBuilder::new(catalog.build().unwrap(), serving)
-            .unwrap()
-            .finish();
+        let base = BaseBuilder::new(catalog.build(), serving).unwrap().finish();
         let scope = base.validation_scope();
         let (writer, reader) = Reader::live(base, pre_publication, SECOND * 1000, Instant::now());
         Self {
@@ -84,13 +82,11 @@ impl Fixture {
 
     pub fn publish(&mut self, version: u64, halt: SwitchState, flag: Toggle) {
         let at = Version::new(version);
-        let candidate = Candidate::new(&self.scope)
-            .at(at)
+        let candidate = Candidate::new(&self.scope, at)
             .row(CandidateRow::switch(&self.halt, halt, at))
             .row(CandidateRow::flag(&self.flag, flag, at));
-        let snapshot = Arc::new(Snapshot::validate(&self.scope, candidate).unwrap());
         assert_eq!(
-            self.writer.apply(snapshot, Instant::now()),
+            self.writer.read_at(candidate, Instant::now()),
             Disposition::Applied
         );
     }

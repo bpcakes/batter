@@ -47,9 +47,9 @@ async fn blocked_by(f: &Fixture, holder: &mut sqlx::Transaction<'_, sqlx::Postgr
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn a_first_heartbeat_publishes_the_catalog_and_later_ones_only_refresh() {
     let f = Fixture::migrated().await;
-    let mut first = process(Build::Base, "build-1", 60, 600);
-    f.store
-        .heartbeat(&mut first, &report(SnapshotReport::NotLoaded), deadline())
+    let mut first = process(&f.store, Build::Base, "build-1", 60, 600);
+    first
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
 
@@ -106,14 +106,10 @@ async fn a_first_heartbeat_publishes_the_catalog_and_later_ones_only_refresh() {
         .unwrap();
     let mut beat = report(SnapshotReport::ControlPlane(Version::new(3)));
     beat.held = KeySample::of([key("fast_path")]);
-    f.store
-        .heartbeat(&mut first, &beat, deadline())
-        .await
-        .unwrap();
-    let mut second = process(Build::Base, "build-1", 60, 600);
-    f.store
+    first.heartbeat(&beat, deadline()).await.unwrap();
+    let mut second = process(&f.store, Build::Base, "build-1", 60, 600);
+    second
         .heartbeat(
-            &mut second,
             &report(SnapshotReport::PersistedFile(Version::new(2))),
             deadline(),
         )
@@ -147,19 +143,15 @@ async fn a_first_heartbeat_publishes_the_catalog_and_later_ones_only_refresh() {
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn a_stop_consumes_the_presence_keeps_the_expiry_and_survives_heartbeats() {
     let f = Fixture::migrated().await;
-    let never = process(Build::Base, "never", 60, 600);
+    let never = process(&f.store, Build::Base, "never", 60, 600);
     assert_eq!(
-        f.store.stop(never, deadline()).await.unwrap(),
+        never.stop(deadline()).await.unwrap(),
         StopOutcome::NotRegistered
     );
 
-    let mut stopping = process(Build::Base, "stopping", 60, 600);
-    f.store
-        .heartbeat(
-            &mut stopping,
-            &report(SnapshotReport::NotLoaded),
-            deadline(),
-        )
+    let mut stopping = process(&f.store, Build::Base, "stopping", 60, 600);
+    stopping
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     let expiry = || async {
@@ -172,16 +164,16 @@ async fn a_stop_consumes_the_presence_keeps_the_expiry_and_survives_heartbeats()
     };
     let before = expiry().await;
     assert_eq!(
-        f.store.stop(stopping, deadline()).await.unwrap(),
+        stopping.stop(deadline()).await.unwrap(),
         StopOutcome::Stopped
     );
     assert_eq!(expiry().await, before, "a stop leaves the expiry alone");
 
     // A stop recorded some other way is reported, and a heartbeat never
     // clears it.
-    let mut marked = process(Build::Base, "marked", 60, 600);
-    f.store
-        .heartbeat(&mut marked, &report(SnapshotReport::NotLoaded), deadline())
+    let mut marked = process(&f.store, Build::Base, "marked", 60, 600);
+    marked
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     sqlx::query(
@@ -190,12 +182,12 @@ async fn a_stop_consumes_the_presence_keeps_the_expiry_and_survives_heartbeats()
     .execute(&f.pool)
     .await
     .unwrap();
-    f.store
-        .heartbeat(&mut marked, &report(SnapshotReport::NotLoaded), deadline())
+    marked
+        .heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     assert_eq!(
-        f.store.stop(marked, deadline()).await.unwrap(),
+        marked.stop(deadline()).await.unwrap(),
         StopOutcome::AlreadyStopped
     );
     let states: Vec<_> = f
@@ -215,9 +207,8 @@ async fn a_stop_consumes_the_presence_keeps_the_expiry_and_survives_heartbeats()
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn a_heartbeat_stamps_its_expiry_after_waiting_for_its_row() {
     let f = Fixture::migrated().await;
-    let mut slow = process(Build::Base, "slow", 1, 600);
-    f.store
-        .heartbeat(&mut slow, &report(SnapshotReport::NotLoaded), deadline())
+    let mut slow = process(&f.store, Build::Base, "slow", 1, 600);
+    slow.heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     // Hold the row past its one-second liveness while the next heartbeat waits.
@@ -226,10 +217,8 @@ async fn a_heartbeat_stamps_its_expiry_after_waiting_for_its_row() {
         .fetch_one(&mut *holder)
         .await
         .unwrap();
-    let store = f.store.clone();
     let beat = tokio::spawn(async move {
-        store
-            .heartbeat(&mut slow, &report(SnapshotReport::NotLoaded), deadline())
+        slow.heartbeat(&report(SnapshotReport::NotLoaded), deadline())
             .await
     });
     blocked_by(&f, &mut holder).await;
@@ -252,9 +241,8 @@ async fn a_heartbeat_stamps_its_expiry_after_waiting_for_its_row() {
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn a_heartbeat_outlasts_a_prune_that_deletes_its_catalog() {
     let f = Fixture::migrated().await;
-    let mut gone = process(Build::Base, "build-1", 60, 600);
-    f.store
-        .heartbeat(&mut gone, &report(SnapshotReport::NotLoaded), deadline())
+    let mut gone = process(&f.store, Build::Base, "build-1", 60, 600);
+    gone.heartbeat(&report(SnapshotReport::NotLoaded), deadline())
         .await
         .unwrap();
     sqlx::query("DELETE FROM flags.flag_processes")
@@ -274,11 +262,9 @@ async fn a_heartbeat_outlasts_a_prune_that_deletes_its_catalog() {
         .unwrap();
 
     // A heartbeat of the same build waits on that lock...
-    let store = f.store.clone();
-    let mut next = process(Build::Base, "build-1", 60, 600);
+    let mut next = process(&f.store, Build::Base, "build-1", 60, 600);
     let beat = tokio::spawn(async move {
-        store
-            .heartbeat(&mut next, &report(SnapshotReport::NotLoaded), deadline())
+        next.heartbeat(&report(SnapshotReport::NotLoaded), deadline())
             .await
     });
     blocked_by(&f, &mut prune).await;

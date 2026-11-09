@@ -1325,10 +1325,11 @@ factory, and passes that same view to work only on `Open`. Switch identity and
 process ownership refusals precede core registration. The opaque
 `GatedPeriodicPolicy` fixes immediate startup and `StopAtDrain`; it cannot
 select first-success startup or support-through-drain. Acknowledgement proves
-loop initialization, not successful maintenance. Core `PeriodicSummary.succeeded`
-includes skipped runs; `GatedPeriodicReader::skipped()` retains their saturating
-count separately, outside core's completion report. These are separate live
-observations, not a coherent pair of counters. A switch change affects the next
+loop initialization, not successful maintenance. A skipped run is core's own
+`PeriodicOutcome::Skipped` (`register_skippable_in`), counted in
+`PeriodicSummary::skipped` under core's history lock and in the completion
+report, never in `succeeded`, and never acknowledging first-success startup
+(`batter-jkw6.50`; `tests/periodic/skips.rs`). A switch change affects the next
 run and does not revoke an active run's frozen view. Work required for native
 settlement during drain must register ungated through core.
 The gate retains its owned application future after it returns, until core has
@@ -3561,10 +3562,13 @@ validation order, native API limits, authority and test coverage.
 
 `PooledStore::migrate` refuses with `ErrorClass::SearchPath` when a session of
 its pool has a default path that resolves unqualified names into `flags`: an
-explicit `flags` entry, or `"$user"` for a role named `flags`. It checks one
-session before migrating when the schema exists and another after, so a first
-migration has run when it refuses; any `migrate` failure can follow committed
-migrations. The checks sample separate connections, which share their defaults
+explicit `flags` entry, or `"$user"` for a role named `flags`. It decides
+before anything is migrated, the first migration included: the probe creates
+the schema if it is absent inside a transaction it always rolls back, so
+PostgreSQL resolves the path against it and a refusal creates and applies
+nothing (live `migrate_refuses_a_session_whose_search_path_resolves_into_flags`).
+A failure while migrating can still follow committed migrations. The probe and
+the migration sample separate connections, which share their defaults
 unless the login's role or database settings or the pool's connect options
 changed while it held connections, which the check cannot see, and it cannot see other pools' or logins' sessions; a host migrator
 on such a login remains the application's to configure.
@@ -3586,8 +3590,10 @@ an enabling variant whose required settings are absent or empty, and a pair
 an invariant forbids fail startup; a governed flag is judged at its code
 default while its switch resolves engaged. Invariants across process kinds are
 not checked: the other kind's value is unknowable there. The startup report
-shows each key's source as `literal`, `absent` or `not_applicable`, so a
-narrowed source shows as every applicable key absent. No failure message
+shows each key's source as `literal`, `absent` or `not_applicable`. A source
+any layer of which passed through `select_dedicated` or `select_environment`
+is refused with `DeclaredError::NarrowedSource`, so flag names a root's own
+narrowing dropped never read as absent defaults (`batter-jkw6.53`). No failure message
 carries a setting's value; the only retained value is a non-Unicode setting,
 reachable through `source()`. No library production source reads the process
 environment outside the declared seam
@@ -3598,7 +3604,12 @@ environment outside the declared seam
 A gate reads every switch from one view captured at entry
 (`SwitchGate::enter`), and the reading is an exhaustive `GateReading`: awaiting
 publication is never mistaken for open. Evaluation reads no clock and does no
-I/O. An evaluation emits `feature_flag.evaluation` on target `batter::flags`:
+I/O. The low-level `gate_switch` reads a switch the view cannot answer for as
+`Tripped`, failing closed (`batter-jkw6.42`). `pin` refuses an error decision
+with `Unpinnable` rather than pinning a default a replay would honour
+(`batter-jkw6.45`). An ungated job before the first publication under
+`unready_until_loaded` is deferred by its recheck (`batter-jkw6.56`). An
+evaluation emits `feature_flag.evaluation` on target `batter::flags`:
 DEBUG ordinarily, INFO for an engaged gate, WARN for the first error per handle
 and cause. A request, job invocation or periodic run keeps the view it was
 admitted with; a later publication affects the next one.
@@ -3606,14 +3617,26 @@ admitted with; a later publication affects the next one.
 ### Control plane
 
 `control_plane::register_in` validates every input before registering
-anything. The process writer publishes through core's `Authority`, so the
-version, drift and file rules are enforced by the writer, not left to the
-loader: a version below the applied one is refused as `Regressed`, a changed
-digest at the same version as drift, and a file after a control-plane
-publication is never applied. Staleness counts from registration until the
-first publication and from the last confirming read after it; a file-served
-snapshot ages from registration. A held kill switch keeps its last published
-state, and the settings floor only engages.
+anything. The process writer owns core's `low_level::Publisher`, the only
+value that can advance the published `Record`, so the version, drift, file
+and carrying rules are enforced by the publisher, not left to the loader: a
+version below the applied one is refused as `Regressed` before its rows are
+judged, a changed digest at the same version as drift, and the last-good file
+enters only through `Publisher::restore`, before anything else; a file offered
+as a read is refused. The publisher carries the kill-switch states it serves
+into every read it judges, so a held kill switch keeps its last published
+state whatever the candidate carried, and a refusal before the first
+publication is recorded rather than dropped. A read is judged and then
+published in two steps, so a refresh whose deadline passes while it judges
+publishes and records nothing (`batter-flags-core/tests/published.rs`, the
+writer tests in `batter-flags/src/reader/tests/writer.rs`). Staleness counts from registration until the first publication and
+from the last confirming read after it; a file-served snapshot ages from
+registration. The settings floor only engages.
+`RegisteredFlags::status` reports the loader's liveness, what views serve and
+the latest judged read as separate fields, read under the lock the refresh
+publishes under, so a refusal or a schema behind never hides what is served
+and a status never pairs a publication with another read's verdict; `Gate`
+is judged from one status (`control_plane/tests/status.rs`).
 
 The last-good file is written by the refresh after it publishes, only for
 values this process published from the control plane, under a directory lock,

@@ -126,8 +126,18 @@ pub(crate) struct GateRecord(Arc<dyn Any + Send + Sync>);
 ///
 /// See [`GroupGate`] for a complete usage example. This value has no constructor
 /// and is not `Clone`. Missing or wrong-typed records reject with the fixed,
-/// sanitized 500 [`HttpFailure::Internal`] response, never a Rust type name.
-/// Repeated extractions of the same type share the exact same value.
+/// sanitized 500 [`HttpFailure::Internal`] response, never a Rust type name,
+/// and the request's completion event carries `gate_outcome="unmatched_view"`
+/// so the wiring error is told apart from a server fault. Repeated extractions
+/// of the same type share the exact same value.
+///
+/// The pairing of a handler's `GateView<V>` with a group gated by a
+/// `GroupGate` capturing `V` is not checked at compile time: it would need the
+/// extractor to require a gate-owned router state, and then a handler of an
+/// application with its own state could not also extract `State<AppState>`,
+/// since a `FromRef` from that gate state to an arbitrary application state
+/// cannot be implemented outside the application. Keep gate views in routes
+/// of the group whose gate captures them.
 ///
 /// ```compile_fail,E0277
 /// use axum::extract::Request;
@@ -153,12 +163,17 @@ impl<S: Send + Sync, V: Send + Sync + 'static> FromRequestParts<S> for GateView<
     type Rejection = HttpFailure;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
+        let view = parts
             .extensions
             .get::<GateRecord>()
             .and_then(|record| record.0.clone().downcast::<V>().ok())
-            .map(Self)
-            .ok_or(HttpFailure::Internal)
+            .map(Self);
+        if view.is_none()
+            && let Some(observation) = parts.extensions.get::<ObservationState>()
+        {
+            observation.record_gate_unmatched();
+        }
+        view.ok_or(HttpFailure::Internal)
     }
 }
 

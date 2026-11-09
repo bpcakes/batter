@@ -47,46 +47,43 @@ fn a_candidate_is_rejected_only_for_structural_corruption() {
     let base = base(catalog, &h.serving, &[]);
     let scope = base.validation_scope();
 
-    let versionless = Candidate::new(&scope).row(flag_row(&h.fast_path, Toggle::On, 1));
-    assert_eq!(
-        Snapshot::validate(&scope, versionless).unwrap_err(),
-        SnapshotRejection::MissingVersion
-    );
-
-    let repeated = Candidate::new(&scope).at(version(4)).rows([
+    let repeated = Candidate::new(&scope, version(4)).rows([
         flag_row(&h.fast_path, Toggle::On, 1),
         row("retired_flag", "mode", "toggle", CANONICAL_ON),
         flag_row(&h.fast_path, Toggle::Off, 2),
     ]);
     assert_eq!(
-        Snapshot::validate(&scope, repeated).unwrap_err(),
+        Snapshot::validate(repeated).unwrap_err(),
         SnapshotRejection::DuplicateKey { row: 2 },
         "the later row is the one that repeats"
     );
     // A repeated key is corrupt whether or not any declaration has it.
-    let unknown_twice = Candidate::new(&scope).at(version(4)).rows([
+    let unknown_twice = Candidate::new(&scope, version(4)).rows([
         row("retired_flag", "mode", "toggle", CANONICAL_ON),
         row("retired_flag", "mode", "toggle", CANONICAL_ON),
     ]);
     assert_eq!(
-        Snapshot::validate(&scope, unknown_twice).unwrap_err(),
+        Snapshot::validate(unknown_twice).unwrap_err(),
         SnapshotRejection::DuplicateKey { row: 1 }
     );
 
     let (other_catalog, other) = world();
     let other_base = self::base(other_catalog, &other.serving, &[]);
     let other_scope = other_base.validation_scope();
-    let foreign = Candidate::new(&other_scope).at(version(4));
+    // A candidate keeps its own scope, so only a publisher of another scope
+    // can be offered it, and that publisher refuses it.
+    let foreign = Candidate::new(&other_scope, version(4));
     assert_eq!(
-        Snapshot::validate(&scope, foreign).unwrap_err(),
-        SnapshotRejection::ForeignScope
+        batter_flags_core::low_level::Publisher::new(&scope, 0_u64)
+            .judge(foreign)
+            .publish(1),
+        batter_flags_core::low_level::Disposition::Refused(
+            batter_flags_core::low_level::Refusal::Rejected(SnapshotRejection::ForeignScope)
+        )
     );
 
-    let valid = Candidate::new(&scope).at(version(0));
-    assert_eq!(
-        Snapshot::validate(&scope, valid).unwrap().version(),
-        version(0)
-    );
+    let valid = Candidate::new(&scope, version(0));
+    assert_eq!(Snapshot::validate(valid).unwrap().version(), version(0));
 }
 
 #[test]
@@ -95,10 +92,8 @@ fn a_rejection_names_a_position_never_candidate_text() {
     let base = base(catalog, &h.serving, &[]);
     let scope = base.validation_scope();
     let secret = row("SECRET_key", "SECRET_kind", "SECRET_type", "SECRET_state");
-    let candidate = Candidate::new(&scope)
-        .at(version(1))
-        .rows([secret.clone(), secret]);
-    let rejection = Snapshot::validate(&scope, candidate).unwrap_err();
+    let candidate = Candidate::new(&scope, version(1)).rows([secret.clone(), secret]);
+    let rejection = Snapshot::validate(candidate).unwrap_err();
     for text in [format!("{rejection}"), format!("{rejection:?}")] {
         assert!(!text.contains("SECRET"), "{text}");
     }
@@ -138,7 +133,7 @@ fn unknown_and_not_owned_rows_are_counted_never_held_and_emit_nothing() {
     let base = base(catalog, &h.serving, &[]);
     let scope = base.validation_scope();
     // `worker_mode` and `export_halt` belong to `worker` alone.
-    let candidate = Candidate::new(&scope).at(version(6)).rows([
+    let candidate = Candidate::new(&scope, version(6)).rows([
         row("retired_flag", "mode", "toggle", CANONICAL_ON),
         row("another_retired_flag", "release", "toggle", "not even json"),
         flag_row(&h.worker_mode, Toggle::On, 5),
@@ -146,7 +141,7 @@ fn unknown_and_not_owned_rows_are_counted_never_held_and_emit_nothing() {
         flag_row(&h.fast_path, Toggle::On, 5),
     ]);
     let capture = Capture::new();
-    let snapshot = capture.within(|| Snapshot::validate(&scope, candidate).unwrap());
+    let snapshot = capture.within(|| Snapshot::validate(candidate).unwrap());
     assert_eq!((snapshot.unknown(), snapshot.not_owned()), (2, 2));
     assert_eq!(held(&snapshot), [], "neither kind of row is ever held");
     assert!(
@@ -426,15 +421,13 @@ fn debug_output_never_shows_row_state_or_a_key_that_is_not_a_name() {
     let scope: ValidationScope = base.validation_scope();
     let secret = row("SECRET key", "SECRET_kind", "SECRET_type", "SECRET_state");
     let named = row("fast_path", "release", "toggle", "SECRET_state");
-    let candidate = Candidate::new(&scope)
-        .at(version(1))
-        .rows([secret.clone(), named.clone()]);
+    let candidate = Candidate::new(&scope, version(1)).rows([secret.clone(), named.clone()]);
     let rendered = [
         format!("{secret:?}"),
         format!("{named:?}"),
         format!("{candidate:?}"),
         format!("{scope:?}"),
-        format!("{:?}", Snapshot::validate(&scope, candidate).unwrap()),
+        format!("{:?}", Snapshot::validate(candidate).unwrap()),
     ];
     for text in rendered {
         assert!(!text.contains("SECRET"), "{text}");

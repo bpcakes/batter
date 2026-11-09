@@ -137,10 +137,10 @@ impl<'a> Composition<'a> {
             )?;
             manifest = manifest.with_fragment(fragment)?;
         }
-        if let Some(operations) = self.flags {
+        if let Some((first, rest)) = self.flags.and_then(<[FlagsOperation]>::split_first) {
             let fragment = batter::flags::grants::grant_fragment(
                 &self.objects(FLAGS_SCHEMA)?,
-                operations.iter().copied(),
+                &batter::flags::grants::FlagsGrant::operations(*first, rest.iter().copied()),
             )?;
             manifest = manifest.with_fragment(fragment)?;
         }

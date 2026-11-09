@@ -21,7 +21,9 @@ OUTBOUND_SHIPPED_EXAMPLE = ["cargo", "test", "-p", "batter", "--no-default-featu
                             "outbound-http", "--example", "outbound_exchange", "--locked"]
 # The `flags`-only build that declared-mode consumers select: no store, no HTTP
 # or job integration, so none of those optional packages may be required.
-FLAGS_DECLARED = ["cargo", "test", "-p", "batter-flags", "--no-default-features", "--locked"]
+# `test-support` adds no package; it only builds the `TestFlags` targets.
+FLAGS_DECLARED = ["cargo", "test", "-p", "batter-flags", "--no-default-features", "--features",
+                  "test-support", "--locked"]
 # The store and the operator command with their own default features; their
 # live suites stay ignored.
 FLAGS_DEFAULT = ["cargo", "test", "-p", "batter-flags-postgres", "-p", "batter-flags-cli", "--locked"]

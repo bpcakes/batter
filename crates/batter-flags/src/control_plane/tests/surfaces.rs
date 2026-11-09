@@ -175,7 +175,10 @@ async fn a_job_invocation_before_the_first_attempt_sees_the_file() {
     let policy = LoadPolicy::start_on_defaults(file_timing()).with_last_good(directory.open());
     let (flags, _) = register(&mut supervisor, input, policy, Script::Hang).unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let handler = flags.flagged(Probe(seen.clone(), handles.halt.clone()));
+    let handler = flags.flagged(
+        Probe(seen.clone(), handles.halt.clone()),
+        crate::jobs::Recheck::after(Duration::from_secs(30)).unwrap(),
+    );
     // No driver has started, so no control-plane read has been attempted.
     let result = HandlerInvocation::new(Duration::from_secs(5))
         .unwrap()

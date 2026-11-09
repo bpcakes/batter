@@ -24,7 +24,8 @@ use crate::flags::Flags;
 ///   periodic gate read only views they captured themselves, so passing this
 ///   view to one is not possible.
 /// - It is not a fixture. Tests build views from
-///   [`TestFlags`](crate::test::TestFlags), which reports `Source::Test`.
+///   `test::TestFlags`, behind the `test-support` feature, which reports
+///   `Source::Test`.
 ///
 /// It takes `&Flags` and never fails: it does no I/O, never panics and emits
 /// no event until the view evaluates something.
@@ -37,12 +38,10 @@ use crate::flags::Flags;
 /// };
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-/// let serving = catalog.process_kind("serving")?;
-/// let hosted = catalog.environment_class("hosted")?;
+/// let (mut catalog, serving, hosted) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 /// let expiry = Expiry::on(CivilDate::new(2027, 3, 31)?);
 /// let new_checkout = catalog.release_flag("new_checkout", Toggle::Off, expiry).declare()?;
-/// let catalog = catalog.build()?;
+/// let catalog = catalog.build();
 ///
 /// let source = SettingsSource::from_pairs([("FLAG_NEW_CHECKOUT".into(), "on".into())])?;
 /// let flags = declared::resolve(catalog, &source, serving, hosted, CivilDate::new(2026, 11, 5)?)?

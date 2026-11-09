@@ -24,7 +24,8 @@ Experimental. Declared mode is implemented: `declared::resolve` consumes a
 catalog and the root's captured `SettingsSource` once and returns a `Resolved`
 with strict literals, ownership, retired and unknown names, required settings
 and invariants, a redacted startup report and two revisions; `Resolved::into_flags`
-enters declared mode. `test::TestFlags` is the fixture path, and
+enters declared mode. `test::TestFlags`, behind the `test-support` feature
+so a production build cannot serve `Source::Test`, is the fixture path, and
 `low_level::capture_now` is the disclosed, non-canonical live read. The
 protected periodic, `axum` HTTP and `runledger` job gates are implemented.
 With `postgres`, `control_plane::register_in` turns a `Resolved` and a
@@ -36,18 +37,25 @@ snapshots on a `RefreshTiming` cadence under a `LoadPolicy`
 `flags.presence_prune` keep the fleet view current; and the
 `flags.presence.stopped` cleanup records the stop before the application's
 pool closes. Registration refuses caller-owned, foreign-owner and
-extracted-cleanup pools before adding any component. `RegisteredFlags::status()` reports a `SnapshotStatus` in
-precedence order, and `readiness_condition(Gate::Published | Gate::Fresh)`
-returns the `flags.snapshot` condition. `grants::grant_fragment` lists the
-exact privileges of each `FlagsOperation`. `LoadPolicy::with_last_good(SnapshotDirectory)`
+extracted-cleanup pools before adding any component. `RegisteredFlags::status()` reports a `SnapshotStatus` of three
+separate facts read together: `loader` (running or stopped), `served` (the
+declared base, the persisted file, or a control-plane version and its
+freshness) and `latest_read` (none yet, loaded, schema behind, or refused with
+core's `Refusal`). `status.satisfies(gate)` and
+`readiness_condition(Gate::Published | Gate::Fresh)`, which returns the
+`flags.snapshot` condition, judge one such status. `grants::grant_fragment` lists the
+exact privileges of a `FlagsGrant`: a `FlagsRole` (`ServingProcess`, exactly what
+`register_in` runs, or `OperatorCli`) or at least one `FlagsOperation`. `LoadPolicy::with_last_good(SnapshotDirectory)`
 keeps the last control-plane publication in a `BFSN` v1 file
 ([format](docs/snapshot-file-v1.md)): registration publishes a usable file
 before the driver starts, as `Source::PersistedFile`, so a restart during an
 outage serves its engaged kill switches; a missing, damaged or foreign file
 publishes nothing, and `startup_file()` says which (`Disabled`, `Missing`,
 `Published`, `Unusable`); each control-plane
-publication is persisted under a directory lock, and a persist failure goes to
-`last_persist_failure()` and never changes a run's outcome. The file is a
+publication is persisted under a directory lock, and `last_good()` reports
+the persister's state (up to date, a publication waiting and why its last
+write failed, a write in flight, or too large); a persist failure never
+changes a run's outcome. The file is a
 cache: deleting it is always safe. `LoadPolicy::with_listen(ListenEndpoint)`
 also wakes the refresh when an audited write commits: a listener, on a
 two-connection pool of its own for each session, LISTENs on the store's
@@ -128,7 +136,7 @@ Worker-free failure contracts run with:
 cargo test -p batter-flags --features runledger --locked
 ```
 
-The ignored `jobs_live` target requires `runledger,postgres` and an externally
+The ignored `jobs_live` target requires `runledger,postgres,test-support` and an externally
 provided `DATABASE_URL` naming a dedicated disposable PostgreSQL 18 database.
 It runs the protected supervisor, inspects durable continuations, retry exhaustion,
 drop hooks, resource release, workflow refusal and keyed pin conflicts. It waits

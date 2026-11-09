@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use batter::cleanup::CleanupBudget;
 use batter::flags::control_plane::{
-    ApplicationName, BuildId, ControlPlaneStore, HeartbeatCadence, LoadPolicy, Presence,
-    RefreshTiming, SnapshotStatus, register_in,
+    ApplicationName, BuildId, ControlPlaneStore, Gate, HeartbeatCadence, LoadPolicy, Presence,
+    RefreshTiming, register_in,
 };
 use batter::flags::core::{
     CatalogBuilder, CivilDate, Expiry, KillSwitch, Pinned, PinnedResolution, ReleaseFlag,
@@ -34,9 +34,8 @@ struct Handles {
 
 /// One catalog: a pinnable release flag governed by a kill switch.
 fn resolve(settings: &[(&str, &str)]) -> Outcome<(Resolved, Handles)> {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    let serving = catalog.process_kind("serving")?;
-    let hosted = catalog.environment_class("hosted")?;
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     let halt = catalog
         .kill_switch(
             "checkout_halt",
@@ -58,7 +57,7 @@ fn resolve(settings: &[(&str, &str)]) -> Outcome<(Resolved, Handles)> {
             .map(|(name, value)| ((*name).into(), (*value).into())),
     )?;
     let resolved = declared::resolve(
-        catalog.build()?,
+        catalog.build(),
         &source,
         serving,
         hosted,
@@ -81,7 +80,7 @@ pub(crate) async fn run(options: PgConnectOptions) -> Outcome {
     let (resolved, handles) = resolve(&[("FLAG_EXPRESS_CHECKOUT", "on")])?;
     println!("facade consumer: declared catalog resolved");
     let declared = resolved.into_flags();
-    let pin = capture_now(&declared).pin(&handles.express);
+    let pin = capture_now(&declared).pin(&handles.express)?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
@@ -157,7 +156,7 @@ pub(crate) async fn run(options: PgConnectOptions) -> Outcome {
             .wait_ready()
             .await
             .map_err(|readiness| format!("not ready: {readiness:?}"))?;
-        if flags.status() != SnapshotStatus::Fresh
+        if !flags.status().satisfies(Gate::Fresh)
             || capture_now(&flags).evaluate(&handles.express).value() != Toggle::On
         {
             return Err("the control-plane snapshot was not published before readiness".into());

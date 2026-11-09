@@ -40,13 +40,11 @@ impl Manifest {
     /// use batter_flags_core::{CatalogBuilder, SettingsPrefix, FlagStanding, Toggle};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    /// builder.process_kind("serving")?;
-    /// builder.environment_class("hosted")?;
+    /// let (mut builder, _, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     /// let ledger_v2 = builder.mode_flag("ledger_v2", Toggle::Off).declare()?;
     /// let ledger_audit = builder.mode_flag("ledger_audit", Toggle::Off).declare()?;
     /// builder.requires(&ledger_v2, Toggle::On, &ledger_audit, Toggle::On)?;
-    /// let manifest = builder.build()?.manifest();
+    /// let manifest = builder.build().manifest();
     ///
     /// // `ledger_v2` is published on; `ledger_audit` stands at its default.
     /// let holds = manifest.invariant_holds("serving", |entry| {

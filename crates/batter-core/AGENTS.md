@@ -28,8 +28,9 @@ Windows support and non-Unix fallbacks are out of scope.
   its private snapshot writer requires the admission mutex guard.
 - `src/periodic.rs` and `periodic/` own the one serial schedule, per-run budget,
   startup acknowledgement policy, two library-owned stopping classes and
-  bounded recoverable-failure evidence. The operation remains application- or
-  native-owned.
+  bounded recoverable-failure evidence, including skips from
+  `register_skippable_in`, which are never successes and never acknowledge
+  startup. The operation remains application- or native-owned.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
   mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.

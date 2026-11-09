@@ -105,15 +105,14 @@ pub async fn process(
     database: &Database,
     listen: Listening,
 ) -> (RegisteredFlags, RunningSupervisor, KillSwitch) {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = catalog.process_kind("serving").unwrap();
-    let hosted = catalog.environment_class("hosted").unwrap();
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let halt = catalog
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
         .unwrap();
     let resolved = declared::resolve(
-        catalog.build().unwrap(),
+        catalog.build(),
         &SettingsSource::from_pairs([]).unwrap(),
         serving,
         hosted,
@@ -145,9 +144,9 @@ pub async fn process(
     };
     let policy = LoadPolicy::start_on_defaults(RefreshTiming::new(poll, maximum_age).unwrap());
     let policy = match listen {
-        Listening::Yes => {
-            policy.with_listen(ListenEndpoint::new(database.options.clone(), SECOND).unwrap())
-        }
+        Listening::Yes => policy
+            .with_listen(ListenEndpoint::new(database.options.clone(), SECOND).unwrap())
+            .unwrap(),
         Listening::No | Listening::PollFast => policy,
     };
     let presence = Presence::new(

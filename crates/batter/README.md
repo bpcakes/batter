@@ -33,6 +33,7 @@ The default feature set is empty. The available feature/module pairs are:
 | `flags-postgres` | `batter::flags::postgres`, `batter::flags::control_plane` and `batter::flags::grants` (experimental): the audited store and the protected registration of its refresh, heartbeat, prune and optional LISTEN wake, plus the required `batter::sqlx` capability |
 | `flags-axum` | `batter::flags::http` (experimental): route-group gates and per-request flag views, plus `batter::axum` |
 | `flags-runledger` | `batter::flags::jobs` (experimental): job-handler gates and pinned decisions, plus `batter::runledger` |
+| `flags-test-support` | `batter::flags::test::TestFlags` (experimental): injected test flags serving `Source::Test`, for test builds only |
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
 

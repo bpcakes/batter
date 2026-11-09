@@ -54,9 +54,17 @@ injection private to tests; public fixtures use `TestFlags`. Registration
 checks the pool's cleanup evidence against the same borrowed target before
 registering anything. Presence reservation consumes its preparation and retains
 that target through component registration, lending only fresh reborrows. Persistence selects work and enters
-its writing phase under one lock; the selected owner lives in the blocking task.
+its writing phase, numbered by selection, under one lock; the selected owner
+lives in the blocking task, records its outcome and releases admission in one
+critical section, and a later destruction releases only its own selection.
+`RegisteredFlags::last_good` reads that state; never keep a failure apart from
+the publication it failed.
 Registration validates every input before registering anything, and refuses a base an
-engaged governing switch would leave breaking an invariant. A heartbeat takes
+engaged governing switch would leave breaking an invariant. The writer owns
+core's `Publisher`; the refresh publishes and records its verdict in one
+critical section of the shared status state, and `status()` reads under it.
+Questions only a live reader can answer belong to its `LiveRecord`, never to
+`Reader`, so declared and test modes answer nothing with a stand-in. A heartbeat takes
 its version, freshness and held keys from one published record. Persisting the
 last-good file never changes a run's outcome or narrows readiness.
 

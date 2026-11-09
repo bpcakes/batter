@@ -6,7 +6,7 @@
 //! command: run it with `DATABASE_URL` naming a login that owns the flags
 //! schema, before the build that needs it serves. Serving with `DATABASE_URL`
 //! never migrates: it registers the control plane over the pool `pool_in`
-//! owns, under a serving login granted only the serving selection, with a
+//! owns, under a serving login granted only `FlagsRole::ServingProcess`, with a
 //! last-good file in `FLAGS_LAST_GOOD_DIR` (default: the system temporary
 //! directory), and serves on defaults, or on its last-good file, through an
 //! outage. In both modes a maintenance run is gated by the kill switch.
@@ -19,10 +19,6 @@ mod tests;
 use std::{
     ffi::OsString,
     process::ExitCode,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -40,7 +36,7 @@ use batter::{
             StaleRule, Toggle,
         },
         declared::{self, Resolved},
-        periodic::GatedPeriodicPolicy,
+        periodic::{GatedPeriodicPolicy, GatedPeriodicReader},
         postgres::{PooledStore, StoreTiming},
     },
     lifecycle::{ShutdownBudget, Supervisor},
@@ -60,9 +56,8 @@ pub(crate) fn resolve(
     settings: &SettingsSource,
     today: CivilDate,
 ) -> Result<(Resolved, Handles), BoxError> {
-    let mut catalog = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?);
-    let serving = catalog.process_kind("serving")?;
-    let hosted = catalog.environment_class("hosted")?;
+    let (mut catalog, serving, hosted) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
     let new_checkout = catalog
         .release_flag(
             "new_checkout",
@@ -77,7 +72,7 @@ pub(crate) fn resolve(
             StaleRule::HoldLastKnown,
         )
         .declare()?;
-    let resolved = declared::resolve(catalog.build()?, settings, serving, hosted, today)?;
+    let resolved = declared::resolve(catalog.build(), settings, serving, hosted, today)?;
     Ok((
         resolved,
         Handles {
@@ -118,34 +113,32 @@ fn supervisor() -> Result<Supervisor, BoxError> {
     )?))
 }
 
-/// Registers the maintenance run the kill switch gates; returns how many
-/// runs did their work.
+/// Registers the maintenance run the kill switch gates. Core counts runs
+/// that did their work as successes and the runs the switch kept out as skips.
 pub(crate) fn gate_maintenance(
     flags: &Flags,
     supervisor: &mut Supervisor,
     handles: &Handles,
-) -> Result<Arc<AtomicU64>, BoxError> {
-    let worked = Arc::new(AtomicU64::new(0));
-    let count = worked.clone();
+) -> Result<GatedPeriodicReader, BoxError> {
     let new_checkout = handles.new_checkout.clone();
-    flags.gate_periodic_in(
-        supervisor,
-        "rollout.maintenance",
-        GatedPeriodicPolicy::new(Duration::from_secs(1), Duration::from_secs(1))?,
-        &handles.outbound_halt,
-        move |_, view| {
-            // The run's one view: the switch let it run, and the flag it reads
-            // cannot change under it.
-            let checkout = view.evaluate(&new_checkout).value();
-            count.fetch_add(1, Ordering::SeqCst);
-            println!(
-                "maintenance ran with new_checkout={}",
-                checkout == Toggle::On
-            );
-            std::future::ready(Ok::<(), PeriodicFailure<std::io::Error>>(()))
-        },
-    )?;
-    Ok(worked)
+    flags
+        .gate_periodic_in(
+            supervisor,
+            "rollout.maintenance",
+            GatedPeriodicPolicy::new(Duration::from_secs(1), Duration::from_secs(1))?,
+            &handles.outbound_halt,
+            move |_, view| {
+                // The run's one view: the switch let it run, and the flag it reads
+                // cannot change under it.
+                let checkout = view.evaluate(&new_checkout).value();
+                println!(
+                    "maintenance ran with new_checkout={}",
+                    checkout == Toggle::On
+                );
+                std::future::ready(Ok::<(), PeriodicFailure<std::io::Error>>(()))
+            },
+        )
+        .map_err(Into::into)
 }
 
 /// Declared mode: the settings decide until the next restart.
@@ -154,7 +147,7 @@ pub(crate) async fn run_declared(settings: &SettingsSource) -> Result<u64, BoxEr
     println!("{}", resolved.report());
     let flags = resolved.into_flags();
     let mut supervisor = supervisor()?;
-    let worked = gate_maintenance(&flags, &mut supervisor, &handles)?;
+    let maintenance = gate_maintenance(&flags, &mut supervisor, &handles)?;
     let running = supervisor.start();
     running
         .status()
@@ -163,7 +156,8 @@ pub(crate) async fn run_declared(settings: &SettingsSource) -> Result<u64, BoxEr
         .map_err(|readiness| format!("not ready: {readiness:?}"))?;
     tokio::time::sleep(Duration::from_millis(2_500)).await;
     running.shutdown_checked().await?;
-    Ok(worked.load(Ordering::SeqCst))
+    // Skipped runs did no work, so they are not successes.
+    Ok(maintenance.snapshot().succeeded)
 }
 
 /// The finite migration command, under a login that owns the flags schema.

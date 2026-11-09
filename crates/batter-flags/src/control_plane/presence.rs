@@ -14,7 +14,7 @@ use batter_core::{
 };
 use batter_flags_core::{
     FlagKey, Kind, SwitchState,
-    low_level::{Base, ResolutionSource, Standing},
+    low_level::{Base, Provenance, Record, ResolutionSource},
 };
 use batter_flags_postgres::{
     Cadence, KeySample, PooledStore, PresenceReport, ProcessId, ProcessLabel, ProcessLabels,
@@ -186,10 +186,8 @@ impl<'a> Reserved<'a> {
             prune,
             ..
         } = self.prepared;
-        let beat_store = store.clone();
         let presence =
-            register_periodic_in(&mut target, "flags.presence", heartbeat, move |context| {
-                let store = beat_store.clone();
+            register_periodic_in(&mut target, super::PRESENCE, heartbeat, move |context| {
                 let slot = slot.clone();
                 let shared = shared.clone();
                 let floor = floor.clone();
@@ -209,8 +207,8 @@ impl<'a> Reserved<'a> {
                     let report = report(&shared, floor);
                     let mut slot = slot.lock().await;
                     match &mut *slot {
-                        Slot::Active(presence) => store
-                            .heartbeat(presence, &report, work_deadline(context.deadline()))
+                        Slot::Active(presence) => presence
+                            .heartbeat(&report, work_deadline(context.deadline()))
                             .await
                             .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error))),
                         Slot::Stopped => Ok(()),
@@ -218,17 +216,16 @@ impl<'a> Reserved<'a> {
                 }
             })?;
         let limit = PruneLimit::new(PRUNE_ROWS).expect("the prune limit is in range");
-        let pruning =
-            register_periodic_in(&mut target, "flags.presence_prune", prune, move |context| {
-                let store = store.clone();
-                async move {
-                    store
-                        .prune(limit, work_deadline(context.deadline()))
-                        .await
-                        .map(|_| ())
-                        .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error)))
-                }
-            })?;
+        let pruning = register_periodic_in(&mut target, super::PRUNE, prune, move |context| {
+            let store = store.clone();
+            async move {
+                store
+                    .prune(limit, work_deadline(context.deadline()))
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error)))
+            }
+        })?;
         Ok((presence, pruning))
     }
 }
@@ -262,7 +259,7 @@ pub(crate) fn prepare(
         environment,
         build: presence.build.0,
     };
-    let process_presence = ProcessPresence::new(labels, base, cadence);
+    let process_presence = ProcessPresence::new(store, labels, base, cadence);
     Ok(Prepared {
         store: store.clone(),
         process: process_presence.process(),
@@ -288,12 +285,11 @@ impl Prepared {
     ) -> Result<Reserved<'_>, RegistrationError> {
         let mut target = target.registration();
         let slot = self.slot.clone();
-        let store = self.store.clone();
         let budget = self.stop_budget;
         target
             .registration()
-            .reserve_cleanup("flags.presence.stopped")?
-            .register(move || async move { stop(&store, &slot, budget).await });
+            .reserve_cleanup(super::STOP_MARKER)?
+            .register(move || async move { stop(&slot, budget).await });
         Ok(Reserved {
             prepared: self,
             target,
@@ -301,13 +297,13 @@ impl Prepared {
     }
 }
 
-async fn stop(store: &PooledStore, slot: &Mutex<Slot>, budget: Duration) -> Result<(), BoxError> {
+async fn stop(slot: &Mutex<Slot>, budget: Duration) -> Result<(), BoxError> {
     let mut slot = slot.lock().await;
     let presence = match std::mem::replace(&mut *slot, Slot::Stopped) {
         Slot::Active(presence) => *presence,
         Slot::Stopped => return Ok(()),
     };
-    match store.stop(presence, Instant::now() + budget - MARGIN).await {
+    match presence.stop(Instant::now() + budget - MARGIN).await {
         Ok(_) => Ok(()),
         Err(StopFailure::NotRecorded { error, presence }) => {
             // The process is ending either way; its row goes Silent at its
@@ -322,20 +318,21 @@ async fn stop(store: &PooledStore, slot: &Mutex<Slot>, budget: Duration) -> Resu
 /// What this heartbeat reports, all from one published record: what it
 /// stands on and the keys it holds.
 fn report(shared: &Shared, floor_engaged: KeySample) -> PresenceReport {
-    let (snapshot, held) = match shared.reader().record() {
-        None => (SnapshotReport::NotLoaded, KeySample::default()),
-        Some(record) => {
-            let snapshot = match record.authority().standing() {
-                Standing::Unpublished => SnapshotReport::NotLoaded,
-                Standing::Persisted { version } => SnapshotReport::PersistedFile(version),
-                Standing::ControlPlane { version, .. } => SnapshotReport::ControlPlane(version),
+    let record = shared.live().current();
+    let (snapshot, held) = match &*record {
+        Record::Unpublished(_) => (SnapshotReport::NotLoaded, KeySample::default()),
+        Record::Published(published) => {
+            let version = published.snapshot().version();
+            let snapshot = match published.snapshot().provenance() {
+                Provenance::LastGoodFile => SnapshotReport::PersistedFile(version),
+                Provenance::ControlPlane => SnapshotReport::ControlPlane(version),
             };
             // The holds a view of this same record captured now has, so a
             // stale view's extra holds are reported while it is stale and the
             // version is never paired with another publication's holds.
             let held = KeySample::of(
                 shared
-                    .reader()
+                    .live()
                     .held_in(&record, Instant::now())
                     .into_iter()
                     .map(|(key, _)| key),

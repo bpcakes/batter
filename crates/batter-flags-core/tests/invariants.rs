@@ -41,10 +41,9 @@ struct Flags {
 }
 
 fn relations() -> (Catalog, Flags) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let worker = builder.process_kind("worker").unwrap();
-    builder.environment_class("hosted").unwrap();
     let toggle = |builder: &mut CatalogBuilder, key: &str| {
         builder.mode_flag(key, Toggle::Off).declare().unwrap()
     };
@@ -93,7 +92,7 @@ fn relations() -> (Catalog, Flags) {
         pair_b,
         serving_side,
     };
-    (builder.build().unwrap(), flags)
+    (builder.build(), flags)
 }
 
 fn held(snapshot: &Snapshot) -> Vec<(String, HoldCause)> {
@@ -308,9 +307,8 @@ fn a_held_entry_keeps_its_first_cause_before_any_invariant_is_judged() {
 
 /// `a` on conflicts with `b` on, and `b` on with `c` on, declared in `order`.
 fn chain_in(order: [&str; 3]) -> (Catalog, ProcessKind, Vec<ModeFlag<Toggle>>) {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
-    builder.environment_class("hosted").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let mut flags: Vec<(String, ModeFlag<Toggle>)> = order
         .iter()
         .map(|key| {
@@ -331,7 +329,7 @@ fn chain_in(order: [&str; 3]) -> (Catalog, ProcessKind, Vec<ModeFlag<Toggle>>) {
             .conflicts(&flags[left], Toggle::On, &flags[right], Toggle::On)
             .unwrap();
     }
-    (builder.build().unwrap(), serving, flags)
+    (builder.build(), serving, flags)
 }
 
 #[test]

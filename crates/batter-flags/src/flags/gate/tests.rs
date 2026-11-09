@@ -2,12 +2,12 @@
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use batter_flags_core::{
     Catalog, CatalogBuilder, KillSwitch, Layer, PrePublication, ProcessKind, SafeState,
     SettingsPrefix, StaleRule, SwitchState, Version,
-    low_level::{BaseBuilder, Candidate, CandidateRow, GateReading, Snapshot},
+    low_level::{BaseBuilder, Candidate, CandidateRow, GateReading},
 };
 use tokio::time::Instant;
 
@@ -26,10 +26,9 @@ struct World {
 }
 
 fn world() -> World {
-    let mut builder = CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap());
-    let serving = builder.process_kind("serving").unwrap();
+    let (mut builder, serving, _) =
+        CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
     let worker = builder.process_kind("worker").unwrap();
-    builder.environment_class("hosted").unwrap();
     let halt = builder
         .kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
         .declare()
@@ -44,7 +43,7 @@ fn world() -> World {
         .declare()
         .unwrap();
     World {
-        catalog: builder.build().unwrap(),
+        catalog: builder.build(),
         serving,
         worker,
         halt,
@@ -76,10 +75,7 @@ fn flags_with(
 }
 
 /// Flags of a control plane that has published nothing, with the given floors.
-fn unpublished(
-    world: World,
-    floors: &[&KillSwitch],
-) -> (Flags, crate::reader::Writer, Arc<Snapshot>) {
+fn unpublished(world: World, floors: &[&KillSwitch]) -> (Flags, crate::reader::Writer, Candidate) {
     let mut base = BaseBuilder::new(world.catalog, world.serving).unwrap();
     for floor in floors {
         base.switch(floor.key(), SwitchState::Engaged).unwrap();
@@ -87,19 +83,15 @@ fn unpublished(
     let base = base.finish();
     let scope = base.validation_scope();
     let at = Version::new(5);
-    let candidate = Candidate::new(&scope).at(at).row(CandidateRow::switch(
-        &world.halt,
-        SwitchState::Engaged,
-        at,
-    ));
-    let snapshot = Arc::new(Snapshot::validate(&scope, candidate).unwrap());
+    let candidate =
+        Candidate::new(&scope, at).row(CandidateRow::switch(&world.halt, SwitchState::Engaged, at));
     let (writer, reader) = Reader::live(
         base,
         PrePublication::ServeDefaults,
         Duration::from_secs(100),
         Instant::now(),
     );
-    (Flags::new(reader), writer, snapshot)
+    (Flags::new(reader), writer, candidate)
 }
 
 fn name(reading: &GateReading) -> &'static str {
@@ -243,13 +235,13 @@ fn before_any_publication_the_gate_waits_and_a_floor_still_trips() {
 fn each_entry_is_one_capture_and_a_later_publication_reaches_the_next_entry_only() {
     let w = world();
     let halt = w.halt.clone();
-    let (flags, mut writer, snapshot) = unpublished(w, &[]);
+    let (flags, mut writer, candidate) = unpublished(w, &[]);
     let gate = flags.gate(&halt).unwrap();
 
     let before = gate.enter();
     assert_eq!(name(&before.reading), "awaiting publication");
 
-    writer.apply(snapshot, Instant::now());
+    writer.read_at(candidate, Instant::now());
     let after = gate.enter();
     assert_eq!(name(&after.reading), "tripped");
     // The earlier entry's view is frozen: it still says nothing was published.

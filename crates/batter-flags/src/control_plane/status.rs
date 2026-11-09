@@ -1,5 +1,5 @@
-//! What a registered loader reports: its status, in precedence order, and the
-//! readiness condition built on it.
+//! What a registered loader reports: its status, as separate loader, served
+//! and latest-read facts, and the readiness condition built on it.
 
 use std::{
     sync::{Arc, Mutex, PoisonError},
@@ -8,15 +8,12 @@ use std::{
 
 use batter_core::readiness::ReadinessCondition;
 use batter_flags_core::{
-    Version,
-    low_level::{Refusal, SnapshotRejection, Standing},
+    Freshness, Version,
+    low_level::{Candidate, Disposition, Provenance, Record, Refusal},
 };
 use tokio::time::Instant;
 
-use crate::{
-    last_good::PersistFailure,
-    reader::{Publication, Reader},
-};
+use crate::reader::{Late, LiveRecord, Reader, Writer};
 
 /// Why a refresh published nothing.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -56,93 +53,143 @@ impl LoadCause {
     }
 }
 
-/// Why the latest read at or above the applied version could not publish.
+/// What a registered loader reports: whether it still runs, what views serve
+/// and what the latest judged read did.
+///
+/// The three are separate facts, read together in one critical section with
+/// the publication they describe, so a refusal never hides what is served and
+/// a status never pairs one publication with another read's verdict. A
+/// [`Gate`] is judged from one status with [`satisfies`](Self::satisfies).
+///
+/// Migration: `SnapshotStatus::LoaderStopped` is `loader: LoaderState::Stopped`.
+/// Migration: `SnapshotStatus::SchemaBehind`, `SnapshotStatus::Regressed` and
+/// `SnapshotStatus::Rejected` are [`LatestRead::SchemaBehind`] and
+/// [`LatestRead::Refused`] in `latest_read`, which no longer hide `served`.
+/// Migration: `SnapshotStatus::NotLoaded`, `SnapshotStatus::ServingPersisted`,
+/// `SnapshotStatus::Stale` and `SnapshotStatus::Fresh` are
+/// [`Served::DeclaredBase`], [`Served::PersistedFile`] and
+/// [`Served::ControlPlane`] with its freshness in `served`; replace
+/// `status == SnapshotStatus::Fresh` with `status.satisfies(Gate::Fresh)`.
+/// Migration: `RejectionCause` is removed; a refusal is core's [`Refusal`] in
+/// [`LatestRead::Refused`], `RejectionCause::DigestDrift` being
+/// `Refusal::DigestDrift` and `RejectionCause::Structural` `Refusal::Rejected`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RejectionCause {
-    /// The applied version came back with a different digest.
-    DigestDrift,
-    /// The candidate is structurally invalid.
-    Structural(SnapshotRejection),
+pub struct SnapshotStatus {
+    /// Whether the refresh still runs.
+    pub loader: LoaderState,
+    /// What views captured now serve.
+    pub served: Served,
+    /// What the latest read that reached the store and was judged did.
+    pub latest_read: LatestRead,
 }
 
-/// The state of a registered loader, in precedence order: the first arm that
-/// applies is the one reported.
+/// Whether a registered loader can still publish.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SnapshotStatus {
-    /// The loader has ended; nothing will be published again.
-    LoaderStopped,
-    /// The installed schema is older than this build requires. Nothing is
-    /// read or published until it is migrated, publication or not.
+pub enum LoaderState {
+    /// The refresh component runs.
+    Running,
+    /// The refresh has ended; nothing will be published again, and what was
+    /// last published keeps serving.
+    Stopped,
+}
+
+/// What views captured now serve.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Served {
+    /// Nothing is published; views serve the declared base.
+    DeclaredBase {
+        /// How long ago the flags were registered.
+        since_registration: Duration,
+    },
+    /// The last-good file restored at startup; no control-plane read has
+    /// applied yet. A file carries no clock, so its views age from
+    /// registration.
+    PersistedFile {
+        /// The file's version.
+        version: Version,
+    },
+    /// A control-plane publication.
+    ControlPlane {
+        /// The applied version.
+        version: Version,
+        /// Whether its last confirmation is within the maximum age; views are
+        /// captured with this freshness.
+        freshness: Freshness,
+    },
+}
+
+/// What the latest read that reached the store and was judged did. A read
+/// that failed before it could be judged, such as a timeout, changes nothing
+/// here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LatestRead {
+    /// No read has been judged since registration.
+    NoRead,
+    /// It published a snapshot or confirmed the one served.
+    Loaded,
+    /// It found the installed schema older than this build requires. Nothing
+    /// is read or published until it is migrated.
     SchemaBehind {
         /// The revision this build requires.
         required: i32,
         /// The installed revision, 0 when no flags migration has run.
         found: i32,
     },
-    /// The latest read is below the applied control-plane version.
-    Regressed {
-        /// The applied version, which stays served.
-        applied: Version,
-        /// The version the latest read returned.
+    /// The publisher refused it; what is served stays. A refusal clears only
+    /// through a publication or a confirming read.
+    Refused {
+        /// Why it was refused.
+        refusal: Refusal,
+        /// The version the store returned.
         observed: Version,
     },
-    /// The latest read could not be published; what was served stays.
-    Rejected {
-        /// The version the read carried, when it carried one.
-        observed: Option<Version>,
-        /// Why it was refused.
-        cause: RejectionCause,
-    },
-    /// Nothing is published; views serve the declared base.
-    NotLoaded {
-        /// How long ago the flags were registered.
-        since_registration: Duration,
-    },
-    /// The last-good file is served and no control-plane read is yet.
-    ServingPersisted {
-        /// The file's version.
-        version: Version,
-    },
-    /// A control-plane publication is served but its confirmation is older
-    /// than the maximum age, so views are captured Stale.
-    Stale,
-    /// A control-plane publication is served and recently confirmed.
-    Fresh,
 }
 
 /// What a readiness condition requires of the flags.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Gate {
-    /// Unready while the loader has stopped, the schema is behind, or nothing
-    /// (neither a control-plane read nor a last-good file) is published.
+    /// Unready while the loader has stopped, the latest read found the schema
+    /// behind, or nothing (neither a control-plane read nor a last-good file)
+    /// is published.
     Published,
-    /// Unready unless the status is [`SnapshotStatus::Fresh`].
+    /// Unready unless the loader runs, the latest judged read loaded, and a
+    /// control-plane publication is served fresh.
     Fresh,
+}
+
+impl SnapshotStatus {
+    /// Whether `gate` is satisfied by this status alone.
+    pub fn satisfies(&self, gate: Gate) -> bool {
+        let running = match self.loader {
+            LoaderState::Running => true,
+            LoaderState::Stopped => false,
+        };
+        match gate {
+            Gate::Published => {
+                running
+                    && !matches!(self.latest_read, LatestRead::SchemaBehind { .. })
+                    && match self.served {
+                        Served::DeclaredBase { .. } => false,
+                        Served::PersistedFile { .. } | Served::ControlPlane { .. } => true,
+                    }
+            }
+            Gate::Fresh => {
+                running
+                    && self.latest_read == LatestRead::Loaded
+                    && matches!(
+                        self.served,
+                        Served::ControlPlane {
+                            freshness: Freshness::Fresh,
+                            ..
+                        }
+                    )
+            }
+        }
+    }
 }
 
 /// The name of the flags readiness condition, for either gate.
 pub(crate) const CONDITION: &str = "flags.snapshot";
-
-/// Whether the installed schema was found current on the latest read that
-/// reached it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Schema {
-    /// No read has reached the schema, or the last one found it current.
-    Current,
-    /// The last read found it behind.
-    Behind { found: i32 },
-}
-
-/// Whether the latest read at or above the applied version was refused.
-/// A refusal clears only through a publication or a confirming read.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Verdict {
-    Clear,
-    Refused {
-        refusal: Refusal,
-        observed: Option<Version>,
-    },
-}
 
 /// The cause of the latest run, for event deduplication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,29 +203,30 @@ pub(crate) enum LastRun {
 }
 
 struct State {
-    schema: Schema,
-    verdict: Verdict,
+    latest_read: LatestRead,
     last_run: LastRun,
     last_rejection: Option<Refusal>,
-    persist_failure: Option<PersistFailure>,
 }
 
 /// What the loader shares with the registered flags.
+///
+/// Its lock is held while the refresh publishes, so a status read under it
+/// pairs a publication with that same read's verdict.
 pub(crate) struct Shared {
     reader: Arc<Reader>,
+    live: LiveRecord,
     state: Mutex<State>,
 }
 
 impl Shared {
-    pub(crate) fn new(reader: Arc<Reader>) -> Self {
+    pub(crate) fn new(reader: Arc<Reader>, live: LiveRecord) -> Self {
         Self {
             reader,
+            live,
             state: Mutex::new(State {
-                schema: Schema::Current,
-                verdict: Verdict::Clear,
+                latest_read: LatestRead::NoRead,
                 last_run: LastRun::None,
                 last_rejection: None,
-                persist_failure: None,
             }),
         }
     }
@@ -187,19 +235,43 @@ impl Shared {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Records a run that published or confirmed, and returns the cause of
-    /// the run before it.
-    pub(crate) fn loaded(&self) -> LastRun {
+    /// Publishes one read read at `observed` through `writer` and records
+    /// what it did, in one critical section of the shared state, and returns
+    /// the cause of the run before it and this run's outcome.
+    pub(crate) fn publish(
+        &self,
+        writer: &mut Writer,
+        candidate: Candidate,
+        deadline: Instant,
+        observed: Version,
+    ) -> (LastRun, Result<(), LoadCause>) {
         let mut state = self.state();
-        state.schema = Schema::Current;
-        state.verdict = Verdict::Clear;
-        std::mem::replace(&mut state.last_run, LastRun::Loaded)
+        let (latest_read, result) = match writer.read(candidate, deadline) {
+            Err(Late) => (state.latest_read, Err(LoadCause::Deadline)),
+            Ok(Disposition::Applied | Disposition::Confirmed) => (LatestRead::Loaded, Ok(())),
+            Ok(Disposition::Refused(refusal)) => {
+                state.last_rejection = Some(refusal);
+                (
+                    LatestRead::Refused { refusal, observed },
+                    Err(cause(refusal)),
+                )
+            }
+        };
+        state.latest_read = latest_read;
+        let run = match result {
+            Ok(()) => LastRun::Loaded,
+            Err(cause) => LastRun::Failed(cause),
+        };
+        (std::mem::replace(&mut state.last_run, run), result)
     }
 
     /// Records a read that found the schema behind.
     pub(crate) fn schema_behind(&self, found: i32) -> LastRun {
         let mut state = self.state();
-        state.schema = Schema::Behind { found };
+        state.latest_read = LatestRead::SchemaBehind {
+            required: batter_flags_postgres::REQUIRED_SCHEMA_REVISION,
+            found,
+        };
         std::mem::replace(
             &mut state.last_run,
             LastRun::Failed(LoadCause::SchemaBehind),
@@ -211,113 +283,58 @@ impl Shared {
         std::mem::replace(&mut self.state().last_run, LastRun::Failed(cause))
     }
 
-    /// Records a read the writer refused, and returns the previous run's
-    /// cause and this one's.
-    pub(crate) fn refused(
-        &self,
-        refusal: Refusal,
-        observed: Option<Version>,
-    ) -> (LastRun, LoadCause) {
-        let mut state = self.state();
-        let cause = cause(refusal);
-        state.schema = Schema::Current;
-        state.verdict = Verdict::Refused { refusal, observed };
-        state.last_rejection = Some(refusal);
-        (
-            std::mem::replace(&mut state.last_run, LastRun::Failed(cause)),
-            cause,
-        )
-    }
-
     pub(crate) fn schema_is_behind(&self) -> bool {
-        matches!(self.state().schema, Schema::Behind { .. })
+        matches!(self.state().latest_read, LatestRead::SchemaBehind { .. })
     }
 
     pub(crate) fn last_rejection(&self) -> Option<Refusal> {
         self.state().last_rejection
     }
 
-    /// Records a persist that did not write.
-    pub(crate) fn persist_failed(&self, failure: PersistFailure) {
-        self.state().persist_failure = Some(failure);
-    }
-
-    pub(crate) fn last_persist_failure(&self) -> Option<PersistFailure> {
-        self.state().persist_failure
-    }
-
     pub(crate) fn reader(&self) -> &Reader {
         &self.reader
     }
 
+    /// The control plane's side of the reader.
+    pub(crate) fn live(&self) -> &LiveRecord {
+        &self.live
+    }
+
     pub(crate) fn status(&self, now: Instant) -> SnapshotStatus {
-        if self.reader.writer_gone() {
-            return SnapshotStatus::LoaderStopped;
-        }
-        let (schema, verdict) = {
-            let state = self.state();
-            (state.schema, state.verdict)
+        // The refresh publishes under this lock, so the record and the
+        // verdict read here belong to the same read.
+        let state = self.state();
+        let loader = if self.live.writer_gone() {
+            LoaderState::Stopped
+        } else {
+            LoaderState::Running
         };
-        if let Schema::Behind { found } = schema {
-            return SnapshotStatus::SchemaBehind {
-                required: batter_flags_postgres::REQUIRED_SCHEMA_REVISION,
-                found,
-            };
-        }
-        if let Verdict::Refused { refusal, observed } = verdict {
-            match refusal {
-                Refusal::Regressed { applied, observed } => {
-                    return SnapshotStatus::Regressed { applied, observed };
-                }
-                Refusal::DigestDrift { .. } => {
-                    return SnapshotStatus::Rejected {
-                        observed,
-                        cause: RejectionCause::DigestDrift,
-                    };
-                }
-                Refusal::Rejected(rejection) => {
-                    return SnapshotStatus::Rejected {
-                        observed,
-                        cause: RejectionCause::Structural(rejection),
-                    };
-                }
-                // The loader reads only the control plane, so a file can never
-                // follow a publication here.
-                Refusal::FileAfterPublication => {}
-            }
-        }
-        match self.reader.publication(now) {
-            Publication::Unpublished { since_registration } => {
-                SnapshotStatus::NotLoaded { since_registration }
-            }
-            Publication::Published { standing, fresh } => match standing {
-                Standing::Unpublished => SnapshotStatus::NotLoaded {
-                    since_registration: Duration::ZERO,
-                },
-                Standing::Persisted { version } => SnapshotStatus::ServingPersisted { version },
-                Standing::ControlPlane { .. } if fresh => SnapshotStatus::Fresh,
-                Standing::ControlPlane { .. } => SnapshotStatus::Stale,
+        let record = self.live.current();
+        let served = match &*record {
+            Record::Unpublished(unpublished) => Served::DeclaredBase {
+                since_registration: now.saturating_duration_since(*unpublished.registered()),
             },
+            Record::Published(published) => {
+                let version = published.snapshot().version();
+                match published.snapshot().provenance() {
+                    Provenance::LastGoodFile => Served::PersistedFile { version },
+                    Provenance::ControlPlane => Served::ControlPlane {
+                        version,
+                        freshness: self.live.freshness(&record, now),
+                    },
+                }
+            }
+        };
+        SnapshotStatus {
+            loader,
+            served,
+            latest_read: state.latest_read,
         }
     }
 
-    /// Whether `gate` is satisfied now.
+    /// Whether `gate` is satisfied now, judged from one status.
     pub(crate) fn satisfies(&self, gate: Gate) -> bool {
-        let status = self.status(Instant::now());
-        match gate {
-            Gate::Fresh => status == SnapshotStatus::Fresh,
-            Gate::Published => match status {
-                SnapshotStatus::LoaderStopped
-                | SnapshotStatus::SchemaBehind { .. }
-                | SnapshotStatus::NotLoaded { .. } => false,
-                SnapshotStatus::Regressed { .. } | SnapshotStatus::Rejected { .. } => {
-                    self.reader.has_publication()
-                }
-                SnapshotStatus::ServingPersisted { .. }
-                | SnapshotStatus::Stale
-                | SnapshotStatus::Fresh => true,
-            },
-        }
+        self.status(Instant::now()).satisfies(gate)
     }
 
     pub(crate) fn condition() -> ReadinessCondition {

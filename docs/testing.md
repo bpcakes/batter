@@ -393,8 +393,11 @@ keeps removed pool getters unavailable. Observed absence does not prove remote r
 
 The workspace part (`cargo test --workspace --all-features --all-targets`) runs
 every offline flags target; the `no-default-features` part's `flags-declared`
-command also runs `batter-flags` with no features (`cargo test -p batter-flags
---no-default-features --locked`), which guards the declared-only build. `batter-flags-core` targets: catalog
+command also runs `batter-flags` with no optional package (`cargo test -p
+batter-flags --no-default-features --features test-support --locked`), which
+guards the declared-only build. `test-support` adds no package; the
+`TestFlags` targets name it in `required-features`, because a dependency of
+`batter-flags` on itself would break the flags graph rule. `batter-flags-core` targets: catalog
 build, rules and queries, relations, handles and handle checks, digests,
 manifest and manifest decoding, snapshots, state encoding, revisions,
 resolutions, authority and published records, evaluation, governance, kill
@@ -440,7 +443,7 @@ cargo test -p batter --features runledger,runlimit-postgres,flags-postgres \
 
 # The job gate, against a dedicated database it migrates itself.
 DATABASE_URL=postgres://.../dedicated cargo test -p batter-flags \
-  --features runledger,postgres --test jobs_live -- --ignored
+  --features runledger,postgres,test-support --test jobs_live -- --ignored
 ```
 
 `listen_live` covers the NOTIFY wake (`batter-jkw6.19`): a committed write

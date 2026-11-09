@@ -283,6 +283,46 @@ async fn absent_and_wrong_typed_views_are_sanitized_internal_failures() {
     }
 }
 
+/// A handler that extracts a view no gate of its group captured gets the
+/// sanitized 500, and its completion event names the wiring error, so it is
+/// told apart from a server fault in the logs.
+#[test]
+fn an_unmatched_gate_view_is_named_in_the_completion_event() {
+    for gated in [false, true] {
+        let capture = Capture::new();
+        capture.block_on(async {
+            let control = ready();
+            let group = if gated {
+                GroupPolicy::gated(policy(&control), GroupGate::new(|| Gated::Serve("text")))
+            } else {
+                GroupPolicy::new(policy(&control))
+            };
+            let app = HttpBoundary::new(group)
+                .assemble(
+                    GuardedRouter::new()
+                        .route("/work", get(|_: GateView<u64>| async { "unreachable" })),
+                )
+                .await
+                .unwrap()
+                .in_process();
+            let response = app.request(request(Method::GET, "/work")).await;
+            assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
+        let logs = capture.text();
+        let events: Vec<_> = logs
+            .lines()
+            .filter(|line| line.contains("HTTP response boundary finished"))
+            .collect();
+        assert_eq!(events.len(), 1, "{logs}");
+        assert!(
+            events[0].contains("gate_outcome=\"unmatched_view\""),
+            "{}",
+            events[0]
+        );
+        assert!(!logs.contains("text"), "the captured value is never logged");
+    }
+}
+
 #[test]
 fn disabled_severity_replaces_renderer_level_but_preserves_renderer_status() {
     for (level, filter, visible) in [
