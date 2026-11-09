@@ -23,6 +23,13 @@ use tokio::time::Instant;
 const SERVING: &[FlagsOperation] = FlagsRole::ServingProcess.operations();
 const OPERATOR: &[FlagsOperation] = FlagsRole::OperatorCli.operations();
 const WRITER: &[FlagsOperation] = &[FlagsOperation::AuditedWrite];
+/// Each operator read alone, so a read that needs another operation's
+/// privilege fails here rather than passing under the operator's union.
+const READS: [(&str, FlagsOperation); 3] = [
+    ("flags_catalog_read", FlagsOperation::CatalogRead),
+    ("flags_history_read", FlagsOperation::HistoryRead),
+    ("flags_fleet_read", FlagsOperation::FleetRead),
+];
 
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(20)
@@ -116,6 +123,7 @@ async fn in_database(fixture: &mut Fixture, database: &str) -> Result {
     let process = serve(&logins.serving).await?;
     judge(&logins.writer).await?;
     operate(&logins, process).await?;
+    read_alone(fixture, &mut logins.admin, database).await?;
     deny(&logins).await?;
     prune_needs_its_lock_columns(fixture, &mut logins.admin, database).await?;
     // The serving login still loads: a failed prune never touches reads.
@@ -331,6 +339,59 @@ async fn operate(logins: &Logins, process: ProcessPresence) -> Result {
         store.fleet_declaring(&halt, deadline()).await,
     )?;
     step("operator load", store.load(deadline()).await)?;
+    Ok(())
+}
+
+/// A login granted exactly one read operation runs that operation's reads,
+/// each of which first checks the installed schema revision in its snapshot.
+async fn read_alone(
+    fixture: &mut Fixture,
+    admin: &mut sqlx::PgConnection,
+    database: &str,
+) -> Result {
+    let halt = FlagKey::new("halt")?;
+    for (label, operation) in READS {
+        let role = Composition::new(PublicPolicy::Deny)
+            .with_flags(&[operation])
+            .compile()?;
+        let login = fixture.login_on(label, &role, admin, database).await?;
+        let pool = fixture.pool_on(&login, database).await?;
+        require_within_policy(&pool, &role).await?;
+        let store = PooledStore::new(pool, timing()?);
+        step(
+            &format!("{label} preflight"),
+            store.preflight(deadline()).await,
+        )?;
+        match operation {
+            FlagsOperation::CatalogRead => {
+                require!(
+                    !step(&format!("{label} keys"), store.keys(deadline()).await)?.is_empty(),
+                    "catalog read alone lists the keys"
+                )?;
+                step(&format!("{label} key"), store.key(&halt, deadline()).await)?;
+            }
+            FlagsOperation::HistoryRead => {
+                let page = step(
+                    &format!("{label} history"),
+                    store
+                        .history(Some(&halt), Version::new(0), deadline())
+                        .await,
+                )?;
+                require!(
+                    page.entries.len() == 4,
+                    "history read alone reads the audit"
+                )?;
+            }
+            FlagsOperation::FleetRead => {
+                step(&format!("{label} fleet"), store.fleet(deadline()).await)?;
+                step(
+                    &format!("{label} fleet declaring"),
+                    store.fleet_declaring(&halt, deadline()).await,
+                )?;
+            }
+            other => return Err(super::support::fail(&format!("{other:?} is not a read"))),
+        }
+    }
     Ok(())
 }
 

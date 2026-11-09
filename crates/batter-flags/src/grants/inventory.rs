@@ -16,11 +16,13 @@ pub enum FlagsOperation {
     PresencePrune,
     /// Audited set, kill, archive and restore.
     AuditedWrite,
-    /// Catalogs, their entries and the state rows.
+    /// Catalogs, their entries and the state rows. Like every operator read,
+    /// it first reads the installed schema revision.
     CatalogRead,
-    /// The audit history.
+    /// The audit history, after the installed schema revision.
     HistoryRead,
-    /// The fleet view: process rows, the head and which catalogs declare a key.
+    /// The fleet view: the installed schema revision, process rows, the head
+    /// and which catalogs declare a key.
     FleetRead,
 }
 
@@ -259,7 +261,18 @@ const AUDITED_WRITE: &[Requirement] = &[
     },
 ];
 
+/// The guard every operator read runs first, in its own snapshot: the
+/// installed schema revision (`PooledStore::preflight` and each read).
+const READ_GUARD: Requirement = Requirement {
+    relation: CONTROL,
+    relation_privileges: &[],
+    select: &["schema_revision", "singleton"],
+    insert: &[],
+    update: &[],
+};
+
 const CATALOG_READ: &[Requirement] = &[
+    READ_GUARD,
     Requirement {
         relation: CATALOGS,
         relation_privileges: &[ObjectPrivilege::Select],
@@ -281,15 +294,27 @@ const CATALOG_READ: &[Requirement] = &[
         insert: &[],
         update: &[],
     },
+    // Whether any process row still references a declaring catalog: the
+    // listing's `referenced` column.
+    Requirement {
+        relation: PROCESSES,
+        relation_privileges: &[],
+        select: &["manifest_digest"],
+        insert: &[],
+        update: &[],
+    },
 ];
 
-const HISTORY_READ: &[Requirement] = &[Requirement {
-    relation: AUDIT,
-    relation_privileges: &[ObjectPrivilege::Select],
-    select: &[],
-    insert: &[],
-    update: &[],
-}];
+const HISTORY_READ: &[Requirement] = &[
+    READ_GUARD,
+    Requirement {
+        relation: AUDIT,
+        relation_privileges: &[ObjectPrivilege::Select],
+        select: &[],
+        insert: &[],
+        update: &[],
+    },
+];
 
 const FLEET_READ: &[Requirement] = &[
     Requirement {
@@ -302,7 +327,7 @@ const FLEET_READ: &[Requirement] = &[
     Requirement {
         relation: CONTROL,
         relation_privileges: &[],
-        select: &["singleton", "version"],
+        select: &["schema_revision", "singleton", "version"],
         insert: &[],
         update: &[],
     },

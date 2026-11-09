@@ -49,11 +49,14 @@ fn prune_deletes_by_its_predicate_columns_and_locks_one_column_each() {
 
 #[test]
 fn history_is_read_whole_and_nothing_writes_the_audit() {
+    // The read guard first reads the installed schema revision.
     assert_eq!(
         rendered(FlagsGrant::operations(FlagsOperation::HistoryRead, [])),
         concat!(
             "GRANT USAGE ON SCHEMA \"flags\" TO \"flags_service\";\n",
             "GRANT SELECT ON TABLE \"flags\".\"flag_audit\" TO \"flags_service\";\n",
+            "GRANT SELECT (\"schema_revision\") ON TABLE \"flags\".\"flag_control\" TO \"flags_service\";\n",
+            "GRANT SELECT (\"singleton\") ON TABLE \"flags\".\"flag_control\" TO \"flags_service\";\n",
         ),
     );
     let everything =
@@ -107,6 +110,28 @@ fn the_operator_cli_is_the_union_of_its_parts() {
     ));
     assert_eq!(cli, parts);
     assert!(cli.contains("UPDATE (\"version\") ON TABLE \"flags\".\"flag_control\""));
+}
+
+/// Every operator read runs `SELECT schema_revision FROM flags.flag_control
+/// WHERE singleton` in its own snapshot before reading anything else, so a
+/// login granted only that read can run it.
+#[test]
+fn every_operator_read_can_run_the_schema_guard() {
+    for operation in [
+        FlagsOperation::CatalogRead,
+        FlagsOperation::HistoryRead,
+        FlagsOperation::FleetRead,
+    ] {
+        let read = rendered(FlagsGrant::operations(operation, []));
+        for column in ["schema_revision", "singleton"] {
+            assert!(
+                read.contains(&format!(
+                    "SELECT (\"{column}\") ON TABLE \"flags\".\"flag_control\""
+                )),
+                "{operation:?} lacks {column}: {read}"
+            );
+        }
+    }
 }
 
 #[test]

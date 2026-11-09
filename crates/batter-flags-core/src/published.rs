@@ -37,6 +37,12 @@ mod views;
 /// It is not `Clone`: a loader holds one and every reader sees the
 /// [`Record`] it hands out, so no stale copy of a record can be advanced.
 ///
+/// ```compile_fail,E0599
+/// fn twice(publisher: batter_flags_core::low_level::Publisher<u64>) {
+///     let _copy = publisher.clone();
+/// }
+/// ```
+///
 /// ```
 /// use batter_flags_core::{
 ///     CatalogBuilder, Freshness, PrePublication, SafeState, SettingsPrefix, StaleRule,

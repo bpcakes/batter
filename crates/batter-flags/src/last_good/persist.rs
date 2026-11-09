@@ -29,9 +29,15 @@ enum Written {
     At(u64),
 }
 
-/// What is waiting to be written.
+/// The latest publication offered, and what became of it. Every variant but
+/// `Empty` names its version: offering that version again, as each confirming
+/// read does, changes nothing, and only a newer publication replaces it.
 enum Queue {
-    Idle,
+    /// Nothing has been offered yet.
+    Empty,
+    /// The latest publication needs no write: it was written, or the file on
+    /// disk was already newer.
+    Settled { version: u64 },
     /// The latest publication not yet written, and why the last attempt at it
     /// failed. It is retried every run, whatever that run read, until it is
     /// written or a newer one replaces it.
@@ -41,9 +47,18 @@ enum Queue {
     },
     /// The latest publication does not fit the file, so it is never retried;
     /// a newer publication replaces it.
-    TooLarge {
-        version: u64,
-    },
+    TooLarge { version: u64 },
+}
+
+impl Queue {
+    /// The version of the publication this queue holds or has settled.
+    fn version(&self) -> Option<u64> {
+        match self {
+            Self::Empty => None,
+            Self::Waiting { file, .. } => Some(file.version),
+            Self::Settled { version } | Self::TooLarge { version } => Some(*version),
+        }
+    }
 }
 
 struct State {
@@ -82,9 +97,9 @@ impl Selected {
         match outcome {
             Ok(Persisted::Written) => {
                 state.written = Written::At(self.file.version);
-                self.settle(&mut state, Queue::Idle);
+                self.settle(&mut state, self.settled());
             }
-            Ok(Persisted::NewerOnDisk) => self.settle(&mut state, Queue::Idle),
+            Ok(Persisted::NewerOnDisk) => self.settle(&mut state, self.settled()),
             // The rename replaced the file and only its durability is in
             // doubt, so the first-write authority is spent: the retry, which
             // stays queued, must not replace a newer file another process
@@ -99,6 +114,13 @@ impl Selected {
         self.release(&mut state);
         drop(state);
         outcome
+    }
+
+    /// The queue once this write's publication needs no further write.
+    fn settled(&self) -> Queue {
+        Queue::Settled {
+            version: self.file.version,
+        }
     }
 
     /// Records that this publication can never be written to the file.
@@ -191,7 +213,7 @@ impl Persister {
             path,
             state: Arc::new(Mutex::new(State {
                 written: Written::Never,
-                queue: Queue::Idle,
+                queue: Queue::Empty,
                 phase: Phase::Ready,
                 selections: 0,
             })),
@@ -230,11 +252,14 @@ impl Persister {
         (persister, release)
     }
 
-    /// Queues a control-plane publication, unless its version is the one
-    /// already written.
+    /// Queues a control-plane publication newer than the one the queue holds
+    /// or has settled. Every confirming read offers the version it serves
+    /// again, so an equal offer must keep what the queue already knows: a
+    /// version written or dropped for a newer file stays settled, one too
+    /// large for the file is not retried, and a waiting one keeps its failure.
     pub(crate) fn offer(&self, file: FileSnapshot) {
         let mut state = lock(&self.state);
-        if state.written != Written::At(file.version) {
+        if state.queue.version().is_none_or(|held| held < file.version) {
             state.queue = Queue::Waiting {
                 file,
                 failure: None,
@@ -262,7 +287,7 @@ impl Persister {
             Phase::Ready => {}
         }
         let file = match &state.queue {
-            Queue::Idle | Queue::TooLarge { .. } => return Ok(None),
+            Queue::Empty | Queue::Settled { .. } | Queue::TooLarge { .. } => return Ok(None),
             Queue::Waiting { file, .. } => file.clone(),
         };
         let selection = state.selections;
@@ -357,7 +382,9 @@ fn status(state: &State) -> LastGoodStatus {
             version: Version::new(*version),
             written,
         },
-        (Phase::Ready, Queue::Idle) => LastGoodStatus::UpToDate { written },
+        (Phase::Ready, Queue::Empty | Queue::Settled { .. }) => {
+            LastGoodStatus::UpToDate { written }
+        }
     }
 }
 

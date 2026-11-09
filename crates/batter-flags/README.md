@@ -16,9 +16,12 @@ job-handler gates and pinned decisions. `core` is always the catalog crate
 identity through the direct and facade paths.
 
 ```sh
-cargo test -p batter-flags --no-default-features --locked
+cargo test -p batter-flags --no-default-features --features test-support --locked
 cargo test -p batter-flags --all-features --locked
 ```
+
+`test-support` adds no package; the targets that build `TestFlags` fixtures
+require it, and are skipped without it.
 
 Experimental. Declared mode is implemented: `declared::resolve` consumes a
 catalog and the root's captured `SettingsSource` once and returns a `Resolved`
@@ -196,10 +199,11 @@ published, and under `start_on_defaults` it opens after the first bounded
 attempt.
 
 ```sh
-cargo test -p batter-flags --features axum --locked
+cargo test -p batter-flags --features axum,test-support --locked
 ```
 
-HTTP tests cover refusals, private construction, wrong-view rejection, event
+The HTTP integration target builds `TestFlags` fixtures, so it requires
+`test-support` as well as `axum`. HTTP tests cover refusals, private construction, wrong-view rejection, event
 counts and severity, defaults/unready/stale/floor admission, and publication
 while a request is suspended. They use the sealed in-process transport; they
 do not establish real socket or TLS serving behavior.

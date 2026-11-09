@@ -15,8 +15,9 @@ use batter_flags_core::{
     low_level::BaseBuilder,
 };
 use batter_flags_postgres::{
-    Cadence, KeySample, PooledStore, PresenceReport, ProcessLabel, ProcessLabels, ProcessPresence,
-    SnapshotReport, StoreTiming,
+    Actor, Cadence, Change, ChangeReason, KeySample, PooledStore, Precondition, PresenceReport,
+    ProcessLabel, ProcessLabels, ProcessPresence, SnapshotReport, StoreTiming, Variant, Write,
+    WriteOutcome,
 };
 use postgres_test_harness::{DatabaseLease, HarnessConfig, PostgresHarness};
 use serde_json::Value;
@@ -326,6 +327,33 @@ impl Database {
             .execute(&self.pool)
             .await
             .unwrap();
+    }
+
+    /// Writes `count` audited changes to `key` through the store, alternating
+    /// `on` and `off` so that every write changes the state.
+    pub async fn audited_writes(&self, key: &str, count: usize) {
+        let second = Duration::from_secs(1);
+        let store = PooledStore::new(
+            self.pool.clone(),
+            StoreTiming::new(second * 3, second * 3, second * 3, second * 3).unwrap(),
+        );
+        let key = batter_flags_core::FlagKey::new(key).unwrap();
+        for n in 0..count {
+            let variant = Variant::new(if n % 2 == 0 { "on" } else { "off" }).unwrap();
+            let change = Change::new(
+                Actor::new("ops").unwrap(),
+                ChangeReason::new("page").unwrap(),
+                Precondition::Unconditional,
+            );
+            let outcome = store
+                .write(Write::set(key.clone(), variant, change), deadline())
+                .await
+                .unwrap();
+            assert!(
+                matches!(outcome, WriteOutcome::Written { .. }),
+                "{outcome:?}"
+            );
+        }
     }
 
     /// Adds a Live process of `build` declaring `keys`.

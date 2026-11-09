@@ -316,8 +316,8 @@ run; the check after migrating is gone. The probe needs no privilege beyond
 the database `CREATE` that SQLx's own `CREATE SCHEMA IF NOT EXISTS` needs.
 
 What types cannot express here is remote session state. The check samples one
-session before and one after migrating, on separate connections. Those of one
-pool share their defaults unless the login's role or database settings or the
+session, the probe's, before the migrator runs on its own connection. Those of
+one pool share their defaults unless the login's role or database settings or the
 pool's connect options (`PgPool::set_connect_options`) changed while it held
 connections, so such a pool can pass while other sessions are hazardous.
 Inspecting the migrator's own connection would not close that gap: the flags
@@ -329,9 +329,12 @@ documented in the store README. A failure while migrating can follow
 committed migrations, as the `StoreError` contract states; a refusal cannot. The new class is a hard cut of the
 exhaustive `ErrorClass`, recorded with `Breaking:` and `Migration:` text and no
 shim. Evidence: the live `migrate_refuses_a_session_whose_search_path_resolves_into_flags`
-test (an explicit `flags` entry, refused after the first migration and before
-the second, and a reset path migrating with nothing applied twice), and a local
-run under a temporary role named `flags`, refused on both migrations.
+test. With an explicit `flags` entry, a first migration is refused before it
+runs, even while another session holds SQLx's migration lock, and creates
+nothing; a path without `flags` then migrates once; and with the schema in
+place the path is refused again with nothing applied twice. A local run under
+a temporary role named `flags`, refused on both migrations, predates the
+rolled-back probe of `batter-jkw6.41` and is kept as history.
 
 ## Publication lifecycle (`batter-jkw6.39`)
 
@@ -419,7 +422,12 @@ its tests and live evidence.
   `build` cannot fail (`.44`); `BuildError::RepeatedCall` is gone.
 - `pin` refuses an error decision with `Unpinnable` (`.45`).
 - Every operator read runs the store's primary and schema guard in its own
-  snapshot (`.46`); `history` returns a page with an explicit continuation
+  snapshot (`.46`), and each read operation's grant includes the guard's
+  `flag_control` columns; the review of this round found the inventory had not
+  followed the guard, and that `CatalogRead` already lacked the
+  `flag_processes (manifest_digest)` its listing reads, which only a login
+  holding exactly one read operation shows. The live grant case now runs each
+  read under such a login. `history` returns a page with an explicit continuation
   (`.47`); write outcomes record an accepted coordinated flip (`.48`); a
   process presence is bound to the store that issued it (`.49`).
 - Core counts gated periodic skips itself (`register_skippable_in`,
@@ -428,7 +436,11 @@ its tests and live evidence.
   `with_listen` refuses its spacing when the policy is built (`.51`).
 - `RegisteredFlags::last_good()` reports the persister's state, a stale
   selection cannot release a newer one, an oversized snapshot is not retried,
-  and a `LoadPolicy` is not `Clone` (`.52`).
+  and a `LoadPolicy` is not `Clone` (`.52`). The persister's queue names the
+  version it holds or has settled (`Empty`, `Settled`, `Waiting`,
+  `TooLarge`), and only a newer offer replaces it: every confirming read
+  offers its version again, which used to re-queue an oversized or
+  newer-on-disk version and clear a waiting failure on each poll.
 - `declared::resolve` refuses a narrowed settings source (`.53`). A type split
   of core's `SettingsSource` was weighed and judged too costly for every root;
   the source records its narrowing and the refusal is explicit at startup.

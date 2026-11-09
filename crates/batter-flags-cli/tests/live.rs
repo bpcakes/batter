@@ -72,7 +72,19 @@ async fn refused_writes_exit_3_and_write_nothing() {
         "--accept-rolling-flip",
     ]);
     assert_eq!(accepted.code, 0, "{accepted:?}");
-    assert_eq!(accepted.json()["outcome"], "written");
+    let accepted = accepted.json();
+    assert_eq!(accepted["outcome"], "written");
+    // An accepted coordinated flip is named in the outcome and warned about.
+    assert_eq!(accepted["data"]["deferral"]["flip"], "coordinated");
+    let warnings = accepted["warnings"].as_array().unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.as_str().unwrap().starts_with(
+                "rollout is declared coordinated: processes apply this write poll by poll"
+            )),
+        "{warnings:?}"
+    );
     let stale = db.cli_args(&[
         "set",
         "fast_path",
@@ -145,17 +157,24 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
         0,
         "an absent key is revision 0"
     );
-    db.cli_args(&[
-        "set",
-        "fast_path",
-        "on",
-        "--actor",
-        "ops",
-        "--reason",
-        "go",
-        "--if-revision",
-        "0",
-    ]);
+    let rolling = db
+        .cli_args(&[
+            "set",
+            "fast_path",
+            "on",
+            "--actor",
+            "ops",
+            "--reason",
+            "go",
+            "--if-revision",
+            "0",
+        ])
+        .json();
+    assert_eq!(rolling["data"]["deferral"]["flip"], "rolling");
+    assert!(
+        !rolling.to_string().contains("declared coordinated"),
+        "{rolling}"
+    );
     assert_eq!(
         db.cli_args(&["show", "fast_path"]).json()["data"]["revision"],
         1
@@ -196,6 +215,23 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
         .map(|d| d["presence"].as_str().unwrap())
         .collect();
     assert_eq!(presence, ["live", "live", "stopped"]);
+    db.close().await;
+}
+
+/// The store returns history a page at a time; the command reads every page,
+/// so the newest event, the one an uncertain write points to, is shown.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn history_reads_every_page_so_the_newest_event_is_shown() {
+    let db = Database::seeded().await;
+    let count = batter_flags_postgres::HISTORY_PAGE + 1;
+    db.audited_writes("fast_path", count).await;
+    let history = db.cli_args(&["history", "fast_path"]);
+    assert_eq!(history.code, 0, "{history:?}");
+    let history = history.json();
+    let entries = history["data"].as_array().unwrap();
+    assert_eq!(entries.len(), count);
+    assert_eq!(entries.last().unwrap()["version"], db.head().await);
     db.close().await;
 }
 

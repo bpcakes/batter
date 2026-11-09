@@ -36,7 +36,7 @@ use crate::{
 
 /// Everything one run needs, shared by every run of the component. The
 /// writer is dropped when the component ends, which readers see as
-/// `LoaderStopped`.
+/// `LoaderState::Stopped`.
 struct Refresh {
     source: LoadSource,
     writer: Mutex<Writer>,

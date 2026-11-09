@@ -21,7 +21,9 @@ contracts, capability facts and validation history.
   invoked before the first publication is deferred by it, as a gated job's is;
   it ran on the declared defaults while the process was still unready, which
   only the decisions' `provider_not_ready` reason showed. `start_on_defaults`,
-  declared mode and test flags run every invocation, as before.
+  declared mode and test flags run every invocation, as before. No shim: the
+  recheck delay is application policy, and a one-argument form would have to
+  choose it silently.
 
   ```rust,ignore
   // Before:
@@ -54,7 +56,8 @@ contracts, capability facts and validation history.
   through every protected surface, and a production root could reach them
   through plain `flags`. `GateError::DeferOnWorkflowStep`, which no
   constructor returned, is removed. No shim: an always-compiled `test` module is
-  the exposure this removes.
+  the exposure this removes, and a deprecated variant nothing returns would
+  only keep a dead match arm alive.
 
   ```toml
   # Before:
@@ -62,6 +65,13 @@ contracts, capability facts and validation history.
   # After, for tests that use TestFlags:
   [dev-dependencies]
   batter = { version = "...", features = ["flags", "flags-test-support"] }
+  ```
+
+  ```rust,ignore
+  // Before:
+  Err(GateError::DeferOnWorkflowStep) => unreachable!(),
+  // After: delete the arm; `GateError` is `#[non_exhaustive]`, so a wildcard
+  // arm, if the match has one, still covers future variants.
   ```
 
 - `batter_core::settings::SettingsSource` records whether any layer was
@@ -72,7 +82,8 @@ contracts, capability facts and validation history.
   the new `DeclaredError::NarrowedSource`. A root that narrowed its settings to
   its own schema before resolving dropped the flag names, and every flag served
   its default with only `absent` in the startup report to show it. Pass the
-  root's capture, before narrowing.
+  root's capture, before narrowing. No shim: resolving a narrowed source is
+  the silent-default state this removes.
 
   ```rust,ignore
   // Before: silently served every flag's default.
@@ -88,19 +99,27 @@ contracts, capability facts and validation history.
   `last_failure`, `Writing`, `TooLarge`), read under the persister's lock, and
   replaces `last_persist_failure()`, which kept the last failure forever, even
   after a later write succeeded (`batter-jkw6.52`). A publication too large for
-  the file is reported once and no longer retried every run; a finished write
-  releases its admission with its outcome, and a late destruction of an older
-  write can no longer release a newer one. `LoadPolicy` is no longer `Clone`, so
-  an opened `SnapshotDirectory` serves one registration and its first-write
-  authority is never duplicated.
+  the file is reported once and no longer retried every run. Every confirming
+  read offers the version it serves again, and that changes nothing: a version
+  already written, dropped for a newer file on disk or too large is not
+  attempted again until a newer one replaces it, and a waiting version keeps
+  its `last_failure`. A finished write releases its admission with its outcome,
+  and a late destruction of an older write can no longer release a newer one.
+  `LoadPolicy` is no longer `Clone`, so an opened `SnapshotDirectory` serves one
+  registration and its first-write authority is never duplicated. No shim:
+  `last_persist_failure()` could only keep reporting a failure a later write
+  cleared, and a `Clone` policy duplicates that authority.
 
   ```rust,ignore
   // Before:
   if let Some(failure) = flags.last_persist_failure() { alert(failure); }
+  let second = policy.clone();
   // After:
   if let LastGoodStatus::Waiting { last_failure: Some(failure), .. } = flags.last_good() {
       alert(failure);
   }
+  // Each registration builds its own policy, with its own opened directory.
+  let second = LoadPolicy::start_on_defaults(timing).with_last_good(other_directory);
   ```
 
 - **Breaking:** `batter_flags::control_plane::LoadPolicy::with_listen` returns
@@ -111,23 +130,41 @@ contracts, capability facts and validation history.
   name with the new `batter_core::registration::Registration::check_names`
   before registering anything, so a taken name, such as an application
   component named `flags.presence`, installs nothing instead of leaving the
-  stop marker, refresh and listener registered.
+  stop marker, refresh and listener registered. No shim: a `with_listen` that
+  accepts any spacing is the policy this refuses when it is built.
 
   ```rust,ignore
   // Before:
   let policy = LoadPolicy::start_on_defaults(timing).with_listen(endpoint);
-  // After:
-  let policy = LoadPolicy::start_on_defaults(timing).with_listen(endpoint)?;
+  match register_in(/* ... */) {
+      Err(RegisterError::WakeSpacingTooLong { maximum }) => refuse(maximum),
+      // ...
+  }
+  // After: the refusal comes from the builder, before registration.
+  let policy = match LoadPolicy::start_on_defaults(timing).with_listen(endpoint) {
+      Ok(policy) => policy,
+      Err(too_long) => return refuse(too_long.maximum()),
+  };
   ```
 
-- Add `batter_core::periodic::register_skippable_in` and `PeriodicOutcome`: a
-  run registered there returns `Ok(PeriodicOutcome::Ran)` or
-  `Ok(PeriodicOutcome::Skipped)`, and a skip is counted in the new
+- **Breaking:** add `batter_core::periodic::register_skippable_in` and
+  `PeriodicOutcome`: a run registered there returns `Ok(PeriodicOutcome::Ran)`
+  or `Ok(PeriodicOutcome::Skipped)`, and a skip is counted in the new
   `PeriodicSummary::skipped` and the completion report, never as a success, and
   never acknowledges first-success startup (`batter-jkw6.50`).
-  `register_periodic_in` and `register_wakeable_in` are unchanged. A struct
-  literal or exhaustive pattern of `PeriodicSummary` adds `skipped` or ends in
-  `..`.
+  `register_periodic_in` and `register_wakeable_in` are unchanged. The new
+  public field breaks a struct literal or exhaustive pattern of
+  `PeriodicSummary`, which is not `#[non_exhaustive]`. No shim: a field cannot
+  be added behind a deprecation, and a pattern ending in `..` keeps compiling.
+
+  ```rust,ignore
+  // Before:
+  let PeriodicSummary { invocations, succeeded, recoverable_failures, deadline_exceeded,
+      stop_interrupted, unsampled_failures, saturated, first_failure, last_failure,
+      terminal_failure, acknowledged, completion } = summary;
+  // After: name `skipped`, or end the pattern in `..`.
+  let PeriodicSummary { invocations, succeeded, skipped, .. } = summary;
+  ```
 - `batter_flags::Flags::gate_periodic_in` skips through core: a run the gate
   keeps out is `PeriodicSummary::skipped`, and `succeeded` counts only runs
   whose work succeeded; it counted skips too, beside a count kept outside core
@@ -159,7 +196,19 @@ contracts, capability facts and validation history.
   accept such a flip, and their outcome used to look exactly like a rolling
   write's; `WritePolicy::STRICT` still refuses it. The `batter-flags` command
   warns on it and reports `"flip"` in its output. A struct literal or exhaustive
-  pattern of `Deferral` adds the field or ends in `..`.
+  pattern of `Deferral` adds the field or ends in `..`. No shim: a `Deferral`
+  without the field is the indistinguishable outcome this removes.
+
+  ```rust,ignore
+  // Before:
+  let Deferral { unmet, overridden_by, unjudged_catalogs } = deferral;
+  // After:
+  let Deferral { unmet, overridden_by, unjudged_catalogs, flip } = deferral;
+  match flip {
+      Coordination::Rolling => {}
+      Coordination::Coordinated => warn("processes apply this write poll by poll"),
+  }
+  ```
 
 - **Breaking:** `batter_flags_postgres::PooledStore::history` returns a
   `HistoryPage` of at most `HISTORY_PAGE` (1000) entries with
@@ -183,6 +232,14 @@ contracts, capability facts and validation history.
           Continuation::After(last) => after = last,
       }
   }
+
+  // Before:
+  if listing.kind.is_empty() { /* neither stored nor declared */ }
+  // After:
+  match &listing.kind {
+      None => { /* neither stored nor declared */ }
+      Some(kind) => { /* ... */ }
+  }
   ```
 
 - `PooledStore::keys`, `key`, `history` and the fleet reads refuse a standby
@@ -190,7 +247,13 @@ contracts, capability facts and validation history.
   `preflight` do, so a command need not run `preflight` first; a missing flags
   table or schema reads as schema revision 0 (`ErrorClass::SchemaRevision`,
   `installed_schema_revision() == Some(0)`) for every read and for `write`,
-  which reported it as `Database` (`batter-jkw6.46`).
+  which reported it as `Database` (`batter-jkw6.46`). The grant inventory
+  follows the guard: `FlagsOperation::CatalogRead`, `HistoryRead` and
+  `FleetRead` now include `SELECT (schema_revision, singleton)` on
+  `flag_control`, and `CatalogRead` also `SELECT (manifest_digest)` on
+  `flag_processes`, which its listing already read. A login granted only one of
+  those operations was refused with insufficient privilege; the live grant
+  case now runs each read under a login holding exactly its operation.
 
 - **Breaking:** `batter_flags_core::SnapshotView::pin` returns
   `Result<Pinned<V>, Unpinnable>` and refuses a decision that is an error: a

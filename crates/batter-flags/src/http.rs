@@ -9,17 +9,21 @@
 //! use axum::routing::get;
 //! use batter_axum::{GroupPolicy, GuardedRouter, HttpBoundary, RequestPolicy,
 //!     ResponseConstructionBudget, RouteGroup};
-//! use batter_core::lifecycle::ShutdownHandle;
-//! use batter_flags::{core::{CatalogBuilder, SafeState, SettingsPrefix, StaleRule, Toggle},
-//!     http::AdmittedFlags, test::TestFlags};
+//! use batter_core::{lifecycle::ShutdownHandle, settings::SettingsSource};
+//! use batter_flags::{core::{CatalogBuilder, CivilDate, SafeState, SettingsPrefix, StaleRule,
+//!     Toggle}, declared, http::AdmittedFlags};
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
+//! let (mut catalog, serving, hosted) =
+//!     CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
 //! let fast = catalog.mode_flag("fast_path", Toggle::Off).declare()?;
 //! let halt = catalog.kill_switch("halt", SafeState::Released, StaleRule::HoldLastKnown)
 //!     .declare()?;
-//! let fixture = TestFlags::builder(catalog.build(), serving)?.set(&fast, Toggle::On).build()?;
+//! // The root's settings capture, before any narrowing.
+//! let settings = SettingsSource::from_pairs([("FLAG_FAST_PATH".into(), "on".into())])?;
+//! let flags = declared::resolve(catalog.build(), &settings, serving, hosted,
+//!     CivilDate::new(2026, 11, 5)?)?.into_flags();
 //! let (control, approval) = ShutdownHandle::new_with_readiness_approval();
 //! approval.approve();
 //! let policy = RequestPolicy::new(control.operation_admission(),
@@ -30,7 +34,7 @@
 //! }));
 //! let client = HttpBoundary::new(policy.clone())
 //!     .with_group(RouteGroup::new("work",
-//!         GroupPolicy::gated(policy, fixture.flags().http_gate(&halt)?), routes))?
+//!         GroupPolicy::gated(policy, flags.http_gate(&halt)?), routes))?
 //!     .assemble(GuardedRouter::new()).await?.in_process();
 //! # let _ = client;
 //! # Ok(()) }

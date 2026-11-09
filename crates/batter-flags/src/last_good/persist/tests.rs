@@ -331,7 +331,8 @@ fn a_stale_selection_cannot_release_a_newer_one() {
 }
 
 /// A publication too large for the file is reported and not retried every
-/// run; a newer publication replaces it.
+/// run, even though every confirming read offers its version again; a newer
+/// publication replaces it.
 #[tokio::test]
 async fn a_publication_too_large_for_the_file_is_not_retried() {
     let directory = Directory::new();
@@ -345,21 +346,52 @@ async fn a_publication_too_large_for_the_file_is_not_retried() {
         updated_version: 4,
         value: format::EntryValue::State("x".repeat(format::LIMIT + 1)),
     });
-    persister.offer(large);
+    persister.offer(large.clone());
     assert_eq!(
         persister.attempt(deadline()).await,
         Err(PersistFailure::TooLarge)
     );
-    assert_eq!(
-        persister.status(),
-        LastGoodStatus::TooLarge {
-            version: Version::new(4),
-            written: None
-        }
-    );
-    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Idle));
+    let too_large = LastGoodStatus::TooLarge {
+        version: Version::new(4),
+        written: None,
+    };
+    assert_eq!(persister.status(), too_large);
+    // The refresh offers after every confirming read, then attempts.
+    for _ in 0..2 {
+        persister.offer(large.clone());
+        assert_eq!(persister.status(), too_large);
+        assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Idle));
+    }
     persister.offer(snapshot(5));
     assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+}
+
+/// A publication dropped because the file on disk is newer stays settled:
+/// offering its version again, as each confirming read does, writes nothing
+/// and reads nothing, and only a newer publication is attempted.
+#[tokio::test]
+async fn a_publication_dropped_for_a_newer_file_is_not_attempted_again() {
+    let directory = Directory::new();
+    let persister = Persister::new(directory.path());
+    persister.offer(snapshot(1));
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+    // Another process publishes a newer file.
+    std::fs::write(
+        directory.path().file(),
+        format::encode(&snapshot(99)).unwrap(),
+    )
+    .unwrap();
+    persister.offer(snapshot(3));
+    assert_eq!(
+        persister.attempt(deadline()).await,
+        Ok(Persisted::NewerOnDisk)
+    );
+    persister.offer(snapshot(3));
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Idle));
+    assert_eq!(on_disk(&directory), 99);
+    persister.offer(snapshot(100));
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+    assert_eq!(on_disk(&directory), 100);
 }
 
 /// A failure is reported only while the publication it failed is waiting.
@@ -376,14 +408,15 @@ async fn a_failure_is_reported_while_its_publication_waits_and_cleared_by_a_writ
         persister.attempt(deadline()).await,
         Err(PersistFailure::Busy)
     );
-    assert_eq!(
-        persister.status(),
-        LastGoodStatus::Waiting {
-            version: Version::new(7),
-            written: None,
-            last_failure: Some(PersistFailure::Busy)
-        }
-    );
+    let waiting = LastGoodStatus::Waiting {
+        version: Version::new(7),
+        written: None,
+        last_failure: Some(PersistFailure::Busy),
+    };
+    assert_eq!(persister.status(), waiting);
+    // A confirming read offers the waiting version again; its failure stays.
+    persister.offer(snapshot(7));
+    assert_eq!(persister.status(), waiting);
     lock.unlock().unwrap();
     assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
     assert_eq!(
