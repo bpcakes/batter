@@ -1198,6 +1198,18 @@ unjoined work and skipped cleanup, not global quiescence. Installation remains
 process-global and cannot be reset; rejection closes only the rejected pipeline.
 The Batter-only guard intentionally excludes application metrics.
 
+For direct VictoriaMetrics ingestion select
+`batter::otlp::prepare_victoriametrics(endpoint, service_name, instance_id, schedule)`.
+It validates an HTTP(S) path ending in `/opentelemetry/v1/metrics`, allowing
+nonempty cluster/proxy prefixes, and requires a bounded producer instance ID.
+Its explicit transport profile accepts VictoriaMetrics' empty HTTP 200 without
+a Content-Type as well as typed Protobuf success; other response checks and the
+protected lifecycle remain identical. Ordinary `prepare` retains its strict
+`/v1/metrics` endpoint and typed response contract. Authentication, cross-process
+identity uniqueness and backend resource-label retention are deployment policy.
+See [direct export](../crates/batter-otlp/README.md#direct-victoriametrics-export)
+and [live evidence](evidence/victoriametrics-2026-11-09.md).
+
 Native builders still read ambient configuration, so preparation rejects `OTEL_*`
 and uses explicit empty resources. Applications must not mutate environment during
 preparation. See the [adapter guide](../crates/batter-otlp/README.md),

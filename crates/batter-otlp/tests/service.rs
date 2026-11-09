@@ -161,6 +161,15 @@ fn ambient_rejection_child() {
     .err()
     .expect("ambient OpenTelemetry setting must be rejected");
     assert_eq!(error.field(), "environment");
+    let error = batter_otlp::prepare_victoriametrics(
+        "http://127.0.0.1:8428/opentelemetry/v1/metrics",
+        "example-worker",
+        "worker-1",
+        Schedule::new(second, second, second).unwrap(),
+    )
+    .err()
+    .expect("VictoriaMetrics preparation also rejects ambient settings");
+    assert_eq!(error.field(), "environment");
 }
 
 fn assert_final_metrics(request: &ExportMetricsServiceRequest) {

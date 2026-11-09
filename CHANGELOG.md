@@ -8,6 +8,20 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Make OTLP attempt execution library-owned inside the private exporter. Replace
+  the phase/outcome product and paired begin/finish helpers with an exclusive
+  owner, single-use dispatch and phase capabilities, and isolated observations
+  revoked on return/drop. Preserve native encoding, response profiles and typed
+  deadline evidence; add adversarial runtime and compiler controls (`batter-fzw1`).
+  Public call shapes and dependencies are unchanged.
+
+- Give the VictoriaMetrics fixture ownership of work, diagnostics and removal,
+  replacing the Docker cancellation-mode boolean with separate operations.
+  Attach stop grace to matrix command metadata so renamed labels retain their
+  shutdown behavior, and retry only explicit completed-not-ready polling
+  outcomes. Preserve actual Docker read-back and signal/error-retention controls
+  (`batter-kwfa`).
+
 - Zero the response-body storage `batter-outbound-http` allocates before
   releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
   future is dropped, when growth replaces an allocation, and when the last
@@ -19,6 +33,21 @@ contracts, capability facts and validation history.
   to wipe. A completed body also keeps the allocation it grew into, at most twice
   its length, instead of being shrunk. Hyper, rustls and kernel buffers, response
   headers and request bodies are not covered.
+
+- Own SIGTERM with scoped record-only requests across the VictoriaMetrics test
+  fixture lifetime, protect bounded removal from repeated stop requests and
+  remove the Docker-listing prerequisite.
+  Preserve primary/cleanup error chains and add real-signal and failed-removal
+  regressions. Derive the matrix caller's grace from the complete fixture stop
+  path so outer escalation cannot preempt the allocated cleanup. Own complete
+  health/read-back polling in bounded children, including progressing HTTP
+  response cancellation regressions (`batter-pdfk`).
+
+- Add `batter::otlp::prepare_victoriametrics` for direct OTLP metrics ingestion,
+  with required producer instance identity, prefixed ingestion paths and an
+  explicit empty-response compatibility profile. Keep standard OTLP validation
+  strict. Add pinned Docker ingestion/read-back coverage to workspace verification
+  (`batter-cw5f`). Existing public call shapes are unchanged.
 
 - Preserve nested HTTP interruption outcomes in response-construction telemetry,
   including deadline expiry before bulkhead execution starts. Carry classification

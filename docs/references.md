@@ -10,6 +10,7 @@ have been removed; Git retains their history.
 
 ## Dependency selection and Effect v4 rationale
 
+- [OTLP attempt callback boundary, 2026-11-09](references/runtime.md#otlp-attempt-callback-boundary-rechecked-2026-11-09)
 - <a id="dependency-refresh-2026-11-04"></a>[Dependency refresh, 2026-11-04](references/ecosystem.md#dependency-refresh-2026-11-04)
 - <a id="macos-refusal-fixture-repair"></a>[macOS refusal fixture repair](references/ecosystem.md#macos-refusal-fixture-repair)
 - <a id="facade-feature-and-resolver-semantics-reviewed-2026-09-18-resolver-rechecked-2026-09-30"></a>[Facade feature and resolver semantics: reviewed 2026-09-18; resolver rechecked 2026-09-30](references/ecosystem.md#facade-feature-and-resolver-semantics-reviewed-2026-09-18-resolver-rechecked-2026-09-30)
@@ -70,6 +71,8 @@ have been removed; Git retains their history.
 - <a id="shared-profiled-pool-ownership-2026-11-05"></a>[Shared profiled pool ownership (2026-11-05)](references/postgresql.md#shared-profiled-pool-ownership-2026-11-05)
 
 ## Runtime, ownership, telemetry and settings
+
+- [VictoriaMetrics v1.156.0: reviewed 2026-11-09](references/runtime.md#victoriametrics-v11560-reviewed-2026-11-09)
 
 - <a id="native-cleanup-acquisition-2026-11-05"></a>[Native cleanup acquisition, 2026-11-05](references/runtime.md#native-cleanup-acquisition-2026-11-05)
 - <a id="rust-1981-panic-hooks-for-the-redacting-hook-2026-11-02"></a>[Rust 1.98.1 panic hooks for the redacting hook, 2026-11-02](references/runtime.md#rust-1981-panic-hooks-for-the-redacting-hook-2026-11-02)

@@ -19,6 +19,8 @@
 //! that closure guarantee.
 
 mod config;
+mod preparation;
+pub use preparation::{prepare, prepare_victoriametrics, reject_ambient_environment};
 pub mod diagnostics;
 #[path = "pipeline/guard.rs"]
 mod guard;
@@ -34,17 +36,13 @@ use crate::diagnostics::{
     Closure, DiagnosticClosure, ExportFailure, ExportHistory, ExportOutcome, ExportReport,
     FinalCoverage,
 };
-use batter_core::{settings::SettingsError, telemetry::metrics::facade::KeyName};
 use guard::{CatalogRecorder, GuardState};
 use metrics_exporter_otel::OpenTelemetryRecorder;
-use opentelemetry::{InstrumentationScope, KeyValue, metrics::MeterProvider as _};
-use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
-    Resource,
     error::{OTelSdkError, OTelSdkResult},
     metrics::{
         InstrumentKind, ManualReader, Pipeline, SdkMeterProvider, Temporality,
-        data::ResourceMetrics, exporter::PushMetricExporter, reader::MetricReader,
+        data::ResourceMetrics, reader::MetricReader,
     },
 };
 use std::{
@@ -52,7 +50,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::watch, time::Instant};
-use transport::{AttemptSlot, BoundedClient, Evidence, Phase};
+use transport::Exporter;
 
 /// Fixed bucket boundaries, in seconds, for both catalog histograms: twelve
 /// boundaries and therefore thirteen buckets per histogram series.
@@ -62,7 +60,6 @@ pub(crate) const HISTOGRAM_BOUNDS: [f64; 12] = [
 /// Instrumentation scope and the only resource attribute value.
 #[cfg(test)]
 const SERVICE_NAME: &str = "batter-example-reference-service";
-const ENDPOINT: &str = "metrics.endpoint";
 
 /// Shares one manual reader between the provider and the export owner.
 #[derive(Debug, Clone)]
@@ -95,8 +92,7 @@ struct Resources {
     state: Arc<GuardState>,
     provider: SdkMeterProvider,
     reader: Arc<ManualReader>,
-    exporter: MetricExporter,
-    slot: Arc<AttemptSlot>,
+    exporter: Exporter,
 }
 
 impl Resources {
@@ -117,104 +113,12 @@ fn closure(result: OTelSdkResult) -> Closure {
     }
 }
 
-/// Reject ambient OpenTelemetry configuration at the native builder boundary.
-///
-/// Upstream builders read `OTEL_*` headers, endpoints, timeouts and compression
-/// from the live process environment. The application must not mutate the
-/// environment during preparation; this check neither reads nor echoes values.
-pub fn reject_ambient_environment() -> Result<(), SettingsError> {
-    if std::env::vars_os().any(|(key, _)| key.as_encoded_bytes().starts_with(b"OTEL_")) {
-        return Err(SettingsError::new(
-            "environment",
-            "ambient OpenTelemetry settings are unsupported",
-        ));
-    }
-    Ok(())
-}
-
 /// Inert, prepared export pipeline. Nothing is installed, spawned or connected.
 #[must_use = "transfer the prepared exporter into batter_core::service::start"]
 pub struct Prepared {
     recorder: CatalogRecorder<OpenTelemetryRecorder>,
     resources: Resources,
     schedule: Schedule,
-}
-
-/// Prepare an inert OTLP/HTTP pipeline with explicit identity and timing.
-/// Endpoint validation accepts HTTP(S) at `/v1/metrics` without credentials,
-/// query or fragment. Applications may impose a narrower deployment policy.
-/// Ambient `OTEL_*` is rejected because native builders merge that configuration.
-/// Installation is process-global and cannot be reset or reloaded. Another
-/// recorder causes a retained installation rejection and closes only this pipeline.
-///
-/// ```no_run
-/// use batter_otlp::{prepare, Schedule};
-/// use batter_core::{service, startup::ScopedStartup, startup::{ProtectedStartupScope, StartupFuture}};
-/// use std::time::Duration;
-/// async fn launch<F>(startup: ScopedStartup<F>) -> Result<(), batter_core::settings::SettingsError>
-/// where F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, std::io::Error> + Send + 'static {
-///     let schedule = Schedule::new(Duration::from_secs(10), Duration::from_secs(3), Duration::from_secs(5))?;
-///     let exporter = prepare("http://127.0.0.1:4318/v1/metrics", "example-service", schedule)?;
-///     let owner = service::start(startup, exporter);
-///     let completion = owner.wait().await;
-///     let _service_result = completion.service();
-///     let _export_result = completion.diagnostics();
-///     Ok(())
-/// }
-/// ```
-pub fn prepare(
-    endpoint: &str,
-    service_name: &str,
-    schedule: Schedule,
-) -> Result<Prepared, SettingsError> {
-    let endpoint = config::endpoint(endpoint)?;
-    config::identity(service_name)?;
-    reject_ambient_environment()?;
-    let slot = Arc::new(AttemptSlot::default());
-    let client = BoundedClient::new(slot.clone()).map_err(|error| {
-        SettingsError::new(ENDPOINT, "native client construction failed").with_cause(error)
-    })?;
-    let exporter = MetricExporter::builder()
-        .with_temporality(Temporality::Cumulative)
-        .with_http()
-        .with_http_client(client)
-        .with_endpoint(endpoint.as_str())
-        .with_protocol(Protocol::HttpBinary)
-        .with_timeout(schedule.attempt)
-        .build()
-        .map_err(|error| {
-            SettingsError::new(ENDPOINT, "native exporter construction failed").with_cause(error)
-        })?;
-    let reader = Arc::new(
-        ManualReader::builder()
-            .with_temporality(Temporality::Cumulative)
-            .build(),
-    );
-    let resource = Resource::builder_empty()
-        .with_attributes([KeyValue::new("service.name", service_name.to_owned())])
-        .build();
-    let provider = SdkMeterProvider::builder()
-        .with_resource(resource)
-        .with_reader(SharedReader(reader.clone()))
-        .build();
-    let bridge = OpenTelemetryRecorder::new(
-        provider.meter_with_scope(InstrumentationScope::builder(service_name.to_owned()).build()),
-    );
-    for name in guard::HISTOGRAMS {
-        bridge.set_histogram_bounds(&KeyName::from_const_str(name), HISTOGRAM_BOUNDS.to_vec());
-    }
-    let state = Arc::new(GuardState::default());
-    Ok(Prepared {
-        recorder: CatalogRecorder::new(bridge, state.clone()),
-        resources: Resources {
-            state,
-            provider,
-            reader,
-            exporter,
-            slot,
-        },
-        schedule,
-    })
 }
 
 /// Result of the one process-wide installation attempt.
@@ -282,17 +186,10 @@ impl Session {
         if self.resources.reader.collect(&mut self.snapshot).is_err() {
             return ExportOutcome::Failed(ExportFailure::Collection);
         }
-        self.resources.slot.begin(deadline);
-        let exported =
-            tokio::time::timeout_at(deadline, self.resources.exporter.export(&self.snapshot)).await;
-        classify(
-            if exported.is_err() {
-                ExportTiming::TimedOut
-            } else {
-                ExportTiming::Returned
-            },
-            self.resources.slot.finish(),
-        )
+        self.resources
+            .exporter
+            .export(&self.snapshot, deadline)
+            .await
     }
 
     /// Drive `service` to completion while exporting periodically, then export
@@ -379,20 +276,6 @@ impl Session {
     }
 }
 
-/// Combine the typed transport evidence with the outer deadline. Upstream
-/// error text is never inspected.
-fn classify(expired: ExportTiming, evidence: Evidence) -> ExportOutcome {
-    let expired = expired == ExportTiming::TimedOut;
-    match (evidence.outcome, evidence.phase) {
-        (Some(Ok(())), _) => ExportOutcome::Acknowledged,
-        (Some(Err(failure)), _) => ExportOutcome::Failed(failure),
-        (None, Phase::Receiving) if expired => ExportOutcome::Failed(ExportFailure::BodyTimedOut),
-        (None, _) if expired => ExportOutcome::Failed(ExportFailure::HeadersTimedOut),
-        // Upstream finished without invoking the bounded transport.
-        (None, _) => ExportOutcome::Failed(ExportFailure::Encoding),
-    }
-}
-
 trait Record {
     fn record(&mut self, outcome: ExportOutcome);
 }
@@ -431,10 +314,4 @@ impl batter_core::service::Diagnostics for Prepared {
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExportTiming {
-    TimedOut,
-    Returned,
 }

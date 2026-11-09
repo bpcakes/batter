@@ -3,7 +3,7 @@
 //! only in isolated Unix child processes by the `metrics_export` test target.
 
 #[path = "../../tests/support/collector.rs"]
-mod collector;
+pub(crate) mod collector;
 #[path = "tests/guard_closure.rs"]
 mod guard_closure;
 #[path = "tests/ordering.rs"]

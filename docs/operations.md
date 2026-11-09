@@ -97,6 +97,13 @@ and final diagnostic settlement; application and diagnostic outcomes remain
 separate. The reference application's `metrics-export` feature selects this
 adapter using its own settings schema and deployment policy.
 
+For direct VictoriaMetrics ingestion, use
+`batter::otlp::prepare_victoriametrics` with the full ingestion URL, a service
+name and a distinct per-process instance ID. Preserve both resource attributes
+in the backend; two producers sharing the same labels can collide. See the
+[direct export recipe](../crates/batter-otlp/README.md#direct-victoriametrics-export).
+The generic `prepare` function still targets standard OTLP collectors.
+
 Other recorders can use the lower-level `batter::telemetry::metrics::install`
 path. That path leaves aggregation bounds and final export ordering to the
 application: flush only after awaiting driver completion, not readiness

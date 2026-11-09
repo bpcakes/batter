@@ -228,7 +228,7 @@ their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
 | Package | Location | Job |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
-| `batter-otlp` | [crates/batter-otlp](crates/batter-otlp/README.md) | Optional bounded OTLP metrics exporter through protected service completion. |
+| `batter-otlp` | [crates/batter-otlp](crates/batter-otlp/README.md) | Optional bounded OTLP metrics exporter through protected service completion, including an explicit direct VictoriaMetrics profile. |
 | `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | MIT-licensed synchronous standalone envelope encryption and stable MAC keys. |
 | `batter-outbound-http` | [crates/batter-outbound-http](crates/batter-outbound-http/README.md) | Experimental standalone send-once provider HTTP exchange: one library-built client profile and an exhaustive outcome recording whether an attempt could have reached the peer, with an opt-in `OperationContext` bridge. Provider meaning, replay and reconciliation stay with the application. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
