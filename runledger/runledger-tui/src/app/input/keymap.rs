@@ -315,6 +315,19 @@ mod tests {
         KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
     }
 
+    #[test]
+    fn a_fetch_error_is_shown_even_after_an_earlier_notice() {
+        let mut app = test_app();
+        // A notice is never cleared, so it must not outrank a current failure.
+        app.notice = Some("Auto-refresh resumed".to_owned());
+        let status = crate::app::fetch::FetchStatus::default();
+        assert!(app.status_line(status).contains("Auto-refresh resumed"));
+        app.last_error = Some("database unreachable".to_owned());
+        let line = app.status_line(status);
+        assert!(line.contains("database unreachable"), "{line}");
+        assert!(!line.contains("Auto-refresh resumed"), "{line}");
+    }
+
     enum ExpectedAction {
         WorkflowFilter,
         QueueFilter,
