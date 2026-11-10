@@ -51,7 +51,7 @@ rejected decision is made inside the transaction. Rejected authentication commit
 its audit and consecutive-failure increment; infrastructure failure rolls back.
 A stale claim never invokes application writes. The native row lock protects a
 valid claim through commit even if the original verification lease expires.
-One original operation budget covers every phase. `batter-sqlx::run_atomic_in`
+One original operation budget covers every phase. `batter_sqlx::run_atomic_profiled_in`
 retains the full acknowledged or uncertain outcome before boundary telemetry;
 an interruption without acknowledgement cannot establish rollback. Native
 attempt algorithms, lease fencing, storage, and migrations remain Runlimit-owned.
@@ -1180,7 +1180,9 @@ exercises native UDP and real signals at its executable root.
 After successful initialization, no critical components **and** no configured
 finite-work capacity produce `ShutdownCause::EmptySupervisor`. The initializer
 can succeed and every finalizer can succeed while the shutdown report remains
-unsuccessful. Configured finite capacity permits a component-free running
+unsuccessful. Such a supervisor closes admission before its driver starts, so it
+never publishes `Ready`; `service::start_with_readiness` reports
+`StoppedBeforeReady` for it. Configured finite capacity permits a component-free running
 supervisor; root work still requires readiness, submission and explicit shutdown.
 The executable startup rustdocs and `startup_composition` tests cover these
 distinct outcomes without changing the empty-supervisor contract.

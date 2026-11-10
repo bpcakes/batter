@@ -81,7 +81,9 @@ redaction. Never put secrets in panic messages.
 
 ## Dependencies and publishing
 
-The local source forbids unsafe code in all four library crate roots; that is not an audit
+The local source forbids unsafe code in all ten library crate roots under `crates/`,
+and the native `runlimit/` packages forbid it and the native `runledger/` packages
+deny it through their manifests; that is not an audit
 of transitive dependencies or proof of logical cancellation safety. Resolve and
 review Cargo.lock, run your dependency advisory/license checks, and evaluate
 all optional features on the actual target platform. CI actions are separate

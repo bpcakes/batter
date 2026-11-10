@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import stat
 import zipfile
@@ -30,6 +31,26 @@ def eligible(path: Path, root: Path) -> bool:
     return path.name != "SHA256SUMS" and (path.suffix in allowed or path.name in named)
 
 
+def source_files(root: Path, skip_top_level=frozenset()):
+    """Yield eligible files without descending into excluded directories.
+
+    Build outputs and Git storage can hold far more entries than the sources, so
+    excluded directories are pruned instead of being walked and then rejected.
+    Symbolic links to directories are never followed.
+    """
+    for directory, names, files in os.walk(root):
+        relative = Path(directory).relative_to(root)
+        names[:] = sorted(
+            name for name in names
+            if name not in EXCLUDED_PARTS
+            and not (relative.parts == (".agent",) and name in AGENT_TRANSIENT)
+            and not (not relative.parts and name in skip_top_level))
+        for name in sorted(files):
+            path = Path(directory) / name
+            if eligible(path, root):
+                yield path
+
+
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -39,12 +60,12 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     parser.add_argument("--output", type=Path, default=root.parent / "batter-0.0.1.zip")
     args = parser.parse_args()
-    paths = sorted(path for path in root.rglob("*") if eligible(path, root))
+    paths = sorted(source_files(root))
     inventory = "".join(f"{digest(path)}  {path.relative_to(root).as_posix()}\n" for path in paths)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for path in sorted(paths):
+        for path in paths:
             member = "batter/" + path.relative_to(root).as_posix()
             info = zipfile.ZipInfo(member, date_time=(2026, 9, 7, 0, 0, 0))
             info.create_system = 3

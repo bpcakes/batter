@@ -8,6 +8,43 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Fix `batter-axum` plain HTTP registration (`AssembledHttp::register_in`,
+  `low_level::register_http` and `register_http_in`) rebuilding the application
+  router for every accepted connection. Serving a bare `Router` made pinned
+  Axum 0.8.9 clone and re-prepare it per connection, reapplying every lazily
+  mapped layer; the make-service now prepares it once, as the connect-info path
+  already did. Public signatures are unchanged. Behavior change: an application
+  `Layer::layer` runs once before serving instead of once per connection, so
+  state a layer creates when built is now shared by every connection. Axum
+  still builds a `Router::layer` layer separately for each route and method.
+  For example, tower's `ConcurrencyLimitLayer::layer` creates a new semaphore,
+  so that layer over handler routes previously gave each connection its own
+  limit; each route and method now has one limit shared by all connections.
+  Neither was one server-wide limit: use `GlobalConcurrencyLimitLayer` or a
+  shared semaphore for an aggregate limit.
+  `batter_runlimit::http::PreparedHttp::in_process` likewise prepares its
+  router once instead of on every `TestClient::request`, matching its served
+  registration (`batter-70qx`).
+
+- Fix a supervisor with no critical component and no finite-work capacity
+  publishing `Ready` before it drained with `ShutdownCause::EmptySupervisor`.
+  Admission now closes before its driver counts as started. Public signatures
+  are unchanged. Behavior change: for such a service
+  `StartingService::into_ready` returns `Err` and `ServiceObserver::wait_ready`
+  and `ServiceCompletion::readiness` report
+  `ServiceReadinessError::StoppedBeforeReady`, where they previously reported
+  success for a service already draining as a configuration failure
+  (`batter-70qx`).
+
+- Remove dependency declarations nothing used: the `sqlx` normal dependency and
+  a duplicate `serde_json` dev-dependency of `batter-runledger`, the `rt` feature
+  of `tokio-util` in `batter-core`, and the `toml` and `tempfile`
+  dev-dependencies of `runledger-postgres`. `batter-sqlx`'s `test-support`
+  feature now declares the Tokio `sync` feature it uses, and `batter-otlp`
+  forbids unsafe code at its crate root like the other Batter crates. Correct
+  the SQLx verifier README examples, which still called three removed
+  boolean-parameter constructors (`batter-70qx`).
+
 - Zero the response-body storage `batter-outbound-http` allocates before
   releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
   future is dropped, when growth replaces an allocation, and when the last

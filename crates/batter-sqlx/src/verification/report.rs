@@ -77,9 +77,10 @@ pub enum FindingKind {
     /// The managed-object ledger relation does not exist, so no managed object
     /// set was applied to this database. `object` is the quoted ledger.
     MissingManagedObjectLedger,
-    /// The managed-object ledger is not the exact relation apply creates: five
+    /// The managed-object ledger is not the exact relation apply creates: six
     /// `NOT NULL` columns (`identity`, `kind`, `source_checksum`,
-    /// `rendered_checksum`, `applied_at`) and an `identity` primary key.
+    /// `rendered_checksum`, `applied_at`, `release_revision`) and an `identity`
+    /// primary key. The earlier five-column ledger reports this finding too.
     ManagedObjectLedgerShape,
     /// A declared managed object has no ledger row. `object` is its identity.
     MissingManagedObject,

@@ -18,7 +18,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -311,6 +311,69 @@ async fn streaming_abort(register: RegisterHttp) {
     assert_eq!(report.cleanup.skipped[0].name, "dependency");
     assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
     assert!(!cleaned.load(Ordering::SeqCst));
+}
+
+/// A layer that counts how often Axum builds the service it wraps.
+#[derive(Clone)]
+struct CountBuilds(Arc<AtomicUsize>);
+
+impl<S> tower::Layer<S> for CountBuilds {
+    type Service = S;
+
+    fn layer(&self, inner: S) -> S {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        inner
+    }
+}
+
+#[tokio::test]
+async fn plain_server_builds_application_layers_once_across_connections() {
+    layers_built_once(register_http).await;
+}
+
+#[tokio::test]
+async fn peer_server_builds_application_layers_once_across_connections() {
+    layers_built_once(register_http_with_connect_info_in).await;
+}
+
+async fn layers_built_once(register: RegisterHttp) {
+    let builds = Arc::new(AtomicUsize::new(0));
+    let mut supervisor = supervisor();
+    let handle = supervisor.handle();
+    // A layer over a handler route is applied lazily, when Axum prepares the router.
+    let app = Router::new()
+        .route("/", get(|| async { "served" }))
+        .layer(CountBuilds(builds.clone()));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    register(&mut supervisor, "http", listener, app).unwrap();
+    let running = supervisor.start();
+    timeout(Duration::from_secs(1), handle.status().wait_ready())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut observed = Vec::new();
+    for _ in 0..3 {
+        let mut client = connect(address).await;
+        let mut response = String::new();
+        timeout(Duration::from_secs(2), client.read_to_string(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.ends_with("served"), "{response}");
+        observed.push(builds.load(Ordering::SeqCst));
+    }
+    handle.request();
+    let report = timeout(Duration::from_secs(2), running.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(report.is_success(), "{report:?}");
+    assert_ne!(observed[0], 0, "the counting layer was never built");
+    assert_eq!(
+        observed, [observed[0]; 3],
+        "a later connection rebuilt the router"
+    );
 }
 
 #[tokio::test]

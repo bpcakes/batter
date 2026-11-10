@@ -62,10 +62,13 @@ class SourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
             root = parent / "original"
-            keep = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml",
+            keep = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", ".agent/jig-contract.json",
+                    "docs/.beads/retained.md",
                     "runledger/runledger-postgres/src/claim.sql",
                     "runledger/.sqlx/query-fixture.json", "runledger/migrations/001.sql"]
-            omit = [".git", ".env", "runledger/.env", "target/generated.rs", ".agent/.cache/data.json"]
+            omit = [".git", ".env", "runledger/.env", "target/generated.rs", ".agent/.cache/data.json",
+                    "crates/nested/target/generated.rs", ".beads/issues.jsonl",
+                    ".claude/settings.local.json"]
             for name in keep + omit:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

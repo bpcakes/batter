@@ -49,7 +49,7 @@ The Batter packages are version 0.0.1 publication candidates. Their manifests
 target crates.io, but the source tree alone does not claim that an upload or
 registry-name reservation has completed.
 Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
-Hosted Linux verification and focused macOS jobs passed on both supported
+Hosted Linux verification and focused macOS jobs passed on both then-supported
 toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 for commit `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. The documentation,
 package-description, and rustdoc refresh in this checkout postdates that run.
@@ -262,7 +262,7 @@ exactly-once or arbitrary provider guarantee. `batter-runlimit` preserves native
 quota decisions and consumption certainty under an operation budget; optional
 HTTP assembly owns auth/quota/body ordering. Its `memory`, `postgres`, and `axum`
 features are independent and off by default. It does not own PostgreSQL
-initialization or maintenance.
+initialization; `maintenance::register_in` registers native expiry cleanup.
 Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The

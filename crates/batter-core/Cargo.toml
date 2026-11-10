@@ -25,12 +25,12 @@ metrics = ["dep:metrics"]
 metrics = { workspace = true, optional = true }
 pin-project-lite.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal", "net"] }
-tokio-util = { workspace = true, features = ["rt"] }
+tokio-util.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 batter-test-support.workspace = true
 tracing-core.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "signal", "net"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

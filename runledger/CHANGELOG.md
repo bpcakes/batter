@@ -6,6 +6,17 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Operator TUI status line
+
+`runledger-tui` shows the current fetch error in its status line even after an
+earlier notice. A notice is never cleared, so it previously hid every later
+database failure while cached rows stayed on screen.
+
+### Scheduling workspace hygiene
+
+Remove two SQLx offline metadata files whose queries no longer exist, from all
+three caches. Crate-level rustdoc links now point at this repository.
+
 ### Native PostgreSQL test dependencies
 
 `runledger-test-support` now calls Bollard directly, removing Testcontainers and

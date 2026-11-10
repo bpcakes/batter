@@ -1,6 +1,7 @@
 //! Real recorder, SDK aggregation and OTLP transport against a loopback sink.
 //! Recording uses thread-scoped recorders; global installation is exercised
-//! only in isolated Unix child processes by the `metrics_export` test target.
+//! by this package's `tests/service.rs` and, in isolated Unix child processes,
+//! by the reference service's `metrics_export` test target.
 
 #[path = "../../tests/support/collector.rs"]
 mod collector;

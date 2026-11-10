@@ -86,6 +86,48 @@ async fn concurrent_requests_have_independent_admission_observations() {
     finish(running).await;
 }
 
+/// A layer that counts how often Axum builds the route it wraps.
+#[derive(Clone)]
+struct CountBuilds(Arc<AtomicUsize>);
+
+impl<S> tower::Layer<S> for CountBuilds {
+    type Service = S;
+
+    fn layer(&self, inner: S) -> S {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        inner
+    }
+}
+
+#[tokio::test]
+async fn in_process_client_builds_application_layers_once_across_requests() {
+    let running = running().await;
+    let builds = Arc::new(AtomicUsize::new(0));
+    // A layer over a handler route is applied lazily, when Axum prepares the
+    // router. Served registration prepares it once; the test transport must too.
+    let client = prepare(
+        Quota::new(memory()),
+        vec![policy("owner", 3)],
+        request_policy(&running, 1000),
+        routes().layer(CountBuilds(builds.clone())),
+    )
+    .in_process();
+    let mut observed = Vec::new();
+    for _ in 0..3 {
+        let response = client
+            .request(request("/work", "Bearer secret-a"), peer())
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        observed.push(builds.load(Ordering::SeqCst));
+    }
+    assert_ne!(observed[0], 0, "the counting layer was never built");
+    assert_eq!(
+        observed, [observed[0]; 3],
+        "a later request rebuilt the router"
+    );
+    finish(running).await;
+}
+
 #[tokio::test]
 async fn protected_handlers_extract_the_admitted_request() {
     let running = running().await;

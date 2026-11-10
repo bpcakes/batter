@@ -7,7 +7,7 @@ Shared durable-execution contracts: handler traits, job/workflow enums, runtime 
 - `src/lib.rs`: crate API surface.
 - `src/jobs.rs`: public jobs/workflow exports.
 - `src/jobs/handler.rs`: handler traits and registry trait.
-- `src/jobs/runtime_types.rs`: `JobContext`, `JobFailure`, `JobProgress`.
+- `src/jobs/runtime_types.rs`: `JobContext`, `JobFailure`, `JobCompletion`, `JobRetryTiming`.
 - `src/jobs/execution.rs`: borrowed `JobExecution` services and the custom-runtime trait.
 - `src/jobs/invocation.rs`: `JobInvocationOwner` and the read-only `JobInvocation`
   exit observation, its waiters and synchronous exit hooks.

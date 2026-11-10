@@ -2,8 +2,11 @@
 from pathlib import Path
 import shutil
 
-from package import eligible
+from package import source_files
 from parallel_process import render_outcomes, run_parallel
+
+# Historical tracker data and local agent settings are not build inputs.
+NOT_BUILD_INPUTS = frozenset({".beads", ".claude"})
 
 
 def copy_source(root, destination):
@@ -11,11 +14,10 @@ def copy_source(root, destination):
     if destination.is_relative_to(root):
         raise ValueError("source copy must be outside the source checkout")
     destination.mkdir(parents=True)
-    for path in root.rglob("*"):
-        if eligible(path, root):
-            target = destination / path.relative_to(root)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
+    for path in source_files(root, NOT_BUILD_INPUTS):
+        target = destination / path.relative_to(root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
     return destination
 
 
