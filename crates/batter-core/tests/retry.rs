@@ -159,6 +159,52 @@ async fn provider_delay_is_a_lower_bound() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_shorter_provider_delay_does_not_shorten_backoff() {
+    let script = Script::new([Err("busy"), Ok(())]);
+    let started = Instant::now();
+    retry::execute(
+        &context(),
+        "provider",
+        ReplaySafety::Deduplicated,
+        &policy(2),
+        |_| {
+            let script = script.clone();
+            async move { script.next() }
+        },
+        |_| RetryDecision::RetryAfter(Duration::from_millis(10)),
+    )
+    .await
+    .unwrap();
+    assert_elapsed(started.elapsed(), Duration::from_millis(100));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_delay_equal_to_the_remaining_budget_is_refused() {
+    // The paused clock keeps the whole 100 ms budget until the backoff decision.
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(100))
+        .unwrap()
+        .into_context();
+    let result: Result<(), _> = retry::execute(
+        &context,
+        "budget",
+        ReplaySafety::Idempotent,
+        &policy(2),
+        |_| async { Err("busy") },
+        |_| RetryDecision::Retry,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(RetryError::Stopped {
+            attempts: 1,
+            reason: StopReason::InsufficientBudget,
+            error: "busy"
+        })
+    ));
+    assert!(context.check().is_ok());
+}
+
+#[tokio::test(start_paused = true)]
 async fn too_long_provider_delay_does_not_get_shortened() {
     let context = batter_core::operation::OperationOwner::new(Duration::from_millis(50))
         .unwrap()
