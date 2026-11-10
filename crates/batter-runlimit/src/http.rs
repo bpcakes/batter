@@ -381,9 +381,16 @@ impl PreparedHttp {
         )
     }
     /// Consumes the prepared service into an explicit synthetic test transport.
+    ///
+    /// The router is prepared once, as [`Self::register_in`] serving prepares
+    /// it, so an application layer wrapping a handler route is built here and
+    /// never again per request.
     pub fn in_process(self) -> TestClient {
+        // Pinned Axum 0.8.9 builds lazily layered handler routes on every call
+        // of an unprepared `Router`; `with_state(())` builds them eagerly once,
+        // exactly as `into_make_service_with_connect_info` does when served.
         TestClient {
-            router: self.router,
+            router: self.router.with_state(()),
         }
     }
 }
