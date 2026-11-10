@@ -2,46 +2,16 @@ use super::*;
 use crate::{
     RuntimeLoopExit, RuntimeShutdownFailure, RuntimeShutdownSettlement,
     supervisor::tests::{disabled_supervisor, test_budget},
+    test_logs::{LogBuffer, capture_logs},
 };
 use std::{
-    io::{self, Write},
+    io,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
 mod panics;
-
-#[derive(Clone, Default)]
-struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl Write for LogBuffer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().expect("log buffer").extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl LogBuffer {
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().expect("log buffer").clone()).expect("UTF-8 tracing")
-    }
-}
-
-fn capture_logs(log: &LogBuffer) -> tracing::subscriber::DefaultGuard {
-    let writer = log.clone();
-    tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_writer(move || writer.clone())
-            .finish(),
-    )
-}
 
 const UNOBSERVED: &str = "jobs runtime settlement completed after its report waiter was dropped";
 

@@ -143,6 +143,8 @@ mod shutdown_signal;
 mod startup;
 pub mod supervisor;
 mod task_group;
+#[cfg(test)]
+mod test_logs;
 pub mod worker;
 
 pub use error::{Error, ReaperError, Result, RuntimeError, SchedulerError, WorkerError};

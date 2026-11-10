@@ -1185,9 +1185,18 @@ catalog schedule sync APIs apply each spec's `is_active` value on every sync.
 Use lower-level `job_schedule` + `upsert_job_schedule` for schedules whose active
 state should be owned by admin pause/resume workflows.
 Active schedules require enabled job definitions; do not disable definitions
-until referencing schedules are inactive. Scheduler catch-up after downtime
-materializes at most one stale fire, then advances the cursor to the first future
-fire.
+until referencing schedules are inactive. Whenever the scheduler lags by at
+least one cron period, not only after downtime, it materializes at most one
+stale fire, then advances the cursor to the first future fire; the occurrences
+in between are dropped and counted in a capped warning. The scheduler drains
+full batches back to back and wakes for the earliest active fire, so lag needs a
+real backlog or slow passes. The next fire is computed from the jittered fire
+time, so a `max_jitter_seconds` window at least as large as the cron gap can also
+skip occurrences.
+
+The reaper drains a full progressed batch immediately only while its reaped-lease
+observer owner has capacity. At the observer cap it waits the configured reaper
+interval, giving pending best-effort callbacks time to finish.
 
 ## Worker Runtime Rule
 
@@ -1289,8 +1298,19 @@ cooperative cleanup because interruption cannot establish
 that arbitrary descendants created by the callback stopped. Native runtime-owned
 jobs, running/terminal observers, reaped observers and terminal hooks have shared
 join observation; application-created detached tasks remain outside that set.
-Reports format facts without printing panic payloads. Existing native diagnostics
-and the process panic hook retain their own behavior.
+Reports format facts without printing panic payloads, and native diagnostics
+omit them too. Callback, observer and terminal-hook panic warnings carry only the
+job and callback metadata. Join-failure events log `task_id`, `is_panic` and
+`is_cancelled` instead of the `JoinError`, whose Display and Debug include the
+payload. `RuntimeShutdownFailure::LoopJoin` and `DescendantJoin` return `None`
+from `Error::source()`, so reporters that walk the source chain, such as
+`anyhow` or `eyre`, cannot reach the payload either. Payloads remain available
+only through explicit fields: `RuntimeCallbackFailure::Panicked { message, .. }`,
+`report.signal_panic()`, a `RuntimeTaskRecord`'s `error`, a
+`RuntimeLoopRecord`'s `result`, and the join variants' own `source` field. The
+process-global panic hook is separate and still prints each payload to stderr
+unless the embedding application installs a redacting hook, such as Batter's
+`redacting_panic_hook`; this library cannot change that output.
 
 Calling either terminal method creates the independent settlement owner before
 returning its `RuntimeShutdownDriver`. Dropping or cancelling that waiter requests
@@ -1392,8 +1412,10 @@ custom poll/destructor unwinds, or blocking code that never yields.
 Non-string panic payloads are normalized to "non-string panic payload"; their
 opaque allocations are intentionally retained rather than executing a possibly
 panicking payload destructor. `catch_unwind` does not suppress the process-global
-panic hook; configuring that hook is the embedding process's responsibility.
-Runledger's own formatting and diagnostics remain redacted.
+panic hook, which still prints the payload unless the embedding process installs
+a redacting hook such as Batter's `redacting_panic_hook`. Runledger's own
+formatting, log events and `Error::source()` chains omit panic payloads; only the
+explicit fields listed earlier in this section retain them.
 
 Shutdown timing and failure classification are separate contracts. Immediate
 shutdown records its stop time synchronously, so scheduling delay consumes the

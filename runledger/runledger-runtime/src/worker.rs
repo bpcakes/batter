@@ -379,15 +379,27 @@ fn log_worker_completed_drain() {
     warn!("worker loop completed before shutdown; draining in-flight jobs");
 }
 
+// `JoinError` Display and Debug include the panic payload, so these helpers log
+// only its task id and classification.
 fn log_drained_job_task_result(result: Result<(), std::sync::Arc<tokio::task::JoinError>>) {
     if let Err(error) = result {
-        error!(%error, "job task crashed while draining in-flight jobs");
+        error!(
+            task_id = %error.id(),
+            is_panic = error.is_panic(),
+            is_cancelled = error.is_cancelled(),
+            "job task crashed while draining in-flight jobs"
+        );
     }
 }
 
 fn log_finished_job_task_result(result: Result<(), std::sync::Arc<tokio::task::JoinError>>) {
     if let Err(error) = result {
-        error!(%error, "job task crashed");
+        error!(
+            task_id = %error.id(),
+            is_panic = error.is_panic(),
+            is_cancelled = error.is_cancelled(),
+            "job task crashed"
+        );
     }
 }
 
@@ -448,5 +460,7 @@ async fn process_claimed_job_with_terminal_observers(
     execution.execute().await;
 }
 
+#[cfg(test)]
+mod redaction_tests;
 #[cfg(test)]
 mod tests;

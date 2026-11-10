@@ -200,3 +200,25 @@ applies it to index, table, access-method, column and type identifiers. Runledge
 declares both canonical renderings and compares the catalog text unchanged;
 only the trusted expected type reference may gain schema qualification. This
 preserves literals and avoids mutating session settings during inspection.
+
+## Scheduler hint statement bound, 2026-11-10
+
+For `batter-70qx.11`, checked PostgreSQL 18 and the locked SQLx 0.9.0 source.
+The optional earliest-fire query runs after materialization commits; an
+`ACCESS EXCLUSIVE` table lock can block its ordinary `SELECT` even though it
+does not acquire row locks.
+
+- PostgreSQL 18 [statement timeout](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-STATEMENT-TIMEOUT)
+  bounds statement execution, including time spent waiting for a table lock;
+  zero disables it. The native hint caps this setting at one second while
+  retaining a stricter existing value.
+- PostgreSQL 18 [SET LOCAL](https://www.postgresql.org/docs/18/sql-set.html)
+  expires at transaction completion, including rollback. The hint awaits
+  explicit rollback on success and failure, retaining both operation and
+  rollback errors if recovery fails.
+- SQLx 0.9.0 `sqlx-core/src/pool/connection.rs` returns dropped pooled
+  connections asynchronously. Merely dropping a timed-out query is not proof
+  of server cancellation or restored session settings. The implementation
+  awaits the server-bounded read and rollback instead of cancelling the query
+  future. Pool acquisition retains its configured timeout; no absolute
+  transport deadline or general async-drop guarantee is claimed.
