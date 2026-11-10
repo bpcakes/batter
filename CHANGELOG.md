@@ -36,6 +36,15 @@ contracts, capability facts and validation history.
   success for a service already draining as a configuration failure
   (`batter-70qx`).
 
+- Remove dependency declarations nothing used: the `sqlx` normal dependency and
+  a duplicate `serde_json` dev-dependency of `batter-runledger`, the `rt` feature
+  of `tokio-util` in `batter-core`, and the `toml` and `tempfile`
+  dev-dependencies of `runledger-postgres`. `batter-sqlx`'s `test-support`
+  feature now declares the Tokio `sync` feature it uses, and `batter-otlp`
+  forbids unsafe code at its crate root like the other Batter crates. Correct
+  the SQLx verifier README examples, which still called three removed
+  boolean-parameter constructors (`batter-70qx`).
+
 - Zero the response-body storage `batter-outbound-http` allocates before
   releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
   future is dropped, when growth replaces an allocation, and when the last

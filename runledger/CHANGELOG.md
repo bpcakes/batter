@@ -12,6 +12,11 @@ All notable changes to this workspace are documented here.
 earlier notice. A notice is never cleared, so it previously hid every later
 database failure while cached rows stayed on screen.
 
+### Scheduling workspace hygiene
+
+Remove two SQLx offline metadata files whose queries no longer exist, from all
+three caches. Crate-level rustdoc links now point at this repository.
+
 ### Native PostgreSQL test dependencies
 
 `runledger-test-support` now calls Bollard directly, removing Testcontainers and
