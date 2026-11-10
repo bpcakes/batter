@@ -30,7 +30,7 @@ integration namespaces explicitly:
 | `runledger-test-support` | `batter::runledger::test_support`, `batter::runledger::native::test_support` | `runledger`, the adapter's worker-free handler drive, plus Runledger's own PostgreSQL test support |
 | `runlimit` | `batter::runlimit`, `batter::runlimit::native` | `batter-runlimit`, `runlimit-core` |
 | `runlimit-memory` | `batter::runlimit::memory` | `runlimit`, plus `runlimit-memory` |
-| `runlimit-postgres` | `batter::runlimit::postgres`, `batter::runlimit::attempts` | `runlimit`, plus `runlimit-postgres` and `batter-sqlx` |
+| `runlimit-postgres` | `batter::runlimit::postgres`, `batter::runlimit::attempts`, `batter::runlimit::grants`, `batter::runlimit::maintenance` | `runlimit`, plus `runlimit-postgres` and `batter-sqlx` |
 | `runlimit-axum` | `batter::runlimit::http`, `batter::axum` | `runlimit`, `axum`, the protected quota-before-body assembly |
 | `runlimit-native-http` | `batter::runlimit::native_transport::http` | `runlimit`, plus `runlimit-http` |
 | `runlimit-native-axum` | `batter::runlimit::native_transport::axum` | `runlimit`, plus `runlimit-axum` |
@@ -889,7 +889,7 @@ application-classified.
 
 ## Runlimit: optional protected native quota adapter
 
-`batter-runlimit` consumes local native core/memory 0.3.0 and PostgreSQL 0.3.1
+`batter-runlimit` consumes local native core, memory and PostgreSQL 0.4.0
 from `runlimit/`, imported from master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. There are no default features. `memory`
 enables fixed-window/GCRA error bridges; `postgres` enables the native error
 bridge and canonical outcome-aware attempt runner; `axum` selects HTTP assembly.

@@ -51,7 +51,7 @@ rejected decision is made inside the transaction. Rejected authentication commit
 its audit and consecutive-failure increment; infrastructure failure rolls back.
 A stale claim never invokes application writes. The native row lock protects a
 valid claim through commit even if the original verification lease expires.
-One original operation budget covers every phase. `batter-sqlx::run_atomic_in`
+One original operation budget covers every phase. `batter_sqlx::run_atomic_profiled_in`
 retains the full acknowledged or uncertain outcome before boundary telemetry;
 an interruption without acknowledgement cannot establish rollback. Native
 attempt algorithms, lease fencing, storage, and migrations remain Runlimit-owned.

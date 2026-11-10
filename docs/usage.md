@@ -82,7 +82,7 @@ application:
 
 ```toml
 [dependencies]
-batter = { version = "0.1", features = ["at-rest", "axum", "sqlx"] }
+batter = { version = "0.0.1", features = ["at-rest", "axum", "sqlx"] }
 ```
 
 Use `batter::at_rest`, `batter::axum`, `batter::outbound_http`, `batter::sqlx`,

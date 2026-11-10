@@ -226,7 +226,8 @@ those packages as `native`, `memory`, `postgres` and `native_transport::{http, a
 caller-controlled and is not the protected assembly.
 `crates/batter-test-support` contains dependency scripts and error combination.
 [`test-support/process/`](test-support/README.md) contains private std-only Unix
-process machinery included by foundation and Axum integration tests. It is not
+process machinery included by foundation and Axum integration tests, the facade
+HTTP example and the reference service's tests. It is not
 the `batter-test-support` crate or a SQLx feature. Preserve its workspace-relative
 layout when moving consuming crates; suite-specific fixtures and self-tests stay
 with their owning suite.
@@ -411,8 +412,8 @@ keep generic agent workflow and repo policy here.
 
 ## Backend Defaults
 
-- The root is a virtual workspace. Rust package roots are `crates`, `examples`, and
-  `runledger`; follow each package's nearest guide.
+- The root is a virtual workspace. Rust package roots are `crates`, `examples`,
+  `runledger`, and `runlimit`; follow each package's nearest guide.
 - Add crate-level `AGENTS.md` files when a crate has meaningful ownership, entrypoint, or invariant guidance that should travel with that crate.
 
 - Keep transport logic thin and business logic in the owning crate.

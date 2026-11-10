@@ -36,7 +36,8 @@ pub struct ShutdownReport {
     pub periodic: Vec<PeriodicRecord>,
     /// Successful finite tasks are counted instead of retained individually.
     pub completed_process_tasks: u64,
-    /// Whether directly registered tasks remained after the drain phase.
+    /// Whether directly registered tasks, or queued or active finite work,
+    /// remained after the drain phase.
     pub forced_cancellation: bool,
     /// Tasks for which abort was requested, sorted for stable reporting.
     pub abort_requested: Vec<&'static str>,
