@@ -26,6 +26,16 @@ contracts, capability facts and validation history.
   router once instead of on every `TestClient::request`, matching its served
   registration (`batter-70qx`).
 
+- Fix a supervisor with no critical component and no finite-work capacity
+  publishing `Ready` before it drained with `ShutdownCause::EmptySupervisor`.
+  Admission now closes before its driver counts as started. Public signatures
+  are unchanged. Behavior change: for such a service
+  `StartingService::into_ready` returns `Err` and `ServiceObserver::wait_ready`
+  and `ServiceCompletion::readiness` report
+  `ServiceReadinessError::StoppedBeforeReady`, where they previously reported
+  success for a service already draining as a configuration failure
+  (`batter-70qx`).
+
 - Zero the response-body storage `batter-outbound-http` allocates before
   releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
   future is dropped, when growth replaces an allocation, and when the last

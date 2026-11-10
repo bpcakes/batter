@@ -1180,7 +1180,9 @@ exercises native UDP and real signals at its executable root.
 After successful initialization, no critical components **and** no configured
 finite-work capacity produce `ShutdownCause::EmptySupervisor`. The initializer
 can succeed and every finalizer can succeed while the shutdown report remains
-unsuccessful. Configured finite capacity permits a component-free running
+unsuccessful. Such a supervisor closes admission before its driver starts, so it
+never publishes `Ready`; `service::start_with_readiness` reports
+`StoppedBeforeReady` for it. Configured finite capacity permits a component-free running
 supervisor; root work still requires readiness, submission and explicit shutdown.
 The executable startup rustdocs and `startup_composition` tests cover these
 distinct outcomes without changing the empty-supervisor contract.
