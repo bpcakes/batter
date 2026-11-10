@@ -3,9 +3,13 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+mod cadence;
+mod claim_cleanup_log;
 mod observers;
 mod terminal_hooks;
 
+use self::cadence::ReaperNextPass;
+use self::claim_cleanup_log::log_claim_cleanup;
 use self::observers::ReapedObserverTasks;
 use crate::ReaperError;
 use crate::RuntimeLoopExit;
@@ -14,6 +18,15 @@ use crate::observer::JobLifecycleObservers;
 use crate::registry::JobRegistry;
 use crate::shutdown;
 
+/// Reclaims expired job leases until shutdown is requested.
+///
+/// Each pass reaps up to [`JobsConfig::claim_batch_size`] expired leases and
+/// then delivers their terminal hooks and observer callbacks. A whole batch
+/// that reaped at least one lease is followed by another pass after a yield and
+/// a shutdown check, unless the reaped-lease observer cap is reached; any other
+/// pass waits for shutdown or [`JobsConfig::reaper_interval`]. Shutdown is
+/// checked between passes rather than raced against one, so a committed batch
+/// still reaches terminal-hook delivery and its bounded shutdown window.
 pub async fn run_reaper_loop(
     pool: runledger_postgres::DbPool,
     registry: JobRegistry,
@@ -75,7 +88,7 @@ pub(crate) async fn run_reaper_loop_initialized(
             return reaper_shutdown_complete(&mut reaped_observer_tasks).await;
         }
 
-        match runledger_postgres::jobs::reap_expired_leases_with_diagnostics(
+        let next_pass = match runledger_postgres::jobs::reap_expired_leases_with_diagnostics(
             &pool,
             config.claim_batch_size,
             config.reaper_retry_delay_ms,
@@ -83,7 +96,7 @@ pub(crate) async fn run_reaper_loop_initialized(
         .await
         {
             Ok(result) => {
-                if handle_successful_reap_iteration(
+                handle_successful_reap_iteration(
                     registry.as_ref(),
                     &observers,
                     &mut reaped_observer_tasks,
@@ -92,20 +105,29 @@ pub(crate) async fn run_reaper_loop_initialized(
                     &mut shutdown,
                 )
                 .await
-                    == ReaperNotificationFanoutResult::InterruptedByShutdown
+            }
+            Err(error) => {
+                log_reap_iteration_failure(
+                    config.claim_batch_size,
+                    config.reaper_retry_delay_ms,
+                    error,
+                );
+                ReaperNextPass::AfterInterval
+            }
+        };
+
+        match next_pass {
+            ReaperNextPass::Shutdown => {
+                return reaper_shutdown_complete(&mut reaped_observer_tasks).await;
+            }
+            ReaperNextPass::Immediately => tokio::task::yield_now().await,
+            ReaperNextPass::AfterInterval => {
+                if shutdown::wait_for_request_or_timeout(&mut shutdown, config.reaper_interval)
+                    .await
                 {
                     return reaper_shutdown_complete(&mut reaped_observer_tasks).await;
                 }
             }
-            Err(error) => log_reap_iteration_failure(
-                config.claim_batch_size,
-                config.reaper_retry_delay_ms,
-                error,
-            ),
-        }
-
-        if shutdown::wait_for_request_or_timeout(&mut shutdown, config.reaper_interval).await {
-            return reaper_shutdown_complete(&mut reaped_observer_tasks).await;
         }
     }
 }
@@ -117,12 +139,12 @@ async fn handle_successful_reap_iteration(
     result: &runledger_postgres::jobs::ReapExpiredLeasesDetailedResult,
     claim_batch_size: i64,
     shutdown: &mut watch::Receiver<bool>,
-) -> ReaperNotificationFanoutResult {
+) -> ReaperNextPass {
     log_reaped_leases(result.summary.processed);
     log_deferred_row_errors(result);
     log_claim_cleanup(result, claim_batch_size);
 
-    notify_reaped_lease_side_effects(
+    if notify_reaped_lease_side_effects(
         registry,
         observers,
         reaped_observer_tasks,
@@ -130,6 +152,15 @@ async fn handle_successful_reap_iteration(
         shutdown,
     )
     .await
+        == ReaperNotificationFanoutResult::InterruptedByShutdown
+    {
+        return ReaperNextPass::Shutdown;
+    }
+    cadence::after_committed_batch(
+        result,
+        claim_batch_size,
+        reaped_observer_tasks.is_saturated(),
+    )
 }
 
 fn log_reaped_leases(reaped: i64) {
@@ -199,58 +230,6 @@ fn log_deferred_row_errors(result: &runledger_postgres::jobs::ReapExpiredLeasesD
     }
 }
 
-fn log_claim_cleanup(
-    result: &runledger_postgres::jobs::ReapExpiredLeasesDetailedResult,
-    batch_size: i64,
-) {
-    log_released_coordination_claims(result);
-    log_coordination_claim_cleanup_errors(result);
-    log_coordination_claim_cleanup_saturation(result, batch_size);
-}
-
-fn log_released_coordination_claims(
-    result: &runledger_postgres::jobs::ReapExpiredLeasesDetailedResult,
-) {
-    if result.workflow_active_claims_released > 0 || result.execution_resource_claims_released > 0 {
-        info!(
-            workflow_active_claims_released = result.workflow_active_claims_released,
-            execution_resource_claims_released = result.execution_resource_claims_released,
-            "reaper released quiesced coordination claims"
-        );
-    }
-}
-
-fn log_coordination_claim_cleanup_errors(
-    result: &runledger_postgres::jobs::ReapExpiredLeasesDetailedResult,
-) {
-    for error in &result.cleanup_errors {
-        warn!(
-            operation = error.operation.as_str(),
-            error = %error.error,
-            "reaper coordination-claim cleanup failed after the lease batch committed"
-        );
-    }
-}
-
-fn log_coordination_claim_cleanup_saturation(
-    result: &runledger_postgres::jobs::ReapExpiredLeasesDetailedResult,
-    batch_size: i64,
-) {
-    let Ok(batch_size) = u64::try_from(batch_size) else {
-        return;
-    };
-    if result.workflow_active_claims_released >= batch_size
-        || result.execution_resource_claims_released >= batch_size
-    {
-        warn!(
-            workflow_active_claims_released = result.workflow_active_claims_released,
-            execution_resource_claims_released = result.execution_resource_claims_released,
-            cleanup_batch_size = batch_size,
-            "reaper coordination-claim cleanup saturated its batch limit"
-        );
-    }
-}
-
 async fn reaper_shutdown_complete(
     reaped_observer_tasks: &mut ReapedObserverTasks,
 ) -> RuntimeLoopExit {
@@ -267,6 +246,8 @@ enum ReaperNotificationFanoutResult {
 
 #[cfg(test)]
 mod tests {
+    mod cadence;
+
     use std::future::pending;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};

@@ -3044,8 +3044,17 @@ failure and the `job_handler` settlement diagnostic. The persisted outcome is
 still `PANICKED` and nonretryable, even when attempts remain. Deadline and lease
 fencing retain precedence over durable outcome classification. The worker can
 continue to subsequent jobs. Application-created `JobFailure` messages remain
-verbatim; this conversion does not sanitize other callback diagnostics or
-process panic-hook output.
+verbatim; this conversion does not sanitize them, other callbacks' retained
+`RuntimeCallbackFailure::Panicked` messages, or process panic-hook output.
+Separately, Runledger's observer, dead-letter-hook and task-join log events omit
+panic payloads, and `RuntimeShutdownFailure::LoopJoin` and `DescendantJoin`
+return `None` from `Error::source()`. Join-failure events, including supervised
+runtime loops, carry the Tokio task ID and panic/cancellation flags without
+formatting the join error. Log-capture tests in `runledger-runtime`
+(`*_logs_omit_the_payload` and
+`supervised_loop_join_logs_identity_without_payloads`, plus
+`join_failures_keep_panic_payloads_out_of_the_source_chain`) check a sentinel
+payload against each such event and the source chain.
 
 The PostgreSQL-backed `process_claimed_job_catches_main_handler_panic` regression
 checks a formatted synthetic secret against queue, attempt, dead-letter and

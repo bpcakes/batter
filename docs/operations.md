@@ -159,8 +159,12 @@ Native Runledger separately redacts caught main-handler panics before turning
 them into failures: `job.handler_panic` / `PANICKED` uses the fixed message
 `Job handler panicked.` in queue, attempt, dead-letter and event records,
 dead-letter logs and the main-handler settlement diagnostic. Panics remain
-nonretryable. This does not redact output from the process panic hook, other
-callback diagnostics, or application-created `JobFailure` messages. Those
+nonretryable. Runledger's observer, dead-letter-hook and task-join log events
+also omit panic payloads, and its join failures keep them out of
+`Error::source()` chains. Other callbacks' payloads remain in explicit report
+fields such as `RuntimeCallbackFailure::Panicked { message, .. }`. None of this
+redacts output from the process panic hook or application-created `JobFailure`
+messages. Those
 messages are persisted verbatim and may be logged or displayed; use deliberate
 non-sensitive text, never interpolated error `Display`/`Debug` or credentials.
 

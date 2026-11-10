@@ -259,10 +259,17 @@ impl TerminalObserverTasks {
     }
 }
 
+// Observer join failures log the task id and classification, never the
+// `JoinError`, whose Display and Debug include the panic payload.
 fn drain_finished_terminal_observer_tasks(tasks: &mut TaskSet<()>) {
     while let Some(result) = tasks.try_join_next() {
         if let Err(error) = result {
-            error!(%error, "terminal observer task crashed");
+            error!(
+                task_id = %error.id(),
+                is_panic = error.is_panic(),
+                is_cancelled = error.is_cancelled(),
+                "terminal observer task crashed"
+            );
         }
     }
 }
@@ -270,7 +277,12 @@ fn drain_finished_terminal_observer_tasks(tasks: &mut TaskSet<()>) {
 fn drain_finished_running_observer_tasks(tasks: &mut TaskSet<()>) {
     while let Some(result) = tasks.try_join_next() {
         if let Err(error) = result {
-            error!(%error, "running observer drain task crashed");
+            error!(
+                task_id = %error.id(),
+                is_panic = error.is_panic(),
+                is_cancelled = error.is_cancelled(),
+                "running observer drain task crashed"
+            );
         }
     }
 }
@@ -352,7 +364,12 @@ fn log_terminal_observer_abort_timeout(remaining_terminal_observer_tasks: usize)
 async fn drain_terminal_observer_tasks(tasks: &mut TaskSet<()>) {
     while let Some(result) = tasks.join_next().await {
         if let Err(error) = result {
-            error!(%error, "terminal observer task crashed while draining worker shutdown");
+            error!(
+                task_id = %error.id(),
+                is_panic = error.is_panic(),
+                is_cancelled = error.is_cancelled(),
+                "terminal observer task crashed while draining worker shutdown"
+            );
         }
     }
 }
@@ -366,7 +383,12 @@ async fn drain_aborted_terminal_observer_tasks(tasks: &mut TaskSet<()>) -> usize
                 cancelled_count += 1;
             }
             Err(error) => {
-                error!(%error, "terminal observer task failed after worker shutdown abort");
+                error!(
+                    task_id = %error.id(),
+                    is_panic = error.is_panic(),
+                    is_cancelled = error.is_cancelled(),
+                    "terminal observer task failed after worker shutdown abort"
+                );
             }
         }
     }
@@ -434,7 +456,12 @@ async fn drain_aborted_running_observer_tasks(tasks: &mut TaskSet<()>) -> usize 
                 cancelled_count += 1;
             }
             Err(error) => {
-                error!(%error, "running observer drain task failed after worker shutdown abort");
+                error!(
+                    task_id = %error.id(),
+                    is_panic = error.is_panic(),
+                    is_cancelled = error.is_cancelled(),
+                    "running observer drain task failed after worker shutdown abort"
+                );
             }
         }
     }
@@ -645,6 +672,8 @@ impl Drop for RunningObserverJoinGuard {
     }
 }
 
+// `JoinError` Display and Debug include the panic payload, so worker observer
+// diagnostics log only its task id and classification.
 fn log_running_notification_join_error(
     job: &JobObserverLogContext,
     error: std::sync::Arc<tokio::task::JoinError>,
@@ -664,7 +693,9 @@ fn log_running_notification_panic(job: &JobObserverLogContext, error: &tokio::ta
         job_type = %job.job_type,
         run_number = job.run_number,
         attempt = job.attempt,
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "job running observer task panicked; continuing worker job task"
     );
 }
@@ -675,7 +706,9 @@ fn log_running_notification_cancelled(job: &JobObserverLogContext, error: &tokio
         job_type = %job.job_type,
         run_number = job.run_number,
         attempt = job.attempt,
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "job running observer task was cancelled; continuing worker job task"
     );
 }
@@ -689,7 +722,12 @@ fn log_running_notification_join_failure(
         job_type = %job.job_type,
         run_number = job.run_number,
         attempt = job.attempt,
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "job running observer task join failed; continuing worker job task"
     );
 }
+
+#[cfg(test)]
+mod redaction_tests;
