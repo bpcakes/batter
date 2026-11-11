@@ -129,6 +129,19 @@ async fn a_report_at_or_beyond_the_jump_window_never_moves_or_refuses_a_write() 
     .await;
     assert_eq!(written("on").await, 2 + WINDOW);
     assert_eq!(f.head().await, (2 + WINDOW) as i64);
+    // A wild report never hides a genuine one inside the window.
+    let mut genuine = process(&f.store, Build::Base, "genuine", 60, 600);
+    beat(
+        &mut wild,
+        SnapshotReport::ControlPlane(Version::new(i64::MAX as u64)),
+    )
+    .await;
+    beat(
+        &mut genuine,
+        SnapshotReport::ControlPlane(Version::new(2 + WINDOW + 50)),
+    )
+    .await;
+    assert_eq!(written("off").await, 2 + WINDOW + 51);
     f.close().await;
 }
 
