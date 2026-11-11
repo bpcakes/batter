@@ -3598,7 +3598,7 @@ text; `recorded_by` independently records the session login.
 No automatic retry occurs. A lost COMMIT acknowledgement or commit-phase deadline
 is uncertain, even when the server committed. Native SQLx owners retire sessions;
 retirement does not prove server termination. A committed write notifies
-nobody; processes see it at their next poll. Declared settings floors remain
+nobody; processes see it at the first refresh that starts after the commit. Declared settings floors remain
 application containment. The [store README](../crates/batter-flags-postgres/README.md) records
 validation order, native API limits, authority and test coverage.
 
@@ -3701,10 +3701,10 @@ exercised by the last-good tests; durability across power loss is not tested,
 and `flock` on tmpfs or overlayfs is unverified.
 
 A committed audited write notifies nobody: each process sees
-it at the first refresh that starts after the commit. That takes up to one poll
-interval plus the duration of a refresh run, at most its run budget, because runs
-are serial and a run that overruns the interval delays the next (derived from the serial
-schedule; no test measures the bound). After a point-in-time restore or
+it at the first refresh that starts after the commit. Runs are serial and may
+overrun the poll interval, so that takes at most the longer of the poll
+interval and the refresh run budget, plus one more run budget; with runs that
+finish inside the interval, one interval plus one run (derived from the serial schedule; no test measures it). After a point-in-time restore or
 a failover to an older head, a running process refuses the lower head as
 `Regressed` and keeps serving what it had. An audited write made after those
 processes have heartbeated against the restored database is numbered above the

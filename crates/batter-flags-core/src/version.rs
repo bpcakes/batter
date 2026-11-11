@@ -4,8 +4,10 @@ use std::fmt;
 
 /// A control-plane version: the counter every audited write raises, in commit
 /// order, starting at 0 for a store never written. It rises by one, except
-/// that a write after a restore to an older head is numbered above every
-/// running process that has reported its version since.
+/// that a write after a restore to an older head is numbered above the
+/// running processes that have reported their version since, when that report
+/// is within the store's jump window above the head; a report further ahead
+/// is ignored, and the store's README gives the recovery procedure.
 ///
 /// A snapshot, a decision's source and a pin's origin all name the version
 /// they were read at, so two readers that report the same version read the

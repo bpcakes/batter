@@ -261,8 +261,10 @@ precondition (nothing written) and 4 is unknown: run
 `batter-flags history outbound_halt` and re-run with `--if-revision`. `fleet
 --version V` also exits 0 while the rollout is pending or no process is Live;
 the change has reached every Live process only when `data.rollout.reached` is
-`true`. A committed write notifies nobody: each process applies it at its next
-poll, so allow one poll interval before reading the rollout. The settings floor
+`true`. A committed write notifies nobody: each process applies it at the
+first refresh that starts after the commit. Before reading the rollout, allow
+the longer of the poll interval and the refresh run budget, plus one more run
+budget (derived from the serial schedule; no test measures it). The settings floor
 (`FLAG_OUTBOUND_HALT=engaged` and a restart) engages the switch without the
 store. Releasing a switch warns with the number of Live processes whose settings
 floor keeps it engaged.

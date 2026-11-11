@@ -229,8 +229,10 @@ error it does not recognize.
   value is a non-Unicode setting, reachable through `source()`.
 - The LISTEN/NOTIFY wake was withdrawn before merge: it bought at most one poll
   interval and made a full notification queue fail every audited write, kill
-  switches included. A committed write notifies nobody: a process sees it within
-  one poll interval plus the duration of a refresh run.
+  switches included. A committed write notifies nobody: a process sees it at the
+  first refresh that starts after the commit, at most the longer of the poll
+  interval and the refresh run budget, plus one more run budget
+  (derived from the serial schedule; no test measures it).
 - A write after a restore or a failover to an older head is numbered above the
   highest version a Live control-plane process reports, instead of refused:
   running processes apply it at their next refresh without a restart, and

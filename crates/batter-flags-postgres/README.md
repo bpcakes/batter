@@ -106,6 +106,19 @@ numbered one above the head and running processes refuse it as `Regressed`.
 No write is refused for a store behind its fleet, and state lost between the
 restored head and the fleet's version is not recovered.
 
+Recovering a fleet ahead of a restored store, in short (the
+[operations runbook](../../docs/operations.md#restore-or-fail-over-the-flags-database)
+has the full procedure):
+
+1. Wait at least one heartbeat interval, then confirm with `batter-flags fleet`
+   that Live processes report `control_plane` versions above the restored head.
+2. Make an audited write. If it answers `unchanged`, the restored store already
+   holds that state and nothing was written: make a change that does write.
+3. Check the rollout with the version of a write that answered `written` after
+   step 1, never with the version of an earlier write.
+4. A fleet at or beyond `MAX_VERSION_JUMP` above the restored head does not
+   converge by writing; restart its processes.
+
 A written outcome's `Deferral` names what processes will not serve as written
 yet: each hold the write accepted, each engaged governing kill switch, each
 catalog it could not judge, and `flip`, `Coordinated` when a retained catalog

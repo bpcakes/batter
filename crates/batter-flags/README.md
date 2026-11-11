@@ -63,8 +63,10 @@ the persister's state (up to date, a publication waiting and why its last
 write failed, a write in flight, or too large); a persist failure never
 changes a run's outcome. The file is a
 cache: deleting it is always safe. A committed audited write notifies nobody: every
-process sees it at the first refresh that starts after the commit, within one
-poll interval plus the duration of a refresh run.
+process sees it at the first refresh that starts after the commit. Runs are
+serial and may overrun the poll interval, so that takes at most the longer of
+the poll interval and the refresh run budget, plus one more run budget
+(derived from the serial schedule; no test measures it).
 The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator

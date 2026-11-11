@@ -95,8 +95,9 @@ contracts, capability facts and validation history.
   in their own snapshot. `PooledStore::migrate`
   refuses a search path that resolves into `flags`
   (`ErrorClass::SearchPath`) before anything is migrated. A committed write
-  notifies nobody: processes see it within one poll interval plus the duration
-  of a refresh run. After a point-in-time restore or a failover to an older
+  notifies nobody: processes see it at the first refresh that starts after the
+  commit, at most the longer of the poll interval and the refresh run budget,
+  plus one more run budget (derived from the serial schedule; no test measures it). After a point-in-time restore or a failover to an older
   head, a write made once running processes have heartbeated against the
   restored database is numbered above the highest version any Live
   control-plane process reports, so those processes, which refuse the lower
