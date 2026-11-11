@@ -369,3 +369,41 @@ one ordered array batch, then verifies the whole policy in a separate command.
 This preserves permission/check-hook semantics and detects value drift without
 repeating reset or clearing the statement cache. Native fast paths and already
 held leases retain their documented limits.
+
+## Forced connection close at shutdown (2026-11-11)
+
+Rechecked for `batter-9wig.1` against the resolved Axum 0.8.9 and Hyper 1.11.1
+sources in the locked registry.
+
+- Axum `src/serve/mod.rs`: `WithGracefulShutdown` stops accepting when the
+  signal fires, drops the listener, and returns only after
+  `close_tx.closed()`, that is after every spawned connection task has dropped
+  its receiver. Each connection task selects the Hyper connection future
+  against the signal and calls `graceful_shutdown` once. The builder is
+  `hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())` with no
+  timer, so Hyper's 30 second `header_read_timeout` default, which
+  [requires a timer](https://docs.rs/hyper/1.11.1/hyper/server/conn/http1/struct.Builder.html#method.header_read_timeout),
+  never applies. Axum offers no handle that ends an accepted connection.
+- Hyper `src/proto/h1/conn.rs` and `dispatch.rs`: `disable_keep_alive` closes a
+  connection only when it is idle or `has_initial_read_write_state`, which
+  requires an empty read buffer. A partly received request head therefore keeps
+  the connection open after graceful shutdown. While a response is being
+  written and the request was read, `poll_read_keep_alive` calls
+  `mid_message_detect_eof`, which reads from the transport (`force_io_read`)
+  unless half-close is allowed, so a connection with a pending body or a
+  pending write also holds read interest. An I/O error from that read, or from
+  a write or flush, ends the connection future with an error; Axum's task then
+  logs at trace level and drops its receiver.
+- Hyper has no write timeout. A peer that stops reading leaves the connection
+  future pending in `poll_flush` for as long as TCP keeps the connection.
+- `serve_connection_with_upgrades` resolves its connection future when the
+  upgrade is handed over, so an upgraded connection no longer holds Axum's
+  graceful wait.
+
+Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
+operations instead of owning the accept loop: every case above is parked in, or
+returns to, the transport. Local real-socket tests observed the pending body,
+the stalled reader and the half-sent head each holding the wrapper until abort
+without the close and ending inside the cancel allowance with it. HTTP/2 and an
+upgraded connection were not exercised.
+

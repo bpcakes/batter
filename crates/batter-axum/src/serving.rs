@@ -7,7 +7,9 @@ use batter_core::{
     lifecycle::Supervisor,
     registration::{Registration, RegistrationTarget},
 };
-use std::fmt::Debug;
+use std::{fmt::Debug, future::IntoFuture};
+
+mod forced_close;
 
 /// Register an already-bound native Axum server as a supervised critical task.
 ///
@@ -40,9 +42,27 @@ use std::fmt::Debug;
 /// route and method; it is neither rebuilt per connection nor one server-wide
 /// value.
 ///
-/// Axum internally spawns connection and graceful-signal tasks. A graceful return
-/// waits for native connections, but abortion/panic of the direct wrapper does
-/// not prove its descendants stopped; the supervisor conservatively skips cleanup.
+/// Axum internally spawns connection and graceful-signal tasks, and its graceful
+/// return waits for every connection. A connection can outlast drain without
+/// limit: a response body that stays pending, a peer that stops reading a large
+/// response, or a request head that never completes. The registered task
+/// therefore wraps the listener, so every accepted connection's reads and
+/// writes fail once forced cancellation is halfway to the supervisor's
+/// [abort deadline](batter_core::lifecycle::ShutdownSignal::abort_deadline).
+/// The first half of the cancel allowance lets cancelled handlers write their
+/// interruption responses. In the second, Hyper ends each remaining connection
+/// and destroys its handler or body in that connection's own task, so Axum's
+/// graceful wait returns: the wrapper is joined, not aborted, and dependent
+/// cleanup runs with `forced_cancellation` reported. The peer sees a truncated
+/// message or a closed connection.
+///
+/// A zero cancel allowance leaves no such interval, and a connection task that
+/// never yields cannot be ended this way. In both cases the wrapper is aborted,
+/// which does not prove its descendants stopped, and the supervisor
+/// conservatively skips cleanup. An upgraded connection leaves Axum's
+/// connection accounting at the upgrade: the task that holds it belongs to the
+/// application and is never joined here, and its I/O fails only if the server
+/// is still serving another connection when the close happens.
 /// Request deadlines/observations do not bound streaming bodies or WebSockets.
 /// The native server retries accept errors; it does not report them as task exits.
 /// No bind policy, signals, budgets, subscriber or runtime are installed here.
@@ -163,8 +183,8 @@ pub fn register_http_in<T: RegistrationTarget + ?Sized>(
 /// their own, and the extra address bounds are Axum's `Connected` requirements.
 ///
 /// Listener transfer, startup acknowledgement, graceful drain, released pending
-/// accepts and conservative cleanup after wrapper abortion have the same
-/// contract as [`register_http`]. No custom connection-info type or
+/// accepts, forced connection close and conservative cleanup after wrapper
+/// abortion have the same contract as [`register_http`]. No custom connection-info type or
 /// make-service is accepted.
 ///
 /// ```no_run
@@ -232,13 +252,17 @@ where
     registration.register(name, move |startup| async move {
         let running = startup.acknowledge_started();
         let signal = running.signal();
-        let draining = async move { signal.draining().await };
+        let gate = forced_close::Gate::new();
+        let draining = {
+            let signal = signal.clone();
+            async move { signal.draining().await }
+        };
         // Serving a bare `Router` makes pinned Axum 0.8.9 clone and re-prepare
         // it, reapplying every lazily mapped layer, for each accepted
         // connection. The make-service prepares it once, as the peer path does.
-        axum::serve(listener, application.into_make_service())
-            .with_graceful_shutdown(draining)
-            .await?;
+        let serving = axum::serve(gate.listener(listener), application.into_make_service())
+            .with_graceful_shutdown(draining);
+        forced_close::serve(serving.into_future(), signal, gate).await?;
         Ok(running.stopped())
     })
 }
@@ -256,13 +280,18 @@ where
     registration.register(name, move |startup| async move {
         let running = startup.acknowledge_started();
         let signal = running.signal();
-        let draining = async move { signal.draining().await };
-        axum::serve(
-            listener.tap_io(|_: &mut L::Io| {}),
+        let gate = forced_close::Gate::new();
+        let draining = {
+            let signal = signal.clone();
+            async move { signal.draining().await }
+        };
+        let serving = axum::serve(
+            gate.listener(listener)
+                .tap_io(|_: &mut forced_close::ForcedCloseIo<L::Io>| {}),
             application.into_make_service_with_connect_info::<L::Addr>(),
         )
-        .with_graceful_shutdown(draining)
-        .await?;
+        .with_graceful_shutdown(draining);
+        forced_close::serve(serving.into_future(), signal, gate).await?;
         Ok(running.stopped())
     })
 }

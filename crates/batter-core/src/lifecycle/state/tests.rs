@@ -351,3 +351,32 @@ async fn closing_support_rejects_later_support_runs() {
         PeriodicAdmission::Stopped,
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn abort_deadline_follows_the_stop_clock_and_only_moves_earlier() {
+    let allowance = std::time::Duration::from_secs(3);
+    // A standalone coordinator has no phases, before or after drain.
+    let standalone = Shared::new(Supervision::Standalone);
+    standalone.request();
+    assert_eq!(standalone.abort_deadline(), None);
+
+    let state = Shared::new(Supervision::Driven);
+    state.bound_abort(allowance);
+    // A budget is immutable: a second bound cannot replace the first.
+    state.bound_abort(std::time::Duration::from_secs(60));
+    assert_eq!(state.abort_deadline(), None, "no stop time before drain");
+
+    let earlier = Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    let requested = Instant::now();
+    state.request();
+    assert_eq!(state.abort_deadline(), Some(requested + allowance));
+    // Forced cancellation and later requests cannot extend the clock.
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    state.force_cancel();
+    state.request();
+    assert_eq!(state.abort_deadline(), Some(requested + allowance));
+    // An earlier native stop time tightens it.
+    state.request_since(earlier);
+    assert_eq!(state.abort_deadline(), Some(earlier + allowance));
+}

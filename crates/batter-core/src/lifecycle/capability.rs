@@ -331,6 +331,42 @@ impl ShutdownSignal {
     pub fn is_cancelled(&self) -> bool {
         self.shared.is_cancelled()
     }
+
+    /// When the owning supervisor stops waiting for cooperative cancellation
+    /// and requests abort of unfinished direct tasks: its recorded stop time
+    /// plus its drain and cancel allowances.
+    ///
+    /// `None` before drain is requested, and always for a standalone handle,
+    /// which no supervisor budget governs. A component that owns descendants
+    /// can use the remaining interval to end them itself, so that it returns
+    /// joined rather than aborted; an abort makes the supervisor skip
+    /// dependent cleanup. This is an observation, not a guarantee: a tighter
+    /// stop clock can move the instant earlier, never later, so read it again
+    /// after waiting; scheduling delay can pass it unnoticed; and an abandoned
+    /// driver cancels without phases.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget,
+    ///     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor}};
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let handle = supervisor.handle();
+    /// let signal = handle.signal();
+    /// assert!(signal.abort_deadline().is_none());
+    /// let before = tokio::time::Instant::now();
+    /// handle.request();
+    /// let abort = signal.abort_deadline().expect("drain was requested");
+    /// assert!(abort >= before + 2 * second);
+    /// assert!(ShutdownHandle::new_unapproved().signal().abort_deadline().is_none());
+    /// # Ok(()) }
+    /// ```
+    pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
+        self.shared.abort_deadline()
+    }
 }
 
 /// Private ownership of coordinator-only transitions and clocks.
@@ -562,6 +598,12 @@ impl RunningComponent {
     /// Whether forced cooperative cancellation has already been requested.
     pub fn is_cancelled(&self) -> bool {
         self.shutdown.is_cancelled()
+    }
+
+    /// When the owning supervisor requests abort of unfinished direct tasks;
+    /// see [`ShutdownSignal::abort_deadline`] for its limits.
+    pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
+        self.shutdown.abort_deadline()
     }
 
     /// Produce the exit proof once the component's running work has finished.

@@ -301,6 +301,11 @@ whose awaited close hook is registered before the pool is returned. This return
 does not establish connectivity or readiness, and native minimum-connection
 maintenance may begin during construction. Release checkouts and join dependent
 work before cleanup expects `Pool::close` to complete.
+If cleanup is skipped after an unsafe task exit, that close is not awaited: the
+finalizer's handle is dropped, and sessions end when their sockets close, at the
+latest at process exit, without a Terminate message. PostgreSQL rolls back an
+open transaction on such a disconnect. This is from the protocol text and the
+SQLx 0.9 source, not from a live observation.
 `RunledgerDatabase::from_profiled(database.clone())?` shares this pool without
 another connection budget or finalizer. It rejects fallback schemas; application
 SQL and Runledger must use the same role/profile to share. Native standalone

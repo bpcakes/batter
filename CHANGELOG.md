@@ -8,6 +8,38 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Fix `batter-axum` served connections that outlast drain forcing an abort of
+  the server wrapper, which skipped every dependent finalizer. A response body
+  that stays pending, a peer that stops reading a large fixed response and a
+  request head that never completes each held Axum's graceful wait past the
+  cancel allowance, at any client's choice. `AssembledHttp::register_in`,
+  `register_with_connect_info_in` and the three `low_level::register_http*`
+  helpers now wrap the listener: every accepted connection's reads and writes
+  fail halfway between forced cancellation and the supervisor's abort
+  deadline, Hyper ends the connection, and the wrapper returns joined. Public
+  signatures are unchanged. Behavior change: such a shutdown now reports
+  success with `forced_cancellation` set and runs cleanup, where it reported
+  `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
+  message or a closed connection in the second half of the cancel allowance
+  instead of after process exit. Cancelled handlers still deliver their 503
+  `operation_cancelled` first. A zero cancel allowance keeps the earlier
+  abort-and-skip outcome. Upgraded connections, HTTP/2 and servers that call
+  `axum::serve` themselves are not covered. Each connection adds one registry
+  entry and one atomic read per I/O poll (`batter-9wig.1`).
+- Document that a skipped `CleanupSlot::acquire_semaphore` or `bind_udp`
+  finalizer has still released its permit or socket reference: the hook only
+  drops its capture, and skipping drops it too. `SkippedCleanup` now says so.
+  No type or behavior changes (`batter-9wig.4`).
+- Document what a skipped `batter_sqlx::pool_in` close leaves on the server:
+  sessions end when their sockets close, without a Terminate message, and
+  PostgreSQL rolls back open transactions. Source reading against PostgreSQL 18
+  and SQLx 0.9.0, not a live observation (`batter-9wig.5`).
+- Add `ShutdownSignal::abort_deadline` and `RunningComponent::abort_deadline`:
+  the stop time plus the supervisor's drain and cancel allowances, `None`
+  before drain and for a standalone handle. A component that owns descendants
+  can use the remaining interval to end them itself and return joined rather
+  than aborted. Additive; no existing caller changes (`batter-9wig.1`).
+
 - Outbound HTTP: give each DNS candidate a one-second minimum within the shared
   setup deadline, avoiding tiny attempt windows caused by long answer lists.
   Earlier stalled candidates can still exhaust the shared budget before a

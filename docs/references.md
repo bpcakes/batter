@@ -31,6 +31,7 @@ have been removed; Git retains their history.
 - <a id="generic-serving-listeners-and-connection-metadata-2026-09-30"></a>[Generic serving listeners and connection metadata, 2026-09-30](references/http.md#generic-serving-listeners-and-connection-metadata-2026-09-30)
 - <a id="optional-rendered-fallback-2026-09-30"></a>[Optional rendered fallback (2026-09-30)](references/http.md#optional-rendered-fallback-2026-09-30)
 - <a id="sealed-assembly-and-one-time-client-preparation-2026-10-05"></a>[Sealed assembly and one-time client preparation (2026-10-05)](references/http.md#sealed-assembly-and-one-time-client-preparation-2026-10-05)
+- <a id="forced-connection-close-at-shutdown-2026-11-11"></a>[Forced connection close at shutdown (2026-11-11)](references/http.md#forced-connection-close-at-shutdown-2026-11-11)
 - <a id="postgresql-session-profile-batching-and-idle-authority-2026-10-06"></a>[PostgreSQL session-profile batching and idle authority (2026-10-06)](references/http.md#postgresql-session-profile-batching-and-idle-authority-2026-10-06)
 
 ## Native Runledger and Runlimit integration
@@ -49,6 +50,7 @@ have been removed; Git retains their history.
 
 ## PostgreSQL execution, managed objects and verification
 
+- [Skipped pool close and server-session termination (2026-11-11)](references/postgresql.md#skipped-pool-close-and-server-session-termination-2026-11-11)
 - [PostgreSQL 18 GCRA response timing (2026-11-08)](references/postgresql.md#postgresql-18-gcra-response-timing-2026-11-08)
 
 - <a id="postgresql-18-guarded-index-removal-2026-10-27"></a>[PostgreSQL 18 guarded index removal, 2026-10-27](references/postgresql.md#postgresql-18-guarded-index-removal-2026-10-27)

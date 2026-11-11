@@ -123,7 +123,10 @@ their observers travel in managed report records. Their independently retained
 owners continue after direct waiter abortion. Pending native settlement forbids
 cleanup; later observation never runs previously skipped finalizers.
 The earliest stop timestamp belongs to `lifecycle/state.rs`; phase entry and later
-requests cannot extend it. Idempotent native stop callbacks return the earlier
+requests cannot extend it. `ShutdownSignal::abort_deadline` is that timestamp
+plus the supervisor's drain and cancel allowances, recorded once at
+construction: read-only observation that confers no authority, unset for
+standalone handles, and never a promise that abort happens at that instant. Idempotent native stop callbacks return the earlier
 native/parent timestamp. Propagate new earlier clocks to settling components and
 wake active phase waits; keep the first failure cause independent of tightening.
 Publish caught stop-control failures at their catch boundary, including repeated

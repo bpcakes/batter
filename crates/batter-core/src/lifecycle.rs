@@ -253,6 +253,8 @@ impl Supervisor {
     /// Build an initially unready supervisor, without spawning anything.
     pub fn new(budget: ShutdownBudget) -> Self {
         let (coordinator, approval) = LifecycleCoordinator::new(Supervision::Driven);
+        // Checked by `ShutdownBudget::new`, which bounds the whole sum.
+        coordinator.shared.bound_abort(budget.drain + budget.cancel);
         Self {
             ownership: Some(SupervisorOwnership::new(coordinator.clone(), approval)),
             components: Vec::new(),

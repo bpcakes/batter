@@ -890,6 +890,17 @@ Ready results are harvested before escalation and final reporting. Being present
 in a JoinSet does not alone make a task an abort target: already-finished tasks
 retain their actual outcomes and do not suppress cleanup as requested aborts.
 
+`ShutdownSignal::abort_deadline` and `RunningComponent::abort_deadline` report
+when that abort would be requested: the recorded stop time plus the drain and
+cancel allowances. It is `None` before drain and for a standalone handle, which
+no budget governs. A component that owns descendants can use the remaining
+interval to end them itself and return joined, as the Axum serving adapter does
+for connections. It is read-only observation of the phase clock: an earlier
+native stop time moves it earlier and nothing moves it later, a task set that
+finishes sooner is never aborted, scheduling delay can pass it, and an abandoned
+driver cancels without phases. A state unit test covers the unset, standalone,
+extended and tightened cases.
+
 Total configured allowance is drain + cancel + abort observation + cleanup work
 + cleanup final abort observation. Scheduling delays, synchronous blocking,
 non-yielding task bodies/destructors, and OS suspension can exceed it. This is
@@ -1693,6 +1704,12 @@ Dropping CleanupStack does NOT call the hooks. It emits a count-only warning.
 Skipping or dropping a hook still drops its captured values using their native
 Rust Drop behavior; it does not keep resources alive indefinitely or suppress
 those types' own destruction protocols.
+For `CleanupSlot::acquire_semaphore` and `bind_udp` that drop is the whole
+finalizer, so a skipped stack releases the permit and the library's socket
+reference while its report lists both names under `skipped`: the entry means
+the factory was not invoked and dependents were not shown to have stopped, not
+that the resource is still held. A unit test asserts both the release and the
+report entries. The report types are unchanged.
 Dropping close mid-flight aborts its local task but cannot await completion or
 return a report. Shutdown/readiness, resource acquisition, and cleanup are not
 interruptibility-masked like a full managed effect runtime.
@@ -1743,6 +1760,15 @@ This establishes neither connectivity nor readiness. SQLx may
 start native minimum-connection maintenance during construction; constructor
 panics and runtime death remain native limits. Dependent work must be joined and
 checked-out connections released before successful cleanup can be expected.
+When cleanup is skipped, the registered close is not awaited: the finalizer's
+pool handle is dropped, which closes nothing while another handle exists. Each
+server session then ends when its socket closes, at the latest at process exit,
+without a Terminate message, and PostgreSQL rolls back an open transaction; a
+statement already running outside a transaction block may still commit. Handles
+kept by surviving tasks keep their sessions for as long as those tasks live.
+This follows from the PostgreSQL 18 protocol text and the resolved SQLx source
+([references](references.md#postgresql-execution-managed-objects-and-verification));
+it is unverified against a live server.
 Local completion evidence requires the named successful cleanup record, zero
 remaining pool size and `PoolClosed` from a later acquisition; `is_closed()` alone
 only witnesses that close began. These facts still say nothing about detached
@@ -2868,10 +2894,43 @@ running finalizers.
 Binding and its errors belong to owned Startup. Axum retries native accept errors
 and spawns its own connection and graceful-signal tasks. Native graceful return
 waits for connection completion; wrapper abortion does not join descendants.
-A real streaming regression holds a body beyond the request budget and through
-wrapper abort: the report is unsuccessful and dependent cleanup is skipped even
-though every direct task was joined. The test separately releases the body.
-There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
+
+A connection can outlast drain without limit: a response body that stays
+pending, a peer that stops reading a large fixed response, or a request head
+that never completes. Each of them once forced abort of the wrapper and skipped
+every dependent finalizer, at any client's choice. The registered task now wraps
+its listener, and every accepted connection's reads and writes fail once forced
+cancellation is halfway to `ShutdownSignal::abort_deadline`, the stop time plus
+the drain and cancel allowances. The first half of the cancel allowance is left
+to cancelled handlers, whose interruption responses are still written whole. In
+the second half Hyper ends each remaining connection and destroys its handler or
+body in that connection's own task; Axum's graceful wait then returns, so the
+wrapper is joined, the report is successful with `forced_cancellation` set and
+dependent cleanup runs. The peer sees a truncated message or a closed
+connection. The gate is one atomic read per I/O poll and stores a waker only
+when the transport is pending; it adds one registry entry per connection.
+
+[Real socket tests](../crates/batter-axum/tests/operational/forced_close.rs)
+cover a pending body through both registration helpers, a stalled reader of a
+64 MiB fixed body, a half-sent request head, and a cancelled handler whose 503
+`operation_cancelled` still arrives complete. A
+[TLS case](../crates/batter-axum/tests/tls_serving/serving.rs) repeats the
+pending body through the assembled boundary over rustls. With the close
+removed, the four plain-socket cases that depend on it fail and the
+interruption response still passes; the TLS case was not mutation-checked.
+
+The limits remain. A zero cancel allowance leaves no interval, and the earlier
+contract then holds unchanged: a real streaming regression is aborted with its
+body still owned, the report is unsuccessful and cleanup is skipped with
+`UnsafeTaskExit`. A connection task that never yields cannot be ended by failing
+its I/O. A stop clock tightened after forced cancellation was observed can pass
+the chosen instant. An upgraded connection leaves Axum's connection accounting
+at the upgrade: its task belongs to the application, is never joined here, and
+its I/O fails only if the server is still serving another connection when the
+close happens. Tasks a handler detached are untouched. Applications that serve
+`axum::serve` themselves, as the two HTTP lifetime suites deliberately do, get
+none of this. There is no new async-drop, response-stream, WebSocket or
+disconnect guarantee.
 `low_level::register_http` and `low_level::register_http_in` accept a plain
 Router and supply no ConnectInfo extension. Their opt-in companion
 `low_level::register_http_with_connect_info_in`
@@ -2882,7 +2941,7 @@ socket's remote address and port. Forwarded,
 X-Forwarded-For and X-Real-IP headers are not interpreted; behind a proxy the peer
 is the proxy. Authentication, proxy trust and application extension replacement
 remain application-owned. The companion shares the registration, acknowledgement,
-listener-release, graceful-drain and conservative wrapper-abort contracts above.
+listener-release, graceful-drain, forced-close and conservative wrapper-abort contracts above.
 It accepts no arbitrary make-service or custom metadata type. Pinned Axum 0.8.9
 implements `Connected` for a bare listener only for TcpListener and generically
 only for `ListenerExt::tap_io`, so the companion applies an empty tap itself; it

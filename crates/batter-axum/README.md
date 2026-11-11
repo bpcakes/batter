@@ -555,11 +555,17 @@ the root needs the bound address;
 router for compositions outside the boundary. It acknowledges when
 the registered task runs and delegates graceful drain to Axum. Registration
 failure and abandoned startup release the listener. Native accept errors are
-retried by Axum. Streaming bodies can outlive response deadlines and direct
-wrapper abortion; dependent cleanup remains conservatively skipped on forced
-abort. `low_level::register_http(&mut Supervisor, ...)` keeps the direct
-supervisor signature for the lower-level path. The [operational tests](tests/operational.rs) exercise that limit with a
-real socket and explicitly release the outstanding body afterward.
+retried by Axum. Streaming bodies can outlive response deadlines, and so can a
+peer that stops reading or never finishes its request head. The registered
+server closes the I/O of every connection still open halfway through the cancel
+allowance, after cancelled handlers have written their interruption responses,
+so it returns joined and dependent cleanup runs. With a zero cancel allowance
+the wrapper is aborted instead and cleanup remains conservatively skipped.
+Upgraded connections are the application's and are not joined.
+`low_level::register_http(&mut Supervisor, ...)` keeps the direct
+supervisor signature for the lower-level path. The
+[forced-close tests](tests/operational/forced_close.rs) exercise both outcomes
+with real sockets.
 
 When authentication admission needs the direct TCP peer, replace the registration
 call with `AssembledHttp::register_with_connect_info_in(scope, "http", listener)`,

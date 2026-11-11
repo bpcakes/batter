@@ -91,13 +91,18 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/serving.rs` registers any bound `axum::serve::Listener` plus a router with
   the supervisor, including the listener's opt-in direct peer `ConnectInfo`
   through protected authority. Transport policy stays with the listener.
+  `src/serving/forced_close.rs` owns the private gate that wraps the listener
+  and fails every accepted connection's I/O halfway between forced
+  cancellation and the supervisor's abort deadline.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
-  all readiness reasons, native startup/drain and a body surviving wrapper abort;
+  all readiness reasons and native startup/drain; `tests/operational/forced_close.rs`
+  covers connections closed within the cancel allowance with cleanup run, and
+  a body surviving wrapper abort when that allowance is zero;
   `tests/operational/rendered_probes.rs` covers application-rendered probes
   outside admission, every decision through a contradicting renderer and
   application conditions. `tests/operational/admitted_request.rs` covers the
@@ -174,6 +179,13 @@ streaming or detached connection-task shutdown. Keep probe routes separate from
 guarded business routes. Serving accepts any `axum::serve::Listener`; never move
 certificate, provider, protocol-version, ALPN or handshake policy into the
 adapter, and never claim that a listener's own spawned work was joined.
+Keep the forced-close gate inside the registered component future, never in a
+spawned task, and close it only after cancelled handlers have had part of the
+cancel allowance to write their interruption responses. Fail reads and writes
+alike once it is closed, keep the hot path to one atomic read with waker
+storage only on a pending transport, and wake outside the registry lock. Do not
+describe upgraded connections, handler-detached tasks or a zero cancel
+allowance as covered; the wrapper-abort contract still applies to them.
 Canonical probes accept only validated `ProbePath`
 values, and duplicate paths must fail through the boundary's sanitized
 configuration error before Axum routing. The canonical guarded builder must

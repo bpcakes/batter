@@ -287,7 +287,10 @@ service.
   continues shutdown when a waiter is cancelled, provided the runtime remains
   alive.
 - The Axum boundary ends when a response is constructed. Streaming bodies and
-  WebSockets require a separate lifetime design.
+  WebSockets require a separate lifetime design. A registered server closes the
+  I/O of connections still open halfway through the cancel allowance, so a
+  stalled peer or an endless body no longer forces an abort; with a zero
+  cancel allowance it still does.
 
 These are API contracts and limitations, not footnotes. Read
 [guarantees](docs/guarantees.md) before putting side effects behind a boundary.

@@ -6,6 +6,33 @@ These source checks support current contracts. Each record names the
 version and date actually inspected; it is not a new dependency audit.
 Re-check the resolved dependency before changing an integration.
 
+## Skipped pool close and server-session termination (2026-11-11)
+
+For `batter-9wig.5`, checked what remains on the server when the `pool_in`
+finalizer is skipped instead of awaited:
+
+- [PostgreSQL 18 protocol flow, 54.2.9 Termination](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-TERMINATION):
+  graceful termination is a Terminate message followed by connection close. If
+  either side "sees an unexpected closure of the connection, it should clean up
+  and terminate", and "for either normal or abnormal termination, any open
+  transaction is rolled back, not committed". A statement already running
+  outside a transaction block may still finish and commit before the backend
+  notices the disconnection.
+- Resolved SQLx 0.9.0: `PgConnection::close` (`sqlx-postgres`
+  `src/connection/mod.rs`) sends Terminate and shuts the stream down, and is the
+  only sender of Terminate. No connection type implements `Drop` to send it.
+  `PoolInner::drop` (`sqlx-core` `src/pool/inner.rs`) only marks the pool closed
+  and returns permits to a parent pool. A dropped pool handle therefore closes
+  nothing while another handle exists; dropping the last one drops the idle
+  connections, which closes their sockets without Terminate.
+
+So a skipped close does not leave sessions the server cannot end: each backend
+exits when its socket closes, at the latest when the process does, and rolls
+back an open transaction. What is lost is the Terminate message, the wait for
+checked-out connections to return, and any bound on how long handles held by
+surviving tasks keep sessions open. This is source reading; no live server
+observed `pg_stat_activity` after a skipped close.
+
 ## PostgreSQL 18 GCRA response timing, 2026-11-08
 
 For `batter-1zoj`, checked PostgreSQL 18 semantics and the resolved SQLx 0.9.0

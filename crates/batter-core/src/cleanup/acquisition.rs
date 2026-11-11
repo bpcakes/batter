@@ -17,6 +17,8 @@ impl CleanupSlot<'_> {
     /// The permit cannot escape or be forgotten by the caller. No application
     /// callback runs between native acquisition and registration. Cancellation
     /// while waiting has Tokio's queue-position semantics and registers nothing.
+    /// The finalizer only drops the permit, so a skipped cleanup still releases
+    /// it while reporting this name as [`SkippedCleanup`](super::SkippedCleanup).
     /// Migration: instead of `CleanupSlot::acquire` or manual permit registration,
     /// pass the semaphore directly to this method.
     ///
@@ -62,6 +64,8 @@ impl CleanupSlot<'_> {
     ///
     /// Cleanup drops its reference; all caller clones must also be dropped to
     /// close the socket. No detached-task join or remote-effect guarantee follows.
+    /// A skipped cleanup drops that reference too, while reporting this name as
+    /// [`SkippedCleanup`](super::SkippedCleanup).
     /// A cancelled, never-polled call does not bind. The Tokio I/O driver must be enabled.
     /// Migration: replace UDP-binding `CleanupSlot::acquire` callbacks with this
     /// operation; generic pairing belongs to [`super::low_level::acquire_pair`].

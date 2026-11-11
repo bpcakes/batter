@@ -191,6 +191,9 @@ consumed only into protected registration or `boundary/client.rs`'s opaque
 caller-ordered middleware and registration helpers, which have no crate-root
 alias; `admitted.rs` owns the privately recorded
 `AdmittedRequest` that guarded handlers extract instead of raw extensions;
+`crates/batter-axum/src/serving.rs` registers the native server, and
+`serving/forced_close.rs` fails accepted connections' I/O halfway through the
+cancel allowance so a connection that outlasts drain ends before wrapper abort;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route
