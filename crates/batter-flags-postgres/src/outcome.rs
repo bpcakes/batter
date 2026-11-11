@@ -38,9 +38,9 @@ pub enum UndeclaredBasis {
 }
 /// Certain, non-mutating policy refusal. No arm authorizes replay.
 ///
-/// Migration: an exhaustive `match` that ended at `Refusal::StoreBehindFleet`
-/// adds `Refusal::InvariantUnmet { unmet }` and
-/// `Refusal::InvariantsUnjudged { catalogs }` arms.
+/// Migration: `Refusal::StoreBehindFleet` is gone. A write to a store whose
+/// head is behind a Live process is now numbered above that process instead
+/// of refused; remove the arm.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Refusal {
     /// The stored state cannot be decoded by this writer.
@@ -79,8 +79,6 @@ pub enum Refusal {
     /// refused coordinated flips: processes apply a change poll by poll,
     /// never all at once.
     CoordinatedFlip,
-    /// A live control-plane reader has already applied a higher version.
-    StoreBehindFleet,
     /// The written flag would newly hold flags in a Live or Silent
     /// declarer's processes, for cross-flag invariants it leaves unmet, and
     /// the request refused that.

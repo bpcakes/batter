@@ -80,8 +80,8 @@ a persisted file or the declared base.
 
 One counter row serializes first writes and updates. The store locks and bumps it,
 reads the row and catalogs, checks (in order) stored encoding, requested kind,
-archive status, unchanged state, CAS, environment restrictions, declaration,
-live/silent decodability and fleet regression, then changes one row. Refusals and
+archive status, unchanged state, CAS, environment restrictions, declaration and
+live/silent decodability, then changes one row. Refusals and
 no-ops roll back the bump. `UnchangedSince(v)` uses zero for an absent row;
 above-head requests are refused. Equality is tested before CAS, so an already
 satisfied request is unchanged even with an old CAS revision.
@@ -90,8 +90,16 @@ Live means not stopped and not expired by the server clock. Silent means expired
 but not stopped/pruned. Both block incompatible writes and archive; only Live
 counts for `Written`. Stopped declarers yield `NoLiveDeclarer`, unreferenced
 retained catalogs yield `Orphaned`, and explicit writes without any retained
-catalog yield `NeverDeclared`. A live control-plane snapshot above the database
-head blocks writes; a persisted-file or not-loaded heartbeat does not.
+catalog yield `NeverDeclared`.
+
+The bump takes the counter to one above the larger of the head and the highest
+version any Live process reports from the control plane; a persisted-file or
+not-loaded heartbeat does not count. After a point-in-time restore or a failover
+to an older head, the next write is therefore numbered above the fleet, and
+running processes, which refuse the lower head and keep serving what they had,
+apply it at their next poll without a restart. No write is refused for a store
+behind its fleet, and state lost between the restored head and the fleet's
+version is not recovered.
 
 A written outcome's `Deferral` names what processes will not serve as written
 yet: each hold the write accepted, each engaged governing kill switch, each
@@ -100,18 +108,19 @@ declares the key's flips coordinated. Such a flip, a write or a restore, is
 written only under a policy that accepts a rolling flip; `WritePolicy::STRICT`
 refuses it.
 
-The counter and audit versions have no allocation gaps and follow commit order.
-Triggers reject unaudited writes, stale/future row versions, counter decrement,
+The counter and audit versions follow commit order. They have no allocation gaps
+except the one a write after such a restore leaves below itself.
+Triggers reject unaudited writes, stale/future row versions, a counter that does
+not increase,
 unpaired counter advances at COMMIT, state deletion, audit mutation and table
 truncation. Trigger functions are SECURITY DEFINER with a fixed safe search path,
 qualified table resolution and no PUBLIC execute grant. Their errors are static.
-State changes emit a version-only NOTIFY in the same transaction. A full NOTIFY
-queue can reject **every** write, including a kill switch, at COMMIT. The
-application's declared settings floor remains the outage containment mechanism.
+A write notifies nobody: processes see it at their next poll. The application's
+declared settings floor remains the outage containment mechanism.
 
 `Uncertain` retains native `batter-sqlx::CommitUnconfirmed` or a commit-phase
 deadline, with the provisional version. SQLSTATE ErrorResponses rejecting COMMIT
-(such as 54000/P0001) are certain errors; connection-loss/unknown-completion and
+(such as P0001) are certain errors; connection-loss/unknown-completion and
 shutdown codes remain uncertain. There is no replay. Before COMMIT is invoked,
 deadline/drop retires the connection and cannot commit this library's private
 body; local retirement is not acknowledgement of server-session termination.
@@ -148,8 +157,7 @@ strict, low-level bundle; `PooledStore::migrate` tolerates newer flags migration
 while validating known checksums. `CREATE_FLAGS_SQL` supports vendoring and
 `REQUIRED_SCHEMA_REVISION` is 1. Migration checksums use SQLx's SHA-384.
 Queries always qualify the flags schema; changing `search_path` cannot redirect
-writes. Rows are unscoped; environment is a heartbeat label. The salt column is
-reserved for deferred rollout work, not an implemented rollout feature.
+writes. Rows are unscoped; environment is a heartbeat label.
 
 The reverse direction is the application's: PostgreSQL's default `search_path`
 is `"$user", public`, so for a role named `flags` the `flags` schema comes first
@@ -200,9 +208,8 @@ cargo test -p batter-flags-postgres --locked -- --ignored --test-threads=1
 The second command requires `BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL`. It uses
 the repository-pinned external `postgres-test-harness` to create and clean up
 isolated databases. Docker provisioning stays outside this library. The wire
-proxy test suppresses an actual successful COMMIT acknowledgement; the queue
-failure test injects the server's 54000 ErrorResponse at COMMIT without exhausting
-the cluster's queue. Standby and older-server checks use injected server values;
+proxy test suppresses an actual successful COMMIT acknowledgement; the
+commit-refusal test injects an ErrorResponse at COMMIT through a deferred trigger. Standby and older-server checks use injected server values;
 no actual replica or PostgreSQL 17 server is claimed. The standby refusal of
 `load`, `preflight` and the operator reads (`keys`, `key`, `history` and the
 fleet reads) goes through one store check, which a test-only hook makes read

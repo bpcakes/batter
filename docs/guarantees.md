@@ -1355,9 +1355,8 @@ required because the completion report carries the same evidence.
 One registered component owns exactly one directly polled serial future. There
 is no detached per-run task, no event queue and no second scheduler, so
 invocations cannot overlap. The first invocation is immediate once the
-component can run. For `register_periodic_in`, later invocations follow a fixed
-interval with missed ticks skipped; the experimental wakeable path below adds
-a spacing floor and explicit wake requests. One overdue invocation may run
+component can run. Later invocations follow a fixed interval with missed ticks
+skipped. One overdue invocation may run
 immediately after an overrun, and the schedule then realigns without replaying a burst of missed work, including
 intervals and overruns shorter than Tokio's five-millisecond missed-tick
 tolerance. The private schedule advances to the first future point on its
@@ -1462,8 +1461,8 @@ discards its classification, as the executable helper examples demonstrate.
 Only that explicit escalation escalates a returned application outcome, while a
 native factory, poll or destructor panic, unexpected component termination and
 initialization failure stay terminal. A recoverable failure or an expired run
-deadline permits the next cadence invocation (or a separately requested wake
-for a wakeable component), never an automatic extra retry. Registration
+deadline permits the next cadence invocation, never an automatic extra retry.
+Registration
 authorizes recurrence only: it proves no remote rollback,
 idempotence, successful renewal, fencing or absence of a timed-out effect, and
 lease-loss, freshness and durable witness policy stay application- or
@@ -1498,7 +1497,7 @@ completion alone does not make this predicate true, but any recorded run failure
 or interruption still does, including a pending initialization run interrupted
 by drain. This predicate does not determine checked shutdown success.
 
-`invocations` includes cadence- and wake-admitted runs, active work and runs
+`invocations` includes active work and runs
 lost before classification through panic, abort or an unjoined runner, so it need not equal the classified outcomes
 plus a fatal run. A final completion marker describes how the loop ended; it
 does not promise exact accounting when counters saturated or an interruption
@@ -1531,43 +1530,6 @@ displaced cause is destroyed outside the publication lock inside the
 component's protected dispatch, and recoverable history alone does not make
 checked lifecycle completion fail. Terminal task failures, unjoined work and
 unsuccessful cleanup keep their existing failure meaning.
-
-### Experimental wakeable periodic registration (`batter-jkw6.18`)
-
-`periodic::register_wakeable_in` adds a `WakeablePolicy` and returns the same
-read-only history plus a cloneable `PeriodicWake`. The policy wraps a validated
-`PeriodicPolicy` and rejects zero or unrepresentable wake spacing before
-registration. Spacing is a floor between **all** admitted starts, including
-cadence starts; selecting spacing longer than the interval is valid. One pending
-request is retained regardless of how many handles call `wake()`. Wakes before
-the first invocation coalesce with that immediate invocation; wakes during work
-remain pending for a later serial run. A pending wake and a due tick coalesce.
-
-A cadence tick within the spacing window is deferred to the window's end,
-not discarded. At delivery, missed ticks realign to the first future point on
-the original cadence, so neither an early wake nor a deferred tick resets its
-phase. The component uses its existing single future; no task or application
-queue is added. Dropping all wake handles leaves the cadence running. Waking an
-ended, panicked or abandoned component does nothing and cannot restart it or
-keep it alive. Waking is a request, not evidence that work ran.
-
-Initialization wakes retain the original total allowance, including waits for
-spacing, and cannot acknowledge readiness without a qualifying success. The
-allowance and applicable stopping boundary win over ready wakes. Every run
-still needs the lifecycle admission grant, receives the same per-run budget and
-downward cancellation, and contributes to `PeriodicSummary.invocations` with
-its existing outcome classification. Initialized support may be woken during
-drain while ordinary work needs it, under the existing forced-cancellation cap;
-closing support interrupts its active work before dependency cleanup. Callers
-neither cancel nor join the wake capability. Remote effect, replay and freshness
-policy remain application-owned, and blocking polls or destructors remain
-cooperative-boundary limitations.
-
-The paused-time contracts are in
-[`wake.rs`](../crates/batter-core/tests/periodic/wake.rs) and
-[`wake_lifecycle.rs`](../crates/batter-core/tests/periodic/wake_lifecycle.rs).
-This API is experimental. New hosted execution and platform certification are
-not claimed here; their records remain with the owning delivery/process tasks.
 
 ## Maintained Runlimit PostgreSQL storage
 
@@ -3547,9 +3509,10 @@ as migration transactions, with unconditional retirement of that configured
 session. Request and lifecycle phases use explicit internal enums; acknowledged
 outcomes require consuming native completion evidence.
 
-`batter-flags-postgres` owns audited, gapless, commit-ordered state changes in a
-dedicated `flags` schema. No-op/refusal rolls back the counter; archived rows are
-absent from coherent primary snapshots. Live and Silent declarers block
+`batter-flags-postgres` owns audited, commit-ordered state changes in a
+dedicated `flags` schema; versions are gapless except below a write that
+follows a restore to a head behind the fleet. No-op/refusal rolls back the
+counter; archived rows are absent from coherent primary snapshots. Live and Silent declarers block
 incompatible states and archive. These database guards assume writer logins are
 non-owner, non-superuser and cannot set `session_replication_role`; owners,
 superusers and replica mode are outside the claim. Audit actor/reason are supplied
@@ -3557,9 +3520,9 @@ text; `recorded_by` independently records the session login.
 
 No automatic retry occurs. A lost COMMIT acknowledgement or commit-phase deadline
 is uncertain, even when the server committed. Native SQLx owners retire sessions;
-retirement does not prove server termination. Full NOTIFY queues can reject all
-mutations, including kill switches. Declared settings floors remain application
-containment. The [store README](../crates/batter-flags-postgres/README.md) records
+retirement does not prove server termination. A committed write notifies
+nobody; processes see it at their next poll. Declared settings floors remain
+application containment. The [store README](../crates/batter-flags-postgres/README.md) records
 validation order, native API limits, authority and test coverage.
 
 `PooledStore::migrate` refuses with `ErrorClass::SearchPath` when a session of
@@ -3610,7 +3573,11 @@ I/O. The low-level `gate_switch` reads a switch the view cannot answer for as
 `Tripped`, failing closed (`batter-jkw6.42`). `pin` refuses an error decision
 with `Unpinnable` rather than pinning a default a replay would honour
 (`batter-jkw6.45`). An ungated job before the first publication under
-`unready_until_loaded` is deferred by its recheck (`batter-jkw6.56`). An
+`unready_until_loaded` is deferred by its recheck (`batter-jkw6.56`). Before
+the first publication a `Flags::gated_direct` job returns a continuation after
+`awaiting` and spends no attempt, whatever its tripped policy; a
+`gated_workflow_step` job and a `Flags::flagged` job spend an attempt, so a
+long initial outage can exhaust theirs. An
 evaluation emits `feature_flag.evaluation` on target `batter::flags`:
 DEBUG ordinarily, INFO for an engaged gate, WARN for the first error per handle
 and cause. A request, job invocation or periodic run keeps the view it was
@@ -3656,12 +3623,15 @@ drain, so roots end with `Runtime::shutdown_timeout`. On macOS 27.2 arm64
 exercised by the last-good tests; durability across power loss is not tested,
 and `flock` on tmpfs or overlayfs is unverified.
 
-With `LoadPolicy::with_listen`, a committed audited write's notification wakes
-the refresh; wakes coalesce, no refresh starts sooner than the wake spacing
-after the previous one, and the poll remains the backstop. Notifications are
-not durable and a notification's payload is never read. A rebuild after a lost
-session wakes a resync. A standby's refusal and a black-holed peer are
-unverified, and sqlx's detached `UNLISTEN *` on drop is disclosed.
+A committed audited write notifies nobody: each process sees it at its next
+poll, so the poll interval bounds propagation. After a point-in-time restore or
+a failover to an older head, a running process refuses the lower head as
+`Regressed` and keeps serving what it had. The next audited write is numbered
+above the highest version any Live control-plane process reports, and those
+processes apply it at their next poll without a restart; state lost between the
+restored head and the fleet's version is not recovered (live
+`a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges`
+in `crates/batter/tests/flags_live.rs`).
 
 ### Control-plane invariants
 

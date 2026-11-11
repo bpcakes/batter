@@ -244,9 +244,8 @@ precondition (nothing written) and 4 is unknown: run
 `batter-flags history outbound_halt` and re-run with `--if-revision`. `fleet
 --version V` also exits 0 while the rollout is pending or no process is Live;
 the change has reached every Live process only when `data.rollout.reached` is
-`true`. A full
-cluster-wide NOTIFY queue fails every audited write at COMMIT with 54000,
-`kill` included (`pg_notification_queue_usage()` shows it); the settings floor
+`true`. A committed write notifies nobody: each process applies it at its next
+poll, so allow one poll interval before reading the rollout. The settings floor
 (`FLAG_OUTBOUND_HALT=engaged` and a restart) engages the switch without the
 store. Releasing a switch warns with the number of Live processes whose settings
 floor keeps it engaged.
@@ -265,24 +264,27 @@ running build's catalog is newer than the command, which upgrading
 switches whose stored rows a newer build wrote, which only a write of those
 switches from a build that reads them resolves; accept the hold only once the
 fleet's holds are known. Invariant holds never refuse a `kill`, whose report
-lists the flags engaging the switch newly holds; its revision, encoding,
-coordinated-flip and store-behind-fleet refusals still apply.
+lists the flags engaging the switch newly holds; its revision, encoding and
+coordinated-flip refusals still apply.
 
 ### Restore or fail over the flags database
 
-After a point-in-time restore or a failover to an older head, writes are refused
-with `store_behind_fleet` while a Live process reports a version above the
-head, and versions above the restored head are reused. The remedy, in order:
+After a point-in-time restore or a failover to an older head, state written
+between the restored head and the version the fleet had applied is not
+recovered. Running processes refuse the lower head (`Regressed`), keep serving
+their pre-restore state and go stale; no write is refused for it.
 
-1. Stop every process of the fleet. A running process can still persist its
-   pre-restore snapshot, so its file is not safe to delete while it runs.
-2. Delete every host's last-good file.
-3. Start the fleet, and check with `batter-flags fleet --version H` (H the
-   restored head) that every Live process reports `control_plane` at H.
-4. Write.
+Any audited write makes the fleet converge: it is numbered above the highest
+version a Live control-plane process reports, so running processes apply it at
+their next poll without a restart. Re-issue the switch state you need (`kill`
+or `set` with `--if-revision` from `batter-flags show`), then check
+`batter-flags fleet --version V` with V from the write's report. Versions
+therefore skip from the restored head to above the fleet; the counter is never
+rebased.
 
-A restart before the files are deleted serves pre-restore state during an
-outage. The counter is never rebased.
+A process that restarts before that write serves its last-good file and then
+accepts the restored head. Until someone writes, the fleet can so serve a mix
+of pre-restore and restored state.
 
 ### Size the pool
 

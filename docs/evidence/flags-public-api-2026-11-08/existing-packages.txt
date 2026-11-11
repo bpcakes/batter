@@ -1,11 +1,10 @@
-## batter-core: 1184 -> 1315 entries; 2 removed, 133 added
+## batter-core: 1184 -> 1298 entries; 2 removed, 116 added
 - REMOVED method batter_core::startup::StartingSupervisor::wait
 - REMOVED method batter_core::startup::StartingSupervisor::wait_with_output
 + ADDED   enum batter_core::operation::PhasedFailure
 + ADDED   enum batter_core::operation::TrackedOperationError
 + ADDED   enum batter_core::service::ServiceReadinessError
 + ADDED   function batter_core::cleanup::low_level::acquire_pair
-+ ADDED   function batter_core::periodic::register_wakeable_in
 + ADDED   function batter_core::service::start_with_readiness
 + ADDED   impl batter_core::operation::FailedPhasedReport: Clone
 + ADDED   impl batter_core::operation::FailedPhasedReport: Debug
@@ -32,14 +31,6 @@
 + ADDED   impl batter_core::operation::TrackedOperationError: Debug
 + ADDED   impl batter_core::operation::TrackedOperationError: Display
 + ADDED   impl batter_core::operation::TrackedOperationError: Error
-+ ADDED   impl batter_core::periodic::PeriodicWake: Clone
-+ ADDED   impl batter_core::periodic::PeriodicWake: Debug
-+ ADDED   impl batter_core::periodic::WakeablePolicy: Clone
-+ ADDED   impl batter_core::periodic::WakeablePolicy: Copy
-+ ADDED   impl batter_core::periodic::WakeablePolicy: Debug
-+ ADDED   impl batter_core::periodic::WakeablePolicy: Eq
-+ ADDED   impl batter_core::periodic::WakeablePolicy: PartialEq
-+ ADDED   impl batter_core::periodic::WakeablePolicy: StructuralPartialEq
 + ADDED   impl batter_core::service::ServiceReadinessError: Clone
 + ADDED   impl batter_core::service::ServiceReadinessError: Copy
 + ADDED   impl batter_core::service::ServiceReadinessError: Debug
@@ -75,10 +66,6 @@
 + ADDED   method batter_core::operation::RunningPhasedOperation::cancel
 + ADDED   method batter_core::operation::RunningPhasedOperation::observer
 + ADDED   method batter_core::operation::RunningPhasedOperation::wait
-+ ADDED   method batter_core::periodic::PeriodicWake::wake
-+ ADDED   method batter_core::periodic::WakeablePolicy::new
-+ ADDED   method batter_core::periodic::WakeablePolicy::periodic
-+ ADDED   method batter_core::periodic::WakeablePolicy::wake_spacing
 + ADDED   method batter_core::service::ServiceCompletion::readiness
 + ADDED   method batter_core::service::ServiceCompletion::startup_output_failure
 + ADDED   method batter_core::service::ServiceObserver::status
@@ -103,8 +90,6 @@
 + ADDED   struct batter_core::operation::PhasedReport
 + ADDED   struct batter_core::operation::PhasedSuccess
 + ADDED   struct batter_core::operation::RunningPhasedOperation
-+ ADDED   struct batter_core::periodic::PeriodicWake
-+ ADDED   struct batter_core::periodic::WakeablePolicy
 + ADDED   struct batter_core::service::ServiceStartError
 + ADDED   struct batter_core::service::StartingService
 + ADDED   trait batter_core::operation::PhaseAction
@@ -121,8 +106,6 @@
 + ADDED   use batter_core::operation::PhasedSuccess <- phased::PhasedSuccess
 + ADDED   use batter_core::operation::RunningPhasedOperation <- phased::RunningPhasedOperation
 + ADDED   use batter_core::operation::TrackedOperationError <- tracked::TrackedOperationError
-+ ADDED   use batter_core::periodic::PeriodicWake <- wake::PeriodicWake
-+ ADDED   use batter_core::periodic::WakeablePolicy <- wake::WakeablePolicy
 + ADDED   use batter_core::service::ServiceReadinessError <- readiness::ServiceReadinessError
 + ADDED   use batter_core::service::ServiceStartError <- readiness::ServiceStartError
 + ADDED   use batter_core::service::StartingService <- readiness::StartingService

@@ -70,7 +70,6 @@
 //! }
 //! ```
 
-mod listen;
 mod presence;
 mod refresh;
 mod source;
@@ -91,10 +90,9 @@ use batter_sqlx::PgProfiledPool;
 use tokio::time::Instant;
 
 pub use self::{
-    listen::ListenEndpoint,
     presence::{ApplicationName, BuildId, HeartbeatCadence, Presence, PresenceError},
     status::{Gate, LatestRead, LoadCause, LoaderState, Served, SnapshotStatus},
-    timing::{LoadPolicy, RefreshTiming, WakeSpacingTooLong},
+    timing::{LoadPolicy, RefreshTiming},
 };
 use self::{refresh::Persistence, source::LoadSource, status::Shared, timing::Budgets};
 pub use crate::last_good::{
@@ -110,7 +108,6 @@ use crate::{
 
 /// The component and finalizer names the control plane registers.
 pub(crate) const REFRESH: &str = "flags.refresh";
-pub(crate) const LISTEN: &str = "flags.listen";
 pub(crate) const PRESENCE: &str = "flags.presence";
 pub(crate) const PRUNE: &str = "flags.presence_prune";
 pub(crate) const STOP_MARKER: &str = "flags.presence.stopped";
@@ -232,7 +229,7 @@ impl RegisteredFlags {
         self.presence.snapshot()
     }
 
-    /// The refresh component's runs so far, woken ones included.
+    /// The refresh component's runs so far.
     pub fn refresh(&self) -> PeriodicSummary {
         self.refresh.snapshot()
     }
@@ -305,12 +302,8 @@ pub enum RegisterError {
 ///
 /// Every input is validated, and every component and finalizer name checked,
 /// before anything is registered, so registration installs the whole loader
-/// or nothing: the stop marker's cleanup slot, the refresh, the listener when
-/// one is configured, the heartbeat and the prune.
-///
-/// Migration: a taken name, such as an application component already named
-/// `flags.presence`, used to be refused after the stop marker, the refresh and
-/// the listener were installed.
+/// or nothing: the stop marker's cleanup slot, the refresh, the heartbeat and
+/// the prune.
 pub fn register_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     store: ControlPlaneStore,
@@ -383,11 +376,6 @@ fn register_with<T: RegistrationTarget + ?Sized>(
     );
     let reader = Arc::new(reader);
     let shared = Arc::new(Shared::new(reader.clone(), live));
-    // `LoadPolicy::with_listen` already refused a spacing longer than the poll.
-    let listening = match policy.listen() {
-        timing::Listen::Off => None,
-        timing::Listen::On(endpoint) => Some((**endpoint).clone()),
-    };
     let refresh = refresh::prepare(
         source,
         writer,
@@ -397,31 +385,22 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         timing.poll_interval(),
         budgets.refresh,
         startup,
-        listening.as_ref().map(ListenEndpoint::wake_spacing),
     )?;
     // Every name is checked while this exclusive authority is held, so the
     // registrations below cannot be refused part way.
-    let components: &[&'static str] = match &listening {
-        Some(_) => &[REFRESH, LISTEN, PRESENCE, PRUNE],
-        None => &[REFRESH, PRESENCE, PRUNE],
-    };
     target
         .registration()
-        .check_names(components, &[STOP_MARKER])
+        .check_names(&[REFRESH, PRESENCE, PRUNE], &[STOP_MARKER])
         .map_err(RegisterError::Registration)?;
     let process = presence.process();
-    // Cleanup runs in reverse: the stop marker, then the listener's pool, then
-    // the application's pool, which the root registered first.
+    // Cleanup runs in reverse: the stop marker, then the application's pool,
+    // which the root registered first.
     let mut presence = presence
         .reserve_stop(target)
         .map_err(RegisterError::Registration)?;
-    let registered = refresh
+    let refresh = refresh
         .register(&mut presence.registration())
         .map_err(RegisterError::Registration)?;
-    if let (Some(endpoint), refresh::Registered::Woken(_, wake)) = (listening, &registered) {
-        listen::register(&mut presence.registration(), endpoint, wake.clone())
-            .map_err(RegisterError::Registration)?;
-    }
     let (presence, prune) = presence
         .register(shared.clone())
         .map_err(RegisterError::Registration)?;
@@ -431,7 +410,7 @@ fn register_with<T: RegistrationTarget + ?Sized>(
         process,
         presence,
         prune,
-        refresh: registered.reader(),
+        refresh,
         startup_file,
         last_good,
     })

@@ -20,8 +20,6 @@ pub struct Loaded {
     pub(crate) version: Version,
     /// Installed schema revision.
     pub(crate) schema_revision: i32,
-    /// Stored bounded notification channel; payloads contain only a counter.
-    pub(crate) channel: String,
     rows: Vec<CandidateRow>,
 }
 impl Loaded {
@@ -32,10 +30,6 @@ impl Loaded {
     /// Installed schema revision.
     pub fn schema_revision(&self) -> i32 {
         self.schema_revision
-    }
-    /// Bounded schema-derived notification channel.
-    pub fn channel(&self) -> &str {
-        &self.channel
     }
 
     /// Attach this database read to the consumer's validation scope.
@@ -60,7 +54,7 @@ impl PooledStore {
                     .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
                 self.refuse_standby(sql).await?;
                 // No control relation means no flags migration has run yet.
-                let row = sqlx::query("SELECT version, schema_revision, channel FROM flags.flag_control WHERE singleton")
+                let row = sqlx::query("SELECT version, schema_revision FROM flags.flag_control WHERE singleton")
                     .fetch_one(sql.executor()).await.map_err(crate::errors::missing_schema)?;
                 let version = version(row.try_get("version")?)?;
                 let schema_revision: i32 = row.try_get("schema_revision")?;
@@ -70,7 +64,7 @@ impl PooledStore {
                         Ok(CandidateRow::new(r.try_get("name")?, r.try_get("kind")?, r.try_get("value_type")?,
                             crate::load::version(r.try_get("updated_version")?)?, r.try_get("state")?))
                     }).collect::<Result<Vec<_>, StoreError>>()?;
-                Ok(Loaded { version, schema_revision, channel: row.try_get("channel")?, rows })
+                Ok(Loaded { version, schema_revision, rows })
             }).await.map_err(snapshot_error)
     }
 }

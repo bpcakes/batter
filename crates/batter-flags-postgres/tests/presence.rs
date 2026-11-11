@@ -57,7 +57,7 @@ async fn a_first_heartbeat_publishes_the_catalog_and_later_ones_only_refresh() {
         count(&f, "SELECT count(*) FROM flags.flag_catalogs").await,
         1
     );
-    let entries = sqlx::query("SELECT key, kind, value_type, variants, default_variant, expiry::text AS expiry, owners, safe_state, stale_rule, flip_discipline FROM flags.flag_catalog_entries ORDER BY key")
+    let entries = sqlx::query("SELECT key, kind, value_type, variants, expiry::text AS expiry, flip_discipline FROM flags.flag_catalog_entries ORDER BY key")
         .fetch_all(&f.pool).await.unwrap();
     let fast = &entries[0];
     assert_eq!(fast.get::<String, _>("key"), "fast_path");
@@ -65,29 +65,12 @@ async fn a_first_heartbeat_publishes_the_catalog_and_later_ones_only_refresh() {
     assert_eq!(fast.get::<String, _>("value_type"), "toggle");
     assert_eq!(fast.get::<Vec<String>, _>("variants"), ["off", "on"]);
     assert_eq!(
-        fast.get::<Option<String>, _>("default_variant").as_deref(),
-        Some("off")
-    );
-    assert_eq!(
         fast.get::<Option<String>, _>("expiry").as_deref(),
         Some("2027-03-31")
-    );
-    assert_eq!(
-        fast.get::<Option<Vec<String>>, _>("owners"),
-        None,
-        "NULL means every kind"
     );
     let halt = &entries[1];
     assert_eq!(halt.get::<String, _>("kind"), "switch");
     assert!(halt.get::<Vec<String>, _>("variants").is_empty());
-    assert_eq!(
-        halt.get::<Option<String>, _>("safe_state").as_deref(),
-        Some("released")
-    );
-    assert_eq!(
-        halt.get::<Option<String>, _>("stale_rule").as_deref(),
-        Some("hold_last_known")
-    );
 
     let row = sqlx::query("SELECT snapshot_source, snapshot_version, liveness_seconds, retention_seconds, row_encoding, expires_at > clock_timestamp() AS live FROM flags.flag_processes")
         .fetch_one(&f.pool).await.unwrap();

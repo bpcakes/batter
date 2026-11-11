@@ -132,7 +132,7 @@ async fn prune_deletes_at_most_its_limit_and_passes_locked_rows_by() {
             .unwrap();
     }
     for n in 0..3_u8 {
-        sqlx::query("INSERT INTO flags.flag_catalogs(manifest_digest, catalog_digest, manifest, last_referenced_at) VALUES ($1, $1, '{}', clock_timestamp() - interval '40 days')")
+        sqlx::query("INSERT INTO flags.flag_catalogs(manifest_digest, manifest, last_referenced_at) VALUES ($1, '{}', clock_timestamp() - interval '40 days')")
             .bind(vec![n; 32]).execute(&f.pool).await.unwrap();
     }
     tokio::time::sleep(Duration::from_millis(2_500)).await;

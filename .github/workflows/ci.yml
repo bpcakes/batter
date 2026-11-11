@@ -146,7 +146,7 @@ jobs:
         if: steps.reuse.outcome == 'skipped'
         run: |
           cargo test -p batter-flags-postgres --tests --locked -- --ignored --test-threads=1
-          cargo test -p batter-flags --features postgres --test control_plane_live --test listen_live --test invariants_live --locked -- --ignored --test-threads=1
+          cargo test -p batter-flags --features postgres --test control_plane_live --test invariants_live --locked -- --ignored --test-threads=1
           cargo test -p batter-flags-cli --tests --locked -- --ignored --test-threads=1
 
   subprocess-macos:

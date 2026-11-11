@@ -192,33 +192,40 @@ async fn refusal_order_future_encoding_restrictions_and_fleet_regression() {
         .execute(&f.pool)
         .await
         .unwrap();
-    assert!(matches!(
-        f.store
-            .write(set("normal", "on", None), deadline())
-            .await
-            .unwrap(),
-        WriteOutcome::Refused(Refusal::StoreBehindFleet)
-    ));
-    assert_eq!(f.head().await, 1);
+    assert!(
+        matches!(
+            f.store
+                .write(set("normal", "on", None), deadline())
+                .await
+                .unwrap(),
+            WriteOutcome::Written { version, .. } | WriteOutcome::WrittenUndeclared { version, .. } if version == Version::new(51)
+        ),
+        "a write behind a Live process is numbered above it"
+    );
+    assert_eq!(f.head().await, 51);
     sqlx::query(
         "UPDATE flags.flag_processes SET snapshot_source='persisted_file' WHERE build='live'",
     )
     .execute(&f.pool)
     .await
     .unwrap();
-    assert!(matches!(
-        f.store
-            .write(set("normal", "on", Some(0)), deadline())
-            .await
-            .unwrap(),
-        WriteOutcome::WrittenUndeclared { .. }
-    ));
+    // A process serving a file accepts any control-plane version, so it
+    // moves no number.
+    let after_file = f
+        .store
+        .write(set("normal", "off", None), deadline())
+        .await
+        .unwrap();
+    assert!(
+        matches!(&after_file, WriteOutcome::Written { version, .. } | WriteOutcome::WrittenUndeclared { version, .. } if *version == Version::new(52)),
+        "{after_file:?}"
+    );
     f.close().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
-async fn concurrent_first_writes_and_poller_observe_gapless_commit_order() {
+async fn concurrent_first_writes_and_poller_observe_commit_order() {
     let f = Fixture::migrated().await;
     f.seed("race", "mode", "toggle", "live").await;
     let (a, b) = tokio::join!(

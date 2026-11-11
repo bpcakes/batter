@@ -1,5 +1,11 @@
 # Flags store T-12 execution evidence
 
+Removed before merge, after this run: the audit trigger's NOTIFY and
+`flag_control.channel`; `flag_state.salt` and the `reshuffle` audit operation;
+`flag_catalogs.catalog_digest`; and the `flag_catalog_entries` columns
+`fingerprint`, `default_variant`, `owners`, `safe_state`, `stale_rule` and
+`governed_by`. The record below is unchanged.
+
 The implementation-run results below are historical. Successor review run
 `05914008-7c9a-41cf-921d-88c51daea984` owns current repair validation and
 acceptance; they must not be inferred from those earlier passes. Repairs add

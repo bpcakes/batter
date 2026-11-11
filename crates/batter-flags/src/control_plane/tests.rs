@@ -317,29 +317,6 @@ async fn ending_the_loader_reports_loader_stopped() {
     );
 }
 
-/// The policy refuses the spacing when it is built, so registration never
-/// sees it.
-#[test]
-fn a_wake_spacing_longer_than_the_poll_is_refused_by_the_policy() {
-    use crate::control_plane::ListenEndpoint;
-    let options = || {
-        sqlx::postgres::PgConnectOptions::new_without_pgpass()
-            .host("127.0.0.1")
-            .username("flags")
-    };
-    let long = ListenEndpoint::new(options(), POLL + SECOND).unwrap();
-    let refused = LoadPolicy::start_on_defaults(timing())
-        .with_listen(long)
-        .unwrap_err();
-    assert_eq!(refused.maximum(), POLL);
-    let exact = ListenEndpoint::new(options(), POLL).unwrap();
-    assert!(
-        LoadPolicy::start_on_defaults(timing())
-            .with_listen(exact)
-            .is_ok()
-    );
-}
-
 /// A taken name is refused before anything is registered, so a root that
 /// ignores the error cannot start a partial loader: every name is still free
 /// afterwards but the one the application took.

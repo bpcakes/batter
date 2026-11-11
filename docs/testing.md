@@ -102,7 +102,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Quota, authenticated attempts and maintenance | [Runlimit adapter tests](../crates/batter-runlimit/tests/) and native package tests. |
 | Outbound wire behavior and phase-owned evidence | [Outbound tests](../crates/batter-outbound-http/tests/) and facade `outbound_exchange` example tests. |
 | Flag catalogs, snapshots, evaluation, pins and invariants | [Flags core tests](../crates/batter-flags-core/tests/). |
-| Declared mode, gates, control-plane loader and last-good file | [Flags tests](../crates/batter-flags/tests/) and in-crate loader tests; ignored `control_plane_live`, `listen_live`, `invariants_live` and `jobs_live`. |
+| Declared mode, gates, control-plane loader and last-good file | [Flags tests](../crates/batter-flags/tests/) and in-crate loader tests; ignored `control_plane_live`, `invariants_live` and `jobs_live`. |
 | Flags store, operator command and process environment | [Store tests](../crates/batter-flags-postgres/tests/), [command tests](../crates/batter-flags-cli/tests/), facade `flags_live`, `grants_live` and [environment ownership](../crates/batter/tests/process_environment_ownership.rs). |
 | External single-dependency adoption | [Consumer sources](../consumers/README.md) and [source-copy checker](../scripts/check_single_facade_consumer.py). |
 | Verification selection and process failure behavior | [Script controls](../scripts/), especially `test_verify`, `test_parallel_process`, `test_ci_plan` and live-runner controls. |
@@ -444,11 +444,11 @@ same guard is proved live by
 export BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL=postgres://...
 cargo test -p batter-flags-postgres -- --ignored
 cargo test -p batter-flags --features postgres \
-  --test control_plane_live --test listen_live --test invariants_live -- --ignored
+  --test control_plane_live --test invariants_live -- --ignored
 cargo test -p batter-flags-cli -- --ignored
 
-# The facade: the ledger shared with Runledger and Runlimit, the restore
-# remedy, and the exact-role grants of every flags operation.
+# The facade: the ledger shared with Runledger and Runlimit, a write after a
+# restore below the fleet, and the exact-role grants of every flags operation.
 export BATTER_SQLX_ADMIN_URL=postgres://...
 cargo test -p batter --features runledger,runlimit-postgres,flags-postgres \
   --test flags_live --test grants_live -- --ignored --test-threads=1
@@ -458,14 +458,7 @@ DATABASE_URL=postgres://.../dedicated cargo test -p batter-flags \
   --features runledger,postgres,test-support --test jobs_live -- --ignored
 ```
 
-`listen_live` covers the NOTIFY wake (`batter-jkw6.19`): a committed write
-reaching every listening process under a 60 s poll within one wake spacing
-plus a 1.5 s load allowance (the spacing is a minimum between refresh starts,
-not a delivery bound), a
-notification inside an open transaction waking nothing until it commits, a
-terminated listener session rebuilt with a resync that catches the gap, the
-poll converging with no listener, and drain unlistening, closing the listener
-sessions and recording the stop. `invariants_live` covers `requires`,
+`invariants_live` covers `requires`,
 `conflicts`, `both_or_none` and a variant whose required settings the process
 lacks, each held and listed in the heartbeat's `held_keys`, and a governed
 flag under its engaged switch, served at its code default with

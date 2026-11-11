@@ -2,8 +2,10 @@
 
 use std::fmt;
 
-/// A control-plane version: the counter every audited write bumps, gapless
-/// and in commit order, starting at 0 for a store never written.
+/// A control-plane version: the counter every audited write raises, in commit
+/// order, starting at 0 for a store never written. It rises by one, except
+/// that the first write after a restore to an older head is numbered above
+/// every running process.
 ///
 /// A snapshot, a decision's source and a pin's origin all name the version
 /// they were read at, so two readers that report the same version read the

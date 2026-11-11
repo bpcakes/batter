@@ -265,7 +265,14 @@ impl PooledStore {
         }
         let head: i64 = row.try_get("version")?;
         crate::load::version(head)?;
+        // After a restore or a failover to an older head, a Live process can
+        // have applied a version above it and would refuse anything lower.
+        // Numbering this write above every such process lets the fleet
+        // converge on it; otherwise the next version is the head's successor.
+        let applied: Option<i64> = sqlx::query_scalar("SELECT max(snapshot_version) FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > clock_timestamp() AND snapshot_source = 'control_plane'")
+            .fetch_one(sql.executor()).await?;
         let next = head
+            .max(applied.unwrap_or(head))
             .checked_add(1)
             .ok_or_else(|| StoreError::classified(ErrorClass::InvalidData))?;
         sqlx::query("UPDATE flags.flag_control SET version = $1 WHERE singleton")

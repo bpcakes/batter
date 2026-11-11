@@ -104,16 +104,6 @@ impl RefreshTiming {
 pub struct LoadPolicy {
     policy: Policy,
     last_good: LastGood,
-    listen: Listen,
-}
-
-/// Whether the refresh is also woken by NOTIFY.
-#[derive(Clone, Debug)]
-pub(crate) enum Listen {
-    /// Poll only.
-    Off,
-    /// A listener wakes the refresh on every committed write.
-    On(Box<super::listen::ListenEndpoint>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,7 +126,6 @@ impl LoadPolicy {
         Self {
             policy: Policy::UnreadyUntilLoaded { timing, allowance },
             last_good: LastGood::Off,
-            listen: Listen::Off,
         }
     }
 
@@ -149,7 +138,6 @@ impl LoadPolicy {
         Self {
             policy: Policy::StartOnDefaults { timing },
             last_good: LastGood::Off,
-            listen: Listen::Off,
         }
     }
 
@@ -171,42 +159,6 @@ impl LoadPolicy {
 
     pub(crate) fn last_good(&self) -> &LastGood {
         &self.last_good
-    }
-
-    /// Also wakes the refresh when an audited write commits, through a
-    /// listener on its own two-connection pool to `endpoint`. A wake never
-    /// starts a refresh sooner than the endpoint's wake spacing after the
-    /// previous one; the poll stays the backstop, so a lost listener only
-    /// delays changes to the poll interval. LISTEN delivery is exercised by
-    /// the ignored `listen_live` suite against PostgreSQL 18, which hosted
-    /// CI's `native-flags-postgres` job runs when `scripts/ci_plan.py`
-    /// selects it.
-    ///
-    /// # Errors
-    ///
-    /// [`WakeSpacingTooLong`] when the endpoint's wake spacing is longer than
-    /// this policy's poll interval: a spacing that long would space out the
-    /// polls too, and with them the confirmations freshness depends on.
-    ///
-    /// Migration: `with_listen` returned the policy directly and
-    /// `register_in` refused the spacing with
-    /// `RegisterError::WakeSpacingTooLong`; handle the `Result` here.
-    pub fn with_listen(
-        self,
-        endpoint: super::listen::ListenEndpoint,
-    ) -> Result<Self, WakeSpacingTooLong> {
-        let maximum = self.timing().poll_interval();
-        if endpoint.wake_spacing() > maximum {
-            return Err(WakeSpacingTooLong { maximum });
-        }
-        Ok(Self {
-            listen: Listen::On(Box::new(endpoint)),
-            ..self
-        })
-    }
-
-    pub(crate) fn listen(&self) -> &Listen {
-        &self.listen
     }
 
     pub(crate) fn timing(&self) -> RefreshTiming {
@@ -309,18 +261,5 @@ impl Budgets {
             presence: statements(7),
             prune: statements(3),
         }
-    }
-}
-/// A listener's wake spacing is longer than the policy's poll interval.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("the flags wake spacing must be at most the poll interval, {maximum:?}")]
-pub struct WakeSpacingTooLong {
-    maximum: Duration,
-}
-
-impl WakeSpacingTooLong {
-    /// The poll interval, the longest spacing the policy accepts.
-    pub fn maximum(&self) -> Duration {
-        self.maximum
     }
 }

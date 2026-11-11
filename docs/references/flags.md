@@ -14,31 +14,8 @@ Re-check the resolved dependency before changing an integration.
 fetched on 2026-11-08 unless marked otherwise; package facts were read from the
 sources Cargo.lock resolves.
 
-PostgreSQL 18 notifications
-([`NOTIFY`](https://www.postgresql.org/docs/18/sql-notify.html),
-[`LISTEN`](https://www.postgresql.org/docs/18/sql-listen.html),
-[hot standby](https://www.postgresql.org/docs/18/hot-standby.html)): a
-transaction's notifications are delivered only if it commits and only between a
-listener's transactions; identical channel and payload within one transaction
-are delivered once; the payload must be shorter than 8000 bytes in the default
-configuration; the queue is 8 GB in a standard installation, and when it fills
-"transactions calling `NOTIFY` will fail at commit". `LISTEN` takes effect at
-commit, so a listener commits `LISTEN`, then reads state in a new transaction,
-then relies on notifications, and the first ones may repeat what it read. Hot
-standby refuses `LISTEN` and `NOTIFY` and allows `UNLISTEN`. The pages do not
-call notifications durable; Batter treats a notification only as a wake, and
-the poll remains the backstop. Recorded from the plan's research of 2026-11-04
-and not re-fetched here: the full-queue failure is SQLSTATE 54000 in `async.c`
-at `REL_18_STABLE`, and PgBouncer's transaction pooling cannot hold a `LISTEN`.
-
-SQLx 0.9.0 (`sqlx-postgres/src/listener.rs`): `PgListener::connect_with(pool)`
-holds one pool connection (`:60-77`); a dead connection is reconnected only for
-`ConnectionAborted`, `UnexpectedEof`, `TimedOut` and `BrokenPipe`, and the
-receive returns `Ok(None)` for the lost interval (`:281-308`); `Drop` spawns a
-detached `UNLISTEN *` task (`:361-377`). The flags listener therefore rebuilds
-and resyncs on `Ok(None)` or any error, and its drain unlistens before the
-drop. `PgConnectOptions::new_without_pgpass` reads the libpq environment
-defaults (`PGPORT`, `PGHOSTADDR`, `PGHOST`, `PGUSER` and others,
+SQLx 0.9.0 (`sqlx-postgres/src/options/`):
+`PgConnectOptions::new_without_pgpass` reads the libpq environment defaults (`PGPORT`, `PGHOSTADDR`, `PGHOST`, `PGUSER` and others,
 `options/mod.rs:56-68`), and URL parsing starts from it (`options/parse.rs:9-10`),
 so options a root builds from a URL still carry those defaults.
 
@@ -105,10 +82,8 @@ retires on completion and wraps both validation and COMMIT failures in
 retires after rollback. T-12 composes these installed APIs rather than the stale
 plan's plain-SQLx owner.
 
-PostgreSQL 18 [NOTIFY](https://www.postgresql.org/docs/18/sql-notify.html)
-documents transactional delivery, commit ordering, bounded payloads and commit
-failure when the notification queue fills. The version-counter/poller tests
-exercise the store's inference from lock retention through commit.
+The version-counter/poller tests exercise the store's inference from lock
+retention through commit.
 [CREATE TRIGGER](https://www.postgresql.org/docs/18/sql-createtrigger.html)
 defines deferred constraint triggers and TRUNCATE statement triggers.
 [CREATE FUNCTION](https://www.postgresql.org/docs/18/sql-createfunction.html)

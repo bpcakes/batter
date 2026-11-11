@@ -6,6 +6,12 @@ These records apply ADR-010 to the flags packages of
 [ADR-016](../../adr/016-typed-flags-control-plane.md). They retain the evidence
 and limitations recorded at delivery; current contracts remain in rustdoc
 and [guarantees](../../guarantees.md#typed-flags-experimental-adr-016).
+The wakeable periodic seam (T-18) and the LISTEN wake (T-19) were withdrawn
+before merge, and their assessments with them. The flags packages are
+unreleased, so the `Breaking:` changelog entries the records below cite for
+changes inside those packages were dropped before merge; entries for packages
+that exist on master remain. Surface counts below are those of the commits
+named and were not regenerated.
 
 ## Flags store assessment (T-12, batter-jkw6.12)
 
@@ -126,8 +132,10 @@ direct handler enqueued as a workflow step is still refused only at run time,
 an application assertion `jobs_live`'s `drop_and_workflow_refusal` exercises.
 `GatePolicy` takes the awaiting-publication recheck explicitly, and `Drop`
 applies only to a tripped reading, so missing initial data never selects
-`Drop`; awaiting publication fails the attempt with that recheck, and a long
-outage can exhaust the job's attempts. `JobFlags` has no
+`Drop`; awaiting publication a `gated_direct` job continues after that recheck
+without spending an attempt, while a workflow step, which cannot continue, and
+a `flagged` job fail the attempt, so a long outage can exhaust theirs.
+`JobFlags` has no
 unrestricted live evaluation: unpinned facts report `UnpinnedBecause`. Batter
 never writes a pin into a Runledger payload; the application stores it.
 
@@ -195,24 +203,6 @@ shutdown and cleanup once its supervisor has started. Residual: a failure
 between registering the pool's cleanup and starting the supervisor drops the
 cleanup without running it.
 
-## Wakeable periodic seam assessment (T-18, `batter-jkw6.18`)
-
-`periodic::register_wakeable_in` returns a `PeriodicWake` beside the reader; a
-wake only requests work, never bypasses admission, the stopping point or the
-allowance, and is inert after the component ends, so a holder needs no paired
-cancellation or join. Wakes coalesce and every start keeps the spacing, so a
-notification burst cannot overrun the budget. Wake counts live in the adapter;
-`PeriodicSummary` gains no field.
-
-## Flags LISTEN wake assessment (T-19, `batter-jkw6.19`)
-
-`ListenEndpoint::new` validates the spacing, its `Debug` is redacted and
-`register_in` refuses a spacing longer than the poll. The listener is a
-component on its own pool, owns rebuild, resync and drain-time unlisten, and
-reports an exhaustive health state; the application only supplies connection
-options. Residual: a standby refusal, a pool closed during a receive and a
-black-holed peer are unverified, and sqlx's detached `UNLISTEN *` is disclosed.
-
 ## Control-plane invariants assessment (T-21, `batter-jkw6.21`)
 
 The invariant judgement is one function, shared by snapshot validation and the
@@ -251,7 +241,8 @@ established API limits: the flags example does not use protected startup
 (`batter-qrqy`); the agent did not drive a gated handler in an offline test
 (`batter-alk2`); it found no protected invocation-phase composition for a
 flag-aware handler (`batter-31p9`); awaiting publication consumes attempts
-(`batter-owtx`); and the operator command's JSON and retry guidance are
+(`batter-owtx`; a `gated_direct` job has since continued without spending
+one); and the operator command's JSON and retry guidance are
 undocumented (`batter-xuv6`). One run of one agent is a signal, not a measure.
 
 ## Branch state-protocol repairs (`batter-jkw6.36`)
@@ -432,8 +423,7 @@ its tests and live evidence.
   process presence is bound to the store that issued it (`.49`).
 - Core counts gated periodic skips itself (`register_skippable_in`,
   `PeriodicSummary::skipped`), never as successes (`.50`).
-- `register_in` checks every name before registering anything, and
-  `with_listen` refuses its spacing when the policy is built (`.51`).
+- `register_in` checks every name before registering anything (`.51`).
 - `RegisteredFlags::last_good()` reports the persister's state, a stale
   selection cannot release a newer one, an oversized snapshot is not retried,
   and a `LoadPolicy` is not `Clone` (`.52`). The persister's queue names the
@@ -463,12 +453,12 @@ removed, 50 added); `batter-flags` 517 -> 580 (25 removed, 88 added);
 `BuildError::NoProcessKind`, `NoEnvironmentClass` and `RepeatedCall`,
 `SnapshotRejection::MissingVersion`, `LoadPolicy: Clone`,
 `RegisteredFlags::last_persist_failure`, `GateError::DeferOnWorkflowStep`,
-`RegisterError::WakeSpacingTooLong`, `FlagsGrantError::EmptySelection`,
+`FlagsGrantError::EmptySelection`,
 `FlagsOperation::OperatorCli` and `PooledStore::heartbeat` and `stop`. Each one
 has a `Breaking:` changelog entry and a `Migration:` sentence naming it. The
 walker compares names only and runs with every feature enabled, so the
 signature changes (`CatalogBuilder::new` and `build`, `Candidate::new`,
-`SnapshotView::pin`, `LoadPolicy::with_listen`, `grant_fragment`,
+`SnapshotView::pin`, `grant_fragment`,
 `Flags::flagged`, `PooledStore::history`, `KeyListing::kind` and `value_type`,
 `Deferral::flip`, `PeriodicSummary::skipped`) and the `test-support` gate on
 `batter_flags::test` were checked against the changelog by hand.

@@ -106,7 +106,7 @@ required-features = ["sqlx"]
 [[example]]
 name = "rollout"
 test = true
-required-features = ["flags-axum", "flags-runledger", "flags-postgres"]
+required-features = ["flags-postgres"]
 
 [[example]]
 name = "grant_composition"

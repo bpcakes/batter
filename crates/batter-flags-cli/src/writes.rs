@@ -142,11 +142,6 @@ fn refused(name: &'static str, key: &FlagKey, refusal: Refusal) -> Report {
             "the catalog marks this flip coordinated, but processes apply it poll by poll; pass --accept-rolling-flip to accept that".into(),
             Value::Null,
         ),
-        Refusal::StoreBehindFleet => report(
-            "store_behind_fleet",
-            "a Live process applied a version above the store head; see the restore runbook".into(),
-            Value::Null,
-        ),
         Refusal::InvariantUnmet { unmet } => report(
             "invariant_unmet",
             format!(

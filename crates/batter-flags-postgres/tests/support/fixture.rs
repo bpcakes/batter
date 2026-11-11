@@ -86,9 +86,9 @@ impl Fixture {
     }
     pub async fn seed(&self, name: &str, kind: &str, value_type: &str, presence: &str) {
         let digest = name.as_bytes();
-        sqlx::query("INSERT INTO flags.flag_catalogs(manifest_digest,catalog_digest,manifest) VALUES ($1,$1,'{}') ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO flags.flag_catalogs(manifest_digest,manifest) VALUES ($1,'{}') ON CONFLICT DO NOTHING")
             .bind(digest).execute(&self.pool).await.unwrap();
-        sqlx::query("INSERT INTO flags.flag_catalog_entries(manifest_digest,key,kind,value_type,fingerprint,variants,default_variant,flip_discipline) VALUES ($1,$2,$3,$4,$1,ARRAY['off','on','express'],'off','independent') ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO flags.flag_catalog_entries(manifest_digest,key,kind,value_type,variants,flip_discipline) VALUES ($1,$2,$3,$4,ARRAY['off','on','express'],'independent') ON CONFLICT DO NOTHING")
             .bind(digest).bind(name).bind(kind).bind(value_type).execute(&self.pool).await.unwrap();
         if presence == "orphan" {
             return;

@@ -45,14 +45,16 @@
 //! | `DirectWhenTripped::Defer` | `continue_after`: committed continuation advances `run_number`, resets attempts, retains checkpoint and releases resource claims; native continuation alarms are source-read, unverified. |
 //! | `DeferAttempt` (either policy) | Retryable `flags.job_type_deferred`, with a retry lower bound; consumes attempts and dead-letters on exhaustion. |
 //! | `Drop` (either policy) | Terminal `flags.job_type_dropped`; native delivery invokes the inner dead-letter hook. |
-//! | Awaiting first publication | Always `DeferAttempt` with the separately required awaiting interval, even for `Drop`. |
+//! | Awaiting first publication, direct | `continue_after` with the separately required awaiting interval, whatever `when_tripped` says, `Drop` included: no attempt is spent on a job whose handler never ran. |
+//! | Awaiting first publication, workflow step or `flagged` | `DeferAttempt` with the awaiting interval: a step cannot continue, and `flagged` does not know which it wraps. |
 //!
 //! Retry exhaustion and terminal failures on workflow steps propagate through
 //! native workflow settlement. A direct-only declaration is an application
 //! assertion: enqueueing it as a non-opted workflow step causes its first
 //! `Defer` to dead-letter with `job.workflow_handler_continuation_not_enabled`.
 //! No native queue, definition enablement, claim or workflow policy is changed.
-//! An unavailable initial publication can exhaust attempts. Native retry
+//! An unavailable initial publication can exhaust the attempts of a workflow
+//! step or a `flagged` job, never of a gated direct job. Native retry
 //! policy may delay a retry beyond this gate's lower bound. Scheduled jobs
 //! still materialize while tripped, and may accumulate for release; every
 //! recheck costs a claim plus a continuation or failure write set.
@@ -94,7 +96,16 @@ pub struct FlaggedHandler<H> {
 pub struct GatedHandler<H> {
     gate: SwitchGate,
     inner: H,
-    policy: GatePolicy<DirectWhenTripped>,
+    scope: Scope,
+    awaiting: Recheck,
+}
+
+/// What the wrapped job type may do when it cannot run. A direct job can
+/// continue; a workflow step can only spend an attempt or fail.
+#[derive(Clone, Copy)]
+enum Scope {
+    Direct(DirectWhenTripped),
+    Step(StepWhenTripped),
 }
 
 impl Flags {
@@ -128,7 +139,8 @@ impl Flags {
         Ok(GatedHandler {
             gate: self.gate(switch)?,
             inner,
-            policy,
+            scope: Scope::Direct(policy.when_tripped),
+            awaiting: policy.awaiting,
         })
     }
 
@@ -148,14 +160,12 @@ impl Flags {
         switch: &KillSwitch,
         policy: GatePolicy<StepWhenTripped>,
     ) -> Result<GatedHandler<H>, GateError> {
-        self.gated_direct(
+        Ok(GatedHandler {
+            gate: self.gate(switch)?,
             inner,
-            switch,
-            GatePolicy {
-                when_tripped: policy.when_tripped.into(),
-                awaiting: policy.awaiting,
-            },
-        )
+            scope: Scope::Step(policy.when_tripped),
+            awaiting: policy.awaiting,
+        })
     }
 }
 
@@ -163,6 +173,13 @@ fn services_required() -> JobFailure {
     JobFailure::terminal(
         "job.execution_services_required",
         "This handler requires runtime-owned execution services.",
+    )
+}
+
+fn dropped() -> JobFailure {
+    JobFailure::terminal(
+        "flags.job_type_dropped",
+        "Job type was dropped by its flag gate.",
     )
 }
 
@@ -221,20 +238,23 @@ impl<H: FlagAwareHandler> JobHandler for GatedHandler<H> {
                     .execute(execution, &JobFlags(entered.view), payload)
                     .await
             }
-            GateReading::AwaitingPublication(_) => {
-                Err(deferred(self.policy.awaiting, execution.context()))
-            }
-            GateReading::Tripped(_) => match self.policy.when_tripped {
-                DirectWhenTripped::Defer(recheck) => Ok(JobCompletion::continue_after(
-                    recheck.delay(execution.context()),
+            GateReading::AwaitingPublication(_) => match self.scope {
+                Scope::Direct(_) => Ok(JobCompletion::continue_after(
+                    self.awaiting.delay(execution.context()),
                 )),
-                DirectWhenTripped::DeferAttempt(recheck) => {
+                Scope::Step(_) => Err(deferred(self.awaiting, execution.context())),
+            },
+            GateReading::Tripped(_) => match self.scope {
+                Scope::Direct(DirectWhenTripped::Defer(recheck)) => Ok(
+                    JobCompletion::continue_after(recheck.delay(execution.context())),
+                ),
+                Scope::Direct(DirectWhenTripped::DeferAttempt(recheck))
+                | Scope::Step(StepWhenTripped::DeferAttempt(recheck)) => {
                     Err(deferred(recheck, execution.context()))
                 }
-                DirectWhenTripped::Drop => Err(JobFailure::terminal(
-                    "flags.job_type_dropped",
-                    "Job type was dropped by its flag gate.",
-                )),
+                Scope::Direct(DirectWhenTripped::Drop) | Scope::Step(StepWhenTripped::Drop) => {
+                    Err(dropped())
+                }
             },
         }
     }

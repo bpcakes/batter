@@ -572,7 +572,7 @@ fixed `flags` schema and every statement against it, on `batter-sqlx`'s native
 connection owners. `batter-flags` owns the process: resolution, the one reader a
 protected surface captures views from, the gates and the control-plane
 components registered with `batter-core`'s lifecycle and periodic machinery,
-which it extends without a second scheduler. `batter-flags-cli` is an
+which it uses without a second scheduler. `batter-flags-cli` is an
 executable root over the store. Each request, job invocation or periodic run
 evaluates one frozen view, and nothing reads a flag between captures.
 

@@ -229,7 +229,7 @@ fn construction_refuses_foreign_and_unowned_switches() {
 }
 
 #[tokio::test]
-async fn missing_publication_always_retries_even_drop_and_defer() {
+async fn missing_publication_continues_a_direct_job_whatever_its_tripped_policy() {
     for when in [
         DirectWhenTripped::Drop,
         DirectWhenTripped::Defer(recheck()),
@@ -248,7 +248,29 @@ async fn missing_publication_always_retries_even_drop_and_defer() {
         let handler = flags
             .gated_direct(Probe(calls.clone()), &halt, policy(when))
             .unwrap();
-        assert_retry(invoke(&handler).await.unwrap_err(), Duration::from_secs(60));
+        let completion = invoke(&handler).await.unwrap();
+        let JobCompletionDisposition::ContinueAfter(delay) = completion.disposition() else {
+            panic!("a direct job awaiting publication must not spend an attempt")
+        };
+        assert!((Duration::from_secs(60)..=Duration::from_secs(75)).contains(&delay));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        // A workflow step cannot continue, so it spends an attempt instead.
+        for step in [
+            StepWhenTripped::Drop,
+            StepWhenTripped::DeferAttempt(recheck()),
+        ] {
+            let handler = flags
+                .gated_workflow_step(
+                    Probe(calls.clone()),
+                    &halt,
+                    GatePolicy {
+                        when_tripped: step,
+                        awaiting: Recheck::after(Duration::from_secs(60)).unwrap(),
+                    },
+                )
+                .unwrap();
+            assert_retry(invoke(&handler).await.unwrap_err(), Duration::from_secs(60));
+        }
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         // An ungated handler remains callable before publication.
         invoke(&flags.flagged(Probe(calls.clone()), recheck()))

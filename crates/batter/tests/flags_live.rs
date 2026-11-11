@@ -1,6 +1,6 @@
 //! The flags control plane through the facade against a dedicated
 //! disposable PostgreSQL 18 cluster: the migration ledger shared with
-//! Runledger and Runlimit, and the restore remedy. Run explicitly:
+//! Runledger and Runlimit, and convergence after a restore. Run explicitly:
 //!
 //! ```text
 //! BATTER_SQLX_ADMIN_URL=postgres://... \
@@ -16,10 +16,10 @@ mod support;
 use std::time::Duration;
 
 use batter::flags::{
-    control_plane::{Gate, LatestRead, StartupFile},
+    control_plane::LatestRead,
     core::{Source, SwitchState, Version},
     low_level::capture_now,
-    postgres::{PooledStore, Refusal, Write, WriteOutcome},
+    postgres::{PooledStore, Write, WriteOutcome},
 };
 use sqlx::postgres::PgPoolOptions;
 use support::*;
@@ -82,8 +82,7 @@ async fn runledger_runlimit_and_flags_migrate_in_that_order_into_one_database() 
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
-async fn a_restore_below_the_fleet_refuses_writes_until_the_process_restarts_on_the_restored_head()
-{
+async fn a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges() {
     let database = Database::create("restore").await;
     let restored = format!("{}_at90", database.name);
     let retired = format!("{}_old", database.name);
@@ -123,7 +122,6 @@ async fn restore_remedy(
     probe.close().await;
     fail_over_under_the_running_process(&database, &restored, &retired, &flags).await;
     running.shutdown_checked().await.unwrap();
-    restart_over_the_file(&database, &directory).await;
 }
 
 /// The store reaches 90, is copied as a restore point, then reaches 100.
@@ -145,7 +143,9 @@ async fn reach_100_with_a_restore_point_at_90(database: &Database, restored: &st
 }
 
 /// The database name now serves the restore point at 90 under the running
-/// process, which keeps 100 and reports it, so writes are refused.
+/// process, which keeps 100, refuses the lower head and reports 100. The next
+/// write is numbered 101, above the process, which then applies it without a
+/// restart.
 async fn fail_over_under_the_running_process(
     database: &Database,
     restored: &str,
@@ -177,43 +177,6 @@ async fn fail_over_under_the_running_process(
     .await;
     let pool = database.pool().await;
     heartbeat_reports(&pool, flags.process().as_uuid(), ("control_plane", 100)).await;
-    let refused = PooledStore::new(pool.clone(), timing())
-        .write(
-            Write::kill(halt(), SwitchState::Engaged, change()),
-            deadline(),
-        )
-        .await
-        .unwrap();
-    assert!(
-        matches!(refused, WriteOutcome::Refused(Refusal::StoreBehindFleet)),
-        "{refused:?}"
-    );
-    pool.close().await;
-}
-
-/// The remedy: the process restarts over its version-100 file and publishes
-/// the restored head from the control plane, after which a write succeeds.
-async fn restart_over_the_file(database: &Database, directory: &std::path::Path) {
-    let (flags, running) = start(&database.options, directory).await;
-    assert_eq!(
-        flags.startup_file(),
-        StartupFile::Published {
-            version: Version::new(100)
-        }
-    );
-    until(|| matches!(capture_now(&flags).source(), Source::ControlPlane { version, .. } if version == Version::new(90))).await;
-    assert!(
-        flags.status().satisfies(Gate::Fresh),
-        "{:?}",
-        flags.status()
-    );
-    until(|| {
-        std::fs::read(directory.join("flags.bfsn"))
-            .is_ok_and(|bytes| bytes.windows(8).any(|w| w == 90u64.to_be_bytes()))
-    })
-    .await;
-    let pool = database.pool().await;
-    heartbeat_reports(&pool, flags.process().as_uuid(), ("control_plane", 90)).await;
     let written = PooledStore::new(pool.clone(), timing())
         .write(
             Write::kill(halt(), SwitchState::Engaged, change()),
@@ -222,9 +185,9 @@ async fn restart_over_the_file(database: &Database, directory: &std::path::Path)
         .await
         .unwrap();
     assert!(
-        matches!(written, WriteOutcome::Written { .. }),
+        matches!(&written, WriteOutcome::Written { version, .. } if *version == Version::new(101)),
         "{written:?}"
     );
-    running.shutdown_checked().await.unwrap();
+    until(|| matches!(capture_now(flags).source(), Source::ControlPlane { version, .. } if version == Version::new(101))).await;
     pool.close().await;
 }

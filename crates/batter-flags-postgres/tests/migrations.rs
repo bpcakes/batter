@@ -22,7 +22,7 @@ fn first_migration_checksum_is_immutable() {
         .collect();
     assert_eq!(
         checksum,
-        "012496b1a41f85d61d47df47505258cb25f4a27b789a557f16c6f50f63050558ef896ec21ed5a50364f526a44997cff2"
+        "382f517f73dbfb864c6b98c2eef5059019fd691f681eadb414c7b27b5b7a4f8293c59392eeeb0e036d17231427dcccb6"
     );
     assert_eq!(
         MIGRATOR.iter().next().unwrap().checksum.as_ref(),
@@ -172,22 +172,22 @@ async fn dedicated_ledger_coexists_in_both_orders_and_strict_host_stays_strict()
 async fn v1_column_lists_and_definer_privileges_are_pinned() {
     let f = Fixture::migrated().await;
     let tables = [
-        ("flag_control", "singleton version channel schema_revision"),
+        ("flag_control", "singleton version schema_revision"),
         (
             "flag_audit",
             "version flag_name operation actor reason guard recorded_by before_state after_state recorded_at",
         ),
         (
             "flag_state",
-            "name kind value_type salt state created_version updated_version archived_version created_at updated_at",
+            "name kind value_type state created_version updated_version archived_version created_at updated_at",
         ),
         (
             "flag_catalogs",
-            "manifest_digest catalog_digest manifest first_seen last_referenced_at",
+            "manifest_digest manifest first_seen last_referenced_at",
         ),
         (
             "flag_catalog_entries",
-            "manifest_digest key kind value_type fingerprint variants default_variant expiry owners only_in safe_state stale_rule governed_by flip_discipline",
+            "manifest_digest key kind value_type variants expiry only_in flip_discipline",
         ),
         (
             "flag_processes",

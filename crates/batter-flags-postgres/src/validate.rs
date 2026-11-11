@@ -138,13 +138,6 @@ pub(crate) async fn apply(
             Refusal::UndecodableByLiveDeclaration { builds: blocking },
         )));
     }
-    let ahead: bool = sqlx::query_scalar("SELECT EXISTS (SELECT FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > clock_timestamp() AND snapshot_source = 'control_plane' AND snapshot_version > $1)")
-        .bind(head).fetch_one(sql.executor()).await?;
-    if ahead {
-        return Ok(Prepared::Rollback(RollbackDecision::Refused(
-            Refusal::StoreBehindFleet,
-        )));
-    }
     let written = plan.written();
     let mut deferral = match written {
         Some(written) if !active.is_empty() => {

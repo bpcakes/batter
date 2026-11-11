@@ -7,16 +7,13 @@ END $$;
 CREATE TABLE flags.flag_control (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
-  channel text NOT NULL,
   schema_revision integer NOT NULL DEFAULT 1 CHECK (schema_revision >= 1)
 );
-INSERT INTO flags.flag_control(channel)
-VALUES ('batter_flags_' || left(encode(sha256(convert_to('flags', 'UTF8')), 'hex'), 16));
+INSERT INTO flags.flag_control DEFAULT VALUES;
 CREATE TABLE flags.flag_state (
   name text PRIMARY KEY CHECK (name ~ '^[a-z][a-z0-9_]{0,63}$'),
   kind text NOT NULL CHECK (kind IN ('release','mode','switch')),
   value_type text NOT NULL CHECK (value_type IN ('toggle','enum','switch')),
-  salt bytea NOT NULL DEFAULT uuid_send(gen_random_uuid()),
   state jsonb NOT NULL CHECK (jsonb_typeof(state) = 'object'
     AND state ? 'encoding' AND jsonb_typeof(state->'encoding') = 'number'
     AND (state->>'encoding')::numeric >= 1
@@ -31,7 +28,7 @@ CREATE TABLE flags.flag_state (
 CREATE TABLE flags.flag_audit (
   version bigint PRIMARY KEY,
   flag_name text NOT NULL,
-  operation text NOT NULL CHECK (operation IN ('create','set','archive','restore','reshuffle')),
+  operation text NOT NULL CHECK (operation IN ('create','set','archive','restore')),
   actor text NOT NULL,
   reason text NOT NULL,
   guard text NOT NULL,
@@ -42,7 +39,6 @@ CREATE TABLE flags.flag_audit (
 );
 CREATE TABLE flags.flag_catalogs (
   manifest_digest bytea PRIMARY KEY,
-  catalog_digest bytea NOT NULL,
   manifest jsonb NOT NULL,
   first_seen timestamptz NOT NULL DEFAULT clock_timestamp(),
   last_referenced_at timestamptz NOT NULL DEFAULT clock_timestamp()
@@ -52,15 +48,9 @@ CREATE TABLE flags.flag_catalog_entries (
   key text NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{0,63}$'),
   kind text NOT NULL CHECK (kind IN ('release','mode','switch')),
   value_type text NOT NULL CHECK (value_type IN ('toggle','enum','switch')),
-  fingerprint bytea NOT NULL,
   variants text[] NOT NULL,
-  default_variant text NULL,
   expiry date NULL,
-  owners text[] NULL,
   only_in text NULL,
-  safe_state text NULL,
-  stale_rule text NULL,
-  governed_by text NULL,
   flip_discipline text NOT NULL,
   PRIMARY KEY (manifest_digest, key),
   CHECK ((kind = 'switch') = (value_type = 'switch'))
@@ -100,9 +90,8 @@ CREATE FUNCTION flags.guard_control() RETURNS trigger LANGUAGE plpgsql SECURITY 
 SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF NEW.singleton IS DISTINCT FROM OLD.singleton
-     OR NEW.channel IS DISTINCT FROM OLD.channel
      OR NEW.schema_revision < OLD.schema_revision
-     OR (NEW.version <> OLD.version + 1 AND NOT
+     OR NOT (NEW.version > OLD.version OR
          (NEW.version = OLD.version AND NEW.schema_revision > OLD.schema_revision)) THEN
     RAISE EXCEPTION 'invalid flags counter transition';
   END IF;
@@ -152,10 +141,6 @@ BEGIN
        OR NEW.updated_version <= OLD.updated_version THEN
       RAISE EXCEPTION 'invalid flags state transition';
     END IF;
-    IF NEW.salt IS DISTINCT FROM OLD.salt AND
-       (NEW.state IS DISTINCT FROM OLD.state OR NEW.archived_version IS DISTINCT FROM OLD.archived_version) THEN
-      RAISE EXCEPTION 'invalid flags salt transition';
-    END IF;
     IF NEW.archived_version IS NOT NULL AND NEW.archived_version <> head THEN
       RAISE EXCEPTION 'invalid flags archive version';
     END IF;
@@ -189,7 +174,7 @@ SET search_path = pg_catalog, pg_temp AS $$
 DECLARE actor text := current_setting('batter_flags.actor', true);
   reason text := current_setting('batter_flags.reason', true);
   guard text := current_setting('batter_flags.guard', true);
-  operation text; before_state jsonb; channel text;
+  operation text; before_state jsonb;
 BEGIN
   IF actor IS NULL OR octet_length(actor) NOT BETWEEN 1 AND 128 OR actor ~ '[[:cntrl:]]'
      OR reason IS NULL OR octet_length(reason) NOT BETWEEN 1 AND 1024 OR reason ~ '[[:cntrl:]]'
@@ -199,16 +184,13 @@ BEGIN
   IF TG_OP = 'INSERT' THEN operation := 'create';
   ELSE
     before_state := to_jsonb(OLD);
-    operation := CASE WHEN NEW.salt IS DISTINCT FROM OLD.salt THEN 'reshuffle'
-      WHEN OLD.archived_version IS NULL AND NEW.archived_version IS NOT NULL THEN 'archive'
+    operation := CASE WHEN OLD.archived_version IS NULL AND NEW.archived_version IS NOT NULL THEN 'archive'
       WHEN OLD.archived_version IS NOT NULL AND NEW.archived_version IS NULL THEN 'restore'
       ELSE 'set' END;
   END IF;
   EXECUTE format('INSERT INTO %I.flag_audit(version, flag_name, operation, actor, reason, guard, before_state, after_state)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', TG_TABLE_SCHEMA)
     USING NEW.updated_version, NEW.name, operation, actor, reason, guard, before_state, to_jsonb(NEW);
-  EXECUTE format('SELECT channel FROM %I.flag_control WHERE singleton', TG_TABLE_SCHEMA) INTO channel;
-  PERFORM pg_notify(channel, NEW.updated_version::text);
   RETURN NULL;
 END $$;
 REVOKE ALL ON FUNCTION flags.audit_state() FROM PUBLIC;

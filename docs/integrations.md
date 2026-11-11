@@ -1662,16 +1662,17 @@ Batter never writes a `Pinned<T>` into a Runledger payload; the application
 places it in its own row, or in a payload by its own choice, where it joins the
 keyed idempotency snapshot. A handler resolves a stored pin through `JobFlags`,
 and a governing kill switch engaged in the invocation's view overrides it.
+Before the first publication a `Flags::gated_direct` job returns a native
+continuation after `awaiting` and spends no attempt, whatever its tripped
+policy; a `gated_workflow_step` job and a `Flags::flagged` job spend one.
 
 ## Flags control plane over PostgreSQL
 
 `batter::flags::control_plane::register_in` owns the refresh, the heartbeat,
-the prune, the optional last-good file and, with `LoadPolicy::with_listen`, a
-LISTEN component on its own two-connection pool whose connection options the
-root supplies (`batter-jkw6.19`). Every audited write notifies the store's
-channel; a notification only wakes a refresh, its payload is never read, and
-the poll remains the backstop. The application owns the connection options,
-the login's grants (a `FlagsRole`, `ServingProcess` for a serving login, or a
+the prune and the optional last-good file, all on the application's registered
+pool. A committed audited write notifies nobody; each process sees it at its
+next poll, so the poll interval is the propagation bound. The application owns
+the pool's connection options, the login's grants (a `FlagsRole`, `ServingProcess` for a serving login, or a
 `FlagsGrant` of `FlagsOperation`s for its exact-role manifest; `AuditedWrite`
 covers what a write judges) and its settings.
 

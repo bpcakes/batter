@@ -137,8 +137,6 @@ The links below retain this ADR's existing assessment anchors.
 - <a id="last-good-file-assessment-t-15-batter-jkw615"></a>[Last-good file assessment (T-15, batter-jkw6.15)](../evidence/api-assessments/flags.md#last-good-file-assessment-t-15-batter-jkw615)
 - <a id="operator-command-assessment-t-16-batter-jkw616"></a>[Operator command assessment (T-16, batter-jkw6.16)](../evidence/api-assessments/flags.md#operator-command-assessment-t-16-batter-jkw616)
 - <a id="flags-facade-and-consumer-assessment-t-17-batter-jkw617"></a>[Flags facade and consumer assessment (T-17, batter-jkw6.17)](../evidence/api-assessments/flags.md#flags-facade-and-consumer-assessment-t-17-batter-jkw617)
-- <a id="wakeable-periodic-seam-assessment-t-18-batter-jkw618"></a>[Wakeable periodic seam assessment (T-18, batter-jkw6.18)](../evidence/api-assessments/flags.md#wakeable-periodic-seam-assessment-t-18-batter-jkw618)
-- <a id="flags-listen-wake-assessment-t-19-batter-jkw619"></a>[Flags LISTEN wake assessment (T-19, batter-jkw6.19)](../evidence/api-assessments/flags.md#flags-listen-wake-assessment-t-19-batter-jkw619)
 - <a id="control-plane-invariants-assessment-t-21-batter-jkw621"></a>[Control-plane invariants assessment (T-21, batter-jkw6.21)](../evidence/api-assessments/flags.md#control-plane-invariants-assessment-t-21-batter-jkw621)
 - <a id="flags-control-plane-fresh-agent-evaluation-t-24-batter-jkw624"></a>[Flags control-plane fresh-agent evaluation (T-24, batter-jkw6.24)](../evidence/api-assessments/flags.md#flags-control-plane-fresh-agent-evaluation-t-24-batter-jkw624)
 - <a id="branch-state-protocol-repairs-batter-jkw636"></a>[Branch state-protocol repairs (batter-jkw6.36)](../evidence/api-assessments/flags.md#branch-state-protocol-repairs-batter-jkw636)

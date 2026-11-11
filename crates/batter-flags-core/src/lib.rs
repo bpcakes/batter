@@ -46,8 +46,8 @@
 //! [`GateReading`](low_level::GateReading) a gate acts on, the
 //! [`Authority`](low_level::Authority) transitions and the one immutable
 //! [`Published`](low_level::Published) record a loader follows, the
-//! `feature_flag.evaluation` event and, with the `serde` feature, the manifest,
-//! its digest and `manifest_diff`. Relationships between flags are stated on the
+//! `feature_flag.evaluation` event and, with the `serde` feature, the manifest
+//! and its digest. Relationships between flags are stated on the
 //! builder, with [`CatalogBuilder::requires`].
 //!
 //! Views are built through the disclosed [`low_level`] path, which asserts a
@@ -126,9 +126,8 @@ pub use key::{
 };
 #[cfg(feature = "serde")]
 pub use manifest::{
-    InvariantHold, InvariantJudgement, Manifest, ManifestDiff, ManifestDiffError, ManifestEntry,
-    ManifestInvariant, ManifestOwners, ManifestRequiredSettings, ManifestRetired, Retype,
-    manifest_diff,
+    InvariantHold, InvariantJudgement, Manifest, ManifestEntry, ManifestInvariant, ManifestOwners,
+    ManifestRequiredSettings, ManifestRetired,
 };
 pub use pin::{
     PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution, Unpinnable,

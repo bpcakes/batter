@@ -18,8 +18,3 @@ mod skips;
 mod startup;
 #[path = "periodic/support.rs"]
 mod support;
-
-#[path = "periodic/wake.rs"]
-mod wake;
-#[path = "periodic/wake_lifecycle.rs"]
-mod wake_lifecycle;

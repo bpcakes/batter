@@ -981,26 +981,6 @@ refreshes an audited PostgreSQL snapshot instead, over a `ControlPlaneStore`
 built from the pool `batter::sqlx::pool_in` registered, optionally keeping a
 last-good file. `crates/batter/examples/rollout.rs` shows both modes.
 
-### Push control-plane changes with LISTEN/NOTIFY (experimental, `batter-jkw6.19`)
-
-Every audited write notifies the store's channel. A root that wants changes
-sooner than its poll adds a listener endpoint to the load policy; the poll
-stays the backstop, so a lost listener only delays a change to the poll:
-
-```rust,ignore
-use batter::flags::control_plane::{ListenEndpoint, LoadPolicy, RefreshTiming};
-
-let timing = RefreshTiming::new(Duration::from_secs(30), Duration::from_secs(120))?;
-// The listener's own connection options, supplied by the root, and the
-// shortest spacing between two refreshes a wake may start.
-let listen = ListenEndpoint::new(listener_options, Duration::from_secs(1))?;
-let policy = LoadPolicy::start_on_defaults(timing).with_listen(listen)?;
-```
-
-`with_listen` refuses a wake spacing longer than the poll interval
-(`WakeSpacingTooLong`) when the policy is built. The listener is a component on a private
-two-connection pool; it never reads a payload, and its `Debug` is redacted.
-
 ### Cross-flag invariants in control-plane mode (experimental, `batter-jkw6.21`)
 
 `requires`, `conflicts` and `both_or_none` hold in control-plane mode as in
@@ -1082,36 +1062,6 @@ failure that must drain the process; recurrence itself proves nothing about a
 remote effect, so lease-loss and freshness policy stay in the application. The
 facade `worker` example shows both classes together with finite work that keeps
 draining while its lease is renewed.
-
-### Request an early maintenance run (experimental, `batter-jkw6.18`)
-
-Use `periodic::register_wakeable_in` when a notification should request an early
-run of the same maintenance operation. Wrap the ordinary policy with
-`WakeablePolicy::new(policy, wake_spacing)` and retain its `PeriodicWake`:
-
-```rust
-use batter::periodic::{register_wakeable_in, PeriodicWake, WakeablePolicy};
-
-// Inside the registration function above, with the same validated policy:
-let (reader, wake) = register_wakeable_in(
-    &mut registration,
-    "storage.refresh",
-    WakeablePolicy::new(policy, Duration::from_secs(2))?,
-    prune,
-)?;
-// Give a clone to the notification producer. This requests work; it does not
-// perform work or promise that an invocation has completed.
-let notification_wake: PeriodicWake = wake.clone();
-notification_wake.wake();
-```
-
-The library coalesces requests, spaces all starts, retains a tick that becomes
-due within the spacing window, and preserves the original cadence. Wakes during
-initialization stay inside its allowance; wakes after component termination are
-inert. The existing process driver owns stopping, destruction and joining, and
-its report counts wake-admitted runs. No paired cancellation or join call is
-required. See the executable registration example in
-[`periodic`](../crates/batter-core/src/periodic.rs).
 
 ## Sample health independently of HTTP traffic
 

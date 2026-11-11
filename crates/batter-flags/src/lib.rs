@@ -21,8 +21,7 @@
 //! snapshot and the process's presence, and `grants` lists the exact
 //! privileges each flags operation needs. `LoadPolicy::with_last_good` keeps
 //! the last control-plane publication on disk, so a restart during an outage
-//! serves it, and `LoadPolicy::with_listen` wakes the refresh on every
-//! committed write.
+//! serves it.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 

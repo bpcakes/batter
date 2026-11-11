@@ -6,7 +6,6 @@
 )]
 #[path = "support/fixture.rs"]
 mod fixture;
-use batter_flags_postgres::*;
 use fixture::*;
 use sqlx::{Connection, PgConnection};
 
@@ -110,51 +109,5 @@ async fn nonowner_writer_cannot_bypass_audit_counter_or_append_only_guards() {
     rejected(&mut owner,"INSERT INTO flags.flag_audit(version,flag_name,operation,actor,reason,guard,after_state) VALUES (500,'x','create','a','r','unconditional','{}')".into(),"P0001").await;
     owner.close().await.unwrap();
     f.drop_role("flags_guard_writer").await;
-    f.close().await;
-}
-#[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18"]
-async fn notify_is_transactional_and_payload_is_only_bounded_counter() {
-    let f = Fixture::migrated().await;
-    let channel = f.store.load(deadline()).await.unwrap().channel().to_owned();
-    assert!(channel.len() <= 63 && channel.starts_with("batter_flags_"));
-    let long_channel:String=sqlx::query_scalar("SELECT 'batter_flags_' || left(encode(sha256(convert_to(repeat('x',63),'UTF8')),'hex'),16)")
-        .fetch_one(&f.pool).await.unwrap();
-    let mut listener = sqlx::postgres::PgListener::connect(f.lease.database_url())
-        .await
-        .unwrap();
-    listener.listen(&channel).await.unwrap();
-    listener.listen(&long_channel).await.unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "BEGIN; {META} UPDATE flags.flag_control SET version=version+1; {INSERT} ROLLBACK"
-    )))
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), listener.recv())
-            .await
-            .is_err()
-    );
-    let _ = f
-        .store
-        .write(
-            Write::explicit(
-                key("committed"),
-                ExplicitValue::ModeToggle(batter_flags_core::Toggle::On),
-                change(None),
-            ),
-            deadline(),
-        )
-        .await
-        .unwrap();
-    let message = tokio::time::timeout(std::time::Duration::from_secs(2), listener.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(message.channel(), channel);
-    assert_eq!(message.payload(), "1");
-    assert!(i64::MAX.to_string().len() < 8000);
-    drop(listener);
     f.close().await;
 }

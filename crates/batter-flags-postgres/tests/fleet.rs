@@ -35,7 +35,7 @@ fn builds(blocking: &[BlockingBuild]) -> Vec<(&str, Presence)> {
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
-async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
+async fn only_a_live_control_plane_report_above_the_head_moves_the_next_version() {
     let f = Fixture::migrated().await;
     let ahead = || SnapshotReport::ControlPlane(Version::new(50));
     let mut silent = process(&f.store, Build::Base, "silent", 1, 600);
@@ -50,7 +50,7 @@ async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
     until_silent().await;
 
     // A persisted file, the declared base, a Silent and a Stopped process
-    // above the head never block.
+    // above the head never move the next version.
     let written = f
         .store
         .write(set("fast_path", "on", None), deadline())
@@ -69,18 +69,21 @@ async fn only_a_live_control_plane_report_above_the_head_blocks_writes() {
 
     let mut live = process(&f.store, Build::Base, "live", 60, 600);
     beat(&mut live, ahead()).await;
+    assert!(
+        matches!(
+            f.store
+                .write(set("fast_path", "off", None), deadline())
+                .await
+                .unwrap(),
+            WriteOutcome::Written { version, .. } if version == Version::new(51)
+        ),
+        "a Live process above the head moves the next version above itself"
+    );
+    // At or below the head, the same Live process moves nothing.
+    beat(&mut live, SnapshotReport::ControlPlane(Version::new(51))).await;
     assert!(matches!(
-        f.store
-            .write(set("fast_path", "off", None), deadline())
-            .await
-            .unwrap(),
-        WriteOutcome::Refused(Refusal::StoreBehindFleet)
-    ));
-    // At or below the head, the same Live process does not block.
-    beat(&mut live, SnapshotReport::ControlPlane(Version::new(1))).await;
-    assert!(matches!(
-        f.store.write(set("fast_path", "off", None), deadline()).await.unwrap(),
-        WriteOutcome::Written { version, .. } if version == Version::new(2)
+        f.store.write(set("fast_path", "on", None), deadline()).await.unwrap(),
+        WriteOutcome::Written { version, .. } if version == Version::new(52)
     ));
     f.close().await;
 }

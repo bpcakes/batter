@@ -62,21 +62,9 @@ publication is persisted under a directory lock, and `last_good()` reports
 the persister's state (up to date, a publication waiting and why its last
 write failed, a write in flight, or too large); a persist failure never
 changes a run's outcome. The file is a
-cache: deleting it is always safe. `LoadPolicy::with_listen(ListenEndpoint)`
-also wakes the refresh when an audited write commits: a listener, on a
-two-connection pool of its own for each session, LISTENs on the store's
-channel, wakes the refresh once after every LISTEN to catch what it missed, and
-again on every notification, never sooner than the wake spacing after the
-previous run. The spacing may not exceed the poll interval (`with_listen`
-returns `WakeSpacingTooLong` when the policy is built), so the poll stays
-the backstop and a lost listener delays a change by at most one poll. Each
-session's pool is closed within a bound when the session ends, so a connection
-a dead peer keeps busy never blocks the next one; at drain the listener
-unlistens first. Live tests cover delivery to every listening process within
-the spacing, coalesced bursts, a notification held by an uncommitted
-transaction, a terminated listener rebuilt on a new backend, poll-only
-convergence and drain. The standby refusal, a pool closed during a receive and
-the rebuild after a black-holed peer are unverified. The catalog grammar and evaluation live in
+cache: deleting it is always safe. A committed audited write notifies nobody: every
+process sees it at its next poll, so the poll interval bounds propagation.
+The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
 command in [`batter-flags-cli`](../batter-flags-cli/README.md).
@@ -118,10 +106,12 @@ publication with its `awaiting: Recheck`, as the gate constructors do;
 Both gate constructors require `GatePolicy { when_tripped, awaiting }`.
 `Recheck::after` accepts 30 seconds through one hour; deterministic per-job spread
 adds at most 25%. `DirectWhenTripped` allows `Defer`, `DeferAttempt`, and `Drop`;
-`StepWhenTripped` allows only the latter two. Before the first publication the
-wrapper always defers an attempt with `awaiting`. A settings floor is an actual
-operator trip and can apply `Drop` even before publication. Prolonged initial
-unavailability can exhaust attempts.
+`StepWhenTripped` allows only the latter two. Before the first publication a
+gated direct job continues after `awaiting` without spending an attempt, whatever
+its tripped policy; a workflow step, which cannot continue, and a `flagged` job
+defer an attempt instead, so prolonged initial unavailability can exhaust theirs.
+A settings floor is an actual operator trip and can apply `Drop` even before
+publication.
 
 `Defer` returns a native continuation: after commit it resets attempts, advances
 the run and releases resource claims. `DeferAttempt` consumes attempts and uses

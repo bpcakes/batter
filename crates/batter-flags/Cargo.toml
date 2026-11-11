@@ -62,10 +62,6 @@ name = "control_plane_live"
 required-features = ["postgres"]
 
 [[test]]
-name = "listen_live"
-required-features = ["postgres"]
-
-[[test]]
 name = "invariants_live"
 required-features = ["postgres"]
 

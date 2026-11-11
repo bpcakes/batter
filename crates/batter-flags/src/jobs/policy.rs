@@ -75,21 +75,13 @@ pub enum StepWhenTripped {
 
 /// Explicit policies for an operator trip and for missing initial publication.
 ///
-/// Both fields are required. Missing publication always consumes an attempt
-/// with `awaiting`, even when `when_tripped` is `Drop`.
+/// Both fields are required. Missing publication rechecks after `awaiting`
+/// whatever `when_tripped` says: a direct job continues without spending an
+/// attempt, and a workflow step, which cannot continue, spends one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GatePolicy<P> {
     /// What an actual trip does.
     pub when_tripped: P,
     /// Validated recheck for the initial publication window.
     pub awaiting: Recheck,
-}
-
-impl From<StepWhenTripped> for DirectWhenTripped {
-    fn from(value: StepWhenTripped) -> Self {
-        match value {
-            StepWhenTripped::DeferAttempt(recheck) => Self::DeferAttempt(recheck),
-            StepWhenTripped::Drop => Self::Drop,
-        }
-    }
 }

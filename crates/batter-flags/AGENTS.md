@@ -21,8 +21,8 @@ view-returning method; the only public live read is `low_level::capture_now`.
 - `src/control_plane.rs` is `register_in` and `RegisteredFlags`; `control_plane/`
   holds the refresh (`refresh.rs`), presence and its heartbeat report
   (`presence.rs`), status and readiness (`status.rs`), timing and load policy
-  (`timing.rs`), the LISTEN component (`listen.rs`) and the crate-private load
-  source with its test fake (`source.rs`).
+  (`timing.rs`) and the crate-private load source with its test fake
+  (`source.rs`).
 - `src/last_good.rs` and `last_good/` own the last-good file, format `BFSN` v1
   ([`docs/snapshot-file-v1.md`](docs/snapshot-file-v1.md)).
 - `src/grants.rs` and `grants/inventory.rs` list the privileges each
@@ -76,8 +76,8 @@ last-good file never changes a run's outcome or narrows readiness.
 cargo test -p batter-flags --all-features --locked
 cargo clippy -p batter-flags --all-targets --all-features --locked -- -D warnings
 BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL=postgres://... cargo test -p batter-flags \
-  --features postgres --test control_plane_live --test listen_live \
-  --test invariants_live -- --ignored
+  --features postgres --test control_plane_live --test invariants_live \
+  -- --ignored
 ```
 
 Full backend verification follows the root guide and the active delivery

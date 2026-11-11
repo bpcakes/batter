@@ -61,10 +61,10 @@ fn sqlstate(mut error: &(dyn Error + 'static)) -> Option<String> {
 }
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
-async fn deferred_notify_queue_sqlstate_is_known_failure_and_retires() {
+async fn an_error_response_at_commit_is_a_known_failure_and_retires() {
     let f = Fixture::migrated().await;
-    // Reproduce PostgreSQL's COMMIT ErrorResponse without filling a cluster-wide queue.
-    sqlx::raw_sql("CREATE FUNCTION flags.simulate_queue_full() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='54000', MESSAGE='private failure marker'; END $$; CREATE CONSTRAINT TRIGGER simulate_queue AFTER UPDATE ON flags.flag_control DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION flags.simulate_queue_full();").execute(&f.pool).await.unwrap();
+    // A deferred trigger makes PostgreSQL answer COMMIT with an ErrorResponse.
+    sqlx::raw_sql("CREATE FUNCTION flags.simulate_commit_refusal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='54000', MESSAGE='private failure marker'; END $$; CREATE CONSTRAINT TRIGGER simulate_refusal AFTER UPDATE ON flags.flag_control DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION flags.simulate_commit_refusal();").execute(&f.pool).await.unwrap();
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(f.lease.database_url())

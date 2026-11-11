@@ -53,7 +53,7 @@ class SqlxLiveControls(unittest.TestCase):
                 self.assertEqual(built[built.index("-p") + 1], "batter")
                 self.assertIn("flags-postgres", built[built.index("--features") + 1])
                 self.assertEqual(built[built.index("--test") + 1], target)
-        self.assertIn("a_restore_below_the_fleet_refuses_writes_until_the_process_restarts_on_the_restored_head",
+        self.assertIn("a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges",
                       sqlx_live.TARGETS["flags_live"])
 
     def test_missing_environment_fails_before_invocation(self):

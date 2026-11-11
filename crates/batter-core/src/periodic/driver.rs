@@ -129,7 +129,6 @@ where
         policy,
         mut work,
         history,
-        scheduling,
     } = registration;
     // Nothing has run yet, so an abandoned or never-polled registration
     // performs no application work at all.
@@ -151,7 +150,7 @@ where
         // that any maintenance has succeeded.
         None => ComponentState::running(startup, &history, &obligation),
     };
-    let mut ticker = Schedule::new(policy.interval(), scheduling);
+    let mut ticker = Schedule::new(policy.interval());
     let mut invocation = 0u64;
     let ending = loop {
         let phase = component.phase();
@@ -227,7 +226,6 @@ where
     };
     // The factory and its application captures are destroyed when this future
     // returns, so the ending's concrete cause is retained before that.
-    drop(ticker);
     finish(name, &history, invocation, ending, component)
 }
 

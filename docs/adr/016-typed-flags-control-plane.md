@@ -108,8 +108,8 @@ Every evidenced requirement is 3/3.
   mandatory `Expiry` on release flags (0/3 roots), `StaleRule`, the
   route-group scope of the HTTP gate with the permanent `HttpFailure::Disabled`
   (owner answer 3), the periodic gate, the evaluation events, the control plane
-  with its presence and fleet view, the operator command, the last-good file,
-  the NOTIFY wake and control-plane invariant holds. Per-subject rollouts left
+  with its presence and fleet view, the operator command, the last-good file
+  and control-plane invariant holds. Per-subject rollouts left
   this epic (owner answer 4).
 
 ## Decision
@@ -129,8 +129,8 @@ answers 5 and 9), consolidating flags under the Batter name:
   presence, pruning and the fleet view, on `batter-sqlx` (owner answer 7).
 - `batter-flags` owns declared resolution, the process reader, the protected
   HTTP, job and periodic gates, `TestFlags`, the exact-role grant inventory and
-  `control_plane::register_in`, which registers the refresh, heartbeat, prune
-  and optional LISTEN wake as process components. The refresh persists the
+  `control_plane::register_in`, which registers the refresh, heartbeat and
+  prune as process components. The refresh persists the
   optional last-good file at the end of a run, in a blocking write that can be
   abandoned at its deadline and outlive the run, so joining the component does
   not prove the write stopped; roots end with `Runtime::shutdown_timeout`.
@@ -227,6 +227,14 @@ error it does not recognize.
 - `requires_settings` "present and non-empty" means not exactly empty.
 - `DeclaredError`'s `Debug` wraps its redacted `Display`; the only retained
   value is a non-Unicode setting, reachable through `source()`.
+- The LISTEN/NOTIFY wake was withdrawn before merge: it bought at most one poll
+  interval and made a full notification queue fail every audited write, kill
+  switches included. A committed write notifies nobody, and the poll interval
+  is the propagation bound.
+- A write after a restore or a failover to an older head is numbered above the
+  highest version a Live control-plane process reports, instead of refused:
+  running processes apply it at their next poll without a restart, and versions
+  skip from the restored head to above the fleet.
 
 ## Overrides
 
@@ -296,9 +304,11 @@ error it does not recognize.
 - Before the first publication without a last-good file, a restart during a
   control-plane outage loses every engagement that exists only in the control
   plane; `LoadPolicy::with_last_good` and the settings floor are the remedies.
-  Meanwhile every gated job fails each attempt with its awaiting recheck,
-  whatever its tripped policy, so a long outage can exhaust a job's attempts
-  without invoking its handler, and gated periodic components skip their runs.
+  Meanwhile a gated direct job continues after its awaiting recheck without
+  spending an attempt, whatever its tripped policy. A gated workflow step cannot
+  continue and a `flagged` job does not know which it wraps, so each of those
+  fails the attempt, and a long outage can exhaust its attempts without invoking
+  its handler. Gated periodic components skip their runs.
 - ADR-014's reopening condition is noted: one consumer now composes through
   the lifecycle layer. The re-survey is deferred to `batter-8pn8` (owner
   answer 10).
@@ -311,6 +321,3 @@ error it does not recognize.
 - A second consumer of the control plane, which would let track 2 assess
   promotion.
 - Any root that writes flag values into a job payload (R-09 says none does).
-- Notification queue pressure in a shared cluster: a full queue fails every
-  audited write at COMMIT with SQLSTATE 54000, kill switches included; the
-  settings floor engages a switch without the store.

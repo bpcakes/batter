@@ -32,7 +32,8 @@ ownership; do not expose `PgConnection` or add a caller rollback protocol.
 
 ## Invariants
 
-One locked counter, one row change, one audit row, one transactional NOTIFY.
+One locked counter, one row change, one audit row. A write notifies nobody;
+processes poll.
 No-op/refusal rolls back the counter. Refusals are judged inside the write's
 transaction, after the counter lock; a kill switch is never refused for the
 flags engaging it holds. Silent declarers still block incompatible
