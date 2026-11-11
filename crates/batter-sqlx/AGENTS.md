@@ -52,6 +52,10 @@ consumer is `examples/postgres-lifecycle`.
 
 ## Invariants
 
+Protected `pool_in` retains the finalizer registration evidence in its
+`PgProfiledPool`. Caller-owned constructors carry no such evidence. Adapters
+can check `is_registered_in` before attaching dependents to that same target.
+
 Dropping an unsuccessful lease detaches and drops the client connection.
 Ordinary pool return requires a private proof created only after application
 success and a successful same-connection

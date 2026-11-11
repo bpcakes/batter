@@ -30,6 +30,7 @@ jobs:
       tree_verified: ${{ steps.plan.outputs.tree_verified }}
       verified_run: ${{ steps.plan.outputs.verified_run }}
       runlimit_postgres: ${{ steps.plan.outputs.runlimit_postgres }}
+      flags_postgres: ${{ steps.plan.outputs.flags_postgres }}
     env:
       RUSTUP_TOOLCHAIN: "1.98.1"
     steps:
@@ -92,6 +93,61 @@ jobs:
         run: |
           cargo test -p runlimit-postgres --tests --locked -- --ignored --test-threads=1
           cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
+
+  native-flags-postgres:
+    needs: plan
+    if: >-
+      ${{ !cancelled() && github.event_name != 'schedule'
+      && (needs.plan.result != 'success' || needs.plan.outputs.flags_postgres == 'true') }}
+    name: Flags PostgreSQL 18 (1.98.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          # Not `flags`: the default search_path starts with "$user", so a
+          # role named after the flags schema would resolve the host
+          # migrator's unqualified `_sqlx_migrations` into `flags`.
+          POSTGRES_USER: ci_admin
+          POSTGRES_PASSWORD: ci_admin
+          POSTGRES_DB: ci_admin
+          # The fixtures create password-less roles and connect as them, as
+          # against a local trust-authenticated server; this service is
+          # disposable and reachable only from the job.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_admin -d ci_admin"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      # A superuser admin URL; each test leases and drops its own database.
+      BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL: postgresql://ci_admin:ci_admin@127.0.0.1:5432/ci_admin
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Cache Rust dependencies
+        id: rust-cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # PRs reuse master caches without creating a cache for every PR.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Reuse the earlier verification of this tree
+        id: reuse
+        if: needs.plan.outputs.tree_verified == 'true' && steps.rust-cache.outputs.cache-hit == 'true'
+        env:
+          VERIFIED_RUN: ${{ needs.plan.outputs.verified_run }}
+        run: echo "This tree passed in $VERIFIED_RUN and the master cache is current; tests are skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Execute the flags PostgreSQL 18 suites
+        if: steps.reuse.outcome == 'skipped'
+        run: |
+          cargo test -p batter-flags-postgres --tests --locked -- --ignored --test-threads=1
+          cargo test -p batter-flags --features postgres --test control_plane_live --test invariants_live --locked -- --ignored --test-threads=1
+          cargo test -p batter-flags-cli --tests --locked -- --ignored --test-threads=1
 
   subprocess-macos:
     needs: plan
@@ -199,7 +255,7 @@ jobs:
   # here later must also be listed in `needs` before it may reuse the marker.
   record-verified-tree:
     name: Record verified tree
-    needs: [plan, native-runlimit-postgres, subprocess-macos, verify]
+    needs: [plan, native-runlimit-postgres, native-flags-postgres, subprocess-macos, verify]
     if: >-
       ${{ !cancelled()
       && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
@@ -208,7 +264,10 @@ jobs:
       && needs.subprocess-macos.result == 'success'
       && (needs.native-runlimit-postgres.result == 'success'
           || (needs.native-runlimit-postgres.result == 'skipped'
-              && needs.plan.outputs.runlimit_postgres == 'false')) }}
+              && needs.plan.outputs.runlimit_postgres == 'false'))
+      && (needs.native-flags-postgres.result == 'success'
+          || (needs.native-flags-postgres.result == 'skipped'
+              && needs.plan.outputs.flags_postgres == 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

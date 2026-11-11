@@ -47,7 +47,9 @@ mod atomic;
 mod atomic_context;
 mod atomic_policy;
 mod atomic_runner;
+mod deadline;
 mod failure;
+mod migration;
 mod native_query;
 mod pooled_query;
 mod profile;
@@ -59,8 +61,8 @@ pub mod managed;
 pub mod verification;
 
 pub use atomic::{
-    CommitUnconfirmed, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError, PgScopeFailure,
-    PgScopeLoss, PgScopedSql, PgTransactionError,
+    CommitUnconfirmed, PgCommitConfirmed, PgCommitStop, PgRollbackConfirmed, PgScopeError,
+    PgScopeFailure, PgScopeLoss, PgScopedSql, PgTransactionError,
 };
 pub use atomic_context::{run_atomic_in, run_atomic_profiled_in};
 pub use atomic_policy::{
@@ -75,7 +77,9 @@ pub use atomic_runner::{
 /// Caller-owned transactions and pools. These entry points require explicit
 /// completion/cleanup and are not equivalent to the protected runners or [`pool_in`].
 pub mod low_level;
+pub use deadline::PgDeadlineError;
 pub use failure::{FailureClass, SqlxFailure};
+pub use migration::{PgMigrationTimeoutError, PgMigrationTimeouts};
 pub use native_query::PgNativeQuery;
 pub use pooled_query::PgQueryHandle;
 pub use profile::{PgProfileError, PgSessionProfile};
@@ -565,11 +569,11 @@ pub fn pool_in(
 ) -> Result<PgProfiledPool, sqlx::Error> {
     let database = PgProfiledPool::connect_lazy(connect_options, profile, pool_options)?;
     let closing = database.pool().clone();
-    slot.register(move || async move {
+    let registration = slot.register_tracked(move || async move {
         closing.close().await;
         Ok(())
     });
-    Ok(database)
+    Ok(database.with_cleanup(registration))
 }
 
 #[cfg(feature = "test-support")]

@@ -1,0 +1,34 @@
+[package]
+name = "batter-flags-core"
+description = "Typed flag and kill-switch catalog, snapshots and evaluation for batter-flags"
+version = "0.0.1"
+edition.workspace = true
+rust-version = "1.98.1"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/batter-flags-core"
+publish = ["crates-io"]
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+# Serialization for the manifest and snapshot types that the store and the
+# operator command exchange. Off by default so the bare closure holds no
+# serialization library.
+serde = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.23", features = ["registry"] }

@@ -14,6 +14,7 @@ mod assembly;
 mod client;
 mod declared;
 mod fallback;
+pub(crate) mod gate;
 mod group;
 mod guarded;
 mod inventory;
@@ -25,6 +26,7 @@ mod tests;
 pub use assembled::AssembledHttp;
 pub use client::InProcessClient;
 pub use declared::{RouteInventory, RouteInventoryError};
+pub use gate::{GateView, Gated, GroupGate};
 pub use group::{BrowserPolicy, GroupPolicy, MutationCheckWaiver, RouteGroup, RouteGroupError};
 pub use guarded::GuardedRouter;
 pub use probe::{ProbePath, ProbePathError, ProbeRegistrationError};
@@ -95,7 +97,7 @@ impl Error for BoundaryAssemblyError {}
 /// HTTP observer are outermost; probes sit outside every route group; and each
 /// route group receives, from outside in, its private-response headers when it
 /// has a [`BrowserPolicy`], its lifecycle admission and response-construction
-/// deadline, its mutation checks when configured, and then the application's
+/// deadline, its optional group gate, its mutation checks when configured, and then the application's
 /// own layers and routes. The routes passed to [`Self::assemble`] form the
 /// `default` group, whose policy is given to [`Self::new`] and which owns every
 /// guarded root and nested fallback. [`Self::with_rendered_fallback`] instead

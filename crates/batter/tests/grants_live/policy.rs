@@ -7,6 +7,7 @@
 use batter::sqlx::verification::AuthorityAllowance;
 
 use super::support::Result;
+use batter::flags::grants::{FlagsOperation, SCHEMA as FLAGS_SCHEMA};
 use batter::runledger::grants::RunledgerOperation;
 use batter::runlimit::grants::RunlimitOperation;
 use batter::sqlx::verification::{
@@ -30,6 +31,7 @@ pub(crate) enum PublicPolicy {
 
 /// One consumer-shaped composition request.
 pub(crate) struct Composition<'a> {
+    pub(crate) flags: Option<&'a [FlagsOperation]>,
     pub(crate) jobs: Option<(&'a str, &'a [RunledgerOperation])>,
     pub(crate) quotas: Option<(&'a str, &'a [RunlimitOperation])>,
     pub(crate) application: Option<&'a str>,
@@ -39,6 +41,7 @@ pub(crate) struct Composition<'a> {
 impl<'a> Composition<'a> {
     pub(crate) const fn new(public: PublicPolicy) -> Self {
         Self {
+            flags: None,
             jobs: None,
             quotas: None,
             application: None,
@@ -64,6 +67,12 @@ impl<'a> Composition<'a> {
         self
     }
 
+    /// The flags operations, in their fixed `flags` schema.
+    pub(crate) const fn with_flags(mut self, operations: &'a [FlagsOperation]) -> Self {
+        self.flags = Some(operations);
+        self
+    }
+
     pub(crate) const fn with_application(mut self, schema: &'a str) -> Self {
         self.application = Some(schema);
         self
@@ -75,11 +84,13 @@ impl<'a> Composition<'a> {
             .application
             .or(self.jobs.map(|(schema, _)| schema))
             .or(self.quotas.map(|(schema, _)| schema))
+            .or(self.flags.map(|_| FLAGS_SCHEMA))
             .ok_or_else(|| super::support::fail("a composition needs at least one schema"))?;
         let mut scope = Vec::new();
         for schema in [
             self.jobs.map(|(schema, _)| schema),
             self.quotas.map(|(schema, _)| schema),
+            self.flags.map(|_| FLAGS_SCHEMA),
             self.application,
         ]
         .into_iter()
@@ -123,6 +134,13 @@ impl<'a> Composition<'a> {
             let fragment = batter::runlimit::grants::grant_fragment(
                 &self.objects(schema)?,
                 operations.iter().copied(),
+            )?;
+            manifest = manifest.with_fragment(fragment)?;
+        }
+        if let Some((first, rest)) = self.flags.and_then(<[FlagsOperation]>::split_first) {
+            let fragment = batter::flags::grants::grant_fragment(
+                &self.objects(FLAGS_SCHEMA)?,
+                &batter::flags::grants::FlagsGrant::operations(*first, rest.iter().copied()),
             )?;
             manifest = manifest.with_fragment(fragment)?;
         }

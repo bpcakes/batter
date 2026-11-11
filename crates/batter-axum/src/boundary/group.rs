@@ -1,6 +1,6 @@
 //! Guarded route groups with their own request and browser policy.
 
-use super::GuardedRouter;
+use super::{GroupGate, GuardedRouter, gate};
 use crate::{
     RequestPolicy,
     browser::{
@@ -193,7 +193,7 @@ impl BrowserPolicy {
     }
 }
 
-/// Request policy and optional browser policy for one guarded route group.
+/// Request policy, optional browser policy and optional gate for one guarded route group.
 ///
 /// A [`RequestPolicy`] converts into a group policy without browser policy, so
 /// `HttpBoundary::new(request_policy)` keeps its meaning.
@@ -202,6 +202,7 @@ impl BrowserPolicy {
 pub struct GroupPolicy {
     request: RequestPolicy,
     browser: Option<BrowserPolicy>,
+    gate: Option<GroupGate>,
 }
 
 impl GroupPolicy {
@@ -210,6 +211,7 @@ impl GroupPolicy {
         Self {
             request,
             browser: None,
+            gate: None,
         }
     }
 
@@ -218,21 +220,62 @@ impl GroupPolicy {
         Self {
             request,
             browser: Some(browser),
+            gate: None,
+        }
+    }
+
+    /// Admit requests, then capture one gate value or render disablement.
+    ///
+    /// See [`GroupGate`] for an example and method/fallback scope. This constructor
+    /// accepts exactly one gate; there is no setter that can replace its source.
+    pub fn gated(request: RequestPolicy, gate: GroupGate) -> Self {
+        Self {
+            request,
+            browser: None,
+            gate: Some(gate),
+        }
+    }
+
+    /// Admit requests, run the gate, then check browser mutation signals.
+    ///
+    /// Private browser response headers also cover disabled responses.
+    /// Use this in place of [`Self::gated`] when the group carries cookies:
+    /// ```
+    /// use batter_axum::{BrowserPolicy, GroupGate, GroupPolicy, RequestPolicy};
+    /// fn group(request: RequestPolicy, browser: BrowserPolicy, gate: GroupGate) -> GroupPolicy {
+    ///     GroupPolicy::browser_gated(request, browser, gate)
+    /// }
+    /// ```
+    pub fn browser_gated(request: RequestPolicy, browser: BrowserPolicy, gate: GroupGate) -> Self {
+        Self {
+            request,
+            browser: Some(browser),
+            gate: Some(gate),
         }
     }
 
     /// Install this policy around every route and fallback in `router`.
     ///
     /// Layers added later run outside earlier ones, so the order is: private
-    /// response headers, then admission, then the browser gate, which checks
-    /// mutations and records whether the request may present credentials, then
+    /// response headers, then admission, then the group gate, then the browser
+    /// gate, which checks mutations and records credential access, then
     /// the application's own layers and handler.
     pub(super) fn apply(self, mut router: Router) -> Router {
-        let Self { request, browser } = self;
+        let Self {
+            request,
+            browser,
+            gate,
+        } = self;
         if let Some(browser) = &browser {
             router = router.layer(middleware::from_fn_with_state(
                 browser.mutation.clone(),
                 browser_gate,
+            ));
+        }
+        if let Some(gate) = gate {
+            router = router.layer(middleware::from_fn_with_state(
+                (gate, request.clone()),
+                gate::run,
             ));
         }
         router = router.layer(middleware::from_fn_with_state(request, request_admission));

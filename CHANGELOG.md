@@ -14,6 +14,116 @@ contracts, capability facts and validation history.
   healthy later address is tried.
   Add opt-in connection, resolver-queue and response-buffer measurements.
 
+- `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
+  extracted where no gate of the route's group captured its value still
+  rejects with the sanitized 500, and the completion event now carries
+  `gate_outcome="unmatched_view"`, telling the wiring error apart from a server
+  fault (`batter-jkw6.57`). A compile-time pairing is not offered: it would
+  need a gate-owned router state, and `State<AppState>` could then not be
+  extracted beside it. The observation's gate fact is an explicit enum.
+
+- `batter_core::settings::SettingsSource` records whether any layer was
+  narrowed by `select_dedicated` or `select_environment`
+  (`SettingsSource::selection()`, `SettingsSelection::{Captured, Selected}`);
+  `overlay` keeps `Selected` from either layer (`batter-jkw6.53`).
+- Add `batter_sqlx::low_level::PgAtomicTransaction::commit_unless`, which
+  commits unless a caller-supplied interrupt completes first. An interrupt
+  before COMMIT is sent returns `PgCommitStop::Interrupted` and commits
+  nothing; once COMMIT is sent nothing interrupts it, and a failure is
+  `PgCommitStop::Unconfirmed`. `commit` is unchanged.
+- Add `batter_core::registration::Registration::check_names`, which checks
+  component and finalizer names against the target before anything is
+  registered, so a helper that registers several pieces installs all of them or
+  none (`batter-jkw6.51`).
+- **Breaking:** add `batter_core::periodic::register_skippable_in` and
+  `PeriodicOutcome`: a run registered there returns `Ok(PeriodicOutcome::Ran)`
+  or `Ok(PeriodicOutcome::Skipped)`, and a skip is counted in the new
+  `PeriodicSummary::skipped` and the completion report, never as a success, and
+  never acknowledges first-success startup (`batter-jkw6.50`).
+  `register_periodic_in` is unchanged. The new
+  public field breaks a struct literal or exhaustive pattern of
+  `PeriodicSummary`, which is not `#[non_exhaustive]`. No shim: a field cannot
+  be added behind a deprecation, and a pattern ending in `..` keeps compiling.
+
+  ```rust,ignore
+  // Before:
+  let PeriodicSummary { invocations, succeeded, recoverable_failures, deadline_exceeded,
+      stop_interrupted, unsampled_failures, saturated, first_failure, last_failure,
+      terminal_failure, acknowledged, completion } = summary;
+  // After: name `skipped`, or end the pattern in `..`.
+  let PeriodicSummary { invocations, succeeded, skipped, .. } = summary;
+  ```
+- Add experimental typed flags and kill switches
+  ([ADR-016](docs/adr/016-typed-flags-control-plane.md), `batter-jkw6`), through
+  the facade's `flags`, `flags-postgres`, `flags-axum`, `flags-runledger` and
+  `flags-test-support` features and the `rollout` example
+  (`required-features = ["flags-postgres"]`). The four packages are new and
+  unreleased, so this entry describes them as they are; no migration applies.
+
+  Catalog (`batter-flags-core`, no Batter dependency):
+  `CatalogBuilder::new(prefix, kind, class)` names the first process kind and
+  environment class, so `build` cannot fail; release and mode declarations
+  track `only_in` and `governed_by` as set-once type states. Snapshots publish
+  or hold rows one by one, evaluation is clock-free, and
+  `SnapshotView::pin` returns `Result<Pinned<V>, Unpinnable>`, refusing an
+  error decision. One `low_level::Publisher` owns the published `Record`: it
+  refuses a regression before judging rows, carries the kill-switch states it
+  serves, and admits the last-good file only through `Publisher::restore`.
+  `low_level::gate_switch` reads a switch the view cannot answer for as
+  `Tripped`.
+
+  Declared mode and gates (`batter-flags`): `declared::resolve` reads the
+  root's captured `SettingsSource` once, refuses a narrowed one with
+  `DeclaredError::NarrowedSource`, and judges a governed flag at its code
+  default while its switch resolves engaged. HTTP route-group, job and
+  periodic gates each evaluate one captured view; a gated periodic skip is
+  core's `PeriodicSummary::skipped`. `Flags::flagged(inner, awaiting)`,
+  `gated_direct` and `gated_workflow_step` build job handlers. Before the
+  first publication a `gated_direct` job returns a continuation after
+  `awaiting` and spends no attempt, whatever its tripped policy; a
+  `gated_workflow_step` job and a `flagged` job spend an attempt.
+  `test::TestFlags` is behind `test-support` (the facade's
+  `flags-test-support`).
+
+  Store (`batter-flags-postgres`): audited compare-and-set writes in a
+  dedicated `flags` schema with ordered refusals, `WritePolicy` (coordinated
+  flips and invariant holds, judged inside the write's transaction) and a
+  `Deferral` on written outcomes; paged `history` (`HistoryPage`,
+  `Continuation`); archive and restore; a `ProcessPresence` bound to the store
+  that issued it; pruning and the fleet view. `load`, `preflight`, `keys`,
+  `key`, `history` and the fleet reads refuse a standby and an unusable schema
+  in their own snapshot. `PooledStore::migrate`
+  refuses a search path that resolves into `flags`
+  (`ErrorClass::SearchPath`) before anything is migrated. A committed write
+  notifies nobody: processes see it at the first refresh that starts after the
+  commit, at most the longer of the poll interval and the refresh run budget,
+  plus one more run budget (derived from the serial schedule; no test measures it). After a point-in-time restore or a failover to an older
+  head, a write made once running processes have heartbeated against the
+  restored database is numbered above the highest version any Live
+  control-plane process reports, so those processes, which refuse the lower
+  head as `Regressed`, apply it at their next refresh without a restart;
+  versions then skip from the restored head to above the fleet. One write moves
+  the counter by at most `MAX_VERSION_JUMP` (1,000,000), which the counter
+  guard enforces and beyond which a report is ignored.
+
+  Control plane (`batter-flags` with `postgres`): `control_plane::register_in`
+  checks every input and name first, then registers `flags.refresh`,
+  `flags.presence` and `flags.presence_prune` and the
+  `flags.presence.stopped` finalizer on the application's registered pool; it
+  refuses a pool whose cleanup it cannot bind to the target and a base an
+  engaged governing switch would leave breaking an invariant
+  (`RegisterError::GovernedInvariant`). `RegisteredFlags::status()` returns a
+  `SnapshotStatus` of `loader`, `served` and `latest_read`;
+  `LoadPolicy::with_last_good` keeps a last-good file whose state
+  `last_good()` reports as `LastGoodStatus`. `grants::grant_fragment` takes a
+  `FlagsGrant` built from a `FlagsRole` or at least one `FlagsOperation`. The
+  `batter-flags` operator command (`publish = false`) writes through the
+  store.
+
+- Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
+  library read of the process environment outside the one declared seam, and
+  share the executable-root inventory with the panic-hook scan
+  (`batter-jkw6.3`).
 - Fix `batter-axum` plain HTTP registration (`AssembledHttp::register_in`,
   `low_level::register_http` and `register_http_in`) rebuilding the application
   router for every accepted connection. Serving a bare `Router` made pinned
@@ -513,6 +623,59 @@ contracts, capability facts and validation history.
   cover excluded range endpoints, adjacent public addresses and zero dial
   attempts for wholly disallowed answers.
   Existing HTTPS and loopback constructors retain their behavior.
+
+- **Breaking:** `batter_axum::HttpFailure` (also `batter::axum::HttpFailure`)
+  gains the permanent, unconditional `Disabled` variant. A group gate first
+  produces it, but the failure remains part of the HTTP contract even if the
+  gate seam is withdrawn. Its defaults are 503, code `disabled`, and standard
+  infrastructure message `The service is temporarily disabled`. The group's
+  renderer may select another status. No `#[deprecated]` shim is provided:
+  the old variant set cannot render this new state. The owner approved this
+  hard cut without a shim (2026-11-05, `batter-jkw6.7`).
+
+  Exhaustive match, before:
+
+  ```rust
+  match failure {
+      HttpFailure::Unavailable => unavailable(),
+      HttpFailure::Cancelled => cancelled(),
+      HttpFailure::DeadlineExceeded => deadline(),
+      HttpFailure::Overloaded => overloaded(),
+      HttpFailure::Internal => internal(),
+  }
+  ```
+
+  After, add the new state explicitly:
+
+  ```rust
+  match failure {
+      HttpFailure::Unavailable => unavailable(),
+      HttpFailure::Cancelled => cancelled(),
+      HttpFailure::DeadlineExceeded => deadline(),
+      HttpFailure::Overloaded => overloaded(),
+      HttpFailure::Internal => internal(),
+      HttpFailure::Disabled => disabled(),
+  }
+  ```
+
+  Wildcard match, before (still compiles, but now conflates disablement):
+
+  ```rust
+  match failure {
+      HttpFailure::Internal => internal(),
+      _ => unavailable(),
+  }
+  ```
+
+  After, choose the intended disablement response explicitly:
+
+  ```rust
+  match failure {
+      HttpFailure::Internal => internal(),
+      HttpFailure::Disabled => disabled(),
+      _ => unavailable(),
+  }
+  ```
 
 - Repair the outbound ownership panel findings (`batter-4p4a`): retain bounded
   address fallback inside the exchange future, with at most two TCP candidates

@@ -2,8 +2,8 @@
 
 `batter` is the public facade for the native Tokio operational toolkit. It
 keeps the established `batter::...` foundation paths while optional at-rest,
-outbound HTTP, Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected
-through additive facade features.
+outbound HTTP, Axum, SQLx, Runledger, Runlimit, flags, and test-support namespaces are
+selected through additive facade features.
 
 The implementation of the foundation lives in [`batter-core`](../batter-core).
 The facade only re-exports that implementation and owns the runnable foundation
@@ -29,9 +29,19 @@ The default feature set is empty. The available feature/module pairs are:
 | `runlimit-axum` | `batter::runlimit::http` and `batter::axum` |
 | `runlimit-native-http` | `batter::runlimit::native_transport::http`: native response metadata, no transport framework |
 | `runlimit-native-axum` | `batter::runlimit::native_transport::axum`: the native caller-controlled layer, without `batter::axum` |
+| `flags` | `batter::flags` and `batter::flags::core` (experimental, [ADR-016](../../docs/adr/016-typed-flags-control-plane.md)): typed flags and kill switches declared once in code, `declared::resolve` from the application's settings source with its startup report and the periodic gate; `test::TestFlags` needs `flags-test-support` |
+| `flags-postgres` | `batter::flags::postgres`, `batter::flags::control_plane` and `batter::flags::grants` (experimental): the audited store and the protected registration of its refresh, heartbeat and prune, plus the required `batter::sqlx` capability |
+| `flags-axum` | `batter::flags::http` (experimental): route-group gates and per-request flag views, plus `batter::axum` |
+| `flags-runledger` | `batter::flags::jobs` (experimental): job-handler gates and pinned decisions, plus `batter::runledger` |
+| `flags-test-support` | `batter::flags::test::TestFlags` (experimental): injected test flags serving `Source::Test`, for test builds only |
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
 | `otlp` | `batter::otlp`: explicit bounded metrics export through `batter::service::start` |
+
+The five `flags*` features are experimental. `flags` alone is declared mode,
+with no database; the [`rollout` example](examples/rollout.rs) runs in both
+declared and control-plane mode. The `batter-flags` operator command is the
+unpublished [`batter-flags-cli`](../batter-flags-cli/README.md) package.
 
 For example:
 

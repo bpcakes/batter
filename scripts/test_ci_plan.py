@@ -23,6 +23,8 @@ from ci_plan import (
 
 TREE = "a" * 40
 CLOSURE = ["runlimit/runlimit-core/", "runlimit/runlimit-postgres/"]
+FLAGS_CLOSURE = ["crates/batter-core/", "crates/batter-sqlx/", "crates/batter-flags-core/",
+                 "crates/batter-flags-postgres/", "crates/batter-flags/", "crates/batter-flags-cli/"]
 
 
 def fail(*_args):
@@ -149,14 +151,16 @@ class VerifyingRunTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
-    def plan(self, event, paths, find_run=lambda _tree: None, closure=lambda: CLOSURE):
-        return plan(event, paths, TREE, find_run, closure)
+    def plan(self, event, paths, find_run=lambda _tree: None, closure=lambda: CLOSURE,
+             flags_closure=lambda: FLAGS_CLOSURE):
+        return plan(event, paths, TREE, find_run, closure, flags_closure)
 
     def test_events_without_a_diff_run_everything_without_lookup(self):
         for event in ("schedule", "workflow_dispatch"):
-            outputs, _ = self.plan(event, ["docs/testing.md"], find_run=fail, closure=fail)
+            outputs, _ = self.plan(event, ["docs/testing.md"], find_run=fail, closure=fail,
+                                   flags_closure=fail)
             self.assertEqual(outputs, dict(tree=TREE, tree_verified="false", verified_run="",
-                                           runlimit_postgres="true"))
+                                           runlimit_postgres="true", flags_postgres="true"))
 
     def test_runlimit_runs_only_for_its_inputs(self):
         cases = [(["docs/testing.md", "crates/batter/src/lib.rs"], "false"),
@@ -167,6 +171,21 @@ class PlanTests(unittest.TestCase):
             for paths, expected in cases:
                 outputs, _ = self.plan(event, paths)
                 self.assertEqual(outputs["runlimit_postgres"], expected, (event, paths))
+
+    def test_flags_runs_only_for_its_inputs(self):
+        cases = [(["docs/testing.md", "runlimit/runlimit-core/src/lib.rs"], "false"),
+                 (["crates/batter-flags-core/src/snapshot.rs"], "true"),
+                 (["crates/batter-sqlx/src/lib.rs"], "true"),
+                 (["Cargo.lock"], "true"), (None, "true")]
+        for event in ("pull_request", "merge_group", "push"):
+            for paths, expected in cases:
+                outputs, _ = self.plan(event, paths)
+                self.assertEqual(outputs["flags_postgres"], expected, (event, paths))
+
+    def test_unknown_flags_inputs_run_it_without_affecting_runlimit(self):
+        outputs, notes = self.plan("pull_request", ["docs/testing.md"], flags_closure=fail)
+        self.assertEqual((outputs["flags_postgres"], outputs["runlimit_postgres"]), ("true", "false"))
+        self.assertIn("flags PostgreSQL inputs are unknown", " ".join(notes))
 
     def test_unknown_runlimit_inputs_run_it(self):
         outputs, notes = self.plan("pull_request", ["docs/testing.md"], closure=fail)

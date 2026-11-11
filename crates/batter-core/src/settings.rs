@@ -15,7 +15,7 @@
 //! ```
 
 mod source;
-pub use source::{SettingsSource, read_file, read_literal};
+pub use source::{SettingsSelection, SettingsSource, read_file, read_literal};
 
 use std::{error::Error, fmt, time::Duration};
 

@@ -1,0 +1,141 @@
+//! PostgreSQL 18 guards contracts.
+#![allow(
+    clippy::unwrap_used,
+    clippy::missing_assert_message,
+    reason = "independent database guard assertions"
+)]
+#[path = "support/fixture.rs"]
+mod fixture;
+use fixture::*;
+use sqlx::{Connection, PgConnection};
+
+const META: &str = "SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','guard probe',true),set_config('batter_flags.guard','unconditional',true);";
+const INSERT: &str = "INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) VALUES ('raw','mode','toggle','{\"encoding\":1,\"variant\":\"on\"}',1,1);";
+async fn rejected(connection: &mut PgConnection, sql: String, state: &str) {
+    let error = sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+        .execute(&mut *connection)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some(state),
+        "guard statement failed: {error}"
+    );
+    sqlx::raw_sql("ROLLBACK").execute(connection).await.unwrap();
+}
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn nonowner_writer_cannot_bypass_audit_counter_or_append_only_guards() {
+    let f = Fixture::migrated().await;
+    let writer = f.writer("flags_guard_writer").await;
+    let mut c = writer.acquire().await.unwrap();
+    let identity:(bool,bool)=sqlx::query_as("SELECT rolsuper, pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE oid='flags.flag_state'::regclass),'USAGE') FROM pg_roles WHERE rolname=current_user").fetch_one(&mut *c).await.unwrap();
+    assert_eq!(identity, (false, false));
+    rejected(
+        &mut c,
+        "BEGIN; UPDATE flags.flag_control SET version = version - 1; COMMIT".into(),
+        "P0001",
+    )
+    .await;
+    rejected(
+        &mut c,
+        "BEGIN; UPDATE flags.flag_control SET version = version + 1; COMMIT".into(),
+        "P0001",
+    )
+    .await;
+    rejected(&mut c, format!("BEGIN; {META} {INSERT} COMMIT"), "P0001").await;
+    rejected(
+        &mut c,
+        format!("BEGIN; UPDATE flags.flag_control SET version = version + 1; {INSERT} COMMIT"),
+        "P0001",
+    )
+    .await;
+    rejected(
+        &mut c,
+        format!(
+            "BEGIN; {META} UPDATE flags.flag_control SET version = version + 1; {} COMMIT",
+            INSERT.replace("1,1)", "1,2)")
+        ),
+        "P0001",
+    )
+    .await;
+    rejected(&mut c,"INSERT INTO flags.flag_audit(version,flag_name,operation,actor,reason,guard,after_state) VALUES (500,'x','create','a','r','unconditional','{}')".into(),"42501").await;
+    for statement in [
+        "UPDATE flags.flag_audit SET actor = 'x'",
+        "DELETE FROM flags.flag_audit",
+    ] {
+        rejected(&mut c, statement.into(), "42501").await;
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "BEGIN; {META} UPDATE flags.flag_control SET version = version + 1; {INSERT} COMMIT"
+    )))
+    .execute(&mut *c)
+    .await
+    .unwrap();
+    // The same physical session retains empty GUC placeholders after SET LOCAL.
+    rejected(&mut c,"BEGIN; UPDATE flags.flag_control SET version = version + 1; UPDATE flags.flag_state SET state='{\"encoding\":1,\"variant\":\"off\"}', updated_version=2 WHERE name='raw'; COMMIT".into(),"P0001").await;
+    rejected(
+        &mut c,
+        format!(
+            "BEGIN; {META} UPDATE flags.flag_state SET updated_version=2 WHERE name='raw'; COMMIT"
+        ),
+        "P0001",
+    )
+    .await;
+    sqlx::raw_sql("GRANT TRUNCATE ON ALL TABLES IN SCHEMA flags TO flags_guard_writer")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for table in [
+        "flag_control",
+        "flag_state",
+        "flag_audit",
+        "flag_catalogs",
+        "flag_catalog_entries",
+        "flag_processes",
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "GRANT TRUNCATE ON flags.{table} TO flags_guard_writer"
+        )))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+        rejected(&mut c, format!("TRUNCATE flags.{table} CASCADE"), "P0001").await;
+    }
+    assert_eq!(f.head().await, 1);
+    drop(c);
+    writer.close().await;
+    let mut owner = PgConnection::connect(f.lease.database_url()).await.unwrap();
+    rejected(&mut owner,"INSERT INTO flags.flag_audit(version,flag_name,operation,actor,reason,guard,after_state) VALUES (500,'x','create','a','r','unconditional','{}')".into(),"P0001").await;
+    owner.close().await.unwrap();
+    f.drop_role("flags_guard_writer").await;
+    f.close().await;
+}
+
+/// One audited step may move the counter by the jump window and no further,
+/// whoever writes it.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn the_counter_guard_bounds_one_step_to_the_jump_window() {
+    const WINDOW: i64 = batter_flags_postgres::MAX_VERSION_JUMP;
+    let f = Fixture::migrated().await;
+    let writer = f.writer("flags_jump_writer").await;
+    let mut c = writer.acquire().await.unwrap();
+    let step = |by: i64| {
+        format!(
+            "BEGIN; {META} UPDATE flags.flag_control SET version = version + {by}; {} COMMIT",
+            INSERT.replace("1,1)", &format!("{by},{by})"))
+        )
+    };
+    rejected(&mut c, step(WINDOW + 1), "P0001").await;
+    assert_eq!(f.head().await, 0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(step(WINDOW)))
+        .execute(&mut *c)
+        .await
+        .unwrap();
+    assert_eq!(f.head().await, WINDOW);
+    drop(c);
+    writer.close().await;
+    f.drop_role("flags_jump_writer").await;
+    f.close().await;
+}

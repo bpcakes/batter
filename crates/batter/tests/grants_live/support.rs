@@ -215,6 +215,55 @@ impl Fixture {
         Ok(name)
     }
 
+    /// A superuser connection to `database` on the fixture's cluster.
+    pub(crate) async fn admin_on(&self, database: &str) -> Result<PgConnection> {
+        Ok(
+            PgConnection::connect_with(&PgConnectOptions::from_str(&self.url)?.database(database))
+                .await?,
+        )
+    }
+
+    /// A login like [`login`](Self::login) whose grant plan is applied in
+    /// `database` through `admin`, a superuser connection to it.
+    pub(crate) async fn login_on(
+        &mut self,
+        label: &str,
+        role: &CompiledExactRole,
+        admin: &mut PgConnection,
+        database: &str,
+    ) -> Result<String> {
+        let name = format!("{}_{label}", self.names.owner);
+        exec(
+            &mut self.admin,
+            format!(
+                "CREATE ROLE {} LOGIN PASSWORD '{}' NOSUPERUSER NOCREATEDB \
+                 NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT",
+                quote(&name),
+                self.password
+            ),
+        )
+        .await?;
+        self.logins.push(name.clone());
+        let rendered = role.grant_plan().render(
+            &Identifier::new(name.clone())?,
+            Some(&Identifier::new(database)?),
+        )?;
+        exec(admin, rendered).await?;
+        Ok(name)
+    }
+
+    /// A pooled connection for `role` to `database`.
+    pub(crate) async fn pool_on(&mut self, role: &str, database: &str) -> Result<PgPool> {
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .min_connections(0)
+            .acquire_timeout(Duration::from_secs(20))
+            .connect_with(self.options(role)?.database(database))
+            .await?;
+        self.pools.push(pool.clone());
+        Ok(pool)
+    }
+
     /// An ordinary pooled connection for `role` with an exact trusted search path.
     pub(crate) async fn pool(&mut self, role: &str, schemas: &[&str]) -> Result<PgPool> {
         let search_path = schemas

@@ -40,7 +40,14 @@ cargo clippy -p runlimit-core -p runlimit-memory -p runlimit-postgres -p runlimi
 cargo clippy -p batter-runlimit --all-targets --no-default-features --features memory,postgres --locked -- -D warnings -D clippy::mod_module_files
 # The reference package's default build excludes its opt-in metrics exporter.
 cargo clippy -p batter-example-reference-service --all-targets --locked -- -D warnings -D clippy::mod_module_files
-for part in workspace no-default-features doctests consumers runlimit scripts; do
+# Feature-gated flags code the all-features workspace run cannot see: the bare
+# catalog crate, and the adapter declared-only, with the store, and with the
+# HTTP and job integrations but no store.
+cargo clippy -p batter-flags-core --all-targets --no-default-features --locked -- -D warnings -D clippy::mod_module_files
+cargo clippy -p batter-flags --all-targets --no-default-features --locked -- -D warnings -D clippy::mod_module_files
+cargo clippy -p batter-flags --all-targets --no-default-features --features postgres --locked -- -D warnings -D clippy::mod_module_files
+cargo clippy -p batter-flags --all-targets --no-default-features --features axum,runledger --locked -- -D warnings -D clippy::mod_module_files
+for part in workspace no-default-features doctests consumers runlimit flags scripts; do
   python3 scripts/test_matrix.py "$part"
 done
 RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" cargo doc --workspace --all-features --no-deps --locked

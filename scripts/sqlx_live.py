@@ -191,6 +191,14 @@ TARGETS = {
         "the_direct_job_worker_runs_every_selected_lifecycle_path",
         "maintained_limiters_clean_expired_rows_under_their_selections_until_drain",
         "maintenance_without_its_cleanup_selection_never_becomes_ready",
+        "flags_serving_and_operator_logins_run_their_operations_and_nothing_more",
+    },
+    # The flags control plane through the facade: the migration ledger shared
+    # with Runledger and Runlimit, and convergence after a restore, each in databases it
+    # creates and drops through BATTER_SQLX_ADMIN_URL.
+    "flags_live": {
+        "runledger_runlimit_and_flags_migrate_in_that_order_into_one_database",
+        "a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges",
     },
     "verification_live": {
         "verification_temporary_namespace_requests_are_incomplete",
@@ -234,7 +242,8 @@ TARGETS = {
 
 
 # Targets outside the owned-PostgreSQL adapter and the exact features they need.
-PACKAGES = {"grants_live": ("batter", ["--features", "runledger,runlimit-postgres"])}
+FACADE_FLAGS = ("batter", ["--features", "runledger,runlimit-postgres,flags-postgres"])
+PACKAGES = {"grants_live": FACADE_FLAGS, "flags_live": FACADE_FLAGS}
 
 
 def command(target):

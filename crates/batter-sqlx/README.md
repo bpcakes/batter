@@ -1123,6 +1123,14 @@ failed consuming database cleanup from retained pool and observation failures.
 
 ### Native migration execution
 
+For bounded migration setup, use `PgLease::migrate_until(&migrator, limits,
+deadline)` with validated `PgMigrationTimeouts`. It normalizes inherited state,
+installs nonzero statement/lock/idle limits capped by the remaining deadline,
+and retires the connection on every path. Session settings cover native SQLx's
+advisory lock outside transactions and inherit into its migration transactions.
+Trusted migration SQL can override them. Deadline or error does not prove that
+earlier migrations did not commit; the native ledger remains authoritative.
+
 `PgLease::migrate(&Migrator)` consumes the lease while retaining its physical
 connection internally. The application selects and configures its native SQLx
 bundle; SQLx owns migration locking, history and checksum validation. A failed or
@@ -1137,6 +1145,17 @@ pool construction. No local result proves server-session termination.
 `PgLease::migrate_and_apply` runs the same migrator and then applies
 [managed routines and triggers](#managed-routines-and-triggers) on the same
 connection.
+
+For bounded recoverable atomic scopes and snapshots, use
+`low_level::PgAtomicTransaction::operation_until` and
+`PgReadOnlySnapshot::inspect_until`. Their `PgDeadlineError::RecoveryElapsed`
+retains the concrete application error when native savepoint recovery or rollback
+cannot acknowledge by the absolute deadline. `Elapsed` carries no invented
+database cause and `Failed` retains ordinary native failure evidence. Successful
+return still requires the same continuity and disposition checks as the unbounded
+methods. An externally dropped future loses its result and retires; these APIs
+do not promise asynchronous Drop or remote termination. The bounded snapshot
+budget covers its complete acquisition/setup/inspection/cleanup workflow.
 
 ### Foundation dependency direction
 

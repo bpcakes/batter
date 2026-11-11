@@ -524,6 +524,11 @@ application schema would carry less evidence: Batter cannot know which remote
 credentials, worker identity, or routes a particular application requires.
 The reference application is the executable contract for this division.
 
+Typed flags keep that division. Declared flag resolution reads the same
+caller-supplied `SettingsSource` once, adds no source order, file discovery or
+schema, and treats `ProcessKind` and `EnvironmentClass` as vocabularies the
+application declares, not a foundation-owned mode parameter.
+
 ## Why there is no resource graph yet
 
 Explicit constructors and cleanup ordering are easier to inspect than an
@@ -575,3 +580,18 @@ while retaining policy, quota/attempt persistence, migrations and transport-help
 ownership. None depends on Batter. `batter-runlimit` remains the optional operational
 adapter; the facade default graph still excludes native backends. See
 [ADR-012](adr/012-native-runlimit-workspace.md).
+
+## Typed flags ownership
+
+Four packages split flag ownership by layer
+([ADR-016](adr/016-typed-flags-control-plane.md)). `batter-flags-core` owns the
+catalog, snapshots, evaluation and pins and depends on no Batter crate, so the
+rule set is the same wherever it is evaluated. `batter-flags-postgres` owns the
+fixed `flags` schema and every statement against it, on `batter-sqlx`'s native
+connection owners. `batter-flags` owns the process: resolution, the one reader a
+protected surface captures views from, the gates and the control-plane
+components registered with `batter-core`'s lifecycle and periodic machinery,
+which it uses without a second scheduler. `batter-flags-cli` is an
+executable root over the store. Each request, job invocation or periodic run
+evaluates one frozen view, and nothing reads a flag between captures.
+

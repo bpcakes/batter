@@ -59,8 +59,14 @@ if os.environ.get("FAIL_COMMAND") and os.environ["FAIL_COMMAND"] in " ".join([na
              "--", "-D", "warnings", "-D", "clippy::mod_module_files"],
             ["cargo", "clippy", "-p", "batter-example-reference-service", "--all-targets",
              "--locked", "--", "-D", "warnings", "-D", "clippy::mod_module_files"],
+            *[["cargo", "clippy", "-p", package, "--all-targets", "--no-default-features",
+               *features, "--locked", "--", "-D", "warnings", "-D", "clippy::mod_module_files"]
+              for package, features in [("batter-flags-core", []), ("batter-flags", []),
+                                        ("batter-flags", ["--features", "postgres"]),
+                                        ("batter-flags", ["--features", "axum,runledger"])]],
             *[["python3", "scripts/test_matrix.py", part] for part in
-              ["workspace", "no-default-features", "doctests", "consumers", "runlimit", "scripts"]],
+              ["workspace", "no-default-features", "doctests", "consumers", "runlimit", "flags",
+               "scripts"]],
             ["cargo", "doc", "--workspace", "--all-features", "--no-deps", "--locked"],
             ["python3", "scripts/check_http_smokes.py"],
         ])

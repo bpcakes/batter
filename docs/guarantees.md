@@ -1364,6 +1364,28 @@ fixture acceptance is not evidence of a deployment retirement.
 
 ## Periodic maintenance components
 
+### Flags gate (`batter-jkw6.10`)
+
+`batter_flags::Flags::gate_periodic_in` captures one `SnapshotView` per run,
+skips both `AwaitingPublication` and `Tripped` without calling the application
+factory, and passes that same view to work only on `Open`. Switch identity and
+process ownership refusals precede core registration. The opaque
+`GatedPeriodicPolicy` fixes immediate startup and `StopAtDrain`; it cannot
+select first-success startup or support-through-drain. Acknowledgement proves
+loop initialization, not successful maintenance. A skipped run is core's own
+`PeriodicOutcome::Skipped` (`register_skippable_in`), counted in
+`PeriodicSummary::skipped` under core's history lock and in the completion
+report, never in `succeeded`, and never acknowledging first-success startup
+(`batter-jkw6.50`; `tests/periodic/skips.rs`). A switch change affects the next
+run and does not revoke an active run's frozen view. Work required for native
+settlement during drain must register ungated through core.
+The gate retains its owned application future after it returns, until core has
+recorded the outcome: a subsequent future-destructor panic cannot erase the
+returned error or success count. The panic still makes completion incomplete
+and conservatively skips dependent cleanup.
+
+### Core schedule and ownership
+
 `periodic::register_periodic_in` registers recurring maintenance through the
 same sealed `RegistrationTarget` authority as native adapters, so a component
 can be added without process start, replacement or cleanup-extraction
@@ -1380,9 +1402,9 @@ required because the completion report carries the same evidence.
 One registered component owns exactly one directly polled serial future. There
 is no detached per-run task, no event queue and no second scheduler, so
 invocations cannot overlap. The first invocation is immediate once the
-component can run; later ones follow a fixed interval with missed ticks
-skipped. One overdue invocation may run immediately after an overrun, and the
-schedule then realigns without replaying a burst of missed work, including
+component can run. Later invocations follow a fixed interval with missed ticks
+skipped. One overdue invocation may run
+immediately after an overrun, and the schedule then realigns without replaying a burst of missed work, including
 intervals and overruns shorter than Tokio's five-millisecond missed-tick
 tolerance. The private schedule advances to the first future point on its
 original cadence before admitting that overdue run; this is start-to-start
@@ -1486,8 +1508,9 @@ discards its classification, as the executable helper examples demonstrate.
 Only that explicit escalation escalates a returned application outcome, while a
 native factory, poll or destructor panic, unexpected component termination and
 initialization failure stay terminal. A recoverable failure or an expired run
-deadline permits the next scheduled invocation and never an extra immediate
-retry. Registration authorizes recurrence only: it proves no remote rollback,
+deadline permits the next cadence invocation, never an automatic extra retry.
+Registration
+authorizes recurrence only: it proves no remote rollback,
 idempotence, successful renewal, fencing or absence of a timed-out effect, and
 lease-loss, freshness and durable witness policy stay application- or
 native-owned.
@@ -1521,8 +1544,8 @@ completion alone does not make this predicate true, but any recorded run failure
 or interruption still does, including a pending initialization run interrupted
 by drain. This predicate does not determine checked shutdown success.
 
-`invocations` includes active work and runs lost before classification through
-panic, abort or an unjoined runner, so it need not equal the classified outcomes
+`invocations` includes active work and runs
+lost before classification through panic, abort or an unjoined runner, so it need not equal the classified outcomes
 plus a fatal run. A final completion marker describes how the loop ended; it
 does not promise exact accounting when counters saturated or an interruption
 classification was lost to a destruction panic, as described below.
@@ -2173,6 +2196,29 @@ Ordinary successful return retains SQLx's asynchronous health-check policy.
 Neither operation interruption nor native failure classification authorizes replay.
 
 ## HTTP boundary
+
+Route groups can install one flags-agnostic `GroupGate` through
+`GroupPolicy::gated` or `GroupPolicy::browser_gated`. The order is private headers,
+lifecycle/deadline admission, group gate, browser checks, application layers.
+The synchronous gate captures once and either shares its value with every
+`GateView<V>` extraction or drops the body and renders `HttpFailure::Disabled`
+through the group's renderer. A missing or wrong-typed view yields a sanitized
+500, and its completion records `gate_outcome="unmatched_view"`, so the wiring
+error is told apart from a server fault; the pairing of a view with its group's
+gate is not checked at compile time. Renderer metadata strips the private type-erased gate record for every `V`.
+An already captured value remains the request's value during later engagement;
+application interior mutability is not an immutable-snapshot guarantee.
+
+The gate covers every method and all guarded fallbacks of its group, including
+unmatched paths of a gated default group. Probes and metadata-rendered fallbacks
+bypass it. A gate panic propagates with the same single WARN `dropped` completion
+as a handler panic, without status or panic payload. Disablement is a permanent
+HTTP failure: default 503, code `disabled`, standard infrastructure message
+`The service is temporarily disabled`, with actual status still renderer-owned.
+Its completion records `gate_outcome="disabled"`. The gate replaces renderer-set
+severity with INFO, or the level selected by `with_disabled_level`; `batter=warn`
+hides the INFO default. See the [usage guide](../crates/batter-axum/README.md#route-group-gates).
+
 
 `HttpBoundary` assembles probes, admission, correlation and the observer in one
 library-owned order, and is the canonical path. The deliberately caller-ordered
@@ -3529,3 +3575,178 @@ to retry remain application-owned. Evidence is a point-in-time observation, not
 a reservation against future promotion or retention. The new reconciliation
 grant reads only selected metadata; adding other operation grants can expose more
 columns, including canonical submitted requests for intent submission.
+
+## Flags store contract (T-12)
+
+Observed application rejections survive bounded native cleanup: the store's
+`RollbackFailure` retains both the operation cause and a cleanup deadline. This
+does not promise result retention after external cancellation of the entire
+future. Migration server budgets cover the native advisory-lock phase as well
+as migration transactions, with unconditional retirement of that configured
+session. Request and lifecycle phases use explicit internal enums; acknowledged
+outcomes require consuming native completion evidence.
+
+`batter-flags-postgres` owns audited, commit-ordered state changes in a
+dedicated `flags` schema; versions are gapless except below a write that
+follows a restore to a head behind the fleet. No-op/refusal rolls back the
+counter; archived rows are absent from coherent primary snapshots. Live and Silent declarers block
+incompatible states and archive. These database guards assume writer logins are
+non-owner, non-superuser and cannot set `session_replication_role`; owners,
+superusers and replica mode are outside the claim. Audit actor/reason are supplied
+text; `recorded_by` independently records the session login.
+
+No automatic retry occurs. A lost COMMIT acknowledgement or commit-phase deadline
+is uncertain, even when the server committed. Native SQLx owners retire sessions;
+retirement does not prove server termination. A committed write notifies
+nobody; processes see it at the first refresh that starts after the commit. Declared settings floors remain
+application containment. The [store README](../crates/batter-flags-postgres/README.md) records
+validation order, native API limits, authority and test coverage.
+
+`PooledStore::migrate` refuses with `ErrorClass::SearchPath` when a session of
+its pool has a default path that resolves unqualified names into `flags`: an
+explicit `flags` entry, or `"$user"` for a role named `flags`. It decides
+before anything is migrated, the first migration included: the probe creates
+the schema if it is absent inside a transaction it always rolls back, so
+PostgreSQL resolves the path against it and a refusal creates and applies
+nothing (live `migrate_refuses_a_session_whose_search_path_resolves_into_flags`).
+A failure while migrating can still follow committed migrations. The probe and
+the migration sample separate connections, which share their defaults
+unless the login's role or database settings or the pool's connect options
+changed while it held connections, which the check cannot see, and it cannot see other pools' or logins' sessions; a host migrator
+on such a login remains the application's to configure.
+
+## Typed flags (experimental, ADR-016)
+
+[ADR-016](adr/016-typed-flags-control-plane.md) records the design; every
+contract below is experimental.
+
+### Declared mode
+
+`declared::resolve` reads only the `SettingsSource` the root supplies, once,
+into `Resolved`; values change by restart. Literals are strict: a toggle
+accepts `true`, `false`, `on` or `off` in any letter case, an enum only its
+declared variants, and anything else fails startup naming the setting, never
+the value. A value presented to a kind that does not own the flag, or in a
+class its `only_in` excludes, a retired name, an unknown name under the prefix,
+an enabling variant whose required settings are absent or empty, and a pair
+an invariant forbids fail startup; a governed flag is judged at its code
+default while its switch resolves engaged. Invariants across process kinds are
+not checked: the other kind's value is unknowable there. The startup report
+shows each key's source as `literal`, `absent` or `not_applicable`. A source
+any layer of which passed through `select_dedicated` or `select_environment`
+is refused with `DeclaredError::NarrowedSource`, so flag names a root's own
+narrowing dropped never read as absent defaults (`batter-jkw6.53`). No failure message
+carries a setting's value; the only retained value is a non-Unicode setting,
+reachable through `source()`. No library production source reads the process
+environment outside the declared seam
+(`crates/batter/tests/process_environment_ownership.rs`).
+
+### Gates and evaluation
+
+A gate reads every switch from one view captured at entry
+(`SwitchGate::enter`), and the reading is an exhaustive `GateReading`: awaiting
+publication is never mistaken for open. Evaluation reads no clock and does no
+I/O. The low-level `gate_switch` reads a switch the view cannot answer for as
+`Tripped`, failing closed (`batter-jkw6.42`). `pin` refuses an error decision
+with `Unpinnable` rather than pinning a default a replay would honour
+(`batter-jkw6.45`). An ungated job before the first publication under
+`unready_until_loaded` is deferred by its recheck (`batter-jkw6.56`). Before
+the first publication a `Flags::gated_direct` job returns a continuation after
+`awaiting` and spends no attempt, whatever its tripped policy; a
+`gated_workflow_step` job and a `Flags::flagged` job spend an attempt, so a
+long initial outage can exhaust theirs. An
+evaluation emits `feature_flag.evaluation` on target `batter::flags`:
+DEBUG ordinarily, INFO for an engaged gate, WARN for the first error per handle
+and cause. A request, job invocation or periodic run keeps the view it was
+admitted with; a later publication affects the next one.
+
+### Control plane
+
+`control_plane::register_in` validates every input before registering
+anything. The process writer owns core's `low_level::Publisher`, the only
+value that can advance the published `Record`, so the version, drift, file
+and carrying rules are enforced by the publisher, not left to the loader: a
+version below the applied one is refused as `Regressed` before its rows are
+judged, a changed digest at the same version as drift, and the last-good file
+enters only through `Publisher::restore`, before anything else; a file offered
+as a read is refused. The publisher carries the kill-switch states it serves
+into every read it judges, so a held kill switch keeps its last published
+state whatever the candidate carried, and a refusal before the first
+publication is recorded rather than dropped. A read is judged and then
+published in two steps, so a refresh whose deadline passes while it judges
+publishes and records nothing (`batter-flags-core/tests/published.rs`, the
+writer tests in `batter-flags/src/reader/tests/writer.rs`). Staleness counts from registration until the first publication and
+from the last confirming read after it; a file-served snapshot ages from
+registration. The settings floor only engages.
+`RegisteredFlags::status` reports the loader's liveness, what views serve and
+the latest judged read as separate fields, read under the lock the refresh
+publishes under, so a refusal or a schema behind never hides what is served
+and a status never pairs a publication with another read's verdict; `Gate`
+is judged from one status (`control_plane/tests/status.rs`).
+
+The last-good file is written by the refresh after it publishes, only for
+values this process published from the control plane, under a directory lock,
+synced and renamed into place within the directory, and never changes a run's
+outcome or narrows readiness. A replacement whose directory sync fails counts
+as this process's write for the rule that a later write keeps a newer file, and
+is retried. A publication too large for the file is reported as
+`LastGoodStatus::TooLarge` and not retried. Every confirming read offers the
+version it serves again, and that changes nothing: a version already written,
+dropped for a newer file on disk or too large is not attempted again until a
+newer publication replaces it, and a waiting version keeps its last failure
+(`last_good/persist/tests.rs`). A persist abandoned at its deadline can outlive
+drain, so roots end with `Runtime::shutdown_timeout`. On macOS 27.2 arm64
+(APFS) a directory's `File::sync_all` returns `Ok`, probed on 2026-11-08 and
+exercised by the last-good tests; durability across power loss is not tested,
+and `flock` on tmpfs or overlayfs is unverified.
+
+A committed audited write notifies nobody: each process sees
+it at the first refresh that starts after the commit. Runs are serial and may
+overrun the poll interval, so that takes at most the longer of the poll
+interval and the refresh run budget, plus one more run budget; with runs that
+finish inside the interval, one interval plus one run (derived from the serial schedule; no test measures it). After a point-in-time restore or
+a failover to an older head, a running process refuses the lower head as
+`Regressed` and keeps serving what it had. An audited write made after those
+processes have heartbeated against the restored database is numbered above the
+highest version any Live control-plane process reports, within
+`MAX_VERSION_JUMP` of the head, and those processes apply it at their next
+refresh without a restart. A write made before those heartbeats is numbered one
+above the head and stays refused (store-level
+`only_a_live_control_plane_report_above_the_head_moves_the_next_version`);
+a report at or beyond the window never moves or refuses a write
+(`a_report_at_or_beyond_the_jump_window_never_moves_or_refuses_a_write`,
+`the_counter_guard_bounds_one_step_to_the_jump_window`). State lost between the
+restored head and the fleet's version is not recovered (live
+`a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges`
+in `crates/batter/tests/flags_live.rs`).
+
+### Control-plane invariants
+
+A published flag that would leave a `requires`, `conflicts` or `both_or_none`
+invariant between flags the process kind owns unmet is held at its declared
+base (`HoldCause::InvariantUnmet`) until the invariant is met, judged with a
+governed flag at its code default while its switch is engaged, and separately
+for a stale view; the heartbeat's held keys and `RegisteredFlags::held` report
+the holds of a view captured at that moment. Which flag is held depends only
+on the catalog, never on declaration order. Registration refuses a base an
+engaged governing switch would leave breaking an invariant, so no fixed value
+can leave one unmet. `PooledStore::submit` with `WritePolicy::STRICT` refuses a
+flag write after which a running declarer's processes would newly hold a flag,
+or that a newer build's catalog cannot be judged for; the write-side judgement
+replays the processes' own over stored rows and code defaults and sees neither
+a process's settings nor its staleness, so it is advance notice and the
+process's own judgement is the enforcement. A kill switch is never refused for
+the flags engaging it holds.
+
+### Flags local state and cleanup ownership
+
+Flags registration rejects unregistered, foreign-owner and extracted-cleanup
+pools before registering components. The pool's opaque cleanup evidence and the
+presence reservation bind shutdown ordering to the same local owner; they do not
+prove that the native pool remains open or that PostgreSQL sessions terminated.
+A dropped write-interrupt sender disables both pre-commit waits without polling
+its completed receiver again. Last-good work selection and write admission are
+atomic, and a timed-out blocking write retains admission until it finishes. A
+failed selection retains the latest queued publication for retry.
+Declaration `only_in` and `governed_by` policies each assign once in the type
+system; validation failures retain the first error and admit no later mutation.

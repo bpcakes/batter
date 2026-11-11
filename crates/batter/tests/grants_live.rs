@@ -8,12 +8,14 @@
 //!
 //! ```text
 //! BATTER_SQLX_ADMIN_URL=postgres://... \
-//!   cargo test -p batter --features runledger,runlimit-postgres \
+//!   cargo test -p batter --features runledger,runlimit-postgres,flags-postgres \
 //!   --test grants_live -- --ignored --test-threads=1
 //! ```
 
 #[path = "grants_live/control_cases.rs"]
 mod control_cases;
+#[path = "grants_live/flags_cases.rs"]
+mod flags_cases;
 #[path = "grants_live/maintenance_cases.rs"]
 mod maintenance_cases;
 #[path = "grants_live/policy.rs"]

@@ -1,0 +1,100 @@
+## batter-core: 1328 -> 1359 entries; 0 removed, 31 added
++ ADDED   enum batter_core::periodic::PeriodicOutcome
++ ADDED   enum batter_core::settings::SettingsSelection
++ ADDED   field batter_core::periodic::PeriodicSummary.skipped
++ ADDED   function batter_core::periodic::register_skippable_in
++ ADDED   impl batter_core::cleanup::CleanupRegistration: Clone
++ ADDED   impl batter_core::cleanup::CleanupRegistration: Debug
++ ADDED   impl batter_core::periodic::PeriodicOutcome: Clone
++ ADDED   impl batter_core::periodic::PeriodicOutcome: Copy
++ ADDED   impl batter_core::periodic::PeriodicOutcome: Debug
++ ADDED   impl batter_core::periodic::PeriodicOutcome: Eq
++ ADDED   impl batter_core::periodic::PeriodicOutcome: PartialEq
++ ADDED   impl batter_core::periodic::PeriodicOutcome: StructuralPartialEq
++ ADDED   impl batter_core::settings::SettingsSelection: Clone
++ ADDED   impl batter_core::settings::SettingsSelection: Copy
++ ADDED   impl batter_core::settings::SettingsSelection: Debug
++ ADDED   impl batter_core::settings::SettingsSelection: Default
++ ADDED   impl batter_core::settings::SettingsSelection: Eq
++ ADDED   impl batter_core::settings::SettingsSelection: PartialEq
++ ADDED   impl batter_core::settings::SettingsSelection: StructuralPartialEq
++ ADDED   method batter_core::cleanup::CleanupSlot::register_tracked
++ ADDED   method batter_core::registration::Registration::check_names
++ ADDED   method batter_core::registration::Registration::owns_cleanup
++ ADDED   method batter_core::settings::SettingsSource::selection
++ ADDED   struct batter_core::cleanup::CleanupRegistration
++ ADDED   use batter_core::cleanup::CleanupRegistration <- registration::CleanupRegistration
++ ADDED   use batter_core::periodic::PeriodicOutcome <- failure::PeriodicOutcome
++ ADDED   use batter_core::settings::SettingsSelection <- source::SettingsSelection
++ ADDED   variant batter_core::periodic::PeriodicOutcome::Ran
++ ADDED   variant batter_core::periodic::PeriodicOutcome::Skipped
++ ADDED   variant batter_core::settings::SettingsSelection::Captured
++ ADDED   variant batter_core::settings::SettingsSelection::Selected
+
+## batter-axum: 590 -> 606 entries; 0 removed, 16 added
++ ADDED   enum batter_axum::Gated
++ ADDED   impl batter_axum::GateView: FromRequestParts
++ ADDED   impl batter_axum::GroupGate: Clone
++ ADDED   method batter_axum::GateView::value
++ ADDED   method batter_axum::GroupGate::new
++ ADDED   method batter_axum::GroupGate::with_disabled_level
++ ADDED   method batter_axum::GroupPolicy::browser_gated
++ ADDED   method batter_axum::GroupPolicy::gated
++ ADDED   struct batter_axum::GateView
++ ADDED   struct batter_axum::GroupGate
++ ADDED   use batter_axum::GateView <- boundary::GateView
++ ADDED   use batter_axum::Gated <- boundary::Gated
++ ADDED   use batter_axum::GroupGate <- boundary::GroupGate
++ ADDED   variant batter_axum::Gated::Disabled
++ ADDED   variant batter_axum::Gated::Serve
++ ADDED   variant batter_axum::HttpFailure::Disabled
+
+## batter-sqlx: 1379 -> 1410 entries; 0 removed, 31 added
++ ADDED   enum batter_sqlx::PgCommitStop
++ ADDED   enum batter_sqlx::PgDeadlineError
++ ADDED   impl batter_sqlx::PgCommitStop: Debug
++ ADDED   impl batter_sqlx::PgCommitStop: Display
++ ADDED   impl batter_sqlx::PgCommitStop: Error
++ ADDED   impl batter_sqlx::PgDeadlineError: Debug
++ ADDED   impl batter_sqlx::PgDeadlineError: Display
++ ADDED   impl batter_sqlx::PgDeadlineError: Error
++ ADDED   impl batter_sqlx::PgMigrationTimeoutError: Debug
++ ADDED   impl batter_sqlx::PgMigrationTimeoutError: Display
++ ADDED   impl batter_sqlx::PgMigrationTimeoutError: Error
++ ADDED   impl batter_sqlx::PgMigrationTimeouts: Clone
++ ADDED   impl batter_sqlx::PgMigrationTimeouts: Copy
++ ADDED   impl batter_sqlx::PgMigrationTimeouts: Debug
++ ADDED   method batter_sqlx::PgLease::migrate_until
++ ADDED   method batter_sqlx::PgMigrationTimeouts::new
++ ADDED   method batter_sqlx::PgProfiledPool::is_registered_in
++ ADDED   method batter_sqlx::PgReadOnlySnapshot::inspect_until
++ ADDED   method batter_sqlx::low_level::PgAtomicTransaction::commit_unless
++ ADDED   method batter_sqlx::low_level::PgAtomicTransaction::operation_until
++ ADDED   struct batter_sqlx::PgMigrationTimeoutError
++ ADDED   struct batter_sqlx::PgMigrationTimeouts
++ ADDED   use batter_sqlx::PgCommitStop <- atomic::PgCommitStop
++ ADDED   use batter_sqlx::PgDeadlineError <- deadline::PgDeadlineError
++ ADDED   use batter_sqlx::PgMigrationTimeoutError <- migration::PgMigrationTimeoutError
++ ADDED   use batter_sqlx::PgMigrationTimeouts <- migration::PgMigrationTimeouts
++ ADDED   variant batter_sqlx::PgCommitStop::Interrupted
++ ADDED   variant batter_sqlx::PgCommitStop::Unconfirmed
++ ADDED   variant batter_sqlx::PgDeadlineError::Elapsed
++ ADDED   variant batter_sqlx::PgDeadlineError::Failed
++ ADDED   variant batter_sqlx::PgDeadlineError::RecoveryElapsed
+
+## batter-runledger: 123 -> 123 entries; 0 removed, 0 added
+
+## batter-runlimit: 228 -> 228 entries; 0 removed, 0 added
+
+## batter-otlp: 106 -> 106 entries; 0 removed, 0 added
+
+## batter-outbound-http: 200 -> 200 entries; 0 removed, 0 added
+
+## batter-at-rest: 145 -> 145 entries; 0 removed, 0 added
+
+## batter-test-support: 21 -> 21 entries; 0 removed, 0 added
+
+## batter: 21 -> 23 entries; 0 removed, 2 added
++ ADDED   mod batter::flags
++ ADDED   use batter::flags::batter_flags <- batter_flags::*
+

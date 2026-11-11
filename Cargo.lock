@@ -291,6 +291,7 @@ dependencies = [
  "batter-at-rest",
  "batter-axum",
  "batter-core",
+ "batter-flags",
  "batter-otlp",
  "batter-outbound-http",
  "batter-runledger",
@@ -404,6 +405,76 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots",
+]
+
+[[package]]
+name = "batter-flags"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "batter-axum",
+ "batter-core",
+ "batter-flags-core",
+ "batter-flags-postgres",
+ "batter-runledger",
+ "batter-sqlx",
+ "batter-test-support",
+ "pin-project-lite",
+ "postgres-test-harness",
+ "runledger-core",
+ "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "batter-flags-cli"
+version = "0.0.1"
+dependencies = [
+ "batter-core",
+ "batter-flags-core",
+ "batter-flags-postgres",
+ "chrono",
+ "clap",
+ "postgres-test-harness",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "batter-flags-core"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "batter-flags-postgres"
+version = "0.0.1"
+dependencies = [
+ "batter-core",
+ "batter-flags-core",
+ "batter-sqlx",
+ "chrono",
+ "postgres-test-harness",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

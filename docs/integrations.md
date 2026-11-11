@@ -1661,3 +1661,34 @@ reopening intent recording. Match `IntentReconciliation` and then
 manifest. It is metadata-only, but does not authorize a tenant or revoke earlier
 grants. See the [migration](../runledger/CHANGELOG.md) and
 [evidence](evidence/intent-reconciliation-2026-11-05.md).
+
+## Typed flags in job handlers
+
+Batter never writes a `Pinned<T>` into a Runledger payload; the application
+places it in its own row, or in a payload by its own choice, where it joins the
+keyed idempotency snapshot. A handler resolves a stored pin through `JobFlags`,
+and a governing kill switch engaged in the invocation's view overrides it.
+Before the first publication a `Flags::gated_direct` job returns a native
+continuation after `awaiting` and spends no attempt, whatever its tripped
+policy; a `gated_workflow_step` job and a `Flags::flagged` job spend one.
+
+## Flags control plane over PostgreSQL
+
+`batter::flags::control_plane::register_in` owns the refresh, the heartbeat,
+the prune and the optional last-good file, all on the application's registered
+pool. A committed audited write notifies nobody; each process sees
+it at the first refresh that starts after the commit. Runs are serial and may
+overrun the poll interval, so that takes at most the longer of the poll
+interval and the refresh run budget, plus one more run budget
+(derived from the serial schedule; no test measures it). The application owns
+the pool's connection options, the login's grants (a `FlagsRole`, `ServingProcess` for a serving login, or a
+`FlagsGrant` of `FlagsOperation`s for its exact-role manifest; `AuditedWrite`
+covers what a write judges) and its settings.
+
+Cross-flag invariants are enforced where the state is served: every process
+judges the snapshot it loads and holds what an invariant leaves unmet
+(`batter-jkw6.21`). The store's judgement of a write, `WritePolicy` and the
+`Deferral` it reports, replays that judgement over the stored rows and code
+defaults as advance notice; it does not see a process's settings, settings
+floor or staleness, and it proves nothing about a process that has not loaded
+the write yet.

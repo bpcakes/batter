@@ -53,6 +53,55 @@ pub enum PeriodicFailure<E> {
 /// ```
 pub type PeriodicRun<E> = Result<(), PeriodicFailure<E>>;
 
+/// What a periodic run that returned `Ok` did.
+///
+/// A run registered with [`register_skippable_in`](super::register_skippable_in)
+/// returns `Ok(PeriodicOutcome::Ran)` when it did its work, and
+/// `Ok(PeriodicOutcome::Skipped)` when it decided not to, such as a run a
+/// tripped gate keeps out:
+/// counted in [`PeriodicSummary::skipped`](super::PeriodicSummary::skipped),
+/// never as a success, and never acknowledging startup.
+///
+/// ```
+/// use batter_core::periodic::{PeriodicFailure, PeriodicOutcome};
+///
+/// fn run(gate_open: bool) -> Result<PeriodicOutcome, PeriodicFailure<std::io::Error>> {
+///     if !gate_open {
+///         return Ok(PeriodicOutcome::Skipped);
+///     }
+///     // The work.
+///     Ok(PeriodicOutcome::Ran)
+/// }
+/// assert_eq!(run(false).unwrap(), PeriodicOutcome::Skipped);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeriodicOutcome {
+    /// The run did its work.
+    Ran,
+    /// The run did not do its work this time.
+    Skipped,
+}
+
+/// The success value of a periodic run: `()` for a run that did its work, or
+/// a [`PeriodicOutcome`] for one registered with
+/// [`register_skippable_in`](super::register_skippable_in).
+pub(crate) trait PeriodicSuccess: Send + 'static {
+    /// What the run did.
+    fn outcome(self) -> PeriodicOutcome;
+}
+
+impl PeriodicSuccess for () {
+    fn outcome(self) -> PeriodicOutcome {
+        PeriodicOutcome::Ran
+    }
+}
+
+impl PeriodicSuccess for PeriodicOutcome {
+    fn outcome(self) -> PeriodicOutcome {
+        self
+    }
+}
+
 impl<E> PeriodicFailure<E> {
     /// Mark one run's failure as recoverable without relying on inference.
     ///

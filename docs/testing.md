@@ -16,9 +16,11 @@ Prerequisites include Python 3.9+, Docker for native Runledger PostgreSQL 18
 tests, loopback TCP, Unix subprocess permissions and a host certificate store.
 Initial dependency and file-budget-runtime downloads require network access.
 
-The script owns the complete local sequence: formatting, file budgets, four
-Clippy configurations, six test-matrix parts, rustdoc with warnings denied and
-all five HTTP smoke profiles. It fails on any unsuccessful command and preserves
+The script owns the complete local sequence: formatting, file budgets, eight
+Clippy configurations, seven test-matrix parts, rustdoc with warnings denied and
+all five HTTP smoke profiles. The four flags Clippy configurations cover the bare
+`batter-flags-core` and `batter-flags` declared-only, with `postgres` and with
+`axum,runledger`. It fails on any unsuccessful command and preserves
 the Cargo-generated lockfile. Do not repeat a successful matrix unless later
 changes or environment differences invalidate its result. Record outcomes and
 limitations in the owning Bead. Backend changes require the complete run.
@@ -30,6 +32,8 @@ them to defaults before exec if a background launch is necessary.
 The standalone [at-rest portability gate](../scripts/check-batter-at-rest-portability.sh)
 runs separately in CI. Hosted Rust job selection belongs to
 [ci_plan.py](../scripts/ci_plan.py); a planner failure selects the full run.
+The native Runlimit and flags PostgreSQL jobs run only when their packages'
+local closures or a workspace-wide input change; manual dispatch runs both.
 Weekly CI checks floating stable. A workflow definition is not evidence that it ran.
 
 <a id="verification-commands"></a>
@@ -42,6 +46,7 @@ python3 scripts/test_matrix.py no-default-features
 python3 scripts/test_matrix.py doctests
 python3 scripts/test_matrix.py consumers
 python3 scripts/test_matrix.py runlimit
+python3 scripts/test_matrix.py flags
 python3 scripts/test_matrix.py scripts
 cargo fmt --all -- --check
 bash scripts/check_file_budget.sh
@@ -53,11 +58,12 @@ Use a focused part while developing; it does not replace a required complete run
 | Matrix part | Scope |
 | --- | --- |
 | `workspace` | All-feature workspace tests, reference-runner controls, hostile configuration and optimized adapter future-size tests. |
-| `no-default-features` | Minimal core/facade, standalone outbound leaf, and the shipped outbound example without dev-only reqwest features. |
+| `no-default-features` | Minimal core/facade, standalone outbound leaf, the shipped outbound example without dev-only reqwest features, and declared-only `batter-flags`. |
 | `doctests` | Workspace all-feature rustdoc examples, including compilation failures for invalid compositions. |
 | `consumers` | Facade feature checks, native/source-copy consumers and graph/tool controls. |
 | `runlimit` | Native default-feature tests, optimized corrupt-state regression and workspace graph checks. |
-| `scripts` | Bounded process, smoke, live-runner and consumer controls. |
+| `flags` | The flags store and operator command with default features, the bare `batter-flags-core` without `serde`, and the [flags workspace checker](../scripts/check_flags_workspace.py). |
+| `scripts` | Bounded process, smoke, live-runner, consumer and flags graph controls. |
 
 [test_matrix.py](../scripts/test_matrix.py) owns the exact inventory and ordered
 batches. Do not run conflicting reference executable feature builds together:
@@ -95,6 +101,9 @@ Tests and the matrix own the executable inventory; contracts live in
 | Native invocation phases, settlement and handler testing | [Runledger adapter tests](../crates/batter-runledger/tests/), native [runtime tests](../runledger/runledger-runtime/tests/). |
 | Quota, authenticated attempts and maintenance | [Runlimit adapter tests](../crates/batter-runlimit/tests/) and native package tests. |
 | Outbound wire behavior and phase-owned evidence | [Outbound tests](../crates/batter-outbound-http/tests/) and facade `outbound_exchange` example tests. |
+| Flag catalogs, snapshots, evaluation, pins and invariants | [Flags core tests](../crates/batter-flags-core/tests/). |
+| Declared mode, gates, control-plane loader and last-good file | [Flags tests](../crates/batter-flags/tests/) and in-crate loader tests; ignored `control_plane_live`, `invariants_live` and `jobs_live`. |
+| Flags store, operator command and process environment | [Store tests](../crates/batter-flags-postgres/tests/), [command tests](../crates/batter-flags-cli/tests/), facade `flags_live`, `grants_live` and [environment ownership](../crates/batter/tests/process_environment_ownership.rs). |
 | Outbound capacity observations (opt-in) | Run `python3 scripts/measure_outbound_http.py`; [executed scope and limits](evidence/outbound-capacity-2026-11-11.md). The scripts matrix compiles the probe with `--check`; timing is not a CI threshold. |
 | Outbound response-body wiping before deallocation | Private [buffer](../crates/batter-outbound-http/src/send/buffer/tests.rs) and [body-storage](../crates/batter-outbound-http/src/send/body_storage_tests.rs) tests, with a `cfg(test)` destructor probe. |
 | External single-dependency adoption | [Consumer sources](../consumers/README.md) and [source-copy checker](../scripts/check_single_facade_consumer.py). |
@@ -407,6 +416,83 @@ restricted reads, own-write visibility, rejection rollback, concurrent
 promotion/retention and a dropped COMMIT acknowledgement. Compile-fail rustdoc
 keeps removed pool getters unavailable. Observed absence does not prove remote rollback.
 
+## Flags offline suites
+
+The workspace part (`cargo test --workspace --all-features --all-targets`) runs
+every offline flags target; the `no-default-features` part's `flags-declared`
+command also runs `batter-flags` with no optional package (`cargo test -p
+batter-flags --no-default-features --features test-support --locked`), which
+guards the declared-only build. `test-support` adds no package; the
+`TestFlags` targets name it in `required-features`, because a dependency of
+`batter-flags` on itself would break the flags graph rule. `batter-flags-core` targets: catalog
+build, rules and queries, relations, handles and handle checks, digests,
+manifest and manifest decoding, snapshots, state encoding, revisions,
+resolutions, authority and published records, evaluation, governance, kill
+switch, gates, invariants and invariant governance, pins, pin refusal, pin
+serialization, events, event levels and events with pins. `batter-flags`
+targets: the declared literals, rules, revisions, redaction (its child
+re-executes the test binary with a cleared environment), events and
+invariants, the test flags and their errors, auto traits, grants and HTTP; its
+in-crate tests cover the reader, flags, declared mode, the jobs and periodic
+gates, the last-good file and the control-plane loader over a scripted source
+in paused time. `batter-flags-postgres` and `batter-flags-cli` run their offline
+tests and leave the live ones ignored. The evaluation hot path has an ignored
+micro-benchmark whose timings are unverified:
+
+```text
+cargo test --release -p batter-flags-core --test hot_path -- --ignored --nocapture
+```
+
+## Flags control-plane PostgreSQL 18 suites
+
+The flags control plane's live suites are ignored tests against a disposable
+PostgreSQL 18 server, which `scripts/verify.sh` does not run. Hosted CI's
+`native-flags-postgres` job runs the store, loader and operator-command suites
+below against a PostgreSQL 18 service whenever `scripts/ci_plan.py` selects it
+(`flags_postgres`, the flags packages' local closure). Its first hosted run
+failed on an admin role named `flags` (`batter-jkw6.34`); a later hosted run
+passed the store, loader and operator-command suites (`batter-jkw6.28`). `scripts/sqlx_live.py` runs the facade's `flags_live` target and
+the `grants_live` flags case; `jobs_live` needs a dedicated database and runs
+by hand. Each run is recorded on the owning Bead.
+
+The store's `load`, `preflight` and operator reads refuse a standby before
+they read any schema or row: the ignored live unit test
+`every_read_and_the_load_refuse_a_standby_before_reading_anything` sets the
+store's test-only standby hook on an unmigrated store and asserts `Standby`
+from every one, and `SchemaRevision` without it. A session cannot stand in for
+a replica, because the read-only snapshot pins `search_path` to
+`pg_catalog, pg_temp`. Unverified: no suite runs against a hot standby, so a
+real replica's `pg_is_in_recovery()` is not exercised. The schema half of the
+same guard is proved live by
+`every_read_and_write_refuses_an_unmigrated_store_as_revision_zero`.
+
+```text
+# The admin URL of the disposable server; each test leases its own database.
+export BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL=postgres://...
+cargo test -p batter-flags-postgres -- --ignored
+cargo test -p batter-flags --features postgres \
+  --test control_plane_live --test invariants_live -- --ignored
+cargo test -p batter-flags-cli -- --ignored
+
+# The facade: the ledger shared with Runledger and Runlimit, a write after a
+# restore below the fleet, and the exact-role grants of every flags operation.
+export BATTER_SQLX_ADMIN_URL=postgres://...
+cargo test -p batter --features runledger,runlimit-postgres,flags-postgres \
+  --test flags_live --test grants_live -- --ignored --test-threads=1
+
+# The job gate, against a dedicated database it migrates itself.
+DATABASE_URL=postgres://.../dedicated cargo test -p batter-flags \
+  --features runledger,postgres,test-support --test jobs_live -- --ignored
+```
+
+`invariants_live` covers `requires`,
+`conflicts`, `both_or_none` and a variant whose required settings the process
+lacks, each held and listed in the heartbeat's `held_keys`, and a governed
+flag under its engaged switch, served at its code default with
+`Layer::Override` and not held (`batter-jkw6.21`); the
+store's `relations` suite covers the write-side judgement, refusal and
+deferral, and the CLI's `live_writes` suite `--accept-invariant-hold`.
+
 ## Limits of current coverage
 
 Builds, unit tests, loopback transports, native Docker tests and external live
@@ -440,3 +526,12 @@ and fence state read-only. Native handler tests cover the private driver's ready
 work, ordinary-finalization and late-settlement paths, including callback
 construction, polling and destruction failures. Execution results belong to the
 owning Bead; no new fresh-agent usability evaluation is claimed.
+
+### Flags state-protocol regression coverage
+
+`batter-jkw6.36` adds a live store regression for a dropped interrupt sender,
+local two-phase interrupt tests, persistence admission tests spanning a timed-out
+blocking writer, and registration tests for foreign, unregistered and extracted
+pool cleanup. Catalog tests compare policy/ownership ordering and first-error
+retention; compile-fail doctests reject repeated set-once policies. The existing
+encoding-1 parser cases cover member order, duplicates and missing fields.

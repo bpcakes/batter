@@ -236,6 +236,109 @@ then explicitly await the sibling finalization context, retaining both outcomes.
 Do not wrap the pair in the work deadline or reuse a token cancelled when work
 finished. The reserve neither ignores parent cancellation nor extends total time.
 
+## Flags control plane (experimental)
+
+### Migrate before deploying
+
+Run `PooledStore::migrate` as a finite command under a login that is neither the
+serving nor the operator login, before the build that needs it serves. A build
+deployed ahead of its migration reports `LatestRead::SchemaBehind` in its status, reads
+nothing and skips its heartbeat until the migration runs, each skip counted in
+`RegisteredFlags::presence().skipped`, not `succeeded`; under
+`Gate::Published` it never becomes ready.
+
+### Engage a kill switch
+
+```sh
+batter-flags show outbound_halt                 # note its revision
+batter-flags kill outbound_halt engage --actor ops --reason "contain failures" --if-revision N
+batter-flags fleet --version V                  # V from the write's report
+```
+
+Exit 0 means the command succeeded, not that it wrote: read the report's
+`outcome` (`written`, `written_undeclared` or `unchanged`). Exit 3 is a
+precondition (nothing written) and 4 is unknown: run
+`batter-flags history outbound_halt` and re-run with `--if-revision`. `fleet
+--version V` also exits 0 while the rollout is pending or no process is Live;
+the change has reached every Live process only when `data.rollout.reached` is
+`true`. A committed write notifies nobody: each process applies it at the
+first refresh that starts after the commit. Before reading the rollout, allow
+the longer of the poll interval and the refresh run budget, plus one more run
+budget (derived from the serial schedule; no test measures it). The settings floor
+(`FLAG_OUTBOUND_HALT=engaged` and a restart) engages the switch without the
+store. Releasing a switch warns with the number of Live processes whose settings
+floor keeps it engaged.
+
+### Change flags an invariant relates
+
+A `set` after which a running declarer's processes would newly hold a flag
+exits 3 with `refusal` `invariant_unmet`, listing each flag that would be held
+and its invariant under `data.unmet`; nothing is written. Write the missing
+flag first. A `both_or_none` pair, or two flags that require each other,
+cannot change one strict write at a time: pass `--accept-invariant-hold` on
+the first write, read the warning naming the held flag, then write the other
+without it. `invariants_unjudged` (`data.catalogs`) has two causes: a
+running build's catalog is newer than the command, which upgrading
+`batter-flags` resolves, or a catalog has more than four governing kill
+switches whose stored rows a newer build wrote, which only a write of those
+switches from a build that reads them resolves; accept the hold only once the
+fleet's holds are known. Invariant holds never refuse a `kill`, whose report
+lists the flags engaging the switch newly holds; its revision, encoding and
+coordinated-flip refusals still apply.
+
+### Restore or fail over the flags database
+
+After a point-in-time restore or a failover to an older head, state written
+between the restored head and the version the fleet had applied is not
+recovered. Running processes refuse the lower head (`Regressed`), keep serving
+their pre-restore state and go stale; no write is refused for it.
+
+An audited write makes the fleet converge only once the store knows what the
+fleet has applied, and it learns that from heartbeats:
+
+1. Wait at least one heartbeat interval after the restored database accepts
+   connections, then run `batter-flags fleet` and confirm that Live processes
+   report `control_plane` versions above the restored head. The restored
+   presence rows hold restore-point versions until each process reports again.
+   A write made before that is numbered one above the restored head, running
+   processes refuse it as `Regressed`, and they keep serving their pre-restore
+   state; write again once the reports are in.
+2. Make an audited write (`kill` or `set` with `--if-revision` from
+   `batter-flags show`). It is numbered above the highest version a Live
+   control-plane process reports, so running processes apply the whole
+   restored state at their next refresh without a restart.
+3. If the command answers `unchanged`, the restored store already holds that
+   state and nothing was written, so nothing converges. Make a change that
+   does write: any audited write of any key carries the whole state to every
+   process, for example setting a flag that is safe to move to another value
+   and back.
+4. Check `batter-flags fleet --version V` with V from the report of a write
+   that answered `written`. Do not use a version from a write made before
+   step 1: the fleet can exceed it without having applied it.
+
+Versions therefore skip from the restored head to above the fleet; the counter
+is never rebased. One write moves the counter by at most 1,000,000
+(`MAX_VERSION_JUMP`): a report at or beyond that distance above the head is
+ignored, so a process reporting a wild version can neither refuse a write nor
+exhaust the counter, and a fleet genuinely that far ahead of a restored store
+needs its processes restarted instead.
+
+A process that restarts before that write serves its last-good file and then
+accepts the restored head. Until someone writes, the fleet can so serve a mix
+of pre-restore and restored state.
+
+### Size the pool
+
+Each process holds up to three flags sessions at once (refresh, heartbeat,
+prune) on top of the application's peak. Exhaustion presents as `Stale` and
+applies each switch's stale rule.
+
+### Version the environment with the build
+
+A process's settings floor, its environment class and its catalog travel with
+its build: change them by deploying, and expect `batter-flags fleet --version`
+to group processes by build, applied version and declared revision.
+
 ## Deployment prerequisites
 
 Choose exposure, TLS, authentication, and service budgets from the consuming

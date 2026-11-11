@@ -26,6 +26,13 @@ use std::sync::Arc;
 pub struct PgProfiledPool {
     pool: PgPool,
     profile: Arc<PgSessionProfile>,
+    cleanup: Cleanup,
+}
+
+#[derive(Clone)]
+enum Cleanup {
+    CallerOwned,
+    Registered(batter_core::cleanup::CleanupRegistration),
 }
 
 impl std::fmt::Debug for PgProfiledPool {
@@ -97,7 +104,39 @@ impl PgProfiledPool {
                 Box::pin(async move { profile.reset_and_apply(connection).await.map(|()| true) })
             })
             .connect_lazy_with(options);
-        Ok(Self { pool, profile })
+        Ok(Self {
+            pool,
+            profile,
+            cleanup: Cleanup::CallerOwned,
+        })
+    }
+
+    pub(crate) fn with_cleanup(
+        mut self,
+        registration: batter_core::cleanup::CleanupRegistration,
+    ) -> Self {
+        self.cleanup = Cleanup::Registered(registration);
+        self
+    }
+
+    /// Whether `target` owns the pool closure installed by [`crate::pool_in`].
+    /// Caller-owned pools and pools registered in another or extracted stack
+    /// return false. A true result proves registration only, not pool liveness.
+    /// See [`crate::pool_in`] for construction; adapters must check this before
+    /// registering dependent work on the same borrowed target.
+    ///
+    /// ```
+    /// use batter_core::registration::RegistrationTarget;
+    /// use batter_sqlx::PgProfiledPool;
+    /// fn belongs_to(pool: &PgProfiledPool, target: &mut impl RegistrationTarget) -> bool {
+    ///     pool.is_registered_in(&target.registration())
+    /// }
+    /// ```
+    pub fn is_registered_in(&self, target: &batter_core::registration::Registration<'_>) -> bool {
+        match &self.cleanup {
+            Cleanup::CallerOwned => false,
+            Cleanup::Registered(registration) => target.owns_cleanup(registration),
+        }
     }
 
     /// Native access under the declared profile. Raw SQL can change its current

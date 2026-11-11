@@ -19,6 +19,7 @@ These decisions govern the source implementation and future work.
 | [013](013-managed-database-objects.md) | Apply consumer-declared routines, triggers and constraint triggers after migrations and verify them; source, ownership and grants stay downstream. |
 | [014](014-reuse-after-two-consumers.md) | Extract only what two application roots share: an application-installed redacting panic hook and bounded blocking work; no application root, DI, cache, queue or circuit framework. |
 | [015](015-outbound-transport-evidence.md) | Own only the transport evidence of one outbound HTTP request, in an experimental standalone leaf with a fixed send-once client and an exhaustive outcome; provider meaning, replay, idempotency, fences and reconciliation stay downstream. |
+| [016](016-typed-flags-control-plane.md) | Typed flags and kill switches in one catalog, resolved from settings or loaded from an audited PostgreSQL control plane; experimental, split between survey-evidenced extraction and owner-selected additions. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, an update to the implemented status, and executed checks recorded in the

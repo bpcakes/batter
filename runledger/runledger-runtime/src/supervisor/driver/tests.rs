@@ -196,8 +196,8 @@ impl Future for BlockingPollSignal {
         if let Some(entered) = this.entered.take() {
             entered.send(()).expect("test observes signal polling");
         }
-        this.release
-            .recv()
+        // Never strand work queued on this worker, such as the settlement owner.
+        tokio::task::block_in_place(|| this.release.recv())
             .expect("test releases the blocked signal poll");
         Poll::Pending
     }

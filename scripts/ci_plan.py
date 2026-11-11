@@ -12,6 +12,9 @@
 - `runlimit_postgres`: `true` when the change can affect the native Runlimit
   PostgreSQL tests, meaning a file in the local package closure of
   `runlimit-postgres` or a workspace-wide build input.
+- `flags_postgres`: `true` when the change can affect the flags PostgreSQL
+  suites, meaning a file in the local package closure of `batter-flags-postgres`,
+  `batter-flags` or `batter-flags-cli`, or a workspace-wide build input.
 
 Whenever the planner cannot prove a skip, it selects the full work. The
 workflow also runs every test job when this planner fails.
@@ -30,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = ".github/workflows/ci.yml"
 MARKER_PREFIX = "verified-tree-"
 RUNLIMIT_PACKAGE = "runlimit-postgres"
+FLAGS_PACKAGES = ("batter-flags-postgres", "batter-flags", "batter-flags-cli")
 # Files and directories outside package directories that can change any Rust
 # job's outcome. Directory entries end with "/".
 GLOBAL_INPUTS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/",
@@ -62,6 +66,14 @@ def local_closure(metadata, package):
             if dependency.get("path") and (is_root or dependency.get("kind") in (None, "build")):
                 pending.append((by_dir[Path(dependency["path"])], False))
     return sorted(directory.relative_to(root).as_posix() + "/" for directory in seen)
+
+
+def flags_closure(metadata):
+    """Return the union of the flags PostgreSQL packages' local closures."""
+    directories = set()
+    for package in FLAGS_PACKAGES:
+        directories.update(local_closure(metadata, package))
+    return sorted(directories)
 
 
 def touches(paths, inputs):
@@ -101,14 +113,15 @@ def verifying_run(tree, get):
     return None
 
 
-def plan(event, paths, tree, find_run, closure):
+def plan(event, paths, tree, find_run, closure, flags_closure):
     """Return the step outputs and the notes that explain them.
 
-    `find_run` maps a tree to a verifying run URL and `closure` returns the
-    Runlimit PostgreSQL input directories; either may raise.
+    `find_run` maps a tree to a verifying run URL, `closure` returns the
+    Runlimit PostgreSQL input directories and `flags_closure` the flags
+    PostgreSQL ones; any of them may raise.
     """
     outputs = {"tree": tree, "tree_verified": "false", "verified_run": "",
-               "runlimit_postgres": "true"}
+               "runlimit_postgres": "true", "flags_postgres": "true"}
     notes = []
     if event not in DIFF_EVENTS:
         notes.append(f"{event} runs every job.")
@@ -116,16 +129,18 @@ def plan(event, paths, tree, find_run, closure):
     if paths is None:
         notes.append("The changed files are unknown, so every job runs.")
     else:
-        try:
-            inputs = (*closure(), *GLOBAL_INPUTS)
-        except Exception as error:  # noqa: BLE001 - any failure selects the full run
-            notes.append(f"The Runlimit PostgreSQL inputs are unknown ({error!r}), so it runs.")
-        else:
+        for key, label, inputs_of in (("runlimit_postgres", "Runlimit PostgreSQL", closure),
+                                      ("flags_postgres", "flags PostgreSQL", flags_closure)):
+            try:
+                inputs = (*inputs_of(), *GLOBAL_INPUTS)
+            except Exception as error:  # noqa: BLE001 - any failure selects the full run
+                notes.append(f"The {label} inputs are unknown ({error!r}), so it runs.")
+                continue
             if touches(paths, inputs):
-                notes.append("The change touches Runlimit PostgreSQL inputs.")
+                notes.append(f"The change touches {label} inputs.")
             else:
-                outputs["runlimit_postgres"] = "false"
-                notes.append("The change leaves Runlimit PostgreSQL inputs untouched; it is skipped.")
+                outputs[key] = "false"
+                notes.append(f"The change leaves {label} inputs untouched; it is skipped.")
     if event == "push":
         try:
             url = find_run(tree)
@@ -183,7 +198,8 @@ def main(environ=os.environ):
     get = github_getter(environ.get("GITHUB_API_URL", "https://api.github.com"),
                         environ["GITHUB_REPOSITORY"], environ.get("GITHUB_TOKEN", ""))
     outputs, notes = plan(event, paths, tree, lambda value: verifying_run(value, get),
-                          lambda: local_closure(cargo_metadata(), RUNLIMIT_PACKAGE))
+                          lambda: local_closure(cargo_metadata(), RUNLIMIT_PACKAGE),
+                          lambda: flags_closure(cargo_metadata()))
     write_outputs(outputs, notes, environ)
     return 0
 

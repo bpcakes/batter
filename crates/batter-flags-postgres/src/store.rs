@@ -1,0 +1,125 @@
+use crate::{ErrorClass, StoreError, ValidationError};
+use sqlx::PgPool;
+use std::time::Duration;
+use tokio::time::Instant;
+
+/// Required nonzero limits, each at most 60 seconds.
+#[derive(Clone, Copy, Debug)]
+pub struct StoreTiming {
+    pub(crate) acquire: Duration,
+    pub(crate) statement: Duration,
+    pub(crate) lock: Duration,
+    pub(crate) idle: Duration,
+}
+impl StoreTiming {
+    /// Validate all budgets before any connection can be acquired.
+    pub fn new(
+        acquire: Duration,
+        statement: Duration,
+        lock: Duration,
+        idle: Duration,
+    ) -> Result<Self, ValidationError> {
+        if [acquire, statement, lock, idle]
+            .iter()
+            .any(|v| *v < Duration::from_millis(1) || *v > Duration::from_secs(60))
+        {
+            return Err(ValidationError);
+        }
+        Ok(Self {
+            acquire,
+            statement,
+            lock,
+            idle,
+        })
+    }
+    /// The pool-acquire timeout, which also bounds one load's inspection.
+    pub fn acquire(self) -> Duration {
+        self.acquire
+    }
+    /// The per-statement timeout.
+    pub fn statement(self) -> Duration {
+        self.statement
+    }
+    /// The lock-wait timeout.
+    pub fn lock(self) -> Duration {
+        self.lock
+    }
+    /// The idle-in-transaction timeout.
+    pub fn idle(self) -> Duration {
+        self.idle
+    }
+    pub(crate) fn settings(self, deadline: Instant) -> Result<[String; 3], StoreError> {
+        let remaining = remaining(deadline)?;
+        Ok([self.statement, self.lock, self.idle]
+            .map(|d| format!("{}ms", d.min(remaining).as_millis().max(1))))
+    }
+}
+/// Protected pool-backed flags store. Every method owns acquisition, transaction
+/// completion and disposition; no connection or incomplete transaction escapes.
+/// Atomic/read-only transactions and migrations retire even after success;
+/// migration session timeout settings never return to the pool.
+#[derive(Clone)]
+pub struct PooledStore {
+    pub(crate) pool: PgPool,
+    pub(crate) timing: StoreTiming,
+    #[cfg(test)]
+    pub(crate) pause: Option<std::sync::Arc<super::tests::Pause>>,
+    /// Test builds only: the recovery check reads as a standby, because no
+    /// suite runs a replica and a read snapshot pins `search_path`, so no
+    /// session can stand in for one.
+    #[cfg(test)]
+    pub(crate) standby: bool,
+}
+impl std::fmt::Debug for PooledStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PooledStore")
+    }
+}
+impl PooledStore {
+    /// The timing every operation of this store runs under.
+    pub fn timing(&self) -> StoreTiming {
+        self.timing
+    }
+    /// Bind an application-owned pool to validated timing. The application owns
+    /// pool shutdown; individual operations own all checked-out connections.
+    pub fn new(pool: PgPool, timing: StoreTiming) -> Self {
+        Self {
+            pool,
+            timing,
+            #[cfg(test)]
+            pause: None,
+            #[cfg(test)]
+            standby: false,
+        }
+    }
+
+    /// Refuses a standby with `ErrorClass::Standby`: the first read `load`,
+    /// `preflight` and every operator read make in their snapshot, before any
+    /// schema or row.
+    pub(crate) async fn refuse_standby(
+        &self,
+        sql: &mut batter_sqlx::PgReadOnlySql<'_>,
+    ) -> Result<(), StoreError> {
+        let recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
+            .fetch_one(sql.executor())
+            .await?;
+        #[cfg(test)]
+        let recovery = recovery || self.standby;
+        crate::errors::check_primary(recovery)
+    }
+}
+pub(crate) fn remaining(deadline: Instant) -> Result<Duration, StoreError> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|v| !v.is_zero())
+        .ok_or_else(|| StoreError::classified(ErrorClass::Deadline))
+}
+pub(crate) async fn bounded<T>(
+    deadline: Instant,
+    future: impl Future<Output = Result<T, StoreError>>,
+) -> Result<T, StoreError> {
+    remaining(deadline)?;
+    tokio::time::timeout_at(deadline, future)
+        .await
+        .map_err(|_| StoreError::classified(ErrorClass::Deadline))?
+}
