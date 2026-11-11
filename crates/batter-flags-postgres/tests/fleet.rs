@@ -97,7 +97,7 @@ async fn a_report_at_or_beyond_the_jump_window_never_moves_or_refuses_a_write() 
     const WINDOW: u64 = MAX_VERSION_JUMP as u64;
     let f = Fixture::migrated().await;
     let mut wild = process(&f.store, Build::Base, "wild", 60, 600);
-    let mut written = async |variant: &str| match f
+    let written = async |variant: &str| match f
         .store
         .write(set("fast_path", variant, None), deadline())
         .await
