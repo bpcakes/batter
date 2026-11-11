@@ -95,12 +95,15 @@ contracts, capability facts and validation history.
   in their own snapshot. `PooledStore::migrate`
   refuses a search path that resolves into `flags`
   (`ErrorClass::SearchPath`) before anything is migrated. A committed write
-  notifies nobody: processes see it at their next poll. After a point-in-time
-  restore or a failover to an older head, the next write is numbered above the
-  highest version any Live control-plane process reports, so running
-  processes, which refuse the lower head as `Regressed`, apply it at their
-  next poll without a restart; versions then skip from the restored head to
-  above the fleet.
+  notifies nobody: processes see it within one poll interval plus the duration
+  of a refresh run. After a point-in-time restore or a failover to an older
+  head, a write made once running processes have heartbeated against the
+  restored database is numbered above the highest version any Live
+  control-plane process reports, so those processes, which refuse the lower
+  head as `Regressed`, apply it at their next refresh without a restart;
+  versions then skip from the restored head to above the fleet. One write moves
+  the counter by at most `MAX_VERSION_JUMP` (1,000,000), which the counter
+  guard enforces and beyond which a report is ignored.
 
   Control plane (`batter-flags` with `postgres`): `control_plane::register_in`
   checks every input and name first, then registers `flags.refresh`,

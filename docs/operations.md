@@ -291,13 +291,35 @@ between the restored head and the version the fleet had applied is not
 recovered. Running processes refuse the lower head (`Regressed`), keep serving
 their pre-restore state and go stale; no write is refused for it.
 
-Any audited write makes the fleet converge: it is numbered above the highest
-version a Live control-plane process reports, so running processes apply it at
-their next poll without a restart. Re-issue the switch state you need (`kill`
-or `set` with `--if-revision` from `batter-flags show`), then check
-`batter-flags fleet --version V` with V from the write's report. Versions
-therefore skip from the restored head to above the fleet; the counter is never
-rebased.
+An audited write makes the fleet converge only once the store knows what the
+fleet has applied, and it learns that from heartbeats:
+
+1. Wait at least one heartbeat interval after the restored database accepts
+   connections, then run `batter-flags fleet` and confirm that Live processes
+   report `control_plane` versions above the restored head. The restored
+   presence rows hold restore-point versions until each process reports again.
+   A write made before that is numbered one above the restored head, running
+   processes refuse it as `Regressed`, and they keep serving their pre-restore
+   state; write again once the reports are in.
+2. Make an audited write (`kill` or `set` with `--if-revision` from
+   `batter-flags show`). It is numbered above the highest version a Live
+   control-plane process reports, so running processes apply the whole
+   restored state at their next refresh without a restart.
+3. If the command answers `unchanged`, the restored store already holds that
+   state and nothing was written, so nothing converges. Make a change that
+   does write: any audited write of any key carries the whole state to every
+   process, for example setting a flag that is safe to move to another value
+   and back.
+4. Check `batter-flags fleet --version V` with V from the report of a write
+   that answered `written`. Do not use a version from a write made before
+   step 1: the fleet can exceed it without having applied it.
+
+Versions therefore skip from the restored head to above the fleet; the counter
+is never rebased. One write moves the counter by at most 1,000,000
+(`MAX_VERSION_JUMP`): a report at or beyond that distance above the head is
+ignored, so a process reporting a wild version can neither refuse a write nor
+exhaust the counter, and a fleet genuinely that far ahead of a restored store
+needs its processes restarted instead.
 
 A process that restarts before that write serves its last-good file and then
 accepts the restored head. Until someone writes, the fleet can so serve a mix

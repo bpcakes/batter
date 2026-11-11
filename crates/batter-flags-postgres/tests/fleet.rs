@@ -88,6 +88,50 @@ async fn only_a_live_control_plane_report_above_the_head_moves_the_next_version(
     f.close().await;
 }
 
+/// A report is the serving role's own claim: at or beyond the jump window
+/// above the head it neither refuses a write nor moves its number, and just
+/// inside the window it moves the write to the window's edge.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_report_at_or_beyond_the_jump_window_never_moves_or_refuses_a_write() {
+    const WINDOW: u64 = MAX_VERSION_JUMP as u64;
+    let f = Fixture::migrated().await;
+    let mut wild = process(&f.store, Build::Base, "wild", 60, 600);
+    let mut written = async |variant: &str| match f
+        .store
+        .write(set("fast_path", variant, None), deadline())
+        .await
+        .unwrap()
+    {
+        WriteOutcome::Written { version, .. } => version.get(),
+        other => panic!("{other:?}"),
+    };
+    // The largest storable version: no write is refused and none jumps.
+    beat(
+        &mut wild,
+        SnapshotReport::ControlPlane(Version::new(i64::MAX as u64)),
+    )
+    .await;
+    assert_eq!(written("on").await, 1);
+    // Exactly the window above the head is still outside it.
+    beat(
+        &mut wild,
+        SnapshotReport::ControlPlane(Version::new(1 + WINDOW)),
+    )
+    .await;
+    assert_eq!(written("off").await, 2);
+    // One inside the window: the write lands at the window's edge, which is
+    // the widest step the counter guard accepts.
+    beat(
+        &mut wild,
+        SnapshotReport::ControlPlane(Version::new(2 + WINDOW - 1)),
+    )
+    .await;
+    assert_eq!(written("on").await, 2 + WINDOW);
+    assert_eq!(f.head().await, (2 + WINDOW) as i64);
+    f.close().await;
+}
+
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn decoding_and_the_archive_gate_count_live_and_silent_declarers_only() {

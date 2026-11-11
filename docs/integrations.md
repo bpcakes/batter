@@ -1676,8 +1676,10 @@ policy; a `gated_workflow_step` job and a `Flags::flagged` job spend one.
 
 `batter::flags::control_plane::register_in` owns the refresh, the heartbeat,
 the prune and the optional last-good file, all on the application's registered
-pool. A committed audited write notifies nobody; each process sees it at its
-next poll, so the poll interval is the propagation bound. The application owns
+pool. A committed audited write notifies nobody; each process sees
+it at the first refresh that starts after the commit. That takes up to one poll
+interval plus the duration of a refresh run, at most its run budget, because runs
+are serial and a run that overruns the interval delays the next. The application owns
 the pool's connection options, the login's grants (a `FlagsRole`, `ServingProcess` for a serving login, or a
 `FlagsGrant` of `FlagsOperation`s for its exact-role manifest; `AuditedWrite`
 covers what a write judges) and its settings.

@@ -205,6 +205,17 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
     let history = db.cli_args(&["history", "fast_path"]).json();
     assert_eq!(history["data"][0]["actor"], "ops");
     assert_eq!(history["data"][0]["version"], 1);
+    // The event carries the audit row's own timestamp, as RFC 3339.
+    let recorded =
+        chrono::DateTime::parse_from_rfc3339(history["data"][0]["recorded_at"].as_str().unwrap())
+            .unwrap();
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT (extract(epoch FROM recorded_at) * 1000000)::bigint FROM flags.flag_audit WHERE version = 1",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded.timestamp_micros(), stored);
 
     let fleet = db.cli_args(&["fleet", "--version", "1"]).json();
     assert_eq!(fleet["data"]["live_groups"].as_array().unwrap().len(), 1);

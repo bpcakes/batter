@@ -31,6 +31,15 @@ impl Mutation {
         }
     }
 }
+/// The furthest one audited write may move the version counter.
+///
+/// A write is numbered above the highest version a Live control-plane process
+/// reports, so that a fleet ahead of a restored store converges on it. That
+/// report is the serving role's own claim: one at or beyond this window above
+/// the stored head is ignored, and the counter guard refuses a wider step from
+/// any writer, so no report can refuse a write or exhaust the counter.
+pub const MAX_VERSION_JUMP: i64 = 1_000_000;
+
 /// Whether a write or a restore may flip a key a retained catalog declares
 /// coordinated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -265,10 +274,13 @@ impl PooledStore {
         // have applied a version above it and would refuse anything lower.
         // Numbering this write above every such process lets the fleet
         // converge on it; otherwise the next version is the head's successor.
-        let applied: Option<i64> = sqlx::query_scalar("SELECT max(snapshot_version) FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > clock_timestamp() AND snapshot_source = 'control_plane'")
-            .fetch_one(sql.executor()).await?;
-        let next = head
-            .max(applied.unwrap_or(head))
+        // A report is the serving role's own claim, so one at or beyond the
+        // window above the head is ignored: it can neither refuse this write
+        // nor move the counter further than the guard trigger allows.
+        let applied: Option<i64> = sqlx::query_scalar("SELECT max(snapshot_version) FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > clock_timestamp() AND snapshot_source = 'control_plane' AND snapshot_version > $1 AND snapshot_version - $1 < $2")
+            .bind(head).bind(crate::MAX_VERSION_JUMP).fetch_one(sql.executor()).await?;
+        let next = applied
+            .unwrap_or(head)
             .checked_add(1)
             .ok_or_else(|| StoreError::classified(ErrorClass::InvalidData))?;
         sqlx::query("UPDATE flags.flag_control SET version = $1 WHERE singleton")

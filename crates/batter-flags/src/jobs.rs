@@ -51,7 +51,9 @@
 //! Retry exhaustion and terminal failures on workflow steps propagate through
 //! native workflow settlement. A direct-only declaration is an application
 //! assertion: enqueueing it as a non-opted workflow step causes its first
-//! `Defer` to dead-letter with `job.workflow_handler_continuation_not_enabled`.
+//! continuation, a `Defer` or any invocation awaiting the first publication
+//! whatever its tripped policy, to dead-letter with
+//! `job.workflow_handler_continuation_not_enabled`.
 //! No native queue, definition enablement, claim or workflow policy is changed.
 //! An unavailable initial publication can exhaust the attempts of a workflow
 //! step or a `flagged` job, never of a gated direct job. Native retry

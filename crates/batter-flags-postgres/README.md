@@ -94,12 +94,17 @@ catalog yield `NeverDeclared`.
 
 The bump takes the counter to one above the larger of the head and the highest
 version any Live process reports from the control plane; a persisted-file or
-not-loaded heartbeat does not count. After a point-in-time restore or a failover
-to an older head, the next write is therefore numbered above the fleet, and
-running processes, which refuse the lower head and keep serving what they had,
-apply it at their next poll without a restart. No write is refused for a store
-behind its fleet, and state lost between the restored head and the fleet's
-version is not recovered.
+not-loaded heartbeat does not count, and neither does a report at or beyond
+`MAX_VERSION_JUMP` (1,000,000) above the head, which is the widest step the
+counter guard accepts from any writer. After a point-in-time restore or a
+failover to an older head, a write made once the running processes have
+heartbeated against the restored database is therefore numbered above the
+fleet, and those processes, which refuse the lower head and keep serving what
+they had, apply it at their next refresh without a restart. The restored
+presence rows hold restore-point versions until then, so an earlier write is
+numbered one above the head and running processes refuse it as `Regressed`.
+No write is refused for a store behind its fleet, and state lost between the
+restored head and the fleet's version is not recovered.
 
 A written outcome's `Deferral` names what processes will not serve as written
 yet: each hold the write accepted, each engaged governing kill switch, each
@@ -115,7 +120,7 @@ not increase,
 unpaired counter advances at COMMIT, state deletion, audit mutation and table
 truncation. Trigger functions are SECURITY DEFINER with a fixed safe search path,
 qualified table resolution and no PUBLIC execute grant. Their errors are static.
-A write notifies nobody: processes see it at their next poll. The application's
+A write notifies nobody: processes see it at their next refresh. The application's
 declared settings floor remains the outage containment mechanism.
 
 `Uncertain` retains native `batter-sqlx::CommitUnconfirmed` or a commit-phase

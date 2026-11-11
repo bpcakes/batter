@@ -91,7 +91,7 @@ SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF NEW.singleton IS DISTINCT FROM OLD.singleton
      OR NEW.schema_revision < OLD.schema_revision
-     OR NOT (NEW.version > OLD.version OR
+     OR NOT ((NEW.version > OLD.version AND NEW.version - OLD.version <= 1000000) OR
          (NEW.version = OLD.version AND NEW.schema_revision > OLD.schema_revision)) THEN
     RAISE EXCEPTION 'invalid flags counter transition';
   END IF;

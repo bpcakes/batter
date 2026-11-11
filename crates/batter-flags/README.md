@@ -63,7 +63,8 @@ the persister's state (up to date, a publication waiting and why its last
 write failed, a write in flight, or too large); a persist failure never
 changes a run's outcome. The file is a
 cache: deleting it is always safe. A committed audited write notifies nobody: every
-process sees it at its next poll, so the poll interval bounds propagation.
+process sees it at the first refresh that starts after the commit, within one
+poll interval plus the duration of a refresh run.
 The catalog grammar and evaluation live in
 [`batter-flags-core`](../batter-flags-core/README.md), the store in
 [`batter-flags-postgres`](../batter-flags-postgres/README.md) and the operator
@@ -118,7 +119,9 @@ the run and releases resource claims. `DeferAttempt` consumes attempts and uses
 stable code `flags.job_type_deferred` with a retry lower bound. `Drop` uses
 `flags.job_type_dropped`. A direct gate used on a workflow step that has not
 opted into continuations is rejected by Runledger with
-`job.workflow_handler_continuation_not_enabled`; the direct-only assertion is
+`job.workflow_handler_continuation_not_enabled` at its first continuation: a
+`Defer`, or any invocation awaiting the first publication, whatever its tripped
+policy; the direct-only assertion is
 application policy. Scheduled jobs still materialize while a gate is tripped.
 The complete durable-effects matrix and its execution-evidence label live in
 [`jobs` rustdoc](src/jobs.rs).

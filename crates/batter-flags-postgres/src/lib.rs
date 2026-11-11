@@ -68,7 +68,9 @@ pub use request::{
     Actor, Archive, Change, ChangeReason, ExplicitValue, Precondition, Variant, Write,
 };
 pub use store::{PooledStore, StoreTiming};
-pub use write::{FlipPolicy, InvariantPolicy, Request, RollbackFailure, WritePolicy};
+pub use write::{
+    FlipPolicy, InvariantPolicy, MAX_VERSION_JUMP, Request, RollbackFailure, WritePolicy,
+};
 #[cfg(test)]
 extern crate self as batter_flags_postgres;
 #[cfg(test)]

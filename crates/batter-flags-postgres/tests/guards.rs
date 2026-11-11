@@ -111,3 +111,31 @@ async fn nonowner_writer_cannot_bypass_audit_counter_or_append_only_guards() {
     f.drop_role("flags_guard_writer").await;
     f.close().await;
 }
+
+/// One audited step may move the counter by the jump window and no further,
+/// whoever writes it.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn the_counter_guard_bounds_one_step_to_the_jump_window() {
+    const WINDOW: i64 = batter_flags_postgres::MAX_VERSION_JUMP;
+    let f = Fixture::migrated().await;
+    let writer = f.writer("flags_jump_writer").await;
+    let mut c = writer.acquire().await.unwrap();
+    let step = |by: i64| {
+        format!(
+            "BEGIN; {META} UPDATE flags.flag_control SET version = version + {by}; {} COMMIT",
+            INSERT.replace("1,1)", &format!("{by},{by})"))
+        )
+    };
+    rejected(&mut c, step(WINDOW + 1), "P0001").await;
+    assert_eq!(f.head().await, 0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(step(WINDOW)))
+        .execute(&mut *c)
+        .await
+        .unwrap();
+    assert_eq!(f.head().await, WINDOW);
+    drop(c);
+    writer.close().await;
+    f.drop_role("flags_jump_writer").await;
+    f.close().await;
+}

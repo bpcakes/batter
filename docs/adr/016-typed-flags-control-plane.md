@@ -229,12 +229,17 @@ error it does not recognize.
   value is a non-Unicode setting, reachable through `source()`.
 - The LISTEN/NOTIFY wake was withdrawn before merge: it bought at most one poll
   interval and made a full notification queue fail every audited write, kill
-  switches included. A committed write notifies nobody, and the poll interval
-  is the propagation bound.
+  switches included. A committed write notifies nobody: a process sees it within
+  one poll interval plus the duration of a refresh run.
 - A write after a restore or a failover to an older head is numbered above the
   highest version a Live control-plane process reports, instead of refused:
-  running processes apply it at their next poll without a restart, and versions
-  skip from the restored head to above the fleet.
+  running processes apply it at their next refresh without a restart, and
+  versions skip from the restored head to above the fleet. The store learns
+  the fleet's versions from heartbeats, so the write must follow one heartbeat
+  interval against the restored database; the runbook says so. One write moves
+  the counter by at most `MAX_VERSION_JUMP`, enforced by the counter guard, and
+  a report at or beyond that window is ignored, so a serving login can neither
+  refuse a write nor exhaust the counter.
 
 ## Overrides
 

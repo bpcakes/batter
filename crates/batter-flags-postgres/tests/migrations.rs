@@ -22,7 +22,7 @@ fn first_migration_checksum_is_immutable() {
         .collect();
     assert_eq!(
         checksum,
-        "382f517f73dbfb864c6b98c2eef5059019fd691f681eadb414c7b27b5b7a4f8293c59392eeeb0e036d17231427dcccb6"
+        "f6604c5f0ee26d8f375ee68d85ee08ad4ab4ed4b211345946e68cc2ea17cec9e8644304edccc78569f8bb4777c63d359"
     );
     assert_eq!(
         MIGRATOR.iter().next().unwrap().checksum.as_ref(),

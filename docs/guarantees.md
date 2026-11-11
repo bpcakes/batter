@@ -3700,12 +3700,22 @@ drain, so roots end with `Runtime::shutdown_timeout`. On macOS 27.2 arm64
 exercised by the last-good tests; durability across power loss is not tested,
 and `flock` on tmpfs or overlayfs is unverified.
 
-A committed audited write notifies nobody: each process sees it at its next
-poll, so the poll interval bounds propagation. After a point-in-time restore or
+A committed audited write notifies nobody: each process sees
+it at the first refresh that starts after the commit. That takes up to one poll
+interval plus the duration of a refresh run, at most its run budget, because runs
+are serial and a run that overruns the interval delays the next (derived from the serial
+schedule; no test measures the bound). After a point-in-time restore or
 a failover to an older head, a running process refuses the lower head as
-`Regressed` and keeps serving what it had. The next audited write is numbered
-above the highest version any Live control-plane process reports, and those
-processes apply it at their next poll without a restart; state lost between the
+`Regressed` and keeps serving what it had. An audited write made after those
+processes have heartbeated against the restored database is numbered above the
+highest version any Live control-plane process reports, within
+`MAX_VERSION_JUMP` of the head, and those processes apply it at their next
+refresh without a restart. A write made before those heartbeats is numbered one
+above the head and stays refused (store-level
+`only_a_live_control_plane_report_above_the_head_moves_the_next_version`);
+a report at or beyond the window never moves or refuses a write
+(`a_report_at_or_beyond_the_jump_window_never_moves_or_refuses_a_write`,
+`the_counter_guard_bounds_one_step_to_the_jump_window`). State lost between the
 restored head and the fleet's version is not recovered (live
 `a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges`
 in `crates/batter/tests/flags_live.rs`).

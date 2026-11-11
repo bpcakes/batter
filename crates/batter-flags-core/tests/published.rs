@@ -331,6 +331,42 @@ fn a_file_offered_as_a_read_is_refused_even_before_anything_is_published() {
     assert!(matches!(publisher.record(), Record::Unpublished(_)));
 }
 
+/// A second file offered right after a restore is refused, and the restored
+/// record keeps its snapshot, standing and age origin.
+#[test]
+fn a_second_file_after_a_restore_is_refused_and_changes_nothing() {
+    let (catalog, h) = world();
+    let base = base(catalog, &h.serving, &[]);
+    let scope = base.validation_scope();
+    let (mut publisher, restored) = Publisher::restore(
+        &scope,
+        10,
+        version(100),
+        [flag_row(&h.fast_path, Toggle::On, 99)],
+    );
+    assert_eq!(restored, Restored::Published);
+    let before = published(&publisher).clone();
+    let second = Candidate::from_last_good_file(&scope, version(200)).row(flag_row(
+        &h.fast_path,
+        Toggle::Off,
+        199,
+    ));
+    assert_eq!(
+        publisher.judge(second).publish(20),
+        Disposition::Refused(Refusal::FileAfterPublication)
+    );
+    let after = published(&publisher);
+    assert!(Arc::ptr_eq(after.snapshot(), before.snapshot()));
+    assert_eq!(
+        after.standing(),
+        Standing::Persisted {
+            version: version(100)
+        }
+    );
+    assert_eq!(*after.age_origin(), 10);
+    assert_eq!(after.last_refusal(), Some(Refusal::FileAfterPublication));
+}
+
 /// A loader whose deadline passes while a read is judged drops the judgement.
 #[test]
 fn a_judged_read_that_is_not_published_changes_nothing() {
