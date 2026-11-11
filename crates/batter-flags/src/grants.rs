@@ -18,12 +18,6 @@
 //! let history = grant_fragment(&policy, &FlagsGrant::operations(FlagsOperation::HistoryRead, [])).unwrap();
 //! # let _ = (serving, history);
 //! ```
-//!
-//! Migration: `grant_fragment(&policy, [operations])` takes a `&FlagsGrant`,
-//! `FlagsOperation::OperatorCli` is `FlagsRole::OperatorCli`, and the serving
-//! selection of `SnapshotRead`, `Presence` and `PresencePrune` is
-//! `FlagsRole::ServingProcess`. `FlagsGrantError::EmptySelection` is gone: a
-//! grant names at least one operation.
 
 mod inventory;
 

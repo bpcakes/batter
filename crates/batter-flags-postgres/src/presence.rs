@@ -187,12 +187,6 @@ impl Cadence {
 /// heartbeat at a time, and [`stop`](Self::stop) consumes it, so nothing can
 /// heartbeat a stopped process back to life.
 ///
-/// Migration: `store.heartbeat(&mut presence, &report, deadline)` is
-/// `presence.heartbeat(&report, deadline)`, `store.stop(presence, deadline)` is
-/// `presence.stop(deadline)`, and `ProcessPresence::new` takes the store first.
-/// A presence could be stopped against another store, which found no row and
-/// left the real one live.
-///
 /// ```compile_fail,E0382
 /// # async fn example(mut presence: batter_flags_postgres::ProcessPresence,
 /// #     report: batter_flags_postgres::PresenceReport) {

@@ -30,11 +30,6 @@
 //! publisher judged. Such a view asserts its own freshness, and a standalone
 //! candidate carries only what [`Candidate::carrying`] gives it.
 //!
-//! Migration: `Published::first`, `Published::next` and `Published::rejected`
-//! are no longer public, and a loader no longer calls [`Candidate::carrying`].
-//! Keep a [`Publisher`], advance it with `publisher.judge(candidate).publish(at)`
-//! and read it with [`Base::record_view`].
-//!
 //! # Caller obligations
 //!
 //! Nothing on this path can tell a complete record from an incomplete one, so
@@ -78,7 +73,7 @@
 //! ```
 
 pub use crate::{
-    authority::{Authority, Refusal, Standing, Transition},
+    authority::{Refusal, Standing},
     base::{Base, BaseBuilder, BaseError, Resolution, ResolutionSource},
     candidate::{Candidate, CandidateRow},
     check::HandleRefusal,

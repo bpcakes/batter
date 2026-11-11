@@ -13,9 +13,6 @@ use batter_flags_core::{FlagKey, low_level::HandleRefusal};
 /// Every variant that names a switch carries its key, a declared name and never
 /// application data.
 ///
-/// Migration: `GateError::DeferOnWorkflowStep` is removed; no constructor
-/// returned it, so a match arm for it can be deleted.
-///
 /// ```
 /// use batter_flags::GateError;
 /// use batter_flags::core::FlagKey;

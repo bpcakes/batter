@@ -98,10 +98,6 @@ use crate::{flags::Flags, reader::Reader, report::StartupReport};
 /// selection may have dropped the flag names, which would then read as absent
 /// and serve every flag's default.
 ///
-/// Migration: a narrowed source used to resolve with every dropped flag at its
-/// default, visible only as `absent` in the [`StartupReport`]; pass the root's
-/// capture instead.
-///
 /// Expiry never changes a decision and never fails startup: release flags
 /// whose last valid day is before `today` are reported once, in one WARN event
 /// on target `batter::flags`.

@@ -60,9 +60,6 @@ impl fmt::Debug for ValidationScope {
 /// [`EntryTypeMismatch`], [`UnknownRowEncoding`], [`UndeclaredVariant`],
 /// [`RequiresSettingsAbsent`], [`InvariantUnmet`].
 ///
-/// Migration: an exhaustive `match` over the five causes before
-/// `InvariantUnmet` adds an arm for it.
-///
 /// [`EnvironmentRestricted`]: Self::EnvironmentRestricted
 /// [`EntryTypeMismatch`]: Self::EntryTypeMismatch
 /// [`UnknownRowEncoding`]: Self::UnknownRowEncoding
@@ -107,9 +104,6 @@ impl HoldCause {
 /// Why a whole candidate was rejected: structural corruption only.
 ///
 /// No variant carries text from the candidate.
-///
-/// Migration: `SnapshotRejection::MissingVersion` is gone, because a
-/// candidate takes its version when it is made; a match drops its arm.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SnapshotRejection {
     /// A row repeats the key of an earlier row.
@@ -262,10 +256,6 @@ pub struct Snapshot {
 impl Snapshot {
     /// Validates `candidate` against the scope it was read for.
     ///
-    /// Migration: `Snapshot::validate(&scope, candidate)` is
-    /// `Snapshot::validate(candidate)`: a candidate keeps its scope, so a
-    /// second one could only disagree.
-    ///
     /// A row is ignored when it names no declaration (counted as
     /// [`unknown`](Self::unknown)) or names a declaration this process kind
     /// does not own (counted as [`not_owned`](Self::not_owned)); neither is
@@ -401,10 +391,6 @@ impl Snapshot {
     /// The entries a view of `freshness` holds, in declaration order, with
     /// why each is held. A stale view can hold more: a stale rule can engage
     /// a governing switch and so leave an invariant unmet.
-    ///
-    /// Migration: `held()` took no argument and reported a fresh view's
-    /// holds; pass `Freshness::Fresh` for exactly that, or the freshness of
-    /// the view being reported on.
     pub fn held(&self, freshness: Freshness) -> impl Iterator<Item = (&FlagKey, HoldCause)> + '_ {
         self.entries_for(freshness)
             .iter()

@@ -13,9 +13,6 @@ impl<'b, T: FlagValue, O, G> ReleaseDeclaration<'b, T, O, Unassigned, G> {
     /// Restrict this flag to one environment class; the control plane never
     /// supplies it. A setting outside that class fails startup.
     ///
-    /// Migration: `only_in` now returns a declaration with an assigned
-    /// environment policy. Infer its type and call `only_in` only once.
-    ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle, Expiry, CivilDate};
     /// # let (mut b, _serving, class) =
@@ -43,9 +40,6 @@ impl<'b, T: FlagValue, O> ModeDeclaration<'b, T, O, Unassigned> {
     /// Restrict this flag to one environment class; the control plane never
     /// supplies it. A setting outside that class fails startup.
     ///
-    /// Migration: `only_in` now returns a declaration with an assigned
-    /// environment policy. Infer its type and call `only_in` only once.
-    ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle};
     /// # let (mut b, _serving, class) =
@@ -65,9 +59,6 @@ impl<'b, T: FlagValue, O> ModeDeclaration<'b, T, O, Unassigned> {
 impl<'b, T: FlagValue, O, E> ReleaseDeclaration<'b, T, O, E, Unassigned> {
     /// Assign the governing switch once. While engaged, it overrides even a
     /// pin with the code default. Every owner and pin reader must own the switch.
-    ///
-    /// Migration: `governed_by` now returns a declaration with assigned
-    /// governance. Infer its type and call `governed_by` only once.
     ///
     /// ```compile_fail,E0599
     /// # use batter_flags_core::{CatalogBuilder, SettingsPrefix, Toggle, Expiry, CivilDate, SafeState, StaleRule};

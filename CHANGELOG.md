@@ -20,6 +20,11 @@ contracts, capability facts and validation history.
   narrowed by `select_dedicated` or `select_environment`
   (`SettingsSource::selection()`, `SettingsSelection::{Captured, Selected}`);
   `overlay` keeps `Selected` from either layer (`batter-jkw6.53`).
+- Add `batter_sqlx::low_level::PgAtomicTransaction::commit_unless`, which
+  commits unless a caller-supplied interrupt completes first. An interrupt
+  before COMMIT is sent returns `PgCommitStop::Interrupted` and commits
+  nothing; once COMMIT is sent nothing interrupts it, and a failure is
+  `PgCommitStop::Unconfirmed`. `commit` is unchanged.
 - Add `batter_core::registration::Registration::check_names`, which checks
   component and finalizer names against the target before anything is
   registered, so a helper that registers several pieces installs all of them or

@@ -124,9 +124,6 @@ fn checked_draft<'b, T: FlagValue>(
 /// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts
 /// it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-/// Migration: `ReleaseDeclaration` now tracks environment and governance
-/// assignment in trailing type parameters. Infer builder types or preserve
-/// those parameters in helpers; `only_in` and `governed_by` cannot be repeated.
 pub struct ReleaseDeclaration<'b, T: FlagValue, O = Everyone, E = Unassigned, G = Unassigned> {
     draft: Draft<'b>,
     default: T,
@@ -257,9 +254,6 @@ impl<T: FlagValue, O, E, G> ReleaseDeclaration<'_, T, O, E, G> {
 /// Every kind owns it until [`owned_only_by`](Self::owned_only_by) restricts
 /// it.
 #[must_use = "a declaration takes effect only when `declare` is called"]
-/// Migration: `ModeDeclaration` now tracks environment assignment in its
-/// trailing type parameter. Infer builder types or preserve that parameter
-/// in helpers; `only_in` cannot be repeated.
 pub struct ModeDeclaration<'b, T: FlagValue, O = Everyone, E = Unassigned> {
     draft: Draft<'b>,
     default: T,

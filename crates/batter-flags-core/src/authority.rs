@@ -24,43 +24,13 @@ use crate::{
 };
 
 /// What a process serves and what it was confirmed against.
-///
-/// ```
-/// use batter_flags_core::{
-///     CatalogBuilder, SettingsPrefix, Version,
-///     low_level::{Authority, BaseBuilder, Candidate, Refusal, Snapshot, Standing, Transition},
-/// };
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let (mut catalog, serving, _) = CatalogBuilder::new(SettingsPrefix::new("FLAG_")?, "serving", "hosted")?;
-/// let base = BaseBuilder::new(catalog.build(), serving)?.finish();
-/// let scope = base.validation_scope();
-/// let read = |at: u64| Snapshot::validate(Candidate::new(&scope, Version::new(at)));
-/// let file = Snapshot::validate(Candidate::from_last_good_file(&scope, Version::new(100)))?;
-///
-/// // A file is the first publication, and confirms nothing.
-/// let Transition::Apply(authority) = Authority::unpublished().consider(&file) else { unreachable!() };
-/// assert_eq!(authority.standing(), Standing::Persisted { version: Version::new(100) });
-///
-/// // The first control-plane read is applied even below the file's version.
-/// let Transition::Apply(authority) = authority.consider(&read(5)?) else { unreachable!() };
-/// assert!(matches!(authority.standing(), Standing::ControlPlane { version, .. } if version == Version::new(5)));
-///
-/// // From then on versions never decrease.
-/// assert_eq!(
-///     authority.consider(&read(4)?),
-///     Transition::Refuse(Refusal::Regressed { applied: Version::new(5), observed: Version::new(4) })
-/// );
-/// assert_eq!(authority.consider(&read(5)?), Transition::Confirm);
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Authority(Standing);
+pub(crate) struct Authority(Standing);
 
-/// What an [`Authority`] stands on, for status and diagnostics.
+/// What a record stands on, for status and diagnostics.
 ///
-/// Reading a standing grants nothing: only [`Authority::consider`] makes one.
+/// Reading a standing grants nothing: only a
+/// [`Publisher`](crate::low_level::Publisher) judging a read makes one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Standing {
     /// Nothing has been published.
@@ -82,7 +52,7 @@ pub enum Standing {
 /// What a loader does with a snapshot it read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use = "a transition says whether to publish and whether to renew freshness"]
-pub enum Transition {
+pub(crate) enum Transition {
     /// Publish the snapshot. The authority is the standing it now has, and
     /// freshness renews only when that standing is the control plane's.
     Apply(Authority),
@@ -91,19 +61,6 @@ pub enum Transition {
     Confirm,
     /// Keep serving what is served, renew nothing and say why.
     Refuse(Refusal),
-}
-
-impl Transition {
-    /// Whether the control plane just vouched for what is served.
-    ///
-    /// A file publication confirms nothing, so it renews nothing.
-    pub fn renews_freshness(&self) -> bool {
-        match self {
-            Self::Apply(authority) => matches!(authority.standing(), Standing::ControlPlane { .. }),
-            Self::Confirm => true,
-            Self::Refuse(_) => false,
-        }
-    }
 }
 
 /// Why a snapshot was not published or confirmed.
@@ -135,12 +92,12 @@ pub enum Refusal {
 
 impl Authority {
     /// The standing of a process that has published nothing.
-    pub const fn unpublished() -> Self {
+    pub(crate) const fn unpublished() -> Self {
         Self(Standing::Unpublished)
     }
 
     /// What this authority stands on.
-    pub fn standing(&self) -> Standing {
+    pub(crate) fn standing(&self) -> Standing {
         self.0
     }
 
@@ -158,7 +115,7 @@ impl Authority {
 
     /// Judges `snapshot` against the standing, by its provenance, version and
     /// digest.
-    pub fn consider(&self, snapshot: &Snapshot) -> Transition {
+    pub(crate) fn consider(&self, snapshot: &Snapshot) -> Transition {
         let (version, digest) = (snapshot.version(), snapshot.digest());
         match (self.0, snapshot.provenance()) {
             (Standing::Unpublished, _) => Transition::Apply(Self::first(snapshot)),
@@ -187,11 +144,5 @@ impl Authority {
                 }
             }
         }
-    }
-}
-
-impl Default for Authority {
-    fn default() -> Self {
-        Self::unpublished()
     }
 }

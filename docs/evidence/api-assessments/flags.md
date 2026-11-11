@@ -83,7 +83,7 @@ Validation rejects a candidate whole only for structural corruption, and holds
 any other bad row on its own with an exhaustive `HoldCause`, so one row never
 takes the others down. A view is built from one immutable `Record` that only a
 `Publisher` advances, so freshness, standing and snapshot cannot be paired
-across publications, and `Authority::consider` is the only standing transition
+across publications, and the publisher's crate-private judgement is the only standing transition
 (`batter-jkw6.39` moved the record's lifecycle into the publisher). `gate_switch` returns an
 exhaustive `GateReading`, so awaiting publication cannot be mistaken for open.
 `pin` refuses an error decision with `Unpinnable` (`batter-jkw6.45`; it used

@@ -44,7 +44,7 @@
 //! returns a layered [`Decision`], [`Pinned`] decisions with the
 //! [`PinRefusal`] a rejected one must be answered through, the three-way
 //! [`GateReading`](low_level::GateReading) a gate acts on, the
-//! [`Authority`](low_level::Authority) transitions and the one immutable
+//! [`Standing`](low_level::Standing) and the one immutable
 //! [`Published`](low_level::Published) record a loader follows, the
 //! `feature_flag.evaluation` event and, with the `serde` feature, the manifest
 //! and its digest. Relationships between flags are stated on the

@@ -37,10 +37,6 @@ pub enum UndeclaredBasis {
     NeverDeclared,
 }
 /// Certain, non-mutating policy refusal. No arm authorizes replay.
-///
-/// Migration: `Refusal::StoreBehindFleet` is gone. A write to a store whose
-/// head is behind a Live process is now numbered above that process instead
-/// of refused; remove the arm.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Refusal {
     /// The stored state cannot be decoded by this writer.
@@ -122,10 +118,6 @@ impl Error for CommitUncertainty {
     }
 }
 /// Exhaustive write/archive/restore result, released only after disposition.
-///
-/// Migration: the patterns `Written { version, previous, live_declaring }`
-/// and `WrittenUndeclared { version, basis }` add the `deferral` field, or
-/// end in `..`.
 #[derive(Debug)]
 #[must_use]
 pub enum WriteOutcome {

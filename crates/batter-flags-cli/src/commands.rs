@@ -262,6 +262,7 @@ async fn history(store: &PooledStore, deadline: Instant, key: &FlagKey) -> Resul
                 "reason": entry.reason,
                 "guard": entry.guard,
                 "recorded_by": entry.recorded_by,
+                "recorded_at": entry.recorded_at.to_rfc3339(),
                 "after": entry.after.value(),
             })
         })

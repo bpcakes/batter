@@ -13,124 +13,37 @@ use std::sync::Arc;
 use batter_flags_core::{
     Freshness, Layer, SwitchState, Toggle,
     low_level::{
-        Authority, Candidate, CandidateRow, Provenance, Refusal, Snapshot, Standing, Transition,
-        ViewError,
+        Candidate, CandidateRow, Disposition, Provenance, Publisher, Refusal, Snapshot, ViewError,
     },
 };
 use world::{base, file_snapshot, flag_row, snapshot, switch_row, undecodable_row, version, world};
 
-fn applied(transition: Transition) -> Authority {
-    match transition {
-        Transition::Apply(authority) => authority,
-        other => panic!("expected Apply, got {other:?}"),
-    }
-}
-
-fn control_plane(authority: &Authority) -> (u64, batter_flags_core::SnapshotDigest) {
-    match authority.standing() {
-        Standing::ControlPlane { version, digest } => (version.get(), digest),
-        other => panic!("expected a control-plane standing, got {other:?}"),
-    }
-}
-
-/// The sequence the audit named: file version 100, then the first control-plane
-/// version 5, then a regression to 4, a confirmation at 5 and drift at 5.
-#[test]
-fn the_standing_follows_the_file_then_the_control_plane_and_never_goes_back() {
-    let (catalog, h) = world();
-    let base = base(catalog, &h.serving, &[]);
-    let rows = |on: Toggle| [flag_row(&h.fast_path, on, 1)];
-
-    let unpublished = Authority::unpublished();
-    assert_eq!(unpublished.standing(), Standing::Unpublished);
-
-    // The file is the first publication and confirms nothing.
-    let from_file = unpublished.consider(&file_snapshot(&base, 100, rows(Toggle::On)));
-    assert!(!from_file.renews_freshness());
-    let persisted = applied(from_file);
-    assert_eq!(
-        persisted.standing(),
-        Standing::Persisted {
-            version: version(100)
-        }
-    );
-
-    // The first control-plane read is applied even far below the file's version.
-    let first = snapshot(&base, 5, rows(Toggle::On));
-    let from_control_plane = persisted.consider(&first);
-    assert!(from_control_plane.renews_freshness());
-    let serving = applied(from_control_plane);
-    assert_eq!(control_plane(&serving), (5, first.digest()));
-
-    // A lower version is refused and renews nothing.
-    let regressed = serving.consider(&snapshot(&base, 4, rows(Toggle::On)));
-    assert_eq!(
-        regressed,
-        Transition::Refuse(Refusal::Regressed {
-            applied: version(5),
-            observed: version(4)
-        })
-    );
-    assert!(!regressed.renews_freshness());
-
-    // The same version with the same digest confirms.
-    let confirmed = serving.consider(&snapshot(&base, 5, rows(Toggle::On)));
-    assert_eq!(confirmed, Transition::Confirm);
-    assert!(confirmed.renews_freshness());
-
-    // The same version with another digest is drift: nothing renews.
-    let drifted = serving.consider(&snapshot(&base, 5, rows(Toggle::Off)));
-    assert_eq!(
-        drifted,
-        Transition::Refuse(Refusal::DigestDrift {
-            version: version(5)
-        })
-    );
-    assert!(!drifted.renews_freshness());
-
-    // A higher version is applied, with its own digest.
-    let next = snapshot(&base, 6, rows(Toggle::Off));
-    let later = applied(serving.consider(&next));
-    assert_eq!(control_plane(&later), (6, next.digest()));
-    // Refusals changed nothing: the authority that judged them is as it was.
-    assert_eq!(control_plane(&serving), (5, first.digest()));
-}
-
-#[test]
-fn a_file_is_only_ever_the_first_publication() {
-    let (catalog, h) = world();
-    let base = base(catalog, &h.serving, &[]);
-    let restored = file_snapshot(&base, 100, []);
-    let persisted = applied(Authority::unpublished().consider(&restored));
-    let serving = applied(persisted.consider(&snapshot(&base, 5, [])));
-    for authority in [persisted, serving] {
-        let late = authority.consider(&file_snapshot(&base, 200, []));
-        assert_eq!(late, Transition::Refuse(Refusal::FileAfterPublication));
-        assert!(!late.renews_freshness());
-    }
-}
-
+/// A read at the applied version confirms only with the same digest: a held
+/// row's text, and a row's own version, are part of what was read.
 #[test]
 fn the_digest_and_not_the_version_alone_decides_confirmation() {
     let (catalog, h) = world();
     let base = base(catalog, &h.serving, &[]);
+    let scope = base.validation_scope();
     let read = |style: &str, updated: u64| {
-        snapshot(
-            &base,
-            9,
-            [
-                flag_row(&h.fast_path, Toggle::On, updated),
-                CandidateRow::new("checkout_style", "mode", "enum", version(2), style),
-            ],
-        )
+        Candidate::new(&scope, version(9)).rows([
+            flag_row(&h.fast_path, Toggle::On, updated),
+            CandidateRow::new("checkout_style", "mode", "enum", version(2), style),
+        ])
     };
-    let serving = applied(Authority::unpublished().consider(&read("held", 8)));
-    assert_eq!(serving.consider(&read("held", 8)), Transition::Confirm);
-    // A held row's text, and a row's own version, are part of what was read.
+    let mut publisher = Publisher::new(&scope, 0_u64);
+    assert_eq!(
+        publisher.judge(read("held", 8)).publish(1),
+        Disposition::Applied
+    );
+    assert_eq!(
+        publisher.judge(read("held", 8)).publish(2),
+        Disposition::Confirmed
+    );
     for (style, updated) in [("changed", 8), ("held", 7)] {
         assert_eq!(
-            serving.consider(&read(style, updated)),
-            Transition::Refuse(Refusal::DigestDrift {
+            publisher.judge(read(style, updated)).publish(3),
+            Disposition::Refused(Refusal::DigestDrift {
                 version: version(9)
             }),
             "{style} {updated}"

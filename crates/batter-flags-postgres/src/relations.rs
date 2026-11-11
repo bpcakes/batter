@@ -74,9 +74,6 @@ pub struct Deferral {
     /// `archive` and `restore` do, writes the flip anyway, and processes apply
     /// it poll by poll, not together.
     ///
-    /// Migration: a struct literal or exhaustive pattern of `Deferral` adds
-    /// `flip`, or ends in `..`.
-    ///
     /// [`PooledStore::write`]: crate::PooledStore::write
     pub flip: crate::Coordination,
 }

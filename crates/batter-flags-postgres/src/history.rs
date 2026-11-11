@@ -21,6 +21,8 @@ pub struct HistoryEntry {
     pub guard: String,
     /// Database session login, independent of authored actor.
     pub recorded_by: String,
+    /// When the audit row was written, by the database's clock.
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
     /// Full previous row image, if present.
     pub before: Option<StoredState>,
     /// Full resulting row image.
@@ -63,10 +65,6 @@ impl PooledStore {
     /// snapshot, as [`preflight`](Self::preflight) does. No version above the
     /// store's `bigint` range exists, so such an `after` reads a complete, empty
     /// page.
-    ///
-    /// Migration: `history` returned a bare `Vec` silently capped at 1000 rows;
-    /// read `page.entries`, and while `page.next` is `Continuation::After(v)`
-    /// read again after `v`.
     pub async fn history(
         &self,
         key: Option<&FlagKey>,
@@ -83,13 +81,14 @@ impl PooledStore {
         PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
                 self.read_guard(sql, deadline).await?;
                 // One row beyond the page says whether more follow.
-                let rows = sqlx::query("SELECT version, flag_name, operation, actor, reason, guard, recorded_by::text, before_state, after_state FROM flags.flag_audit WHERE version > $1 AND ($2::text IS NULL OR flag_name = $2) ORDER BY version LIMIT $3")
+                let rows = sqlx::query("SELECT version, flag_name, operation, actor, reason, guard, recorded_by::text, recorded_at, before_state, after_state FROM flags.flag_audit WHERE version > $1 AND ($2::text IS NULL OR flag_name = $2) ORDER BY version LIMIT $3")
                     .bind(after).bind(key.map(FlagKey::as_str)).bind(HISTORY_PAGE as i64 + 1).fetch_all(sql.executor()).await?;
                 let more = rows.len() > HISTORY_PAGE;
                 let entries = rows.into_iter().take(HISTORY_PAGE).map(|r| Ok(HistoryEntry {
                     version: crate::load::version(r.try_get("version")?)?, key: r.try_get("flag_name")?,
                     operation: r.try_get("operation")?, actor: r.try_get("actor")?, reason: r.try_get("reason")?,
                     guard: r.try_get("guard")?, recorded_by: r.try_get("recorded_by")?,
+                    recorded_at: r.try_get("recorded_at")?,
                     before: r.try_get::<Option<serde_json::Value>, _>("before_state")?.map(StoredState),
                     after: StoredState(r.try_get("after_state")?),
                 })).collect::<Result<Vec<_>, StoreError>>()?;

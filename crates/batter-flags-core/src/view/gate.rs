@@ -112,9 +112,6 @@ impl GateReading {
 /// its switches with
 /// [`Base::check_switch`](crate::low_level::Base::check_switch) when it is
 /// built and refuse them at startup; the gates of `batter-flags` do.
-///
-/// Migration: such a switch whose safe state is released read as
-/// [`Open`](GateReading::Open); it now reads as `Tripped`.
 pub fn gate_switch(view: &SnapshotView, switch: &KillSwitch) -> GateReading {
     let decision = view.switch_decision(switch);
     let surface = if decision.value().is_engaged() {

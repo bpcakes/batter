@@ -64,7 +64,7 @@ fn before_any_publication_views_are_not_loaded_and_age_from_registration() {
     let publisher = Publisher::new(&base.validation_scope(), 10);
     let record = publisher.record();
     assert!(matches!(record, Record::Unpublished(_)));
-    assert_eq!(record.authority().standing(), Standing::Unpublished);
+    assert_eq!(record.standing(), Standing::Unpublished);
     assert_eq!((*record.age_origin(), record.last_refusal()), (10, None));
     assert!(record.snapshot().is_none());
 
@@ -92,7 +92,7 @@ fn a_restored_file_ages_from_registration_and_confirms_nothing() {
     assert_eq!(restored, Restored::Published);
     let first = published(&publisher);
     assert_eq!(
-        first.authority().standing(),
+        first.standing(),
         Standing::Persisted {
             version: version(100)
         }
@@ -147,7 +147,7 @@ fn the_first_control_plane_read_replaces_the_file_at_any_version_and_renews_age(
     let applied = published(&publisher);
     assert_eq!(*applied.age_origin(), 90, "the read's own evidence");
     assert!(matches!(
-        applied.authority().standing(),
+        applied.standing(),
         Standing::ControlPlane { version: applied_at, digest }
             if applied_at == version(5) && digest == applied.snapshot().digest()
     ));
@@ -221,7 +221,7 @@ fn a_refused_read_changes_nothing_but_the_recorded_refusal() {
             100,
             "nothing was confirmed: {refusal:?}"
         );
-        assert_eq!(record.authority(), before.authority());
+        assert_eq!(record.standing(), before.standing());
         assert_eq!(
             before.last_refusal(),
             None,

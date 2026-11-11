@@ -93,8 +93,6 @@ impl RefreshTiming {
 /// opened directory into it, and one directory serves one registration, so
 /// two loaders never share its initial bytes or its first-write authority.
 ///
-/// Migration: `LoadPolicy` was `Clone`; build one policy per registration.
-///
 /// ```compile_fail,E0599
 /// fn twice(policy: batter_flags::control_plane::LoadPolicy) {
 ///     let _copy = policy.clone();

@@ -172,10 +172,6 @@ impl fmt::Debug for CandidateRow {
 /// another scope; a [`Publisher`](crate::low_level::Publisher) refuses one
 /// read for another scope.
 ///
-/// Migration: `Candidate::new(&scope).at(version)` is
-/// `Candidate::new(&scope, version)`, and `Candidate::at` is gone, with
-/// `SnapshotRejection::MissingVersion`.
-///
 /// ```
 /// use batter_flags_core::{
 ///     CatalogBuilder, SettingsPrefix, Version,

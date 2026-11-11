@@ -74,8 +74,6 @@ pub struct KeyListing {
     pub key: String,
     /// The stored kind, else the newest declaring catalog's; `None` for a key
     /// neither stored nor declared.
-    ///
-    /// Migration: `kind` and `value_type` were empty strings for such a key.
     pub kind: Option<String>,
     /// The stored value type, else the newest declaring catalog's; `None` for
     /// a key neither stored nor declared.

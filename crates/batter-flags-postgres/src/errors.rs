@@ -55,9 +55,6 @@ pub enum ErrorClass {
     /// rows into `flags`. The check runs before anything is migrated, the
     /// first migration included, so nothing was applied; migrate again after
     /// fixing the role name or `search_path`.
-    ///
-    /// Migration: an exhaustive `match` on `ErrorClass` needs an arm for
-    /// `SearchPath`; no other variant changed.
     SearchPath,
 }
 pub(crate) enum ErrorKind {

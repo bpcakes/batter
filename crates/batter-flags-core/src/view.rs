@@ -224,10 +224,6 @@ impl SnapshotView {
     /// first publication under a load policy that withholds readiness, even
     /// when an engaged governing switch would answer `evaluate`. The error is
     /// counted and reported as [`evaluate`](Self::evaluate) counts one.
-    ///
-    /// Migration: `pin` returned the `Pinned` directly and pinned an error
-    /// decision at its code default, which a replay then honoured as cached;
-    /// handle the `Result`, deferring the work on `ProviderNotReady`.
     pub fn pin<F: Pinnable>(&self, flag: &F) -> Result<Pinned<F::Value>, Unpinnable> {
         let handle = flag.handle();
         let default = flag.code_default();

@@ -116,10 +116,6 @@ impl Flags {
     /// process has no state to run it on and does not serve its declared
     /// defaults. Under `start_on_defaults`, in declared mode and with test
     /// flags, every invocation runs.
-    ///
-    /// Migration: `flagged(inner)` ran such an invocation on the declared
-    /// defaults while the process was still unready; pass the recheck to defer
-    /// it with.
     pub fn flagged<H: FlagAwareHandler>(&self, inner: H, awaiting: Recheck) -> FlaggedHandler<H> {
         FlaggedHandler {
             flags: self.clone(),

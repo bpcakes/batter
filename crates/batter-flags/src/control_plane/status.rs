@@ -60,19 +60,6 @@ impl LoadCause {
 /// the publication they describe, so a refusal never hides what is served and
 /// a status never pairs one publication with another read's verdict. A
 /// [`Gate`] is judged from one status with [`satisfies`](Self::satisfies).
-///
-/// Migration: `SnapshotStatus::LoaderStopped` is `loader: LoaderState::Stopped`.
-/// Migration: `SnapshotStatus::SchemaBehind`, `SnapshotStatus::Regressed` and
-/// `SnapshotStatus::Rejected` are [`LatestRead::SchemaBehind`] and
-/// [`LatestRead::Refused`] in `latest_read`, which no longer hide `served`.
-/// Migration: `SnapshotStatus::NotLoaded`, `SnapshotStatus::ServingPersisted`,
-/// `SnapshotStatus::Stale` and `SnapshotStatus::Fresh` are
-/// [`Served::DeclaredBase`], [`Served::PersistedFile`] and
-/// [`Served::ControlPlane`] with its freshness in `served`; replace
-/// `status == SnapshotStatus::Fresh` with `status.satisfies(Gate::Fresh)`.
-/// Migration: `RejectionCause` is removed; a refusal is core's [`Refusal`] in
-/// [`LatestRead::Refused`], `RejectionCause::DigestDrift` being
-/// `Refusal::DigestDrift` and `RejectionCause::Structural` `Refusal::Rejected`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SnapshotStatus {
     /// Whether the refresh still runs.

@@ -126,11 +126,6 @@ pub enum GateRegistrationError {
 /// Cloning or dropping a reader does not affect execution. Skips are core's
 /// own evidence, counted under the same lock as every other run and kept in
 /// the completion report, so a skip is never counted as a success.
-///
-/// Migration: `snapshot().succeeded` counted skipped runs too, beside a count
-/// these readers kept apart from core's; it now counts only runs whose work
-/// succeeded, and `snapshot().skipped` holds the skips.
-/// See [`Flags::gate_periodic_in`] for usage.
 #[derive(Clone, Debug)]
 pub struct GatedPeriodicReader {
     periodic: PeriodicReader,

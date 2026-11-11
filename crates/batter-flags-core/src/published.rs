@@ -14,7 +14,7 @@
 //! [`Unpublished`], or restored from the last-good file, and every later read
 //! goes through [`Publisher::judge`] and [`Judged::publish`]. The publisher
 //! carries the kill-switch states of what it serves into each read, picks where
-//! age counts from and applies the [`Authority`] rules, so none of those is a
+//! age counts from and applies the standing rules, so none of those is a
 //! step its caller can forget or reorder.
 //!
 //! Core reads no clock, so the evidence is a type `C` the loader chooses (a
@@ -110,12 +110,8 @@ pub struct Unpublished<C> {
 ///
 /// Only a [`Publisher`] makes one: from the last-good file with
 /// [`Publisher::restore`], or from a read with [`Judged::publish`], which
-/// applies the [`Authority`] rules, so a regressed, drifted or misplaced
+/// applies the standing rules, so a regressed, drifted or misplaced
 /// snapshot can neither replace nor renew what is served.
-///
-/// Migration: `Published::first`, `Published::next` and `Published::rejected`
-/// are no longer public; a loader keeps a [`Publisher`] and advances it with
-/// [`Publisher::judge`] and [`Judged::publish`] instead.
 #[derive(Clone, Debug)]
 pub struct Published<C> {
     snapshot: Arc<Snapshot>,
@@ -306,10 +302,10 @@ impl<C: Clone> Judged<'_, C> {
 
 impl<C> Record<C> {
     /// What the record stands on.
-    pub fn authority(&self) -> Authority {
+    pub fn standing(&self) -> Standing {
         match self {
-            Self::Unpublished(_) => Authority::unpublished(),
-            Self::Published(published) => published.authority,
+            Self::Unpublished(_) => Authority::unpublished().standing(),
+            Self::Published(published) => published.authority.standing(),
         }
     }
 
@@ -412,8 +408,8 @@ impl<C> Published<C> {
     }
 
     /// What the snapshot stands on.
-    pub fn authority(&self) -> Authority {
-        self.authority
+    pub fn standing(&self) -> Standing {
+        self.authority.standing()
     }
 
     /// The evidence age is counted from.

@@ -95,6 +95,13 @@ async fn a_history_longer_than_a_page_says_where_to_continue() {
     assert_eq!(first.entries.len(), HISTORY_PAGE);
     let last = first.entries.last().unwrap().version;
     assert_eq!(first.next, Continuation::After(last));
+    // Each row carries when the database recorded it, in commit order.
+    assert!(
+        first
+            .entries
+            .windows(2)
+            .all(|pair| pair[0].recorded_at <= pair[1].recorded_at)
+    );
     let second = f
         .store
         .history(Some(&busy), last, deadline())

@@ -81,14 +81,6 @@ impl CatalogBuilder {
     /// the catalog digest and the manifest. Declared mode refuses every name
     /// under the prefix that the catalog does not declare.
     ///
-    /// Migration: `CatalogBuilder::new(prefix)` followed by
-    /// `process_kind(kind)` and `environment_class(class)` is
-    /// `CatalogBuilder::new(prefix, kind, class)`, and `build` no longer
-    /// fails, so `BuildError::NoProcessKind` and
-    /// `BuildError::NoEnvironmentClass` are gone. `BuildError::RepeatedCall`
-    /// is gone too: each set-once policy is a type state, so a repeat does
-    /// not compile.
-    ///
     /// # Errors
     ///
     /// As for [`process_kind`](Self::process_kind) and
@@ -231,9 +223,6 @@ impl CatalogBuilder {
     /// Returns the catalog. Every declaration and relationship was validated
     /// as it was stated, and the constructor named a process kind and an
     /// environment class, so nothing is left to refuse.
-    ///
-    /// Migration: `build()` returned `Result<Catalog, BuildError>`; drop the
-    /// `?` or `unwrap()` after it.
     pub fn build(self) -> Catalog {
         Catalog::assemble(self)
     }

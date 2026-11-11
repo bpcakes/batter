@@ -10,10 +10,6 @@
 //!
 //! The module exists only with the `test-support` feature, or the facade's
 //! `flags-test-support`, so a production root cannot serve `Source::Test`.
-//!
-//! Migration: `batter_flags::test::TestFlags` was always compiled; enable
-//! `test-support` (facade: `flags-test-support`) in the dev-dependency that
-//! uses it.
 
 use std::collections::BTreeSet;
 

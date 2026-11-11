@@ -210,10 +210,6 @@ impl RegisteredFlags {
     /// What last-good persistence is doing now: disabled, up to date, a
     /// publication waiting and why its last write failed, a write in flight,
     /// or a publication too large for the file.
-    ///
-    /// Migration: `last_persist_failure()` returned the last failure forever,
-    /// even after a later write succeeded; match `LastGoodStatus::Waiting {
-    /// last_failure, .. }` for a failure that still matters.
     pub fn last_good(&self) -> LastGoodStatus {
         match &self.last_good {
             LastGoodReader::Disabled => LastGoodStatus::Disabled,

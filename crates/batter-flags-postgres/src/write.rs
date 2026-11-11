@@ -109,10 +109,6 @@ impl PooledStore {
     /// nothing written. Once COMMIT is sent it is never interrupted, so the
     /// outcome reported is the real one. Dropping the sender interrupts
     /// nothing. `policy` decides what is refused inside the transaction.
-    ///
-    /// Migration: the `flip: FlipPolicy` argument is now
-    /// `WritePolicy { flip, invariants }`; `WritePolicy::STRICT` refuses what
-    /// `FlipPolicy::RefuseCoordinated` did and an unmet invariant too.
     pub async fn submit(
         &self,
         request: Request,
