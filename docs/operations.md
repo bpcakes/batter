@@ -137,7 +137,11 @@ holds two allocations, and for a completed body keeping at most twice its length
 until its last handle is released. Growth and the release of a large body copy or
 wipe without yielding on the current thread, so a limit near the 64 MiB maximum
 can delay that thread by tens of milliseconds. Swap, hibernation and core dumps
-can still capture live bodies, so those remain host controls.
+can still capture live bodies, so those remain host controls. Choose the smallest
+limit required by the provider protocol; a tiny retained slice can retain the
+whole backing allocation. The [capacity assessment](evidence/outbound-capacity-2026-11-11.md)
+records executed connection, DNS-queue and scheduler measurements and explicitly
+unverified deployment conditions.
 
 Batter never installs, takes or replaces the process panic hook; Rust's default
 hook prints every string payload. Each executable installs

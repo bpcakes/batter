@@ -80,7 +80,8 @@
 //!
 //! Hostname setup retains bounded address fallback inside this future: the
 //! other address family starts after at most 300 ms or half the remaining setup
-//! budget, and addresses within each family share its remaining time. At most
+//! budget. Each address receives its fair share with a one-second minimum,
+//! capped by the shared deadline; not every address is guaranteed an attempt. At most
 //! two TCP candidates run together; losers drop before TLS or HTTP handoff.
 //! Preparation keeps the default `Accept: */*` when callers omit `Accept`, and
 //! preserves their explicit values and sensitivity.

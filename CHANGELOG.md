@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Outbound HTTP: give each DNS candidate a one-second minimum within the shared
+  setup deadline, avoiding tiny attempt windows caused by long answer lists.
+  Earlier stalled candidates can still exhaust the shared budget before a
+  healthy later address is tried.
+  Add opt-in connection, resolver-queue and response-buffer measurements.
+
 - Fix `batter-axum` plain HTTP registration (`AssembledHttp::register_in`,
   `low_level::register_http` and `register_http_in`) rebuilding the application
   router for every accepted connection. Serving a bare `Router` made pinned

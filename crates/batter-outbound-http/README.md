@@ -113,7 +113,10 @@ client's HTTP/2 or gzip support cannot change this transport.
 Hostname setup resolves addresses explicitly. The first resolved family starts
 first; the other family starts after at most 300 ms, or half the remaining setup
 budget when shorter. An outright family failure starts the alternative at once.
-Within each family the remaining budget is shared across its addresses. At most
+Within each family the remaining budget is shared across its addresses, with a
+one-second minimum per candidate capped by the shared deadline. Long answer
+lists cannot reduce attempts to tens of milliseconds. A stalled address can
+consume a shorter family budget; not every answer is guaranteed an attempt. At most
 two TCP attempts run together, both inside the exchange future, and losing
 sockets are dropped before TLS or HTTP handoff. This is address fallback, not
 HTTP replay. Controlled connection futures cover stalled addresses and families;
@@ -311,3 +314,11 @@ against a scripted loopback peer that records every connection and raw request.
 Tests that build an HTTPS client need a non-empty host certificate store, which
 on Linux follows `SSL_CERT_FILE` and `SSL_CERT_DIR`; loopback clients never read
 it.
+
+## Capacity evidence
+
+Run `python3 scripts/measure_outbound_http.py` from the workspace for release-build
+connection-churn, resolver-queue and production-buffer measurements. See the
+[executed assessment](../../docs/evidence/outbound-capacity-2026-11-11.md) for
+observed scheduler costs and remaining production-promotion evidence. Loopback
+measurements do not establish cloud NAT capacity or TLS throughput.

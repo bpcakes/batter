@@ -59,6 +59,7 @@ RUNLIMIT_DEFAULT = ["cargo", "test", "-p", "runlimit-core", "-p", "runlimit-memo
 RUNLIMIT_RELEASE = ["cargo", "test", "-p", "runlimit-memory", "--release", "--locked",
                     "corrupt_quota_state_fails_closed_in_release_builds"]
 FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
+OUTBOUND_MEASUREMENTS = [sys.executable, "scripts/measure_outbound_http.py", "--check"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
 
 # Cargo uplifts one debug executable per binary target, and reference-service
@@ -143,8 +144,9 @@ def parts():
                       [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
-                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls"],
-                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS])],
+                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls", "outbound-measurement-build"],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS,
+                      OUTBOUND_MEASUREMENTS])],
     })
 
 

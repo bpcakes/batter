@@ -95,6 +95,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Native invocation phases, settlement and handler testing | [Runledger adapter tests](../crates/batter-runledger/tests/), native [runtime tests](../runledger/runledger-runtime/tests/). |
 | Quota, authenticated attempts and maintenance | [Runlimit adapter tests](../crates/batter-runlimit/tests/) and native package tests. |
 | Outbound wire behavior and phase-owned evidence | [Outbound tests](../crates/batter-outbound-http/tests/) and facade `outbound_exchange` example tests. |
+| Outbound capacity observations (opt-in) | Run `python3 scripts/measure_outbound_http.py`; [executed scope and limits](evidence/outbound-capacity-2026-11-11.md). The scripts matrix compiles the probe with `--check`; timing is not a CI threshold. |
 | Outbound response-body wiping before deallocation | Private [buffer](../crates/batter-outbound-http/src/send/buffer/tests.rs) and [body-storage](../crates/batter-outbound-http/src/send/body_storage_tests.rs) tests, with a `cfg(test)` destructor probe. |
 | External single-dependency adoption | [Consumer sources](../consumers/README.md) and [source-copy checker](../scripts/check_single_facade_consumer.py). |
 | Verification selection and process failure behavior | [Script controls](../scripts/), especially `test_verify`, `test_parallel_process`, `test_ci_plan` and live-runner controls. |

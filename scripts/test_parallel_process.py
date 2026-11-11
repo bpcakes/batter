@@ -362,7 +362,7 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
                          {"workspace": [2, 2], "no-default-features": [4, 1, 1], "doctests": [1],
-                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 3]})
+                          "consumers": [4, 4, 1], "runlimit": [3], "scripts": [4, 4]})
         planned = matrix.parts()
         # Each part executes exactly the batches it plans, in the planned order.
         self.assertEqual({part: [commands for _, commands in plan] for part, plan in planned.items()},
@@ -379,9 +379,9 @@ class MatrixTests(unittest.TestCase):
             matrix.RUNLIMIT_GRAPH, matrix.RUNLIMIT_CONTROLS, matrix.RUNLIMIT_DEFAULT,
             matrix.RUNLIMIT_RELEASE, matrix.FACADE_FEATURES, matrix.FACADE_CACHE_CONTROLS,
             matrix.FUTURE_SIZE_RELEASE, matrix.SINGLE_FACADE_CONSUMER, matrix.SINGLE_FACADE_CONTROLS,
-            matrix.HTTP_SMOKE_CONTROLS,
+            matrix.HTTP_SMOKE_CONTROLS, matrix.OUTBOUND_MEASUREMENTS,
         ])
-        self.assertEqual(len(commands), 30)
+        self.assertEqual(len(commands), 31)
         self.assertIn("--all-targets", commands["workspace-tests"])
         self.assertIn("--workspace", commands["workspace-tests"])
         hostile = commands["configuration-hostile-environment"]
