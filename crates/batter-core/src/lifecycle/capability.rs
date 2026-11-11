@@ -257,6 +257,32 @@ impl OperationAdmission {
         &self,
         deadline: crate::operation::RootDeadline,
     ) -> Result<crate::operation::OperationOwner, Readiness> {
+        self.admit(deadline)
+    }
+
+    /// Lower-level adapter seam: admit one operation exactly as
+    /// [`Self::admit_root`] does, and also return the proof that lets the
+    /// adapter start work continuing it. See [`super::OperationContinuation`]
+    /// for the obligations that proof carries.
+    pub fn admit_root_with_continuation(
+        &self,
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<
+        (
+            crate::operation::OperationOwner,
+            super::OperationContinuation,
+        ),
+        Readiness,
+    > {
+        let owner = self.admit(deadline)?;
+        let continuation = super::OperationContinuation::admitted(self.shared.clone());
+        Ok((owner, continuation))
+    }
+
+    fn admit(
+        &self,
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<crate::operation::OperationOwner, Readiness> {
         let readiness = self.shared.readiness();
         let admitted = if readiness == Readiness::Ready {
             let parent = self.shared.operation_token();
@@ -309,6 +335,10 @@ pub struct ShutdownSignal {
 }
 
 impl ShutdownSignal {
+    pub(super) fn observing(shared: Arc<Shared>) -> Self {
+        Self { shared }
+    }
+
     /// Wait until admission closes and draining begins.
     pub async fn draining(&self) {
         self.shared.draining().await;

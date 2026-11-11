@@ -130,6 +130,9 @@ library path is covered by `tests/operational/forced_close.rs` and a TLS case.
 Not covered: HTTP/2, upgraded connections (which leave Axum's accounting at the
 upgrade and stay application-owned), tasks a handler detached, a connection task
 that never yields, and a stop clock tightened after cancellation was observed.
-A library-owned lifetime for streaming bodies was assessed in `batter-9wig.2`; its
-implementation remains open in `batter-9wig.6`.
+A library-owned lifetime for streaming bodies was assessed in `batter-9wig.2` and
+delivered as `AdmittedRequest::into_streaming_response` under `batter-9wig.6`.
+The response-construction boundary itself is unchanged: the owner starts a
+second lifetime from the same admission and does not extend the first. Its
+contract and limits are in the [HTTP guarantees](../guarantees.md#http-boundary).
 See [primary sources](../references.md#forced-connection-close-at-shutdown-2026-11-11).

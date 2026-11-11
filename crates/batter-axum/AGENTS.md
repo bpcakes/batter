@@ -40,6 +40,11 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admitted.rs` owns the private admission record, the `AdmittedRequest`
   extractor that guarded handlers use instead of raw extensions and its
   sanitized `AdmittedRequestRejection`.
+- `src/streaming.rs` owns `AdmittedRequest::into_streaming_response`,
+  `BodyBudget`, `BodyScope` and the private `OwnedBody` that wraps the built
+  response's body. The admission record carries the private
+  `OperationContinuation` and the shared observation state it starts from;
+  `src/observation.rs` publishes the request's span context there once.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
@@ -186,6 +191,26 @@ alike once it is closed, keep the hot path to one atomic read with waker
 storage only on a pending transport, and wake outside the registry lock. Do not
 describe upgraded connections, handler-detached tasks or a zero cancel
 allowance as covered; the wrapper-abort contract still applies to them.
+An owned body starts its context from the admission record's continuation,
+never from a second `admit_root`. Keep that continuation in the record's
+take-once slot shared by every clone, and honour it only while the request's
+own context is live; a refused start gets an already-cancelled standalone
+owner, never a root under process cancellation. Cancel the body's context on
+every ending, including destruction and a panicking builder. Report an application panic (a builder
+that never returned, a poll that unwound, destruction while unwinding) as
+`panicked`, never as a departed peer. The observer publishes the request span
+in its shared state only while it is alive and clears it when it finishes;
+never let a kept request extension or admitted request own that span. Check the
+bounds before each frame and
+register for forced cancellation and the nearer bound only when the source is
+pending. End a library-ended body with an error, never `None`. Poll the
+application's body, emit the completion event, destroy that body and release
+the request span all under the captured dispatcher: closing a span releases its
+parent through the current default. Emit the event once, before application
+destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`
+without a public constructor, and do not claim the bounds for a peer that is
+not reading. `tests/streaming.rs` and `tests/streaming/` cover the owner on a
+paused clock and over real sockets.
 Canonical probes accept only validated `ProbePath`
 values, and duplicate paths must fail through the boundary's sanitized
 configuration error before Axum routing. The canonical guarded builder must

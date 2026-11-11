@@ -87,7 +87,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Serial maintenance, health and freshness | [Periodic](../crates/batter-core/tests/periodic.rs), core health/readiness targets. |
 | Panic-hook ownership and redacted reports | [Hook ownership](../crates/batter/tests/panic_hook_ownership.rs), core `panic_hook` and `report_redaction` targets. |
 | Settings and diagnostic exclusion | Core settings tests, reference `configuration`, SQLx example diagnostics. |
-| Browser transport and HTTP composition | [Browser](../crates/batter-axum/tests/browser.rs), [route groups](../crates/batter-axum/tests/route_groups.rs), [operational](../crates/batter-axum/tests/operational.rs), and adapter rustdoc. |
+| Browser transport and HTTP composition | [Browser](../crates/batter-axum/tests/browser.rs), [route groups](../crates/batter-axum/tests/route_groups.rs), [operational](../crates/batter-axum/tests/operational.rs), [owned response bodies](../crates/batter-axum/tests/streaming.rs), and adapter rustdoc. |
 | HTTP/1.1 traffic, streaming and disconnect limits | [HTTP transport tests](../crates/batter-axum/tests/), [ADR-008](adr/008-http-transport-ownership.md) and [ADR-009](adr/009-http-lifetime-observations.md). |
 | Send bounds, future size and composed consumers | Core `send_futures`, [SQLx future sizes](../crates/batter-sqlx/tests/future_size.rs), Runlimit future sizes and facade consumer targets. |
 | Profiled SQLx scopes, query/transaction completion and uncertainty | [SQLx tests](../crates/batter-sqlx/tests/), including ignored `atomic_live`, profile and verification targets. |

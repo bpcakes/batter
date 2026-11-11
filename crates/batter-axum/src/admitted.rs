@@ -1,13 +1,23 @@
 //! The admitted request's context, read through one typed extractor.
 
-use crate::{CorrelationId, HttpFailure, RequestInterruptionResponder, correlation};
+use crate::{
+    CorrelationId, HttpFailure, RequestInterruptionResponder, correlation,
+    observation::ObservationState,
+};
 use axum::{
     extract::FromRequestParts,
     http::{Extensions, request::Parts},
     response::{IntoResponse, Response},
 };
-use batter_core::operation::OperationContext;
-use std::{error::Error, fmt};
+use batter_core::{
+    lifecycle::{OperationContinuation, ShutdownSignal},
+    operation::OperationContext,
+};
+use std::{
+    error::Error,
+    fmt,
+    sync::{Arc, Mutex, PoisonError},
+};
 
 /// What admission records for one admitted request.
 ///
@@ -20,6 +30,16 @@ pub(crate) struct Admission {
     context: OperationContext,
     correlation_id: CorrelationId,
     interruption: RequestInterruptionResponder,
+    /// Proof of this request's admission, from which one owned response body
+    /// starts its own lifetime without a second readiness decision. Every
+    /// clone of the record shares the one slot, so repeated extraction cannot
+    /// multiply it.
+    continuation: Arc<Mutex<Option<OperationContinuation>>>,
+    /// Read-only drain and forced-cancellation observation for that body.
+    pub(crate) shutdown: ShutdownSignal,
+    /// The observing request, whose span an owned response body re-enters.
+    /// The observer publishes that span only while it is alive.
+    pub(crate) observation: Option<ObservationState>,
 }
 
 /// Record the admitted request for [`AdmittedRequest`].
@@ -31,13 +51,19 @@ pub(crate) fn record(
     extensions: &mut Extensions,
     context: OperationContext,
     interruption: RequestInterruptionResponder,
+    continuation: OperationContinuation,
 ) {
     extensions.remove::<Admission>();
     if let Some(correlation_id) = correlation::server_correlation(extensions) {
+        let observation = extensions.get::<ObservationState>().cloned();
+        let shutdown = continuation.signal();
         extensions.insert(Admission {
             context,
             correlation_id,
             interruption,
+            continuation: Arc::new(Mutex::new(Some(continuation))),
+            shutdown,
+            observation,
         });
     }
 }
@@ -89,7 +115,7 @@ pub(crate) fn record(
 ///
 /// ```compile_fail,E0423
 /// use batter_axum::AdmittedRequest;
-/// use batter_core::operation::OperationContext;
+/// use batter_core::{lifecycle::OperationContinuation, operation::OperationContext};
 ///
 /// fn forge(context: OperationContext) -> AdmittedRequest {
 ///     AdmittedRequest(context)
@@ -140,6 +166,11 @@ impl AdmittedRequest {
     ///
     /// Pass it to nested operations. Clones observe and execute without
     /// authority to cancel the request.
+    ///
+    /// It ends with the handler. A response body that is still being produced
+    /// after the handler returns must not keep it: its first step would find
+    /// the context already cancelled. Hand such a body to
+    /// [`Self::into_streaming_response`], which gives it a context of its own.
     pub fn context(&self) -> &OperationContext {
         &self.0.context
     }
@@ -160,6 +191,32 @@ impl AdmittedRequest {
     /// interrupted.
     pub fn interruption_responder(&self) -> &RequestInterruptionResponder {
         &self.0.interruption
+    }
+}
+
+impl AdmittedRequest {
+    pub(crate) fn into_admission(self) -> Admission {
+        self.0
+    }
+}
+
+impl Admission {
+    pub(crate) fn correlation_id(&self) -> &CorrelationId {
+        &self.correlation_id
+    }
+
+    /// The authority to start this request's owned body: once per request,
+    /// across every extracted copy, and only while its response is being
+    /// constructed, which the request's own context outlives by nothing.
+    /// After that a request kept by the application, or a second extraction,
+    /// cannot start work that admission would now refuse.
+    pub(crate) fn start_continuation(&self) -> Option<OperationContinuation> {
+        let continuation = self
+            .continuation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        continuation.filter(|_| self.context.check().is_ok())
     }
 }
 

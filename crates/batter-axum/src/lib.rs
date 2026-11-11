@@ -1,9 +1,11 @@
 //! Axum HTTP observation, request admission, and browser transport boundaries for Batter.
 //! The workspace targets Unix backends. Windows is unsupported and not planned.
 //!
-//! This bounds obtaining a response, NOT streaming its body or a WebSocket
-//! session. It does not detect disconnects that the transport does not surface
-//! by dropping the handler future. Bodies, proxy trust and auth remain
+//! Admission bounds obtaining a response, NOT streaming its body or a WebSocket
+//! session. A body that outlives its handler gets its own lifetime from
+//! [`AdmittedRequest::into_streaming_response`]. Nothing here detects
+//! disconnects that the transport does not surface by dropping the handler
+//! future or the body. Request bodies, proxy trust and auth remain
 //! application-owned. Trusted request correlation is explicitly opt-in. The
 //! [`browser`] module supplies validated cookie/header mechanics without an
 //! account, session, authorization, CORS, or CSRF-token model; a group's
@@ -34,6 +36,7 @@ mod observation;
 mod readiness;
 mod rendering;
 mod serving;
+mod streaming;
 
 pub mod low_level;
 
@@ -52,6 +55,7 @@ pub use correlation::{CorrelationId, render_infrastructure_failure};
 pub use readiness::{
     ReadinessDecision, ReadinessPolicy, default_readiness_level, readiness_status,
 };
+pub use streaming::{BodyBudget, BodyScope};
 
 use axum::{
     Json,

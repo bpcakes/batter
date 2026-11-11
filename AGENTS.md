@@ -160,6 +160,9 @@ read-only freshness snapshots and writer lifetime.
 including the dependency-first/lifecycle-last read order, application conditions
 that can only narrow readiness and unrepresentable healthy-as-failure states.
 `crates/batter-core/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
+`crates/batter-core/src/lifecycle/continuation.rs` owns `OperationContinuation`,
+the adapter-facing proof of an admission from which continued work starts
+without a second readiness read.
 `crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries,
 typed failures, and pre-telemetry resolution of application-retained outcomes.
 `crates/batter-core/src/retry.rs` owns replay policy, bounded attempts, and backoff.
@@ -194,6 +197,10 @@ alias; `admitted.rs` owns the privately recorded
 `crates/batter-axum/src/serving.rs` registers the native server, and
 `serving/forced_close.rs` fails accepted connections' I/O halfway through the
 cancel allowance so a connection that outlasts drain ends before wrapper abort;
+`streaming.rs` owns `AdmittedRequest::into_streaming_response`, the validated
+`BodyBudget`, the `BodyScope` and the private owned body that gives a response
+body outliving its handler its own context, bounds, protected dispatch and
+completion event;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route

@@ -8,6 +8,31 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `AdmittedRequest::into_streaming_response`, with `BodyBudget` and
+  `BodyScope`, in `batter-axum`: a library-owned lifetime for a response body
+  that outlives its handler. The body gets a context that starts from the
+  request's admission and survives response construction, required total and
+  idle bounds enforced without the stream's cooperation, polling and
+  destruction under the handler's tracing dispatcher and request span (which
+  then closes when the body ends, so span-close timing includes the body), and
+  one `HTTP response body finished` event with `request_id`, `bytes`,
+  `duration_ms` and `body_outcome`. A bound or forced cancellation truncates
+  the message visibly. A request starts at most one owned body, and only while
+  its response is being constructed. The existing completion event and every
+  existing signature are unchanged, and an unowned streaming body still
+  compiles. Not covered: a peer that stops reading (ended only by the forced
+  connection close), upgraded connections, and admission permits held for a
+  body's lifetime. `batter-axum` now depends on `http-body` directly
+  (`batter-9wig.6`).
+- Add the lower-level `OperationAdmission::admit_root_with_continuation` and
+  `OperationContinuation` in `batter-core`: proof of an admission from which an
+  adapter starts work that continues the admitted operation under its own
+  deadline, without a second readiness read. The proof is not `Clone` and
+  `start` consumes it, so one admission continues into at most one root.
+  Additive (`batter-9wig.6`).
+- The `http_service` example gains an `/events` route that streams server-sent
+  events through `into_streaming_response` and ends at drain.
+
 - Fix `batter-axum` served connections that outlast drain forcing an abort of
   the server wrapper, which skipped every dependent finalizer. A response body
   that stays pending, a peer that stops reading a large fixed response and a

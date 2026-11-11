@@ -901,6 +901,19 @@ finishes sooner is never aborted, scheduling delay can pass it, and an abandoned
 driver cancels without phases. A state unit test covers the unset, standalone,
 extended and tightened cases.
 
+`OperationAdmission::admit_root_with_continuation` is a lower-level adapter
+seam. It admits exactly as `admit_root` does and also returns an
+`OperationContinuation`, proof that the readiness decision was made. The proof
+can start one root that inherits only process forced cancellation, with its own
+deadline and without reading readiness again, which is what lets admitted work
+continue through drain. It has no public constructor, is not `Clone`, and
+`start` consumes it, so one admission continues into at most one root; a
+compile-fail doctest rejects a second start and a copy. Its holder owns the
+obligations the type cannot express: when the continued work starts and that it
+ends. The Axum adapter keeps it private to
+one admitted request and starts at most one body from it, only while that
+request's response is being constructed.
+
 Total configured allowance is drain + cancel + abort observation + cleanup work
 + cleanup final abort observation. Scheduling delays, synchronous blocking,
 non-yielding task bodies/destructors, and OS suspension can exceed it. This is
@@ -2543,7 +2556,96 @@ admission, and all responses remain observed.
 The timeout ends when Next returns a Response. It does not bound streaming body
 polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring
 outside this layer. An escaped request context is cancelled at response
-construction, so a streaming design needs a distinct owner.
+construction, so a body that outlives its handler needs the distinct owner
+below.
+
+`AdmittedRequest::into_streaming_response` consumes the admitted request and
+gives the body of the built response a lifetime of its own. Its `BodyScope`
+context starts from the request's admission through a private
+`OperationContinuation`, so no second readiness decision is made and a body that
+begins during drain is not refused. That context is cancelled by process forced
+cancellation and when the body ends or is destroyed, including when the builder
+panics, and never by response construction; a clone kept beyond the body
+observes cancellation. The authority to start a body belongs to the request,
+not to one extracted value: every extraction shares one take-once slot, and the
+slot is honoured only while the request's own context is live, that is, during
+response construction. A second call, or a call on a request the application
+kept after its response, builds the response with a scope that is already
+cancelled and never starts work that drain admission would refuse. A body with
+content ends at its first poll, truncated, and every refused start is reported
+`cancelled`, including an empty body that the transport learns has ended from
+`is_end_stream` and never polls. `BodyBudget` requires a positive total and a
+positive idle bound no longer than it. The library enforces both without the stream's
+cooperation: the bounds are checked before every frame, so an always-ready
+source cannot outrun them, and a pending body registers for forced cancellation
+and the nearer bound. Each of the three ends the body with an error, which
+Hyper turns into a closed connection without a final chunk; a library-ended
+body is never reported to the peer as complete. Ending at drain is left to the
+stream through `BodyScope::shutdown`.
+
+The body is polled under the tracing dispatcher current when the handler handed
+it over and inside the request's span context. The application's body and that
+span are also destroyed under it: closing a span releases its parent through
+the current default dispatcher, so releasing either on the transport's task
+unprotected would reach another registry. The request's observer publishes
+that span to the body only while the observer is alive and releases its copy
+when it finishes, so an admitted request or request extension kept beyond the
+response holds no span. An owned body holds its own copy until it ends, so the
+`batter.http` span closes when the body ends and span-close timing, including
+exported span durations, covers the body, while `latency_ms` and the boundary
+completion event still measure response construction only. Exactly one
+`HTTP response body finished` event carries
+`request_id`, `bytes`, `duration_ms` and `body_outcome` (`completed`, `failed`,
+`deadline_exceeded`, `idle_timeout`, `cancelled`, `panicked`, `dropped`),
+emitted before application destructors run. A stream error, either bound,
+cancellation and a panic are WARN; completion and `dropped` are INFO.
+`dropped` names a body discarded before its end by whoever held it, not ended
+by the library, a panic or the stream: a peer that went away, a HEAD response
+whose body Axum strips, or a response discarded because response construction
+ended without it; the request's own completion event, with its method and
+status, tells these apart. `panicked` names a builder that never returned, a poll of the body that
+unwound (the transport destroys such a body after catching the unwind) or
+destruction during unwinding, such as a handler panicking after the hand-over;
+it carries no payload. A body destroyed after its scope was cancelled or
+expired reports that reason instead of `dropped`, and a source that finished
+without being polled for its end is `completed`. Error contents are not
+copied into the event. The request's own completion event is unchanged, and no
+metric is recorded for bodies.
+
+[In-process tests](../crates/batter-axum/tests/streaming/) on a paused clock
+cover steps that run after the handler returned beside the unowned control,
+the escaped context, both bounds and their restart on each frame, an
+always-ready source, a parked frame woken by forced cancellation, drain as the
+stream's choice, a body started during drain, a stream error, a builder
+panic, a handler panic after the hand-over and a panicking stream, the event
+before application destructors, an admitted request kept beyond its response,
+a second and a late body start for one request, a refused empty body that is
+never polled, a HEAD request and a
+response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, and a
+foreign subscriber on the polling task.
+[Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
+the registered server show a pending owned body ending itself at forced
+cancellation before the server's forced close, a stalled reader ended only by
+that close and reported `cancelled`, and a departed peer reported `dropped`.
+Mutation checks were run by hand on 2026-11-11, each applied temporarily and
+reverted; they are not an automated gate. Removing scope cancellation, the
+cancellation wakeup, the captured dispatcher or the per-frame bound check each
+failed at least one of these tests, as did keeping the observer's published
+span after it finishes, destroying the application's body before the event,
+dropping either panic check, dropping either the take-once slot or the
+liveness check on the body-start authority, releasing the request span or
+destroying the application's body outside the captured dispatcher (with the
+request inside a parent span), and dropping the refused-start record for an
+empty body. Restoring `Clone` and a borrowing `start` on
+`OperationContinuation` made its compile-fail doctests compile.
+
+Limits: the bounds are observed only when the transport polls the body. A peer
+that stops reading leaves it unpolled, so only the forced connection close at
+shutdown ends it; there is no write-stall timeout. The owner covers response
+bodies, not upgraded connections. Admission permits are not held for the body's
+lifetime. An unowned streaming body still compiles, because `OperationContext`
+is `Clone` and `'static` by design; the owner makes the supported composition
+available, it does not make the other unrepresentable. HTTP/2 was not exercised.
 
 A response returned from `RequestInterruptionResponder::render` carries private
 interruption evidence. Admission uses it to classify the response-construction

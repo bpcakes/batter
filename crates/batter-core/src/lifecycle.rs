@@ -11,6 +11,8 @@ use crate::lifecycle::state::Supervision;
 mod caller_owned;
 mod capability;
 pub(crate) use capability::StartupPhase;
+mod continuation;
+pub use continuation::OperationContinuation;
 mod driver;
 mod managed;
 mod process;

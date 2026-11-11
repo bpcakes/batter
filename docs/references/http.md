@@ -399,6 +399,12 @@ sources in the locked registry.
 - `serve_connection_with_upgrades` resolves its connection future when the
   upgrade is handed over, so an upgraded connection no longer holds Axum's
   graceful wait.
+- Hyper `src/proto/h1/dispatch.rs` `poll_write`: a response body frame error
+  becomes `Error::new_user_body` and ends the connection future, so a chunked
+  message whose body errors receives no final chunk. It polls the body only
+  while `can_write_body` holds and the write buffer accepts more, so a body is
+  not polled while its peer is not reading. Checked for `batter-9wig.6`; a
+  real-socket test asserts the missing final chunk.
 
 Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
 operations instead of owning the accept loop: every case above is parked in, or

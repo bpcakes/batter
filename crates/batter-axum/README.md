@@ -243,6 +243,103 @@ the missing type. To migrate, replace `Extension<OperationContext>`,
 handler arguments with one `AdmittedRequest` and its three accessors. The raw
 extensions remain for Batter's adapters and existing handlers.
 
+### Bodies that outlive their handler
+
+The request's context ends when the handler returns: admission cancels it, and
+Hyper polls the body afterwards on its own connection task. A stream that kept
+`admitted.context()` therefore finds its first step already interrupted. For a
+body still being produced when the handler returns (server-sent events, a
+chunked export, a proxied download), hand it to the library instead:
+
+```rust
+use axum::{body::{Body, Bytes}, response::Response};
+use batter_axum::{AdmittedRequest, BodyBudget};
+use batter_core::operation::OperationError;
+use futures_util::stream;
+use std::{convert::Infallible, io, time::Duration};
+
+async fn export(admitted: AdmittedRequest) -> Response {
+    let budget = BodyBudget::new(Duration::from_secs(600), Duration::from_secs(30))
+        .expect("a positive total no shorter than the idle bound");
+    admitted.into_streaming_response(budget, |scope| {
+        Body::from_stream(stream::unfold((scope, 0_u32), |(scope, index)| async move {
+            if index == 1_000 {
+                return None;
+            }
+            let step = scope
+                .context()
+                .run("export.chunk", |_step| async move {
+                    Ok::<_, Infallible>(Bytes::from(format!("chunk {index}\n")))
+                })
+                .await;
+            match step {
+                Ok(chunk) => Some((Ok(chunk), (scope, index + 1))),
+                // An error, not a normal end, so the message stays visibly
+                // truncated. The transport stops polling after it.
+                Err(OperationError::Interrupted(reason)) => {
+                    Some((Err(io::Error::other(reason.to_string())), (scope, index)))
+                }
+                Err(OperationError::Failed(never)) => match never {},
+            }
+        }))
+    })
+}
+```
+
+`into_streaming_response` consumes the admitted request and accepts anything
+that is `IntoResponse`, including `axum::response::Sse`. The closure receives a
+`BodyScope`:
+
+- `scope.context()` lives until the body ends, the budget's total bound passes
+  or the process forces cancellation. It starts from the request's own
+  admission, so a body that begins while the process drains is not refused.
+  A clone kept beyond the body observes the body's end as cancellation.
+  One request starts at most one owned body, and only while its response is
+  being constructed: a second call, even on another extraction of the same
+  request, or a call on a request kept after its response gets a scope that
+  is already cancelled. A body with content ends at its first poll,
+  truncated, and every refused start is reported `cancelled`, including an
+  empty body the transport never polls.
+- `scope.shutdown()` observes drain. Ending at drain is the stream's decision:
+  an event stream usually ends there so its client reconnects elsewhere, a
+  download does not. The runnable `http_service` example's `/events` route
+  shows the first.
+
+The library then owns the body whether or not the stream cooperates. A wait for
+the next frame longer than the idle bound, the total bound and forced
+cancellation each end it with a body error, so the peer sees a truncated
+message and never a final chunk it could take for a complete one. The body is
+polled and destroyed under the tracing dispatcher and request span of the
+handler that handed it over, and it holds that `batter.http` span open until it
+ends: span-close timing, such as an exported span's duration, then covers the
+body, while `latency_ms` and the request's completion event still measure
+response construction. Exactly one `HTTP response body finished` event
+carries `request_id`, `bytes`, `duration_ms` and `body_outcome`: `completed`
+and `dropped` at INFO; `failed`, `deadline_exceeded`, `idle_timeout`,
+`cancelled` and `panicked` (a builder or stream that panicked, or a handler
+that panicked after handing the body over) at WARN. `dropped` means the body's
+holder discarded it before its end: a peer that went away, a HEAD request on a
+GET route, whose body Axum strips, or a response discarded because response
+construction ended without it. The request's own completion event is
+unchanged, still measures response construction and, with its method and
+status, tells those cases apart.
+
+The library checks the scope's context before each poll, so its own bounds and
+forced cancellation reach the peer as the library's truncation; a step's
+`Interrupted` arm is reached only for a tighter deadline the stream set itself
+with `scope.context().child(..)`. A stream meant to run indefinitely still
+needs a total bound: reaching it truncates the body at WARN, so end the stream
+yourself shortly before if its peer should see a clean close. The completion
+event is the only notification of a body's end; there is no application hook.
+
+Limits: the bounds are observed only when the transport polls the body, so a
+peer that stops reading is ended by the registered server's forced connection
+close at shutdown and not by the budget; no write-stall timeout exists. An
+upgraded connection is not a body. Admission permits, such as a bulkhead's, are
+not held for the body's lifetime. An unowned body still compiles: nothing
+prevents moving the request's context into a plain `Body::from_stream`, because
+`OperationContext` is deliberately `Clone`.
+
 ### Routers built by another router builder
 
 A router built by another router builder, for example an OpenAPI router
@@ -476,9 +573,10 @@ manual composition.
 snapshot of request parts. Establish trusted metadata outside the boundary.
 Handlers should use the application's renderer for their own failures.
 
-The deadline ends at response construction. Streaming bodies, WebSockets, client
-disconnect lifetime, authentication, proxy trust, and request body limits need
-application policy. A joined server wrapper does not prove detached connection
+The deadline ends at response construction. A body that outlives its handler
+gets its own bounds through `AdmittedRequest::into_streaming_response`;
+WebSockets, client disconnect lifetime, authentication, proxy trust, and request
+body limits need application policy. A joined server wrapper does not prove detached connection
 tasks have stopped. Automatic observations omit raw error/request contents;
 the application installs its tracing subscriber. A polled response future dropped
 before completion emits `dropped` without a status, under its first-poll subscriber.

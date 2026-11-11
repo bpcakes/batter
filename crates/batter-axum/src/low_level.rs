@@ -262,9 +262,9 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let Some(deadline) = Instant::now().checked_add(policy.budget) else {
         return policy.render_failure(HttpFailure::Internal, &parts);
     };
-    let Ok(owner) = policy
+    let Ok((owner, continuation)) = policy
         .admission
-        .admit_root(batter_core::operation::RootDeadline::at(deadline))
+        .admit_root_with_continuation(batter_core::operation::RootDeadline::at(deadline))
     else {
         return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
@@ -278,7 +278,12 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
-            admitted::record(request.extensions_mut(), scope.clone(), interruption);
+            admitted::record(
+                request.extensions_mut(),
+                scope.clone(),
+                interruption,
+                continuation,
+            );
             request.extensions_mut().insert(scope);
             Ok::<_, Infallible>(next.run(request).await)
         },
