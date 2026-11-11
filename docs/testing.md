@@ -104,6 +104,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Flag catalogs, snapshots, evaluation, pins and invariants | [Flags core tests](../crates/batter-flags-core/tests/). |
 | Declared mode, gates, control-plane loader and last-good file | [Flags tests](../crates/batter-flags/tests/) and in-crate loader tests; ignored `control_plane_live`, `invariants_live` and `jobs_live`. |
 | Flags store, operator command and process environment | [Store tests](../crates/batter-flags-postgres/tests/), [command tests](../crates/batter-flags-cli/tests/), facade `flags_live`, `grants_live` and [environment ownership](../crates/batter/tests/process_environment_ownership.rs). |
+| Outbound capacity observations (opt-in) | Run `python3 scripts/measure_outbound_http.py`; [executed scope and limits](evidence/outbound-capacity-2026-11-11.md). The scripts matrix compiles the probe with `--check`; timing is not a CI threshold. |
 | Outbound response-body wiping before deallocation | Private [buffer](../crates/batter-outbound-http/src/send/buffer/tests.rs) and [body-storage](../crates/batter-outbound-http/src/send/body_storage_tests.rs) tests, with a `cfg(test)` destructor probe. |
 | External single-dependency adoption | [Consumer sources](../consumers/README.md) and [source-copy checker](../scripts/check_single_facade_consumer.py). |
 | Verification selection and process failure behavior | [Script controls](../scripts/), especially `test_verify`, `test_parallel_process`, `test_ci_plan` and live-runner controls. |

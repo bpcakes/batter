@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Outbound HTTP: give each DNS candidate a one-second minimum within the shared
+  setup deadline, avoiding tiny attempt windows caused by long answer lists.
+  Earlier stalled candidates can still exhaust the shared budget before a
+  healthy later address is tried.
+  Add opt-in connection, resolver-queue and response-buffer measurements.
+
 - `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
   extracted where no gate of the route's group captured its value still
   rejects with the sanitized 500, and the completion event now carries

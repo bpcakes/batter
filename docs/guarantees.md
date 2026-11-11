@@ -401,7 +401,9 @@ Hostname setup uses bounded address fallback (`batter-4p4a`). It preserves the
 first resolved family preference, starts the other family after at most 300 ms
 or half the remaining setup budget, and starts it immediately if the first
 family fails. Within each family, remaining time is shared across its remaining
-addresses. At most two TCP candidates are active, driven in the exchange future;
+addresses with a one-second minimum per candidate capped by the shared deadline
+(`batter-wznf.1`). A stalled address can consume a shorter family budget; not
+every answer is guaranteed an attempt. At most two TCP candidates are active, driven in the exchange future;
 losing candidates are dropped before TLS or HTTP handoff. The single absolute
 setup/exchange deadline bounds all of them. This does not replay an HTTP request.
 
@@ -481,7 +483,8 @@ production handoff and driver with controlled I/O and a paused Tokio clock:
   checks queued and partially written requests for both deadline and cancellation.
 - `deadline_expiring_while_connecting_is_not_started` checks stalled TLS setup.
 - The private `transport/dial/tests.rs` covers stalled preferred families,
-  same-family address stalls, immediate family failure, short shared budgets,
+  same-family address stalls, long lists of healthy delayed candidates, immediate
+  family failure, short shared budgets,
   either family winning and losing candidates being dropped before return.
 - `tls_error_reads_cannot_flush_buffered_http_after_deadline_or_cancellation`
   uses the production TLS assembly and HTTP driver over controlled raw I/O.
