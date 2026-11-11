@@ -71,7 +71,8 @@ Fast jump index for agent-facing guidance in this repository.
 ## Private shared test sources
 
 - [Repository process machinery](./test-support/README.md): std-only Unix launch,
-  capture and watchdog sources included by foundation and Axum tests. This is
+  capture and watchdog sources included by foundation and Axum tests, the facade
+  HTTP example and the reference service's tests. This is
   not the `batter-test-support` Cargo crate; preserve the documented relative layout.
 
 ## Suggested usage pattern
@@ -79,6 +80,3 @@ Fast jump index for agent-facing guidance in this repository.
 1. Start with the root [AGENTS.md](./AGENTS.md).
 2. Open the nearest guide for the area you will change.
 3. Follow that guide's entrypoint map before editing.
-
-Owned initialization: `crates/batter-core/src/startup.rs` and `startup/` retain the
-supervisor through failure cleanup or running handoff.

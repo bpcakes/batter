@@ -17,6 +17,7 @@
 //! retained before the exporter and provider are closed exactly once on normal
 //! finalization. Panics, non-yielding SDK calls and runtime death do not carry
 //! that closure guarantee.
+#![forbid(unsafe_code)]
 
 mod config;
 pub mod diagnostics;

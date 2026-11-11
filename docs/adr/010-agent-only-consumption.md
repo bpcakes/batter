@@ -120,6 +120,7 @@ The links below retain this ADR's existing assessment anchors.
 - <a id="bounded-blocking-work-assessment-batter-0772"></a>[Bounded blocking work assessment (batter-0772)](../evidence/api-assessments/operations.md#bounded-blocking-work-assessment-batter-0772)
 - <a id="redacting-panic-hook-assessment-batter-4q78"></a>[Redacting panic hook assessment (batter-4q78)](../evidence/api-assessments/lifecycle.md#redacting-panic-hook-assessment-batter-4q78)
 - <a id="public-origin-invalid-state-review-batter-321j"></a>[Public-origin invalid-state review (batter-321j)](../evidence/api-assessments/http.md#public-origin-invalid-state-review-batter-321j)
+- <a id="response-body-storage-invalid-state-review-batter-53nf"></a>[Response-body storage invalid-state review (batter-53nf)](../evidence/api-assessments/http.md#response-body-storage-invalid-state-review-batter-53nf)
 - <a id="outbound-exchange-assessment-batter-3s1a"></a>[Outbound exchange assessment (batter-3s1a)](../evidence/api-assessments/http.md#outbound-exchange-assessment-batter-3s1a)
 - <a id="owned-phase-and-acquisition-handoff-assessment-batter-jxj2"></a>[Owned phase and acquisition handoff assessment (batter-jxj2)](../evidence/api-assessments/operations.md#owned-phase-and-acquisition-handoff-assessment-batter-jxj2)
 - <a id="protected-service-readiness-and-typed-output-batter-m9rp"></a>[Protected service readiness and typed output (batter-m9rp)](../evidence/api-assessments/lifecycle.md#protected-service-readiness-and-typed-output-batter-m9rp)

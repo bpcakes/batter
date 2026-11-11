@@ -137,6 +137,10 @@ with a nonzero port, for local fixtures and tests.
 `client.request(method, segments)` starts a `RequestDraft` below the origin.
 Each segment is percent-encoded, so `/`, `?`, `#` and `%` stay inside it: pass
 `["v1", "effects"]`, not `["v1/effects"]`, which is sent as one encoded segment.
+For an endpoint whose path ends in `/`, use
+`client.request(Method::POST, ["v1", "effects"]).trailing_slash()` before
+`prepare()`. It sends `/v1/effects/`; repeated calls add no further slash, and
+the origin root remains `/`. Empty or dot segments are still refused.
 `header` marks every value it is given sensitive and refuses `Host`,
 `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`, `Trailer`,
 `Expect`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and
@@ -207,14 +211,45 @@ treat a lost exchange as `Unknown`. An outer `run`, `retry`, `timeout` or
 `select!` can still discard a ready exchange according to its own precedence.
 Sending requires a Tokio runtime with its time driver enabled.
 
+## Response-body storage
+
+A response body can hold credentials or personal data, so this package overwrites
+the heap storage it allocates for a body with zeros before releasing that storage:
+
+- when the read stops early, with `Body::TooLarge` or any `Body::Failed`;
+- when the exchange future is dropped while reading the body;
+- when the buffer grows, for the allocation being replaced; and
+- for `Body::Complete`, when the last `Bytes` handle is released. Clones and
+  slices, on any thread, share one owner and stay intact until then.
+
+The guarantee stops at that storage. It does not reach hyper's read buffer, rustls
+or kernel buffers, response headers or request bodies. A copy is the caller's to
+wipe, including `Bytes::to_vec`, `Vec::from(bytes)`, `BytesMut::from(bytes)` and
+parsed values. A returned body is never uniquely owned, so `Bytes::try_into_mut`
+returns `Err`, and `Vec::from` and `BytesMut::from` always copy instead of
+reclaiming the allocation.
+
+The wipe runs in a destructor, so a leaked or forgotten handle, an abort and
+process exit skip it. Live bytes are not locked in memory, so swap, hibernation or
+a core dump can capture them. Wiping takes time proportional to the allocation and
+runs without yielding on the thread that releases it: about 18 ms for 64 MiB in
+one release-build measurement.
+
 ## Limits
 
 - `ResponseLimit` accepts 1 byte to 64 MiB. A declared or streamed length above
   it returns `TooLarge`; chunked framing is removed and content codings remain
   encoded. Preallocation is capped at 1 MiB and buffer growth stays within the
-  limit. A body delimited only by connection close cannot reveal truncation.
-- Deadlines are cooperative. Scheduling delay or synchronous certificate
-  verification on macOS can delay return beyond `RESERVE`. A gate cannot
+  limit. Growth copies into a new allocation before releasing the old one, so two
+  allocations briefly coexist, together below twice the limit. A completed body
+  keeps the allocation it grew into, at most twice its length and never above the
+  limit, until its last handle is released. A body delimited only by connection
+  close cannot reveal truncation.
+- Deadlines are cooperative. Scheduling delay, synchronous certificate
+  verification on macOS or growing a large body's buffer can delay return beyond
+  `RESERVE`. One growth step copies and wipes the old allocation without
+  yielding. Separate release-build measurements of copying and wiping 64 MiB
+  give an estimated combined cost of about 56 ms (38 ms + 18 ms). A gate cannot
   interrupt an already-entered poll or eliminate thread preemption between a
   clock check and a socket operation. The handoff and write checks have no
   intervening await. Bytes already accepted by the kernel can arrive later,
@@ -258,11 +293,14 @@ unsupported and not planned. Earlier macOS results in `batter-8e8r` predate the
 owned-connection transport. Current executed checks belong to `batter-u387`;
 no new macOS or hosted evidence is claimed. The current lockfile resolves
 hyper 1.11.1, hyper-util 0.1.20, tokio-rustls 0.26.6, rustls 0.23.46,
-rustls-platform-verifier 0.7.1 and Tokio 1.54.1. reqwest 0.13.5 is dev-only.
+rustls-platform-verifier 0.7.1, Tokio 1.54.1, bytes 1.12.1 and zeroize 1.9.1.
+reqwest 0.13.5 is dev-only.
 The package's own tests compile its gzip/HTTP2 features as unification controls;
 the facade example executes the owned transport without that control client.
 Tests also exercise real TLS 1.2/1.3 with untrusted certificate rejection and a
 private explicitly trusting verifier, including a readable response at expiry.
+Response-body wiping is observed by private unit tests recorded in `batter-53nf`;
+those tests have not been executed on macOS.
 See `docs/references.md` at the workspace root for the inspected sources and
 `docs/guarantees.md` for the contract and evidence.
 

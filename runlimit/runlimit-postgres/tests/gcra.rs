@@ -593,6 +593,43 @@ async fn logical_expiry_cleanup_skips_busy_shards_and_preserves_other_shards_clo
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
+async fn cleanup_advances_each_candidate_shard_on_its_own_clock() {
+    let db = Database::new().await;
+    let start = db.freeze_time().await;
+    let short = policy(1, 1000, 1);
+    let long = policy(1, 60_000, 1);
+    let limiter = db.limiter();
+    for check in [
+        Check::new(subject(1, 0, &short).bind(&short)),
+        Check::new(subject(1, 1, &short).bind(&short)),
+        Check::new(subject(2, 1, &long).bind(&long)),
+    ] {
+        assert!(limiter.check(&check).await.unwrap().permits_request());
+    }
+    // Shard 0 kept a watermark far ahead of shard 1, as after a clock regression.
+    // Shard 1 has only observed the expiry of its short counter.
+    let ahead = i64::try_from(start + 120_000).unwrap();
+    let own = i64::try_from(start + 1000).unwrap();
+    sqlx::query("UPDATE runlimit_gcra_shards SET observed_at_ms = CASE capacity_shard WHEN 0 THEN $1 ELSE $2 END WHERE capacity_shard IN (0, 1)")
+        .bind(ahead)
+        .bind(own)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(limiter.cleanup_expired(10).await.unwrap(), 2);
+    let clocks: Vec<(i16, i64, i64)> = sqlx::query_as(
+        "SELECT capacity_shard, observed_at_ms, row_count FROM runlimit_gcra_shards WHERE capacity_shard IN (0, 1) ORDER BY capacity_shard",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    // Shard 1 keeps its own clock, so its still-active counter survives.
+    assert_eq!(clocks, [(0, ahead, 0), (1, own, 1)]);
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL"]
 async fn failed_cleanup_rolls_back_watermark_and_counter_deletion_together() {
     let db = Database::new().await;
     let policy = policy(1, 1000, 1);

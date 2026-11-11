@@ -3,15 +3,18 @@
 Owning task: `batter-jkw6.28`. This record checks the flags epic's changes to
 existing packages, and its new packages, against a public-API surface diff,
 with the method of [the 0.0.1 diff](../public-api-diff-2026-10-09/README.md).
+It was regenerated on 2026-11-11, after the branch merged master and after
+the LISTEN wake, the notification channel, `manifest_diff` and the public
+`Authority` transitions were withdrawn; the first version of this record
+compared `fb792dd` with `87eabd0`.
 
 ## Method
 
 Both revisions were documented with rustdoc's unstable JSON output on the same
 nightly as that record, rustc 1.100.0-nightly (a69a63265 2026-09-03):
 
-- old: `fb792dd` (master, the epic's merge base), in a detached worktree;
-- new: `87eabd0` (the flags integration branch with every delivery task, T-03
-  and the P-1 and P-2 records).
+- old: `1053293d` (master), in a detached worktree;
+- new: the flags branch at `bcf74006` merged with that master.
 
 ```sh
 cargo +nightly rustdoc -p <package> --lib --all-features --locked -- \
@@ -21,45 +24,37 @@ python3 ../public-api-diff-2026-10-09/surface.py <old-doc-dir> <new-doc-dir> \
   batter-outbound-http batter-at-rest batter-test-support batter
 ```
 
-`existing-packages.txt` is that output, with one later correction: the 17
-lines for `periodic::register_wakeable_in`, `WakeablePolicy` and `PeriodicWake`
-were removed by hand on 2026-11-10, when the wakeable seam was withdrawn, and
-the file was not regenerated. Its `batter-core` header and the table's
-`batter-core` row are the generated 1315 entries and 133 additions less those
-17, and nothing added to any package after `87eabd0` appears in it. The branch also carries work merged
-from other tasks since `fb792dd`, so not every entry is the flags epic's; the
-table attributes each removal. The same limits apply as in the 0.0.1 record:
-entries are compared by path and kind, so a changed signature on a kept name is
-not detected.
+`existing-packages.txt` is that output, unedited. Because the old revision is
+the master the branch merged, every entry is the flags epic's. The same limits
+apply as in the 0.0.1 record: entries are compared by path and kind, so a
+changed signature on a kept name is not detected.
 
 ## Existing packages
 
-| Package | Entries | Flags epic entries | Other entries |
-| --- | --- | --- | --- |
-| `batter-core` | 1184 → 1298 | none | the removed `StartingSupervisor::wait` and `wait_with_output` and the phased-operation, tracked-operation, service-readiness and cleanup additions belong to the startup-handoff and operation tasks, whose `Breaking:` entries are in the CHANGELOG |
-| `batter-axum` | 590 → 606 | T-07: `GroupGate` (`new`, `with_disabled_level`), `Gated::{Serve, Disabled}`, `GateView` (`value`, its extractor) and `HttpFailure::Disabled`; the variant is the recorded hard cut with its `Breaking:` entry and no shim | none |
-| `batter-sqlx` | 1347 → 1409 | T-16: `PgAtomicTransaction::commit_unless` and `PgCommitStop::{Interrupted, Unconfirmed}`, additive | the removed `register_pool_close`, `PgProfiledPool::connect` and `connect_lazy` belong to the profiled-pool ownership task, whose `Breaking:` entry gives the `low_level` replacements |
-| `batter` | 21 → 23 | T-17: the `flags` module re-exporting `batter_flags` | none |
-| `batter-runledger`, `batter-outbound-http` | 83 → 88, 197 → 199 | none | other tasks' additions |
-| `batter-runlimit`, `batter-otlp`, `batter-at-rest`, `batter-test-support` | unchanged | none | none |
+| Package | Entries | Flags epic entries |
+| --- | --- | --- |
+| `batter-core` | 1328 → 1359 | `periodic::register_skippable_in`, `PeriodicOutcome::{Ran, Skipped}` and the field `PeriodicSummary::skipped`; `settings::SettingsSelection::{Captured, Selected}` and `SettingsSource::selection`; `Registration::check_names` and `owns_cleanup`; `cleanup::CleanupRegistration` and `CleanupSlot::register_tracked` |
+| `batter-axum` | 590 → 606 | `GroupGate` (`new`, `with_disabled_level`), `Gated::{Serve, Disabled}`, `GateView` (`value`, its extractor), `GroupPolicy::gated` and `browser_gated`, and the variant `HttpFailure::Disabled` |
+| `batter-sqlx` | 1379 → 1410 | `PgAtomicTransaction::commit_unless` and `operation_until`, `PgCommitStop::{Interrupted, Unconfirmed}`, `PgDeadlineError::{Elapsed, Failed, RecoveryElapsed}`, `PgLease::migrate_until` with `PgMigrationTimeouts` and `PgMigrationTimeoutError`, `PgReadOnlySnapshot::inspect_until` and `PgProfiledPool::is_registered_in` |
+| `batter` | 21 → 23 | the `flags` module re-exporting `batter_flags` |
+| `batter-runledger`, `batter-runlimit`, `batter-otlp`, `batter-outbound-http`, `batter-at-rest`, `batter-test-support` | unchanged | none |
 
 No flags-epic change to an existing package removes or renames a public item.
-The one addition that breaks source compatibility is `HttpFailure::Disabled`,
-an exhaustive variant, recorded with before/after matches in the CHANGELOG.
+Two additions break source compatibility, and each is recorded with
+before/after code in the CHANGELOG: `HttpFailure::Disabled`, a variant of an
+exhaustive enum, and `PeriodicSummary::skipped`, a public field of a struct
+that is not `#[non_exhaustive]`.
 
 ## New packages
 
 | Package | Entries |
 | --- | --- |
-| `batter-flags-core` | 1249 |
-| `batter-flags-postgres` | 516 |
-| `batter-flags` | 516 |
+| `batter-flags-core` | 1238 |
+| `batter-flags-postgres` | 535 |
+| `batter-flags` | 561 |
 
-The three are new since `fb792dd`, and since 0.0.1, so every entry is an
+The three are new since master, and since 0.0.1, so every entry is an
 addition; none was released, so changes made to them within the epic carry no
-`Breaking:` entries. The counts are those of `87eabd0` and were not
-regenerated: they predate the later withdrawal of the LISTEN wake
-(`batter-flags`), the notification channel (`batter-flags-postgres`) and
-`manifest_diff` (`batter-flags-core`), among other changes since. The
-surfaces are regenerated by importing `surface.py`'s `surface` on the new
-revision's JSON. `batter-flags-cli` is a binary with no library surface.
+`Breaking:` entries. The counts are of the same new revision, taken by
+importing `surface.py`'s `surface` on its JSON. `batter-flags-cli` is a binary
+with no library surface.

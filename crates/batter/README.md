@@ -25,7 +25,7 @@ The default feature set is empty. The available feature/module pairs are:
 | `runledger-test-support` | `batter::runledger::test_support`: drive one job handler without a worker, queue or database; and `batter::runledger::native::test_support`: test-only reachability for Runledger's own PostgreSQL support |
 | `runlimit` | `batter::runlimit` and `batter::runlimit::native` |
 | `runlimit-memory` | native memory error bridge plus `batter::runlimit::memory` |
-| `runlimit-postgres` | native PostgreSQL error bridge plus `batter::runlimit::postgres` |
+| `runlimit-postgres` | native PostgreSQL error bridge plus `batter::runlimit::postgres`, `batter::runlimit::attempts`, `batter::runlimit::grants` and `batter::runlimit::maintenance` |
 | `runlimit-axum` | `batter::runlimit::http` and `batter::axum` |
 | `runlimit-native-http` | `batter::runlimit::native_transport::http`: native response metadata, no transport framework |
 | `runlimit-native-axum` | `batter::runlimit::native_transport::axum`: the native caller-controlled layer, without `batter::axum` |
@@ -36,6 +36,7 @@ The default feature set is empty. The available feature/module pairs are:
 | `flags-test-support` | `batter::flags::test::TestFlags` (experimental): injected test flags serving `Source::Test`, for test builds only |
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
+| `otlp` | `batter::otlp`: explicit bounded metrics export through `batter::service::start` |
 
 The five `flags*` features are experimental. `flags` alone is declared mode,
 with no database; the [`rollout` example](examples/rollout.rs) runs in both

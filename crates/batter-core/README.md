@@ -60,6 +60,13 @@ resolver before telemetry is finalized. The application remains responsible for
 the evidence and any remote-effect claim; dropping the outer future cannot run
 the resolver.
 
+For adapters whose interruption still produces a value, such as an HTTP reply,
+`operation::low_level::run_resolved_value` accepts one exhaustive
+`ResolvedOutcome<T>` carrying classification and value together. The same core
+boundary observes that outcome before returning the value, without a separate
+storage slot. Classification remains caller policy; this lower-level seam does
+not certify remote effects. Applications should prefer the supported adapter.
+
 Adapter authors can wrap a future with `batter_core::telemetry::with_current_dispatch`
 to retain the dispatcher captured at the call through polling and destruction.
 Keep observations and nested spans inside that future; it does not capture or

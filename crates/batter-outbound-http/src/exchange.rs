@@ -202,6 +202,11 @@ pub enum Body {
     /// HTTP/1.1 chunked framing is removed. A response with neither
     /// `Content-Length` nor chunked framing ends when the peer closes the
     /// connection, so its truncation cannot be detected.
+    ///
+    /// This package zeroes the body's allocation when the last clone or slice
+    /// of these [`Bytes`] is released. A copy made from them, including through
+    /// `Vec::from` or `BytesMut::from`, is the caller's to wipe. See
+    /// [Response-body storage](crate#response-body-storage).
     Complete(Bytes),
     /// The declared or streamed length exceeded the [`crate::ResponseLimit`].
     TooLarge,

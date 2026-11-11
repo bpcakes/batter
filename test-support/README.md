@@ -18,8 +18,12 @@ the consuming package's environment from a shared module.
 
 The workspace-relative location remains stable when foundation tests move to a
 different same-depth crate. Cargo fmt follows the HTTP module paths; Cargo
-workspace tests compile both consumers, including these
-sources. The foundation controls continue to test the same included implementation.
+workspace tests compile every consumer, including these sources. The consumers
+are the `batter-core` and `batter-axum` tests, the facade HTTP example under
+`crates/batter/examples/http_service/`, the `batter-runlimit` HTTP tests and the
+`examples/reference-service` tests; list them again with
+`git grep -l 'test-support/' -- '*.rs'` before moving this directory. The
+foundation controls continue to test the same included implementation.
 
 `events.rs` owns synchronous event storage and returns owned snapshots. It exposes
 no mutex guard: failed ordering/wait assertions must leave resource Drop recording
@@ -38,8 +42,9 @@ workaround on an upstream upgrade. Enabled and filtered callback assertions rema
 in their owning suites; production code does not use this constructor.
 
 `capture.rs` owns the tracing buffer and current-thread runtime wrapper shared by
-the Axum suites and the facade HTTP example. Keep filter construction and dispatch
-bootstrapping here so both consumers exercise the same observation oracle.
+the Axum suites, foundation tests and the facade HTTP example. Keep filter
+construction and dispatch bootstrapping here so every consumer exercises the same
+observation oracle.
 
 The HTTP adapter's shared wrapper also owns complete startup/exercise/teardown
 allowances below its process deadline. Keep phase policy there; the generic

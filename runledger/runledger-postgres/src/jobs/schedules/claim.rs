@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::types::Uuid;
 
-use crate::{DbTx, Error, Result};
+use crate::{DbPool, DbTx, Error, Result};
 
 use super::super::types::JobScheduleRecord;
 use super::locking::lock_job_schedules_for_due_schedule_claim_tx;
@@ -109,4 +109,79 @@ pub async fn mark_schedule_fired_tx(
     .map_err(|error| Error::from_query_sqlx_with_context("mark schedule fired", error))?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Reads the earliest `next_fire_at` among active schedules.
+///
+/// This is a low-level runtime helper used by `runledger-runtime`'s scheduler
+/// loop to sleep until the next due fire instead of a whole poll interval. It
+/// reads the same active-schedule set that [`claim_due_schedules_tx`] claims
+/// from, through the partial index on active `next_fire_at`, without taking row
+/// locks. The value is therefore only a hint: the row may already be claimed by
+/// another scheduler, and a later write may create an earlier fire. Returns
+/// `None` when no schedule is active.
+///
+/// The read owns a transaction with a one-second `statement_timeout` cap,
+/// preserving a stricter caller setting. It awaits rollback on success and
+/// failure, restoring pooled-session settings before returning. Pool acquisition
+/// retains the pool's configured timeout; this is not a transport deadline.
+///
+/// # Errors
+/// Returns an error if acquisition, the bounded read or rollback fails. When
+/// both the read and rollback fail, both errors are retained.
+///
+/// # Example
+///
+/// ```no_run
+/// # async fn example(pool: &runledger_postgres::DbPool) -> runledger_postgres::Result<()> {
+/// use runledger_postgres::jobs::earliest_active_schedule_fire_at;
+///
+/// let poll_interval = std::time::Duration::from_secs(30);
+/// let wait = match earliest_active_schedule_fire_at(pool).await? {
+///     Some(fire_at) => (fire_at - chrono::Utc::now())
+///         .to_std()
+///         .unwrap_or_default()
+///         .min(poll_interval),
+///     None => poll_interval,
+/// };
+/// tokio::time::sleep(wait).await;
+/// # Ok(()) }
+/// ```
+pub async fn earliest_active_schedule_fire_at(pool: &DbPool) -> Result<Option<DateTime<Utc>>> {
+    let mut tx = pool.begin().await.map_err(|error| {
+        Error::from_query_sqlx_with_context("begin earliest schedule fire read", error)
+    })?;
+    let read = async {
+        super::super::transaction_settings::cap_local_statement_timeout_tx(
+            &mut tx,
+            "1s",
+            1_000,
+            "cap earliest schedule fire read",
+        )
+        .await?;
+        sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT min(next_fire_at)
+             FROM job_schedules
+             WHERE is_active",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| {
+            Error::from_query_sqlx_with_context("read earliest active schedule fire", error)
+        })
+    }
+    .await;
+    match (read, tx.rollback().await) {
+        (result, Ok(())) => result,
+        (Err(operation), Err(rollback)) => {
+            Err(Error::RollbackFailure(Box::new(crate::RollbackFailure {
+                operation,
+                rollback,
+            })))
+        }
+        (Ok(_), Err(error)) => Err(Error::from_query_sqlx_with_context(
+            "rollback earliest schedule fire read",
+            error,
+        )),
+    }
 }

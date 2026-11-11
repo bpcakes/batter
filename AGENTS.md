@@ -159,7 +159,9 @@ and below TLS; `transport/dial.rs` owns bounded address fallback, with at most
 two TCP candidates under the same setup deadline and losers dropped before
 TLS/HTTP; `send.rs` owns the immediate pre-`send_request` gate and drives
 hyper's low-level HTTP/1 connection inside the exchange future, never spawned.
-No pool, reuse, redirect or resend. `operation.rs`, behind opt-in `operation`,
+No pool, reuse, redirect or resend. `send/buffer.rs` owns response-body storage,
+zeroing each allocation before release and giving a complete body to `Bytes`
+through a zeroizing owner. `operation.rs`, behind opt-in `operation`,
 bridges OperationContext and is the package's only Batter dependency.
 Provider meaning, replay, idempotency, fences and reconciliation remain with
 the application. The facade only reexports `batter::outbound_http` behind
@@ -259,7 +261,8 @@ write that can outlive its run.
 ([ADR-016](docs/adr/016-typed-flags-control-plane.md)).
 `crates/batter-test-support` contains dependency scripts and error combination.
 [`test-support/process/`](test-support/README.md) contains private std-only Unix
-process machinery included by foundation and Axum integration tests. It is not
+process machinery included by foundation and Axum integration tests, the facade
+HTTP example and the reference service's tests. It is not
 the `batter-test-support` crate or a SQLx feature. Preserve its workspace-relative
 layout when moving consuming crates; suite-specific fixtures and self-tests stay
 with their owning suite.
@@ -448,8 +451,8 @@ keep generic agent workflow and repo policy here.
 
 ## Backend Defaults
 
-- The root is a virtual workspace. Rust package roots are `crates`, `examples`, and
-  `runledger`; follow each package's nearest guide.
+- The root is a virtual workspace. Rust package roots are `crates`, `examples`,
+  `runledger`, and `runlimit`; follow each package's nearest guide.
 - Add crate-level `AGENTS.md` files when a crate has meaningful ownership, entrypoint, or invariant guidance that should travel with that crate.
 
 - Keep transport logic thin and business logic in the owning crate.

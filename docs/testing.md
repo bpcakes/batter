@@ -104,6 +104,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Flag catalogs, snapshots, evaluation, pins and invariants | [Flags core tests](../crates/batter-flags-core/tests/). |
 | Declared mode, gates, control-plane loader and last-good file | [Flags tests](../crates/batter-flags/tests/) and in-crate loader tests; ignored `control_plane_live`, `invariants_live` and `jobs_live`. |
 | Flags store, operator command and process environment | [Store tests](../crates/batter-flags-postgres/tests/), [command tests](../crates/batter-flags-cli/tests/), facade `flags_live`, `grants_live` and [environment ownership](../crates/batter/tests/process_environment_ownership.rs). |
+| Outbound response-body wiping before deallocation | Private [buffer](../crates/batter-outbound-http/src/send/buffer/tests.rs) and [body-storage](../crates/batter-outbound-http/src/send/body_storage_tests.rs) tests, with a `cfg(test)` destructor probe. |
 | External single-dependency adoption | [Consumer sources](../consumers/README.md) and [source-copy checker](../scripts/check_single_facade_consumer.py). |
 | Verification selection and process failure behavior | [Script controls](../scripts/), especially `test_verify`, `test_parallel_process`, `test_ci_plan` and live-runner controls. |
 
@@ -122,9 +123,8 @@ cargo test -p batter-runledger --features test-support --locked
 ```
 
 `test_support::HandlerInvocation` drives native handler dispatch without a queue,
-worker or database. Its in-crate tests (`src/test_support/invocation_tests.rs`)
-and the `handler_progress` target cover first-poll budgets, retained progress,
-returned failures, panic handling and invocation exit.
+worker or database. `src/test_support/invocation_tests.rs` and `handler_progress` cover first-poll
+budgets, retained progress, returned failures, panic handling and invocation exit.
 This facility applies no durable persistence or retry policy.
 
 ## Managed routines and triggers
@@ -321,6 +321,32 @@ They assert readiness, fallback, response envelopes, generated correlation,
 completion fields and checked shutdown. The smoke launcher owns its fixture
 settings instead of consuming ambient `BATTER_*` values. These are not load,
 streaming or external deployment tests.
+
+`batter-axum`'s `observation::interruption` regressions exhaust the request budget
+inside one handler poll, before bulkhead work starts, and require a correlated
+deadline operation event under both normal and WARN-filtered telemetry. Controls
+cover cancellation, custom response retention, single renderer invocation and a
+discarded interruption rendering followed by an unrelated application 503.
+`observation::stacked_interruption` exercises both split and combined low-level
+layers: handler-returned interruption and the inner boundary's own deadline or
+forced cancellation retain the inner outcome and leave an active outer operation
+successful, with one custom render and one HTTP completion. A second matrix
+recycles response extensions from both interruption reasons through drain
+rejection, deadline, cancellation and handler rendering. It checks that stale
+evidence cannot classify the outer operation, the current handler reason wins,
+and custom status, headers, body and unrelated extensions survive.
+`observation::policy_rendering` recycles both reasons through browser rejection,
+liveness, readiness and unmatched-fallback callbacks. It returns each in-process
+response through an independent admission, checking successful construction,
+one callback and HTTP completion, retained application metadata and envelopes,
+and probe-owned status. All four scenarios failed on stale operation evidence
+before the private renderer-output contract was enforced.
+
+The core `resolved_value` target exercises every classified-value outcome,
+redaction, refusal before work, inert unpolled callbacks, borrowed/non-`Send`
+values, `Send` preservation, panic propagation, child cancellation, one metric
+per completion, and abandoned work/resolver captures plus nested span destruction
+under the first-poll dispatcher. Rustdoc rejects a dropped-with-value variant.
 
 ## Typed settings verification
 

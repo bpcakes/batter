@@ -366,31 +366,31 @@ let authority = AuthorityPolicyBuilder {
     ],
     relations: vec![RelationPolicy {
         relation: ledger,
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
+        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Select)],
         columns: Vec::new(),
         allow_owner: false,
         allow_row_type_public_usage: true,
     }],
     schemas: vec![SchemaPolicy {
         schema: batter_sqlx::verification::Identifier::new("app")?,
-        privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+        privileges: vec![AllowedPrivilege::privilege(ObjectPrivilege::Usage)],
         allow_owner: false,
     }],
     database: DatabasePolicy {
         privileges: vec![
-            AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-            AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+            AllowedPrivilege::privilege(ObjectPrivilege::Connect),
+            AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
         ],
         allow_owner: false,
     },
     public_grants: vec![
         PublicGrant {
             object: PublicObject::Database,
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Connect, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Connect),
         },
         PublicGrant {
             object: PublicObject::Database,
-            privilege: AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+            privilege: AllowedPrivilege::privilege(ObjectPrivilege::Temporary),
         },
     ],
     ..AuthorityPolicyBuilder::default()
@@ -489,7 +489,7 @@ operator execution.
 
 ```rust
 use batter_sqlx::verification::{
-    DeclarationPurpose, DiscoveryScope, ExactRoleManifest, Identifier,
+    AuthorityAllowance, DeclarationPurpose, DiscoveryScope, ExactRoleManifest, Identifier,
     ObjectPrivilege, QualifiedName, RelationGrantGroup,
 };
 
@@ -504,7 +504,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             [ObjectPrivilege::Select],
             DeclarationPurpose::RequiredAndProvisioned,
         )?
-        .allow_row_type_public_usage(true),
+        .row_type_public_usage(AuthorityAllowance::Allow),
     )?;
     let compiled = manifest.compile()?;
     let sql = compiled
@@ -636,7 +636,7 @@ missing-object violation, not an empty successful scope. Equivalent whitespace,
 quoting, order, or extra path entries are not normalized. This verifies catalog
 configuration, not routine bodies, trigger behavior, or future DDL.
 
-Call `ExactRoleManifest::deny_current_database_ownership(true)` before compiling
+Call `ExactRoleManifest::database_ownership(AuthorityAllowance::Deny)` before compiling
 to reject current-database ownership held by the authenticated login or a role
 reachable through the verifier's INHERIT/SET/ADMIN capability graph. The check
 uses the current database owner and database-local `pg_shdepend` owner records,
@@ -857,7 +857,8 @@ application. The ledger is an application-named relation, never
 `_sqlx_migrations`. `digest()` is a SHA-256 set digest over the policy, entries
 and retirements, suitable for release evidence.
 
-`PgLease::migrate_and_apply` is the only apply path. A session advisory lock
+`PgLease::migrate_and_apply` and its `migrate_and_apply_with` form are the only
+apply path. A session advisory lock
 keyed by the ledger spans the migrator and one apply transaction, which:
 creates the ledger when absent and locks it `ACCESS EXCLUSIVE`, refusing any
 relation that is not exactly `identity text PRIMARY KEY`, `kind text`,

@@ -32,6 +32,7 @@ mod boundary;
 mod correlation;
 mod observation;
 mod readiness;
+mod rendering;
 mod serving;
 
 pub mod low_level;
@@ -58,12 +59,13 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use batter_core::{ConfigurationError, lifecycle::OperationAdmission, operation::Interruption};
+use rendering::PolicyResponse;
 use serde::Serialize;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::Level;
 
-type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> Response + Send + Sync;
+type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> PolicyResponse + Send + Sync;
 
 /// Application-selected HTTP completion-event level, carried in response extensions.
 ///
@@ -148,10 +150,15 @@ pub struct RequestPolicy {
 /// }
 /// ```
 #[derive(Clone)]
-pub struct RequestInterruptionResponder(InterruptionRendering);
+pub struct RequestInterruptionResponder(FailureRendering);
+
+// Only a returned response carries this fact; merely invoking a renderer must
+// not classify a different response that the handler ultimately chooses.
+#[derive(Clone, Copy)]
+struct RenderedInterruption(Interruption);
 
 #[derive(Clone)]
-enum InterruptionRendering {
+enum FailureRendering {
     Default,
     Custom {
         renderer: Arc<FailureRenderer>,
@@ -159,15 +166,31 @@ enum InterruptionRendering {
     },
 }
 
-impl RequestInterruptionResponder {
+impl FailureRendering {
     fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
         match &policy.failure_renderer {
-            Some(renderer) => Self(InterruptionRendering::Custom {
+            Some(renderer) => Self::Custom {
                 renderer: renderer.clone(),
                 original_parts: Arc::new(correlation::renderer_parts(original_parts.clone())),
-            }),
-            None => Self(InterruptionRendering::Default),
+            },
+            None => Self::Default,
         }
+    }
+
+    fn render(&self, failure: HttpFailure) -> Response {
+        match self {
+            Self::Default => failure.into_response(),
+            Self::Custom {
+                renderer,
+                original_parts,
+            } => renderer(failure, original_parts.as_ref()).into_response(),
+        }
+    }
+}
+
+impl RequestInterruptionResponder {
+    fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
+        Self(FailureRendering::from_policy(policy, original_parts))
     }
 
     /// Render cancellation or deadline expiry with the admission policy's envelope.
@@ -175,18 +198,25 @@ impl RequestInterruptionResponder {
     /// The custom renderer receives the original request metadata captured
     /// before inner adapter extensions were inserted, without private quota,
     /// observation or operational ownership state.
+    /// Returning this response through admission also records `reason` as the
+    /// response-construction operation's outcome, preserving the rendered body,
+    /// headers and status. Rendering and discarding it changes no outcome.
     pub fn render(&self, reason: Interruption) -> Response {
+        let mut response = self.render_response(reason);
+        response
+            .extensions_mut()
+            .insert(RenderedInterruption(reason));
+        response
+    }
+
+    // A boundary that already owns the interruption renders directly, without
+    // creating evidence for another admission boundary to consume.
+    fn render_response(&self, reason: Interruption) -> Response {
         let failure = match reason {
             Interruption::Cancelled => HttpFailure::Cancelled,
             Interruption::DeadlineExceeded => HttpFailure::DeadlineExceeded,
         };
-        match &self.0 {
-            InterruptionRendering::Default => failure.into_response(),
-            InterruptionRendering::Custom {
-                renderer,
-                original_parts,
-            } => renderer(failure, original_parts.as_ref()),
-        }
+        self.0.render(failure)
     }
 }
 
@@ -280,7 +310,9 @@ impl RequestPolicy {
     where
         F: Fn(HttpFailure, &Parts) -> Response + Send + Sync + 'static,
     {
-        self.failure_renderer = Some(Arc::new(renderer));
+        self.failure_renderer = Some(Arc::new(move |failure, parts| {
+            PolicyResponse::new(renderer(failure, parts))
+        }));
         self
     }
 
@@ -298,10 +330,7 @@ impl RequestPolicy {
     }
 
     fn render_failure(&self, failure: HttpFailure, parts: &Parts) -> Response {
-        match &self.failure_renderer {
-            Some(renderer) => renderer(failure, &correlation::renderer_parts(parts.clone())),
-            None => failure.into_response(),
-        }
+        FailureRendering::from_policy(self, parts).render(failure)
     }
 }
 

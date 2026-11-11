@@ -18,8 +18,10 @@ mod sealed {
 ///
 /// Implemented only for `Query`, `Map` and `QueryScalar`: the types returned by
 /// SQLx's `query!`, `query_as!` and `query_scalar!` macros. Native row mapping,
-/// decoding and bind behavior are preserved. Runtime query constructors return
-/// the same types and also work; only SQLx macros provide compile-time SQL checks.
+/// decoding and bind behavior are preserved. The runtime `sqlx::query` and
+/// `sqlx::query_scalar` constructors return the same types and also work; the
+/// runtime `sqlx::query_as` returns `QueryAs`, which is not accepted. Only SQLx
+/// macros provide compile-time SQL checks.
 /// Consumers cannot implement this trait or use it to extract a library owner.
 /// Prefer the methods on [`crate::PgPolicyScope`] or [`crate::PgQueryHandle`].
 ///

@@ -51,7 +51,7 @@ rejected decision is made inside the transaction. Rejected authentication commit
 its audit and consecutive-failure increment; infrastructure failure rolls back.
 A stale claim never invokes application writes. The native row lock protects a
 valid claim through commit even if the original verification lease expires.
-One original operation budget covers every phase. `batter-sqlx::run_atomic_in`
+One original operation budget covers every phase. `batter_sqlx::run_atomic_profiled_in`
 retains the full acknowledged or uncertain outcome before boundary telemetry;
 an interruption without acknowledgement cannot establish rollback. Native
 attempt algorithms, lease fencing, storage, and migrations remain Runlimit-owned.
@@ -153,6 +153,18 @@ one classification. It cannot await cleanup, extend the deadline, or run when
 the outer future itself is dropped. The application owns the retained evidence
 and may reclassify interruption only from that evidence; Batter does not prove a
 remote commit, rollback, or other effect.
+
+`operation::low_level::run_resolved_value` uses that same execution boundary when
+an adapter must return a value even for interruption. Its resolver returns one
+`ResolvedOutcome<T>`: `Succeeded(T)`, `Failed(T)`, or
+`Interrupted { reason, value: T }`. Classification and value cannot be split
+across an operation result and a separately coordinated optional slot. The
+library records the selected outcome before returning the value. There is no
+constructible dropped-with-value variant. An unpolled call invokes neither
+callback; abandoning a pending call destroys work and resolver captures under
+the first-poll dispatch without invoking the resolver. Panics propagate and
+cancel the child. The low-level caller still owns classification truth and any
+remote-effect claim; the supported adapter owns that translation for its users.
 
 Batter restores the originating tracing dispatcher during polling and destruction
 of its observed futures. Completion/drop events and nested span destruction stay
@@ -486,6 +498,15 @@ production handoff and driver with controlled I/O and a paused Tokio clock:
   control over TLS 1.2/1.3, including a readable body at expiry.
 - `clones_open_independent_connections` and
   `a_closed_previous_connection_is_never_reused` check fresh connections.
+- The private `send/buffer/tests.rs` and `send/body_storage_tests.rs` observe
+  each body allocation from its own destructor, after the wipe and before
+  deallocation, through a `cfg(test)` probe that reads no freed memory. They
+  cover replaced allocations, `Bytes` clones and slices released in every order
+  and on another thread, streamed size-limit failure, truncated
+  length and chunked bodies, deadline, cancellation, a dropped exchange future
+  and the initial allocation, with status and single-request checks on the real
+  hyper path. Each protection was temporarily removed and the matching tests
+  failed; see [references](references.md#outbound-response-body-storage-2026-11-09).
 
 The facade feature runner checks type identity and `send_in`, rejects imports
 without `outbound-http`, and checks that both the normal leaf graph and the
@@ -496,9 +517,30 @@ standalone no-default-features tests use no batter-core.
 - `ResponseLimit` accepts 1 byte to 64 MiB. A declared or streamed length above
   it returns `TooLarge`; chunked framing is removed and content codings remain
   encoded. Preallocation is capped at 1 MiB and buffer growth stays within the
-  limit. A body delimited only by connection close cannot reveal truncation.
-- Deadlines are cooperative. Scheduling delay or synchronous certificate
-  verification on macOS can delay return beyond `RESERVE`. A gate cannot
+  limit. Growth copies into a new allocation before releasing the old one, so two
+  allocations briefly coexist, together below twice the limit. A completed body
+  keeps the allocation it grew into, at most twice its length and never above the
+  limit, until its last handle is released. A body delimited only by connection
+  close cannot reveal truncation.
+- Response-body storage the package allocates is zeroed before release: after
+  `TooLarge` and every `Body::Failed`, when the exchange future is dropped while
+  reading, when growth replaces an allocation, and for
+  `Body::Complete` when the last `Bytes` clone or slice is released. The buffer
+  is a fixed boxed slice, so no `reserve` or shrink can release populated memory
+  unwiped; the returned `Bytes` comes from `Bytes::from_owner` on that same
+  owner. hyper, rustls and kernel buffers, response headers, request bodies and
+  copies made by the caller are outside the guarantee, including `to_vec`,
+  `Vec::from(bytes)` and `BytesMut::from(bytes)`. A returned body is never
+  uniquely owned, so `try_into_mut` returns `Err` and those conversions always
+  copy. A destructor performs the wipe: a leaked or forgotten handle, an abort
+  and process exit skip it, and live bytes can reach swap, hibernation images
+  or core dumps. The wipe is proportional to the allocation and does not yield
+  (about 18 ms for 64 MiB in one release-build measurement).
+- Deadlines are cooperative. Scheduling delay, synchronous certificate
+  verification on macOS or growing a large body's buffer can delay return beyond
+  `RESERVE`. One growth step copies and wipes the old allocation without
+  yielding. Separate release-build measurements of copying and wiping 64 MiB
+  give an estimated combined cost of about 56 ms (38 ms + 18 ms). A gate cannot
   interrupt an already-entered poll or eliminate thread preemption between a
   clock check and a socket operation. The handoff and write checks have no
   intervening await. Bytes already accepted by the kernel can arrive later,
@@ -520,9 +562,9 @@ standalone no-default-features tests use no batter-core.
   destinations remain unsupported.
 
 Unexecuted cases include DNS failure, a TCP setup timeout, production platform
-verification against a public CA, the preallocation cap's allocation behavior,
-and fresh-agent adoption tasks. New macOS and hosted execution evidence are
-not claimed. Actual verification outcomes belong to `batter-u387`.
+verification against a public CA and fresh-agent adoption tasks. New macOS and
+hosted execution evidence are not claimed. Actual verification outcomes belong
+to `batter-u387`, and those for response-body storage to `batter-53nf`.
 
 ## Admission contract
 
@@ -1138,7 +1180,9 @@ exercises native UDP and real signals at its executable root.
 After successful initialization, no critical components **and** no configured
 finite-work capacity produce `ShutdownCause::EmptySupervisor`. The initializer
 can succeed and every finalizer can succeed while the shutdown report remains
-unsuccessful. Configured finite capacity permits a component-free running
+unsuccessful. Such a supervisor closes admission before its driver starts, so it
+never publishes `Ready`; `service::start_with_readiness` reports
+`StoppedBeforeReady` for it. Configured finite capacity permits a component-free running
 supervisor; root work still requires readiness, submission and explicit shutdown.
 The executable startup rustdocs and `startup_composition` tests cover these
 distinct outcomes without changing the empty-supervisor contract.
@@ -2518,6 +2562,27 @@ polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring
 outside this layer. An escaped request context is cancelled at response
 construction, so a streaming design needs a distinct owner.
 
+A response returned from `RequestInterruptionResponder::render` carries private
+interruption evidence. Admission uses it to classify the response-construction
+operation before emitting telemetry, including when a nested bulkhead refuses
+expired work before its factory starts and the outer timer has not fired. The
+original status, headers and body are retained in one `ResolvedOutcome<Response>`
+without calling the renderer again. Admission consumes the private marker before
+returning; its own timer/cancellation path renders directly without producing a
+handoff marker. In stacked low-level admission, an inner interruption therefore
+does not reclassify an outer boundary whose own authority remains active. Both
+interruption paths have the same ownership. Every stored adapter renderer returns
+an opaque private output that removes recycled interruption evidence from custom
+response extensions while retaining unrelated metadata. This includes request
+failures, early admission rejection, browser rejection, probes and unmatched
+fallback rendering; their existing status and severity policies still apply.
+Only the public interruption responder attaches a current handoff reason.
+Rendering and discarding a response
+does not classify a later response;
+an unmarked application 503 remains successful response construction. The single
+HTTP completion still describes the actual response status. The operation event
+retains request correlation when INFO operation spans are filtered out.
+
 The two HTTP/1.1 lifetime targets share launch/completion evidence but retain
 separate raw-wire and instrumented-IO fixtures ([ADR-008](adr/008-http-transport-ownership.md),
 [ADR-009](adr/009-http-lifetime-observations.md)). They independently observe
@@ -3025,8 +3090,17 @@ failure and the `job_handler` settlement diagnostic. The persisted outcome is
 still `PANICKED` and nonretryable, even when attempts remain. Deadline and lease
 fencing retain precedence over durable outcome classification. The worker can
 continue to subsequent jobs. Application-created `JobFailure` messages remain
-verbatim; this conversion does not sanitize other callback diagnostics or
-process panic-hook output.
+verbatim; this conversion does not sanitize them, other callbacks' retained
+`RuntimeCallbackFailure::Panicked` messages, or process panic-hook output.
+Separately, Runledger's observer, dead-letter-hook and task-join log events omit
+panic payloads, and `RuntimeShutdownFailure::LoopJoin` and `DescendantJoin`
+return `None` from `Error::source()`. Join-failure events, including supervised
+runtime loops, carry the Tokio task ID and panic/cancellation flags without
+formatting the join error. Log-capture tests in `runledger-runtime`
+(`*_logs_omit_the_payload` and
+`supervised_loop_join_logs_identity_without_payloads`, plus
+`join_failures_keep_panic_payloads_out_of_the_source_chain`) check a sentinel
+payload against each such event and the source chain.
 
 The PostgreSQL-backed `process_claimed_job_catches_main_handler_panic` regression
 checks a formatted synthetic secret against queue, attempt, dead-letter and

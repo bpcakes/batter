@@ -99,7 +99,7 @@ impl ShutdownBudget {
     }
 }
 
-/// Observed termination of a directly registered component.
+/// Observed termination of a directly registered component or admitted finite task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskOutcome {
     /// A finite process task completed normally.
@@ -631,7 +631,7 @@ impl Supervisor {
     where
         F: Future<Output = ()>,
     {
-        self.coordinator.shared.start_driver();
+        let decided = self.start_driver();
         let mut tasks = TaskSet::default();
         let mut managed = Vec::new();
         for registration in self.managed.drain(..) {
@@ -644,7 +644,9 @@ impl Supervisor {
             tasks.spawn_component(component);
         }
         tokio::pin!(shutdown);
-        let cause = self.wait_for_shutdown(shutdown.as_mut(), &mut tasks).await;
+        let cause = self
+            .wait_for_shutdown(decided, shutdown.as_mut(), &mut tasks)
+            .await;
         self.coordinator.shared.request();
         let drain = self.budget.drain;
         let cancel = drain + self.budget.cancel;
@@ -716,27 +718,48 @@ impl Supervisor {
         (report, self.coordinator)
     }
 
-    async fn wait_for_shutdown<F>(&mut self, shutdown: F, tasks: &mut TaskSet) -> ShutdownCause
+    /// Mark the driver started, returning any shutdown cause this already decides.
+    ///
+    /// This is the only emptiness decision. An empty supervisor is a
+    /// configuration failure: its admission closes before the driver counts as
+    /// started, so it can never publish `Ready`, and its shutdown cause is
+    /// [`ShutdownCause::EmptySupervisor`].
+    fn start_driver(&self) -> Option<ShutdownCause> {
+        let empty = self.managed.is_empty() && self.components.is_empty() && self.process.is_none();
+        if empty {
+            self.coordinator.shared.request();
+        }
+        self.coordinator.shared.start_driver();
+        empty.then_some(ShutdownCause::EmptySupervisor)
+    }
+
+    /// Select the shutdown cause, unless [`Self::start_driver`] already decided
+    /// it before any task was spawned.
+    async fn wait_for_shutdown<F>(
+        &mut self,
+        decided: Option<ShutdownCause>,
+        shutdown: F,
+        tasks: &mut TaskSet,
+    ) -> ShutdownCause
     where
         F: Future<Output = ()>,
     {
+        if let Some(cause) = decided {
+            return cause;
+        }
         tokio::pin!(shutdown);
-        if tasks.is_empty() && self.process.is_none() {
-            ShutdownCause::EmptySupervisor
-        } else {
-            loop {
-                tokio::select! {
-                    biased;
-                    // Draining cannot be starved by a stream of finite success.
-                    _ = self.coordinator.shared.draining() => break ShutdownCause::Requested,
-                    _ = &mut shutdown => break ShutdownCause::Requested,
-                    cause = tasks.next_exit(&self.coordinator), if !tasks.is_empty() => {
-                        if let Some(cause) = cause {
-                            break cause;
-                        }
+        loop {
+            tokio::select! {
+                biased;
+                // Draining cannot be starved by a stream of finite success.
+                _ = self.coordinator.shared.draining() => break ShutdownCause::Requested,
+                _ = &mut shutdown => break ShutdownCause::Requested,
+                cause = tasks.next_exit(&self.coordinator), if !tasks.is_empty() => {
+                    if let Some(cause) = cause {
+                        break cause;
                     }
-                    Some(task) = receive_process(&mut self.queued) => tasks.spawn_process(task),
                 }
+                Some(task) = receive_process(&mut self.queued) => tasks.spawn_process(task),
             }
         }
     }

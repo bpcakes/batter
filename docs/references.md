@@ -41,6 +41,7 @@ have been removed; Git retains their history.
 
 ## Native Runledger and Runlimit integration
 
+- [Scheduler hint statement bound (2026-11-10)](references/native-runtime.md#scheduler-hint-statement-bound-2026-11-10)
 - <a id="native-postgresql-docker-dependency-removal-reviewed-2026-11-06"></a>[Native PostgreSQL Docker dependency removal: reviewed 2026-11-06](references/native-runtime.md#native-postgresql-docker-dependency-removal-reviewed-2026-11-06)
 - <a id="runledger-claim-write-batching-2026-10-14"></a>[Runledger claim-write batching (2026-10-14)](references/native-runtime.md#runledger-claim-write-batching-2026-10-14)
 - <a id="runledger-online-migration-failure-handling-2026-10-25"></a>[Runledger online migration failure handling (2026-10-25)](references/native-runtime.md#runledger-online-migration-failure-handling-2026-10-25)
@@ -50,6 +51,7 @@ have been removed; Git retains their history.
 - <a id="reqwest-consolidation-2026-11-04"></a>[Reqwest consolidation, 2026-11-04](references/outbound-http.md#reqwest-consolidation-2026-11-04)
 - <a id="owned-outbound-http1-connections-2026-11-04"></a>[Owned outbound HTTP/1 connections, 2026-11-04](references/outbound-http.md#owned-outbound-http1-connections-2026-11-04)
 - <a id="public-https-address-policy-2026-11-05"></a>[Public HTTPS address policy (2026-11-05)](references/outbound-http.md#public-https-address-policy-2026-11-05)
+- <a id="outbound-response-body-storage-2026-11-09"></a>[Outbound response-body storage (2026-11-09)](references/outbound-http.md#outbound-response-body-storage-2026-11-09)
 
 ## PostgreSQL execution, managed objects and verification
 

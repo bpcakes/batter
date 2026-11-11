@@ -87,7 +87,7 @@ pub(super) fn validate_builder(policy: &AuthorityPolicyBuilder) -> Result<(), Po
                 .flat_map(|entry| [&entry.privileges, &entry.public_privileges]),
         )
     {
-        // There are only fourteen privilege kinds. This also prevents a repeated
+        // There are only fifteen privilege kinds. This also prevents a repeated
         // allowance list from multiplying into every discovered object's policy.
         if privileges.len() > 32 {
             return Err(PolicyError::AuthorityCapacity);

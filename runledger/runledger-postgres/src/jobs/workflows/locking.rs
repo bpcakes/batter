@@ -60,6 +60,56 @@ impl LockedWorkflowStepState {
     }
 }
 
+/// Proof that the current transaction holds a workflow-run row `FOR UPDATE`.
+///
+/// Completion and whole-run step lockers take the run row first: job-backed
+/// completion holds the job row, then the
+/// shared release advisory lock, then this row; cancellation holds job rows and
+/// the exclusive advisory lock before it. A transaction that held a step row
+/// before its run row could wait on a whole-run step locker that already holds
+/// the run, and step-row order alone cannot prevent that because step ids follow
+/// insertion order, not dependency order. Taking the run row in its final mode
+/// also prevents a `FOR SHARE` to `FOR UPDATE` upgrade between two completions.
+///
+/// Only the run-row lock functions construct this value, and step-row lockers,
+/// dependency release and status recompute require it. It describes the
+/// transaction that produced it; never carry it into another transaction.
+#[derive(Debug)]
+pub(crate) struct WorkflowRunRowLock {
+    workflow_run_id: Uuid,
+}
+
+impl WorkflowRunRowLock {
+    #[must_use]
+    pub(crate) const fn workflow_run_id(&self) -> Uuid {
+        self.workflow_run_id
+    }
+}
+
+/// Locks the workflow-run row `FOR UPDATE`, returning `None` when the run does
+/// not exist or is outside `organization_id`.
+pub(in crate::jobs::workflows) async fn lock_workflow_run_row_tx(
+    tx: &mut DbTx<'_>,
+    workflow_run_id: Uuid,
+    organization_id: Option<Uuid>,
+) -> Result<Option<WorkflowRunRowLock>> {
+    // Keep the marker in the SQL text; lock-order regression tests observe it.
+    let locked = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id /* runledger:lock_workflow_run_row */
+         FROM workflow_runs
+         WHERE id = $1
+           AND ($2::uuid IS NULL OR organization_id = $2)
+         FOR UPDATE",
+    )
+    .bind(workflow_run_id)
+    .bind(organization_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("lock workflow run row", error))?;
+
+    Ok(locked.map(|workflow_run_id| WorkflowRunRowLock { workflow_run_id }))
+}
+
 /// Cancellation's completed lock-acquisition phase.
 ///
 /// The contained transaction capability is only available after cancellation
@@ -68,6 +118,7 @@ impl LockedWorkflowStepState {
 pub(in crate::jobs::workflows) struct CancelWorkflowLockPhase<'tx, 'db> {
     read_committed_tx: ReadCommittedTx<'tx, 'db>,
     locked_steps: Vec<LockedWorkflowStepState>,
+    run_lock: WorkflowRunRowLock,
     workflow_run: WorkflowRunDbRecord,
 }
 
@@ -77,9 +128,15 @@ impl<'tx, 'db> CancelWorkflowLockPhase<'tx, 'db> {
     ) -> (
         ReadCommittedTx<'tx, 'db>,
         Vec<LockedWorkflowStepState>,
+        WorkflowRunRowLock,
         WorkflowRunDbRecord,
     ) {
-        (self.read_committed_tx, self.locked_steps, self.workflow_run)
+        (
+            self.read_committed_tx,
+            self.locked_steps,
+            self.run_lock,
+            self.workflow_run,
+        )
     }
 }
 
@@ -113,10 +170,11 @@ pub(in crate::jobs::workflows) async fn lock_workflow_run_release_exclusive_afte
     Ok(())
 }
 
-// Blocks until no cancellation owns the exclusive release lock. Terminal job
-// completion uses this after it has already persisted the terminal step state
-// so dependency release observes cancellation as an ordered transaction boundary
-// instead of surfacing a transient release-conflict error to the worker.
+// Job-backed completion holds its job row, then takes this shared advisory
+// lock before the run and step rows. Reaper batches prepare it before processing
+// any row; later terminal completion reacquires it on the same transaction.
+// External completion/append already hold the run and steps and must use the
+// try-lock below instead: waiting there could cycle with cancellation.
 pub(in crate::jobs::workflows) async fn lock_workflow_run_release_shared_tx(
     tx: &mut DbTx<'_>,
     workflow_run_id: Uuid,
@@ -168,6 +226,41 @@ fn is_release_lock_timeout_error(error: &sqlx::Error) -> bool {
         .as_database_error()
         .and_then(|database_error| database_error.code())
         .is_some_and(|code| matches!(code.as_ref(), "55P03" | "57014"))
+}
+
+/// Prepares one reaper run before any batch workflow-step mutation. The caller
+/// isolates failure in a preparation savepoint and retains successful locks
+/// outside every later row savepoint. Row contention defers this run's rows;
+/// NOWAIT does not bound table locks, so retain the usual acquisition cap too.
+pub(crate) async fn lock_workflow_run_for_reaper_tx(
+    tx: &mut DbTx<'_>,
+    workflow_run_id: Uuid,
+) -> Result<WorkflowRunRowLock> {
+    lock_workflow_run_release_shared_tx(tx, workflow_run_id).await?;
+    let previous = cap_local_lock_timeout_tx(
+        tx,
+        WORKFLOW_RUN_RELEASE_SHARED_LOCK_ACQUIRE_TIMEOUT,
+        WORKFLOW_RUN_RELEASE_SHARED_LOCK_ACQUIRE_TIMEOUT_MS,
+        "cap reaper workflow run acquisition timeout",
+    )
+    .await?;
+    let locked = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id /* runledger:prepare_reaper_workflow_run */
+         FROM workflow_runs WHERE id = $1 FOR UPDATE NOWAIT",
+    )
+    .bind(workflow_run_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("prepare reaper workflow run", error))?;
+    set_local_lock_timeout_tx(
+        tx,
+        &previous,
+        "restore reaper workflow run acquisition timeout",
+    )
+    .await?;
+    locked
+        .map(|workflow_run_id| WorkflowRunRowLock { workflow_run_id })
+        .ok_or_else(|| workflow_internal_state_error("reaper job lost its workflow run"))
 }
 
 // Releases take a shared advisory lock so independent releases on the same run
@@ -258,31 +351,31 @@ pub(in crate::jobs::workflows) async fn acquire_cancel_workflow_lock_phase_tx<'t
         organization_id,
     )
     .await?;
-    let locked_steps = lock_workflow_steps_for_update_tx(
+    // Run row before step rows, matching completion and whole-run step lockers.
+    let (run_lock, workflow_run) = lock_workflow_run_for_update_tx(
         read_committed_tx.as_tx(),
         workflow_run_id,
         organization_id,
     )
     .await?;
-    let workflow_run = lock_workflow_run_for_update_tx(
-        read_committed_tx.as_tx(),
-        workflow_run_id,
-        organization_id,
-    )
-    .await?;
+    let locked_steps =
+        lock_workflow_steps_for_update_tx(read_committed_tx.as_tx(), &run_lock, organization_id)
+            .await?;
 
     Ok(CancelWorkflowLockPhase {
         read_committed_tx,
         locked_steps,
+        run_lock,
         workflow_run,
     })
 }
 
 pub(in crate::jobs::workflows) async fn lock_workflow_step_rows_for_update_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     organization_id: Option<Uuid>,
 ) -> Result<()> {
+    let workflow_run_id = run_lock.workflow_run_id();
     // Keep the inline marker below in sync with lock-order regression tests
     // that identify this wait in pg_stat_activity.
     sqlx::query(
@@ -307,9 +400,10 @@ pub(in crate::jobs::workflows) async fn lock_workflow_step_rows_for_update_tx(
 
 pub(in crate::jobs::workflows) async fn lock_workflow_steps_for_update_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     organization_id: Option<Uuid>,
 ) -> Result<Vec<LockedWorkflowStepState>> {
+    let workflow_run_id = run_lock.workflow_run_id();
     let rows = sqlx::query!(
         "SELECT
             ws.id,
@@ -352,14 +446,19 @@ pub(in crate::jobs::workflows) async fn lock_workflow_run_for_update_tx(
     tx: &mut DbTx<'_>,
     workflow_run_id: Uuid,
     organization_id: Option<Uuid>,
-) -> Result<WorkflowRunDbRecord> {
+) -> Result<(WorkflowRunRowLock, WorkflowRunDbRecord)> {
+    // Lock through the marked statement so lock-order tests can observe the
+    // wait; the status read below re-locks the held row without waiting.
+    let run_lock = lock_workflow_run_row_tx(tx, workflow_run_id, organization_id)
+        .await?
+        .ok_or_else(workflow_run_not_found_error)?;
     let row = sqlx::query!(
         "SELECT id, status::text AS \"status!\"
          FROM workflow_runs
          WHERE id = $1
            AND ($2::uuid IS NULL OR organization_id = $2)
          FOR UPDATE",
-        workflow_run_id,
+        run_lock.workflow_run_id(),
         organization_id,
     )
     .fetch_optional(&mut **tx)
@@ -376,7 +475,7 @@ pub(in crate::jobs::workflows) async fn lock_workflow_run_for_update_tx(
             workflow_run.id
         )));
     }
-    Ok(workflow_run)
+    Ok((run_lock, workflow_run))
 }
 
 #[cfg(test)]

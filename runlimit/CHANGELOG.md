@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `PostgresGcraLimiter::cleanup_expired` advanced every candidate shard to the
+  most advanced candidate's watermark instead of each shard's own clamped
+  clock. After a database clock regression, one cleanup pass could therefore
+  delete still-active counters in other shards and admit a fresh burst for
+  their keys. Each shard now advances to the later of the database clock and its
+  own watermark. Without a clock regression behavior is unchanged; no schema,
+  migration or public item changes. Admission is not changed: a multi-shard
+  `check_all` batch still evaluates every member at the most advanced batch
+  shard's watermark and writes that watermark to each of its shards, so after a
+  clock regression it can still advance another shard's clock
+  (`batter-70qx.1`).
+
 ### Changed
 
 - PostgreSQL GCRA retry and replenishment delays now subtract database-measured

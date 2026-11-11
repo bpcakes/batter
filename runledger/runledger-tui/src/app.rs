@@ -260,9 +260,9 @@ impl App {
             .unwrap_or_else(|| "query --".to_owned());
         let filters = self.filter_status_label();
         let message = self
-            .notice
+            .last_error
             .as_ref()
-            .or(self.last_error.as_ref())
+            .or(self.notice.as_ref())
             .map(|e| format!(" | {}", truncate_status(e, 52)))
             .unwrap_or_default();
         format!(

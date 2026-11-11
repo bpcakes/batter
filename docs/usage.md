@@ -82,7 +82,7 @@ application:
 
 ```toml
 [dependencies]
-batter = { version = "0.1", features = ["at-rest", "axum", "sqlx"] }
+batter = { version = "0.0.1", features = ["at-rest", "axum", "sqlx"] }
 ```
 
 Use `batter::at_rest`, `batter::axum`, `batter::outbound_http`, `batter::sqlx`,
@@ -274,7 +274,10 @@ body. The TLS verifier may log certificate failures and names through
 `rustls_platform_verifier`. When the graph enables rustls's `logging` feature,
 `rustls` may also log names, ClientHellos and certificates. The
 application's logger filters those targets (see
-[operations](operations.md#telemetry-and-diagnostics)). A
+[operations](operations.md#telemetry-and-diagnostics)). The package zeroes the
+body storage it owns when the last `Bytes` handle of a `Body::Complete` is
+released; a copy made from that handle, including `Vec::from`, is the
+application's to wipe. A
 provider crate that must not depend on `batter-core` uses `batter_outbound_http`
 directly with `send(deadline, limit)`. The
 [runnable example](../crates/batter/examples/outbound_exchange.rs) compiles this

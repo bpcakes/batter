@@ -111,6 +111,27 @@ async fn an_empty_path_targets_the_origin_root() {
 }
 
 #[tokio::test]
+async fn explicit_trailing_slash_preserves_the_exact_target_and_query() {
+    let (_peer, request) = sent(|client| {
+        client
+            .request(Method::POST, ["v1", "effects"])
+            .trailing_slash()
+            .trailing_slash()
+            .query("name", "a/b")
+    })
+    .await;
+    assert_eq!(
+        request.request_line(),
+        "POST /v1/effects/?name=a%2Fb HTTP/1.1"
+    );
+    let (_peer, root) = sent(|client| client.request(Method::GET, []).trailing_slash()).await;
+    assert_eq!(root.request_line(), "GET / HTTP/1.1");
+    let (_peer, encoded) =
+        sent(|client| client.request(Method::GET, ["a/b"]).trailing_slash()).await;
+    assert_eq!(encoded.request_line(), "GET /a%2Fb/ HTTP/1.1");
+}
+
+#[tokio::test]
 async fn query_pairs_are_form_encoded_in_call_order() {
     let (_peer, request) = sent(|client| {
         client

@@ -274,16 +274,39 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(responder.clone());
     let interruption = responder.clone();
-    match context
-        .run("http.response_construction", |scope| async move {
+    batter_core::operation::low_level::run_resolved_value(
+        &context,
+        "http.response_construction",
+        |scope| async move {
             admitted::record(request.extensions_mut(), scope.clone(), interruption);
             request.extensions_mut().insert(scope);
             Ok::<_, Infallible>(next.run(request).await)
-        })
-        .await
-    {
-        Ok(response) => response,
-        Err(OperationError::Interrupted(reason)) => responder.render(reason),
+        },
+        |result| resolve_response(result, &responder),
+    )
+    .await
+}
+
+fn resolve_response(
+    result: Result<Response, OperationError<Infallible>>,
+    responder: &RequestInterruptionResponder,
+) -> batter_core::operation::low_level::ResolvedOutcome<Response> {
+    use batter_core::operation::low_level::ResolvedOutcome;
+    match result {
+        Ok(mut response) => match response
+            .extensions_mut()
+            .remove::<crate::RenderedInterruption>()
+        {
+            Some(crate::RenderedInterruption(reason)) => ResolvedOutcome::Interrupted {
+                reason,
+                value: response,
+            },
+            None => ResolvedOutcome::Succeeded(response),
+        },
+        Err(OperationError::Interrupted(reason)) => ResolvedOutcome::Interrupted {
+            reason,
+            value: responder.render_response(reason),
+        },
         Err(OperationError::Failed(never)) => match never {},
     }
 }

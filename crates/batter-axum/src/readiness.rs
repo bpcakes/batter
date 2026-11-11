@@ -1,8 +1,8 @@
-use crate::HttpObservationLevel;
+use crate::{HttpObservationLevel, rendering::PolicyResponse};
 use axum::{
     extract::State,
     http::{StatusCode, request::Parts},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use batter_core::{
     health::HealthReader,
@@ -222,7 +222,7 @@ impl<E> ReadinessPolicy<E> {
     /// adapter-owned status, decision extension and severity.
     pub(crate) fn render(&self, parts: &Parts, renderer: &ReadinessRenderer) -> Response {
         let decision = self.decision();
-        self.finish(decision, renderer(decision, parts))
+        self.finish(decision, renderer(decision, parts).into_response())
     }
 
     /// Replace the status and the decision and severity extensions, whatever a
@@ -237,7 +237,8 @@ impl<E> ReadinessPolicy<E> {
 }
 
 /// An application renderer for readiness probe responses.
-pub(crate) type ReadinessRenderer = dyn Fn(ReadinessDecision, &Parts) -> Response + Send + Sync;
+pub(crate) type ReadinessRenderer =
+    dyn Fn(ReadinessDecision, &Parts) -> PolicyResponse + Send + Sync;
 
 /// Serve [`ReadinessPolicy`]'s read-only decision outside guarded routes.
 ///

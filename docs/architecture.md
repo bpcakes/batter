@@ -207,6 +207,20 @@ interruption responder under a type that only the adapter can name. The public
 extensions cannot hold it, and the shared renderer filter removes the record
 at every application renderer boundary.
 
+The interruption responder attaches private outcome evidence to the response it
+renders. Admission consumes that evidence into one
+`operation::low_level::ResolvedOutcome<Response>`, carrying the classification and
+response together. `run_resolved_value` shares the core execution boundary and
+observes that terminal value before returning the response. There is no separate
+retained-response slot. A boundary rendering its own interruption creates no
+handoff marker. Every stored synchronous renderer returns the private
+`rendering::PolicyResponse`, whose constructor removes recycled interruption
+evidence. This covers failure, browser, probe and fallback callbacks without a
+cleanup step at each invocation site; the public interruption responder alone
+adds a current handoff reason afterward. A discarded
+rendering cannot classify another response, and an HTTP status alone is not
+evidence of an interruption. See the [invalid-state assessment](evidence/api-assessments/http.md#explicit-http-completion-batter-q1jl).
+
 The public `batter_axum::browser` namespace owns a separate synchronous HTTP
 transport boundary: validated configured origins, strict named-cookie scanning,
 fixed host-only cookie serialization, exact browser mutation signals, and
@@ -544,6 +558,11 @@ silent resend behavior. See [guarantees](guarantees.md#outbound-provider-exchang
 The same owner drives bounded address fallback before TLS: at most two TCP
 candidates can be active under one setup deadline, and losing candidates are
 dropped before the single selected connection receives an HTTP request.
+
+Response bodies accumulate in a private buffer whose every allocation is zeroed
+before release, including partial bodies and allocations replaced by growth. A
+complete body gives that buffer to `Bytes`, so its last clone or slice wipes it.
+Upstream transport buffers and caller copies stay outside that guarantee.
 
 The fixed rustls configuration keeps explicit *ring*, TLS 1.3/1.2,
 `http/1.1` ALPN and the operating system verifier for HTTPS. Loopback HTTP does

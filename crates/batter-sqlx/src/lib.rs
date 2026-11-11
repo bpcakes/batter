@@ -292,7 +292,9 @@ impl PgLease {
     /// Run an application-selected SQLx migrator, then apply a managed object
     /// manifest, on this one connection.
     ///
-    /// This is the only way to apply a [`managed::ManagedObjectManifest`], so
+    /// This and [`Self::migrate_and_apply_with`], which also runs application
+    /// SQL in the apply transaction, are the only ways to apply a
+    /// [`managed::ManagedObjectManifest`], so
     /// managed routines, triggers and constraint triggers always follow the
     /// versioned migrations on the same session: SQL-language bodies are validated against the migrated
     /// catalog, never before it. A session advisory lock keyed by the ledger

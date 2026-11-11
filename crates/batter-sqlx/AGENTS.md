@@ -167,8 +167,9 @@ New supported semantics require primary PostgreSQL18 evidence and native tests.
 ## Common commands
 
 Run `cargo test -p batter-sqlx --features test-support --locked` for offline contracts and
-`bash scripts/test_sqlx_live.sh` with `DATABASE_URL` plus a known-good password
-endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` for the ignored live cases. The explicit
+`bash scripts/test_sqlx_live.sh` with `DATABASE_URL`, a known-good password
+endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` and a superuser connection to a
+dedicated disposable cluster in `BATTER_SQLX_ADMIN_URL` for the ignored live cases. The explicit
 invocation must fail when prerequisites are missing. Also run the root
 complete pinned-toolchain verification, including HTTP smoke profiles, locally;
 the pinned toolchain is also the minimum.

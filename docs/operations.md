@@ -130,6 +130,15 @@ out of logs. The outbound transport no longer calls reqwest or hyper-util's
 legacy client; their pool/destination logs do not arise on this path. See
 [references](references.md#owned-outbound-http1-connections-2026-11-04).
 
+Body storage the exchange allocates is zeroed before release; the
+[contract](guarantees.md#outbound-provider-exchange) lists what falls outside
+it. Size `ResponseLimit` for a brief peak below twice the limit, while growth
+holds two allocations, and for a completed body keeping at most twice its length
+until its last handle is released. Growth and the release of a large body copy or
+wipe without yielding on the current thread, so a limit near the 64 MiB maximum
+can delay that thread by tens of milliseconds. Swap, hibernation and core dumps
+can still capture live bodies, so those remain host controls.
+
 Batter never installs, takes or replaces the process panic hook; Rust's default
 hook prints every string payload. Each executable installs
 `batter::redacting_panic_hook()` as the first statement of `main` instead. It
@@ -150,8 +159,12 @@ Native Runledger separately redacts caught main-handler panics before turning
 them into failures: `job.handler_panic` / `PANICKED` uses the fixed message
 `Job handler panicked.` in queue, attempt, dead-letter and event records,
 dead-letter logs and the main-handler settlement diagnostic. Panics remain
-nonretryable. This does not redact output from the process panic hook, other
-callback diagnostics, or application-created `JobFailure` messages. Those
+nonretryable. Runledger's observer, dead-letter-hook and task-join log events
+also omit panic payloads, and its join failures keep them out of
+`Error::source()` chains. Other callbacks' payloads remain in explicit report
+fields such as `RuntimeCallbackFailure::Panicked { message, .. }`. None of this
+redacts output from the process panic hook or application-created `JobFailure`
+messages. Those
 messages are persisted verbatim and may be logged or displayed; use deliberate
 non-sensitive text, never interpolated error `Display`/`Debug` or credentials.
 

@@ -114,6 +114,66 @@ contracts, capability facts and validation history.
   library read of the process environment outside the one declared seam, and
   share the executable-root inventory with the panic-hook scan
   (`batter-jkw6.3`).
+- Fix `batter-axum` plain HTTP registration (`AssembledHttp::register_in`,
+  `low_level::register_http` and `register_http_in`) rebuilding the application
+  router for every accepted connection. Serving a bare `Router` made pinned
+  Axum 0.8.9 clone and re-prepare it per connection, reapplying every lazily
+  mapped layer; the make-service now prepares it once, as the connect-info path
+  already did. Public signatures are unchanged. Behavior change: an application
+  `Layer::layer` runs once before serving instead of once per connection, so
+  state a layer creates when built is now shared by every connection. Axum
+  still builds a `Router::layer` layer separately for each route and method.
+  For example, tower's `ConcurrencyLimitLayer::layer` creates a new semaphore,
+  so that layer over handler routes previously gave each connection its own
+  limit; each route and method now has one limit shared by all connections.
+  Neither was one server-wide limit: use `GlobalConcurrencyLimitLayer` or a
+  shared semaphore for an aggregate limit.
+  `batter_runlimit::http::PreparedHttp::in_process` likewise prepares its
+  router once instead of on every `TestClient::request`, matching its served
+  registration (`batter-70qx`).
+
+- Fix a supervisor with no critical component and no finite-work capacity
+  publishing `Ready` before it drained with `ShutdownCause::EmptySupervisor`.
+  Admission now closes before its driver counts as started. Public signatures
+  are unchanged. Behavior change: for such a service
+  `StartingService::into_ready` returns `Err` and `ServiceObserver::wait_ready`
+  and `ServiceCompletion::readiness` report
+  `ServiceReadinessError::StoppedBeforeReady`, where they previously reported
+  success for a service already draining as a configuration failure
+  (`batter-70qx`).
+
+- Remove dependency declarations nothing used: the `sqlx` normal dependency and
+  a duplicate `serde_json` dev-dependency of `batter-runledger`, the `rt` feature
+  of `tokio-util` in `batter-core`, and the `toml` and `tempfile`
+  dev-dependencies of `runledger-postgres`. `batter-sqlx`'s `test-support`
+  feature now declares the Tokio `sync` feature it uses, and `batter-otlp`
+  forbids unsafe code at its crate root like the other Batter crates. Correct
+  the SQLx verifier README examples, which still called three removed
+  boolean-parameter constructors (`batter-70qx`).
+
+- Zero the response-body storage `batter-outbound-http` allocates before
+  releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
+  future is dropped, when growth replaces an allocation, and when the last
+  `Bytes` clone or slice of a `Body::Complete` is released (`batter-53nf`).
+  Public signatures are unchanged, so callers compile as before. Behavior change:
+  a returned body is never uniquely owned, even through its only handle.
+  `try_into_mut` now always returns `Err`, so code that unwraps it panics, and
+  `Vec::from` and `BytesMut::from` always copy, leaving that copy for the caller
+  to wipe. A completed body also keeps the allocation it grew into, at most twice
+  its length, instead of being shrunk. Hyper, rustls and kernel buffers, response
+  headers and request bodies are not covered.
+
+- Preserve nested HTTP interruption outcomes in response-construction telemetry,
+  including deadline expiry before bulkhead execution starts. Carry classification
+  and response in `operation::low_level::ResolvedOutcome`, driven by the additive
+  `run_resolved_value` seam. Retain the exact response and filtered correlation,
+  and consume interruption evidence within one admission boundary. All policy
+  renderer callbacks return a private sanitized response, clearing recycled
+  evidence from failures, browser rejections, probes and unmatched fallbacks
+  (`batter-q1jl`).
+
+- Add `RequestDraft::trailing_slash()` for provider endpoints whose exact path
+  ends in `/`. Segment validation, escaping and the origin root are preserved.
 
 - Own reference-worker interruption evidence inside exchange execution, remove
   caller-set progress markers and constrain recovery actions to unresolved
