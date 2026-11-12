@@ -278,11 +278,13 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
+            let method = request.method().clone();
             admitted::record(
                 request.extensions_mut(),
                 scope.clone(),
                 interruption,
                 continuation,
+                method,
             );
             request.extensions_mut().insert(scope);
             Ok::<_, Infallible>(next.run(request).await)

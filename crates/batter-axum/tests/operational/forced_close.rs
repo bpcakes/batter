@@ -1,6 +1,7 @@
 //! Connections that outlive drain: the registered server closes their I/O
 //! part-way through the cancel allowance, so the wrapper is joined and
-//! dependent cleanup runs. Only a zero cancel allowance still reaches abort.
+//! dependent cleanup runs. Only a zero cancel allowance, or a connection task
+//! that never yields, still reaches abort.
 
 use axum::{
     Router,
@@ -467,4 +468,116 @@ async fn zero_cancel_allowance_still_aborts_the_wrapper_and_skips_cleanup() {
     assert_eq!(report.cleanup.skipped[0].name, "dependency");
     assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
     assert!(!served.cleaned.load(Ordering::SeqCst));
+}
+
+/// One frame, then, once started, a poll that blocks its connection task
+/// until released or for at most `WAIT`: a task that never yields.
+struct BlockingBody {
+    first: bool,
+    start: oneshot::Receiver<()>,
+    blocked: Option<oneshot::Sender<()>>,
+    release: std::sync::mpsc::Receiver<()>,
+    returned: Arc<AtomicBool>,
+}
+
+impl http_body::Body for BlockingBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, Infallible>>> {
+        if std::mem::take(&mut self.first) {
+            return Poll::Ready(Some(Ok(http_body::Frame::data(Bytes::from_static(
+                b"first",
+            )))));
+        }
+        // Pending first lets Hyper flush the first frame to the peer.
+        let _ = std::task::ready!(Pin::new(&mut self.start).poll(cx));
+        if let Some(blocked) = self.blocked.take() {
+            let _ = blocked.send(());
+        }
+        let release = &self.release;
+        let _ = tokio::task::block_in_place(|| release.recv_timeout(WAIT));
+        self.returned.store(true, Ordering::SeqCst);
+        Poll::Ready(None)
+    }
+}
+
+struct Blocking {
+    start: oneshot::Sender<()>,
+    blocked: oneshot::Receiver<()>,
+    release: std::sync::mpsc::Sender<()>,
+    returned: Arc<AtomicBool>,
+}
+
+fn blocking_route(router: Router) -> (Router, Blocking) {
+    let (start, started) = oneshot::channel();
+    let (blocked_tx, blocked) = oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let returned = Arc::new(AtomicBool::new(false));
+    let body = Arc::new(Mutex::new(Some(BlockingBody {
+        first: true,
+        start: started,
+        blocked: Some(blocked_tx),
+        release: released,
+        returned: returned.clone(),
+    })));
+    let router = router.route(
+        "/",
+        get(move || async move { Body::new(body.lock().unwrap().take().unwrap()) }),
+    );
+    let blocking = Blocking {
+        start,
+        blocked,
+        release,
+        returned,
+    };
+    (router, blocking)
+}
+
+/// A connection task that never yields cannot observe the closed gate. It
+/// outlives the close and the abort deadline, so the wrapper is aborted and
+/// dependent cleanup skipped: closing the gate is not taken as proof that the
+/// server's connections ended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connection_that_never_yields_outlives_the_close_and_the_wrapper_is_aborted() {
+    let mut blocking = None;
+    let served = Served::start(register_http, CANCEL, |router| {
+        let (router, body) = blocking_route(router);
+        blocking = Some(body);
+        router
+    })
+    .await;
+    let blocking = blocking.unwrap();
+    let mut client = served.request(GET).await;
+    read_first_frame(&mut client).await;
+    blocking.start.send(()).unwrap();
+    timeout(WAIT, blocking.blocked).await.unwrap().unwrap();
+
+    let report = served.shut_down().await;
+    let still_blocked = !blocking.returned.load(Ordering::SeqCst);
+    // Release the connection task even if assertions fail.
+    let _ = blocking.release.send(());
+    timeout(WAIT, async {
+        while !blocking.returned.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        still_blocked,
+        "the connection task returned before the report"
+    );
+    assert!(!report.is_success());
+    assert!(report.forced_cancellation);
+    assert_eq!(report.abort_requested, ["http"]);
+    assert!(report.all_direct_tasks_joined());
+    assert_eq!(report.cleanup.skipped.len(), 1);
+    assert_eq!(report.cleanup.skipped[0].name, "dependency");
+    assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
+    assert!(!served.cleaned.load(Ordering::SeqCst));
+    drop(client);
 }

@@ -192,9 +192,12 @@ before reading the closed flag, not only on a pending one: Hyper can wait on a
 body alone after ready polls, with pipelined bytes buffered or its read side
 closed. Keep that to one uncontended lock and a `will_wake` compare per poll,
 recompute the close instant when `ShutdownSignal::abort_deadline_before`
-reports an earlier abort, and wake outside the registry lock. Do not
-describe upgraded connections, handler-detached tasks or a zero cancel
-allowance as covered; the wrapper-abort contract still applies to them.
+reports an earlier abort, and wake outside the registry lock. Never close
+when cancellation is observed with no interval left, as with a zero cancel
+allowance: that only races the wrapper abort and fails interruption responses.
+Do not describe upgraded connections, handler-detached tasks, a connection
+task that never yields or a zero cancel allowance as covered; the
+wrapper-abort contract still applies to them.
 An owned body starts its context from the admission record's continuation,
 never from a second `admit_root`. Keep that continuation in the record's
 take-once slot shared by every clone, and honour it only while the request's
@@ -202,7 +205,12 @@ own context is live; a refused start gets an already-cancelled standalone
 owner, never a root under process cancellation. Cancel the body's context on
 every ending, including destruction and a panicking builder. Report an application panic (a builder
 that never returned, a poll that unwound, destruction while unwinding) as
-`panicked`, never as a departed peer. The observer publishes the request span
+`panicked`, never as a departed peer. A body the transport finishes without
+asking for its end is `completed` only once its advertised length is produced,
+or, without one, after `is_end_stream` or trailers; a source that ends short of
+that length is `failed`, because Hyper aborts the message. Take no advertised
+length from a response Hyper writes without a body: mirror its
+`can_have_body` rule for the request method and response status. The observer publishes the request span
 in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
 bounds before each frame and

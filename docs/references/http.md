@@ -412,6 +412,27 @@ sources in the locked registry.
   while `can_write_body` holds and the write buffer accepts more, so a body is
   not polled while its peer is not reading. Checked for `batter-9wig.6`; a
   real-socket test asserts the missing final chunk.
+- Hyper `poll_write` stops polling a body without asking for its end in three
+  cases: once `is_end_stream` reports the end after a data frame
+  (`dispatch.rs:408-417`), once `can_write_body` is false because the
+  advertised length has been written (`dispatch.rs:391-397`), and after a
+  trailers frame (`dispatch.rs:426-430`). A body that yields its end with a
+  `Content-Length` still outstanding makes `end_body` fail:
+  `Encoder::end` returns `NotEof` for `Kind::Length(n)` (`encode.rs:124`) and
+  `end_body` maps it to a body-write-aborted error and closes writing
+  (`conn.rs:807-809`). A short final chunk after `is_end_stream` is written by
+  `write_body_and_end`, which closes writing because `encode_and_end` returns
+  false for a chunk shorter than the remaining length (`conn.rs:764-781`,
+  `encode.rs:248-251`). Either way the peer receives a truncated
+  message, so the owned body reports such an end as `failed`. Checked against
+  Hyper 1.11.1 on 2026-11-12; real-socket tests assert both short ends.
+- Hyper writes no response body, whatever length is declared, to a HEAD
+  request, for a 2xx answer to CONNECT and for 1xx, 204 and 304 statuses
+  (`role.rs:515-527`, `can_have_body`, forcing the body to zero at
+  `role.rs:965`). Axum 0.8.9 also replaces a HEAD response's body with an empty
+  one after setting its length (`routing/route.rs:166-171`). The owned body
+  therefore takes no advertised length from such a response. Checked on
+  2026-11-12; in-process tests cover a 304 and a HEAD response.
 
 Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
 operations instead of owning the accept loop. A connection need not be waiting

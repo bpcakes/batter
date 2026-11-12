@@ -56,13 +56,13 @@ mod forced_close;
 /// cleanup runs with `forced_cancellation` reported. The peer sees a truncated
 /// message or a closed connection.
 ///
-/// A zero cancel allowance leaves no such interval, and a connection task that
-/// never yields cannot be ended this way. In both cases the wrapper is aborted,
-/// which does not prove its descendants stopped, and the supervisor
-/// conservatively skips cleanup. An upgraded connection leaves Axum's
-/// connection accounting at the upgrade: the task that holds it belongs to the
-/// application and is never joined here, and its I/O fails only if the server
-/// is still serving another connection when the close happens.
+/// A zero cancel allowance leaves no such interval, so the I/O is never closed,
+/// and a connection task that never yields cannot be ended this way. In both
+/// cases the wrapper is aborted, which does not prove its descendants stopped,
+/// and the supervisor conservatively skips cleanup. An upgraded connection
+/// leaves Axum's connection accounting at the upgrade: the task that holds it
+/// belongs to the application and is never joined here, and its I/O fails only
+/// if the server is still serving another connection when the close happens.
 /// Request deadlines/observations do not bound streaming bodies or WebSockets.
 /// The native server retries accept errors; it does not report them as task exits.
 /// No bind policy, signals, budgets, subscriber or runtime are installed here.

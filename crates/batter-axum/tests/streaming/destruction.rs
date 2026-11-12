@@ -9,7 +9,7 @@ use super::support::{
 use crate::capture::{Capture, test_dispatch};
 use axum::{
     body::{Body, Bytes, HttpBody},
-    http::{Method, Request, StatusCode},
+    http::{Method, Request, StatusCode, header},
     routing::get as route,
 };
 use batter_axum::{AdmittedRequest, GuardedRouter};
@@ -179,6 +179,43 @@ fn a_body_discarded_by_head_or_by_a_construction_timeout_is_observed_as_dropped(
         }
         assert_eq!(escaped.context().check(), Err(Interruption::Cancelled));
         let event = assert_finished(&capture, "INFO", "dropped");
+        assert!(event.contains("bytes=0"), "{event}");
+    }
+}
+
+/// A response without a body frames none, so a length it declares is not one
+/// the body must produce: an empty body behind a 304, or answering a HEAD
+/// request, completed rather than ending short.
+#[test]
+fn a_declared_length_on_a_response_without_a_body_is_observed_as_completed() {
+    for (method, status) in [
+        (Method::GET, StatusCode::NOT_MODIFIED),
+        (Method::HEAD, StatusCode::OK),
+    ] {
+        let capture = Capture::new();
+        let answered = paused(&capture, async move {
+            let handle = ready();
+            let app = client(
+                &handle,
+                GuardedRouter::new().route(
+                    "/",
+                    route(move |admitted: AdmittedRequest| async move {
+                        admitted.into_streaming_response(budget(60, 5), move |_scope| {
+                            (status, [(header::CONTENT_LENGTH, "10")], Body::empty())
+                        })
+                    }),
+                ),
+            )
+            .await;
+            let request = Request::builder()
+                .method(method)
+                .uri("/")
+                .body(Body::empty())
+                .unwrap();
+            app.request(request).await.status()
+        });
+        assert_eq!(answered, status);
+        let event = assert_finished(&capture, "INFO", "completed");
         assert!(event.contains("bytes=0"), "{event}");
     }
 }

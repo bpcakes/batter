@@ -1,4 +1,9 @@
 use super::*;
+use batter_core::{
+    BoxError,
+    cleanup::CleanupBudget,
+    lifecycle::{ComponentExit, ShutdownBudget, Supervisor},
+};
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
@@ -6,6 +11,41 @@ use tokio::{
 };
 
 const WAIT: Duration = Duration::from_secs(5);
+
+/// Whether the gate of a server that has not finished is closed once the
+/// supervisor has forced cancellation, aborted the component that outlasted
+/// drain and stopped, and the serving task has had ample time to act.
+async fn closed_after_forced_cancellation(cancel: Duration) -> bool {
+    let cleanup = CleanupBudget::new(WAIT, WAIT, WAIT).unwrap();
+    let mut supervisor = Supervisor::new(ShutdownBudget::new(WAIT, cancel, WAIT, cleanup).unwrap());
+    supervisor
+        .register("held", |startup| async move {
+            let _running = startup.acknowledge_started();
+            std::future::pending::<Result<ComponentExit, BoxError>>().await
+        })
+        .unwrap();
+    let handle = supervisor.handle();
+    let gate = Gate::new();
+    let serving = tokio::spawn(serve(std::future::pending(), handle.signal(), gate.clone()));
+    let running = supervisor.start();
+    handle.status().wait_ready().await.unwrap();
+    handle.request();
+    let report = running.wait().await.unwrap();
+    assert!(report.forced_cancellation);
+    assert_eq!(report.abort_requested, ["held"]);
+    tokio::time::sleep(WAIT).await;
+    serving.abort();
+    gate.is_closed()
+}
+
+/// With no interval left at forced cancellation the gate stays open, so the
+/// wrapper abort does not race a close on any runtime flavour; a positive
+/// allowance still closes it.
+#[tokio::test(start_paused = true)]
+async fn a_zero_cancel_allowance_never_closes_the_gate() {
+    assert!(!closed_after_forced_cancellation(Duration::ZERO).await);
+    assert!(closed_after_forced_cancellation(Duration::from_secs(2)).await);
+}
 
 fn connection(gate: &Arc<Gate>, capacity: usize) -> (ForcedCloseIo<DuplexStream>, DuplexStream) {
     let (server, client) = tokio::io::duplex(capacity);

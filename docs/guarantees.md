@@ -2616,7 +2616,13 @@ it carries no payload. A body destroyed after its scope was cancelled or
 expired reports that reason instead of `dropped`, and a source that produced
 its whole message is `completed` even when the transport never polls for its
 end: Hyper stops once `is_end_stream` reports the end, once the advertised
-`Content-Length` or exact size has been written, and after trailers. Error contents are not
+`Content-Length` or exact size has been written, and after trailers. A source
+that yields its end, reports it through `is_end_stream` or yields trailers
+before producing its advertised length is `failed` (WARN): Hyper aborts that
+message and the peer sees it truncated. Hyper, not the owner, enforces the
+framing. A response Hyper writes without a body (to a HEAD request, a 2xx
+answer to CONNECT, or a 1xx, 204 or 304 status) frames nothing, so a length it
+declares is not held against its body: an empty body there is `completed`. Error contents are not
 copied into the event. The request's own completion event is unchanged, and no
 metric is recorded for bodies.
 
@@ -2628,7 +2634,8 @@ stream's choice, a body started during drain, a stream error, a builder
 panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
 a second and a late body start for one request, a refused empty body that is
-never polled, a HEAD request and a
+never polled, a HEAD request, a declared length on a 304 and on a HEAD
+response, and a
 response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, and a
 foreign subscriber on the polling task.
 [Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
@@ -2636,7 +2643,9 @@ the registered server show a pending owned body ending itself at forced
 cancellation before the server's forced close, a stalled reader ended only by
 that close and reported `cancelled`, a departed peer reported `dropped`, and a
 stream that produced its declared `Content-Length` and one that ended with
-trailers, neither of which yields its end, each reported `completed`.
+trailers, neither of which yields its end, each reported `completed`, and a
+source that ended or reported its end five bytes short of a declared ten,
+each reported `failed` with the peer's message truncated.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
 cancellation wakeup, the captured dispatcher, the per-frame bound check, the
@@ -2648,7 +2657,10 @@ liveness check on the body-start authority, releasing the request span or
 destroying the application's body outside the captured dispatcher (with the
 request inside a parent span), and dropping the refused-start record for an
 empty body. Restoring `Clone` and a borrowing `start` on
-`OperationContinuation` made its compile-fail doctests compile.
+`OperationContinuation` made its compile-fail doctests compile. In the same
+way on 2026-11-12, reporting a short end as `completed` failed both
+short-length cases, and holding a declared length against a response without a
+body failed the 304 case, and the HEAD case on its own.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
@@ -3035,8 +3047,11 @@ cover a pending body through both registration helpers, a pending body after
 pipelined request bytes that Hyper's first read returned with the head, a
 stalled reader of a 64 MiB fixed body, a half-sent request head that outlasts
 drain, a cancelled handler whose 503 `operation_cancelled` still arrives
-complete, and an abort deadline that a managed component moves earlier after
-forced cancellation. A
+complete, an abort deadline that a managed component moves earlier after
+forced cancellation, and a connection task blocked inside its body's poll
+across the close and the abort deadline, which still aborts the wrapper and
+skips cleanup. A gate unit test shows that a zero cancel allowance never closes
+the gate while a positive one does. A
 [TLS case](../crates/batter-axum/tests/tls_serving/serving.rs) repeats the
 pending body through the assembled boundary over rustls. With the close
 removed, the four plain-socket cases that depend on it fail and the
@@ -3044,13 +3059,19 @@ interruption response still passes; the TLS case was not mutation-checked.
 Hand-run mutation checks on 2026-11-11, applied temporarily and reverted and
 not an automated gate: recording wakers only on pending polls failed the
 pipelined case and a gate unit test of a task whose last I/O poll was ready,
-and a close instant fixed at cancellation failed the moved-deadline case.
+and a close instant fixed at cancellation failed the moved-deadline case. On
+2026-11-12, closing with no interval left failed the zero-allowance gate test,
+and returning from the server once the gate closed failed the never-yielding
+case.
 
-The limits remain. A zero cancel allowance leaves no interval, and the earlier
-contract then holds unchanged: a real streaming regression is aborted with its
-body still owned, the report is unsuccessful and cleanup is skipped with
-`UnsafeTaskExit`. A connection task that never yields cannot be ended by failing
-its I/O. An abort deadline moved so close that half the remaining interval
+The limits remain. When forced cancellation is observed with no interval left,
+as with a zero cancel allowance, the gate never closes, so the earlier contract
+holds unchanged on any runtime flavour: a real streaming regression is aborted
+with its body still owned, the report is unsuccessful, cleanup is skipped with
+`UnsafeTaskExit` and detached connections still write their interruption
+responses. A connection task that never yields cannot be ended by failing its
+I/O: it outlives the close and the abort deadline, and the wrapper is aborted
+with cleanup skipped. An abort deadline moved so close that half the remaining interval
 cannot end the connections still aborts the wrapper. An upgraded connection
 leaves Axum's connection accounting
 at the upgrade: its task belongs to the application, is never joined here, and

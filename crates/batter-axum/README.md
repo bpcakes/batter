@@ -322,7 +322,11 @@ and `dropped` at INFO; `failed`, `deadline_exceeded`, `idle_timeout`,
 that panicked after handing the body over) at WARN. `completed` means the
 source produced its whole message, including a body Hyper finishes without
 asking for its end: after its advertised `Content-Length` or exact size, or
-after trailers. `dropped` means the body's holder discarded it before its end: a peer that went away, a HEAD request on a
+after trailers. A source that ends, reports its end or yields trailers short of
+its advertised length is `failed`: Hyper aborts that message and the peer sees
+it truncated. A response Hyper writes without a body (to HEAD, a 2xx answer to
+CONNECT, or a 1xx, 204 or 304 status) frames no length, so its empty body is
+`completed`. `dropped` means the body's holder discarded it before its end: a peer that went away, a HEAD request on a
 GET route, whose body Axum strips, or a response discarded because response
 construction ended without it. The request's own completion event is
 unchanged, still measures response construction and, with its method and
@@ -664,7 +668,8 @@ allowance, after cancelled handlers have written their interruption responses,
 so it returns joined and dependent cleanup runs. That includes a connection
 Hyper leaves waiting on its body alone, and the instant is recomputed when a
 component moves the abort deadline earlier. With a zero cancel allowance
-the wrapper is aborted instead and cleanup remains conservatively skipped.
+the connections are not closed: the wrapper is aborted instead and cleanup
+remains conservatively skipped, as it is when a connection task never yields.
 Upgraded connections are the application's and are not joined.
 `low_level::register_http(&mut Supervisor, ...)` keeps the direct
 supervisor signature for the lower-level path. The

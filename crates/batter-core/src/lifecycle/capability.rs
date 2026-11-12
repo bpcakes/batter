@@ -379,10 +379,9 @@ impl ShutdownSignal {
     /// ```
     /// use batter_core::{cleanup::CleanupBudget,
     ///     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor}};
-    /// use std::time::Duration;
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() -> Result<(), batter_core::BoxError> {
-    /// let second = Duration::from_secs(1);
+    /// let second = std::time::Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
     /// let handle = supervisor.handle();
@@ -410,12 +409,10 @@ impl ShutdownSignal {
     /// which no supervisor budget governs. Read-only: waiting changes nothing.
     ///
     /// ```
-    /// use batter_core::{cleanup::CleanupBudget,
-    ///     lifecycle::{ShutdownBudget, Supervisor}};
-    /// use std::time::Duration;
+    /// use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}};
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() -> Result<(), batter_core::BoxError> {
-    /// let second = Duration::from_secs(1);
+    /// let second = std::time::Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
     /// let handle = supervisor.handle();
@@ -423,11 +420,8 @@ impl ShutdownSignal {
     /// handle.request();
     /// let abort = signal.abort_deadline().expect("drain was requested");
     /// // Nothing revealed an earlier stop, so the deadline has not moved.
-    /// let unchanged = tokio::time::timeout(
-    ///     Duration::from_millis(10),
-    ///     signal.abort_deadline_before(abort),
-    /// );
-    /// assert!(unchanged.await.is_err());
+    /// let moved = signal.abort_deadline_before(abort);
+    /// assert!(tokio::time::timeout(second / 100, moved).await.is_err());
     /// // A caller holding a later instant learns the current one at once.
     /// assert_eq!(signal.abort_deadline_before(abort + second).await, abort);
     /// # Ok(()) }
@@ -670,6 +664,28 @@ impl RunningComponent {
 
     /// When the owning supervisor requests abort of unfinished direct tasks;
     /// see [`ShutdownSignal::abort_deadline`] for its limits.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}};
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = std::time::Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let mut supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// supervisor.register("worker", |startup| async move {
+    ///     let running = startup.acknowledge_started();
+    ///     assert!(running.abort_deadline().is_none());
+    ///     running.draining().await;
+    ///     // Descendants ended before this instant leave the component joined.
+    ///     assert!(running.abort_deadline().expect("drained") > tokio::time::Instant::now());
+    ///     Ok(running.stopped())
+    /// })?;
+    /// let (handle, process) = (supervisor.handle(), supervisor.start());
+    /// handle.status().wait_ready().await.expect("the worker acknowledged");
+    /// handle.request();
+    /// assert!(process.wait().await.expect("the report is published").is_success());
+    /// # Ok(()) }
+    /// ```
     pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
         self.shutdown.abort_deadline()
     }

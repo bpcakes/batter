@@ -21,7 +21,10 @@ contracts, capability facts and validation history.
   a frame ready only after its wait expired does not extend the body. A body
   whose source produced its whole message is `completed` even when Hyper never
   polls for its end: after its advertised `Content-Length` or exact size, or
-  after trailers. A request starts at most one owned body, and only while
+  after trailers; one that ends, reports its end or yields trailers short of
+  its advertised length is `failed`, since Hyper aborts that message, except
+  on a response Hyper writes without a body (HEAD, a 2xx answer to CONNECT,
+  1xx, 204, 304), whose declared length frames nothing. A request starts at most one owned body, and only while
   its response is being constructed. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still
   compiles. Not covered: a peer that stops reading (ended only by the forced
@@ -51,8 +54,9 @@ contracts, capability facts and validation history.
   `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
   message or a closed connection in the second half of the cancel allowance
   instead of after process exit. Cancelled handlers still deliver their 503
-  `operation_cancelled` first. A zero cancel allowance keeps the earlier
-  abort-and-skip outcome. The close also reaches a connection that never
+  `operation_cancelled` first. With a zero cancel allowance the gate never
+  closes, so the earlier abort-and-skip outcome holds on any runtime flavour,
+  as it does for a connection task that never yields. The close also reaches a connection that never
   waited in transport I/O, such as one whose first read returned a request head
   with bytes of a following request, after which Hyper waits on the response
   body alone; and its instant is recomputed when a component moves the abort

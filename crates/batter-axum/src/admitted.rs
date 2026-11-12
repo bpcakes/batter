@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     extract::FromRequestParts,
-    http::{Extensions, request::Parts},
+    http::{Extensions, Method, request::Parts},
     response::{IntoResponse, Response},
 };
 use batter_core::{
@@ -40,6 +40,9 @@ pub(crate) struct Admission {
     /// The observing request, whose span an owned response body re-enters.
     /// The observer publishes that span only while it is alive.
     pub(crate) observation: Option<ObservationState>,
+    /// The request's method, which decides with the response status whether
+    /// the transport writes a response body at all.
+    pub(crate) method: Method,
 }
 
 /// Record the admitted request for [`AdmittedRequest`].
@@ -52,6 +55,7 @@ pub(crate) fn record(
     context: OperationContext,
     interruption: RequestInterruptionResponder,
     continuation: OperationContinuation,
+    method: Method,
 ) {
     extensions.remove::<Admission>();
     if let Some(correlation_id) = correlation::server_correlation(extensions) {
@@ -64,6 +68,7 @@ pub(crate) fn record(
             continuation: Arc::new(Mutex::new(Some(continuation))),
             shutdown,
             observation,
+            method,
         });
     }
 }

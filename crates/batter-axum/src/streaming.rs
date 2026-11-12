@@ -8,7 +8,7 @@
 use crate::{AdmittedRequest, CorrelationId, observation::ObservationState};
 use axum::{
     body::{Body, Bytes, HttpBody},
-    http::header::CONTENT_LENGTH,
+    http::{Method, StatusCode, header::CONTENT_LENGTH},
     response::{IntoResponse, Response},
 };
 use batter_core::{
@@ -192,7 +192,13 @@ impl AdmittedRequest {
     ///   `dropped` emit INFO. `completed` names a body whose source produced
     ///   its whole message, including one the transport finished without
     ///   asking for its end: after the advertised `Content-Length` or exact
-    ///   size, or after trailers. `dropped` names a body its holder discarded
+    ///   size, or after trailers. A source that ends, reports its end or
+    ///   yields trailers short of its advertised length is `failed`: the
+    ///   transport aborts that message and the peer sees it truncated. A
+    ///   response written without a body (to HEAD, a 2xx answer to CONNECT, or
+    ///   a 1xx, 204 or 304 status) frames no length, so its empty body is
+    ///   `completed`.
+    ///   `dropped` names a body its holder discarded
     ///   before its end without the library, a panic or the stream ending it:
     ///   a peer that went away, a HEAD response whose body Axum strips, or a
     ///   response discarded because response construction ended without it.
@@ -325,12 +331,20 @@ impl AdmittedRequest {
         };
         let (parts, body) = build(scope).into_response().into_parts();
         // The length the transport frames the message with: the header the
-        // application set, else the body's exact size.
+        // application set, else the body's exact size. A response the
+        // transport writes without a body, by Hyper's rule for its method and
+        // status, frames none, so a declared length is not one to produce.
+        let (method, status) = (&admission.method, parts.status);
+        let bodyless = method == Method::HEAD
+            || method == Method::CONNECT && status.is_success()
+            || status.is_informational()
+            || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED);
         owned.advertised = parts
             .headers
             .get(CONTENT_LENGTH)
             .and_then(|length| length.to_str().ok()?.parse().ok())
-            .or_else(|| body.size_hint().exact());
+            .or_else(|| body.size_hint().exact())
+            .filter(|_| !bodyless);
         owned.inner = Some(body);
         Response::from_parts(parts, Body::new(owned))
     }
@@ -481,13 +495,29 @@ impl OwnedBody {
         });
     }
 
-    /// Whether the source produced its whole message. A transport stops
-    /// polling, without asking for the end, once `is_end_stream` reports it,
-    /// once the advertised length is written or after trailers.
-    fn produced_all(&self) -> bool {
-        self.trailers
-            || self.advertised.is_some_and(|length| self.bytes >= length)
-            || self.inner.as_ref().is_some_and(HttpBody::is_end_stream)
+    /// How a source ended that its transport stopped polling without asking
+    /// for the end, if it did. A transport stops once the advertised length is
+    /// written, once `is_end_stream` reports the end and after trailers. A
+    /// source that ends short of its advertised length failed: the transport
+    /// aborts the message and the peer sees it truncated.
+    fn source_end(&self) -> Option<BodyEnd> {
+        let ended = self.trailers || self.inner.as_ref().is_some_and(HttpBody::is_end_stream);
+        match self.advertised.map(|length| self.bytes >= length) {
+            Some(true) => Some(BodyEnd::Completed),
+            Some(false) if ended => Some(BodyEnd::Failed),
+            None if ended => Some(BodyEnd::Completed),
+            _ => None,
+        }
+    }
+
+    /// How a source that yielded its end finished: short of its advertised
+    /// length is a failure, as for [`Self::source_end`].
+    fn yielded_end(&self) -> BodyEnd {
+        if self.advertised.is_some_and(|length| self.bytes < length) {
+            BodyEnd::Failed
+        } else {
+            BodyEnd::Completed
+        }
     }
 
     fn interrupt(&mut self, end: BodyEnd) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
@@ -574,7 +604,7 @@ impl HttpBody for OwnedBody {
                 Poll::Ready(Some(Err(error)))
             }
             Poll::Ready(None) => {
-                this.finish(BodyEnd::Completed);
+                this.finish(this.yielded_end());
                 Poll::Ready(None)
             }
             Poll::Pending => match this.wait(cx) {
@@ -607,8 +637,8 @@ impl Drop for OwnedBody {
             BodyEnd::Panicked
         } else if self.refused {
             BodyEnd::Cancelled
-        } else if self.produced_all() {
-            BodyEnd::Completed
+        } else if let Some(end) = self.source_end() {
+            end
         } else {
             match self.owner.context().check() {
                 Err(reason) => BodyEnd::interrupted(reason),

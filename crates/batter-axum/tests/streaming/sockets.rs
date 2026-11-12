@@ -313,6 +313,85 @@ fn a_streamed_body_that_produced_its_declared_length_is_observed_as_completed() 
     assert_eq!(finished(&capture).len(), 1);
 }
 
+/// Serve `source` behind a declared length of ten bytes and return what the
+/// peer read before the connection ended.
+fn served_short(capture: &Capture, source: fn() -> Body) -> String {
+    capture.block_on(async {
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(move |admitted: AdmittedRequest| async move {
+                admitted.into_streaming_response(budget(600, 300), move |_scope| {
+                    ([(header::CONTENT_LENGTH, "10")], source())
+                })
+            }),
+        ))
+        .await;
+        let mut client = served.request().await;
+        let mut bytes = Vec::new();
+        // Hyper aborts the message, so the read may end in a reset.
+        let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
+        wait_for_finished(capture).await;
+        served.shut_down().await;
+        String::from_utf8_lossy(&bytes).into_owned()
+    })
+}
+
+/// The peer received less than the declared length, and the owner reports a
+/// failure rather than a completed message.
+fn assert_short_and_failed(capture: &Capture, text: &str) {
+    let body = text.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+    assert!(body.len() < 10, "{text}");
+    let event = assert_finished(capture, "WARN", "failed");
+    assert!(event.contains("bytes=5"), "{event}");
+    assert_eq!(finished(capture).len(), 1);
+}
+
+/// A source that yields its end short of its declared length makes Hyper
+/// abort the message instead of finishing it.
+#[test]
+fn a_body_that_ended_before_its_declared_length_is_observed_as_failed() {
+    let capture = Capture::new();
+    let text = served_short(&capture, || {
+        Body::from_stream(stream::iter([Ok::<_, Infallible>(Bytes::from_static(
+            b"hello",
+        ))]))
+    });
+    assert_short_and_failed(&capture, &text);
+}
+
+/// One frame, after which the source reports its end without yielding it.
+struct EndsShort {
+    sent: bool,
+}
+
+impl http_body::Body for EndsShort {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        if std::mem::replace(&mut self.sent, true) {
+            return Poll::Pending;
+        }
+        Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"hello")))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.sent
+    }
+}
+
+/// Hyper reads `is_end_stream` after the short frame, ends the message there
+/// and destroys the body without polling it again.
+#[test]
+fn a_body_that_reported_its_end_before_its_declared_length_is_observed_as_failed() {
+    let capture = Capture::new();
+    let text = served_short(&capture, || Body::new(EndsShort { sent: false }));
+    assert_short_and_failed(&capture, &text);
+}
+
 /// Data, then trailers, then pending: the source never yields its end.
 struct Trailed {
     frames: u8,

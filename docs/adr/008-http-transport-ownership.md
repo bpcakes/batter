@@ -125,7 +125,7 @@ public registration signatures are unchanged. The amended row is:
 | Trigger | Independently asserted outcome |
 | --- | --- |
 | Connection still open halfway through the cancel allowance, served through a registration helper | Its I/O fails; body or handler is destroyed before the report; the server returns joined, `forced_cancellation` is true, no abort is requested and cleanup runs. |
-| The same with a zero cancel allowance, or a server registered directly with `axum::serve` | The original wrapper-abort row: named abort, body still owned at report inspection, cleanup skipped. |
+| The same with a zero cancel allowance (the gate never closes), a connection task that never yields, or a server registered directly with `axum::serve` | The original wrapper-abort row: named abort, body still owned at report inspection, cleanup skipped. |
 
 Consequences: the two HTTP lifetime suites keep registering `axum::serve`
 directly, because they instrument the native graceful milestones; they remain
