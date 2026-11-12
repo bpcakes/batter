@@ -3,14 +3,21 @@
 use super::support::{Escaped, assert_finished, budget, client, get, next, paused, ready};
 use crate::capture::Capture;
 use axum::{
-    body::{Body, Bytes},
+    body::{Body, Bytes, HttpBody},
     routing::get as route,
 };
 use batter_axum::{AdmittedRequest, BodyBudget, GuardedRouter};
 use batter_core::{ConfigurationError, operation::Interruption};
 use futures_util::stream;
-use std::{convert::Infallible, time::Duration};
-use tokio::time::Instant;
+use std::{
+    convert::Infallible,
+    future::poll_fn,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::Poll,
+    time::Duration,
+};
+use tokio::{sync::mpsc, time::Instant};
 
 /// One chunk every `every`, forever, ignoring every signal it was given.
 fn endless(every: Duration) -> Body {
@@ -95,6 +102,51 @@ fn a_source_that_stops_producing_is_ended_at_the_idle_bound() {
     assert_eq!(escaped.context().check(), Err(Interruption::Cancelled));
     let event = assert_finished(&capture, "WARN", "idle_timeout");
     assert!(event.contains("bytes=6"), "{event}");
+}
+
+/// The idle bound is checked before a frame is accepted: a source that
+/// becomes ready only after its armed wait expired, before the body was
+/// polled again, does not extend the body.
+#[test]
+fn a_frame_ready_only_after_the_idle_bound_expired_is_not_accepted() {
+    let capture = Capture::new();
+    let late = paused(&capture, async {
+        let handle = ready();
+        let (sender, receiver) = mpsc::unbounded_channel::<Bytes>();
+        let receiver = Arc::new(Mutex::new(Some(receiver)));
+        let app = client(
+            &handle,
+            GuardedRouter::new().route(
+                "/",
+                route(move |admitted: AdmittedRequest| {
+                    let receiver = receiver.lock().unwrap().take().unwrap();
+                    async move {
+                        admitted.into_streaming_response(budget(60, 5), move |_scope| {
+                            Body::from_stream(stream::unfold(receiver, |mut receiver| async {
+                                let frame = receiver.recv().await?;
+                                Some((Ok::<_, Infallible>(frame), receiver))
+                            }))
+                        })
+                    }
+                }),
+            ),
+        )
+        .await;
+        let mut response = get(&app, "/").await;
+        let body = response.body_mut();
+        // Nothing is ready, so the first poll arms the idle bound.
+        let first = poll_fn(|cx| Poll::Ready(Pin::new(&mut *body).poll_frame(cx))).await;
+        assert!(first.is_pending());
+        // The wait expires, and only then does the source become ready.
+        tokio::time::advance(Duration::from_secs(6)).await;
+        sender.send(Bytes::from_static(b"late;")).unwrap();
+        next(body).await.expect("the body ended with an error")
+    });
+    let error = late.expect_err("a late frame was accepted");
+    let source = std::error::Error::source(&error).unwrap().to_string();
+    assert_eq!(source, "response body ended: idle_timeout");
+    let event = assert_finished(&capture, "WARN", "idle_timeout");
+    assert!(event.contains("bytes=0"), "{event}");
 }
 
 #[test]

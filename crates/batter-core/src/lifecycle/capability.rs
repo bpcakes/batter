@@ -372,8 +372,9 @@ impl ShutdownSignal {
     /// joined rather than aborted; an abort makes the supervisor skip
     /// dependent cleanup. This is an observation, not a guarantee: a tighter
     /// stop clock can move the instant earlier, never later, so read it again
-    /// after waiting; scheduling delay can pass it unnoticed; and an abandoned
-    /// driver cancels without phases.
+    /// after waiting or wait for that move with
+    /// [`Self::abort_deadline_before`]; scheduling delay can pass it
+    /// unnoticed; and an abandoned driver cancels without phases.
     ///
     /// ```
     /// use batter_core::{cleanup::CleanupBudget,
@@ -396,6 +397,43 @@ impl ShutdownSignal {
     /// ```
     pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
         self.shared.abort_deadline()
+    }
+
+    /// Wait until [`Self::abort_deadline`] is earlier than `known`, and return
+    /// the new instant.
+    ///
+    /// The deadline moves only earlier, when a component reveals a stop time
+    /// before the recorded one, such as a native runtime that had already
+    /// begun stopping. Work scheduled against a deadline it read waits on this
+    /// beside that work and reschedules when it resolves. It resolves at once
+    /// if the deadline is already earlier, and never for a standalone handle,
+    /// which no supervisor budget governs. Read-only: waiting changes nothing.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget,
+    ///     lifecycle::{ShutdownBudget, Supervisor}};
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let handle = supervisor.handle();
+    /// let signal = handle.signal();
+    /// handle.request();
+    /// let abort = signal.abort_deadline().expect("drain was requested");
+    /// // Nothing revealed an earlier stop, so the deadline has not moved.
+    /// let unchanged = tokio::time::timeout(
+    ///     Duration::from_millis(10),
+    ///     signal.abort_deadline_before(abort),
+    /// );
+    /// assert!(unchanged.await.is_err());
+    /// // A caller holding a later instant learns the current one at once.
+    /// assert_eq!(signal.abort_deadline_before(abort + second).await, abort);
+    /// # Ok(()) }
+    /// ```
+    pub async fn abort_deadline_before(&self, known: tokio::time::Instant) -> tokio::time::Instant {
+        self.shared.abort_before(known).await
     }
 }
 

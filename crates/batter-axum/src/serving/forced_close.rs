@@ -37,13 +37,13 @@ pub(super) struct Gate {
 #[derive(Default)]
 struct Connections {
     next: u64,
-    parked: HashMap<u64, Arc<Parked>>,
+    pollers: HashMap<u64, Arc<Pollers>>,
 }
 
-/// The tasks one connection last left waiting, by direction. An upgraded
-/// connection may be split, so its halves can park different tasks.
+/// The tasks that last polled one connection, by direction. An upgraded
+/// connection may be split, so its halves can be polled by different tasks.
 #[derive(Default)]
-struct Parked {
+struct Pollers {
     read: Mutex<Option<Waker>>,
     write: Mutex<Option<Waker>>,
 }
@@ -71,15 +71,16 @@ impl Gate {
         self.closed.load(Ordering::SeqCst)
     }
 
-    /// Fail all later I/O and wake every task parked in earlier I/O.
+    /// Fail all later I/O and wake every task that polled earlier I/O.
     ///
-    /// The flag is published before the wakers are taken, and a parking poll
-    /// rereads it after storing its waker, so no poll can stay parked.
+    /// The flag is published before the wakers are taken, and every poll
+    /// rereads it after storing its waker, so each poll either fails or is
+    /// woken by this close.
     fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        let parked: Vec<_> = lock(&self.connections).parked.values().cloned().collect();
+        let pollers: Vec<_> = lock(&self.connections).pollers.values().cloned().collect();
         // Waking application tasks happens outside the registry lock.
-        for connection in parked {
+        for connection in pollers {
             for slot in [&connection.read, &connection.write] {
                 let waker = lock(slot).take();
                 if let Some(waker) = waker {
@@ -89,21 +90,26 @@ impl Gate {
         }
     }
 
-    fn park<T>(&self, slot: &Mutex<Option<Waker>>, cx: &Context<'_>) -> Poll<io::Result<T>> {
+    /// Record the task polling one direction, then report whether the gate
+    /// has closed.
+    ///
+    /// Every poll records its task, not only one the transport leaves
+    /// pending. Hyper can wait on a response body alone without polling the
+    /// transport again: after a ready read left bytes of a following request
+    /// in its buffer, or after it closed the read side. That task's last I/O
+    /// poll was ready, and the close must still wake it so its next pass,
+    /// which flushes, fails.
+    fn enter(&self, slot: &Mutex<Option<Waker>>, cx: &Context<'_>) -> bool {
         {
-            let mut parked = lock(slot);
-            if !parked
+            let mut poller = lock(slot);
+            if !poller
                 .as_ref()
                 .is_some_and(|waker| waker.will_wake(cx.waker()))
             {
-                *parked = Some(cx.waker().clone());
+                *poller = Some(cx.waker().clone());
             }
         }
-        if self.is_closed() {
-            Poll::Ready(Err(closed()))
-        } else {
-            Poll::Pending
-        }
+        self.is_closed()
     }
 }
 
@@ -121,8 +127,11 @@ fn closed() -> io::Error {
 /// handlers render their own interruption responses first. The gate closes
 /// halfway between that instant and the supervisor's abort deadline, which
 /// leaves the first half for those responses to be written and the second for
-/// Axum to observe the closed connections finish. A zero cancel allowance
-/// leaves no interval, and the wrapper is then aborted as before.
+/// Axum to observe the closed connections finish. A component that reveals an
+/// earlier stop time moves the abort deadline earlier, and the midpoint is
+/// then recomputed from the same cancellation instant, closing at once if it
+/// has passed. A zero cancel allowance leaves no interval, and the wrapper is
+/// then aborted as before.
 pub(super) async fn serve<F>(serving: F, signal: ShutdownSignal, gate: Arc<Gate>) -> io::Result<()>
 where
     F: Future<Output = io::Result<()>>,
@@ -130,9 +139,14 @@ where
     let mut serving = pin!(serving);
     let closing = async {
         signal.cancelled().await;
-        if let Some(abort) = signal.abort_deadline() {
-            let now = Instant::now();
-            tokio::time::sleep_until(now + abort.saturating_duration_since(now) / 2).await;
+        let cancelled = Instant::now();
+        while let Some(abort) = signal.abort_deadline() {
+            let close = cancelled + abort.saturating_duration_since(cancelled) / 2;
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(close) => break,
+                _ = signal.abort_deadline_before(abort) => {}
+            }
         }
         gate.close();
     };
@@ -167,31 +181,31 @@ pub(super) struct ForcedCloseIo<I> {
     inner: I,
     gate: Arc<Gate>,
     id: u64,
-    parked: Arc<Parked>,
+    pollers: Arc<Pollers>,
 }
 
 impl<I> ForcedCloseIo<I> {
     fn new(inner: I, gate: Arc<Gate>) -> Self {
-        let parked = Arc::new(Parked::default());
+        let pollers = Arc::new(Pollers::default());
         let id = {
             let mut connections = lock(&gate.connections);
             let id = connections.next;
             connections.next += 1;
-            connections.parked.insert(id, parked.clone());
+            connections.pollers.insert(id, pollers.clone());
             id
         };
         Self {
             inner,
             gate,
             id,
-            parked,
+            pollers,
         }
     }
 }
 
 impl<I> Drop for ForcedCloseIo<I> {
     fn drop(&mut self) {
-        lock(&self.gate.connections).parked.remove(&self.id);
+        lock(&self.gate.connections).pollers.remove(&self.id);
     }
 }
 
@@ -201,13 +215,10 @@ impl<I: AsyncRead + Unpin> AsyncRead for ForcedCloseIo<I> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        if self.gate.is_closed() {
+        if self.gate.enter(&self.pollers.read, cx) {
             return Poll::Ready(Err(closed()));
         }
-        match Pin::new(&mut self.inner).poll_read(cx, buf) {
-            Poll::Pending => self.gate.park(&self.parked.read, cx),
-            ready => ready,
-        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
 
@@ -217,13 +228,10 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.gate.is_closed() {
+        if self.gate.enter(&self.pollers.write, cx) {
             return Poll::Ready(Err(closed()));
         }
-        match Pin::new(&mut self.inner).poll_write(cx, buf) {
-            Poll::Pending => self.gate.park(&self.parked.write, cx),
-            ready => ready,
-        }
+        Pin::new(&mut self.inner).poll_write(cx, buf)
     }
 
     fn poll_write_vectored(
@@ -231,13 +239,10 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        if self.gate.is_closed() {
+        if self.gate.enter(&self.pollers.write, cx) {
             return Poll::Ready(Err(closed()));
         }
-        match Pin::new(&mut self.inner).poll_write_vectored(cx, bufs) {
-            Poll::Pending => self.gate.park(&self.parked.write, cx),
-            ready => ready,
-        }
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -245,25 +250,19 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.gate.is_closed() {
+        if self.gate.enter(&self.pollers.write, cx) {
             return Poll::Ready(Err(closed()));
         }
-        match Pin::new(&mut self.inner).poll_flush(cx) {
-            Poll::Pending => self.gate.park(&self.parked.write, cx),
-            ready => ready,
-        }
+        Pin::new(&mut self.inner).poll_flush(cx)
     }
 
     // A closed gate also fails shutdown: a transport that must write to finish
     // closing would otherwise wait on the same stalled peer.
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.gate.is_closed() {
+        if self.gate.enter(&self.pollers.write, cx) {
             return Poll::Ready(Err(closed()));
         }
-        match Pin::new(&mut self.inner).poll_shutdown(cx) {
-            Poll::Pending => self.gate.park(&self.parked.write, cx),
-            ready => ready,
-        }
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 

@@ -898,8 +898,11 @@ interval to end them itself and return joined, as the Axum serving adapter does
 for connections. It is read-only observation of the phase clock: an earlier
 native stop time moves it earlier and nothing moves it later, a task set that
 finishes sooner is never aborted, scheduling delay can pass it, and an abandoned
-driver cancels without phases. A state unit test covers the unset, standalone,
-extended and tightened cases.
+driver cancels without phases. `ShutdownSignal::abort_deadline_before` waits,
+read-only, until the deadline is earlier than one the caller holds, so work
+scheduled against it can follow a tightened clock; the Axum serving adapter
+reschedules its connection close that way. State unit tests cover the unset,
+standalone, extended and tightened cases and that wait.
 
 `OperationAdmission::admit_root_with_continuation` is a lower-level adapter
 seam. It admits exactly as `admit_root` does and also returns an
@@ -2576,9 +2579,12 @@ content ends at its first poll, truncated, and every refused start is reported
 `cancelled`, including an empty body that the transport learns has ended from
 `is_end_stream` and never polls. `BodyBudget` requires a positive total and a
 positive idle bound no longer than it. The library enforces both without the stream's
-cooperation: the bounds are checked before every frame, so an always-ready
-source cannot outrun them, and a pending body registers for forced cancellation
-and the nearer bound. Each of the three ends the body with an error, which
+cooperation: the total bound and an armed idle wait are checked before every
+frame, so an always-ready source cannot outrun them and a frame that became
+ready only after its wait expired does not extend the body, and a pending body
+registers for forced cancellation and the nearer bound. The idle wait starts at
+the body's first pending poll after a frame, so time the transport spends not
+polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
 Hyper turns into a closed connection without a final chunk; a library-ended
 body is never reported to the peer as complete. Ending at drain is left to the
 stream through `BodyScope::shutdown`.
@@ -2607,15 +2613,17 @@ status, tells these apart. `panicked` names a builder that never returned, a pol
 unwound (the transport destroys such a body after catching the unwind) or
 destruction during unwinding, such as a handler panicking after the hand-over;
 it carries no payload. A body destroyed after its scope was cancelled or
-expired reports that reason instead of `dropped`, and a source that finished
-without being polled for its end is `completed`. Error contents are not
+expired reports that reason instead of `dropped`, and a source that produced
+its whole message is `completed` even when the transport never polls for its
+end: Hyper stops once `is_end_stream` reports the end, once the advertised
+`Content-Length` or exact size has been written, and after trailers. Error contents are not
 copied into the event. The request's own completion event is unchanged, and no
 metric is recorded for bodies.
 
 [In-process tests](../crates/batter-axum/tests/streaming/) on a paused clock
 cover steps that run after the handler returned beside the unowned control,
-the escaped context, both bounds and their restart on each frame, an
-always-ready source, a parked frame woken by forced cancellation, drain as the
+the escaped context, both bounds and their restart on each frame, a frame ready
+only after its idle wait expired, an always-ready source, a parked frame woken by forced cancellation, drain as the
 stream's choice, a body started during drain, a stream error, a builder
 panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
@@ -2626,11 +2634,14 @@ foreign subscriber on the polling task.
 [Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
 the registered server show a pending owned body ending itself at forced
 cancellation before the server's forced close, a stalled reader ended only by
-that close and reported `cancelled`, and a departed peer reported `dropped`.
+that close and reported `cancelled`, a departed peer reported `dropped`, and a
+stream that produced its declared `Content-Length` and one that ended with
+trailers, neither of which yields its end, each reported `completed`.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
-cancellation wakeup, the captured dispatcher or the per-frame bound check each
-failed at least one of these tests, as did keeping the observer's published
+cancellation wakeup, the captured dispatcher, the per-frame bound check, the
+expired-idle check before a frame, the advertised-length completion or the
+trailers completion each failed at least one of these tests, as did keeping the observer's published
 span after it finishes, destroying the application's body before the event,
 dropping either panic check, dropping either the take-once slot or the
 liveness check on the body-start authority, releasing the request span or
@@ -3009,24 +3020,39 @@ the second half Hyper ends each remaining connection and destroys its handler or
 body in that connection's own task; Axum's graceful wait then returns, so the
 wrapper is joined, the report is successful with `forced_cancellation` set and
 dependent cleanup runs. The peer sees a truncated message or a closed
-connection. The gate is one atomic read per I/O poll and stores a waker only
-when the transport is pending; it adds one registry entry per connection.
+connection. Each I/O poll records its task's waker before reading the closed
+flag, not only a poll the transport leaves pending: Hyper can wait on a response
+body alone after ready polls, holding bytes of a following request or with its
+read side closed, and the close must still wake that task, whose next pass
+flushes and fails. That costs one uncontended lock per I/O poll and one registry
+entry per connection. A component that reveals an earlier stop time moves the
+abort deadline earlier after cancellation was observed;
+`ShutdownSignal::abort_deadline_before` reports it and the close instant is
+recomputed, halfway from the same cancellation instant to the new deadline.
 
 [Real socket tests](../crates/batter-axum/tests/operational/forced_close.rs)
-cover a pending body through both registration helpers, a stalled reader of a
-64 MiB fixed body, a half-sent request head, and a cancelled handler whose 503
-`operation_cancelled` still arrives complete. A
+cover a pending body through both registration helpers, a pending body after
+pipelined request bytes that Hyper's first read returned with the head, a
+stalled reader of a 64 MiB fixed body, a half-sent request head that outlasts
+drain, a cancelled handler whose 503 `operation_cancelled` still arrives
+complete, and an abort deadline that a managed component moves earlier after
+forced cancellation. A
 [TLS case](../crates/batter-axum/tests/tls_serving/serving.rs) repeats the
 pending body through the assembled boundary over rustls. With the close
 removed, the four plain-socket cases that depend on it fail and the
 interruption response still passes; the TLS case was not mutation-checked.
+Hand-run mutation checks on 2026-11-11, applied temporarily and reverted and
+not an automated gate: recording wakers only on pending polls failed the
+pipelined case and a gate unit test of a task whose last I/O poll was ready,
+and a close instant fixed at cancellation failed the moved-deadline case.
 
 The limits remain. A zero cancel allowance leaves no interval, and the earlier
 contract then holds unchanged: a real streaming regression is aborted with its
 body still owned, the report is unsuccessful and cleanup is skipped with
 `UnsafeTaskExit`. A connection task that never yields cannot be ended by failing
-its I/O. A stop clock tightened after forced cancellation was observed can pass
-the chosen instant. An upgraded connection leaves Axum's connection accounting
+its I/O. An abort deadline moved so close that half the remaining interval
+cannot end the connections still aborts the wrapper. An upgraded connection
+leaves Axum's connection accounting
 at the upgrade: its task belongs to the application, is never joined here, and
 its I/O fails only if the server is still serving another connection when the
 close happens. Tasks a handler detached are untouched. Applications that serve

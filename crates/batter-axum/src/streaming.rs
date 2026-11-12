@@ -8,6 +8,7 @@
 use crate::{AdmittedRequest, CorrelationId, observation::ObservationState};
 use axum::{
     body::{Body, Bytes, HttpBody},
+    http::header::CONTENT_LENGTH,
     response::{IntoResponse, Response},
 };
 use batter_core::{
@@ -175,9 +176,11 @@ impl AdmittedRequest {
     ///   or the process forces cancellation. It starts from this request's
     ///   admission, so a body that begins during drain is not refused.
     /// - A wait for the next frame longer than `budget`'s idle bound, the total
-    ///   bound and forced cancellation each end the body with an error. The
-    ///   peer sees a truncated message, never a final chunk it could mistake
-    ///   for a complete one.
+    ///   bound and forced cancellation each end the body with an error. Both
+    ///   bounds are checked before a frame is accepted, so a frame that became
+    ///   ready only after its wait expired does not extend the body. The peer
+    ///   sees a truncated message, never a final chunk it could mistake for a
+    ///   complete one.
     /// - The body is polled and destroyed under the tracing dispatcher current
     ///   here and inside the request's span, on whichever task the transport
     ///   uses.
@@ -186,7 +189,10 @@ impl AdmittedRequest {
     ///   `completed`, `failed`, `deadline_exceeded`, `idle_timeout`,
     ///   `cancelled`, `panicked` or `dropped`. A returned stream error, a
     ///   bound, forced cancellation and a panic emit WARN; completion and
-    ///   `dropped` emit INFO. `dropped` names a body its holder discarded
+    ///   `dropped` emit INFO. `completed` names a body whose source produced
+    ///   its whole message, including one the transport finished without
+    ///   asking for its end: after the advertised `Content-Length` or exact
+    ///   size, or after trailers. `dropped` names a body its holder discarded
     ///   before its end without the library, a panic or the stream ending it:
     ///   a peer that went away, a HEAD response whose body Axum strips, or a
     ///   response discarded because response construction ended without it.
@@ -311,11 +317,20 @@ impl AdmittedRequest {
             idle: budget.idle,
             wake: None,
             bytes: 0,
+            advertised: None,
+            trailers: false,
             ended: false,
             polling: false,
             refused,
         };
         let (parts, body) = build(scope).into_response().into_parts();
+        // The length the transport frames the message with: the header the
+        // application set, else the body's exact size.
+        owned.advertised = parts
+            .headers
+            .get(CONTENT_LENGTH)
+            .and_then(|length| length.to_str().ok()?.parse().ok())
+            .or_else(|| body.size_hint().exact());
         owned.inner = Some(body);
         Response::from_parts(parts, Body::new(owned))
     }
@@ -377,6 +392,18 @@ struct Wake {
     idle_first: bool,
 }
 
+impl Wake {
+    /// The armed bound's outcome once its instant has passed, so a source
+    /// that becomes ready only after its wait expired does not extend it.
+    fn due(&self) -> Option<BodyEnd> {
+        (self.armed && self.timer.deadline() <= Instant::now()).then_some(if self.idle_first {
+            BodyEnd::IdleTimeout
+        } else {
+            BodyEnd::DeadlineExceeded
+        })
+    }
+}
+
 struct OwnedBody {
     /// `None` while the application is still building the response and after
     /// the body ended.
@@ -389,6 +416,12 @@ struct OwnedBody {
     idle: Duration,
     wake: Option<Wake>,
     bytes: u64,
+    /// The message length the transport writes, after which it stops polling
+    /// without asking for the end.
+    advertised: Option<u64>,
+    /// The source yielded trailers, its last frame; the transport may not
+    /// poll again.
+    trailers: bool,
     ended: bool,
     /// Set while the application's body is being polled, so a poll that
     /// unwinds is recognised when the transport destroys the body afterwards.
@@ -448,6 +481,15 @@ impl OwnedBody {
         });
     }
 
+    /// Whether the source produced its whole message. A transport stops
+    /// polling, without asking for the end, once `is_end_stream` reports it,
+    /// once the advertised length is written or after trailers.
+    fn produced_all(&self) -> bool {
+        self.trailers
+            || self.advertised.is_some_and(|length| self.bytes >= length)
+            || self.inner.as_ref().is_some_and(HttpBody::is_end_stream)
+    }
+
     fn interrupt(&mut self, end: BodyEnd) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
         self.finish(end);
         Poll::Ready(Some(Err(axum::Error::new(BodyInterrupted(end)))))
@@ -499,9 +541,13 @@ impl HttpBody for OwnedBody {
         if this.ended {
             return Poll::Ready(None);
         }
-        // A source that is always ready must not outrun its bounds.
+        // A source that is always ready must not outrun its bounds, and one
+        // that became ready after its armed wait expired is not accepted.
         if let Err(reason) = this.owner.context().check() {
             return this.interrupt(BodyEnd::interrupted(reason));
+        }
+        if let Some(end) = this.wake.as_ref().and_then(Wake::due) {
+            return this.interrupt(end);
         }
         let Some(inner) = this.inner.as_mut() else {
             return Poll::Ready(None);
@@ -517,6 +563,7 @@ impl HttpBody for OwnedBody {
                 if let Some(data) = frame.data_ref() {
                     this.bytes = this.bytes.saturating_add(data.len() as u64);
                 }
+                this.trailers |= frame.is_trailers();
                 if let Some(wake) = &mut this.wake {
                     wake.armed = false;
                 }
@@ -555,14 +602,12 @@ impl Drop for OwnedBody {
         }
         // Only an unwinding builder leaves no body without ending it. A
         // transport destroys a body whose poll panicked only after catching
-        // the unwind, so the flag, not `panicking`, names that case. A
-        // transport that learned the end from `is_end_stream` never polls for
-        // it, so a finished source is still a completed body.
+        // the unwind, so the flag, not `panicking`, names that case.
         let end = if self.inner.is_none() || self.polling || std::thread::panicking() {
             BodyEnd::Panicked
         } else if self.refused {
             BodyEnd::Cancelled
-        } else if self.inner.as_ref().is_some_and(HttpBody::is_end_stream) {
+        } else if self.produced_all() {
             BodyEnd::Completed
         } else {
             match self.owner.context().check() {

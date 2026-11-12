@@ -13,7 +13,7 @@ fn connection(gate: &Arc<Gate>, capacity: usize) -> (ForcedCloseIo<DuplexStream>
 }
 
 fn registered(gate: &Gate) -> usize {
-    lock(&gate.connections).parked.len()
+    lock(&gate.connections).pollers.len()
 }
 
 fn assert_closed<T: std::fmt::Debug>(result: io::Result<T>) {
@@ -35,8 +35,8 @@ async fn open_gate_passes_bytes_in_both_directions() {
     assert_eq!(&written, b"response");
 }
 
-/// A split connection parks its halves in different tasks; closing must wake
-/// and fail both, not only the one that parked last.
+/// A split connection is polled by different tasks per half; closing must
+/// wake and fail both, not only the one that polled last.
 #[tokio::test]
 async fn closing_wakes_and_fails_a_parked_read_and_a_parked_write() {
     let gate = Gate::new();
@@ -54,6 +54,44 @@ async fn closing_wakes_and_fails_a_parked_read_and_a_parked_write() {
     gate.close();
     assert_closed(timeout(WAIT, reading).await.unwrap().unwrap());
     assert_closed(timeout(WAIT, writing).await.unwrap().unwrap());
+}
+
+/// Hyper can wait on a response body alone after a ready read left bytes of a
+/// following request in its buffer, without polling the transport again.
+/// That task's last I/O poll was ready, yet closing must wake it so the flush
+/// on its next pass fails.
+#[tokio::test]
+async fn closing_wakes_a_task_whose_last_io_poll_was_ready() {
+    let gate = Gate::new();
+    let (mut server, mut client) = connection(&gate, 64);
+    client.write_all(b"head and pipelined bytes").await.unwrap();
+    let waiting = tokio::spawn(async move {
+        let mut buffer = [0_u8; 64];
+        let mut read = false;
+        std::future::poll_fn(|cx| {
+            if !read {
+                let mut unfilled = ReadBuf::new(&mut buffer);
+                let ready = Pin::new(&mut server).poll_read(cx, &mut unfilled);
+                assert!(matches!(ready, Poll::Ready(Ok(()))));
+                assert!(!unfilled.filled().is_empty());
+                read = true;
+                // Wait without I/O interest, as Hyper does with buffered bytes.
+                return Poll::Pending;
+            }
+            Pin::new(&mut server).poll_flush(cx)
+        })
+        .await
+    });
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !waiting.is_finished(),
+        "nothing wakes the task before closing"
+    );
+
+    gate.close();
+    assert_closed(timeout(WAIT, waiting).await.unwrap().unwrap());
 }
 
 #[tokio::test]

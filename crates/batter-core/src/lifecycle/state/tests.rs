@@ -380,3 +380,30 @@ async fn abort_deadline_follows_the_stop_clock_and_only_moves_earlier() {
     state.request_since(earlier);
     assert_eq!(state.abort_deadline(), Some(earlier + allowance));
 }
+
+#[tokio::test(start_paused = true)]
+async fn abort_before_resolves_only_when_the_deadline_moves_earlier() {
+    let allowance = std::time::Duration::from_secs(3);
+    let state = std::sync::Arc::new(Shared::new(Supervision::Driven));
+    state.bound_abort(allowance);
+    let earliest = Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    let requested = Instant::now();
+    let first = requested + allowance;
+    // Before drain, and while the deadline stays put, nothing resolves.
+    let waiting = tokio::spawn({
+        let state = state.clone();
+        async move { state.abort_before(first).await }
+    });
+    tokio::task::yield_now().await;
+    state.request();
+    state.force_cancel();
+    state.request_since(requested + std::time::Duration::from_secs(1));
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished(), "no earlier deadline was published");
+    // A deadline already earlier than the caller's resolves at once.
+    assert_eq!(state.abort_before(first + allowance).await, first);
+    // An earlier stop wakes the waiter with the new deadline.
+    state.request_since(earliest);
+    assert_eq!(waiting.await.unwrap(), earliest + allowance);
+}

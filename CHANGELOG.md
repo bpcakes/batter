@@ -17,7 +17,11 @@ contracts, capability facts and validation history.
   then closes when the body ends, so span-close timing includes the body), and
   one `HTTP response body finished` event with `request_id`, `bytes`,
   `duration_ms` and `body_outcome`. A bound or forced cancellation truncates
-  the message visibly. A request starts at most one owned body, and only while
+  the message visibly; both bounds are checked before a frame is accepted, so
+  a frame ready only after its wait expired does not extend the body. A body
+  whose source produced its whole message is `completed` even when Hyper never
+  polls for its end: after its advertised `Content-Length` or exact size, or
+  after trailers. A request starts at most one owned body, and only while
   its response is being constructed. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still
   compiles. Not covered: a peer that stops reading (ended only by the forced
@@ -48,9 +52,13 @@ contracts, capability facts and validation history.
   message or a closed connection in the second half of the cancel allowance
   instead of after process exit. Cancelled handlers still deliver their 503
   `operation_cancelled` first. A zero cancel allowance keeps the earlier
-  abort-and-skip outcome. Upgraded connections, HTTP/2 and servers that call
+  abort-and-skip outcome. The close also reaches a connection that never
+  waited in transport I/O, such as one whose first read returned a request head
+  with bytes of a following request, after which Hyper waits on the response
+  body alone; and its instant is recomputed when a component moves the abort
+  deadline earlier. Upgraded connections, HTTP/2 and servers that call
   `axum::serve` themselves are not covered. Each connection adds one registry
-  entry and one atomic read per I/O poll (`batter-9wig.1`).
+  entry, and each I/O poll one uncontended lock (`batter-9wig.1`).
 - Document that a skipped `CleanupSlot::acquire_semaphore` or `bind_udp`
   finalizer has still released its permit or socket reference: the hook only
   drops its capture, and skipping drops it too. `SkippedCleanup` now says so.
@@ -63,7 +71,10 @@ contracts, capability facts and validation history.
   the stop time plus the supervisor's drain and cancel allowances, `None`
   before drain and for a standalone handle. A component that owns descendants
   can use the remaining interval to end them itself and return joined rather
-  than aborted. Additive; no existing caller changes (`batter-9wig.1`).
+  than aborted. `ShutdownSignal::abort_deadline_before` waits, read-only, until
+  that deadline is earlier than one the caller holds, so such work can follow
+  a component that reveals an earlier stop. Additive; no existing caller
+  changes (`batter-9wig.1`).
 
 - Outbound HTTP: give each DNS candidate a one-second minimum within the shared
   setup deadline, avoiding tiny attempt windows caused by long answer lists.

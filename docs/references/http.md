@@ -390,10 +390,17 @@ sources in the locked registry.
   the connection open after graceful shutdown. While a response is being
   written and the request was read, `poll_read_keep_alive` calls
   `mid_message_detect_eof`, which reads from the transport (`force_io_read`)
-  unless half-close is allowed, so a connection with a pending body or a
-  pending write also holds read interest. An I/O error from that read, or from
-  a write or flush, ends the connection future with an error; Axum's task then
-  logs at trace level and drops its receiver.
+  only while half-close is not allowed and its read buffer is empty
+  (`conn.rs:487-493`). Bytes of a following request already buffered, or a read
+  side Hyper has closed (`conn.rs:434-435`), leave it waiting with no transport
+  interest, so a connection whose reads and writes were all ready can then wait
+  on its response body alone. Every dispatcher pass still flushes
+  (`dispatch.rs:172-175`), and with an empty write buffer `Buffered::poll_flush`
+  calls the transport's `poll_flush` (`io.rs:271-275`) unless `pipeline_flush`
+  is enabled, which Axum's builder leaves off. An I/O error from a read, write
+  or flush ends the connection future with an error; Axum's task then logs at
+  trace level and drops its receiver. Checked against Hyper 1.11.1 for the
+  `batter-9wig` follow-up review.
 - Hyper has no write timeout. A peer that stops reading leaves the connection
   future pending in `poll_flush` for as long as TCP keeps the connection.
 - `serve_connection_with_upgrades` resolves its connection future when the
@@ -407,9 +414,12 @@ sources in the locked registry.
   real-socket test asserts the missing final chunk.
 
 Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
-operations instead of owning the accept loop: every case above is parked in, or
-returns to, the transport. Local real-socket tests observed the pending body,
-the stalled reader and the half-sent head each holding the wrapper until abort
-without the close and ending inside the cancel allowance with it. HTTP/2 and an
-upgraded connection were not exercised.
+operations instead of owning the accept loop. A connection need not be waiting
+in the transport when the gate closes, so the gate records the task of every
+I/O poll, not only a pending one, and wakes it; that task's next pass flushes
+and fails. Local real-socket tests observed the pending body, the stalled
+reader and the half-sent head each holding the wrapper until abort without the
+close and ending inside the cancel allowance with it; a pending body after
+pipelined request bytes did the same when only pending polls were recorded.
+HTTP/2 and an upgraded connection were not exercised.
 

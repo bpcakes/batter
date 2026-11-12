@@ -12,8 +12,13 @@ use batter_axum::{
     low_level::{register_http, register_http_with_connect_info_in},
 };
 use batter_core::{
+    BoxError,
     cleanup::{CleanupBudget, SkipReason},
-    lifecycle::{SharedShutdownReport, ShutdownBudget, ShutdownHandle, ShutdownReport, Supervisor},
+    lifecycle::{
+        ManagedComponent, ManagedSettlement, SharedShutdownReport, ShutdownBudget, ShutdownHandle,
+        ShutdownReport, Supervisor,
+    },
+    operation::OperationOwner,
 };
 use std::{
     convert::Infallible,
@@ -58,9 +63,20 @@ impl Served {
         cancel: Duration,
         routes: impl FnOnce(Router) -> Router,
     ) -> Self {
+        Self::start_with(register, cancel, routes, |_| {}).await
+    }
+
+    /// Like `start`, with other components registered beside the server.
+    async fn start_with(
+        register: RegisterHttp,
+        cancel: Duration,
+        routes: impl FnOnce(Router) -> Router,
+        components: impl FnOnce(&mut Supervisor),
+    ) -> Self {
         let cleanup = CleanupBudget::new(WAIT, WAIT, WAIT).unwrap();
         let mut supervisor =
             Supervisor::new(ShutdownBudget::new(DRAIN, cancel, WAIT, cleanup).unwrap());
+        components(&mut supervisor);
         let handle = supervisor.handle();
         let cleaned = Arc::new(AtomicBool::new(false));
         let finalized = cleaned.clone();
@@ -223,6 +239,120 @@ async fn pending_body(register: RegisterHttp) {
     drop(held.release);
 }
 
+/// Hyper stops reading while its buffer holds bytes of a following request
+/// and then waits on the response body alone. When its first read returned
+/// those bytes with the head and every write was ready, the connection never
+/// waited in transport I/O, yet the close must still reach it.
+#[tokio::test]
+async fn pending_body_after_pipelined_bytes_is_closed_and_cleanup_runs() {
+    let mut held = None;
+    let served = Served::start(register_http, CANCEL, |router| {
+        let (router, body) = held_route(router);
+        held = Some(body);
+        router
+    })
+    .await;
+    let mut held = held.unwrap();
+    // Written before this current-thread runtime can accept the connection,
+    // so Hyper's first read returns the head and the following bytes at once.
+    let mut client = std::net::TcpStream::connect(served.address).unwrap();
+    std::io::Write::write_all(
+        &mut client,
+        b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\nGET /next HTTP/1.1\r\n",
+    )
+    .unwrap();
+    client.set_nonblocking(true).unwrap();
+    let mut client = TcpStream::from_std(client).unwrap();
+    let mut bytes = read_first_frame(&mut client).await;
+
+    let report = served.shut_down().await;
+    assert!(held.dropped.try_recv().is_ok(), "body outlived the report");
+    assert!(report.forced_cancellation);
+    served.assert_joined_and_cleaned(&report);
+    let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.starts_with("HTTP/1.1 200 "), "{text}");
+    assert!(!text.ends_with("0\r\n\r\n"), "{text}");
+    drop(held.release);
+}
+
+/// A settled native component that reports success.
+struct Settled;
+
+impl ManagedSettlement for Settled {
+    fn is_success(&self) -> bool {
+        true
+    }
+
+    fn allows_dependency_cleanup(&self) -> bool {
+        true
+    }
+}
+
+/// A native component that, while stopping, holds its worker past forced
+/// cancellation and then reveals a stop time `earlier` than the one it was
+/// given, moving the process abort deadline earlier.
+fn late_earlier_stop(supervisor: &mut Supervisor, held: Duration, earlier: Duration) {
+    let context = OperationOwner::new(WAIT).unwrap().into_context();
+    supervisor
+        .register_managed("native", context, move |_| {
+            let (stopped, settled) = oneshot::channel();
+            let mut stopped = Some(stopped);
+            Ok(ManagedComponent::new(
+                async { Ok::<(), BoxError>(()) },
+                std::future::pending(),
+                move |started| {
+                    if let Some(stopped) = stopped.take() {
+                        std::thread::sleep(held);
+                        let _ = stopped.send(());
+                        return started.checked_sub(earlier).unwrap();
+                    }
+                    started
+                },
+                async move {
+                    let _ = settled.await;
+                    Settled
+                },
+            ))
+        })
+        .unwrap();
+}
+
+/// The close instant follows an abort deadline that moved earlier after
+/// forced cancellation was observed. With a one-second cancel allowance the
+/// close was due 550 ms after drain and the abort 1050 ms. The component
+/// reveals, 100 ms after drain, a stop 600 ms earlier: the abort is then due
+/// at 450 ms, before the original close, and the recomputed close at 250 ms.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_follows_an_abort_deadline_tightened_after_forced_cancellation() {
+    let mut held = None;
+    let served = Served::start_with(
+        register_http,
+        Duration::from_secs(1),
+        |router| {
+            let (router, body) = held_route(router);
+            held = Some(body);
+            router
+        },
+        |supervisor| {
+            late_earlier_stop(
+                supervisor,
+                Duration::from_millis(100),
+                Duration::from_millis(600),
+            );
+        },
+    )
+    .await;
+    let held = held.unwrap();
+    let mut client = served.request(GET).await;
+    read_first_frame(&mut client).await;
+
+    let report = served.shut_down().await;
+    assert!(report.forced_cancellation);
+    served.assert_joined_and_cleaned(&report);
+    drop(held.release);
+}
+
 #[tokio::test]
 async fn stalled_reader_of_a_fixed_body_is_closed_and_cleanup_runs() {
     // Larger than both loopback socket buffers, so the write stays pending.
@@ -284,9 +414,15 @@ async fn partial_request_head_does_not_force_an_abort() {
     })
     .await;
     let client = served.request(b"GET / HTTP/1.1\r\nHost: local").await;
+    // No client-visible event marks the server reading a partial head; the
+    // report below proves it did.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let report = served.shut_down().await;
+    // Graceful shutdown ends a fresh connection at once only while Hyper has
+    // read nothing from it. Outlasting drain shows the head was buffered, so
+    // only the gate could end the connection before the abort.
+    assert!(report.forced_cancellation, "{report:?}");
     served.assert_joined_and_cleaned(&report);
     drop(client);
 }

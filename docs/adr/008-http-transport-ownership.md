@@ -108,7 +108,11 @@ methods wrap the listener in a private gate. `ShutdownSignal::abort_deadline`
 exposes the stop time plus the drain and cancel allowances. The registered
 component future, not a spawned task, waits for forced cancellation, then until
 halfway to that deadline, and closes the gate: every accepted connection's reads
-and writes fail and parked I/O is woken. Hyper ends those connections in their
+and writes fail and the task that last polled each connection's I/O is woken,
+whether or not that poll was pending, because Hyper can wait on a body alone
+after ready polls. A component that reveals an earlier stop moves the deadline
+earlier; `ShutdownSignal::abort_deadline_before` reports that, and the midpoint
+is recomputed from the same cancellation instant. Hyper ends those connections in their
 own tasks, Axum's graceful wait returns, and the wrapper is joined. The first
 half of the allowance is reserved because forced cancellation also cancels
 admitted request contexts, and the 503 `operation_cancelled` those handlers
@@ -128,8 +132,8 @@ directly, because they instrument the native graceful milestones; they remain
 evidence for the ungated native composition, including the abort row. The
 library path is covered by `tests/operational/forced_close.rs` and a TLS case.
 Not covered: HTTP/2, upgraded connections (which leave Axum's accounting at the
-upgrade and stay application-owned), tasks a handler detached, a connection task
-that never yields, and a stop clock tightened after cancellation was observed.
+upgrade and stay application-owned), tasks a handler detached, and a
+connection task that never yields.
 A library-owned lifetime for streaming bodies was assessed in `batter-9wig.2` and
 delivered as `AdmittedRequest::into_streaming_response` under `batter-9wig.6`.
 The response-construction boundary itself is unchanged: the owner starts a

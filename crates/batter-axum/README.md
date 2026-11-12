@@ -308,7 +308,9 @@ that is `IntoResponse`, including `axum::response::Sse`. The closure receives a
 The library then owns the body whether or not the stream cooperates. A wait for
 the next frame longer than the idle bound, the total bound and forced
 cancellation each end it with a body error, so the peer sees a truncated
-message and never a final chunk it could take for a complete one. The body is
+message and never a final chunk it could take for a complete one. Both bounds
+are checked before a frame is accepted, so a frame that became ready only after
+its wait expired does not extend the body. The body is
 polled and destroyed under the tracing dispatcher and request span of the
 handler that handed it over, and it holds that `batter.http` span open until it
 ends: span-close timing, such as an exported span's duration, then covers the
@@ -317,8 +319,10 @@ response construction. Exactly one `HTTP response body finished` event
 carries `request_id`, `bytes`, `duration_ms` and `body_outcome`: `completed`
 and `dropped` at INFO; `failed`, `deadline_exceeded`, `idle_timeout`,
 `cancelled` and `panicked` (a builder or stream that panicked, or a handler
-that panicked after handing the body over) at WARN. `dropped` means the body's
-holder discarded it before its end: a peer that went away, a HEAD request on a
+that panicked after handing the body over) at WARN. `completed` means the
+source produced its whole message, including a body Hyper finishes without
+asking for its end: after its advertised `Content-Length` or exact size, or
+after trailers. `dropped` means the body's holder discarded it before its end: a peer that went away, a HEAD request on a
 GET route, whose body Axum strips, or a response discarded because response
 construction ended without it. The request's own completion event is
 unchanged, still measures response construction and, with its method and
@@ -657,7 +661,9 @@ retried by Axum. Streaming bodies can outlive response deadlines, and so can a
 peer that stops reading or never finishes its request head. The registered
 server closes the I/O of every connection still open halfway through the cancel
 allowance, after cancelled handlers have written their interruption responses,
-so it returns joined and dependent cleanup runs. With a zero cancel allowance
+so it returns joined and dependent cleanup runs. That includes a connection
+Hyper leaves waiting on its body alone, and the instant is recomputed when a
+component moves the abort deadline earlier. With a zero cancel allowance
 the wrapper is aborted instead and cleanup remains conservatively skipped.
 Upgraded connections are the application's and are not joined.
 `low_level::register_http(&mut Supervisor, ...)` keeps the direct

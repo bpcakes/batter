@@ -240,6 +240,20 @@ impl Shared {
         }
     }
 
+    /// Wait until the abort deadline is earlier than `known`. Only a stop
+    /// clock moving earlier changes it, and every such move notifies.
+    pub(super) async fn abort_before(&self, known: Instant) -> Instant {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(abort) = self.abort_deadline().filter(|abort| *abort < known) {
+                return abort;
+            }
+            changed.await;
+        }
+    }
+
     pub(super) async fn phase_elapsed(&self, allowance: std::time::Duration) {
         loop {
             let started = self.stop_started().expect("phase wait follows drain");

@@ -6,6 +6,7 @@ use super::support::{assert_finished, budget, finished};
 use crate::capture::Capture;
 use axum::{
     body::{Body, Bytes},
+    http::{HeaderMap, HeaderName, HeaderValue, header},
     routing::get as route,
 };
 use batter_axum::{
@@ -15,13 +16,16 @@ use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{RunningSupervisor, ShutdownBudget, ShutdownHandle, Supervisor},
 };
-use futures_util::stream;
+use futures_util::stream::{self, StreamExt};
+use http_body::Frame;
 use std::{
     convert::Infallible,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -271,4 +275,107 @@ fn a_sized_owned_body_keeps_its_length_and_is_observed_as_completed() {
     assert!(text.ends_with("\r\n\r\nhello"), "{text}");
     let event = assert_finished(&capture, "INFO", "completed");
     assert!(event.contains("bytes=5"), "{event}");
+}
+
+/// Hyper writes an advertised length and then stops polling, without asking
+/// the stream for its end, so a body that produced that length completed even
+/// though its source never ends.
+#[test]
+fn a_streamed_body_that_produced_its_declared_length_is_observed_as_completed() {
+    let capture = Capture::new();
+    let text = capture.block_on(async {
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(|admitted: AdmittedRequest| async move {
+                admitted.into_streaming_response(budget(600, 300), |_scope| {
+                    let chunks = [Bytes::from_static(b"hello"), Bytes::from_static(b"world")];
+                    let source =
+                        stream::iter(chunks.map(Ok::<_, Infallible>)).chain(stream::pending());
+                    ([(header::CONTENT_LENGTH, "10")], Body::from_stream(source))
+                })
+            }),
+        ))
+        .await;
+        let mut client = served.request().await;
+        let mut text = String::new();
+        timeout(WAIT, client.read_to_string(&mut text))
+            .await
+            .unwrap()
+            .unwrap();
+        wait_for_finished(&capture).await;
+        served.shut_down().await;
+        text
+    });
+    assert!(text.contains("content-length: 10\r\n"), "{text}");
+    assert!(text.ends_with("\r\n\r\nhelloworld"), "{text}");
+    let event = assert_finished(&capture, "INFO", "completed");
+    assert!(event.contains("bytes=10"), "{event}");
+    assert_eq!(finished(&capture).len(), 1);
+}
+
+/// Data, then trailers, then pending: the source never yields its end.
+struct Trailed {
+    frames: u8,
+}
+
+impl http_body::Body for Trailed {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        self.frames += 1;
+        match self.frames {
+            1 => Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"hello"))))),
+            2 => Poll::Ready(Some(Ok(Frame::trailers(HeaderMap::from_iter([(
+                HeaderName::from_static("x-digest"),
+                HeaderValue::from_static("done"),
+            )]))))),
+            _ => Poll::Pending,
+        }
+    }
+}
+
+/// Trailers are a body's last frame: Hyper writes them and destroys the body
+/// without polling again, so the owner records a completed body.
+#[test]
+fn a_body_that_ended_with_trailers_is_observed_as_completed() {
+    let capture = Capture::new();
+    let text = capture.block_on(async {
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(|admitted: AdmittedRequest| async move {
+                admitted.into_streaming_response(budget(600, 300), |_scope| {
+                    // Hyper writes only the trailer fields a response declares.
+                    (
+                        [(header::TRAILER, "x-digest")],
+                        Body::new(Trailed { frames: 0 }),
+                    )
+                })
+            }),
+        ))
+        .await;
+        let mut client = TcpStream::connect(served.address).await.unwrap();
+        client
+            .write_all(
+                b"GET / HTTP/1.1\r\nHost: localhost\r\nTE: trailers\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut text = String::new();
+        timeout(WAIT, client.read_to_string(&mut text))
+            .await
+            .unwrap()
+            .unwrap();
+        wait_for_finished(&capture).await;
+        served.shut_down().await;
+        text
+    });
+    assert!(text.contains("transfer-encoding: chunked\r\n"), "{text}");
+    assert!(text.ends_with("0\r\nx-digest: done\r\n\r\n"), "{text}");
+    let event = assert_finished(&capture, "INFO", "completed");
+    assert!(event.contains("bytes=5"), "{event}");
+    assert_eq!(finished(&capture).len(), 1);
 }

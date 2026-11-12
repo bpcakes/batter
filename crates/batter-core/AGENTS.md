@@ -127,6 +127,8 @@ requests cannot extend it. `ShutdownSignal::abort_deadline` is that timestamp
 plus the supervisor's drain and cancel allowances, recorded once at
 construction: read-only observation that confers no authority, unset for
 standalone handles, and never a promise that abort happens at that instant.
+`ShutdownSignal::abort_deadline_before` only waits on the same clock's change
+notification; keep it read-only and resolving only for an earlier deadline.
 `OperationContinuation` is created only by a successful
 `admit_root_with_continuation`. Keep it without a public constructor or
 `Clone`, keep `start` consuming so one admission continues into at most one

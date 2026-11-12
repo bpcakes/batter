@@ -187,8 +187,12 @@ adapter, and never claim that a listener's own spawned work was joined.
 Keep the forced-close gate inside the registered component future, never in a
 spawned task, and close it only after cancelled handlers have had part of the
 cancel allowance to write their interruption responses. Fail reads and writes
-alike once it is closed, keep the hot path to one atomic read with waker
-storage only on a pending transport, and wake outside the registry lock. Do not
+alike once it is closed. Record the polling task's waker on every I/O poll,
+before reading the closed flag, not only on a pending one: Hyper can wait on a
+body alone after ready polls, with pipelined bytes buffered or its read side
+closed. Keep that to one uncontended lock and a `will_wake` compare per poll,
+recompute the close instant when `ShutdownSignal::abort_deadline_before`
+reports an earlier abort, and wake outside the registry lock. Do not
 describe upgraded connections, handler-detached tasks or a zero cancel
 allowance as covered; the wrapper-abort contract still applies to them.
 An owned body starts its context from the admission record's continuation,
