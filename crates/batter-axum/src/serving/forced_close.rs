@@ -154,10 +154,12 @@ impl StopClock for ShutdownSignal {
 /// Axum to observe the closed connections finish. A component that reveals an
 /// earlier stop time moves the abort deadline earlier, and the midpoint is
 /// then recomputed from the same cancellation instant, closing at once if it
-/// has passed. When cancellation is observed with no interval left, as with a
-/// zero cancel allowance, the gate never closes and the wrapper is aborted as
-/// before: closing then would only race that abort, on any runtime flavour,
-/// and fail the interruption responses that detached connections still write.
+/// has passed while the abort deadline has not. Whenever the abort deadline
+/// itself has passed, when cancellation is observed, as with a zero cancel
+/// allowance, or after it moved earlier, the gate never closes and the wrapper
+/// is aborted as before: closing then would only race that abort, on any
+/// runtime flavour, and fail the interruption responses that detached
+/// connections still write.
 pub(super) async fn serve<F, C>(serving: F, signal: C, gate: Arc<Gate>) -> io::Result<()>
 where
     F: Future<Output = io::Result<()>>,
@@ -167,12 +169,6 @@ where
     let closing = async {
         signal.cancelled().await;
         let cancelled = Instant::now();
-        if signal
-            .abort_deadline()
-            .is_some_and(|abort| abort <= cancelled)
-        {
-            std::future::pending::<()>().await;
-        }
         while let Some(abort) = signal.abort_deadline() {
             let close = cancelled + abort.saturating_duration_since(cancelled) / 2;
             tokio::select! {
@@ -180,6 +176,15 @@ where
                 () = tokio::time::sleep_until(close) => break,
                 _ = signal.abort_deadline_before(abort) => {}
             }
+        }
+        // No interval left, at cancellation or because the deadline moved into
+        // the past, even while a stale midpoint won the race above: the wrapper
+        // abort decides, and closing would only race it.
+        if signal
+            .abort_deadline()
+            .is_some_and(|abort| abort <= Instant::now())
+        {
+            std::future::pending::<()>().await;
         }
         gate.close();
     };

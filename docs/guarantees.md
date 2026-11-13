@@ -2601,10 +2601,14 @@ stream through `BodyScope::shutdown`.
 
 The body is polled, and asked for its end and size, under the tracing
 dispatcher current when the handler handed it over and inside the request's
-span context, whichever task asks. The application's body and that span are
-also destroyed under it: closing a span releases its parent through
-the current default dispatcher, so releasing either on the transport's task
-unprotected would reach another registry. The request's observer publishes
+span context, whichever task asks. The application's body is also destroyed
+under it. The completion event and the release of that span happen under the
+dispatcher that recorded the span, the same one unless the handler switched
+subscribers before the hand-over: closing a span releases its parent through
+the current default dispatcher, so releasing it on the transport's task
+unprotected, or under the handler's switched subscriber, would hand another
+registry a span it never saw, which `tracing-subscriber` rejects with a
+panic. The request's observer publishes
 that span to the body only while the observer is alive and releases its copy
 when it finishes, so an admitted request or request extension kept beyond the
 response holds no span. An owned body holds its own copy until it ends, so the
@@ -2663,8 +2667,11 @@ response, a body whose answer about its end panics during destruction and when
 the transport asks first, a body whose first answer about its size panics at
 the hand-over, its end and size answered under the handler's subscriber and
 request span when a foreign subscriber asks, and a
-response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, and a
-foreign subscriber on the polling task.
+response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, a
+foreign subscriber on the polling task, and a handler that hands the body over
+under another subscriber, whose completion event and request span stay in the
+request's registry, where the span is shown to close, while the body's own
+events and destruction follow the switch.
 [Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
 the registered server show a pending owned body ending itself at forced
 cancellation before the server's forced close, a stalled reader ended only by
@@ -3093,7 +3100,9 @@ flushes and fails. That costs one uncontended lock per I/O poll and one registry
 entry per connection. A component that reveals an earlier stop time moves the
 abort deadline earlier after cancellation was observed;
 `ShutdownSignal::abort_deadline_before` reports it and the close instant is
-recomputed, halfway from the same cancellation instant to the new deadline.
+recomputed, halfway from the same cancellation instant to the new deadline. A
+new deadline that has already passed leaves no interval, exactly like a zero
+cancel allowance, so the gate stays open and the wrapper abort decides.
 
 [Real socket tests](../crates/batter-axum/tests/operational/forced_close.rs)
 cover a pending body through both registration helpers, a pending body after
@@ -3112,7 +3121,10 @@ the wrapper is aborted and cleanup skipped. A gate unit test shows that a zero
 cancel allowance never closes the gate while a positive one does. On a paused
 clock, a gate unit test drives the close computation through a private stop
 clock: cancellation observed with the abort 4 s away, then the abort moved to
-1 s, and the gate closes at exactly the recomputed 0.5 s. Another runs it
+1 s, and the gate closes at exactly the recomputed 0.5 s; moved instead to the
+cancellation instant, the gate stays open, as it does when it is first polled
+only after both its stale 2 s midpoint and a deadline tightened into the past
+are due, while a passed midpoint with the abort still ahead closes it at once. Another runs it
 against a real supervisor, whose native component reveals an earlier stop only
 after the gate computed its first close; holding that component needs a
 multi-thread runtime and real time, so its outcome rests on a wall-clock
@@ -3135,10 +3147,18 @@ failed the slow-destructor case, as removing the wait also failed the
 in-flight handler case, removing the wait from the connect-info path
 alone failed that path's case, and dropping the `abort_deadline_before`
 recomputation failed both moved-deadline gate unit tests, the paused-clock one
-by closing at the original 2 s.
+by closing at the original 2 s. Later the same day, checking for a passed
+abort deadline only when cancellation is first observed failed the
+passed-deadline gate test, checking it only before each recomputation, so that
+a stale midpoint winning the race still closed, failed its stale case at
+2.5 s, releasing the request span and emitting the completion event under the
+handler's switched subscriber failed the switched-subscriber streaming test
+with `tracing-subscriber`'s `no such span exists` panic, and leaking the
+request span instead failed that test's close assertion.
 
 The limits remain. When forced cancellation is observed with no interval left,
-as with a zero cancel allowance, the gate never closes, so the earlier contract
+as with a zero cancel allowance, or the abort deadline later moves to an
+instant already passed, the gate never closes, so the earlier contract
 holds unchanged on any runtime flavour: a real streaming regression is aborted
 with its body still owned, the report is unsuccessful, cleanup is skipped with
 `UnsafeTaskExit` and detached connections still write their interruption

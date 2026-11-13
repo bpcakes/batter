@@ -3,8 +3,8 @@
 //! and the request span's lifetime when an admitted request is kept.
 
 use super::support::{
-    DESTROYED, Escaped, FINISHED, Marker, assert_finished, budget, client, drain, finished, get,
-    next, paused, paused_with, ready,
+    Closed, DESTROYED, Escaped, FINISHED, Marker, assert_finished, budget, client, drain, finished,
+    get, next, paused, paused_with, ready,
 };
 use crate::capture::{Capture, test_dispatch};
 use axum::{
@@ -25,7 +25,7 @@ use std::{
     task::Poll,
     time::Duration,
 };
-use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan};
+use tracing_subscriber::prelude::*;
 
 /// Run one request whose handler panics, and return whether the panic reached
 /// the caller.
@@ -485,21 +485,6 @@ fn a_refused_start_leaves_the_framing_to_the_body_that_started() {
     assert!(started.contains("bytes=5"), "{started}");
 }
 
-/// Names the spans the registry closes.
-#[derive(Clone, Default)]
-struct Closed(Arc<Mutex<Vec<&'static str>>>);
-
-impl<S> tracing_subscriber::Layer<S> for Closed
-where
-    S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
-{
-    fn on_close(&self, id: tracing::span::Id, context: Context<'_, S>) {
-        if let Some(span) = context.span(&id) {
-            self.0.lock().unwrap().push(span.name());
-        }
-    }
-}
-
 /// The request span belongs to the observer. An admitted request the
 /// application keeps beyond the response neither holds it open nor releases it
 /// later under another subscriber.
@@ -527,6 +512,6 @@ fn an_admitted_request_kept_beyond_its_response_does_not_hold_the_request_span()
         }
     });
     assert!(kept.lock().unwrap().is_some());
-    let names = closed.0.lock().unwrap().clone();
+    let names = closed.names();
     assert!(names.contains(&"batter.http"), "{names:?}");
 }

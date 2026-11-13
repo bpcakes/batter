@@ -1,10 +1,10 @@
 //! The owned body's context, observation and destruction, without shutdown.
 
 use super::support::{
-    DESTROYED, Escaped, FINISHED, Marker, assert_finished, budget, client, drain, finished, get,
-    next, paused, ready,
+    Closed, DESTROYED, Escaped, FINISHED, Marker, assert_finished, budget, client, drain, finished,
+    get, next, paused, paused_with, ready,
 };
-use crate::capture::Capture;
+use crate::capture::{Capture, test_dispatch};
 use axum::{
     body::{Body, Bytes, HttpBody},
     http::{StatusCode, header},
@@ -24,6 +24,7 @@ use std::{
     time::Duration,
 };
 use tracing::{Instrument, instrument::WithSubscriber};
+use tracing_subscriber::prelude::*;
 
 const STEP: Duration = Duration::from_millis(10);
 
@@ -317,6 +318,74 @@ fn polling_and_destruction_keep_the_handlers_subscriber_and_span() {
     assert!(!foreign.contains("stream step produced"), "{foreign}");
     assert!(!foreign.contains(FINISHED), "{foreign}");
     assert!(!foreign.contains(DESTROYED), "{foreign}");
+}
+
+/// Serve one request whose handler hands its body over under `switched`, read
+/// a frame inside a `caller` span, then drop the body, which then holds the
+/// request span's last reference.
+async fn hand_over_under(switched: tracing::Dispatch) {
+    let handle = ready();
+    let app = client(
+        &handle,
+        GuardedRouter::new().route(
+            "/",
+            route(move |admitted: AdmittedRequest| {
+                let switched = switched.clone();
+                async move {
+                    tracing::dispatcher::with_default(&switched, || {
+                        admitted.into_streaming_response(budget(60, 5), |scope: BodyScope| {
+                            let marker = Marker;
+                            let steps = chunks(scope.context().clone(), 3);
+                            Body::from_stream(steps.map(move |item| {
+                                let _owned = &marker;
+                                item
+                            }))
+                        })
+                    })
+                }
+            }),
+        ),
+    )
+    .await;
+    let mut response = get(&app, "/")
+        .instrument(tracing::info_span!("caller"))
+        .await;
+    assert!(next(response.body_mut()).await.unwrap().is_ok());
+    drop(response);
+}
+
+/// A handler may switch subscribers before handing its body over. The body's
+/// own work follows that switch, but the request span belongs to the request's
+/// subscriber: the completion event is parented to it there, and it is
+/// released and closed there. Releasing it through the other registry would
+/// hand that registry its parent, a span it never saw, and its registry panics.
+#[test]
+fn a_body_handed_over_under_another_subscriber_keeps_the_request_span_in_its_own_registry() {
+    let capture = Capture::new();
+    let other = Capture::new();
+    paused(&capture, hand_over_under(other.dispatch.clone()));
+    let event = assert_finished(&capture, "INFO", "dropped");
+    assert!(
+        event.contains(" caller:") && event.contains(":batter.http{"),
+        "{event}"
+    );
+    let text = capture.text();
+    assert!(!text.contains("stream step produced"), "{text}");
+    assert!(!text.contains(DESTROYED), "{text}");
+    let elsewhere = other.text();
+    assert!(elsewhere.contains("stream step produced"), "{elsewhere}");
+    assert!(elsewhere.contains(DESTROYED), "{elsewhere}");
+    assert!(!elsewhere.contains(FINISHED), "{elsewhere}");
+
+    // The same request against a registry that records closes: the request
+    // span, and the parent it holds, close there once the body is dropped.
+    let closed = Closed::default();
+    let requests = test_dispatch::new(tracing_subscriber::registry().with(closed.clone()));
+    let other = Capture::new();
+    paused_with(&requests, hand_over_under(other.dispatch.clone()));
+    let names = closed.names();
+    assert!(names.contains(&"batter.http"), "{names:?}");
+    assert!(names.contains(&"caller"), "{names:?}");
 }
 
 const END_ANSWERED: &str = "end query answered";

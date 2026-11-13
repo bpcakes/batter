@@ -318,7 +318,10 @@ upstream, must detect it. Both bounds
 are checked before a frame is accepted, so a frame that became ready only after
 its wait expired does not extend the body. The body is
 polled, asked for its end and size, and destroyed under the tracing dispatcher
-and request span of the handler that handed it over, on whichever task asks, and it holds that `batter.http` span open until it
+and request span of the handler that handed it over, on whichever task asks;
+its completion event and the span's release stay with the subscriber that
+recorded the span, should the handler have switched subscribers before the
+hand-over. It holds that `batter.http` span open until it
 ends: span-close timing, such as an exported span's duration, then covers the
 body, while `latency_ms` and the request's completion event still measure
 response construction. Exactly one `HTTP response body finished` event
@@ -681,8 +684,9 @@ response body is destroyed, so dependent cleanup runs only after them; a
 destructor still running at the abort deadline gets the wrapper aborted and
 cleanup skipped instead. That includes a connection
 Hyper leaves waiting on its body alone, and the instant is recomputed when a
-component moves the abort deadline earlier. With a zero cancel allowance
-the connections are not closed: the wrapper is aborted instead and cleanup
+component moves the abort deadline earlier. With a zero cancel allowance, or
+once a deadline moved earlier has already passed, the connections are not
+closed: the wrapper is aborted instead and cleanup
 remains conservatively skipped, as it is when a connection task never yields.
 Upgraded connections are the application's and are not joined.
 `low_level::register_http(&mut Supervisor, ...)` keeps the direct

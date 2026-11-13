@@ -24,6 +24,27 @@ use std::{
 };
 
 pub const SECOND: Duration = Duration::from_secs(1);
+
+/// Names the spans a registry closes.
+#[derive(Clone, Default)]
+pub struct Closed(Arc<Mutex<Vec<&'static str>>>);
+
+impl Closed {
+    pub fn names(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl<S> tracing_subscriber::Layer<S> for Closed
+where
+    S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
+{
+    fn on_close(&self, id: tracing::span::Id, context: tracing_subscriber::layer::Context<'_, S>) {
+        if let Some(span) = context.span(&id) {
+            self.0.lock().unwrap().push(span.name());
+        }
+    }
+}
 pub const FINISHED: &str = "HTTP response body finished";
 pub const DESTROYED: &str = "application body destroyed";
 

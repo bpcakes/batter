@@ -112,7 +112,8 @@ and writes fail and the task that last polled each connection's I/O is woken,
 whether or not that poll was pending, because Hyper can wait on a body alone
 after ready polls. A component that reveals an earlier stop moves the deadline
 earlier; `ShutdownSignal::abort_deadline_before` reports that, and the midpoint
-is recomputed from the same cancellation instant. Hyper ends those connections in their
+is recomputed from the same cancellation instant. A deadline that has already
+passed leaves the gate open, as a zero cancel allowance does. Hyper ends those connections in their
 own tasks and Axum's graceful wait returns. Axum counts a connection finished
 before its task destroys the connection future, which after an I/O error still
 holds the in-flight handler future and the response body, so each connection's

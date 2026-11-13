@@ -192,7 +192,10 @@ impl AdmittedRequest {
     ///   detect it.
     /// - The body is polled, asked for its end and size, and destroyed under
     ///   the tracing dispatcher current here and inside the request's span, on
-    ///   whichever task the transport uses.
+    ///   whichever task the transport uses. The completion event and the
+    ///   request span itself stay with the subscriber that recorded the span:
+    ///   if the handler switched subscribers before this call, the event is
+    ///   emitted, and the span released, under the request's subscriber.
     /// - Exactly one `HTTP response body finished` event carries the request
     ///   id, the bytes yielded, the duration and a `body_outcome` of
     ///   `completed`, `failed`, `deadline_exceeded`, `idle_timeout`,
@@ -323,16 +326,22 @@ impl AdmittedRequest {
             shutdown: admission.shutdown.clone(),
             correlation_id: admission.correlation_id().clone(),
         };
+        let context = admission
+            .observation
+            .as_ref()
+            .and_then(ObservationState::context);
+        // The handler may have switched subscribers since the request began.
+        let request_dispatch = context
+            .as_ref()
+            .and_then(|span| span.with_subscriber(|(_, dispatch)| dispatch.clone()));
         // Owned before the application builds anything, so a panicking builder
         // still cancels the scope it was given and is still observed.
         let mut owned = OwnedBody {
             inner: None,
             owner,
             dispatch: tracing::dispatcher::get_default(Clone::clone),
-            context: admission
-                .observation
-                .as_ref()
-                .and_then(ObservationState::context),
+            context,
+            request_dispatch,
             correlation_id: admission.correlation_id().clone(),
             started,
             idle: budget.idle,
@@ -491,8 +500,14 @@ struct OwnedBody {
     /// the body ended.
     inner: Option<Body>,
     owner: OperationOwner,
+    /// The dispatcher current at the hand-over, under which the application's
+    /// body is polled, queried and destroyed.
     dispatch: tracing::Dispatch,
     context: Option<tracing::Span>,
+    /// The dispatcher that recorded the request span, if one is published.
+    /// The completion event and the span's release belong to it: a span must
+    /// close, and release its parent, in the registry that owns it.
+    request_dispatch: Option<tracing::Dispatch>,
     correlation_id: CorrelationId,
     started: Instant,
     idle: Duration,
@@ -518,7 +533,10 @@ struct OwnedBody {
 
 impl OwnedBody {
     /// Record the end once: cancel the scope, emit the event, then destroy the
-    /// application's body, all under the captured dispatcher and span.
+    /// application's body, inside the request span. The event and the span's
+    /// release run under the request's dispatcher, the application's body is
+    /// destroyed under the one current at the hand-over; they differ only when
+    /// the handler switched subscribers.
     fn finish(&mut self, end: BodyEnd) {
         if self.ended {
             return;
@@ -527,10 +545,14 @@ impl OwnedBody {
         self.wake = None;
         let duration_ms = self.started.elapsed().as_secs_f64() * 1_000.0;
         // Closing a span releases its parent through the current default
-        // dispatcher, so the span itself must also be released under ours.
+        // dispatcher, so the span must be released under the one that owns it.
         let context = self.context.take();
         let parent = context.as_ref().and_then(tracing::Span::id);
-        tracing::dispatcher::with_default(&self.dispatch, || {
+        let request = self
+            .request_dispatch
+            .take()
+            .unwrap_or_else(|| self.dispatch.clone());
+        tracing::dispatcher::with_default(&request, || {
             {
                 let _entered = context.as_ref().map(tracing::Span::enter);
                 // Escaped clones and the stream's own destructors see the end.
@@ -560,7 +582,10 @@ impl OwnedBody {
                         "HTTP response body finished"
                     );
                 }
-                drop(self.inner.take());
+                // An unwinding destructor still releases the span under its
+                // owner, which this closure's guard keeps current.
+                let inner = self.inner.take();
+                tracing::dispatcher::with_default(&self.dispatch, || drop(inner));
             }
             drop(context);
         });

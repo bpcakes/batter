@@ -29,7 +29,9 @@ contracts, capability facts and validation history.
   a 2xx answer to CONNECT, 1xx, 204, 304), whose declared length frames
   nothing. A body whose answer about its end or size panics is `panicked`,
   including at the hand-over, and is ended before it is destroyed; those
-  answers, like its polls, run under the handler's dispatcher and span. A
+  answers, like its polls, run under the handler's dispatcher and span; its
+  completion event and the request span's release stay with the subscriber
+  that recorded the span, even if the handler switched subscribers. A
   request starts at most one owned body, and only while its response is being
   constructed. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still
@@ -68,8 +70,9 @@ contracts, capability facts and validation history.
   instead of after process exit, though an HTTP/1.0 peer receiving a body
   without a declared length cannot tell that close from the message's end.
   Cancelled handlers still deliver their 503
-  `operation_cancelled` first. With a zero cancel allowance the gate never
-  closes, so the earlier abort-and-skip outcome holds on any runtime flavour,
+  `operation_cancelled` first. With a zero cancel allowance, or once a
+  deadline moved earlier has already passed, the gate never closes, so the
+  earlier abort-and-skip outcome holds on any runtime flavour,
   as it does for a connection task that never yields. The close also reaches a connection that never
   waited in transport I/O, such as one whose first read returned a request head
   with bytes of a following request, after which Hyper waits on the response

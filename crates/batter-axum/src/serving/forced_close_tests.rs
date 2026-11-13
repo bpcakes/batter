@@ -130,6 +130,55 @@ async fn the_close_is_recomputed_exactly_when_the_abort_deadline_moves_earlier()
     );
 }
 
+/// Poll the gate after cancellation with the abort 4 s away, move the abort
+/// to `tightened` once `after` has passed without polling the gate, and return
+/// when the gate closed, if within 5 s.
+async fn closed_after_tightening(after: Duration, tightened: Duration) -> Option<Duration> {
+    let start = Instant::now();
+    let clock = ManualClock::new(start + Duration::from_secs(4));
+    let gate = Gate::new();
+    let mut serving = pin!(serve(
+        std::future::pending::<io::Result<()>>(),
+        clock.clone(),
+        gate.clone()
+    ));
+    clock.cancel();
+    let first = poll_fn(|cx| Poll::Ready(serving.as_mut().poll(cx).is_pending())).await;
+    assert!(first && !gate.is_closed());
+    tokio::time::advance(after).await;
+    clock.tighten(start + tightened);
+    let watching = async {
+        loop {
+            tokio::select! {
+                biased;
+                _ = serving.as_mut() => unreachable!("the serving future never returns"),
+                () = tokio::time::sleep(Duration::from_millis(1)) => {}
+            }
+            if gate.is_closed() {
+                break Instant::now() - start;
+            }
+        }
+    };
+    timeout(Duration::from_secs(5), watching).await.ok()
+}
+
+/// An abort deadline moved to or before now leaves no interval, exactly like a
+/// zero cancel allowance: the gate stays open and the wrapper abort decides,
+/// including when the gate is next polled only after the stale 2 s midpoint
+/// too has passed. A midpoint that has passed while the abort is still ahead
+/// closes at once.
+#[tokio::test(start_paused = true)]
+async fn a_deadline_moved_into_the_past_never_closes_the_gate() {
+    let shortly = Duration::from_millis(100);
+    assert_eq!(closed_after_tightening(shortly, Duration::ZERO).await, None);
+    let late = Duration::from_millis(2500);
+    let stale = closed_after_tightening(late, Duration::from_secs(1)).await;
+    assert_eq!(stale, None);
+    let ahead = closed_after_tightening(shortly, Duration::from_millis(150)).await;
+    let closed = ahead.expect("an abort still ahead closes the gate");
+    assert!(closed <= Duration::from_millis(101), "{closed:?}");
+}
+
 /// A settled native component that reports success.
 struct Settled;
 

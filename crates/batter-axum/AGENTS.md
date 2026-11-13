@@ -201,8 +201,9 @@ recompute the close instant when `ShutdownSignal::abort_deadline_before`
 reports an earlier abort, and wake outside the registry lock. Keep that
 computation behind the private `StopClock` trait, implemented by
 `ShutdownSignal`, so its paused-clock unit test drives the same code. Never close
-when cancellation is observed with no interval left, as with a zero cancel
-allowance: that only races the wrapper abort and fails interruption responses.
+when no interval is left, whether at cancellation, as with a zero cancel
+allowance, or after the deadline moved to an instant already passed: that only
+races the wrapper abort and fails interruption responses.
 Do not describe upgraded connections, handler-detached tasks, a connection
 task that never yields or a zero cancel allowance as covered; the
 wrapper-abort contract still applies to them. Never treat Axum's graceful
@@ -241,10 +242,12 @@ in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
 bounds before each frame and
 register for forced cancellation and the nearer bound only when the source is
-pending. End a library-ended body with an error, never `None`. Poll and query
-the application's body, emit the completion event, destroy that body and
-release the request span all under the captured dispatcher: closing a span releases its
-parent through the current default. Emit the event once, before application
+pending. End a library-ended body with an error, never `None`. Poll, query and
+destroy the application's body under the dispatcher current at the hand-over;
+emit the completion event and release the request span under the dispatcher
+that recorded the span, nesting the body's destruction inside it, because
+closing a span releases its parent through the current default and a handler
+may have switched subscribers before the hand-over. Emit the event once, before application
 destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`
 without a public constructor, and do not claim the bounds for a peer that is
 not reading. `tests/streaming.rs` and `tests/streaming/` cover the owner on a
