@@ -13,7 +13,7 @@ use axum::{
     routing::get as route,
 };
 use batter_axum::{AdmittedRequest, GuardedRouter};
-use batter_core::operation::Interruption;
+use batter_core::operation::{Interruption, OperationContext};
 use futures_util::{
     FutureExt,
     stream::{self, StreamExt},
@@ -208,6 +208,67 @@ fn a_body_whose_end_query_panics_still_ends_under_protection() {
     }
 }
 
+/// Panics when first asked for its size, and records from its destructor
+/// whether its scope was already cancelled and how many completion events
+/// had been emitted by then.
+struct SizeQueryPanics {
+    scope: OperationContext,
+    capture: Arc<Capture>,
+    seen: Arc<Mutex<Option<(bool, usize)>>>,
+}
+
+impl http_body::Body for SizeQueryPanics {
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, io::Error>>> {
+        Poll::Pending
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        panic!("size query failed")
+    }
+}
+
+impl Drop for SizeQueryPanics {
+    fn drop(&mut self) {
+        let cancelled = self.scope.check() == Err(Interruption::Cancelled);
+        *self.seen.lock().unwrap() = Some((cancelled, finished(&self.capture).len()));
+    }
+}
+
+/// The hand-over asks the built body for its size. It owns the body first,
+/// so a query that unwinds there ends it like any other: the scope cancelled
+/// and one `panicked` event emitted before the application's body is
+/// destroyed, and the panic still reaching the caller.
+#[test]
+fn a_size_query_that_panics_at_the_hand_over_ends_the_body_before_destroying_it() {
+    let capture = Arc::new(Capture::new());
+    let seen: Arc<Mutex<Option<(bool, usize)>>> = Arc::default();
+    let panicked = panicking_request(&capture, {
+        let (observed, seen) = (capture.clone(), seen.clone());
+        GuardedRouter::new().route(
+            "/",
+            route(move |admitted: AdmittedRequest| async move {
+                admitted.into_streaming_response(budget(60, 5), move |scope| {
+                    Body::new(SizeQueryPanics {
+                        scope: scope.context().clone(),
+                        capture: observed,
+                        seen,
+                    })
+                })
+            }),
+        )
+    });
+    assert!(panicked);
+    assert_eq!(*seen.lock().unwrap(), Some((true, 1)), "{}", capture.text());
+    let event = assert_finished(&capture, "WARN", "panicked");
+    assert!(!event.contains("size query failed"), "{event}");
+}
+
 /// A body its holder discards before its end is `dropped`, not a failure: here
 /// Axum strips the body of a HEAD request routed to the GET handler, and
 /// admission discards a response the handler built before its
@@ -384,6 +445,44 @@ fn a_refused_start_with_an_empty_body_is_reported_cancelled_unpolled() {
         admitted.contains("body_outcome=\"completed\""),
         "{admitted}"
     );
+}
+
+/// Only the body that started hands its framing to request admission. A
+/// refused second start for the same request must not take the started body's
+/// place, so a length the returned response declares after the hand-over, and
+/// the source does not meet, still makes the started body `failed`.
+#[test]
+fn a_refused_start_leaves_the_framing_to_the_body_that_started() {
+    let capture = Capture::new();
+    let drained = paused(&capture, async {
+        let handle = ready();
+        let app = client(
+            &handle,
+            GuardedRouter::new().route(
+                "/",
+                route(|once: AdmittedRequest, again: AdmittedRequest| async move {
+                    let started = once.into_streaming_response(budget(60, 5), |_scope| {
+                        Body::from_stream(stream::iter([Ok::<_, io::Error>(Bytes::from_static(
+                            b"hello",
+                        ))]))
+                    });
+                    drop(again.into_streaming_response(budget(60, 5), |_scope| ()));
+                    ([(header::CONTENT_LENGTH, "10")], started)
+                }),
+            ),
+        )
+        .await;
+        let mut response = get(&app, "/").await;
+        drain(response.body_mut()).await
+    });
+    assert_eq!(drained, ("hello".to_owned(), None));
+    let events = finished(&capture);
+    assert_eq!(events.len(), 2, "{}", capture.text());
+    let (refused, started) = (&events[0], &events[1]);
+    assert!(refused.contains("body_outcome=\"cancelled\""), "{refused}");
+    assert!(started.trim_start().starts_with("WARN"), "{started}");
+    assert!(started.contains("body_outcome=\"failed\""), "{started}");
+    assert!(started.contains("bytes=5"), "{started}");
 }
 
 /// Names the spans the registry closes.

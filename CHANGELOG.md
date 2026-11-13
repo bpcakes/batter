@@ -23,11 +23,13 @@ contracts, capability facts and validation history.
   expired does not extend the body. A body whose source produced its whole
   message is `completed` even when Hyper never polls for its end: after its
   advertised `Content-Length` or exact size, taken from the response request
-  admission returns, or after trailers; one that ends, reports its end or
+  admission returns however the handler built it, or after trailers; one that ends, reports its end or
   yields trailers short of its advertised length is `failed`, since Hyper
   aborts that message, except on a response Hyper writes without a body (HEAD,
   a 2xx answer to CONNECT, 1xx, 204, 304), whose declared length frames
-  nothing. A body whose answer about its end or size panics is `panicked`. A
+  nothing. A body whose answer about its end or size panics is `panicked`,
+  including at the hand-over, and is ended before it is destroyed; those
+  answers, like its polls, run under the handler's dispatcher and span. A
   request starts at most one owned body, and only while its response is being
   constructed. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still

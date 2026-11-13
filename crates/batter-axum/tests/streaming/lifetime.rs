@@ -319,6 +319,74 @@ fn polling_and_destruction_keep_the_handlers_subscriber_and_span() {
     assert!(!foreign.contains(DESTROYED), "{foreign}");
 }
 
+const END_ANSWERED: &str = "end query answered";
+const SIZE_ANSWERED: &str = "size query answered";
+
+/// Never produces a frame, and observes each question it is asked.
+struct Answers;
+
+impl http_body::Body for Answers {
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Bytes>, io::Error>>> {
+        std::task::Poll::Pending
+    }
+
+    fn is_end_stream(&self) -> bool {
+        tracing::info!("{END_ANSWERED}");
+        false
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        tracing::info!("{SIZE_ANSWERED}");
+        http_body::SizeHint::default()
+    }
+}
+
+/// A transport asks the body for its end and size as well as polling it, on
+/// its own task. Answering runs application code, so it is observed under the
+/// handler's subscriber and inside the request span, like a poll.
+#[test]
+fn a_transports_end_and_size_queries_keep_the_handlers_subscriber_and_span() {
+    let capture = Capture::new();
+    let transport = Capture::new();
+    paused(&capture, async {
+        let handle = ready();
+        let app = client(
+            &handle,
+            GuardedRouter::new().route(
+                "/",
+                route(|admitted: AdmittedRequest| async move {
+                    admitted.into_streaming_response(budget(60, 5), |_scope| Body::new(Answers))
+                }),
+            ),
+        )
+        .await;
+        let response = get(&app, "/").await;
+        tracing::dispatcher::with_default(&transport.dispatch, || {
+            assert!(!response.body().is_end_stream());
+            assert_eq!(response.body().size_hint().exact(), None);
+            drop(response);
+        });
+    });
+    let text = capture.text();
+    for answered in [END_ANSWERED, SIZE_ANSWERED] {
+        let line = text
+            .lines()
+            .find(|line| line.contains(answered))
+            .unwrap_or_else(|| panic!("{text}"));
+        assert!(line.contains("batter.http{"), "{line}");
+    }
+    assert_finished(&capture, "INFO", "dropped");
+    let foreign = transport.text();
+    assert!(!foreign.contains(END_ANSWERED), "{foreign}");
+    assert!(!foreign.contains(SIZE_ANSWERED), "{foreign}");
+}
+
 /// The authority to start a body belongs to the request, not to one extracted
 /// value: a second extraction cannot start another body, and a request kept
 /// past its response cannot start one at all, even once the process drains.

@@ -215,17 +215,20 @@ that length is `failed`, because Hyper aborts the message. Take no advertised
 length from a response Hyper writes without a body: mirror its
 `can_have_body` rule for the request method and response status. Settle the
 advertised length again from the response request admission returns, through
-the private `Framing` extension the built response carries, because a
-handler's tuple or an inner layer can declare it after the hand-over. Do not
+the admission record's shared `FramingSlot` that only a started body fills,
+because a handler's tuple or an inner layer can declare it after the
+hand-over; never carry it on the response, which a handler can rebuild around
+the body. Own the built body before asking it anything, so a query that
+unwinds at the hand-over still ends it before it is destroyed. Do not
 claim truncation is visible to an HTTP/1.0 peer for a body without a declared
 length: Hyper delimits it by closing the connection. The observer publishes the request span
 in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
 bounds before each frame and
 register for forced cancellation and the nearer bound only when the source is
-pending. End a library-ended body with an error, never `None`. Poll the
-application's body, emit the completion event, destroy that body and release
-the request span all under the captured dispatcher: closing a span releases its
+pending. End a library-ended body with an error, never `None`. Poll and query
+the application's body, emit the completion event, destroy that body and
+release the request span all under the captured dispatcher: closing a span releases its
 parent through the current default. Emit the event once, before application
 destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`
 without a public constructor, and do not claim the bounds for a peer that is

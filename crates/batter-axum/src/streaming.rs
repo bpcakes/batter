@@ -190,9 +190,9 @@ impl AdmittedRequest {
     ///   connection closes, so that peer cannot tell the truncation from the
     ///   message's end. Declare a `Content-Length` where an HTTP/1.0 peer must
     ///   detect it.
-    /// - The body is polled and destroyed under the tracing dispatcher current
-    ///   here and inside the request's span, on whichever task the transport
-    ///   uses.
+    /// - The body is polled, asked for its end and size, and destroyed under
+    ///   the tracing dispatcher current here and inside the request's span, on
+    ///   whichever task the transport uses.
     /// - Exactly one `HTTP response body finished` event carries the request
     ///   id, the bytes yielded, the duration and a `body_outcome` of
     ///   `completed`, `failed`, `deadline_exceeded`, `idle_timeout`,
@@ -202,8 +202,9 @@ impl AdmittedRequest {
     ///   its whole message, including one the transport finished without
     ///   asking for its end: after the advertised `Content-Length` or exact
     ///   size, or after trailers. The advertised length is the one the
-    ///   response carries when request admission returns it, so a length a
-    ///   handler's tuple or an inner layer adds afterwards counts; a layer
+    ///   response carries when request admission returns it, however it was
+    ///   built: a length a handler's tuple or an inner layer adds afterwards
+    ///   counts, as does one on a response rebuilt around this body; a layer
     ///   outside admission that changes it is not observed. A source that
     ///   ends, reports its end or yields trailers short of its advertised
     ///   length is `failed`: the transport aborts that message and the peer
@@ -217,8 +218,8 @@ impl AdmittedRequest {
     ///   The request's own completion event, with its method and status,
     ///   tells these apart. `panicked` names a builder that never
     ///   returned, a poll of the body that unwound, a query of its end or size
-    ///   that unwound, whether the transport or its destruction asked, or
-    ///   destruction while the thread unwinds, such as a handler panicking
+    ///   that unwound, whether the hand-over, the transport or its destruction
+    ///   asked, or destruction while the thread unwinds, such as a handler panicking
     ///   after this call; it carries no panic payload. The request's own
     ///   completion event is unchanged and still describes response
     ///   construction only.
@@ -344,17 +345,20 @@ impl AdmittedRequest {
             inspecting: Cell::new(false),
             refused,
         };
-        let (mut parts, body) = build(scope).into_response().into_parts();
-        // Provisional: request admission settles it again from the response
-        // it returns, after the handler's own composition and inner layers.
-        owned.framing.settle(
-            &admission.method,
-            parts.status,
-            &parts.headers,
-            &body.size_hint(),
-        );
-        parts.extensions.insert(owned.framing.clone());
+        let (parts, body) = build(scope).into_response().into_parts();
+        // Owned before it is asked anything, so a query that unwinds still
+        // ends the body under protection before the application's body is
+        // destroyed.
         owned.inner = Some(body);
+        // Provisional: request admission settles it again from the response
+        // it returns, however the handler composed or rebuilt that response.
+        let hint = owned.inspect(HttpBody::size_hint).unwrap_or_default();
+        owned
+            .framing
+            .settle(&admission.method, parts.status, &parts.headers, &hint);
+        if !refused {
+            admission.framing.hand_over(owned.framing.clone());
+        }
         Response::from_parts(parts, Body::new(owned))
     }
 }
@@ -365,10 +369,10 @@ impl AdmittedRequest {
 /// by Hyper's `can_have_body` rule for the request method and response status,
 /// frames none, so a length it declares is not one to produce.
 ///
-/// The response the body was built into carries a copy, so request admission
-/// settles it again from the response it returns: headers added afterwards by
-/// a handler's tuple or an inner layer frame the message Hyper writes. Layers
-/// outside admission are not observed.
+/// Request admission settles it again from the response it returns, through
+/// the request's [`FramingSlot`]: headers a handler's tuple or an inner layer
+/// adds afterwards, or a response rebuilt around the body, frame the message
+/// Hyper writes. Layers outside admission are not observed.
 #[derive(Clone, Default)]
 pub(crate) struct Framing(Arc<Mutex<Option<u64>>>);
 
@@ -391,12 +395,26 @@ impl Framing {
     }
 }
 
-/// Settle the framing of the owned body `response` carries, if any, from the
-/// response as request admission returns it for a request with `method`.
-pub(crate) fn settle_framing(method: &Method, response: &Response) {
-    if let Some(framing) = response.extensions().get::<Framing>() {
-        let hint = response.body().size_hint();
-        framing.settle(method, response.status(), response.headers(), &hint);
+/// One request's framing hand-off. Request admission keeps it and the body the
+/// request starts places its [`Framing`] in it; every clone of the admission
+/// record shares the one slot. The response cannot carry it: a handler can
+/// rebuild the response around the body and drop everything else it carried.
+#[derive(Clone, Default)]
+pub(crate) struct FramingSlot(Arc<Mutex<Option<Framing>>>);
+
+impl FramingSlot {
+    fn hand_over(&self, framing: Framing) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(framing);
+    }
+
+    /// Settle the started body's framing, if a body started, from the response
+    /// request admission returns for a request with `method`.
+    pub(crate) fn settle(&self, method: &Method, response: &Response) {
+        let framing = self.0.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(framing) = framing {
+            let hint = response.body().size_hint();
+            framing.settle(method, response.status(), response.headers(), &hint);
+        }
     }
 }
 
@@ -490,8 +508,8 @@ struct OwnedBody {
     /// Set while the application's body is being polled, so a poll that
     /// unwinds is recognised when the transport destroys the body afterwards.
     polling: bool,
-    /// Set while the transport asks the application's body for its end or
-    /// size, for the same reason.
+    /// Set while the application's body is asked for its end or size, for the
+    /// same reason.
     inspecting: Cell<bool>,
     /// The request's body-start authority was already spent or expired. An
     /// empty body is never polled, so the refusal is reported on destruction.
@@ -577,12 +595,16 @@ impl OwnedBody {
         }
     }
 
-    /// Ask the application's body for the transport, marking the call so one
-    /// that unwinds is reported as a panic when the body is destroyed.
+    /// Ask the application's body a question under the captured dispatcher
+    /// and span, as a poll is, marking the call so one that unwinds is
+    /// reported as a panic when the body is destroyed.
     fn inspect<T>(&self, query: impl FnOnce(&Body) -> T) -> Option<T> {
         let inner = self.inner.as_ref()?;
         self.inspecting.set(true);
-        let answer = query(inner);
+        let answer = tracing::dispatcher::with_default(&self.dispatch, || {
+            let _entered = self.context.as_ref().map(tracing::Span::enter);
+            query(inner)
+        });
         self.inspecting.set(false);
         Some(answer)
     }

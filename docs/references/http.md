@@ -440,8 +440,11 @@ sources in the locked registry.
   `response/into_response_parts.rs:149-157`). A length declared after
   `into_streaming_response` returns therefore frames the message, so the owned
   body takes its advertised length from the response request admission
-  returns. Checked on 2026-11-12; real-socket tests cover a length declared
-  through a tuple, both short and met.
+  returns. `http` 1.x `Response::into_body` discards the response's parts,
+  extensions included, so the started body hands its framing to admission
+  through the admission record rather than the response. Checked on
+  2026-11-12 and 2026-11-13; real-socket tests cover a length declared through
+  a tuple and on a response rebuilt around the body, both short and met.
 - Hyper answers an HTTP/1.0 request in HTTP/1.0 (`conn.rs:692-699`,
   `enforce_version`) and, with no declared length, delimits the body by
   closing the connection (`role.rs:921-925`, `Encoder::close_delimited`). A

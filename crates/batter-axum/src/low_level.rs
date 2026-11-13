@@ -279,18 +279,20 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         "http.response_construction",
         |scope| async move {
             let method = request.method().clone();
+            let framing = crate::streaming::FramingSlot::default();
             admitted::record(
                 request.extensions_mut(),
                 scope.clone(),
                 interruption,
                 continuation,
                 method.clone(),
+                framing.clone(),
             );
             request.extensions_mut().insert(scope);
             let response = next.run(request).await;
             // An owned body is framed by the response Hyper writes, which the
-            // handler's composition and inner layers may have changed since.
-            crate::streaming::settle_framing(&method, &response);
+            // handler may have rebuilt and inner layers changed since.
+            framing.settle(&method, &response);
             Ok::<_, Infallible>(response)
         },
         |result| resolve_response(result, &responder),

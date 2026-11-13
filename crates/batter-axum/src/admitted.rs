@@ -2,7 +2,7 @@
 
 use crate::{
     CorrelationId, HttpFailure, RequestInterruptionResponder, correlation,
-    observation::ObservationState,
+    observation::ObservationState, streaming::FramingSlot,
 };
 use axum::{
     extract::FromRequestParts,
@@ -43,6 +43,9 @@ pub(crate) struct Admission {
     /// The request's method, which decides with the response status whether
     /// the transport writes a response body at all.
     pub(crate) method: Method,
+    /// Where the body this request starts hands its framing to admission,
+    /// which settles it from the response it returns. Shared by every clone.
+    pub(crate) framing: FramingSlot,
 }
 
 /// Record the admitted request for [`AdmittedRequest`].
@@ -56,6 +59,7 @@ pub(crate) fn record(
     interruption: RequestInterruptionResponder,
     continuation: OperationContinuation,
     method: Method,
+    framing: FramingSlot,
 ) {
     extensions.remove::<Admission>();
     if let Some(correlation_id) = correlation::server_correlation(extensions) {
@@ -69,6 +73,7 @@ pub(crate) fn record(
             shutdown,
             observation,
             method,
+            framing,
         });
     }
 }

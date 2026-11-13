@@ -317,8 +317,8 @@ cannot tell the library's truncation from the message's end. Declare a
 upstream, must detect it. Both bounds
 are checked before a frame is accepted, so a frame that became ready only after
 its wait expired does not extend the body. The body is
-polled and destroyed under the tracing dispatcher and request span of the
-handler that handed it over, and it holds that `batter.http` span open until it
+polled, asked for its end and size, and destroyed under the tracing dispatcher
+and request span of the handler that handed it over, on whichever task asks, and it holds that `batter.http` span open until it
 ends: span-close timing, such as an exported span's duration, then covers the
 body, while `latency_ms` and the request's completion event still measure
 response construction. Exactly one `HTTP response body finished` event
@@ -330,9 +330,10 @@ or a handler that panicked after handing the body over) at WARN. `completed` mea
 source produced its whole message, including a body Hyper finishes without
 asking for its end: after its advertised `Content-Length` or exact size, or
 after trailers. The advertised length is the one the response carries when
-request admission returns it, so a length added by the handler's tuple or an
-inner layer after `into_streaming_response` counts; a layer outside admission
-that changes it is not observed. A source that ends, reports its end or yields trailers short of
+request admission returns it, however it was built, so a length added by the
+handler's tuple or an inner layer after `into_streaming_response`, or carried
+by a response the handler rebuilt around the body, counts; a layer outside
+admission that changes it is not observed. A source that ends, reports its end or yields trailers short of
 its advertised length is `failed`: Hyper aborts that message and the peer sees
 it truncated. A response Hyper writes without a body (to HEAD, a 2xx answer to
 CONNECT, or a 1xx, 204 or 304 status) frames no length, so its empty body is

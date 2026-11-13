@@ -7,6 +7,7 @@ use crate::capture::Capture;
 use axum::{
     body::{Body, Bytes},
     http::{HeaderMap, HeaderName, HeaderValue, header},
+    response::{IntoResponse, Response},
     routing::get as route,
 };
 use batter_axum::{
@@ -360,12 +361,22 @@ fn a_body_that_ended_before_its_declared_length_is_observed_as_failed() {
     assert_short_and_failed(&capture, &text);
 }
 
-/// Serve `source` and declare `length` only after the hand-over, as a
-/// handler's Axum tuple applies headers to the response it wraps, then return
-/// what the peer read before the connection ended.
+/// How a handler declares a length after the hand-over.
+#[derive(Clone, Copy)]
+enum Declared {
+    /// An Axum tuple applies headers to the response it wraps.
+    ByTuple,
+    /// A new response is built around the owned body, keeping nothing else
+    /// the built response carried.
+    OnRebuiltResponse,
+}
+
+/// Serve `source` and declare `length` only after the hand-over, `declared`,
+/// then return what the peer read before the connection ended.
 fn served_declared_afterwards(
     capture: &Capture,
     length: &'static str,
+    declared: Declared,
     source: fn() -> Body,
 ) -> String {
     capture.block_on(async {
@@ -374,7 +385,15 @@ fn served_declared_afterwards(
             route(move |admitted: AdmittedRequest| async move {
                 let response =
                     admitted.into_streaming_response(budget(600, 300), move |_scope| source());
-                ([(header::CONTENT_LENGTH, length)], response)
+                match declared {
+                    Declared::ByTuple => {
+                        ([(header::CONTENT_LENGTH, length)], response).into_response()
+                    }
+                    Declared::OnRebuiltResponse => Response::builder()
+                        .header(header::CONTENT_LENGTH, length)
+                        .body(response.into_body())
+                        .unwrap(),
+                }
             }),
         ))
         .await;
@@ -389,28 +408,31 @@ fn served_declared_afterwards(
 }
 
 /// Hyper frames the message by the length the returned response declares,
-/// not the one seen when the body was handed over, and so does the outcome.
+/// not the one seen when the body was handed over, and so does the outcome,
+/// including on a response the handler rebuilt around the body.
 #[test]
 fn a_length_declared_after_the_hand_over_decides_the_outcome() {
-    let capture = Capture::new();
-    let text = served_declared_afterwards(&capture, "10", || {
-        Body::from_stream(stream::iter([Ok::<_, Infallible>(Bytes::from_static(
-            b"hello",
-        ))]))
-    });
-    assert_short_and_failed(&capture, &text);
+    for declared in [Declared::ByTuple, Declared::OnRebuiltResponse] {
+        let capture = Capture::new();
+        let text = served_declared_afterwards(&capture, "10", declared, || {
+            Body::from_stream(stream::iter([Ok::<_, Infallible>(Bytes::from_static(
+                b"hello",
+            ))]))
+        });
+        assert_short_and_failed(&capture, &text);
 
-    // Met: Hyper ends the message after five bytes and destroys the source
-    // without asking for its end.
-    let capture = Capture::new();
-    let text = served_declared_afterwards(&capture, "5", || {
-        let source = stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
-        Body::from_stream(source.chain(stream::pending()))
-    });
-    assert!(text.contains("content-length: 5\r\n"), "{text}");
-    assert!(text.ends_with("\r\n\r\nhello"), "{text}");
-    let event = assert_finished(&capture, "INFO", "completed");
-    assert!(event.contains("bytes=5"), "{event}");
+        // Met: Hyper ends the message after five bytes and destroys the
+        // source without asking for its end.
+        let capture = Capture::new();
+        let text = served_declared_afterwards(&capture, "5", declared, || {
+            let source = stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
+            Body::from_stream(source.chain(stream::pending()))
+        });
+        assert!(text.contains("content-length: 5\r\n"), "{text}");
+        assert!(text.ends_with("\r\n\r\nhello"), "{text}");
+        let event = assert_finished(&capture, "INFO", "completed");
+        assert!(event.contains("bytes=5"), "{event}");
+    }
 }
 
 /// Hyper answers an HTTP/1.0 request in HTTP/1.0, where a body without a

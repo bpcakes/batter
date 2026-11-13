@@ -2599,9 +2599,10 @@ truncation from the message's end. A declared `Content-Length` keeps the
 shortfall visible to it. Ending at drain is left to the
 stream through `BodyScope::shutdown`.
 
-The body is polled under the tracing dispatcher current when the handler handed
-it over and inside the request's span context. The application's body and that
-span are also destroyed under it: closing a span releases its parent through
+The body is polled, and asked for its end and size, under the tracing
+dispatcher current when the handler handed it over and inside the request's
+span context, whichever task asks. The application's body and that span are
+also destroyed under it: closing a span releases its parent through
 the current default dispatcher, so releasing either on the transport's task
 unprotected would reach another registry. The request's observer publishes
 that span to the body only while the observer is alive and releases its copy
@@ -2621,9 +2622,11 @@ whose body Axum strips, or a response discarded because response construction
 ended without it; the request's own completion event, with its method and
 status, tells these apart. `panicked` names a builder that never returned, a poll of the body that
 unwound (the transport destroys such a body after catching the unwind), a
-question about the body's end or size that unwound, whether the transport asked
-it or the owner asked it while destroying the body (the owner still finishes
-under the captured dispatcher and the panic then continues), or destruction
+question about the body's end or size that unwound, whether the owner asked it
+at the hand-over, the transport asked it, or the owner asked it while
+destroying the body (the owner owns the body before its first question, so it
+still finishes under the captured dispatcher before the application's body is
+destroyed, and the panic then continues), or destruction
 during unwinding, such as a handler panicking after the hand-over; it carries
 no payload. A body destroyed after its scope was cancelled or
 expired reports that reason instead of `dropped`, and a source that produced
@@ -2632,8 +2635,11 @@ end: Hyper stops once `is_end_stream` reports the end, once the advertised
 `Content-Length` or exact size has been written, and after trailers. The
 advertised length is taken again from the response request admission returns,
 because Hyper frames the message by the headers it encodes and Axum applies a
-handler tuple's headers after `into_streaming_response` returns; a layer outside
-admission that changes the length is not observed. A source
+handler tuple's headers after `into_streaming_response` returns. The started
+body hands its framing to request admission through the admission record, not
+through the response, so a response the handler rebuilt around the body, which
+keeps nothing else the built response carried, is settled the same way; a
+layer outside admission that changes the length is not observed. A source
 that yields its end, reports it through `is_end_stream` or yields trailers
 before producing its advertised length is `failed` (WARN): Hyper aborts that
 message and the peer sees it truncated. Hyper, not the owner, enforces the
@@ -2650,10 +2656,13 @@ only after its idle wait expired, an always-ready source, a parked frame woken b
 stream's choice, a body started during drain, a stream error, a builder
 panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
-a second and a late body start for one request, a refused empty body that is
-never polled, a HEAD request, a declared length on a 304 and on a HEAD
+a second and a late body start for one request, a refused second start that
+leaves the length declared after the hand-over to the body that started, a
+refused empty body that is never polled, a HEAD request, a declared length on a 304 and on a HEAD
 response, a body whose answer about its end panics during destruction and when
-the transport asks first, and a
+the transport asks first, a body whose first answer about its size panics at
+the hand-over, its end and size answered under the handler's subscriber and
+request span when a foreign subscriber asks, and a
 response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, and a
 foreign subscriber on the polling task.
 [Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
@@ -2664,8 +2673,9 @@ stream that produced its declared `Content-Length` and one that ended with
 trailers, neither of which yields its end, each reported `completed`, and a
 source that ended or reported its end five bytes short of a declared ten,
 each reported `failed` with the peer's message truncated, a length a handler
-tuple declares after the hand-over, which decides `failed` when short and
-`completed` when met, and an HTTP/1.0 request whose body, ended at its idle
+tuple declares after the hand-over, or a response rebuilt around the body
+declares, which decides `failed` when short and `completed` when met, and an
+HTTP/1.0 request whose body, ended at its idle
 bound and reported `idle_timeout`, reaches the peer without a declared length
 or chunked framing and as an orderly close.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
@@ -2687,7 +2697,13 @@ skipping the framing settled at request admission failed the late-declared
 length case, asking the source for its end in destruction without catching
 the unwind failed the panicking-answer case, as did forgetting a transport
 question that unwound, and starting a continuation without checking its
-admitted operation failed the core unit test.
+admitted operation failed the core unit test. On 2026-11-13, asking the
+body for its end or size outside the captured dispatcher failed the
+foreign-subscriber query case, asking for its size before owning it failed the
+hand-over panic case, dropping the admission-owned framing hand-off failed the
+late-declared length case, the committed extension-based hand-off failed
+its rebuilt-response half, and letting a refused start hand over its framing
+failed the refused-start framing case.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
