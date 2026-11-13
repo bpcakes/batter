@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use batter_core::{
-    lifecycle::{OperationContinuation, ShutdownSignal},
+    lifecycle::{ShutdownSignal, low_level::OperationContinuation},
     operation::OperationContext,
 };
 use std::{
@@ -120,7 +120,7 @@ pub(crate) fn record(
 ///
 /// ```compile_fail,E0423
 /// use batter_axum::AdmittedRequest;
-/// use batter_core::{lifecycle::OperationContinuation, operation::OperationContext};
+/// use batter_core::{lifecycle::low_level::OperationContinuation, operation::OperationContext};
 ///
 /// fn forge(context: OperationContext) -> AdmittedRequest {
 ///     AdmittedRequest(context)

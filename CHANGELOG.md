@@ -17,26 +17,31 @@ contracts, capability facts and validation history.
   then closes when the body ends, so span-close timing includes the body), and
   one `HTTP response body finished` event with `request_id`, `bytes`,
   `duration_ms` and `body_outcome`. A bound or forced cancellation truncates
-  the message visibly; both bounds are checked before a frame is accepted, so
-  a frame ready only after its wait expired does not extend the body. A body
-  whose source produced its whole message is `completed` even when Hyper never
-  polls for its end: after its advertised `Content-Length` or exact size, or
-  after trailers; one that ends, reports its end or yields trailers short of
-  its advertised length is `failed`, since Hyper aborts that message, except
-  on a response Hyper writes without a body (HEAD, a 2xx answer to CONNECT,
-  1xx, 204, 304), whose declared length frames nothing. A request starts at most one owned body, and only while
-  its response is being constructed. The existing completion event and every
+  the message visibly, except to an HTTP/1.0 peer receiving a body without a
+  declared length, which Hyper delimits by closing the connection; both bounds
+  are checked before a frame is accepted, so a frame ready only after its wait
+  expired does not extend the body. A body whose source produced its whole
+  message is `completed` even when Hyper never polls for its end: after its
+  advertised `Content-Length` or exact size, taken from the response request
+  admission returns, or after trailers; one that ends, reports its end or
+  yields trailers short of its advertised length is `failed`, since Hyper
+  aborts that message, except on a response Hyper writes without a body (HEAD,
+  a 2xx answer to CONNECT, 1xx, 204, 304), whose declared length frames
+  nothing. A body whose answer about its end or size panics is `panicked`. A
+  request starts at most one owned body, and only while its response is being
+  constructed. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still
   compiles. Not covered: a peer that stops reading (ended only by the forced
   connection close), upgraded connections, and admission permits held for a
   body's lifetime. `batter-axum` now depends on `http-body` directly
   (`batter-9wig.6`).
-- Add the lower-level `OperationAdmission::admit_root_with_continuation` and
-  `OperationContinuation` in `batter-core`: proof of an admission from which an
-  adapter starts work that continues the admitted operation under its own
-  deadline, without a second readiness read. The proof is not `Clone` and
-  `start` consumes it, so one admission continues into at most one root.
-  Additive (`batter-9wig.6`).
+- Add the lower-level `lifecycle::low_level::admit_root_with_continuation` and
+  `lifecycle::low_level::OperationContinuation` in `batter-core`: proof of an
+  admission from which an adapter starts work that continues the admitted
+  operation under its own deadline, without a second readiness read. The proof
+  is not `Clone` and `start` consumes it, so one admission continues into at
+  most one root, and a start after the admitted operation was cancelled or
+  passed its deadline is already cancelled. Additive (`batter-9wig.6`).
 - The `http_service` example gains an `/events` route that streams server-sent
   events through `into_streaming_response` and ends at drain.
 
@@ -53,7 +58,9 @@ contracts, capability facts and validation history.
   success with `forced_cancellation` set and runs cleanup, where it reported
   `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
   message or a closed connection in the second half of the cancel allowance
-  instead of after process exit. Cancelled handlers still deliver their 503
+  instead of after process exit, though an HTTP/1.0 peer receiving a body
+  without a declared length cannot tell that close from the message's end.
+  Cancelled handlers still deliver their 503
   `operation_cancelled` first. With a zero cancel allowance the gate never
   closes, so the earlier abort-and-skip outcome holds on any runtime flavour,
   as it does for a connection task that never yields. The close also reaches a connection that never

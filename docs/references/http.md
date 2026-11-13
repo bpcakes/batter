@@ -433,6 +433,23 @@ sources in the locked registry.
   one after setting its length (`routing/route.rs:166-171`). The owned body
   therefore takes no advertised length from such a response. Checked on
   2026-11-12; in-process tests cover a 304 and a HEAD response.
+- Hyper frames a body whose size it does not know by the `Content-Length`
+  header present when it encodes the head (`role.rs:746-766`), and Axum 0.8.9
+  applies a tuple's headers after the inner response is built
+  (`axum-core` `response/into_response.rs:396-416`,
+  `response/into_response_parts.rs:149-157`). A length declared after
+  `into_streaming_response` returns therefore frames the message, so the owned
+  body takes its advertised length from the response request admission
+  returns. Checked on 2026-11-12; real-socket tests cover a length declared
+  through a tuple, both short and met.
+- Hyper answers an HTTP/1.0 request in HTTP/1.0 (`conn.rs:692-699`,
+  `enforce_version`) and, with no declared length, delimits the body by
+  closing the connection (`role.rs:921-925`, `Encoder::close_delimited`). A
+  body error still closes the connection (`dispatch.rs:401-405`), so such a
+  peer receives an orderly end of stream after the data already written and
+  cannot tell an interrupted body from a complete one; a declared length keeps
+  the shortfall visible. Checked on 2026-11-12; a real-socket HTTP/1.0 test
+  observes the clean close.
 
 Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
 operations instead of owning the accept loop. A connection need not be waiting

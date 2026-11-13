@@ -12,7 +12,12 @@ mod caller_owned;
 mod capability;
 pub(crate) use capability::StartupPhase;
 mod continuation;
-pub use continuation::OperationContinuation;
+
+/// Lower-level adapter seams with caller-owned obligations, apart from the
+/// protected admission path.
+pub mod low_level {
+    pub use super::continuation::{OperationContinuation, admit_root_with_continuation};
+}
 mod driver;
 mod managed;
 mod process;

@@ -161,7 +161,8 @@ including the dependency-first/lifecycle-last read order, application conditions
 that can only narrow readiness and unrepresentable healthy-as-failure states.
 `crates/batter-core/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
 `crates/batter-core/src/lifecycle/continuation.rs` owns `OperationContinuation`,
-the adapter-facing proof of an admission from which continued work starts
+published with its admission entry point under `lifecycle::low_level`, the
+adapter-facing proof of an admission from which continued work starts
 without a second readiness read.
 `crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries,
 typed failures, and pre-telemetry resolution of application-retained outcomes.

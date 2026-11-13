@@ -54,7 +54,8 @@ mod forced_close;
 /// and destroys its handler or body in that connection's own task, so Axum's
 /// graceful wait returns: the wrapper is joined, not aborted, and dependent
 /// cleanup runs with `forced_cancellation` reported. The peer sees a truncated
-/// message or a closed connection.
+/// message or a closed connection; an HTTP/1.0 peer receiving a body without a
+/// declared length cannot tell that close from the message's end.
 ///
 /// A zero cancel allowance leaves no such interval, so the I/O is never closed,
 /// and a connection task that never yields cannot be ended this way. In both

@@ -10,7 +10,8 @@ use axum::{
     routing::get as route,
 };
 use batter_axum::{
-    AdmittedRequest, GuardedRouter, HttpBoundary, RequestPolicy, ResponseConstructionBudget,
+    AdmittedRequest, BodyBudget, GuardedRouter, HttpBoundary, RequestPolicy,
+    ResponseConstructionBudget,
 };
 use batter_core::{
     cleanup::CleanupBudget,
@@ -357,6 +358,101 @@ fn a_body_that_ended_before_its_declared_length_is_observed_as_failed() {
         ))]))
     });
     assert_short_and_failed(&capture, &text);
+}
+
+/// Serve `source` and declare `length` only after the hand-over, as a
+/// handler's Axum tuple applies headers to the response it wraps, then return
+/// what the peer read before the connection ended.
+fn served_declared_afterwards(
+    capture: &Capture,
+    length: &'static str,
+    source: fn() -> Body,
+) -> String {
+    capture.block_on(async {
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(move |admitted: AdmittedRequest| async move {
+                let response =
+                    admitted.into_streaming_response(budget(600, 300), move |_scope| source());
+                ([(header::CONTENT_LENGTH, length)], response)
+            }),
+        ))
+        .await;
+        let mut client = served.request().await;
+        let mut bytes = Vec::new();
+        // A short message is aborted, so the read may end in a reset.
+        let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
+        wait_for_finished(capture).await;
+        served.shut_down().await;
+        String::from_utf8_lossy(&bytes).into_owned()
+    })
+}
+
+/// Hyper frames the message by the length the returned response declares,
+/// not the one seen when the body was handed over, and so does the outcome.
+#[test]
+fn a_length_declared_after_the_hand_over_decides_the_outcome() {
+    let capture = Capture::new();
+    let text = served_declared_afterwards(&capture, "10", || {
+        Body::from_stream(stream::iter([Ok::<_, Infallible>(Bytes::from_static(
+            b"hello",
+        ))]))
+    });
+    assert_short_and_failed(&capture, &text);
+
+    // Met: Hyper ends the message after five bytes and destroys the source
+    // without asking for its end.
+    let capture = Capture::new();
+    let text = served_declared_afterwards(&capture, "5", || {
+        let source = stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
+        Body::from_stream(source.chain(stream::pending()))
+    });
+    assert!(text.contains("content-length: 5\r\n"), "{text}");
+    assert!(text.ends_with("\r\n\r\nhello"), "{text}");
+    let event = assert_finished(&capture, "INFO", "completed");
+    assert!(event.contains("bytes=5"), "{event}");
+}
+
+/// Hyper answers an HTTP/1.0 request in HTTP/1.0, where a body without a
+/// declared length is delimited by closing the connection. A body the library
+/// ends there reaches the peer as a clean close after the data it produced,
+/// indistinguishable on the wire from a complete message: the documented
+/// limit of the truncation guarantee.
+#[test]
+fn an_interrupted_body_without_a_declared_length_reaches_an_http10_peer_as_a_clean_close() {
+    let capture = Capture::new();
+    let text = capture.block_on(async {
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(|admitted: AdmittedRequest| async move {
+                let budget =
+                    BodyBudget::new(Duration::from_secs(600), Duration::from_millis(100)).unwrap();
+                admitted.into_streaming_response(budget, |_scope| stuck())
+            }),
+        ))
+        .await;
+        let mut client = TcpStream::connect(served.address).await.unwrap();
+        client
+            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut text = String::new();
+        // An orderly end of stream, as a complete close-delimited message ends.
+        timeout(WAIT, client.read_to_string(&mut text))
+            .await
+            .unwrap()
+            .unwrap();
+        wait_for_finished(&capture).await;
+        served.shut_down().await;
+        text
+    });
+    let (head, body) = text.split_once("\r\n\r\n").unwrap();
+    assert!(head.starts_with("HTTP/1.0 200 "), "{text}");
+    let head = head.to_ascii_lowercase();
+    assert!(!head.contains("content-length"), "{text}");
+    assert!(!head.contains("transfer-encoding"), "{text}");
+    assert_eq!(body, "first;");
+    assert_finished(&capture, "WARN", "idle_timeout");
 }
 
 /// One frame, after which the source reports its end without yielding it.

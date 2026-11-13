@@ -204,13 +204,21 @@ take-once slot shared by every clone, and honour it only while the request's
 own context is live; a refused start gets an already-cancelled standalone
 owner, never a root under process cancellation. Cancel the body's context on
 every ending, including destruction and a panicking builder. Report an application panic (a builder
-that never returned, a poll that unwound, destruction while unwinding) as
-`panicked`, never as a departed peer. A body the transport finishes without
+that never returned, a poll that unwound, an end or size query that unwound,
+destruction while unwinding) as `panicked`, never as a departed peer. Ask the
+source for its end during destruction only under the captured dispatcher and
+inside `catch_unwind`, finishing before the panic continues, and never ask it
+again after a transport's query unwound. A body the transport finishes without
 asking for its end is `completed` only once its advertised length is produced,
 or, without one, after `is_end_stream` or trailers; a source that ends short of
 that length is `failed`, because Hyper aborts the message. Take no advertised
 length from a response Hyper writes without a body: mirror its
-`can_have_body` rule for the request method and response status. The observer publishes the request span
+`can_have_body` rule for the request method and response status. Settle the
+advertised length again from the response request admission returns, through
+the private `Framing` extension the built response carries, because a
+handler's tuple or an inner layer can declare it after the hand-over. Do not
+claim truncation is visible to an HTTP/1.0 peer for a body without a declared
+length: Hyper delimits it by closing the connection. The observer publishes the request span
 in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
 bounds before each frame and

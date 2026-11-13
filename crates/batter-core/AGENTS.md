@@ -130,10 +130,13 @@ standalone handles, and never a promise that abort happens at that instant.
 `ShutdownSignal::abort_deadline_before` only waits on the same clock's change
 notification; keep it read-only and resolving only for an earlier deadline.
 `OperationContinuation` is created only by a successful
-`admit_root_with_continuation`. Keep it without a public constructor or
-`Clone`, keep `start` consuming so one admission continues into at most one
-root, keep that root under process forced cancellation alone, and never let it
-read or bypass readiness for work that was not already admitted. Idempotent native stop callbacks return the earlier
+`lifecycle::low_level::admit_root_with_continuation`; keep both under
+`lifecycle::low_level`, apart from `OperationAdmission::admit_root`. Keep it
+without a public constructor or `Clone`, keep `start` consuming so one
+admission continues into at most one root, keep that root under process forced
+cancellation alone, start it already cancelled once the admitted operation was
+cancelled or passed its deadline, and never let it read or bypass readiness
+for work that was not already admitted. Idempotent native stop callbacks return the earlier
 native/parent timestamp. Propagate new earlier clocks to settling components and
 wake active phase waits; keep the first failure cause independent of tightening.
 Publish caught stop-control failures at their catch boundary, including repeated

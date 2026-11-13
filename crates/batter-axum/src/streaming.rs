@@ -8,7 +8,7 @@
 use crate::{AdmittedRequest, CorrelationId, observation::ObservationState};
 use axum::{
     body::{Body, Bytes, HttpBody},
-    http::{Method, StatusCode, header::CONTENT_LENGTH},
+    http::{HeaderMap, Method, StatusCode, header::CONTENT_LENGTH},
     response::{IntoResponse, Response},
 };
 use batter_core::{
@@ -18,9 +18,12 @@ use batter_core::{
 };
 use http_body::{Frame, SizeHint};
 use std::{
+    cell::Cell,
     fmt,
     future::Future,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     pin::Pin,
+    sync::{Arc, Mutex, PoisonError},
     task::{Context, Poll},
     time::Duration,
 };
@@ -126,12 +129,14 @@ impl BodyScope {
     /// observes the body's end as cancellation.
     ///
     /// The library checks this context before it polls the stream. When the
-    /// body's own bound or forced cancellation is the cause, the peer
-    /// therefore sees the library's truncation and a step's `Interrupted`
+    /// body's own bound or forced cancellation is the cause, the library
+    /// therefore truncates the body and a step's `Interrupted`
     /// result is normally never reached; it remains reachable for a step's own
     /// child deadline. Either way, end the stream with an error rather than
-    /// normally, so the message is not mistaken for a complete one. The
-    /// transport stops polling after the first error.
+    /// normally, so the message is not mistaken for a complete one, except by
+    /// an HTTP/1.0 peer given no declared length (see
+    /// [`AdmittedRequest::into_streaming_response`]). The transport stops
+    /// polling after the first error.
     pub fn context(&self) -> &OperationContext {
         &self.context
     }
@@ -180,7 +185,11 @@ impl AdmittedRequest {
     ///   bounds are checked before a frame is accepted, so a frame that became
     ///   ready only after its wait expired does not extend the body. The peer
     ///   sees a truncated message, never a final chunk it could mistake for a
-    ///   complete one.
+    ///   complete one, except over HTTP/1.0: Hyper answers an HTTP/1.0 request
+    ///   in HTTP/1.0, where a body without a declared length ends when the
+    ///   connection closes, so that peer cannot tell the truncation from the
+    ///   message's end. Declare a `Content-Length` where an HTTP/1.0 peer must
+    ///   detect it.
     /// - The body is polled and destroyed under the tracing dispatcher current
     ///   here and inside the request's span, on whichever task the transport
     ///   uses.
@@ -192,22 +201,27 @@ impl AdmittedRequest {
     ///   `dropped` emit INFO. `completed` names a body whose source produced
     ///   its whole message, including one the transport finished without
     ///   asking for its end: after the advertised `Content-Length` or exact
-    ///   size, or after trailers. A source that ends, reports its end or
-    ///   yields trailers short of its advertised length is `failed`: the
-    ///   transport aborts that message and the peer sees it truncated. A
-    ///   response written without a body (to HEAD, a 2xx answer to CONNECT, or
-    ///   a 1xx, 204 or 304 status) frames no length, so its empty body is
-    ///   `completed`.
+    ///   size, or after trailers. The advertised length is the one the
+    ///   response carries when request admission returns it, so a length a
+    ///   handler's tuple or an inner layer adds afterwards counts; a layer
+    ///   outside admission that changes it is not observed. A source that
+    ///   ends, reports its end or yields trailers short of its advertised
+    ///   length is `failed`: the transport aborts that message and the peer
+    ///   sees it truncated. A response written without a body (to HEAD, a 2xx
+    ///   answer to CONNECT, or a 1xx, 204 or 304 status) frames no length, so
+    ///   its empty body is `completed`.
     ///   `dropped` names a body its holder discarded
     ///   before its end without the library, a panic or the stream ending it:
     ///   a peer that went away, a HEAD response whose body Axum strips, or a
     ///   response discarded because response construction ended without it.
     ///   The request's own completion event, with its method and status,
     ///   tells these apart. `panicked` names a builder that never
-    ///   returned, a poll of the body that unwound, or destruction while the
-    ///   thread unwinds, such as a handler panicking after this call; it
-    ///   carries no panic payload. The request's own completion event is
-    ///   unchanged and still describes response construction only.
+    ///   returned, a poll of the body that unwound, a query of its end or size
+    ///   that unwound, whether the transport or its destruction asked, or
+    ///   destruction while the thread unwinds, such as a handler panicking
+    ///   after this call; it carries no panic payload. The request's own
+    ///   completion event is unchanged and still describes response
+    ///   construction only.
     ///
     /// This consumes the admitted request: the handler's authority ends where
     /// the body's begins. The authority to start a body belongs to the
@@ -247,7 +261,7 @@ impl AdmittedRequest {
     ///                 .await;
     ///             match chunk {
     ///                 Ok(chunk) => Some((Ok(chunk), (scope, index + 1))),
-    ///                 // Ending with an error truncates the message visibly.
+    ///                 // An error truncates the message, visibly over HTTP/1.1.
     ///                 Err(OperationError::Interrupted(reason)) => {
     ///                     Some((Err(std::io::Error::other(reason.to_string())), (scope, 3)))
     ///                 }
@@ -323,30 +337,66 @@ impl AdmittedRequest {
             idle: budget.idle,
             wake: None,
             bytes: 0,
-            advertised: None,
+            framing: Framing::default(),
             trailers: false,
             ended: false,
             polling: false,
+            inspecting: Cell::new(false),
             refused,
         };
-        let (parts, body) = build(scope).into_response().into_parts();
-        // The length the transport frames the message with: the header the
-        // application set, else the body's exact size. A response the
-        // transport writes without a body, by Hyper's rule for its method and
-        // status, frames none, so a declared length is not one to produce.
-        let (method, status) = (&admission.method, parts.status);
+        let (mut parts, body) = build(scope).into_response().into_parts();
+        // Provisional: request admission settles it again from the response
+        // it returns, after the handler's own composition and inner layers.
+        owned.framing.settle(
+            &admission.method,
+            parts.status,
+            &parts.headers,
+            &body.size_hint(),
+        );
+        parts.extensions.insert(owned.framing.clone());
+        owned.inner = Some(body);
+        Response::from_parts(parts, Body::new(owned))
+    }
+}
+
+/// The message length the transport frames an owned body with, after which it
+/// stops polling without asking for the end: the response's `Content-Length`,
+/// else its body's exact size. A response the transport writes without a body,
+/// by Hyper's `can_have_body` rule for the request method and response status,
+/// frames none, so a length it declares is not one to produce.
+///
+/// The response the body was built into carries a copy, so request admission
+/// settles it again from the response it returns: headers added afterwards by
+/// a handler's tuple or an inner layer frame the message Hyper writes. Layers
+/// outside admission are not observed.
+#[derive(Clone, Default)]
+pub(crate) struct Framing(Arc<Mutex<Option<u64>>>);
+
+impl Framing {
+    fn settle(&self, method: &Method, status: StatusCode, headers: &HeaderMap, hint: &SizeHint) {
         let bodyless = method == Method::HEAD
             || method == Method::CONNECT && status.is_success()
             || status.is_informational()
             || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED);
-        owned.advertised = parts
-            .headers
+        let length = headers
             .get(CONTENT_LENGTH)
             .and_then(|length| length.to_str().ok()?.parse().ok())
-            .or_else(|| body.size_hint().exact())
+            .or_else(|| hint.exact())
             .filter(|_| !bodyless);
-        owned.inner = Some(body);
-        Response::from_parts(parts, Body::new(owned))
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = length;
+    }
+
+    fn length(&self) -> Option<u64> {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Settle the framing of the owned body `response` carries, if any, from the
+/// response as request admission returns it for a request with `method`.
+pub(crate) fn settle_framing(method: &Method, response: &Response) {
+    if let Some(framing) = response.extensions().get::<Framing>() {
+        let hint = response.body().size_hint();
+        framing.settle(method, response.status(), response.headers(), &hint);
     }
 }
 
@@ -432,7 +482,7 @@ struct OwnedBody {
     bytes: u64,
     /// The message length the transport writes, after which it stops polling
     /// without asking for the end.
-    advertised: Option<u64>,
+    framing: Framing,
     /// The source yielded trailers, its last frame; the transport may not
     /// poll again.
     trailers: bool,
@@ -440,6 +490,9 @@ struct OwnedBody {
     /// Set while the application's body is being polled, so a poll that
     /// unwinds is recognised when the transport destroys the body afterwards.
     polling: bool,
+    /// Set while the transport asks the application's body for its end or
+    /// size, for the same reason.
+    inspecting: Cell<bool>,
     /// The request's body-start authority was already spent or expired. An
     /// empty body is never polled, so the refusal is reported on destruction.
     refused: bool,
@@ -502,7 +555,7 @@ impl OwnedBody {
     /// aborts the message and the peer sees it truncated.
     fn source_end(&self) -> Option<BodyEnd> {
         let ended = self.trailers || self.inner.as_ref().is_some_and(HttpBody::is_end_stream);
-        match self.advertised.map(|length| self.bytes >= length) {
+        match self.framing.length().map(|length| self.bytes >= length) {
             Some(true) => Some(BodyEnd::Completed),
             Some(false) if ended => Some(BodyEnd::Failed),
             None if ended => Some(BodyEnd::Completed),
@@ -513,11 +566,25 @@ impl OwnedBody {
     /// How a source that yielded its end finished: short of its advertised
     /// length is a failure, as for [`Self::source_end`].
     fn yielded_end(&self) -> BodyEnd {
-        if self.advertised.is_some_and(|length| self.bytes < length) {
+        if self
+            .framing
+            .length()
+            .is_some_and(|length| self.bytes < length)
+        {
             BodyEnd::Failed
         } else {
             BodyEnd::Completed
         }
+    }
+
+    /// Ask the application's body for the transport, marking the call so one
+    /// that unwinds is reported as a panic when the body is destroyed.
+    fn inspect<T>(&self, query: impl FnOnce(&Body) -> T) -> Option<T> {
+        let inner = self.inner.as_ref()?;
+        self.inspecting.set(true);
+        let answer = query(inner);
+        self.inspecting.set(false);
+        Some(answer)
     }
 
     fn interrupt(&mut self, end: BodyEnd) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
@@ -615,13 +682,12 @@ impl HttpBody for OwnedBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.ended || self.inner.as_ref().is_some_and(HttpBody::is_end_stream)
+        self.ended || self.inspect(HttpBody::is_end_stream).unwrap_or(false)
     }
 
     fn size_hint(&self) -> SizeHint {
-        self.inner
-            .as_ref()
-            .map_or_else(|| SizeHint::with_exact(0), HttpBody::size_hint)
+        self.inspect(HttpBody::size_hint)
+            .unwrap_or_else(|| SizeHint::with_exact(0))
     }
 }
 
@@ -631,18 +697,34 @@ impl Drop for OwnedBody {
             return;
         }
         // Only an unwinding builder leaves no body without ending it. A
-        // transport destroys a body whose poll panicked only after catching
-        // the unwind, so the flag, not `panicking`, names that case.
-        let end = if self.inner.is_none() || self.polling || std::thread::panicking() {
+        // transport destroys a body whose poll or query panicked only after
+        // catching the unwind, so the flags, not `panicking`, name that case.
+        let end = if self.inner.is_none()
+            || self.polling
+            || self.inspecting.get()
+            || std::thread::panicking()
+        {
             BodyEnd::Panicked
         } else if self.refused {
             BodyEnd::Cancelled
-        } else if let Some(end) = self.source_end() {
-            end
         } else {
-            match self.owner.context().check() {
-                Err(reason) => BodyEnd::interrupted(reason),
-                Ok(()) => BodyEnd::Dropped,
+            // Asking the source for its end runs application code, so it runs
+            // under the captured dispatcher and span, and one that unwinds
+            // still ends the body under protection before the panic continues.
+            let queried = tracing::dispatcher::with_default(&self.dispatch, || {
+                let _entered = self.context.as_ref().map(tracing::Span::enter);
+                catch_unwind(AssertUnwindSafe(|| self.source_end()))
+            });
+            match queried {
+                Ok(Some(end)) => end,
+                Ok(None) => match self.owner.context().check() {
+                    Err(reason) => BodyEnd::interrupted(reason),
+                    Ok(()) => BodyEnd::Dropped,
+                },
+                Err(panic) => {
+                    self.finish(BodyEnd::Panicked);
+                    resume_unwind(panic)
+                }
             }
         };
         self.finish(end);

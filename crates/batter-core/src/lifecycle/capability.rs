@@ -260,23 +260,13 @@ impl OperationAdmission {
         self.admit(deadline)
     }
 
-    /// Lower-level adapter seam: admit one operation exactly as
-    /// [`Self::admit_root`] does, and also return the proof that lets the
-    /// adapter start work continuing it. See [`super::OperationContinuation`]
-    /// for the obligations that proof carries.
-    pub fn admit_root_with_continuation(
+    /// Admit as [`Self::admit_root`] does, with the lifecycle state that
+    /// [`super::low_level::admit_root_with_continuation`] continues under.
+    pub(super) fn admit_with_state(
         &self,
         deadline: crate::operation::RootDeadline,
-    ) -> Result<
-        (
-            crate::operation::OperationOwner,
-            super::OperationContinuation,
-        ),
-        Readiness,
-    > {
-        let owner = self.admit(deadline)?;
-        let continuation = super::OperationContinuation::admitted(self.shared.clone());
-        Ok((owner, continuation))
+    ) -> Result<(crate::operation::OperationOwner, Arc<Shared>), Readiness> {
+        Ok((self.admit(deadline)?, self.shared.clone()))
     }
 
     fn admit(

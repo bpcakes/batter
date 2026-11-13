@@ -904,17 +904,22 @@ scheduled against it can follow a tightened clock; the Axum serving adapter
 reschedules its connection close that way. State unit tests cover the unset,
 standalone, extended and tightened cases and that wait.
 
-`OperationAdmission::admit_root_with_continuation` is a lower-level adapter
-seam. It admits exactly as `admit_root` does and also returns an
-`OperationContinuation`, proof that the readiness decision was made. The proof
-can start one root that inherits only process forced cancellation, with its own
-deadline and without reading readiness again, which is what lets admitted work
-continue through drain. It has no public constructor, is not `Clone`, and
-`start` consumes it, so one admission continues into at most one root; a
-compile-fail doctest rejects a second start and a copy. Its holder owns the
-obligations the type cannot express: when the continued work starts and that it
-ends. The Axum adapter keeps it private to
-one admitted request and starts at most one body from it, only while that
+`lifecycle::low_level::admit_root_with_continuation` is a lower-level adapter
+seam, placed apart from `OperationAdmission::admit_root`, the protected path. It
+admits exactly as `admit_root` does and also returns an
+`lifecycle::low_level::OperationContinuation`, proof that the readiness
+decision was made. The proof can start one root that inherits only process
+forced cancellation, with its own deadline and without reading readiness again,
+which is what lets admitted work continue through drain. It has no public
+constructor, is not `Clone`, and `start` consumes it, so one admission
+continues into at most one root; a compile-fail doctest rejects a second start
+and a copy. A start after the admitted operation was cancelled or passed its
+deadline returns an already-cancelled owner; a unit test covers a live, a
+cancelled, an expired and a forced-cancelled start. Its holder owns the
+obligations the type cannot express: an admitted owner abandoned without
+cancellation stays live until its deadline, so when the continued work starts,
+and that it ends, remain the caller's. The Axum adapter keeps it private to one
+admitted request and starts at most one body from it, only while that
 request's response is being constructed.
 
 Total configured allowance is drain + cancel + abort observation + cleanup work
@@ -2586,7 +2591,12 @@ registers for forced cancellation and the nearer bound. The idle wait starts at
 the body's first pending poll after a frame, so time the transport spends not
 polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
 Hyper turns into a closed connection without a final chunk; a library-ended
-body is never reported to the peer as complete. Ending at drain is left to the
+body is never reported to the peer as complete over HTTP/1.1. An HTTP/1.0
+request is the exception: Hyper answers it in HTTP/1.0, where a body without a
+declared length is delimited by closing the connection, so that peer receives
+an orderly end of stream after the data already written and cannot tell the
+truncation from the message's end. A declared `Content-Length` keeps the
+shortfall visible to it. Ending at drain is left to the
 stream through `BodyScope::shutdown`.
 
 The body is polled under the tracing dispatcher current when the handler handed
@@ -2610,13 +2620,20 @@ by the library, a panic or the stream: a peer that went away, a HEAD response
 whose body Axum strips, or a response discarded because response construction
 ended without it; the request's own completion event, with its method and
 status, tells these apart. `panicked` names a builder that never returned, a poll of the body that
-unwound (the transport destroys such a body after catching the unwind) or
-destruction during unwinding, such as a handler panicking after the hand-over;
-it carries no payload. A body destroyed after its scope was cancelled or
+unwound (the transport destroys such a body after catching the unwind), a
+question about the body's end or size that unwound, whether the transport asked
+it or the owner asked it while destroying the body (the owner still finishes
+under the captured dispatcher and the panic then continues), or destruction
+during unwinding, such as a handler panicking after the hand-over; it carries
+no payload. A body destroyed after its scope was cancelled or
 expired reports that reason instead of `dropped`, and a source that produced
 its whole message is `completed` even when the transport never polls for its
 end: Hyper stops once `is_end_stream` reports the end, once the advertised
-`Content-Length` or exact size has been written, and after trailers. A source
+`Content-Length` or exact size has been written, and after trailers. The
+advertised length is taken again from the response request admission returns,
+because Hyper frames the message by the headers it encodes and Axum applies a
+handler tuple's headers after `into_streaming_response` returns; a layer outside
+admission that changes the length is not observed. A source
 that yields its end, reports it through `is_end_stream` or yields trailers
 before producing its advertised length is `failed` (WARN): Hyper aborts that
 message and the peer sees it truncated. Hyper, not the owner, enforces the
@@ -2635,7 +2652,8 @@ panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
 a second and a late body start for one request, a refused empty body that is
 never polled, a HEAD request, a declared length on a 304 and on a HEAD
-response, and a
+response, a body whose answer about its end panics during destruction and when
+the transport asks first, and a
 response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, and a
 foreign subscriber on the polling task.
 [Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
@@ -2645,7 +2663,11 @@ that close and reported `cancelled`, a departed peer reported `dropped`, and a
 stream that produced its declared `Content-Length` and one that ended with
 trailers, neither of which yields its end, each reported `completed`, and a
 source that ended or reported its end five bytes short of a declared ten,
-each reported `failed` with the peer's message truncated.
+each reported `failed` with the peer's message truncated, a length a handler
+tuple declares after the hand-over, which decides `failed` when short and
+`completed` when met, and an HTTP/1.0 request whose body, ended at its idle
+bound and reported `idle_timeout`, reaches the peer without a declared length
+or chunked framing and as an orderly close.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
 cancellation wakeup, the captured dispatcher, the per-frame bound check, the
@@ -2660,7 +2682,12 @@ empty body. Restoring `Clone` and a borrowing `start` on
 `OperationContinuation` made its compile-fail doctests compile. In the same
 way on 2026-11-12, reporting a short end as `completed` failed both
 short-length cases, and holding a declared length against a response without a
-body failed the 304 case, and the HEAD case on its own.
+body failed the 304 case, and the HEAD case on its own. Later the same day,
+skipping the framing settled at request admission failed the late-declared
+length case, asking the source for its end in destruction without catching
+the unwind failed the panicking-answer case, as did forgetting a transport
+question that unwound, and starting a continuation without checking its
+admitted operation failed the core unit test.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
@@ -3032,7 +3059,8 @@ the second half Hyper ends each remaining connection and destroys its handler or
 body in that connection's own task; Axum's graceful wait then returns, so the
 wrapper is joined, the report is successful with `forced_cancellation` set and
 dependent cleanup runs. The peer sees a truncated message or a closed
-connection. Each I/O poll records its task's waker before reading the closed
+connection; an HTTP/1.0 peer receiving a body without a declared length cannot
+tell that close from the message's end. Each I/O poll records its task's waker before reading the closed
 flag, not only a poll the transport leaves pending: Hyper can wait on a response
 body alone after ready polls, holding bytes of a following request or with its
 read side closed, and the close must still wake that task, whose next pass

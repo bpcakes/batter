@@ -275,7 +275,8 @@ async fn export(admitted: AdmittedRequest) -> Response {
             match step {
                 Ok(chunk) => Some((Ok(chunk), (scope, index + 1))),
                 // An error, not a normal end, so the message stays visibly
-                // truncated. The transport stops polling after it.
+                // truncated to an HTTP/1.1 peer. The transport stops polling
+                // after it.
                 Err(OperationError::Interrupted(reason)) => {
                     Some((Err(io::Error::other(reason.to_string())), (scope, index)))
                 }
@@ -308,7 +309,12 @@ that is `IntoResponse`, including `axum::response::Sse`. The closure receives a
 The library then owns the body whether or not the stream cooperates. A wait for
 the next frame longer than the idle bound, the total bound and forced
 cancellation each end it with a body error, so the peer sees a truncated
-message and never a final chunk it could take for a complete one. Both bounds
+message and never a final chunk it could take for a complete one. The
+exception is an HTTP/1.0 request: Hyper answers it in HTTP/1.0, where a body
+without a declared length ends when the connection closes, so that peer
+cannot tell the library's truncation from the message's end. Declare a
+`Content-Length` where an HTTP/1.0 peer, such as a proxy speaking HTTP/1.0
+upstream, must detect it. Both bounds
 are checked before a frame is accepted, so a frame that became ready only after
 its wait expired does not extend the body. The body is
 polled and destroyed under the tracing dispatcher and request span of the
@@ -318,22 +324,26 @@ body, while `latency_ms` and the request's completion event still measure
 response construction. Exactly one `HTTP response body finished` event
 carries `request_id`, `bytes`, `duration_ms` and `body_outcome`: `completed`
 and `dropped` at INFO; `failed`, `deadline_exceeded`, `idle_timeout`,
-`cancelled` and `panicked` (a builder or stream that panicked, or a handler
-that panicked after handing the body over) at WARN. `completed` means the
+`cancelled` and `panicked` (a builder or stream that panicked, a body whose
+answer to Hyper's or the library's question about its end or size panicked,
+or a handler that panicked after handing the body over) at WARN. `completed` means the
 source produced its whole message, including a body Hyper finishes without
 asking for its end: after its advertised `Content-Length` or exact size, or
-after trailers. A source that ends, reports its end or yields trailers short of
+after trailers. The advertised length is the one the response carries when
+request admission returns it, so a length added by the handler's tuple or an
+inner layer after `into_streaming_response` counts; a layer outside admission
+that changes it is not observed. A source that ends, reports its end or yields trailers short of
 its advertised length is `failed`: Hyper aborts that message and the peer sees
 it truncated. A response Hyper writes without a body (to HEAD, a 2xx answer to
 CONNECT, or a 1xx, 204 or 304 status) frames no length, so its empty body is
-`completed`. `dropped` means the body's holder discarded it before its end: a peer that went away, a HEAD request on a
-GET route, whose body Axum strips, or a response discarded because response
-construction ended without it. The request's own completion event is
+`completed`. `dropped` means the body's holder discarded it before its end: a
+peer that went away, a HEAD request on a GET route, whose body Axum strips, or
+a response discarded because response construction ended without it. The request's own completion event is
 unchanged, still measures response construction and, with its method and
 status, tells those cases apart.
 
 The library checks the scope's context before each poll, so its own bounds and
-forced cancellation reach the peer as the library's truncation; a step's
+forced cancellation end the body as the library's truncation; a step's
 `Interrupted` arm is reached only for a tighter deadline the stream set itself
 with `scope.context().child(..)`. A stream meant to run indefinitely still
 needs a total bound: reaching it truncates the body at WARN, so end the stream

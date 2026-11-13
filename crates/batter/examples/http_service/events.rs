@@ -46,7 +46,8 @@ async fn next_event(state: Streaming) -> Option<(io::Result<Event>, Streaming)> 
             let event = Event::default().data(value.to_string());
             Some((Ok(event), Some((scope, sequence + 1))))
         }
-        // An error, not a normal end: the peer must see a truncated stream.
+        // An error, not a normal end, so an HTTP/1.1 peer sees a truncated
+        // stream. An HTTP/1.0 peer cannot: this body declares no length.
         Err(OperationError::Interrupted(reason)) => {
             Some((Err(io::Error::other(reason.to_string())), None))
         }

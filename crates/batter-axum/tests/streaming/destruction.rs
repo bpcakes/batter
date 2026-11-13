@@ -134,6 +134,80 @@ fn a_stream_that_panics_while_polled_is_observed_as_panicked_when_destroyed() {
     assert!(!event.contains("stream failed"), "{event}");
 }
 
+/// Never produces a frame, and panics when asked whether it has ended.
+struct EndQueryPanics {
+    _marker: Marker,
+}
+
+impl http_body::Body for EndQueryPanics {
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, io::Error>>> {
+        Poll::Pending
+    }
+
+    fn is_end_stream(&self) -> bool {
+        panic!("end query failed")
+    }
+}
+
+/// Asking an application's body for its end runs application code: when the
+/// body is destroyed, or first by a transport whose task catches the unwind
+/// and destroys the body afterwards without asking again. Either way the body
+/// still ends under protection: one `panicked` event, its scope cancelled and
+/// the application's body destroyed under the handler's subscriber.
+#[test]
+fn a_body_whose_end_query_panics_still_ends_under_protection() {
+    for transport_asks in [false, true] {
+        let capture = Capture::new();
+        let elsewhere = Capture::new();
+        let escaped = Escaped::default();
+        let kept = escaped.clone();
+        let foreign = elsewhere.dispatch.clone();
+        let unwound = paused(&capture, async move {
+            let handle = ready();
+            let app = client(
+                &handle,
+                GuardedRouter::new().route(
+                    "/",
+                    route(move |admitted: AdmittedRequest| async move {
+                        admitted.into_streaming_response(budget(60, 5), |scope| {
+                            kept.keep(scope.context());
+                            Body::new(EndQueryPanics { _marker: Marker })
+                        })
+                    }),
+                ),
+            )
+            .await;
+            let response = get(&app, "/").await;
+            tracing::dispatcher::with_default(&foreign, || {
+                if transport_asks {
+                    let asked = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        response.body().is_end_stream()
+                    }));
+                    // Destroyed after the caught unwind: no second panic.
+                    drop(response);
+                    asked.is_err()
+                } else {
+                    std::panic::catch_unwind(AssertUnwindSafe(|| drop(response))).is_err()
+                }
+            })
+        });
+        assert!(unwound, "the query's panic propagates");
+        assert_eq!(escaped.context().check(), Err(Interruption::Cancelled));
+        let event = assert_finished(&capture, "WARN", "panicked");
+        assert!(!event.contains("end query failed"), "{event}");
+        assert!(capture.text().contains(DESTROYED), "{}", capture.text());
+        let foreign = elsewhere.text();
+        assert!(!foreign.contains(FINISHED), "{foreign}");
+        assert!(!foreign.contains(DESTROYED), "{foreign}");
+    }
+}
+
 /// A body its holder discards before its end is `dropped`, not a failure: here
 /// Axum strips the body of a HEAD request routed to the GET handler, and
 /// admission discards a response the handler built before its
