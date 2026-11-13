@@ -104,7 +104,8 @@ handler drive and its doctest, and
 `cargo clippy -p batter-runledger --all-targets --features test-support --locked -- -D warnings`.
 The native packages live under `runledger/` in the shared workspace. Run
 `scripts/check_runledger_workspace.py` to check actual Cargo source identity and
-ownership direction. No source pin, sibling checkout or foundation patch remains.
+ownership direction. The native packages need no source pin, sibling checkout
+or foundation patch.
 Validate both feature branches together. `python3 scripts/check_single_facade_consumer.py`
 executes the single-dependency consumer, and `python3 scripts/check_facade_features.py`
 proves each namespace's reachability, isolation and identity. Publication is governed by the active

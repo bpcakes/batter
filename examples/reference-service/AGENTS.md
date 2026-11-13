@@ -27,8 +27,8 @@ Unix-only application is not a reusable database framework.
   native preparation and `batter::runledger` registration share that pool. It owns PostgreSQL
   health sampling, installs the delivery handler and approves ordinary readiness
   after registered components acknowledge initialization. Its startup failures downcast to
-  `ProtectedRuntimeStartupFailure`; the earlier wrapper was removed in the
-  coordinated hard cutover and must not be reintroduced.
+  `ProtectedRuntimeStartupFailure` directly; do not wrap it in an
+  application-specific startup failure type.
 - `tests/support/startup_process.rs` owns separately captured signal children and
   the production/test-fixture executable launchers;
   `tests/fixtures/signal_witness_fixture.rs` owns process-local signal

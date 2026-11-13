@@ -4,7 +4,7 @@
 
 Own one send-once provider HTTP exchange on Unix. Provider meaning, replay,
 idempotency keys, Retry-After, dispatch fences and reconciliation belong to the
-application. Experimental under ADR-015, originally `batter-3s1a`; connection
+application. Experimental under ADR-015; connection
 ownership and deadline correction belong to `batter-u387`.
 
 ## Key entrypoints
