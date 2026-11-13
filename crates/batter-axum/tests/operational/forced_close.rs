@@ -581,3 +581,5 @@ async fn connection_that_never_yields_outlives_the_close_and_the_wrapper_is_abor
     assert!(!served.cleaned.load(Ordering::SeqCst));
     drop(client);
 }
+
+mod slow_destructor;

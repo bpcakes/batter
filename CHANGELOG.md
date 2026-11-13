@@ -55,8 +55,13 @@ contracts, capability facts and validation history.
   `register_with_connect_info_in` and the three `low_level::register_http*`
   helpers now wrap the listener: every accepted connection's reads and writes
   fail halfway between forced cancellation and the supervisor's abort
-  deadline, Hyper ends the connection, and the wrapper returns joined. Public
-  signatures are unchanged. Behavior change: such a shutdown now reports
+  deadline, Hyper ends the connection, and the wrapper returns joined once
+  every accepted connection's service, handler future and response body is
+  destroyed, which Axum's graceful return alone does not establish; a
+  destructor still running at the abort deadline aborts the wrapper and skips
+  cleanup. Each response body gains one wrapper allocation, and each
+  request a few atomic increments and decrements of one server-wide counter.
+  Public signatures are unchanged. Behavior change: such a shutdown now reports
   success with `forced_cancellation` set and runs cleanup, where it reported
   `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
   message or a closed connection in the second half of the cancel allowance

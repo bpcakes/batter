@@ -99,6 +99,9 @@ Windows support and non-Unix fallbacks are out of scope.
   `src/serving/forced_close.rs` owns the private gate that wraps the listener
   and fails every accepted connection's I/O halfway between forced
   cancellation and the supervisor's abort deadline.
+  `src/serving/completion.rs` owns the private make-service wrapper whose
+  per-connection service, response futures and response bodies hold tokens,
+  so the registered server returns only after each was destroyed.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
@@ -108,6 +111,9 @@ Windows support and non-Unix fallbacks are out of scope.
   all readiness reasons and native startup/drain; `tests/operational/forced_close.rs`
   covers connections closed within the cancel allowance with cleanup run, and
   a body surviving wrapper abort when that allowance is zero;
+  `tests/operational/forced_close/slow_destructor.rs` covers a pending body or
+  in-flight handler still being destroyed after Axum counted its connection
+  finished;
   `tests/operational/rendered_probes.rs` covers application-rendered probes
   outside admission, every decision through a contradicting renderer and
   application conditions. `tests/operational/admitted_request.rs` covers the
@@ -192,12 +198,21 @@ before reading the closed flag, not only on a pending one: Hyper can wait on a
 body alone after ready polls, with pipelined bytes buffered or its read side
 closed. Keep that to one uncontended lock and a `will_wake` compare per poll,
 recompute the close instant when `ShutdownSignal::abort_deadline_before`
-reports an earlier abort, and wake outside the registry lock. Never close
+reports an earlier abort, and wake outside the registry lock. Keep that
+computation behind the private `StopClock` trait, implemented by
+`ShutdownSignal`, so its paused-clock unit test drives the same code. Never close
 when cancellation is observed with no interval left, as with a zero cancel
 allowance: that only races the wrapper abort and fails interruption responses.
 Do not describe upgraded connections, handler-detached tasks, a connection
 task that never yields or a zero cancel allowance as covered; the
-wrapper-abort contract still applies to them.
+wrapper-abort contract still applies to them. Never treat Axum's graceful
+return as proof that connections were destroyed: it counts one finished before
+its task destroys the connection future, which still holds the in-flight
+handler future and the response body after an I/O error. Keep the completion
+token in every connection's service, response future and response body,
+declared after what it guards, and await every token's release after Axum
+returns, inside the registered future; a destructor still running at the abort
+deadline must leave the wrapper to be aborted.
 An owned body starts its context from the admission record's continuation,
 never from a second `admit_root`. Keep that continuation in the record's
 take-once slot shared by every clone, and honour it only while the request's

@@ -676,7 +676,10 @@ retried by Axum. Streaming bodies can outlive response deadlines, and so can a
 peer that stops reading or never finishes its request head. The registered
 server closes the I/O of every connection still open halfway through the cancel
 allowance, after cancelled handlers have written their interruption responses,
-so it returns joined and dependent cleanup runs. That includes a connection
+and returns joined once every accepted connection's handler future and
+response body is destroyed, so dependent cleanup runs only after them; a
+destructor still running at the abort deadline gets the wrapper aborted and
+cleanup skipped instead. That includes a connection
 Hyper leaves waiting on its body alone, and the instant is recomputed when a
 component moves the abort deadline earlier. With a zero cancel allowance
 the connections are not closed: the wrapper is aborted instead and cleanup

@@ -401,6 +401,20 @@ sources in the locked registry.
   or flush ends the connection future with an error; Axum's task then logs at
   trace level and drops its receiver. Checked against Hyper 1.11.1 for the
   `batter-9wig` follow-up review.
+- Axum `src/serve/mod.rs:388-414` calls `drop(close_rx)` before the pinned
+  connection future leaves scope, so its graceful wait can return while that
+  future is still being destroyed. Hyper `src/proto/h1/dispatch.rs:123-141`
+  (`poll_catch`) does not clear the pending response body or the in-flight
+  service future on a connection error, and `Dispatcher` drops its fields in
+  order I/O, dispatch (in-flight future, then service), request-body sender,
+  response body (`dispatch.rs:22-28`, `48-51`). Destroying the response body is
+  therefore the last application-visible step, after Axum counted the
+  connection finished. A task woken from a Tokio 1.54.1 worker goes to that
+  worker's LIFO slot, which other workers cannot steal
+  (`runtime/scheduler/multi_thread/worker.rs:1393-1407`), which usually hides
+  the gap behind a blocking destructor; `block_in_place` moves that slot to the
+  stealable queue (`worker.rs:479-485`), and the regression uses it. Checked on
+  2026-11-13.
 - Hyper has no write timeout. A peer that stops reading leaves the connection
   future pending in `poll_flush` for as long as TCP keeps the connection.
 - `serve_connection_with_upgrades` resolves its connection future when the

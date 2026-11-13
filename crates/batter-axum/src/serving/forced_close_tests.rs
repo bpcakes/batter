@@ -2,11 +2,13 @@ use super::*;
 use batter_core::{
     BoxError,
     cleanup::CleanupBudget,
-    lifecycle::{ComponentExit, ShutdownBudget, Supervisor},
+    lifecycle::{ComponentExit, ManagedComponent, ManagedSettlement, ShutdownBudget, Supervisor},
+    operation::OperationOwner,
 };
-use std::time::Duration;
+use std::{future::poll_fn, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
+    sync::{oneshot, watch},
     time::timeout,
 };
 
@@ -45,6 +47,185 @@ async fn closed_after_forced_cancellation(cancel: Duration) -> bool {
 async fn a_zero_cancel_allowance_never_closes_the_gate() {
     assert!(!closed_after_forced_cancellation(Duration::ZERO).await);
     assert!(closed_after_forced_cancellation(Duration::from_secs(2)).await);
+}
+
+/// A stop clock the test moves by hand: forced cancellation, and an abort
+/// deadline that only moves earlier.
+#[derive(Clone)]
+struct ManualClock(Arc<watch::Sender<(bool, Option<Instant>)>>);
+
+impl ManualClock {
+    fn new(abort: Instant) -> Self {
+        Self(Arc::new(watch::Sender::new((false, Some(abort)))))
+    }
+
+    fn cancel(&self) {
+        self.0.send_modify(|state| state.0 = true);
+    }
+
+    fn tighten(&self, abort: Instant) {
+        self.0.send_modify(|state| state.1 = Some(abort));
+    }
+}
+
+impl StopClock for ManualClock {
+    fn cancelled(&self) -> impl Future<Output = ()> + Send {
+        let mut state = self.0.subscribe();
+        async move {
+            let _ = state.wait_for(|state| state.0).await;
+        }
+    }
+
+    fn abort_deadline(&self) -> Option<Instant> {
+        self.0.borrow().1
+    }
+
+    fn abort_deadline_before(&self, known: Instant) -> impl Future<Output = Instant> + Send {
+        let mut state = self.0.subscribe();
+        async move {
+            let moved = state
+                .wait_for(|state| state.1.is_some_and(|abort| abort < known))
+                .await;
+            match moved.ok().and_then(|state| state.1) {
+                Some(abort) => abort,
+                None => std::future::pending().await,
+            }
+        }
+    }
+}
+
+/// On a paused clock: cancellation is observed with the abort 4 s away, so
+/// the gate first waits for the 2 s midpoint. The abort then moves to 1 s,
+/// and the gate closes at the recomputed 0.5 s, not at the original one.
+#[tokio::test(start_paused = true)]
+async fn the_close_is_recomputed_exactly_when_the_abort_deadline_moves_earlier() {
+    let start = Instant::now();
+    let clock = ManualClock::new(start + Duration::from_secs(4));
+    let gate = Gate::new();
+    let mut serving = pin!(serve(
+        std::future::pending::<io::Result<()>>(),
+        clock.clone(),
+        gate.clone()
+    ));
+    clock.cancel();
+    let first = poll_fn(|cx| Poll::Ready(serving.as_mut().poll(cx).is_pending())).await;
+    assert!(first && !gate.is_closed());
+
+    tokio::time::advance(Duration::from_millis(100)).await;
+    clock.tighten(start + Duration::from_secs(1));
+    let closed_at = loop {
+        tokio::select! {
+            biased;
+            _ = serving.as_mut() => unreachable!("the serving future never returns"),
+            () = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+        if gate.is_closed() {
+            break Instant::now();
+        }
+    };
+    let elapsed = closed_at - start;
+    assert!(
+        elapsed >= Duration::from_millis(500) && elapsed <= Duration::from_millis(501),
+        "{elapsed:?}"
+    );
+}
+
+/// A settled native component that reports success.
+struct Settled;
+
+impl ManagedSettlement for Settled {
+    fn is_success(&self) -> bool {
+        true
+    }
+
+    fn allows_dependency_cleanup(&self) -> bool {
+        true
+    }
+}
+
+/// The gate computes its close when it observes forced cancellation and
+/// recomputes it when the abort deadline then moves earlier. A native
+/// component here reveals an earlier stop only after the test has polled the
+/// gate past its first computation, so that order is fixed. Holding the
+/// component needs a multi-thread runtime and real time, so the outcome rests
+/// on a wall-clock margin instead: the original close is about 15 s away and
+/// the recomputed one about 0.5 s, against a 5 s wait. A gate that kept the
+/// original close passes only after a stall of about 20 s before its first
+/// poll; a correct one fails only if this task stalls for 5 s.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_close_is_recomputed_when_the_abort_deadline_moves_earlier_afterwards() {
+    // Drain 50 ms and a 30 s cancel allowance: the first close is due about
+    // 15 s after forced cancellation. The revealed stop is 29 s earlier, which
+    // brings the abort to about 1 s after it and the close to about 0.5 s, or
+    // to at once if the first poll came later than the new abort.
+    let cleanup = CleanupBudget::new(WAIT, WAIT, WAIT).unwrap();
+    let budget = ShutdownBudget::new(
+        Duration::from_millis(50),
+        Duration::from_secs(30),
+        WAIT,
+        cleanup,
+    );
+    let mut supervisor = Supervisor::new(budget.unwrap());
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let context = OperationOwner::new(WAIT).unwrap().into_context();
+    supervisor
+        .register_managed("native", context, move |_| {
+            let (settle, settled) = oneshot::channel::<()>();
+            let mut held = Some((released, settle));
+            Ok(ManagedComponent::new(
+                async { Ok::<(), BoxError>(()) },
+                std::future::pending(),
+                move |started| {
+                    let Some((released, settle)) = held.take() else {
+                        return started;
+                    };
+                    // Held past forced cancellation, on a worker handed over
+                    // so the supervisor's driver keeps running.
+                    let _ = tokio::task::block_in_place(|| released.recv_timeout(WAIT));
+                    let _ = settle.send(());
+                    started.checked_sub(Duration::from_secs(29)).unwrap()
+                },
+                async move {
+                    let _ = settled.await;
+                    Settled
+                },
+            ))
+        })
+        .unwrap();
+    let handle = supervisor.handle();
+    let signal = handle.signal();
+    let running = supervisor.start();
+    timeout(WAIT, handle.status().wait_ready())
+        .await
+        .unwrap()
+        .unwrap();
+    handle.request();
+    timeout(WAIT, signal.cancelled()).await.unwrap();
+
+    let gate = Gate::new();
+    let mut serving = pin!(serve(
+        std::future::pending::<io::Result<()>>(),
+        signal,
+        gate.clone()
+    ));
+    // Observes the cancellation and waits for the original midpoint.
+    let first = poll_fn(|cx| Poll::Ready(serving.as_mut().poll(cx).is_pending())).await;
+    assert!(first);
+    assert!(!gate.is_closed());
+    release.send(()).unwrap();
+    timeout(WAIT, async {
+        while !gate.is_closed() {
+            tokio::select! {
+                biased;
+                _ = serving.as_mut() => unreachable!("the serving future never returns"),
+                () = tokio::time::sleep(Duration::from_millis(5)) => {}
+            }
+        }
+    })
+    .await
+    .expect("closed at the recomputed midpoint, not the original one");
+    let report = timeout(WAIT, running.wait()).await.unwrap().unwrap();
+    assert!(report.forced_cancellation);
 }
 
 fn connection(gate: &Arc<Gate>, capacity: usize) -> (ForcedCloseIo<DuplexStream>, DuplexStream) {

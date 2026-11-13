@@ -113,7 +113,13 @@ whether or not that poll was pending, because Hyper can wait on a body alone
 after ready polls. A component that reveals an earlier stop moves the deadline
 earlier; `ShutdownSignal::abort_deadline_before` reports that, and the midpoint
 is recomputed from the same cancellation instant. Hyper ends those connections in their
-own tasks, Axum's graceful wait returns, and the wrapper is joined. The first
+own tasks and Axum's graceful wait returns. Axum counts a connection finished
+before its task destroys the connection future, which after an I/O error still
+holds the in-flight handler future and the response body, so each connection's
+service, response futures and response bodies hold a completion token and the
+registered task also waits for every token to be released before the wrapper
+is joined; a destructor still running at the abort deadline leaves the wrapper
+to be aborted and cleanup skipped. The first
 half of the allowance is reserved because forced cancellation also cancels
 admitted request contexts, and the 503 `operation_cancelled` those handlers
 render must still be written whole. Owning the accept loop was rejected: it
@@ -124,7 +130,8 @@ public registration signatures are unchanged. The amended row is:
 
 | Trigger | Independently asserted outcome |
 | --- | --- |
-| Connection still open halfway through the cancel allowance, served through a registration helper | Its I/O fails; body or handler is destroyed before the report; the server returns joined, `forced_cancellation` is true, no abort is requested and cleanup runs. |
+| Connection still open halfway through the cancel allowance, served through a registration helper | Its I/O fails; body or handler is destroyed before the server returns joined; `forced_cancellation` is true, no abort is requested and cleanup runs after that destruction. |
+| The same, with a body or handler destructor still running at the abort deadline | The wrapper-abort row: named abort, cleanup skipped. |
 | The same with a zero cancel allowance (the gate never closes), a connection task that never yields, or a server registered directly with `axum::serve` | The original wrapper-abort row: named abort, body still owned at report inspection, cleanup skipped. |
 
 Consequences: the two HTTP lifetime suites keep registering `axum::serve`

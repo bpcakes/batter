@@ -197,7 +197,9 @@ alias; `admitted.rs` owns the privately recorded
 `AdmittedRequest` that guarded handlers extract instead of raw extensions;
 `crates/batter-axum/src/serving.rs` registers the native server, and
 `serving/forced_close.rs` fails accepted connections' I/O halfway through the
-cancel allowance so a connection that outlasts drain ends before wrapper abort;
+cancel allowance so a connection that outlasts drain ends before wrapper abort,
+and `serving/completion.rs` holds the server until every accepted connection's
+service and response bodies are destroyed;
 `streaming.rs` owns `AdmittedRequest::into_streaming_response`, the validated
 `BodyBudget`, the `BodyScope` and the private owned body that gives a response
 body outliving its handler its own context, bounds, protected dispatch and

@@ -9,6 +9,7 @@ use batter_core::{
 };
 use std::{fmt::Debug, future::IntoFuture};
 
+mod completion;
 mod forced_close;
 
 /// Register an already-bound native Axum server as a supervised critical task.
@@ -51,9 +52,13 @@ mod forced_close;
 /// [abort deadline](batter_core::lifecycle::ShutdownSignal::abort_deadline).
 /// The first half of the cancel allowance lets cancelled handlers write their
 /// interruption responses. In the second, Hyper ends each remaining connection
-/// and destroys its handler or body in that connection's own task, so Axum's
-/// graceful wait returns: the wrapper is joined, not aborted, and dependent
-/// cleanup runs with `forced_cancellation` reported. The peer sees a truncated
+/// in that connection's own task. Axum's graceful wait returns before that task
+/// destroys the handler future or response body the connection still holds, so
+/// the registered task also waits until every accepted connection's service,
+/// response futures and response bodies are destroyed: the wrapper is then
+/// joined, not aborted, and dependent cleanup runs with `forced_cancellation`
+/// reported, never beside such a destructor. One still running at the abort
+/// deadline leaves the wrapper to be aborted and cleanup skipped. The peer sees a truncated
 /// message or a closed connection; an HTTP/1.0 peer receiving a body without a
 /// declared length cannot tell that close from the message's end.
 ///
@@ -254,6 +259,7 @@ where
         let running = startup.acknowledge_started();
         let signal = running.signal();
         let gate = forced_close::Gate::new();
+        let connections = completion::Connections::new();
         let draining = {
             let signal = signal.clone();
             async move { signal.draining().await }
@@ -261,9 +267,12 @@ where
         // Serving a bare `Router` makes pinned Axum 0.8.9 clone and re-prepare
         // it, reapplying every lazily mapped layer, for each accepted
         // connection. The make-service prepares it once, as the peer path does.
-        let serving = axum::serve(gate.listener(listener), application.into_make_service())
-            .with_graceful_shutdown(draining);
-        forced_close::serve(serving.into_future(), signal, gate).await?;
+        let serving = axum::serve(
+            gate.listener(listener),
+            connections.track(application.into_make_service()),
+        )
+        .with_graceful_shutdown(draining);
+        forced_close::serve(destroyed(serving, &connections), signal, gate).await?;
         Ok(running.stopped())
     })
 }
@@ -286,13 +295,28 @@ where
             let signal = signal.clone();
             async move { signal.draining().await }
         };
+        let connections = completion::Connections::new();
         let serving = axum::serve(
             gate.listener(listener)
                 .tap_io(|_: &mut forced_close::ForcedCloseIo<L::Io>| {}),
-            application.into_make_service_with_connect_info::<L::Addr>(),
+            connections.track(application.into_make_service_with_connect_info::<L::Addr>()),
         )
         .with_graceful_shutdown(draining);
-        forced_close::serve(serving.into_future(), signal, gate).await?;
+        forced_close::serve(destroyed(serving, &connections), signal, gate).await?;
         Ok(running.stopped())
     })
+}
+
+/// Axum's graceful return, then the destruction of every accepted
+/// connection's service, response futures and response bodies, which Axum
+/// counts finished before Hyper destroys them. One still being destroyed at
+/// the abort deadline leaves the server unfinished, so it is aborted and
+/// dependent cleanup is skipped rather than run beside that destructor.
+async fn destroyed(
+    serving: impl IntoFuture<Output = std::io::Result<()>>,
+    connections: &completion::Connections,
+) -> std::io::Result<()> {
+    serving.await?;
+    connections.destroyed().await;
+    Ok(())
 }

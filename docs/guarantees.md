@@ -3071,10 +3071,19 @@ its listener, and every accepted connection's reads and writes fail once forced
 cancellation is halfway to `ShutdownSignal::abort_deadline`, the stop time plus
 the drain and cancel allowances. The first half of the cancel allowance is left
 to cancelled handlers, whose interruption responses are still written whole. In
-the second half Hyper ends each remaining connection and destroys its handler or
-body in that connection's own task; Axum's graceful wait then returns, so the
-wrapper is joined, the report is successful with `forced_cancellation` set and
-dependent cleanup runs. The peer sees a truncated message or a closed
+the second half Hyper ends each remaining connection in that connection's own
+task. Axum counts a connection finished when its task drops its completion
+receiver, which it does before the connection future, and with it the handler
+future or response body Hyper still holds after the I/O error, is destroyed. So
+each accepted connection's service, response futures and response bodies hold a
+token, and the registered task returns only after Axum's graceful wait and the
+release of every token; Hyper destroys the response body last. The wrapper is
+then joined, the report is successful with `forced_cancellation` set and
+dependent cleanup runs, never beside a connection's destructor: one still
+running at the abort deadline leaves the wrapper to be aborted and cleanup
+skipped. Each response body gains one wrapper allocation for this, and each
+request a few atomic increments and decrements of one server-wide counter; a
+lock is taken only when the last token is released or the server waits. The peer sees a truncated message or a closed
 connection; an HTTP/1.0 peer receiving a body without a declared length cannot
 tell that close from the message's end. Each I/O poll records its task's waker before reading the closed
 flag, not only a poll the transport leaves pending: Hyper can wait on a response
@@ -3092,10 +3101,24 @@ pipelined request bytes that Hyper's first read returned with the head, a
 stalled reader of a 64 MiB fixed body, a half-sent request head that outlasts
 drain, a cancelled handler whose 503 `operation_cancelled` still arrives
 complete, an abort deadline that a managed component moves earlier after
-forced cancellation, and a connection task blocked inside its body's poll
+forced cancellation, a connection task blocked inside its body's poll
 across the close and the abort deadline, which still aborts the wrapper and
-skips cleanup. A gate unit test shows that a zero cancel allowance never closes
-the gate while a positive one does. A
+skips cleanup, and, through both registration helpers, a pending body whose
+destructor hands its worker over and blocks after Axum counted its connection
+finished, with the same for an in-flight handler (a fallback outside
+admission that never returns and holds such a guard): destroyed within the
+allowance, cleanup runs only after it; still destroying at the abort deadline,
+the wrapper is aborted and cleanup skipped. A gate unit test shows that a zero
+cancel allowance never closes the gate while a positive one does. On a paused
+clock, a gate unit test drives the close computation through a private stop
+clock: cancellation observed with the abort 4 s away, then the abort moved to
+1 s, and the gate closes at exactly the recomputed 0.5 s. Another runs it
+against a real supervisor, whose native component reveals an earlier stop only
+after the gate computed its first close; holding that component needs a
+multi-thread runtime and real time, so its outcome rests on a wall-clock
+margin: the original close is about 15 s away and the recomputed one about
+0.5 s, against a 5 s wait. A unit test shows the completion
+wait holds for a response body that outlives its connection's service. A
 [TLS case](../crates/batter-axum/tests/tls_serving/serving.rs) repeats the
 pending body through the assembled boundary over rustls. With the close
 removed, the four plain-socket cases that depend on it fail and the
@@ -3106,7 +3129,13 @@ pipelined case and a gate unit test of a task whose last I/O poll was ready,
 and a close instant fixed at cancellation failed the moved-deadline case. On
 2026-11-12, closing with no interval left failed the zero-allowance gate test,
 and returning from the server once the gate closed failed the never-yielding
-case.
+case. On 2026-11-13, returning without waiting for the connections' tokens, or
+giving them only to the connection's service and not to its response bodies,
+failed the slow-destructor case, as removing the wait also failed the
+in-flight handler case, removing the wait from the connect-info path
+alone failed that path's case, and dropping the `abort_deadline_before`
+recomputation failed both moved-deadline gate unit tests, the paused-clock one
+by closing at the original 2 s.
 
 The limits remain. When forced cancellation is observed with no interval left,
 as with a zero cancel allowance, the gate never closes, so the earlier contract

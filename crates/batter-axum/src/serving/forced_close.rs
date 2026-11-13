@@ -120,6 +120,30 @@ fn closed() -> io::Error {
     )
 }
 
+/// The process stop clock the gate follows: forced cancellation and the
+/// supervisor's abort deadline, which only ever moves earlier. Production
+/// passes the component's [`ShutdownSignal`]; a unit test drives the same
+/// computation on a paused clock.
+pub(super) trait StopClock {
+    fn cancelled(&self) -> impl Future<Output = ()> + Send;
+    fn abort_deadline(&self) -> Option<Instant>;
+    fn abort_deadline_before(&self, known: Instant) -> impl Future<Output = Instant> + Send;
+}
+
+impl StopClock for ShutdownSignal {
+    fn cancelled(&self) -> impl Future<Output = ()> + Send {
+        ShutdownSignal::cancelled(self)
+    }
+
+    fn abort_deadline(&self) -> Option<Instant> {
+        ShutdownSignal::abort_deadline(self)
+    }
+
+    fn abort_deadline_before(&self, known: Instant) -> impl Future<Output = Instant> + Send {
+        ShutdownSignal::abort_deadline_before(self, known)
+    }
+}
+
 /// Serve until the native future returns, closing connection I/O part-way
 /// through the cancel allowance.
 ///
@@ -134,9 +158,10 @@ fn closed() -> io::Error {
 /// zero cancel allowance, the gate never closes and the wrapper is aborted as
 /// before: closing then would only race that abort, on any runtime flavour,
 /// and fail the interruption responses that detached connections still write.
-pub(super) async fn serve<F>(serving: F, signal: ShutdownSignal, gate: Arc<Gate>) -> io::Result<()>
+pub(super) async fn serve<F, C>(serving: F, signal: C, gate: Arc<Gate>) -> io::Result<()>
 where
     F: Future<Output = io::Result<()>>,
+    C: StopClock,
 {
     let mut serving = pin!(serving);
     let closing = async {
