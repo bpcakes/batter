@@ -597,6 +597,48 @@ boundary's future as a dropped connection would. Requests may carry explicitly
 inserted synthetic extensions, such as a chosen `ConnectInfo`; choosing them,
 and their meaning, belongs to the caller.
 
+The client accepts only an arrival-shaped request, whose extensions carry no
+record that Axum routing writes. Before the router, any layer or any handler is
+polled, it checks four public records: the path-parameter record that
+`RawPathParams` reads (any result except its missing-parameters rejection,
+including an empty or invalid UTF-8 capture list), `MatchedPath`, `NestedPath`
+and `OriginalUri`. Every request a `Router` dispatches gains `OriginalUri`, and
+every request it routes to a route, a path fallback or a `nest_service` service
+also gains the path-parameter record, so a request built from a whole extension
+map cloned inside an earlier dispatch is refused whole. Nothing is stripped or
+repaired. The refusal is the sanitized `HttpFailure::Internal` response of
+`render_infrastructure_failure` with no correlation identifier, carrying the
+`ReusedRoutingState` response extension, which has no public constructor, plus
+one ERROR event with a fixed message and no request field. The marker is
+`Copy`, so a handler can put one it read from an earlier refusal on its own
+response; the client removes it from every response it dispatched, so a
+returned response carries it only when that call refused the request. The request never entered the boundary, so it has
+no completion event and no `x-request-id` header. Application extensions are
+accepted and reach handlers untouched.
+
+```rust,ignore
+// Before: the destination inherits the source's captures, matched path and
+// observation state, so `Path` fails or reads the wrong captures.
+let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
+*next.extensions_mut() = earlier.clone();
+
+// After: a fresh request with each application extension copied by type.
+let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
+if let Some(label) = earlier.get::<Label>() {
+    next.extensions_mut().insert(label.clone());
+}
+```
+
+Without the refusal, pinned Axum 0.8.9 would treat inherited records as outer
+router state: captures are appended to (`Path<u64>` answers 500), an inherited
+invalid UTF-8 capture rejects a valid path with 400, the matched path and the
+completion event's `route` gain the earlier pattern as a prefix, and inherited
+Batter state suppresses the destination's request span and completion event.
+Axum keeps the path-parameter and nested matched-path records private and
+`http` 1.5.0 `Extensions` cannot be iterated or filtered, so no supported API
+resets routing state while keeping unknown application extensions; the check
+is rechecked whenever either pin changes.
+
 An in-process response establishes response construction only. It is not
 evidence of serving, an accepted connection, a listener, a TLS handshake, a
 remote peer, body streaming or a stopped detached descendant; keep real socket
