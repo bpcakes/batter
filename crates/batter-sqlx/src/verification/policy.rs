@@ -178,7 +178,11 @@ impl RoutineType {
 /// Callers provide canonical [`RoutineType`] values rather than a SQL
 /// signature string. This prevents named arguments, aliases, typmods and
 /// case-folding from silently selecting a different overload. The rendered
-/// string returned by [`Self::as_str`] is for diagnostics only.
+/// string returned by [`Self::as_str`] appears in diagnostics and is never
+/// parsed back. It is also a managed object's ledger key and an input to the
+/// managed-object set digest, so its form is fixed: every identifier in double
+/// quotes with an embedded quote doubled, `[]` after an array's element type,
+/// and arguments joined by a comma and a space.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RoutineSignature {
     schema: Identifier,

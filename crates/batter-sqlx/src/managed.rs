@@ -95,6 +95,7 @@ pub(crate) use catalog::{
     resolve_live,
 };
 pub use error::ManagedObjectError;
+pub use source::statement_start;
 
 use crate::verification::{Identifier, QualifiedName, RoutineSignature, temporary_namespace};
 use sha2::{Digest, Sha256};
@@ -543,6 +544,64 @@ pub enum PublicExecute {
 /// identity order. It does not cover the ledger name, so a build can embed it
 /// in release evidence independently of where the ledger lives. Its `Display`
 /// form is lowercase hexadecimal.
+///
+/// # Stability
+///
+/// Every ledger's `manifest` row stores this digest, and apply compares it
+/// with the manifest's at an equal revision. The scheme is therefore fixed:
+/// one policy, set of objects and set of retirements gives one digest in every
+/// Batter release. A change of scheme would be a `Breaking:` change under a
+/// new tag. Every ledger would then hold a digest the unchanged set no longer
+/// produces, so that release would have to ship at a higher
+/// [`ManagedRevision`].
+///
+/// The digest is SHA-256 over the following, where a *field* is its length in
+/// bytes as a big-endian `u64` followed by the bytes:
+///
+/// 1. the field `batter.managed-objects.v1`;
+/// 2. the field `public-execute:revoke` or `public-execute:unmanaged`;
+/// 3. the number of objects as a big-endian `u64`, then for each object in
+///    byte order of its identity: the field of its
+///    [kind name](ManagedObjectKind::as_str), the field of its
+///    [identity](ManagedObject::identity) and the 32 bytes of its
+///    [checksum](ManagedObject::checksum), the SHA-256 of its source;
+/// 4. the number of retirements as a big-endian `u64`, then for each
+///    retirement in byte order of its identity: the field of its kind name and
+///    the field of its identity.
+///
+/// The rendering of an identity is part of the scheme. A routine is
+/// `"schema"."name"(arguments)`, where each argument is its type as
+/// `"schema"."name"`, followed by `[]` for an array, and arguments are joined
+/// by a comma and a space. A trigger of either kind is
+/// `"name" ON "schema"."table"`. Every identifier is in double quotes, with
+/// an embedded double quote doubled.
+///
+/// ```
+/// use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, Retirement};
+/// use batter_sqlx::verification::{Identifier, QualifiedName, RoutineSignature, RoutineType};
+///
+/// let set = |revision, ledger| {
+///     ManagedObjectManifest::new(
+///         ManagedRevision::new(revision).expect("positive revision"),
+///         QualifiedName::new("app", ledger)?,
+///         PublicExecute::Revoke,
+///         [ManagedObject::function(
+///             RoutineSignature::new("app", "total", [RoutineType::new("pg_catalog", "int8")?])?,
+///             "CREATE OR REPLACE FUNCTION app.total(amount bigint) RETURNS bigint LANGUAGE sql RETURN amount * 2;",
+///         )?],
+///         [Retirement::trigger(QualifiedName::new("app", "records")?, Identifier::new("records_old")?)],
+///     )
+///     .map_err(Box::<dyn std::error::Error>::from)
+/// };
+/// // Computed from the layout above, independently of this crate.
+/// assert_eq!(
+///     set(1, "managed_objects")?.digest().to_string(),
+///     "ab271c6f208556ff4c75f213c881a15df2ae24c8deb81d9f1b1723f3dd7b24df",
+/// );
+/// // Neither the revision nor the ledger name is part of it.
+/// assert_eq!(set(7, "other_ledger")?.digest(), set(1, "managed_objects")?.digest());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct ManagedObjectDigest([u8; 32]);
 

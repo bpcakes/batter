@@ -695,6 +695,11 @@ pub(crate) async fn public_execute_holders(
 }
 
 /// Digest of every entry's rendered definition hash, in sorted identity order.
+///
+/// Apply stores it in the ledger's `manifest` row and verification recomputes
+/// it, possibly from another build, so the scheme is persisted: never change
+/// the tag, the framing or the order in place. `managed/tests/manifest.rs`
+/// holds golden values computed outside the crate.
 pub(crate) fn rendered_set_digest<'a>(
     hashes: impl IntoIterator<Item = (&'a str, &'a [u8])>,
 ) -> [u8; 32] {

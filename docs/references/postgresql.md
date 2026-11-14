@@ -851,6 +851,26 @@ Local dependency remains SQLx 0.9.0; live validation server is PostgreSQL 18.6.
 This change adds no dependency. Application revision numbers are not derived from
 SQLx migration history.
 
+### Leading comments and whitespace — 2026-11-14
+
+- PostgreSQL 18 [lexical structure](https://www.postgresql.org/docs/18/sql-syntax-lexical.html#SQL-SYNTAX-COMMENTS):
+  a `--` comment runs to the end of the line and `/* */` comments nest; both
+  are removed from the input before syntax analysis and replaced by whitespace.
+- PostgreSQL 18 [pg_proc](https://www.postgresql.org/docs/18/catalog-pg-proc.html):
+  `prosrc` holds a string body as written and `prosqlbody` holds a
+  SQL-standard body as a parsed tree; neither holds the `CREATE` statement
+  text, so nothing that precedes the statement is stored. Triggers are stored
+  as catalog rows.
+
+`managed::statement_start` relies on these two facts. The whitespace bytes and
+comment termination it skips are the manifest scanner's own. It removes leading
+text only: comments inside a string body are stored, and the function leaves
+every other comment and all trailing text in the checksum too, because the
+scanner does not separate stored from unstored text. The live case
+`managed_statement_slices_install_what_their_whole_sources_install` ran on
+PostgreSQL 18.6 on 2026-11-14: one entry of each managed kind, applied whole
+and then sliced, kept its stored definition and rendered checksum.
+
 ## Intent reconciliation snapshot and grants (2026-11-05)
 
 - PostgreSQL 18 [transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html):

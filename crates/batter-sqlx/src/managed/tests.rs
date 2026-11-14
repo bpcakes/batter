@@ -1,4 +1,4 @@
-use super::source::{Token, scan};
+use super::source::{Token, scan, statement_start};
 use super::*;
 use crate::verification::RoutineType;
 
@@ -710,3 +710,4 @@ fn manifest(
 }
 
 mod manifest;
+mod statement;

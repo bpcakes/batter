@@ -11,6 +11,10 @@ triggers become a managed kind. The amendment extends the same decision, so it
 is recorded in place, in subsections and paragraphs dated 2026-10-16 under the
 headings it changes.
 
+Amended 2026-11-14 (`batter-6d1g`, approved by the repository owner): the set
+digest scheme becomes a stated contract, `statement_start` is added, and
+revision choice is documented. See the dated section at the end.
+
 ## Context
 
 The main downstream consumer keeps every PostgreSQL routine body inside
@@ -807,3 +811,174 @@ writers, atomic legacy adoption and corrupt/missing metadata. Existing callback
 integrity and cancellation cases now also cover revision state. Executed results
 and pre-fence binary evidence are recorded in `batter-ofom` and the accompanying
 release-fence evidence document.
+
+## Revision choice, header comments and digest stability — 2026-11-14
+
+Decision (`batter-6d1g`). A downstream consumer proposed a merge-safe way to
+choose `ManagedRevision`. The three downstream applications were surveyed
+read-only on 2026-11-14; nothing in them was built or run, and their
+identities stay outside this repository.
+
+- One of the three uses managed objects. The other two keep routines and
+  triggers in SQLx migrations.
+- In that consumer, 47 merges to its main line rewrote a hand-written revision
+  constant within 8 days.
+- It replaced the constant by a frozen base plus a count of append-only record
+  files. That scheme reached its main line on 2026-11-14 with one record; no
+  merge of two branches that each add a record had landed yet.
+- It skips leading comments with its own copy of this scanner's rule, written
+  twice, in its build and in a policy script.
+- It compares the set digest of a frozen historical set, built from unstripped
+  sources, with a stored value before it adopts an older ledger.
+
+### Digest scheme
+
+The set digest is persisted in every ledger's `manifest` row and compared at an
+equal revision, and applications store it in release evidence. Until now the
+tests asserted only its shape and that it differs between sets. The scheme
+under the tag `batter.managed-objects.v1` is now fixed: its byte layout is in
+`ManagedObjectDigest`'s rustdoc, and golden values are asserted in
+`managed/tests/manifest.rs` (every object kind, every retirement kind, both
+`PublicExecute` policies) and in that rustdoc's doctest. The expected values
+were computed outside the crate, from the documented layout. The rendering of
+an identity is digest input and the ledger key, so it is part of the scheme: a
+second golden value covers several arguments, an array type and identifiers
+that need quoting, and `RoutineSignature`'s rustdoc no longer calls that
+rendering diagnostic only. A change of scheme
+is a `Breaking:` change under a new tag. Every ledger would then hold a digest
+the unchanged set no longer produces, which apply refuses at an equal revision
+as `RevisionConflict`, so such a release ships at a higher revision.
+
+The `manifest` row stores a second digest, over the rendered definition hashes
+(`catalog::rendered_set_digest`, tag `batter.managed-objects.rendered.v1`).
+Verification recomputes it, possibly from another build, so it is persisted in
+the same sense. It is internal and has no public type; its layout is stated
+beside its golden values in `managed/tests/manifest.rs`, and the same rule
+applies to it.
+
+### `statement_start`
+
+`managed::statement_start(source)` returns the source from its first token on.
+`source::scan` and this function skip whitespace and comments through one
+private `trivia` function, so they cannot disagree. PostgreSQL stores nothing
+that precedes a statement, so the slice installs the same definition. A
+PostgreSQL 18 case applies one entry of each kind whole and then sliced, and
+finds the stored definitions and rendered checksums unchanged.
+
+It is opt-in. `ManagedObject` still checksums exactly the bytes it is given.
+Skipping leading trivia by default was rejected: it would change the digest of
+every set whose sources carry header comments, and the surveyed consumer's
+historical-set comparison would then fail and block adoption of its older
+ledgers. The function exists because a byte-exact checksum otherwise turns a
+comment edit into a set change: a higher revision, a release in which processes
+built at the previous revision fail verification, and re-execution of the
+object with the table locks its statement takes.
+
+Adopting it is itself a set change. Every object whose source had leading text
+gets a new checksum, and apply executes all of them again in one transaction,
+with their table locks, although no definition changes. The live case asserts
+this re-execution.
+
+Only leading text is removed. Trailing whitespace and comments, and comments
+inside the statement that PostgreSQL does not store, stay in the checksum, so
+an edit to them is still a set change. Trimming trailing text was considered
+and not done. The surveyed consumer's own rule is leading-only with the same
+whitespace and comment rules (read, not executed), so it can replace that rule
+with this function without changing a checksum; a rule that also trimmed the
+end would re-execute its whole set. A separate function can add that later
+without changing this one.
+
+Constructor variants (`ManagedObject::function_statement` and three more) were
+rejected: they would double four constructors for one slice operation, and a
+free function is also usable where no `ManagedObject` is built.
+
+ADR-010 review of `statement_start`.
+
+1. It cannot produce an invalid managed object. Its output goes through the
+   unchanged constructors, which validate the header, the identity and the
+   single statement. It reads only the text it skips and refuses a NUL byte
+   or an unterminated comment there, so the slice hides nothing from
+   construction. A source accepted whole is accepted sliced. The reverse fails
+   only at a size bound: the function applies none, so a source that is over
+   the per-source or manifest bound because of its leading text is refused
+   whole and accepted sliced. Unit tests check both directions.
+2. It is a per-call obligation, which is weaker than the canonical path. The
+   function returns a plain `&str`, so nothing marks a source as sliced. A set
+   stays stable only if every constructor call and every separate digest
+   computation slices. Missing one call is not an invalid state: that object
+   keeps a header-sensitive checksum. Dropping a call later changes a checksum
+   without a source edit, and the fence refuses that release with
+   `RevisionConflict`, after its migrations have committed. The canonical
+   example passes whole sources and does not show the function. A manifest
+   that owns the choice for the whole set would remove the obligation; that is
+   a candidate for the records design in `batter-ulfs`.
+3. Passing the whole source remains valid and is not a known-invalid
+   composition, only a more sensitive checksum; the choice is recorded as
+   application policy.
+4. Mixing sliced and whole sources between releases changes checksums, which
+   the release fence already treats as an ordinary set change.
+
+Fresh-agent usability evaluation is unexecuted.
+
+### Choosing a revision
+
+The package README and `ManagedRevision`'s rustdoc now state what the fence
+needs (a revision that never decreases, and one digest per revision) and
+describe the base-plus-record-count numbering. It is documented, not enforced:
+Batter reads no records and cannot see whether they are append-only.
+
+Limits, stated in the README:
+
+- The numbering assumes one releasing line per ledger. Unmerged branches share
+  a revision with different digests; applying both to one database is refused.
+- A stale branch holding more records than the releasing line is a higher
+  revision and is applied. `authorize` compares two numbers and has no notion
+  of ancestry. A hand-written constant has the same hole.
+- Recording lineage in the ledger was considered. The digest of a merge is
+  known to neither parent, so every merge would need a follow-up edit to a
+  shared value, which is the conflict the numbering removes.
+
+Not adopted:
+
+- `ManagedRevision::derived(base, records)`. It is
+  `ManagedRevision::new(base + records)`, which is already `const`. A named
+  constructor over two integers would suggest an append-only history that
+  nothing checked.
+- A library-owned record reader and append-only comparison in this change. The
+  repository owner approved the direction on 2026-11-14 as a focused
+  experimental extraction under [ADR-014](014-reuse-after-two-consumers.md);
+  its design is `batter-ulfs`, and its API waits for the consumer's first
+  merges of branches that each add a record.
+
+### Evidence
+
+Offline unit tests in `managed/tests/statement.rs` cover every whitespace byte,
+`--` comments ended by a line feed, by a carriage return and by the end of the
+source, nested block comments, multibyte text in comments, sources with no
+token, refused leading text, text left to construction, the per-source size
+bound, and the agreement of the slice with the whole source under the scanner
+and the constructors. Mutation controls, each run and reverted:
+
+- changing the digest tag failed the golden test;
+- omitting the object identity from the digest failed the golden test;
+- changing the argument separator, the array suffix or the quote escaping of
+  an identity each failed the identity-rendering golden test;
+- changing the rendered digest's tag, or removing a length prefix from it,
+  each failed its golden test;
+- ending a `--` comment only at a line feed failed two statement tests;
+- removing the NUL refusal from `statement_start` failed the refusal test;
+- skipping only the first leading item failed two statement tests.
+
+One live PostgreSQL 18 case was added,
+`managed_statement_slices_install_what_their_whole_sources_install`, with a
+routine with a string body, a routine with a SQL-standard body, a procedure, a
+trigger and a constraint trigger. It applies them whole, then sliced at a
+higher revision, and requires five re-executions, unchanged stored
+definitions, unchanged rendered checksums in every ledger row and a clean
+verification; it then rewords the leading text of the sliced sources and
+requires no re-execution.
+
+No live case was added for the numbering. To the release fence a counted
+revision is an integer, and the existing live release cases cover conflict,
+downgrade, identical reapplication and a higher revision with identical
+content. Execution results belong to `batter-6d1g`.

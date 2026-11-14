@@ -3571,9 +3571,18 @@ Legacy five-column ledgers require a matching recorded manifest for baseline
 adoption. The transactional sixth-column upgrade causes pre-fence exact-shape
 readers to refuse apply. There is no default revision or unfenced apply alias.
 Applications own revision ordering, baseline selection and cross-release source
-compatibility. SQLx migrations precede the gate and can already have committed;
+compatibility. The documented base-plus-record-count numbering is a recipe, not
+a guarantee: Batter reads no records, and the fence compares numbers without
+ancestry, so a stale branch with a higher number is applied. Both digests in
+the `manifest` row, the set digest and the digest of rendered definition
+hashes, have schemes that are fixed across releases and pinned by golden
+values computed independently of the implementation; the rendering of an
+identity is part of the first. SQLx migrations precede the gate and can already have committed;
 arbitrary migrations, administrative SQL and ledger deletion are outside it.
-See [ADR-013](adr/013-managed-database-objects.md#release-ordering-and-legacy-adoption--2026-11-05).
+See ADR-013 on
+[release ordering](adr/013-managed-database-objects.md#release-ordering-and-legacy-adoption--2026-11-05)
+and on
+[revision choice and digest stability](adr/013-managed-database-objects.md#revision-choice-header-comments-and-digest-stability--2026-11-14).
 
 ## Retained enqueue-intent reconciliation
 

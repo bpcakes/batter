@@ -8,6 +8,31 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Managed objects (`batter-6d1g`), additive; no signature, ledger shape or
+  digest changes.
+  - `batter_sqlx::managed::statement_start(source)` returns a source from its
+    first token on, skipping leading whitespace and comments through the same
+    rule manifest construction uses. Passing that slice to a `ManagedObject`
+    constructor keeps header comments out of the source checksum and the set
+    digest. It is opt-in and per call: `ManagedObject` still checksums exactly
+    what it is given. Starting to pass slices is a set change: it needs a
+    higher revision, and apply executes every object whose source had leading
+    text again in one transaction, with its table locks. Text inside and after
+    the statement stays in the checksum. A PostgreSQL 18 live case checks that
+    whole and sliced sources install the same definitions.
+  - The set digest scheme is now a stated contract. `ManagedObjectDigest`'s
+    rustdoc gives the byte layout under the tag `batter.managed-objects.v1`,
+    including how an identity is rendered, and golden values computed
+    independently of the implementation pin it. The `manifest` row's digest of
+    rendered definition hashes is pinned the same way. A future change of
+    either scheme would be a `Breaking:` entry that ships at a higher
+    revision.
+  - `ManagedRevision`'s rustdoc and the `batter-sqlx` README gain "Choosing a
+    revision": what the release fence needs, and a base-plus-record-count
+    numbering that merges without a shared line, with its one-releasing-line
+    assumption. Batter does not read or check such records. See
+    [ADR-013](docs/adr/013-managed-database-objects.md#revision-choice-header-comments-and-digest-stability--2026-11-14).
+
 - Refuse reused Axum routing state in Runlimit's in-process test transport
   (`batter-gp93`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
