@@ -5,10 +5,13 @@
 //! body on its own connection task. [`AdmittedRequest::into_streaming_response`]
 //! gives that body an owner of its own instead.
 
+mod start;
+
+pub(crate) use start::BodyStart;
+
 use crate::{AdmittedRequest, CorrelationId, observation::ObservationState};
 use axum::{
     body::{Body, Bytes, HttpBody},
-    http::{HeaderMap, Method, StatusCode, header::CONTENT_LENGTH},
     response::{IntoResponse, Response},
 };
 use batter_core::{
@@ -17,13 +20,13 @@ use batter_core::{
     operation::{Interruption, OperationContext, OperationOwner, RootDeadline},
 };
 use http_body::{Frame, SizeHint};
+use start::Framing;
 use std::{
     cell::Cell,
     fmt,
     future::Future,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     pin::Pin,
-    sync::{Arc, Mutex, PoisonError},
     task::{Context, Poll},
     time::Duration,
 };
@@ -54,6 +57,7 @@ use tokio::time::{Instant, Sleep};
 /// assert_eq!(budget.idle(), Duration::from_secs(30));
 /// // A wait that could never expire before the total is a configuration error.
 /// assert!(BodyBudget::new(Duration::from_secs(1), Duration::from_secs(2)).is_err());
+/// assert!(BodyBudget::new(Duration::from_secs(1), Duration::from_secs(1)).is_err());
 /// assert!(BodyBudget::new(Duration::ZERO, Duration::ZERO).is_err());
 /// # Ok::<(), batter_core::ConfigurationError>(())
 /// ```
@@ -65,7 +69,7 @@ pub struct BodyBudget {
 
 impl BodyBudget {
     /// Validate a positive total of at most one year (365 days) that Tokio can
-    /// represent as a deadline, and a positive idle bound no longer than it.
+    /// represent as a deadline, and a positive idle bound shorter than it.
     /// A longer total is rejected as [`ConfigurationError::TooLarge`].
     pub fn new(total: Duration, idle: Duration) -> Result<Self, ConfigurationError> {
         const TOTAL: &str = "HTTP body total budget";
@@ -81,7 +85,7 @@ impl BodyBudget {
         {
             return Err(ConfigurationError::TooLarge(TOTAL));
         }
-        if idle > total {
+        if idle >= total {
             return Err(ConfigurationError::TooLarge(IDLE));
         }
         Ok(Self { total, idle })
@@ -187,10 +191,13 @@ impl AdmittedRequest {
     /// - A wait for the next frame longer than `budget`'s idle bound, the total
     ///   bound and forced cancellation each end the body with an error. Both
     ///   bounds are checked before and after each poll of the source, so a frame
-    ///   ready or returned only after its wait expired is never accepted. The peer
+    ///   ready or returned only after its wait expired is never accepted, and
+    ///   an error returned then is reported as that bound; such a rejected
+    ///   answer is destroyed like the body, below. The peer
     ///   sees a truncated message, never a final chunk it could mistake for a
     ///   complete one, except over HTTP/1.0: Hyper answers an HTTP/1.0 request
-    ///   in HTTP/1.0, where a body without a declared length ends when the
+    ///   in HTTP/1.0, as it does a response built as HTTP/1.0, and there a
+    ///   body without a declared length ends when the
     ///   connection closes, so that peer cannot tell the truncation from the
     ///   message's end. Declare a `Content-Length` where an HTTP/1.0 peer must
     ///   detect it.
@@ -208,11 +215,16 @@ impl AdmittedRequest {
     ///   `dropped` emit INFO. `completed` names a body whose source produced
     ///   its whole message, including one the transport finished without
     ///   asking for its end: after the advertised `Content-Length` or exact
-    ///   size, or after trailers. The advertised length is the one the
-    ///   response carries when request admission returns it, however it was
-    ///   built: a length a handler's tuple or an inner layer adds afterwards
-    ///   counts, as does one on a response rebuilt around this body; a layer
-    ///   outside admission that changes it is not observed. A source that
+    ///   size, or after trailers. The advertised length is the one Hyper
+    ///   frames the written response with: through the registered server,
+    ///   the response handed to Hyper after every layer; otherwise the one
+    ///   request admission returns. A length a handler's tuple or a layer adds
+    ///   after this call counts, as does one on a response rebuilt around this
+    ///   body. Like Hyper, a `Content-Length` counts only as plain digits,
+    ///   repeated only with one value, else the body's exact size does, and
+    ///   `Transfer-Encoding` frames none, except in an HTTP/1.0 answer,
+    ///   which drops that header; a declared length the body's exact size
+    ///   contradicts still counts, as the peer reads it. A source that
     ///   ends, reports its end or yields trailers short of its advertised
     ///   length is `failed`: the transport aborts that message and the peer
     ///   sees it truncated. The exception is a source that already reports its
@@ -366,71 +378,14 @@ impl AdmittedRequest {
         // ends the body under protection before the application's body is
         // destroyed.
         owned.inner = Some(body);
-        // Provisional: request admission settles it again from the response
-        // it returns, however the handler composed or rebuilt that response.
+        // Provisional: the response finally written settles it again, however
+        // the handler composed or rebuilt it and layers changed it since.
         let hint = owned.inspect(HttpBody::size_hint).unwrap_or_default();
-        owned
-            .framing
-            .settle(&admission.method, parts.status, &parts.headers, &hint);
+        admission.start.frame(&owned.framing, &parts, &hint);
         if !refused {
-            admission.framing.hand_over(owned.framing.clone());
+            admission.start.hand_over(&owned.framing);
         }
         Response::from_parts(parts, Body::new(owned))
-    }
-}
-
-/// The message length the transport frames an owned body with, after which it
-/// stops polling without asking for the end: the response's `Content-Length`,
-/// else its body's exact size. A response the transport writes without a body,
-/// by Hyper's `can_have_body` rule for the request method and response status,
-/// frames none, so a length it declares is not one to produce.
-///
-/// Request admission settles it again from the response it returns, through
-/// the request's [`FramingSlot`]: headers a handler's tuple or an inner layer
-/// adds afterwards, or a response rebuilt around the body, frame the message
-/// Hyper writes. Layers outside admission are not observed.
-#[derive(Clone, Default)]
-pub(crate) struct Framing(Arc<Mutex<Option<u64>>>);
-
-impl Framing {
-    fn settle(&self, method: &Method, status: StatusCode, headers: &HeaderMap, hint: &SizeHint) {
-        let bodyless = method == Method::HEAD
-            || method == Method::CONNECT && status.is_success()
-            || status.is_informational()
-            || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED);
-        let length = headers
-            .get(CONTENT_LENGTH)
-            .and_then(|length| length.to_str().ok()?.parse().ok())
-            .or_else(|| hint.exact())
-            .filter(|_| !bodyless);
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = length;
-    }
-
-    fn length(&self) -> Option<u64> {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-/// One request's framing hand-off. Request admission keeps it and the body the
-/// request starts places its [`Framing`] in it; every clone of the admission
-/// record shares the one slot. The response cannot carry it: a handler can
-/// rebuild the response around the body and drop everything else it carried.
-#[derive(Clone, Default)]
-pub(crate) struct FramingSlot(Arc<Mutex<Option<Framing>>>);
-
-impl FramingSlot {
-    fn hand_over(&self, framing: Framing) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(framing);
-    }
-
-    /// Settle the started body's framing, if a body started, from the response
-    /// request admission returns for a request with `method`.
-    pub(crate) fn settle(&self, method: &Method, response: &Response) {
-        let framing = self.0.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(framing) = framing {
-            let hint = response.body().size_hint();
-            framing.settle(method, response.status(), response.headers(), &hint);
-        }
     }
 }
 
@@ -545,7 +500,15 @@ impl OwnedBody {
     /// destroyed under the one current at the hand-over; they differ only when
     /// the handler switched subscribers.
     fn finish(&mut self, end: BodyEnd) {
+        self.finish_destroying(end, ());
+    }
+
+    /// End the body for `end`, destroying `rejected`, an answer the source
+    /// gave too late, together with the source: after the event, under the
+    /// captured dispatcher and inside the request span.
+    fn finish_destroying<T>(&mut self, end: BodyEnd, rejected: T) {
         if self.ended {
+            tracing::dispatcher::with_default(&self.dispatch, || drop(rejected));
             return;
         }
         self.ended = true;
@@ -591,7 +554,7 @@ impl OwnedBody {
                 }
                 // An unwinding destructor still releases the span under its
                 // owner, which this closure's guard keeps current.
-                let inner = self.inner.take();
+                let inner = (self.inner.take(), rejected);
                 tracing::dispatcher::with_default(&self.dispatch, || drop(inner));
             }
             drop(context);
@@ -605,17 +568,18 @@ impl OwnedBody {
     /// aborts the message and the peer sees it truncated, or, if it had ended
     /// before the head was written, Hyper sent it as an empty message.
     fn source_end(&self) -> Option<BodyEnd> {
-        let ended = self.trailers || self.inner.as_ref().is_some_and(HttpBody::is_end_stream);
-        match self.framing.length().map(|length| self.bytes >= length) {
-            Some(true) => Some(BodyEnd::Completed),
-            Some(false) if ended => Some(BodyEnd::Failed),
-            None if ended => Some(BodyEnd::Completed),
-            _ => None,
+        if self.trailers || self.inner.as_ref().is_some_and(HttpBody::is_end_stream) {
+            return Some(self.yielded_end());
         }
+        let produced = self
+            .framing
+            .length()
+            .is_some_and(|length| self.bytes >= length);
+        produced.then_some(BodyEnd::Completed)
     }
 
-    /// How a source that yielded its end finished: short of its advertised
-    /// length is a failure, as for [`Self::source_end`].
+    /// How a source that ended finished: short of its advertised length is a
+    /// failure, because the transport aborts that message.
     fn yielded_end(&self) -> BodyEnd {
         if self
             .framing
@@ -643,7 +607,17 @@ impl OwnedBody {
     }
 
     fn interrupt(&mut self, end: BodyEnd) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
-        self.finish(end);
+        self.reject(end, ())
+    }
+
+    /// End the body for `end` instead of passing on `rejected`, which the
+    /// library, not the transport, then destroys under protection.
+    fn reject<T>(
+        &mut self,
+        end: BodyEnd,
+        rejected: T,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        self.finish_destroying(end, rejected);
         Poll::Ready(Some(Err(axum::Error::new(BodyInterrupted(end)))))
     }
 
@@ -716,10 +690,16 @@ impl HttpBody for OwnedBody {
             Pin::new(inner).poll_frame(cx)
         });
         this.polling = false;
-        // Nor is a frame or end the source returned from a poll that outlasted
-        // a bound: the check above ran before that poll started.
-        if let (Poll::Ready(Some(Ok(_)) | None), Some(end)) = (&polled, this.overdue()) {
-            return this.interrupt(end);
+        // Nor is a frame, end or error the source returned from a poll that
+        // outlasted a bound: the check above ran before that poll started, and
+        // the bound, not the source, then ended the body.
+        let overdue = if polled.is_ready() {
+            this.overdue()
+        } else {
+            None
+        };
+        if let Some(end) = overdue {
+            return this.reject(end, polled);
         }
         match polled {
             Poll::Ready(Some(Ok(frame))) => {

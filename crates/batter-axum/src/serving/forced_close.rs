@@ -9,6 +9,8 @@
 //! end it, so the wrapper returns after Axum observed every connection task
 //! finish.
 
+use crate::lock;
+use atomic_waker::AtomicWaker;
 use axum::serve::Listener;
 use batter_core::lifecycle::ShutdownSignal;
 use std::{
@@ -17,10 +19,10 @@ use std::{
     io::{self, IoSlice},
     pin::{Pin, pin},
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -42,16 +44,14 @@ struct Connections {
 
 /// The tasks that last polled one connection, by direction. An upgraded
 /// connection may be split, so its halves can be polled by different tasks.
+/// Recording one takes no lock: registering and waking an [`AtomicWaker`] are
+/// read-modify-writes of one atomic, so either the close's wake sees the
+/// registration or the registering poll's later read of the flag sees the
+/// close.
 #[derive(Default)]
 struct Pollers {
-    read: Mutex<Option<Waker>>,
-    write: Mutex<Option<Waker>>,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    read: AtomicWaker,
+    write: AtomicWaker,
 }
 
 impl Gate {
@@ -81,12 +81,8 @@ impl Gate {
         let pollers: Vec<_> = lock(&self.connections).pollers.values().cloned().collect();
         // Waking application tasks happens outside the registry lock.
         for connection in pollers {
-            for slot in [&connection.read, &connection.write] {
-                let waker = lock(slot).take();
-                if let Some(waker) = waker {
-                    waker.wake();
-                }
-            }
+            connection.read.wake();
+            connection.write.wake();
         }
     }
 
@@ -99,16 +95,8 @@ impl Gate {
     /// in its buffer, or after it closed the read side. That task's last I/O
     /// poll was ready, and the close must still wake it so its next pass,
     /// which flushes, fails.
-    fn enter(&self, slot: &Mutex<Option<Waker>>, cx: &Context<'_>) -> bool {
-        {
-            let mut poller = lock(slot);
-            if !poller
-                .as_ref()
-                .is_some_and(|waker| waker.will_wake(cx.waker()))
-            {
-                *poller = Some(cx.waker().clone());
-            }
-        }
+    fn enter(&self, slot: &AtomicWaker, cx: &Context<'_>) -> bool {
+        slot.register(cx.waker());
         self.is_closed()
     }
 }
@@ -159,7 +147,9 @@ impl StopClock for ShutdownSignal {
 /// allowance, or after it moved earlier, the gate never closes and the wrapper
 /// is aborted as before: closing then would only race that abort, on any
 /// runtime flavour, and fail the interruption responses that detached
-/// connections still write.
+/// connections still write. A clock that reports no abort deadline, which the
+/// supervisor's registration never does, leaves no known interval either, so
+/// the gate stays open too.
 pub(super) async fn serve<F, C>(serving: F, signal: C, gate: Arc<Gate>) -> io::Result<()>
 where
     F: Future<Output = io::Result<()>>,
@@ -179,10 +169,11 @@ where
         }
         // No interval left, at cancellation or because the deadline moved into
         // the past, even while a stale midpoint won the race above: the wrapper
-        // abort decides, and closing would only race it.
+        // abort decides, and closing would only race it. Nor is there a known
+        // interval without a deadline, so cancelled handlers keep their share.
         if signal
             .abort_deadline()
-            .is_some_and(|abort| abort <= Instant::now())
+            .is_none_or(|abort| abort <= Instant::now())
         {
             std::future::pending::<()>().await;
         }

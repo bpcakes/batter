@@ -42,9 +42,12 @@ Windows support and non-Unix fallbacks are out of scope.
   sanitized `AdmittedRequestRejection`.
 - `src/streaming.rs` owns `AdmittedRequest::into_streaming_response`,
   `BodyBudget`, `BodyScope` and the private `OwnedBody` that wraps the built
-  response's body. The admission record carries the private
-  `OperationContinuation` and the shared observation state it starts from;
-  `src/observation.rs` publishes the request's span context there once.
+  response's body. `src/streaming/start.rs` owns the private per-request
+  `BodyStart` (the `OperationContinuation`, the request head and the started
+  body's framing hand-off) and the framing rule that mirrors Hyper's encoder.
+  The admission record carries that `BodyStart` and the shared observation
+  state the body starts from; `src/observation.rs` publishes the request's span
+  context there once.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
@@ -102,8 +105,10 @@ Windows support and non-Unix fallbacks are out of scope.
   and fails every accepted connection's I/O halfway between forced
   cancellation and the supervisor's abort deadline.
   `src/serving/completion.rs` owns the private make-service wrapper whose
-  per-connection service, response futures and response bodies hold tokens,
-  so the registered server returns only after each was destroyed.
+  per-connection service, response futures and response bodies hold
+  `TaskTracker` tokens, so the registered server returns only after each was
+  destroyed, and whose response future creates each request's `BodyStart` and
+  settles the started body's framing from the response it hands Hyper.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
@@ -205,14 +210,15 @@ cancel allowance to write their interruption responses. Fail reads and writes
 alike once it is closed. Record the polling task's waker on every I/O poll,
 before reading the closed flag, not only on a pending one: Hyper can wait on a
 body alone after ready polls, with pipelined bytes buffered or its read side
-closed. Keep that to one uncontended lock and a `will_wake` compare per poll,
+closed. Keep that to one `AtomicWaker` registration per poll, with no lock,
 recompute the close instant when `ShutdownSignal::abort_deadline_before`
 reports an earlier abort, and wake outside the registry lock. Keep that
 computation behind the private `StopClock` trait, implemented by
 `ShutdownSignal`, so its paused-clock unit test drives the same code. Never close
 when no interval is left, whether at cancellation, as with a zero cancel
-allowance, or after the deadline moved to an instant already passed: that only
-races the wrapper abort and fails interruption responses.
+allowance, or after the deadline moved to an instant already passed, nor when
+no abort deadline is known: that only races the wrapper abort and fails
+interruption responses.
 Do not describe upgraded connections, handler-detached tasks, a connection
 task that never yields or a zero cancel allowance as covered; the
 wrapper-abort contract still applies to them. Never treat Axum's graceful
@@ -241,19 +247,26 @@ ended when Hyper writes the head stays `failed` although Hyper sends an empty
 `content-length: 0` message, so never promise the peer a truncation there.
 Take no advertised
 length from a response Hyper writes without a body: mirror its
-`can_have_body` rule for the request method and response status. Settle the
-advertised length again from the response request admission returns, through
-the admission record's shared `FramingSlot` that only a started body fills,
-because a handler's tuple or an inner layer can declare it after the
-hand-over; never carry it on the response, which a handler can rebuild around
-the body. Own the built body before asking it anything, so a query that
+`can_have_body` rule for the request method and response status, and its
+encoder: `Content-Length` as plain digits with every value equal, else the
+body's exact size, and no length under `Transfer-Encoding` except in an HTTP/1.0
+answer, judged by Hyper's effective version (HTTP/1.0 for an HTTP/1.0 request,
+else the response's own). Settle the advertised length again from the response request
+admission returns and, on the registered server, from the response
+`completion::Responding` hands Hyper, through the one private `BodyStart` per
+request that the connection service creates, admission claims once and only a
+started body's framing fills, because a handler's tuple or any layer can
+declare it after the hand-over; never carry it on the response, which a
+handler can rebuild around the body. Own the built body before asking it anything, so a query that
 unwinds at the hand-over still ends it before it is destroyed. Do not
 claim truncation is visible to an HTTP/1.0 peer for a body without a declared
 length: Hyper delimits it by closing the connection. The observer publishes the request span
 in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
-bounds before each poll of the source and again before accepting the frame or
-end it returned, since a poll can outlast them, and
+bounds before each poll of the source and again before accepting the frame,
+end or error it returned, since a poll can outlast them, reporting that bound
+and destroying the rejected answer inside the protected ending, with the source,
+and
 register for forced cancellation and the nearer bound only when the source is
 pending. End a library-ended body with an error, never `None`. Poll, query and
 destroy the application's body under the dispatcher current at the hand-over;

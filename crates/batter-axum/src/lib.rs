@@ -69,6 +69,15 @@ use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::Level;
 
+/// Lock adapter-owned state, recovering it after a panic elsewhere: every
+/// value guarded this way stays consistent between statements, so a poisoned
+/// lock carries no torn update.
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> PolicyResponse + Send + Sync;
 
 /// Application-selected HTTP completion-event level, carried in response extensions.

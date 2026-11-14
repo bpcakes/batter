@@ -199,7 +199,8 @@ service and response bodies are destroyed;
 `streaming.rs` owns `AdmittedRequest::into_streaming_response`, the validated
 `BodyBudget`, the `BodyScope` and the private owned body that gives a response
 body outliving its handler its own context, bounds, protected dispatch and
-completion event;
+completion event; `streaming/start.rs` owns its per-request start record and
+the framing rule that mirrors Hyper's encoder;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route

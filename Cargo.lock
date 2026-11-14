@@ -330,6 +330,7 @@ dependencies = [
 name = "batter-axum"
 version = "0.0.1"
 dependencies = [
+ "atomic-waker",
  "axum",
  "batter-core",
  "cookie",
@@ -341,6 +342,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
  "tracing",
@@ -3888,6 +3890,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",

@@ -7,7 +7,7 @@ use batter_core::{
     lifecycle::Supervisor,
     registration::{Registration, RegistrationTarget},
 };
-use std::{fmt::Debug, future::IntoFuture};
+use std::{fmt::Debug, future::IntoFuture, sync::Arc};
 
 mod completion;
 mod forced_close;
@@ -248,7 +248,7 @@ pub fn register_http_with_connect_info_in<T: RegistrationTarget + ?Sized>(
 }
 
 fn register_http_impl<L>(
-    mut registration: Registration<'_>,
+    registration: Registration<'_>,
     name: &'static str,
     listener: L,
     application: Router,
@@ -257,30 +257,20 @@ where
     L: Listener,
     L::Addr: Debug,
 {
-    registration.register(name, move |startup| async move {
-        let running = startup.acknowledge_started();
-        let signal = running.signal();
-        let gate = forced_close::Gate::new();
-        let connections = completion::Connections::new();
-        let draining = {
-            let signal = signal.clone();
-            async move { signal.draining().await }
-        };
+    register_gated(registration, name, move |gate, connections, draining| {
         // Serving a bare `Router` makes pinned Axum 0.8.9 clone and re-prepare
         // it, reapplying every lazily mapped layer, for each accepted
         // connection. The make-service prepares it once, as the peer path does.
-        let serving = axum::serve(
+        axum::serve(
             gate.listener(listener),
             connections.track(application.into_make_service()),
         )
-        .with_graceful_shutdown(draining);
-        forced_close::serve(destroyed(serving, &connections), signal, gate).await?;
-        Ok(running.stopped())
+        .with_graceful_shutdown(draining)
     })
 }
 
 fn register_peer_http_impl<L>(
-    mut registration: Registration<'_>,
+    registration: Registration<'_>,
     name: &'static str,
     listener: L,
     application: Router,
@@ -289,36 +279,48 @@ where
     L: Listener,
     L::Addr: Clone + Debug + Sync + 'static,
 {
-    registration.register(name, move |startup| async move {
-        let running = startup.acknowledge_started();
-        let signal = running.signal();
-        let gate = forced_close::Gate::new();
-        let draining = {
-            let signal = signal.clone();
-            async move { signal.draining().await }
-        };
-        let connections = completion::Connections::new();
-        let serving = axum::serve(
+    register_gated(registration, name, move |gate, connections, draining| {
+        axum::serve(
             gate.listener(listener)
                 .tap_io(|_: &mut forced_close::ForcedCloseIo<L::Io>| {}),
             connections.track(application.into_make_service_with_connect_info::<L::Addr>()),
         )
-        .with_graceful_shutdown(draining);
-        forced_close::serve(destroyed(serving, &connections), signal, gate).await?;
+        .with_graceful_shutdown(draining)
+    })
+}
+
+/// Register a server that `serve` builds over the forced-close gate and the
+/// completion tracker, ending its graceful wait at drain. The registered
+/// task returns after Axum's graceful return and the destruction of every
+/// accepted connection's service, response futures and response bodies,
+/// which Axum counts finished before Hyper destroys them. One still being
+/// destroyed at the abort deadline leaves the server unfinished, so it is
+/// aborted and dependent cleanup is skipped rather than run beside that
+/// destructor.
+fn register_gated<S, F>(
+    mut registration: Registration<'_>,
+    name: &'static str,
+    serve: S,
+) -> Result<(), RegistrationError>
+where
+    S: FnOnce(&Arc<forced_close::Gate>, &completion::Connections, Draining) -> F + Send + 'static,
+    F: IntoFuture<Output = std::io::Result<()>> + Send,
+    F::IntoFuture: Send,
+{
+    registration.register(name, move |startup| async move {
+        let running = startup.acknowledge_started();
+        let signal = running.signal();
+        let gate = forced_close::Gate::new();
+        let connections = completion::Connections::new();
+        let draining: Draining = Box::pin({
+            let signal = signal.clone();
+            async move { signal.draining().await }
+        });
+        let serving = serve(&gate, &connections, draining);
+        forced_close::serve(connections.after(serving), signal, gate).await?;
         Ok(running.stopped())
     })
 }
 
-/// Axum's graceful return, then the destruction of every accepted
-/// connection's service, response futures and response bodies, which Axum
-/// counts finished before Hyper destroys them. One still being destroyed at
-/// the abort deadline leaves the server unfinished, so it is aborted and
-/// dependent cleanup is skipped rather than run beside that destructor.
-async fn destroyed(
-    serving: impl IntoFuture<Output = std::io::Result<()>>,
-    connections: &completion::Connections,
-) -> std::io::Result<()> {
-    serving.await?;
-    connections.destroyed().await;
-    Ok(())
-}
+/// The graceful-shutdown trigger handed to Axum: the process starting drain.
+type Draining = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;

@@ -11,8 +11,10 @@
 //!
 //! Each connection's service, each of its response futures and every response
 //! body it produces hold a token instead, and the server completes only once
-//! every token has been released.
+//! every token has been released. Each response future also settles, from the
+//! response it hands Hyper, the framing of the owned body its request started.
 
+use crate::streaming::BodyStart;
 use axum::{
     body::{Body, Bytes},
     extract::Request,
@@ -23,33 +25,25 @@ use http_body::{Frame, SizeHint};
 use pin_project_lite::pin_project;
 use std::{
     convert::Infallible,
-    future::{Future, poll_fn},
+    future::Future,
     pin::Pin,
-    sync::{
-        Arc, Mutex, PoisonError,
-        atomic::{AtomicUsize, Ordering},
-    },
-    task::{Context, Poll, Waker, ready},
+    task::{Context, Poll, ready},
 };
+use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 use tower::Service;
 
-/// The application state a server's accepted connections still hold.
-///
-/// Taking and releasing a token is one atomic operation; the lock is taken
-/// only to store the waiting task and when the last token is released.
-#[derive(Default)]
-pub(super) struct Connections {
-    tokens: AtomicUsize,
-    idle: Mutex<Option<Waker>>,
-}
+/// The application state a server's accepted connections still hold, counted
+/// by a [`TaskTracker`]: each holder keeps one of its tokens.
+#[derive(Clone, Default)]
+pub(super) struct Connections(TaskTracker);
 
 impl Connections {
-    pub(super) fn new() -> Arc<Self> {
-        Arc::default()
+    pub(super) fn new() -> Self {
+        Self::default()
     }
 
     /// Wrap a make-service so every connection it creates is tracked.
-    pub(super) fn track<M>(self: &Arc<Self>, make_service: M) -> Tracked<M> {
+    pub(super) fn track<M>(&self, make_service: M) -> Tracked<M> {
         Tracked {
             inner: make_service,
             connections: self.clone(),
@@ -60,54 +54,25 @@ impl Connections {
     /// remains. Await it only after the server stopped accepting, so no new
     /// token can appear.
     pub(super) async fn destroyed(&self) {
-        poll_fn(|cx| {
-            if self.tokens.load(Ordering::SeqCst) == 0 {
-                return Poll::Ready(());
-            }
-            *self.idle.lock().unwrap_or_else(PoisonError::into_inner) = Some(cx.waker().clone());
-            // A release that took no waker before it was stored is seen here.
-            if self.tokens.load(Ordering::SeqCst) == 0 {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await;
+        self.0.close();
+        self.0.wait().await;
     }
-}
 
-/// One holder of a connection's application state. It is declared last in
-/// each holder, so it is released only after what it guards was destroyed.
-struct Token(Arc<Connections>);
-
-impl Token {
-    fn new(connections: &Arc<Connections>) -> Self {
-        connections.tokens.fetch_add(1, Ordering::SeqCst);
-        Self(connections.clone())
+    /// `serving`'s return, then the destruction of everything its accepted
+    /// connections held, which Axum counts finished before Hyper destroys it.
+    /// The wait holds on an error return too, so dependent cleanup never runs
+    /// beside such a destructor.
+    pub(super) async fn after(
+        &self,
+        serving: impl IntoFuture<Output = std::io::Result<()>>,
+    ) -> std::io::Result<()> {
+        let served = serving.await;
+        self.destroyed().await;
+        served
     }
-}
 
-impl Clone for Token {
-    fn clone(&self) -> Self {
-        Self::new(&self.0)
-    }
-}
-
-impl Drop for Token {
-    fn drop(&mut self) {
-        if self.0.tokens.fetch_sub(1, Ordering::SeqCst) != 1 {
-            return;
-        }
-        let idle = self
-            .0
-            .idle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        // Woken outside the lock.
-        if let Some(idle) = idle {
-            idle.wake();
-        }
+    fn token(&self) -> TaskTrackerToken {
+        self.0.token()
     }
 }
 
@@ -115,7 +80,7 @@ impl Drop for Token {
 #[derive(Clone)]
 pub(super) struct Tracked<M> {
     inner: M,
-    connections: Arc<Connections>,
+    connections: Connections,
 }
 
 impl<'a, L, M> Service<IncomingStream<'a, L>> for Tracked<M>
@@ -144,7 +109,7 @@ pin_project! {
     pub(super) struct Connecting<F> {
         #[pin]
         inner: F,
-        connections: Arc<Connections>,
+        connections: Connections,
     }
 }
 
@@ -159,17 +124,18 @@ where
         let inner = ready!(this.inner.poll(cx))?;
         Poll::Ready(Ok(ConnectionService {
             inner,
-            token: Token::new(this.connections),
+            token: this.connections.token(),
         }))
     }
 }
 
 /// One connection's service. Hyper destroys it, with any response future in
-/// flight, only when it destroys the connection.
+/// flight, only when it destroys the connection. Its token is declared last,
+/// so it is released only after the service it guards was destroyed.
 #[derive(Clone)]
 pub(super) struct ConnectionService<S> {
     inner: S,
-    token: Token,
+    token: TaskTrackerToken,
 }
 
 impl<S> Service<Request> for ConnectionService<S>
@@ -184,20 +150,27 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, request: Request) -> Self::Future {
+    fn call(&mut self, mut request: Request) -> Self::Future {
+        // Request admission claims this record, so the response handed to
+        // Hyper settles the framing of the body the request starts.
+        let start = BodyStart::served(&request);
+        request.extensions_mut().insert(start.clone());
         Responding {
             inner: self.inner.call(request),
-            token: self.token.clone(),
+            start,
+            token: Some(self.token.clone()),
         }
     }
 }
 
 pin_project! {
-    /// One response in flight; its body inherits the token.
+    /// One response in flight; its body inherits the token, which the future
+    /// no longer needs once its response is ready.
     pub(super) struct Responding<F> {
         #[pin]
         inner: F,
-        token: Token,
+        start: BodyStart,
+        token: Option<TaskTrackerToken>,
     }
 }
 
@@ -210,7 +183,9 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let response = ready!(this.inner.poll(cx))?;
-        let token = this.token.clone();
+        // The response Hyper writes, after every layer outside admission.
+        this.start.settle(&response);
+        let token = this.token.take();
         Poll::Ready(Ok(response.map(|inner| {
             Body::new(ConnectionBody {
                 inner,
@@ -224,7 +199,7 @@ where
 /// It forwards every frame, end and size unchanged, so framing is unaffected.
 struct ConnectionBody {
     inner: Body,
-    _token: Token,
+    _token: Option<TaskTrackerToken>,
 }
 
 impl http_body::Body for ConnectionBody {

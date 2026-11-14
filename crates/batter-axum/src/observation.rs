@@ -54,10 +54,7 @@ impl ObservationState {
     }
 
     fn lock(&self) -> MutexGuard<'_, ObservationFacts> {
-        self.0
-            .facts
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.0.facts)
     }
 
     pub(super) fn replace_quota(&self, quota: crate::quota_observation::QuotaObservation) {
@@ -73,10 +70,7 @@ impl ObservationState {
     }
 
     fn published(&self) -> MutexGuard<'_, Option<tracing::Span>> {
-        self.0
-            .context
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.0.context)
     }
 
     /// The observing request's span context while its observer is alive.

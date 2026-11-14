@@ -2,22 +2,18 @@
 
 use crate::{
     CorrelationId, HttpFailure, RequestInterruptionResponder, correlation,
-    observation::ObservationState, streaming::FramingSlot,
+    observation::ObservationState, streaming::BodyStart,
 };
 use axum::{
     extract::FromRequestParts,
-    http::{Extensions, Method, request::Parts},
+    http::{Extensions, request::Parts},
     response::{IntoResponse, Response},
 };
 use batter_core::{
     lifecycle::{ShutdownSignal, low_level::OperationContinuation},
     operation::OperationContext,
 };
-use std::{
-    error::Error,
-    fmt,
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::{error::Error, fmt};
 
 /// What admission records for one admitted request.
 ///
@@ -30,22 +26,18 @@ pub(crate) struct Admission {
     context: OperationContext,
     correlation_id: CorrelationId,
     interruption: RequestInterruptionResponder,
-    /// Proof of this request's admission, from which one owned response body
-    /// starts its own lifetime without a second readiness decision. Every
-    /// clone of the record shares the one slot, so repeated extraction cannot
-    /// multiply it.
-    continuation: Arc<Mutex<Option<OperationContinuation>>>,
+    /// This request's owned-body start: the proof of its admission, from
+    /// which one owned response body starts its own lifetime without a second
+    /// readiness decision, the request head that decides how the transport
+    /// frames the response, and that body's framing hand-off. Every clone of
+    /// the record shares the one allocation, so repeated extraction cannot
+    /// multiply the proof.
+    pub(crate) start: BodyStart,
     /// Read-only drain and forced-cancellation observation for that body.
     pub(crate) shutdown: ShutdownSignal,
     /// The observing request, whose span an owned response body re-enters.
     /// The observer publishes that span only while it is alive.
     pub(crate) observation: Option<ObservationState>,
-    /// The request's method, which decides with the response status whether
-    /// the transport writes a response body at all.
-    pub(crate) method: Method,
-    /// Where the body this request starts hands its framing to admission,
-    /// which settles it from the response it returns. Shared by every clone.
-    pub(crate) framing: FramingSlot,
 }
 
 /// Record the admitted request for [`AdmittedRequest`].
@@ -58,22 +50,20 @@ pub(crate) fn record(
     context: OperationContext,
     interruption: RequestInterruptionResponder,
     continuation: OperationContinuation,
-    method: Method,
-    framing: FramingSlot,
+    start: BodyStart,
 ) {
     extensions.remove::<Admission>();
     if let Some(correlation_id) = correlation::server_correlation(extensions) {
         let observation = extensions.get::<ObservationState>().cloned();
         let shutdown = continuation.signal();
+        start.admit(continuation);
         extensions.insert(Admission {
             context,
             correlation_id,
             interruption,
-            continuation: Arc::new(Mutex::new(Some(continuation))),
+            start,
             shutdown,
             observation,
-            method,
-            framing,
         });
     }
 }
@@ -221,11 +211,7 @@ impl Admission {
     /// After that a request kept by the application, or a second extraction,
     /// cannot start work that admission would now refuse.
     pub(crate) fn start_continuation(&self) -> Option<OperationContinuation> {
-        let continuation = self
-            .continuation
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let continuation = self.start.take_continuation();
         continuation.filter(|_| self.context.check().is_ok())
     }
 }

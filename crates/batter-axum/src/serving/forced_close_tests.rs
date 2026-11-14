@@ -162,6 +162,29 @@ async fn closed_after_tightening(after: Duration, tightened: Duration) -> Option
     timeout(Duration::from_secs(5), watching).await.ok()
 }
 
+/// A clock that reports no abort deadline gives no interval to share with
+/// cancelled handlers, so the gate stays open after cancellation, as with a
+/// deadline already passed. The supervisor's registration always sets one.
+#[tokio::test(start_paused = true)]
+async fn an_unknown_abort_deadline_never_closes_the_gate() {
+    let clock = ManualClock(Arc::new(watch::Sender::new((false, None))));
+    let gate = Gate::new();
+    let mut serving = pin!(serve(
+        std::future::pending::<io::Result<()>>(),
+        clock.clone(),
+        gate.clone()
+    ));
+    clock.cancel();
+    let first = poll_fn(|cx| Poll::Ready(serving.as_mut().poll(cx).is_pending())).await;
+    assert!(first && !gate.is_closed());
+    tokio::select! {
+        biased;
+        _ = serving.as_mut() => unreachable!("the serving future never returns"),
+        () = tokio::time::sleep(Duration::from_secs(60)) => {}
+    }
+    assert!(!gate.is_closed());
+}
+
 /// An abort deadline moved to or before now leaves no interval, exactly like a
 /// zero cancel allowance: the gate stays open and the wrapper abort decides,
 /// including when the gate is next polled only after the stale 2 s midpoint

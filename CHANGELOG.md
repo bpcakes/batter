@@ -12,7 +12,8 @@ contracts, capability facts and validation history.
   `BodyScope`, in `batter-axum`: a library-owned lifetime for a response body
   that outlives its handler. The body gets a context that starts from the
   request's admission and survives response construction, required total and
-  idle bounds enforced without the stream's cooperation, polling and
+  idle bounds (the idle bound shorter than the total, the total at most one
+  year) enforced without the stream's cooperation, polling and
   destruction under the handler's tracing dispatcher and request span (which
   then closes when the body ends, so span-close timing includes the body), and
   one `HTTP response body finished` event with `request_id`, `bytes`,
@@ -21,10 +22,12 @@ contracts, capability facts and validation history.
   declared length, which Hyper delimits by closing the connection; both bounds
   are checked before a frame is accepted, including after a poll that
   outlasted them, so a frame ready or returned only after its wait expired
-  does not extend the body. A body whose source produced its whole
+  does not extend the body, and an error such a poll returned is reported as
+  that bound. A body whose source produced its whole
   message is `completed` even when Hyper never polls for its end: after its
-  advertised `Content-Length` or exact size, taken from the response request
-  admission returns however the handler built it, or after trailers; one that ends, reports its end or
+  advertised `Content-Length` or exact size, taken as Hyper frames it from the
+  response finally written (on the registered server the one handed to Hyper,
+  after every layer), or after trailers; one that ends, reports its end or
   yields trailers short of its advertised length is `failed`, since Hyper
   aborts that message (a source already ended when Hyper writes the head is
   still `failed`, although Hyper then sends a complete empty
@@ -40,8 +43,9 @@ contracts, capability facts and validation history.
   existing signature are unchanged, and an unowned streaming body still
   compiles. Not covered: a peer that stops reading (ended only by the forced
   connection close), upgraded connections, and admission permits held for a
-  body's lifetime. `batter-axum` now depends on `http-body` directly
-  (`batter-9wig.6`).
+  body's lifetime. `batter-axum` now depends on `http-body`, `tokio-util`
+  (with `rt`, for `TaskTracker`) and `atomic-waker` directly, all already in
+  the dependency graph (`batter-9wig.6`).
 - Add the lower-level `lifecycle::low_level::admit_root_with_continuation` and
   `lifecycle::low_level::OperationContinuation` in `batter-core`: proof of an
   admission from which an adapter starts work that continues the admitted
@@ -64,8 +68,9 @@ contracts, capability facts and validation history.
   every accepted connection's service, handler future and response body is
   destroyed, which Axum's graceful return alone does not establish; a
   destructor still running at the abort deadline aborts the wrapper and skips
-  cleanup. Each response body gains one wrapper allocation, and each
-  request a few atomic increments and decrements of one server-wide counter.
+  cleanup, including when Axum's serving future returns an error. Each
+  response body gains one wrapper allocation, and each request one small
+  shared record and a few atomic updates of one server-wide `TaskTracker`.
   Public signatures are unchanged. Behavior change: such a shutdown now reports
   success with `forced_cancellation` set and runs cleanup, where it reported
   `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
@@ -73,8 +78,9 @@ contracts, capability facts and validation history.
   instead of after process exit, though an HTTP/1.0 peer receiving a body
   without a declared length cannot tell that close from the message's end.
   Cancelled handlers still deliver their 503
-  `operation_cancelled` first. With a zero cancel allowance, or once a
-  deadline moved earlier has already passed, the gate never closes, so the
+  `operation_cancelled` first. With a zero cancel allowance, once a deadline
+  moved earlier has already passed, or with no known abort deadline, the gate
+  never closes, so the
   earlier abort-and-skip outcome holds on any runtime flavour,
   as it does for a connection task that never yields. The close also reaches a connection that never
   waited in transport I/O, such as one whose first read returned a request head
@@ -82,7 +88,7 @@ contracts, capability facts and validation history.
   body alone; and its instant is recomputed when a component moves the abort
   deadline earlier. Upgraded connections, HTTP/2 and servers that call
   `axum::serve` themselves are not covered. Each connection adds one registry
-  entry, and each I/O poll one uncontended lock (`batter-9wig.1`).
+  entry, and each I/O poll one atomic waker registration (`batter-9wig.1`).
 - Document that a skipped `CleanupSlot::acquire_semaphore` or `bind_udp`
   finalizer has still released its permit or socket reference: the hook only
   drops its capture, and skipping drops it too. `SkippedCleanup` now says so.

@@ -16,6 +16,7 @@ autoexamples = false
 workspace = true
 
 [dependencies]
+atomic-waker.workspace = true
 batter-core.workspace = true
 axum.workspace = true
 cookie.workspace = true
@@ -23,6 +24,7 @@ http-body.workspace = true
 pin-project-lite.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["time", "net"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 tower = { workspace = true, features = ["util"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["request-id"] }

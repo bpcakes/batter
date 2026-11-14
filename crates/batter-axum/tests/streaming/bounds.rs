@@ -19,6 +19,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::mpsc, time::Instant};
+use tracing::{Instrument, instrument::WithSubscriber};
 
 /// One chunk every `every`, forever, ignoring every signal it was given.
 fn endless(every: Duration) -> Body {
@@ -69,11 +70,14 @@ fn budget_rejects_zero_unrepresentable_and_inverted_bounds() {
         BodyBudget::new(year + second, second),
         Err(ConfigurationError::TooLarge("HTTP body total budget"))
     );
-    assert_eq!(
-        BodyBudget::new(second, 2 * second),
-        Err(ConfigurationError::TooLarge("HTTP body idle budget"))
-    );
-    assert!(BodyBudget::new(second, second).is_ok());
+    // An idle wait as long as the total could never end the body first.
+    for idle in [2 * second, second] {
+        assert_eq!(
+            BodyBudget::new(second, idle),
+            Err(ConfigurationError::TooLarge("HTTP body idle budget"))
+        );
+    }
+    assert!(BodyBudget::new(2 * second, second).is_ok());
 }
 
 #[test]
@@ -160,22 +164,51 @@ fn a_frame_ready_only_after_the_idle_bound_expired_is_not_accepted() {
     assert!(event.contains("bytes=0"), "{event}");
 }
 
+/// What a slow source's late poll finally returns.
+#[derive(Clone, Copy, Debug)]
+enum Late {
+    Frame,
+    Error,
+    /// An error holding a span opened during that poll, inside the request
+    /// span, which records its destruction.
+    Spanned,
+}
+
+/// An application error that holds a span and reports where it is destroyed.
+#[derive(Debug)]
+struct SpannedError(#[allow(dead_code, reason = "held for its destruction")] tracing::Span);
+
+impl std::fmt::Display for SpannedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the step was interrupted")
+    }
+}
+
+impl std::error::Error for SpannedError {}
+
+impl Drop for SpannedError {
+    fn drop(&mut self) {
+        tracing::info!("late answer destroyed");
+    }
+}
+
 /// Answers its first poll with a frame and its second with `Pending`, waking
 /// itself at once; its third poll blocks the task for `blocks` before
-/// answering with another frame, as synchronous work inside a poll may.
+/// answering with `late`, as synchronous work inside a poll may.
 struct SlowToAnswer {
     polls: u8,
     blocks: Duration,
+    late: Late,
 }
 
 impl HttpBody for SlowToAnswer {
     type Data = Bytes;
-    type Error = Infallible;
+    type Error = std::io::Error;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+    ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
         self.polls += 1;
         match self.polls {
             1 => Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"first;"))))),
@@ -185,7 +218,13 @@ impl HttpBody for SlowToAnswer {
             }
             3 => {
                 std::thread::sleep(self.blocks);
-                Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"late;")))))
+                Poll::Ready(Some(match self.late {
+                    Late::Frame => Ok(Frame::data(Bytes::from_static(b"late;"))),
+                    Late::Error => Err(std::io::Error::other("the step was interrupted")),
+                    Late::Spanned => Err(std::io::Error::other(SpannedError(tracing::info_span!(
+                        "late.step"
+                    )))),
+                }))
             }
             _ => Poll::Pending,
         }
@@ -194,12 +233,17 @@ impl HttpBody for SlowToAnswer {
 
 /// The bounds are checked again once the source answers: a frame returned by
 /// a poll that began inside the armed wait but outlasted the idle bound, or
-/// the total bound, is not accepted. On real time, because a paused clock
-/// cannot move during a poll.
+/// the total bound, is not accepted, and an error returned then, as a step
+/// interrupted by the body's own deadline yields, is reported as that bound.
+/// On real time, because a paused clock cannot move during a poll.
 #[test]
 fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
     let blocks = Duration::from_millis(400);
-    for (total, outcome) in [(60_000, "idle_timeout"), (200, "deadline_exceeded")] {
+    let cases = [(60_000, "idle_timeout"), (200, "deadline_exceeded")];
+    for ((total, outcome), late) in cases
+        .into_iter()
+        .flat_map(|case| [(case, Late::Frame), (case, Late::Error)])
+    {
         let capture = Capture::new();
         let escaped = Escaped::default();
         let (frames, error, _) = capture.block_on({
@@ -213,12 +257,16 @@ fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
                         route(move |admitted: AdmittedRequest| async move {
                             let budget = BodyBudget::new(
                                 Duration::from_millis(total),
-                                Duration::from_millis(200),
+                                Duration::from_millis(150),
                             )
                             .unwrap();
                             admitted.into_streaming_response(budget, move |scope| {
                                 escaped.keep(scope.context());
-                                Body::new(SlowToAnswer { polls: 0, blocks })
+                                Body::new(SlowToAnswer {
+                                    polls: 0,
+                                    blocks,
+                                    late,
+                                })
                             })
                         }),
                     ),
@@ -228,7 +276,7 @@ fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
                 until_error(response.body_mut()).await
             }
         });
-        assert_eq!(frames, 1, "{outcome}");
+        assert_eq!(frames, 1, "{outcome} {late:?}");
         assert_eq!(error, format!("response body ended: {outcome}"));
         assert!(escaped.context().check().is_err());
         let event = assert_finished(&capture, "WARN", outcome);
@@ -288,4 +336,62 @@ fn each_frame_restarts_the_idle_wait() {
     assert_eq!(frames, 6);
     assert_eq!(error, "response body ended: deadline_exceeded");
     assert_eq!(elapsed, Duration::from_secs(20));
+}
+
+/// An answer the source gave too late is destroyed by the library, not the
+/// transport, so like the source it is destroyed under the handler's
+/// subscriber and inside the request span, even when the transport polls
+/// under another subscriber. A span it holds then releases its parents in the
+/// registry that recorded them; under the transport's registry, which never
+/// saw them, that registry panics.
+#[test]
+fn a_late_answer_is_destroyed_under_the_handlers_subscriber() {
+    let capture = Capture::new();
+    let transport = Capture::new();
+    let (frames, error, _) = capture.block_on(async {
+        let handle = ready();
+        let app = client(
+            &handle,
+            GuardedRouter::new().route(
+                "/",
+                route(|admitted: AdmittedRequest| async move {
+                    let budget =
+                        BodyBudget::new(Duration::from_secs(60), Duration::from_millis(150))
+                            .unwrap();
+                    admitted.into_streaming_response(budget, |_scope| {
+                        Body::new(SlowToAnswer {
+                            polls: 0,
+                            blocks: Duration::from_millis(400),
+                            late: Late::Spanned,
+                        })
+                    })
+                }),
+            ),
+        )
+        .await;
+        let mut response = get(&app, "/")
+            .instrument(tracing::info_span!("caller"))
+            .await;
+        async move {
+            let ended = until_error(response.body_mut()).await;
+            drop(response);
+            ended
+        }
+        .with_subscriber(transport.dispatch.clone())
+        .await
+    });
+    assert_eq!(frames, 1);
+    assert_eq!(error, "response body ended: idle_timeout");
+    let text = capture.text();
+    let destroyed = text
+        .lines()
+        .find(|line| line.contains("late answer destroyed"))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(
+        destroyed.contains(" caller:") && destroyed.contains(":batter.http{"),
+        "{destroyed}"
+    );
+    assert_finished(&capture, "WARN", "idle_timeout");
+    let foreign = transport.text();
+    assert!(!foreign.contains("late answer destroyed"), "{foreign}");
 }

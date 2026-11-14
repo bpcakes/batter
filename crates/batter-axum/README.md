@@ -260,7 +260,7 @@ use std::{convert::Infallible, io, time::Duration};
 
 async fn export(admitted: AdmittedRequest) -> Response {
     let budget = BodyBudget::new(Duration::from_secs(600), Duration::from_secs(30))
-        .expect("a positive total no shorter than the idle bound");
+        .expect("a positive total longer than the idle bound");
     admitted.into_streaming_response(budget, |scope| {
         Body::from_stream(stream::unfold((scope, 0_u32), |(scope, index)| async move {
             if index == 1_000 {
@@ -287,6 +287,9 @@ async fn export(admitted: AdmittedRequest) -> Response {
 }
 ```
 
+`BodyBudget::new` requires a positive total of at most one year and a
+positive idle bound strictly shorter than it, so the idle bound can end a body
+before the total does; equal bounds are rejected as `TooLarge`.
 `into_streaming_response` consumes the admitted request and accepts anything
 that is `IntoResponse`, including `axum::response::Sse`. The closure receives a
 `BodyScope`:
@@ -310,14 +313,17 @@ The library then owns the body whether or not the stream cooperates. A wait for
 the next frame longer than the idle bound, the total bound and forced
 cancellation each end it with a body error, so the peer sees a truncated
 message and never a final chunk it could take for a complete one. The
-exception is an HTTP/1.0 request: Hyper answers it in HTTP/1.0, where a body
+exception is an HTTP/1.0 answer: Hyper answers an HTTP/1.0 request in HTTP/1.0,
+as it does a response the application builds as HTTP/1.0, and there a body
 without a declared length ends when the connection closes, so that peer
 cannot tell the library's truncation from the message's end. Declare a
 `Content-Length` where an HTTP/1.0 peer, such as a proxy speaking HTTP/1.0
 upstream, must detect it. Both bounds
 are checked before and after each poll of the source, so a frame that became
 ready, or that a poll outlasting the bound returned, only after its wait
-expired does not extend the body. The body is
+expired does not extend the body, and an error such a poll returned is
+reported as that bound; the library destroys such a rejected answer as it
+does the source. The body is
 polled, asked for its end and size, and destroyed under the tracing dispatcher
 and request span of the handler that handed it over, on whichever task asks;
 its completion event and the span's release stay with the subscriber that
@@ -333,11 +339,18 @@ answer to Hyper's or the library's question about its end or size panicked,
 or a handler that panicked after handing the body over) at WARN. `completed` means the
 source produced its whole message, including a body Hyper finishes without
 asking for its end: after its advertised `Content-Length` or exact size, or
-after trailers. The advertised length is the one the response carries when
-request admission returns it, however it was built, so a length added by the
-handler's tuple or an inner layer after `into_streaming_response`, or carried
-by a response the handler rebuilt around the body, counts; a layer outside
-admission that changes it is not observed. A source that ends, reports its end or yields trailers short of
+after trailers. The advertised length is the one Hyper frames the written
+response with: through the registered server, the response handed to Hyper
+after every layer, otherwise the one request admission returns. A length added
+by the handler's tuple or any layer after `into_streaming_response`, or carried
+by a response the handler rebuilt around the body, counts. As in Hyper, a
+`Content-Length` counts only as plain digits, repeated only with one value,
+else the body's exact size does, and `Transfer-Encoding` frames none except in
+an HTTP/1.0 answer. A declared length that the body's exact size contradicts,
+which Hyper does not support, still counts, being what the peer reads. Axum's
+router adds a `Content-Length` to a body of exact
+size even beside `Transfer-Encoding`, and Hyper then refuses the message, so
+the body is `dropped`. A source that ends, reports its end or yields trailers short of
 its advertised length is `failed`: Hyper aborts that message and the peer sees
 it truncated. A source that already reports its end when Hyper writes the head
 is the exception: Hyper writes no body and frames the message as

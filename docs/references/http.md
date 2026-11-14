@@ -482,6 +482,16 @@ sources in the locked registry.
   2026-11-13.
 - Hyper has no write timeout. A peer that stops reading leaves the connection
   future pending in `poll_flush` for as long as TCP keeps the connection.
+- The completion tokens are those of a Tokio `tokio-util` 0.7.19
+  `TaskTracker` (`task/task_tracker.rs`): `token` counts a holder until it is
+  dropped, and `wait` resolves once the tracker is closed and no token or task
+  remains, so the server closes it after Axum's graceful return and waits.
+  The gate records each I/O poll's task in an `atomic-waker` 1.1.2
+  `AtomicWaker`, whose `register` and `wake` are read-modify-writes of one
+  atomic state: a wake that follows a registration sees its waker, and a
+  registration that follows a wake is ordered after the store of the closed
+  flag that preceded that wake, so the poll's later read of the flag sees it.
+  Checked on 2026-11-14.
 - `serve_connection_with_upgrades` resolves its connection future when the
   upgrade is handed over, so an upgraded connection no longer holds Axum's
   graceful wait. At that point Hyper's `UpgradeableConnection` takes the
@@ -535,12 +545,39 @@ sources in the locked registry.
   `into_streaming_response` returns therefore frames the message, so the owned
   body takes its advertised length from the response request admission
   returns. `http` 1.x `Response::into_body` discards the response's parts,
-  extensions included, so the started body hands its framing to admission
-  through the admission record rather than the response. Checked on
+  extensions included, so the started body hands its framing over through a
+  private per-request record rather than the response. Checked on
   2026-11-12 and 2026-11-13; real-socket tests cover a length declared through
   a tuple and on a response rebuilt around the body, both short and met.
+- The registered server's connection service creates that record before the
+  router runs, admission claims it from the request's extensions, and the
+  connection's response future settles the framing again from the response it
+  returns to Hyper, after every layer outside admission. Hyper encodes that
+  response's headers: `Server::encode` (`role.rs:653-940`) frames a body of
+  unknown size by a `Content-Length` it parses with `from_digits`
+  (`headers.rs:66-68`, `101-123`: plain digits, no sign, whitespace or
+  overflow), requires repeated values to match (`role.rs:756-781`), refuses
+  an unparsable one, and chunk-encodes under any `Transfer-Encoding` unless
+  the answer is HTTP/1.0 or bodyless, where it drops that header
+  (`role.rs:806-830`); a `Content-Length` beside `Transfer-Encoding` refuses
+  the message whenever it follows it, or precedes it in an answer that may be
+  chunked (`role.rs:706-710`, `806-810`). The answer's version is the
+  response's own (`dispatch.rs:600-610`) except that `enforce_version` forces
+  HTTP/1.0 for an HTTP/1.0 request (`conn.rs:692-704`). A body of exact size is
+  framed by that size whatever `Content-Length` says, which is written
+  unchanged and checked only by a debug assertion (`role.rs:712-744`); the
+  owned body judges such a misdeclared response by the declared length, which
+  is what the peer reads. Axum 0.8.9's `Route` adds a
+  `Content-Length` for a body of exact size unless one is present
+  (`routing/route.rs:167`, `190-207`), and `Router::layer` wraps each route in
+  another `Route`, so it does so after every router layer, even beside
+  `Transfer-Encoding`; Hyper then refuses the message and the body is dropped
+  unpolled. Checked on 2026-11-14; unit tests cover the parsing rules, and
+  real-socket tests cover a length a layer outside admission declares and the
+  refused `Transfer-Encoding`.
 - Hyper answers an HTTP/1.0 request in HTTP/1.0 (`conn.rs:692-699`,
-  `enforce_version`) and, with no declared length, delimits the body by
+  `enforce_version`), as it does a response built as HTTP/1.0, and, with no
+  declared length, delimits the body by
   closing the connection (`role.rs:921-925`, `Encoder::close_delimited`). A
   body error still closes the connection (`dispatch.rs:401-405`), so such a
   peer receives an orderly end of stream after the data already written and

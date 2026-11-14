@@ -1,12 +1,12 @@
 use super::*;
 use http_body::Body as _;
-use std::{future::Future, pin::pin, time::Duration};
+use std::{io, pin::pin, time::Duration};
 use tokio::time::timeout;
 
 /// Whether `future` is still pending after one poll.
 async fn pending<F: Future>(future: Pin<&mut F>) -> bool {
     let mut future = future;
-    poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx).is_pending())).await
+    std::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx).is_pending())).await
 }
 
 /// The server waits for the connection's service and for a response body
@@ -22,7 +22,7 @@ async fn destroyed_waits_for_the_service_and_every_response_body() {
         inner: tower::service_fn(|_request: Request| async {
             Ok::<_, Infallible>(Response::new(Body::from("body")))
         }),
-        token: Token::new(&connections),
+        token: connections.token(),
     };
     let response = service.call(Request::new(Body::empty())).await.unwrap();
     assert!(pending(pin!(connections.destroyed())).await);
@@ -38,24 +38,39 @@ async fn destroyed_waits_for_the_service_and_every_response_body() {
         .expect("the last body released its token");
 }
 
-/// Tokens released on another thread while the server waits wake it. This
-/// exercises the cross-thread release; the re-check after storing the waker,
-/// which covers a release between the first check and that store, is too
-/// narrow a window for this loop to hit reliably.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_last_release_on_another_thread_always_wakes_the_waiting_server() {
-    for _ in 0..200 {
-        let connections = Connections::new();
-        let tokens: Vec<_> = (0..4).map(|_| Token::new(&connections)).collect();
-        let waiting = tokio::spawn({
-            let connections = connections.clone();
-            async move { connections.destroyed().await }
-        });
-        let releasing = std::thread::spawn(move || drop(tokens));
-        timeout(Duration::from_secs(1), waiting)
-            .await
-            .expect("the last release woke the server")
-            .unwrap();
-        releasing.join().unwrap();
-    }
+/// A response future that has produced its response no longer holds a token
+/// of its own: the response body carries the only one.
+#[tokio::test]
+async fn a_ready_response_future_hands_its_token_to_the_body() {
+    let connections = Connections::new();
+    let mut service = ConnectionService {
+        inner: tower::service_fn(|_request: Request| async {
+            Ok::<_, Infallible>(Response::new(Body::empty()))
+        }),
+        token: connections.token(),
+    };
+    let mut responding = pin!(service.call(Request::new(Body::empty())));
+    drop(service);
+    let response = std::future::poll_fn(|cx| responding.as_mut().poll(cx))
+        .await
+        .unwrap();
+    assert!(responding.token.is_none());
+    assert_eq!(connections.0.len(), 1);
+    drop(response);
+    assert_eq!(connections.0.len(), 0);
+}
+
+/// An error return from the server still waits for what its connections hold.
+#[tokio::test]
+async fn an_error_return_still_waits_for_every_connection() {
+    let connections = Connections::new();
+    let body = connections.token();
+    let mut after =
+        pin!(connections.after(async { Err::<(), _>(io::Error::other("serving failed")) }));
+    assert!(pending(after.as_mut()).await);
+    drop(body);
+    let served = timeout(Duration::from_secs(1), after)
+        .await
+        .expect("the last holder released its token");
+    assert_eq!(served.unwrap_err().to_string(), "serving failed");
 }

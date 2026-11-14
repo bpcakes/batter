@@ -2624,12 +2624,14 @@ cancelled and never starts work that drain admission would refuse. A body with
 content ends at its first poll, truncated, and every refused start is reported
 `cancelled`, including an empty body that the transport learns has ended from
 `is_end_stream` and never polls. `BodyBudget` requires a positive total and a
-positive idle bound no longer than it. The library enforces both without the stream's
+positive idle bound shorter than it, so the idle bound can end a body first. The library enforces both without the stream's
 cooperation: the total bound and an armed idle wait are checked before every
 poll of the source and again before what it returned is accepted, so an
 always-ready source cannot outrun them and a frame that became ready, or that a
 poll outlasting the bound returned, only after its wait expired does not extend
-the body, and a pending body
+the body; an error such a poll returned is reported as that bound, not
+`failed`, and the library destroys that rejected answer as it does the source,
+under the captured dispatcher and inside the request span; and a pending body
 registers for forced cancellation and the nearer bound. The idle wait starts at
 the body's first pending poll after a frame, so time the transport spends not
 polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
@@ -2680,13 +2682,26 @@ expired reports that reason instead of `dropped`, and a source that produced
 its whole message is `completed` even when the transport never polls for its
 end: Hyper stops once `is_end_stream` reports the end, once the advertised
 `Content-Length` or exact size has been written, and after trailers. The
-advertised length is taken again from the response request admission returns,
-because Hyper frames the message by the headers it encodes and Axum applies a
-handler tuple's headers after `into_streaming_response` returns. The started
-body hands its framing to request admission through the admission record, not
-through the response, so a response the handler rebuilt around the body, which
-keeps nothing else the built response carried, is settled the same way; a
-layer outside admission that changes the length is not observed. A source
+advertised length is taken again from the response finally written, because
+Hyper frames the message by the headers it encodes and Axum applies a handler
+tuple's headers after `into_streaming_response` returns. Request admission
+settles it from the response it returns; the registered server settles it once
+more from the response its connection hands Hyper, after every layer outside
+admission, so only servers that call `axum::serve` themselves and the
+in-process client stop at admission. The started body hands its framing over
+through one private per-request record that the registered server creates and
+admission claims, not through the response, so a response the handler rebuilt
+around the body, which keeps nothing else the built response carried, is
+settled the same way. The framing follows Hyper 1.11.1's encoder: a
+`Content-Length` of plain digits, repeated only with one value, else the body's
+exact size; none under `Transfer-Encoding`, except in an HTTP/1.0 answer, which
+drops that header. The answer's version is Hyper's: HTTP/1.0 for an HTTP/1.0
+request, else the response's own, so a response built as HTTP/1.0 counts as
+one. A declared length that the body's exact size contradicts, which Hyper
+does not support (it frames by the size and only debug builds assert they
+match), still counts, being what the peer reads. Axum's router adds a `Content-Length` to a body of
+exact size after every layer, even beside `Transfer-Encoding`, and Hyper
+refuses such a message, so that body is reported `dropped`. A source
 that yields its end, reports it through `is_end_stream` or yields trailers
 before producing its advertised length is `failed` (WARN): Hyper aborts that
 message and the peer sees it truncated, except when the source already reports
@@ -2702,8 +2717,11 @@ metric is recorded for bodies.
 [In-process tests](../crates/batter-axum/tests/streaming/) on a paused clock
 cover steps that run after the handler returned beside the unowned control,
 the escaped context, both bounds and their restart on each frame, a frame ready
-only after its idle wait expired, a frame returned on real time by a poll that
-outlasted the idle or the total bound, an always-ready source, a parked frame woken by forced cancellation, drain as the
+only after its idle wait expired, a frame or an error returned on real time by
+a poll that outlasted the idle or the total bound, each reported as that bound,
+a late error holding a span destroyed under the handler's subscriber while a
+foreign subscriber polls,
+an idle bound as long as the total refused at validation, an always-ready source, a parked frame woken by forced cancellation, drain as the
 stream's choice, a body started during drain, a stream error, a builder
 panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
@@ -2735,6 +2753,16 @@ HTTP/1.0 request whose body, ended at its idle
 bound and reported `idle_timeout`, reaches the peer without a declared length
 or chunked framing and as an orderly close, while the same body with a declared
 ten-byte `Content-Length` reaches it framed by that length and six bytes short.
+They also show a length that a layer between request admission and the
+operational wrapper declares, reported `failed` when the source ends short of
+it, a `Transfer-Encoding` beside a body of exact size, which Axum's router
+also gives a `Content-Length`, refused by Hyper so that the peer receives
+nothing and the body is reported `dropped`, and an HTTP/1.0 response to an
+HTTP/1.1 request, framed by its `Content-Length` despite `Transfer-Encoding`
+and reported `failed` when short. Unit tests check the framing rules
+against Hyper's parser: plain digits only, repeated values equal, no length
+under `Transfer-Encoding` except for HTTP/1.0, none for a bodyless response,
+and the per-request record claimed by one admission only.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
 cancellation wakeup, the captured dispatcher, the per-frame bound check, the
@@ -2764,7 +2792,16 @@ failed the refused-start framing case. On 2026-11-14, dropping the 204 or the
 CONNECT arm of the no-body framing rule failed the corresponding no-body case,
 and dropping the one-year ceiling on the total failed the budget validation
 test. Later that day, removing the bound check after the source's poll failed
-the outlasting-poll case for the idle and the total bound alike.
+the outlasting-poll case for the idle and the total bound alike; then
+accepting an idle bound equal to the total failed the budget test, reporting
+an error returned after an overrun as `failed` failed the outlasting-poll
+case, parsing `Content-Length` with Rust's integer parser or ignoring
+`Transfer-Encoding` failed the framing unit tests, and dropping the settle on
+the response handed to Hyper failed the outside-admission length case. Later,
+dropping a rejected answer outside the protected ending failed the late-answer
+destruction case, and framing by the request's version instead of Hyper's
+effective one failed both the version unit test and the HTTP/1.0 response
+case.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
@@ -3143,20 +3180,23 @@ then joined, the report is successful with `forced_cancellation` set and
 dependent cleanup runs, never beside a connection's destructor: one still
 running at the abort deadline leaves the wrapper to be aborted and cleanup
 skipped. Each response body gains one wrapper allocation for this, and each
-request a few atomic increments and decrements of one server-wide counter; a
-lock is taken only when the last token is released or the server waits. The peer sees a truncated message or a closed
+request a few atomic increments and decrements of one server-wide Tokio
+`TaskTracker`, which wakes the waiting server when it is closed and empty. The
+wait holds when Axum's serving future returns an error too. The peer sees a truncated message or a closed
 connection; an HTTP/1.0 peer receiving a body without a declared length cannot
 tell that close from the message's end. Each I/O poll records its task's waker before reading the closed
 flag, not only a poll the transport leaves pending: Hyper can wait on a response
 body alone after ready polls, holding bytes of a following request or with its
 read side closed, and the close must still wake that task, whose next pass
-flushes and fails. That costs one uncontended lock per I/O poll and one registry
-entry per connection. A component that reveals an earlier stop time moves the
+flushes and fails. That costs one `AtomicWaker` registration per I/O poll and
+one registry entry per connection. A component that reveals an earlier stop time moves the
 abort deadline earlier after cancellation was observed;
 `ShutdownSignal::abort_deadline_before` reports it and the close instant is
 recomputed, halfway from the same cancellation instant to the new deadline. A
 new deadline that has already passed leaves no interval, exactly like a zero
-cancel allowance, so the gate stays open and the wrapper abort decides.
+cancel allowance, so the gate stays open and the wrapper abort decides. A stop
+clock without an abort deadline, which registration never produces, leaves no
+known interval either, so the gate stays open then too.
 
 [Real socket tests](../crates/batter-axum/tests/operational/forced_close.rs)
 cover a pending body through both registration helpers, a pending body after
@@ -3172,7 +3212,11 @@ destructor hands its worker over and blocks after Axum counted its connection
 finished, with the same for an in-flight handler (a fallback outside
 admission that never returns and holds such a guard): destroyed within the
 allowance, cleanup runs only after it; still destroying at the abort deadline,
-the wrapper is aborted and cleanup skipped. With a zero cancel allowance, on
+the wrapper is aborted and cleanup skipped. Unit tests show the server's
+destruction wait holding when Axum's serving future returns an error, a ready
+response future handing its completion token to the response body, and a stop
+clock without an abort deadline leaving the gate open; each failed by hand on
+2026-11-14 with its behaviour reverted. With a zero cancel allowance, on
 both a current-thread and a multi-thread runtime, a held body still aborts the
 wrapper and skips cleanup while a cancelled handler on another connection
 receives its whole 503 `operation_cancelled`. A gate unit test shows that a zero
