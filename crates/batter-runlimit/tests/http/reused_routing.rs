@@ -1,7 +1,8 @@
 //! The test transport accepts only arrival-shaped requests, exactly as the
 //! Axum adapter's in-process client does: a whole extension map from an
 //! earlier dispatch is refused at entry, before lifecycle admission,
-//! authentication, the native quota check or any handler runs.
+//! authentication, the native quota check or any handler runs. The last test
+//! characterizes the residual that check does not cover.
 
 use super::*;
 use axum::{
@@ -92,6 +93,7 @@ impl Fixture {
                     }
                 }),
             );
+        let routes = with_residual_routes(routes, &captured);
         let hasher = KeyHasher::new([9; 32]).unwrap();
         let client = HttpQuota::new(
             Quota::new(backend.clone()),
@@ -154,6 +156,42 @@ impl Fixture {
         assert_eq!(response.status(), StatusCode::OK);
         self.captured.lock().unwrap().take().unwrap()
     }
+
+    /// Serve an `OPTIONS *` request, which reaches the protected root
+    /// fallback, and return the whole extension map the fallback saw.
+    async fn captured_unmatched_map(&self) -> Extensions {
+        let star = Request::builder()
+            .method("OPTIONS")
+            .uri(Uri::from_static("*"))
+            .header(header::AUTHORIZATION, "Bearer secret-a")
+            .body(Body::empty())
+            .unwrap();
+        let response = self.client.request(star, peer()).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        self.captured.lock().unwrap().take().unwrap()
+    }
+}
+
+/// Add the routes the residual characterization uses: one that echoes the
+/// request identity its handler sees, and a protected custom root fallback,
+/// which also receives a request no pattern matches, such as `OPTIONS *`.
+fn with_residual_routes(routes: Router, captured: &Arc<Mutex<Option<Extensions>>>) -> Router {
+    let unmatched = captured.clone();
+    routes
+        .route(
+            "/inbound",
+            post(|request: Request| async move {
+                request
+                    .headers()
+                    .get("x-request-id")
+                    .map(|id| id.to_str().unwrap().to_owned())
+                    .unwrap_or_default()
+            }),
+        )
+        .fallback(move |request: Request| {
+            *unmatched.lock().unwrap() = Some(request.extensions().clone());
+            async { StatusCode::NOT_FOUND }
+        })
 }
 
 async fn text(response: Response) -> String {
@@ -332,5 +370,59 @@ async fn a_reused_map_is_refused_before_lifecycle_admission() {
     assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
     assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(fixture.counts(), before);
+    finish(running).await;
+}
+
+/// Characterizes the documented residual that the entry check does not
+/// cover: Batter's own observation and operational records with no detected
+/// Axum record. `batter-28kb` owns closing it; when such a map is refused,
+/// invert this test together with the residual statements on
+/// `RouterClient::request`, `TestClient::request`, the guarantees and the
+/// integration contract.
+#[tokio::test]
+async fn residual_a_map_with_only_inherited_batter_records_is_authenticated_and_charged() {
+    let running = running().await;
+    let fixture = Fixture::new(&running);
+
+    // A fresh request gets a generated identity that replaces the client's.
+    let fresh = fixture
+        .client
+        .request(request("/inbound", "Bearer secret-a"), peer())
+        .await;
+    assert_eq!(fresh.status(), StatusCode::OK);
+    let generated = fresh.headers()["x-request-id"].to_str().unwrap().to_owned();
+    assert_eq!(text(fresh).await, generated);
+
+    // The map of a dispatch no pattern matched carries `OriginalUri` as its
+    // only detected record, and is refused while it does.
+    let mut unmatched = fixture.captured_unmatched_map().await;
+    assert_eq!(unmatched.get::<OriginalUri>().unwrap().0, "*");
+    assert!(unmatched.get::<MatchedPath>().is_none());
+    let mut whole = request("/inbound", "Bearer secret-a");
+    *whole.extensions_mut() = unmatched.clone();
+    let refused = fixture.client.request(whole, peer()).await;
+    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+
+    // Once the caller removes it, the inherited Batter records pass the check.
+    unmatched.remove::<OriginalUri>();
+    let before = fixture.counts();
+    let capture = Capture::new("info");
+    let mut reused = request("/inbound", "Bearer secret-a");
+    *reused.extensions_mut() = unmatched;
+    let response = capture.run(fixture.client.request(reused, peer())).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.headers().get("x-request-id").is_none());
+    // The handler sees the client's own identity, not a generated one.
+    assert_eq!(text(response).await, "secret-client-id");
+    // Authenticated and charged like a fresh request.
+    assert_eq!(
+        fixture.counts(),
+        (before.0 + 1, before.1 + 1, before.2, before.3)
+    );
+    let output = capture.text();
+    assert!(capture.events().is_empty(), "{output}");
+    assert!(!output.contains("in-process request refused"), "{output}");
     finish(running).await;
 }

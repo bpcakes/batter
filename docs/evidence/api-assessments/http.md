@@ -762,7 +762,10 @@ Invalid-state review of `RouterClient`:
    with a crate-root import control.
 5. The `batter-oj37` residual is unchanged and costs more here. Batter's
    private records with no detected Axum record are neither refused nor
-   cleared. Reproduced by hand through `TestClient`: a map captured in a
+   cleared. Reproduced through `TestClient`, first by hand and now by the
+   characterization test
+   `residual_a_map_with_only_inherited_batter_records_is_authenticated_and_charged`:
+   a map captured in a
    protected custom root fallback for `OPTIONS *` carries `OriginalUri` as its
    only detected record, and is refused whole. With `OriginalUri` removed by
    the caller it is accepted, authenticated (1 to 2) and charged one native
@@ -770,7 +773,10 @@ Invalid-state review of `RouterClient`:
    sees the client's unreplaced inbound `x-request-id` and no completion event
    is emitted, because the inherited operational and observation records stay
    in place. The residual takes two deliberate caller steps and is stated on
-   `RouterClient::request`, `TestClient::request` and in the contracts.
+   `RouterClient::request`, `TestClient::request` and in the contracts. The
+   test fails if the entry check starts refusing the inherited observation
+   record (checked by hand by adding that check temporarily), so closing
+   `batter-28kb` must invert it together with those statements.
    `RouterClient` lives in `batter-axum` and could detect those private
    records itself; that would widen the `batter-oj37` contract and is left to
    follow-up `batter-28kb`. Making Runlimit's quota stage expressible by
