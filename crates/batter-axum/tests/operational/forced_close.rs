@@ -59,8 +59,15 @@ struct Served {
 }
 
 impl Served {
+    /// Serve `routes` through `register`: a protected registration helper, or
+    /// a test's own call of one around the bound listener.
     async fn start(
-        register: RegisterHttp,
+        register: impl FnOnce(
+            &mut Supervisor,
+            &'static str,
+            TcpListener,
+            Router,
+        ) -> Result<(), batter_core::RegistrationError>,
         cancel: Duration,
         routes: impl FnOnce(Router) -> Router,
     ) -> Self {
@@ -69,7 +76,12 @@ impl Served {
 
     /// Like `start`, with other components registered beside the server.
     async fn start_with(
-        register: RegisterHttp,
+        register: impl FnOnce(
+            &mut Supervisor,
+            &'static str,
+            TcpListener,
+            Router,
+        ) -> Result<(), batter_core::RegistrationError>,
         cancel: Duration,
         routes: impl FnOnce(Router) -> Router,
         components: impl FnOnce(&mut Supervisor),
@@ -369,8 +381,8 @@ async fn stalled_reader_of_a_fixed_body_is_closed_and_cleanup_runs() {
         .unwrap()
         .unwrap();
     assert_eq!(&head, b"HTTP/1.1 200 ");
-    // The handler has finished; the client now stops reading for good.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The handler has returned and Hyper is writing the body; the client
+    // never reads again, so the write cannot finish before the gate closes.
 
     let report = served.shut_down().await;
     assert!(report.forced_cancellation);
@@ -410,14 +422,24 @@ async fn forced_cancellation_still_delivers_the_interruption_response_before_clo
 
 #[tokio::test]
 async fn partial_request_head_does_not_force_an_abort() {
-    let served = Served::start(register_http, CANCEL, |router| {
-        router.route("/", get(|| async {}))
-    })
+    let read = Arc::new(tokio::sync::Notify::new());
+    let reported = read.clone();
+    let served = Served::start(
+        move |supervisor, name, inner, app| {
+            let listener = first_read::FirstRead {
+                inner,
+                read: reported,
+            };
+            register_http(supervisor, name, listener, app)
+        },
+        CANCEL,
+        |router| router.route("/", get(|| async {})),
+    )
     .await;
     let client = served.request(b"GET / HTTP/1.1\r\nHost: local").await;
-    // No client-visible event marks the server reading a partial head; the
-    // report below proves it did.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // No client-visible event marks the server reading a partial head, so the
+    // listener reports the server's first read that returned bytes.
+    timeout(WAIT, read.notified()).await.unwrap();
 
     let report = served.shut_down().await;
     // Graceful shutdown ends a fresh connection at once only while Hyper has
@@ -582,4 +604,5 @@ async fn connection_that_never_yields_outlives_the_close_and_the_wrapper_is_abor
     drop(client);
 }
 
+mod first_read;
 mod slow_destructor;

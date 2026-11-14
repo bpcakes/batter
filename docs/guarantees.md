@@ -3111,8 +3111,9 @@ cancel allowance, so the gate stays open and the wrapper abort decides.
 [Real socket tests](../crates/batter-axum/tests/operational/forced_close.rs)
 cover a pending body through both registration helpers, a pending body after
 pipelined request bytes that Hyper's first read returned with the head, a
-stalled reader of a 64 MiB fixed body, a half-sent request head that outlasts
-drain, a cancelled handler whose 503 `operation_cancelled` still arrives
+stalled reader of a 64 MiB fixed body, a half-sent request head that the
+server is observed to have read before shutdown and that outlasts drain, a
+cancelled handler whose 503 `operation_cancelled` still arrives
 complete, an abort deadline that a managed component moves earlier after
 forced cancellation, a connection task blocked inside its body's poll
 across the close and the abort deadline, which still aborts the wrapper and
