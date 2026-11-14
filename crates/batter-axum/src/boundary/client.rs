@@ -147,8 +147,15 @@ impl InProcessClient {
     ///
     /// Every call reuses the router prepared at construction. Application
     /// extensions the caller inserts are kept, while a request carrying an
-    /// Axum routing record is refused, as described below; the boundary's own
-    /// private state is still installed by its own layers.
+    /// Axum routing record is refused, as described below. The entry check
+    /// looks only for Axum routing records, so it does not refuse a request
+    /// for carrying Batter's own observation or operational record. The
+    /// observer installs an observation record on a request that carries
+    /// none, and the correlation layer installs an operational record on a
+    /// request that carries none. Where the request already carries that
+    /// kind of record, the layer leaves the inherited record in place and
+    /// installs none of that kind; the adapter's contract records that as a
+    /// residual the entry check does not cover.
     ///
     /// # Accepted requests
     ///

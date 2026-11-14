@@ -320,11 +320,13 @@ records from an earlier dispatch:
   `Params` list and never resets it, keeps an existing invalid-UTF-8 record,
   and filters only the private nest-tail and fallback wildcard names. Named
   captures of the matched pattern and captures already in the list remain: a
-  service mounted with `nest_service` at `/mounted/{id}` keeps `id`. The list
-  a dispatch writes is therefore empty only for a path fallback or a static
-  `nest_service` mount with no named capture and no earlier list. An inherited
-  list prepends another route's captures, and an inherited invalid record
-  rejects a valid path.
+  service mounted with `nest_service` at `/mounted/{id}` keeps `id`. Every
+  match calls it, and with no earlier record it inserts the list whatever its
+  length, so the written list is empty whenever the matched pattern has no
+  named capture and no earlier list exists: an ordinary static route, a path
+  fallback and a static `nest_service` mount alike; a local test captures a
+  static route's empty list. An inherited list prepends another route's
+  captures, and an inherited invalid record rejects a valid path.
 - [Matched path](https://docs.rs/axum/0.8.9/src/axum/extract/matched_path.rs.html):
   `set_matched_path_for_request` prefixes the new pattern with an existing
   `MatchedPath` or private `MatchedNestedPath`, minus a nest-tail suffix, and
