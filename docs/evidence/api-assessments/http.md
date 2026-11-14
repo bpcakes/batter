@@ -601,6 +601,99 @@ records one, so that removal is unexercised defense against a future layer
 order. Fresh-agent usability evaluation and the downstream port are proposed
 and unexecuted.
 
+## In-process routing state reuse assessment (`batter-oj37`)
+
+`InProcessClient::request` forwarded the caller's request straight into the
+prepared router. A request built from a whole extension map cloned inside an
+earlier dispatch, for example `request.extensions().clone()` in a handler or
+fallback, therefore reached pinned Axum 0.8.9 carrying that dispatch's routing
+records, which Axum treats as an outer router's state. Through a real assembled
+boundary, a map from `/source/{source_id}` reused for `/view/{id}` made
+`Path<u64>` answer 500 because it received two parameters (three from a nested
+source); an inherited invalid UTF-8 record made a valid path answer 400;
+`MatchedPath`, and with it the completion event's `route`, became the earlier
+pattern followed by the destination's; and the inherited Batter observation and
+operational state suppressed the destination's request span and completion
+event entirely. The protected client accepted a known-invalid input and executed
+it into wrong captures and missing telemetry, which is the shape ADR-010 names
+as design debt.
+
+The invariant is that the client accepts only an arrival-shaped request: one
+whose extension map carries no Axum routing record. The four detectable records
+are the path-parameter record, read through the public `RawPathParams`
+extractor, `MatchedPath`, `NestedPath` and `OriginalUri`. Pinned Axum writes
+`OriginalUri` on every `Router` dispatch, writes the path-parameter record
+whenever it routes to a route, a path fallback or a `nest_service` service, and
+writes its private nested matched-path record only in the same routing step as
+the path-parameter record, so a cloned map from any dispatch carries at least
+one of them ([upstream facts](../../references/http.md#in-process-routing-state-reuse-2026-11-13)).
+The client enforces it at its library-owned entry, before the router, any layer
+or any application code is polled: any one record refuses the whole request,
+and nothing is stripped or repaired. Any `RawPathParams` result except
+`MissingPathParams` counts as present, so a rejection Axum adds later fails
+closed. The refusal is the existing sanitized `HttpFailure::Internal`
+infrastructure response with no correlation identifier, carrying the new
+`ReusedRoutingState` response extension, which has no public constructor or
+field, so a caller or test can tell the refusal from a 500 the boundary built;
+one ERROR event with a fixed message and no request-derived field records it.
+The marker is `Copy`, and a handler can return an inner client's refused
+response or attach a copy, so the client removes the marker from every response
+it dispatched and keeps the other response extensions: only the refusal path
+leaves `request` carrying it.
+The request never entered the boundary, so it has no completion event, request
+span or `x-request-id` header. Caller-inserted application extensions, such as
+`ConnectInfo` and the application's own types, stay accepted and reach handlers
+untouched. The supported migration copies each application extension by type
+into a fresh request.
+
+The invariant is enforced at run time rather than by type. The extension map is
+an opaque upstream type map, so no Rust type can say which values a given map
+holds. A `Result`-returning `request` or a typed fresh-request builder would be
+a hard cut across roughly 150 call sites in 34 files for a rare composition, and
+a builder that accepted caller extensions would still have to filter the
+cloneable public records by name at run time, which is this check behind a
+larger surface. The signature, `request(&self, Request<Body>) -> Response`, is
+unchanged, so this is a behavior change with no hard cut and no deprecated shim.
+
+Rejected alternatives: resetting each record individually is impossible,
+because `UrlParams` and `MatchedNestedPath` are private Axum types and `http`
+1.5.0 `Extensions` has no iteration or retain, and stripping only the nameable
+records would leave a mixed contract that silently repairs some maps and refuses
+others; dropping the whole map with `clear` would delete application metadata
+the caller chose; an upstream reset facility does not exist at the pinned
+versions. Wrappers that hold an `InProcessClient`, such as the reference
+service's request client, inherit the refusal by delegating to it.
+`batter_runlimit::http::TestClient` does not wrap `InProcessClient`: it
+dispatches its own prepared router, so it does not inherit this check.
+
+Evidence: route-group tests capture maps from a captured route, a nested route,
+an invalid UTF-8 capture, a path fallback, the catch-all fallback and a native
+`nest_service` service, insert each record alone into a fresh request, and
+assert the refusal, its marker and body, and that no application layer or
+destination handler ran; a separate test asserts the single static ERROR event,
+no completion event and no path or parameter contents in the captured output.
+The accepted path covers application extensions and `ConnectInfo`, a
+boundary-built 500 without the marker, the copy-by-type migration with the
+destination's own captures, `MatchedPath`, one completion event for its pattern
+and a fresh request identifier, and captures accumulating through nested routes
+and an admitted router inside one dispatch. It also covers an invalid UTF-8
+record left alone after the nameable records are removed, and a handler that
+attaches a copied marker or returns an inner client's refusal, whose dispatched
+response has no marker and keeps its other extension. Negative controls were
+run once by hand and are not part of the suite: with the entry check disabled
+every refusal test fails; with marker removal disabled the copied-marker test
+fails; with only an `Ok` extractor result counted as a record the isolated
+invalid UTF-8 case fails.
+
+Residual: a map can carry Batter's private observation, operational or
+admission records with no detected Axum record. One source is a `low_level`
+wrapper around a service that is not a `Router`. Another is the map of a
+dispatch no pattern matched, such as `OPTIONS *`: its only Axum record is the
+public `OriginalUri`, which an application can remove. Clearing Batter's
+private records stays outside this change, so neither is addressed.
+Fresh-agent usability evaluation of the refusal and migration remains proposed
+and unexecuted.
+
 ## Public-origin invalid-state review (`batter-321j`)
 
 The new constructor stores an immutable policy in the opaque origin; cloning

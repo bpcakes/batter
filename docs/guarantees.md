@@ -2455,7 +2455,46 @@ dispatch and observation ownership, with nothing spawned, so dropping a
 request may carry explicitly inserted synthetic extensions, such as a chosen
 `ConnectInfo`; choosing them and their meaning belongs to the caller, and this
 constrains direct API conversions, not an application's own transport wrapper or
-remote peer authenticity. An in-process response establishes response
+remote peer authenticity. The client accepts only an arrival-shaped request:
+at entry, before the router, any layer or any application code is polled, it
+refuses the whole request when its extensions carry any public Axum routing
+record, namely the path-parameter record that `RawPathParams` reads (any
+result except its missing-parameters rejection, so an empty capture list, an
+invalid UTF-8 capture and any future rejection all count), `MatchedPath`,
+`NestedPath` or `OriginalUri`. Pinned Axum 0.8.9 writes `OriginalUri` on every
+`Router` dispatch, writes the path-parameter record whenever it routes to a
+route, a path fallback or a `nest_service` service (a path no pattern matches,
+such as `*`, reaches the catch-all fallback with `OriginalUri` alone), and
+writes its private nested matched-path record only in the same routing step as
+the path-parameter record, so a whole extension map cloned from a dispatched
+request always carries a detected record. Nothing is stripped or repaired. A refusal returns
+`render_infrastructure_failure(HttpFailure::Internal, None)` carrying the
+`ReusedRoutingState` response extension, which has no public constructor or
+field, and emits one ERROR event with a fixed message and no request-derived
+field on the caller's dispatch.
+The marker is `Copy`, so application code can put one it read from an earlier
+refusal on a response of its own; the client removes it from every response it
+dispatched and keeps the other response extensions, so a returned response
+carries it only when that call refused the request;
+the request never entered the boundary, so it has no request span, completion
+event or `x-request-id` header. Caller-inserted application extensions are
+accepted and reach handlers untouched; the supported way to redispatch is a
+fresh request with each application extension copied by type. Without the
+check, Axum treats inherited records as outer-router state: path parameters are
+appended, an inherited invalid UTF-8 record rejects a valid path, `MatchedPath`
+and the completion `route` gain the earlier pattern as a prefix, and inherited
+Batter observation and operational state suppress the destination's request
+span and completion event. Axum keeps the path-parameter and nested
+matched-path records private and `http` 1.5.0 `Extensions` has no iteration or
+retain, so individual records cannot be reset while keeping unknown application
+extensions. A map can still carry Batter's private records with no detected
+Axum record: one captured behind a `low_level` wrapper around a service that is
+not a `Router`, or the map of a dispatch no pattern matched, whose only Axum
+record is the public `OriginalUri`, after the application removed that record.
+Clearing Batter's private records is not part of this check, so that residual
+is not addressed. Wrappers that hold an
+`InProcessClient`, such as the reference service's request client, inherit the
+refusal by delegating to it. An in-process response establishes response
 construction only: it is not evidence of serving, an accepted connection, a
 listener, a TLS handshake, a remote peer, body streaming or a stopped detached
 descendant. Because the boundary's own observer is outermost and the plain

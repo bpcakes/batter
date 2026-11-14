@@ -97,6 +97,46 @@ contracts, capability facts and validation history.
   a component that reveals an earlier stop. Additive; no existing caller
   changes (`batter-9wig.1`).
 
+- Refuse `batter-axum` in-process requests that reuse Axum routing state
+  (`batter-oj37`;
+  [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-routing-state-reuse-assessment-batter-oj37)).
+  `InProcessClient::request` forwarded a request built from a whole extension
+  map cloned inside an earlier dispatch, and pinned Axum 0.8.9 treated the
+  inherited records as outer-router state: `Path` extraction answered 500 or
+  read another route's captures, an inherited invalid UTF-8 capture made a
+  valid path answer 400, `MatchedPath` and the completion event's `route`
+  gained the earlier pattern as a prefix, and inherited Batter state suppressed
+  the destination's request span and completion event. The client now checks,
+  at entry and before the router, any layer or any handler is polled, for the
+  path-parameter record that `RawPathParams` reads, `MatchedPath`, `NestedPath`
+  and `OriginalUri`; any one refuses the whole request, and nothing is
+  stripped. A refusal returns `render_infrastructure_failure(HttpFailure::Internal,
+  None)` carrying the new `ReusedRoutingState` response extension (also
+  `batter::axum::ReusedRoutingState`), which has no public constructor, and
+  emits one ERROR event with a fixed message and no request field; it has no
+  completion event and no `x-request-id` header. The client removes that
+  extension from every response it dispatched, so a marker a handler copied
+  or forwarded never leaves `request`. Application extensions such
+  as `ConnectInfo` are still accepted untouched. The reference service's
+  request client inherits the refusal by delegating;
+  `batter_runlimit::http::TestClient` dispatches its own router and is
+  unchanged. Public signatures are unchanged. Behavior change: a request whose
+  extension map came from a dispatched request is now refused.
+
+  ```rust,ignore
+  // Before: the whole map of an earlier dispatch, including its routing records.
+  let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
+  *next.extensions_mut() = earlier.clone();
+  let response = client.request(next).await; // now refused: ReusedRoutingState
+
+  // After: a fresh request with each application extension copied by type.
+  let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
+  if let Some(label) = earlier.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  let response = client.request(next).await;
+  ```
+
 - Outbound HTTP: give each DNS candidate a one-second minimum within the shared
   setup deadline, avoiding tiny attempt windows caused by long answer lists.
   Earlier stalled candidates can still exhaust the shared budget before a

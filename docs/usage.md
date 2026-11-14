@@ -749,8 +749,12 @@ certificates, protocol versions and handshake policy. For in-process requests,
 consume the `AssembledHttp` with `in_process()` and call
 `client.request(request).await`: the returned `InProcessClient` is opaque and
 cloneable, prepares the router once, and keeps it private, so nothing can add a
-route or layer outside the observer or hand the assembly to `axum::serve`. An
-in-process response is not serving evidence; keep real socket tests for that.
+route or layer outside the observer or hand the assembly to `axum::serve`. It
+accepts only arrival-shaped requests: a request built from a whole extension map
+cloned inside an earlier dispatch carries Axum routing records and is refused
+before any route runs, with the `ReusedRoutingState` response marker, so copy
+application extensions by type into a fresh request instead. An in-process
+response is not serving evidence; keep real socket tests for that.
 The individual middlewares (`request_admission`, `observe_http`,
 `request_scope`, `operational_http`) remain available through
 `batter::axum::low_level` for compositions the boundary cannot express and

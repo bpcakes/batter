@@ -210,7 +210,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if "axum" in chosen or "runlimit-axum" in chosen:
         # Supported paths only: assembly is sealed into protected serving or
         # an opaque request client, and the raw helpers live in low_level.
-        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, RequestPolicy};")
+        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, RequestPolicy, ReusedRoutingState};")
     if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if chosen & RUNLEDGER_SELECTORS:
