@@ -28,13 +28,14 @@
 //! migration selection and provisioning stay with the application.
 //!
 //! ```
-//! use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, Retirement};
+//! use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, Retirement, SourceChecksum};
 //! use batter_sqlx::verification::{Identifier, QualifiedName, RoutineSignature, RoutineType};
 //!
 //! let touch = RoutineSignature::new("app", "touch_updated_at", [])?;
 //! let manifest = ManagedObjectManifest::new(ManagedRevision::new(1).expect("valid revision"),
 //!     QualifiedName::new("app", "managed_objects")?,
 //!     PublicExecute::Revoke,
+//!     SourceChecksum::FromStatementStart,
 //!     [
 //!         ManagedObject::function(
 //!             touch,
@@ -75,6 +76,7 @@
 
 pub(crate) mod application;
 mod apply;
+mod checksum;
 mod manifest;
 mod revision;
 pub(crate) use apply::ConnectionDisposition;
@@ -94,8 +96,8 @@ pub(crate) use catalog::{
     load_ledger_rows, named_relation, public_execute_holders, render_hashes, rendered_set_digest,
     resolve_live,
 };
+pub use checksum::SourceChecksum;
 pub use error::ManagedObjectError;
-pub use source::statement_start;
 
 use crate::verification::{Identifier, QualifiedName, RoutineSignature, temporary_namespace};
 use sha2::{Digest, Sha256};
@@ -256,6 +258,12 @@ pub struct ManagedObject {
     identity: Identity,
     rendered: String,
     source: Cow<'static, str>,
+    /// Byte offset of the source's first token.
+    statement: usize,
+    /// SHA-256 of the whole source.
+    whole: [u8; 32],
+    /// The checksum its ledger row records, which every manifest that holds
+    /// this object sets from its own [`SourceChecksum`] rule.
     checksum: [u8; 32],
 }
 
@@ -385,14 +393,16 @@ impl ManagedObject {
         if identity.temporary() {
             return Err(ManagedObjectError::TemporaryNamespace);
         }
-        source::validate(kind, &identity, &source)?;
-        let checksum = Sha256::digest(source.as_bytes()).into();
+        let statement = source::validate(kind, &identity, &source)?;
+        let whole = Sha256::digest(source.as_bytes()).into();
         Ok(Self {
             kind,
             rendered: identity.render(),
             identity,
             source,
-            checksum,
+            statement,
+            whole,
+            checksum: whole,
         })
     }
 
@@ -409,13 +419,24 @@ impl ManagedObject {
         &self.rendered
     }
 
-    /// Return the source statement exactly as declared.
+    /// Return the source statement exactly as declared; apply executes it whole.
     pub fn source(&self) -> &str {
         &self.source
     }
 
-    /// Return the SHA-256 checksum of the exact source bytes.
-    pub const fn checksum(&self) -> &[u8; 32] {
+    /// Set the recorded checksum from a manifest's rule, whatever rule an
+    /// earlier manifest holding this object applied.
+    pub(super) fn checksum_under(&mut self, rule: SourceChecksum) {
+        self.checksum = match rule {
+            SourceChecksum::FromStatementStart if self.statement > 0 => {
+                Sha256::digest(&self.source.as_bytes()[self.statement..]).into()
+            }
+            SourceChecksum::WholeSource | SourceChecksum::FromStatementStart => self.whole,
+        };
+    }
+
+    /// The checksum this object's ledger row records under its manifest's rule.
+    pub(crate) const fn checksum(&self) -> &[u8; 32] {
         &self.checksum
     }
 
@@ -432,6 +453,7 @@ impl fmt::Debug for ManagedObject {
             .field("identity", &self.rendered)
             .field("checksum", &Hex(&self.checksum))
             .field("source_bytes", &self.source.len())
+            .field("statement_offset", &self.statement)
             .finish()
     }
 }
@@ -540,7 +562,8 @@ pub enum PublicExecute {
 /// SHA-256 digest of a manifest's policy, entries and retirements.
 ///
 /// The digest covers the [`PublicExecute`] policy, every entry's kind, identity
-/// and source checksum, and every retirement's kind and identity, in sorted
+/// and source checksum under the manifest's [`SourceChecksum`] rule, and every
+/// retirement's kind and identity, in sorted
 /// identity order. It does not cover the ledger name, so a build can embed it
 /// in release evidence independently of where the ledger lives. Its `Display`
 /// form is lowercase hexadecimal.
@@ -553,7 +576,11 @@ pub enum PublicExecute {
 /// Batter release. A change of scheme would be a `Breaking:` change under a
 /// new tag. Every ledger would then hold a digest the unchanged set no longer
 /// produces, so that release would have to ship at a higher
-/// [`ManagedRevision`].
+/// [`ManagedRevision`]. A higher revision does not help an unversioned
+/// five-column ledger, which apply adopts only when its stored digest equals
+/// the manifest's, at any revision: such a release would also have to keep
+/// this scheme for that comparison, or require those ledgers to be adopted by
+/// an earlier release.
 ///
 /// The digest is SHA-256 over the following, where a *field* is its length in
 /// bytes as a big-endian `u64` followed by the bytes:
@@ -564,7 +591,10 @@ pub enum PublicExecute {
 ///    byte order of its identity: the field of its
 ///    [kind name](ManagedObjectKind::as_str), the field of its
 ///    [identity](ManagedObject::identity) and the 32 bytes of its
-///    [checksum](ManagedObject::checksum), the SHA-256 of its source;
+///    [source checksum](ManagedObjectManifest::object_checksums): the SHA-256
+///    of its whole source under [`SourceChecksum::WholeSource`], or of its
+///    source from the first token on under
+///    [`SourceChecksum::FromStatementStart`];
 /// 4. the number of retirements as a big-endian `u64`, then for each
 ///    retirement in byte order of its identity: the field of its kind name and
 ///    the field of its identity.
@@ -577,7 +607,7 @@ pub enum PublicExecute {
 /// an embedded double quote doubled.
 ///
 /// ```
-/// use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, Retirement};
+/// use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, Retirement, SourceChecksum};
 /// use batter_sqlx::verification::{Identifier, QualifiedName, RoutineSignature, RoutineType};
 ///
 /// let set = |revision, ledger| {
@@ -585,6 +615,7 @@ pub enum PublicExecute {
 ///         ManagedRevision::new(revision).expect("positive revision"),
 ///         QualifiedName::new("app", ledger)?,
 ///         PublicExecute::Revoke,
+///         SourceChecksum::WholeSource,
 ///         [ManagedObject::function(
 ///             RoutineSignature::new("app", "total", [RoutineType::new("pg_catalog", "int8")?])?,
 ///             "CREATE OR REPLACE FUNCTION app.total(amount bigint) RETURNS bigint LANGUAGE sql RETURN amount * 2;",

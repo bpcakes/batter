@@ -35,8 +35,8 @@ mod trigger_privileges;
 #[path = "managed_objects_live/trigger_lock_coverage.rs"]
 mod trigger_lock_coverage;
 
-#[path = "managed_objects_live/statement_slices.rs"]
-mod statement_slices;
+#[path = "managed_objects_live/source_checksums.rs"]
+mod source_checksums;
 
 use batter_sqlx::managed::{ManagedApplyError, ManagedObject, PublicExecute, Retirement};
 use batter_sqlx::verification::{

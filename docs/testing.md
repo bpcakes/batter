@@ -91,7 +91,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | HTTP/1.1 traffic, streaming and disconnect limits | [HTTP transport tests](../crates/batter-axum/tests/), [ADR-008](adr/008-http-transport-ownership.md) and [ADR-009](adr/009-http-lifetime-observations.md). |
 | Send bounds, future size and composed consumers | Core `send_futures`, [SQLx future sizes](../crates/batter-sqlx/tests/future_size.rs), Runlimit future sizes and facade consumer targets. |
 | Profiled SQLx scopes, query/transaction completion and uncertainty | [SQLx tests](../crates/batter-sqlx/tests/), including ignored `atomic_live`, profile and verification targets. |
-| Managed routines/triggers, release fences and scoped application SQL | [Managed live tests](../crates/batter-sqlx/tests/managed_objects_live.rs). |
+| Managed routines/triggers, release fences, digest schemes and scoped application SQL | [Managed live tests](../crates/batter-sqlx/tests/managed_objects_live.rs); private [manifest](../crates/batter-sqlx/src/managed/tests/manifest.rs) golden digests with the `ManagedObjectDigest` doctest, and [statement](../crates/batter-sqlx/src/managed/tests/statement.rs) tests for the leading-text offset and the set-wide `SourceChecksum` rule. |
 | Native invocation phases, settlement and handler testing | [Runledger adapter tests](../crates/batter-runledger/tests/), native [runtime tests](../runledger/runledger-runtime/tests/). |
 | Quota, authenticated attempts and maintenance | [Runlimit adapter tests](../crates/batter-runlimit/tests/) and native package tests. |
 | Outbound wire behavior and phase-owned evidence | [Outbound tests](../crates/batter-outbound-http/tests/) and facade `outbound_exchange` example tests. |
@@ -123,7 +123,8 @@ This facility applies no durable persistence or retry policy.
 
 The SQLx managed live suite covers migration-before-apply, routine/trigger
 replacement, constraint-trigger identity, privileges, lock ordering, release
-fences, verifier integrity and interruption. The exact cases are selected by
+fences, whole versus sliced sources, verifier integrity and interruption. The
+exact cases are selected by
 [sqlx_live.py](../scripts/sqlx_live.py); ordinary tests leave external cases ignored.
 See [ADR-013](adr/013-managed-database-objects.md).
 

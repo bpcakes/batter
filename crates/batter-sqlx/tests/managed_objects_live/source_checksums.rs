@@ -1,34 +1,21 @@
-//! A source sliced by `statement_start` installs the definition its whole text
-//! installs, for every managed kind.
+//! Switching a set to `SourceChecksum::FromStatementStart` changes only its
+//! recorded source checksums, for every managed kind; then its leading text
+//! is free to edit.
 
+use super::constraint_triggers::verifies;
 use super::{Fixture, Role, catalog_state};
 use crate::support::{Result, require};
-use batter_sqlx::managed::{ManagedObject, PublicExecute, statement_start};
-use batter_sqlx::verification::{
-    Identifier, QualifiedName, RoutineSignature, RoutineType, VerificationPlan, VerificationStatus,
-};
+use batter_sqlx::managed::{ManagedObject, PublicExecute, SourceChecksum};
+use batter_sqlx::verification::{Identifier, QualifiedName, RoutineSignature, RoutineType};
 use sqlx::{AssertSqlSafe, PgPool};
 
 const HEADER: &str = "-- Reviewed; with a semicolon.\n/* block /* nested */ comment */\n\n";
 const REWORDED: &str = "/* Reworded. */\n";
 
-/// How a source text reaches its constructor.
-#[derive(Clone, Copy)]
-enum Passed {
-    Whole,
-    Sliced,
-}
-
 /// One entry per kind, with a string body and a SQL-standard body among the
 /// routines. Each source is `leading` followed by its statement.
-fn objects(schema: &str, leading: &str, passed: Passed) -> Result<Vec<ManagedObject>> {
-    let source = |statement: String| -> Result<String> {
-        let whole = format!("{leading}{statement}");
-        Ok(match passed {
-            Passed::Whole => whole,
-            Passed::Sliced => statement_start(&whole)?.to_owned(),
-        })
-    };
+fn objects(schema: &str, leading: &str) -> Result<Vec<ManagedObject>> {
+    let source = |statement: String| -> Result<String> { Ok(format!("{leading}{statement}")) };
     let table = || QualifiedName::new(schema, "records");
     Ok(vec![
         ManagedObject::function(
@@ -73,8 +60,10 @@ fn objects(schema: &str, leading: &str, passed: Passed) -> Result<Vec<ManagedObj
     ])
 }
 
-/// What PostgreSQL stored for every routine and trigger in `schema`, without
-/// the row identities a re-execution changes.
+/// The deparsed definition, `prosrc` and `tgenabled` of every routine and
+/// trigger in `schema`, without the row identities a re-execution changes. A
+/// deparse omits parse locations, so equal results do not show that stored
+/// node trees are byte-equal.
 async fn definitions(pool: &PgPool, schema: &str) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(
         "SELECT pg_get_functiondef(p.oid) || '|' || p.prosrc
@@ -104,78 +93,75 @@ async fn checksums(pool: &PgPool, schema: &str) -> Result<Vec<(String, Vec<u8>, 
 
 #[tokio::test]
 #[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
-async fn managed_statement_slices_install_what_their_whole_sources_install() -> Result {
+async fn managed_statement_start_checksums_change_no_installed_definition() -> Result {
     Fixture::run(async |fixture| {
         let schema = fixture.schema().to_owned();
-        let set = |leading, passed| -> Result<_> {
+        let set = |leading, rule| -> Result<_> {
             Ok(fixture
-                .objects_with(
-                    PublicExecute::Revoke,
-                    objects(&schema, leading, passed)?,
-                    [],
-                )?
+                .objects_under(PublicExecute::Revoke, rule, objects(&schema, leading)?, [])?
                 .manifest)
         };
-        let whole = set(HEADER, Passed::Whole)?;
-        let sliced = set(HEADER, Passed::Sliced)?;
-        let reworded = set(REWORDED, Passed::Sliced)?;
+        let whole = set(HEADER, SourceChecksum::WholeSource)?;
+        let sliced = set(HEADER, SourceChecksum::FromStatementStart)?;
+        let reworded = set(REWORDED, SourceChecksum::FromStatementStart)?;
         require!(
             whole.digest() != sliced.digest() && sliced.digest() == reworded.digest(),
-            "leading text entered a sliced digest or left a whole one",
+            "leading text entered a statement-start digest or left a whole one",
         )?;
         let pool = fixture.pool(Role::Migrator).await?;
         require!(
             fixture.apply(&pool, &whole).await?.created_or_replaced() == 5,
             "whole sources were not installed",
         )?;
-        let installed = (
-            definitions(&pool, &schema).await?,
-            checksums(&pool, &schema).await?,
-        );
+        let whole_definitions = definitions(&pool, &schema).await?;
+        let whole_rows = checksums(&pool, &schema).await?;
         require!(
-            installed.0.len() == 5 && installed.1.len() == 6,
+            whole_definitions.len() == 5 && whole_rows.len() == 6,
             "unexpected fixture state",
         )?;
 
-        // A slice is another source text, so starting to pass slices executes
-        // every entry again. What PostgreSQL stores does not change.
+        // Every source has leading text, so switching the rule changes every
+        // checksum and executes every entry again, still from its whole
+        // source. What PostgreSQL stores does not change.
         let applied = fixture.apply(&pool, &sliced).await?;
         require!(
             applied.created_or_replaced() == 5 && applied.unchanged() == 0,
-            "adopting slices did not re-execute every entry",
+            "switching the rule did not re-execute every entry",
         )?;
         require!(
-            definitions(&pool, &schema).await? == installed.0,
-            "a sliced source installed a different definition",
+            definitions(&pool, &schema).await? == whole_definitions,
+            "switching the rule installed a different definition",
         )?;
-        let after = checksums(&pool, &schema).await?;
+        let sliced_rows = checksums(&pool, &schema).await?;
         require!(
-            after.len() == installed.1.len()
-                && after.iter().zip(&installed.1).all(|(sliced, whole)| {
-                    sliced.0 == whole.0 && sliced.1 != whole.1 && sliced.2 == whole.2
-                }),
-            "a slice changed a rendered checksum or kept a source checksum",
+            sliced_rows.len() == whole_rows.len()
+                && sliced_rows.iter().zip(&whole_rows).all(
+                    |((identity, source, rendered), (was_identity, was_source, was_rendered))| {
+                        identity == was_identity && source != was_source && rendered == was_rendered
+                    }
+                ),
+            "the rule changed a rendered checksum or kept a source checksum",
         )?;
         let reader = fixture.pool(Role::Reader).await?;
-        let report = fixture
-            .verify(&reader, VerificationPlan::managed_objects(&sliced))
-            .await?;
         require!(
-            report.status() == VerificationStatus::WithinDeclaredPolicy,
-            "sliced sources did not verify",
+            verifies(fixture, &reader, &sliced).await?,
+            "statement-start checksums did not verify",
         )?;
 
-        // Rewording the leading text of sliced sources is then no set change.
+        // Rewording the leading text is then no set change:
+        // every ledger row keeps its checksums, and no object row is rewritten.
         let catalog = catalog_state(&pool, &schema).await?;
+        let object_rows = fixture.object_rows(&pool).await?;
         let applied = fixture.apply(&pool, &reworded).await?;
         require!(
             applied.created_or_replaced() == 0 && applied.unchanged() == 5,
-            "a reworded header re-executed a sliced entry",
+            "a reworded header re-executed an entry",
         )?;
         require!(
             catalog_state(&pool, &schema).await? == catalog
-                && checksums(&pool, &schema).await?[1..] == after[1..],
-            "a reworded header changed the catalog or an object row",
+                && checksums(&pool, &schema).await? == sliced_rows
+                && fixture.object_rows(&pool).await? == object_rows,
+            "a reworded header changed the catalog or a ledger row",
         )
     })
     .await

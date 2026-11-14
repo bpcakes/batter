@@ -22,6 +22,7 @@ fn digest_is_order_independent_and_covers_policy_sources_and_retirements() {
         ManagedRevision::new(1).expect("valid revision"),
         QualifiedName::new("audit", "managed_objects").unwrap(),
         PublicExecute::Revoke,
+        SourceChecksum::WholeSource,
         base.objects().to_vec(),
         base.retirements().to_vec(),
     )

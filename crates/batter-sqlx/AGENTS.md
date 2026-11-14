@@ -14,8 +14,9 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
   `PgProfiledPool` only after registering closure; caller-owned construction and
   native-hook composition live in `low_level`.
 - `src/managed.rs` and `src/managed/`: the pure `ManagedObjectManifest`
-  (`source.rs` lexer, header validation and the public `statement_start`, which
-  shares the scanner's one `trivia` rule), the migrate-then-apply transaction
+  (`source.rs` lexer, header validation and the statement offset that
+  `SourceChecksum::FromStatementStart` uses, both through the scanner's one
+  `trivia` rule; `checksum.rs` owns that set-wide rule), the migrate-then-apply transaction
   (`apply.rs`) and the catalog resolution, ledger shape and canonical rendering
   shared with verification (`catalog.rs`). ADR-013 owns the boundary.
 - `src/native_query.rs`, `src/pooled_query.rs`: sealed native query dispatch, fixed
@@ -167,9 +168,12 @@ for `catalog::rendered_set_digest` (`batter.managed-objects.rendered.v1`),
 which the `manifest` row also stores. `managed/tests/manifest.rs` and
 `ManagedObjectDigest`'s doctest hold golden values computed outside the crate;
 a failing one is a breaking scheme change, not a value to update.
-`ManagedObject` checksums the exact bytes it is given; do not normalize sources
-by default. `statement_start` removes leading text only and must keep returning
-the same slice for the same source: applications checksum what it returns.
+Source checksums are a manifest's, never an object's: `ManagedObjectManifest::new`
+sets every object's from its one required `SourceChecksum` rule, so do not add
+a per-object or per-call way to choose or normalize them. `WholeSource` must
+keep checksumming every byte; `FromStatementStart` removes leading text only and
+must keep giving the same offset for the same source, because ledgers record
+checksums of the text from it on. Apply executes the whole source under both.
 New supported semantics require primary PostgreSQL18 evidence and native tests.
 
 ## Common commands

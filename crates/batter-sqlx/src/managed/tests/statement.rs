@@ -29,17 +29,44 @@ const LEADING: &[&str] = &[
     "\n\n/* header */\n-- note\n\n",
 ];
 
+/// The text from the first token on, as `FromStatementStart` checksums it.
+fn from_start(source: &str) -> Result<&str, ManagedObjectError> {
+    statement_start(source).map(|index| &source[index..])
+}
+
+fn set(rule: SourceChecksum, objects: Vec<ManagedObject>) -> ManagedObjectManifest {
+    ManagedObjectManifest::new(
+        ManagedRevision::new(1).expect("valid revision"),
+        ledger(),
+        PublicExecute::Revoke,
+        rule,
+        objects,
+        [],
+    )
+    .unwrap()
+}
+
+fn recorded(manifest: &ManagedObjectManifest) -> [u8; 32] {
+    let mut checksums = manifest.object_checksums();
+    assert_eq!(checksums.len(), 1);
+    *checksums.next().unwrap().1
+}
+
+fn sha(text: &str) -> [u8; 32] {
+    Sha256::digest(text.as_bytes()).into()
+}
+
 #[test]
 fn a_statement_starts_at_its_first_token() {
-    assert_eq!(statement_start(STATEMENT), Ok(STATEMENT));
+    assert_eq!(from_start(STATEMENT), Ok(STATEMENT));
     for leading in LEADING {
         let source = format!("{leading}{STATEMENT}");
-        assert_eq!(statement_start(&source), Ok(STATEMENT), "{leading:?}");
+        assert_eq!(from_start(&source), Ok(STATEMENT), "{leading:?}");
     }
     // A block comment ends at the close of its outermost opening, so what
     // follows it is statement text, not a comment.
     assert_eq!(
-        statement_start("/* a /* b */ c */ d */ CREATE"),
+        from_start("/* a /* b */ c */ d */ CREATE"),
         Ok("d */ CREATE")
     );
     // A lone `-` or `/` is a token, and a line comment needs no terminator.
@@ -54,12 +81,12 @@ fn a_statement_starts_at_its_first_token() {
         ("\n;", ";"),
         ("\u{a0}CREATE", "\u{a0}CREATE"),
     ] {
-        assert_eq!(statement_start(source), Ok(expected), "{source:?}");
+        assert_eq!(from_start(source), Ok(expected), "{source:?}");
     }
 }
 
 #[test]
-fn unreadable_leading_text_is_refused_as_construction_refuses_it() {
+fn unreadable_leading_text_is_refused_at_construction() {
     for source in [
         "/* never closed",
         "/* outer /* inner */ never closed",
@@ -69,94 +96,76 @@ fn unreadable_leading_text_is_refused_as_construction_refuses_it() {
         "-- a NUL in a comment that ends the source \0",
     ] {
         assert_eq!(
-            statement_start(source),
-            Err(ManagedObjectError::SourceStatement),
-            "{source:?}"
-        );
-        assert_eq!(
-            function(source.to_owned().leak()),
+            function(source),
             Err(ManagedObjectError::SourceStatement),
             "{source:?}"
         );
     }
 }
 
-/// Only the skipped text is read. A NUL from the first token on is still in
-/// the slice, where construction refuses it.
+/// The bounds apply to the whole source under either rule: leading text that
+/// is not checksummed is still executed.
 #[test]
-fn text_from_the_first_token_on_is_left_to_construction() {
-    const ROUTINE: &str =
-        "CREATE OR REPLACE FUNCTION app.total(bigint) RETURNS bigint LANGUAGE sql RETURN 1; \0";
-    for (source, expected) in [
-        ("\0", "\0"),
-        (" \0CREATE", "\0CREATE"),
-        (format!("-- header\n{ROUTINE}").leak() as &str, ROUTINE),
-        (
-            "/* header */ CREATE /* never closed",
-            "CREATE /* never closed",
-        ),
-    ] {
-        assert_eq!(statement_start(source), Ok(expected), "{source:?}");
-        for refused in [source, expected] {
-            assert_eq!(
-                function(refused),
-                Err(ManagedObjectError::SourceStatement),
-                "{refused:?}"
-            );
-        }
-    }
-}
-
-/// The slice carries no size bound of its own, so leading text can be what
-/// puts a source over the per-source bound.
-#[test]
-fn leading_text_counts_toward_the_bound_only_when_it_is_passed() {
-    const HEADER: &str = "-- twenty byte header\n";
+fn leading_text_counts_toward_the_source_bound_under_either_rule() {
+    const HEADER: &str = "-- a header comment\n";
     let statement = format!("{TOTAL}{}", " ".repeat(MAX_SOURCE_BYTES - TOTAL.len()));
     assert_eq!(statement.len(), MAX_SOURCE_BYTES);
-    let source: &'static str = format!("{HEADER}{statement}").leak();
-    assert_eq!(function(source), Err(ManagedObjectError::SourceTooLarge));
-    let slice = statement_start(source).unwrap();
-    assert_eq!(slice, statement);
-    assert!(function(slice).is_ok());
+    assert!(function(statement.clone().leak()).is_ok());
+    assert_eq!(
+        function(format!("{HEADER}{statement}").leak()),
+        Err(ManagedObjectError::SourceTooLarge)
+    );
 }
 
-/// The slice is validated exactly as the whole source is, tokenizes to the
-/// same tokens, and differs in checksum exactly when something was skipped.
+/// Under `FromStatementStart` every recorded checksum and the set digest are
+/// those of the bare statement, whatever leads it; under `WholeSource` they
+/// change exactly when something leads it. Apply still executes the whole
+/// source under both rules.
 #[test]
-fn the_slice_is_the_same_statement_to_construction_and_the_scanner() {
-    let statements = [
-        STATEMENT,
-        TOTAL,
-        // Rejected sources stay rejected, with the same error.
-        "CREATE FUNCTION app.total(bigint) RETURNS bigint LANGUAGE sql RETURN 1;",
-        "CREATE OR REPLACE FUNCTION total(bigint) RETURNS bigint LANGUAGE sql RETURN 1;",
-        "CREATE OR REPLACE FUNCTION app.total(bigint) RETURNS bigint LANGUAGE sql RETURN 1; SELECT 1;",
-        "CREATE OR REPLACE FUNCTION app.total(bigint) RETURNS bigint LANGUAGE sql AS 'unterminated",
-        "",
-    ];
-    for statement in statements {
+fn the_rule_decides_checksums_and_digest_for_the_whole_set() {
+    for statement in [STATEMENT, TOTAL] {
+        let bare = |rule| set(rule, vec![function(statement).unwrap()]);
+        assert_eq!(recorded(&bare(SourceChecksum::WholeSource)), sha(statement));
+        assert_eq!(
+            bare(SourceChecksum::WholeSource).digest(),
+            bare(SourceChecksum::FromStatementStart).digest()
+        );
         for leading in LEADING.iter().copied().chain([""]) {
             let source: &'static str = format!("{leading}{statement}").leak();
-            let slice = statement_start(source).unwrap();
-            assert!(source.ends_with(slice));
-            assert_eq!(slice, statement_start(statement).unwrap(), "{source:?}");
-            assert_eq!(scan(slice), scan(source), "{source:?}");
-            let whole = function(source);
-            let sliced = function(slice);
             assert_eq!(
-                whole.as_ref().map(|_| ()),
-                sliced.as_ref().map(|_| ()),
+                scan(from_start(source).unwrap()),
+                scan(source),
                 "{source:?}"
             );
-            if let (Ok(whole), Ok(sliced)) = (whole, sliced) {
-                assert_eq!(whole.identity(), sliced.identity());
-                assert_eq!(
-                    whole.checksum() == sliced.checksum(),
-                    slice.len() == source.len(),
-                    "{source:?}"
-                );
-            }
+            let led = |rule| set(rule, vec![function(source).unwrap()]);
+            let sliced = led(SourceChecksum::FromStatementStart);
+            assert_eq!(sliced.objects()[0].source(), source);
+            assert_eq!(recorded(&sliced), sha(statement), "{source:?}");
+            assert_eq!(
+                sliced.digest(),
+                bare(SourceChecksum::FromStatementStart).digest()
+            );
+            let whole = led(SourceChecksum::WholeSource);
+            assert_eq!(recorded(&whole), sha(source), "{source:?}");
+            assert_eq!(
+                whole.digest() == bare(SourceChecksum::WholeSource).digest(),
+                leading.is_empty(),
+                "{source:?}"
+            );
         }
     }
+}
+
+/// A manifest sets every checksum from its own rule, so objects taken from a
+/// set under one rule carry nothing of it into a set under the other.
+#[test]
+fn objects_reused_across_sets_take_the_new_sets_rule() {
+    let source: &'static str = format!("-- header\n{TOTAL}").leak();
+    let whole = set(SourceChecksum::WholeSource, vec![function(source).unwrap()]);
+    let sliced = set(SourceChecksum::FromStatementStart, whole.objects().to_vec());
+    assert_eq!(recorded(&sliced), sha(TOTAL));
+    let back = set(SourceChecksum::WholeSource, sliced.objects().to_vec());
+    assert_eq!(recorded(&back), sha(source));
+    assert_eq!(back.digest(), whole.digest());
+    assert_eq!(back, whole);
 }

@@ -21,11 +21,12 @@ pub(super) enum Token<'a> {
     Literal,
 }
 
+/// Validate one statement and return the byte offset of its first token.
 pub(super) fn validate(
     kind: ManagedObjectKind,
     identity: &Identity,
     source: &str,
-) -> Result<(), ManagedObjectError> {
+) -> Result<usize, ManagedObjectError> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(ManagedObjectError::SourceTooLarge);
     }
@@ -41,18 +42,19 @@ pub(super) fn validate(
         } else {
             StatementKind::Trigger
         },
-    )
+    )?;
+    statement_start(source)
 }
 
 pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        if let Some(end) = trivia(bytes, index)? {
-            index = end;
-            continue;
-        }
+    loop {
+        index = trivia(bytes, index)?;
+        let Some(&byte) = bytes.get(index) else {
+            break;
+        };
         let next = bytes.get(index + 1).copied();
         match byte {
             b'\'' => {
@@ -115,102 +117,37 @@ pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
     Ok(tokens)
 }
 
-/// Return the index after the whitespace byte or comment that starts at
-/// `index`, or `None` when a token (or the end of the source) is there.
+/// Skip every whitespace byte and comment from `index` on, and return the
+/// index of the first token there, or the length of the source when none is.
 ///
 /// This is the one definition of what precedes and separates tokens: [`scan`]
-/// and [`statement_start`] both skip through it, so they cannot disagree.
-fn trivia(bytes: &[u8], index: usize) -> Result<Option<usize>, ManagedObjectError> {
-    let next = bytes.get(index + 1).copied();
-    Ok(match bytes.get(index) {
-        Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) => Some(index + 1),
-        Some(b'-') if next == Some(b'-') => Some(
-            bytes[index..]
+/// and [`statement_start`] both skip through it, so the text that
+/// [`SourceChecksum::FromStatementStart`](super::SourceChecksum::FromStatementStart)
+/// leaves out is exactly the text the header check skips.
+fn trivia(bytes: &[u8], mut index: usize) -> Result<usize, ManagedObjectError> {
+    loop {
+        let next = bytes.get(index + 1).copied();
+        index = match bytes.get(index) {
+            Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) => index + 1,
+            Some(b'-') if next == Some(b'-') => bytes[index..]
                 .iter()
                 .position(|byte| matches!(byte, b'\n' | b'\r'))
                 .map_or(bytes.len(), |offset| index + offset),
-        ),
-        Some(b'/') if next == Some(b'*') => Some(block_comment(bytes, index)?),
-        _ => None,
-    })
+            Some(b'/') if next == Some(b'*') => block_comment(bytes, index)?,
+            _ => return Ok(index),
+        };
+    }
 }
 
-/// Return `source` from its first token on.
+/// Return the byte offset of the first token in `source`, or its length when
+/// it holds none.
 ///
-/// Leading whitespace, `--` comments and nested `/* */` comments are skipped
-/// exactly as manifest construction skips them. PostgreSQL stores nothing that
-/// precedes a statement, so passing the returned slice to
-/// [`ManagedObject::function`](super::ManagedObject::function), `procedure`,
-/// `trigger` or `constraint_trigger` installs the same definition while
-/// keeping a header comment out of the object's source checksum and the set
-/// digest.
-///
-/// Only leading text is removed. Everything from the first token on stays in
-/// the checksum, including text PostgreSQL does not store: comments and
-/// whitespace inside the statement (PostgreSQL keeps those inside a string
-/// constant, such as a dollar-quoted body, and no others) and whatever follows
-/// the statement, such as a final newline. The scanner does not tell stored text from unstored
-/// text there, so an edit to any of it is still a set change.
-///
-/// This is opt-in, per call. A [`ManagedObject`](super::ManagedObject)
-/// checksums exactly the source it is given, so without this function an edit
-/// to a header comment changes the checksum: the manifest then needs a higher
-/// [`ManagedRevision`](super::ManagedRevision), and apply executes that object
-/// again, taking the table locks its statement takes. Slice every source, in
-/// every place that builds the set or computes its digest; a source passed
-/// whole in one of them gives a different checksum.
-///
-/// Starting to pass slices is itself a set change. Every object whose source
-/// had leading text gets a new checksum, so that release needs a higher
-/// revision and apply executes all of those objects again in its one
-/// transaction, with their table locks, although their definitions do not
-/// change.
-///
-/// The function reads only the leading text. It validates nothing from the
-/// first token on and applies no size bound; the constructor still validates
-/// the returned statement, so a source that construction accepts whole is
-/// accepted sliced. The reverse fails only at a size bound: a source that is
-/// over one because of its leading text is refused whole and accepted sliced.
-/// An empty slice is returned when the source holds no token.
-///
-/// ```
-/// use batter_sqlx::managed::{ManagedObject, statement_start};
-/// use batter_sqlx::verification::{RoutineSignature, RoutineType};
-///
-/// let signature = RoutineSignature::new("app", "total", [RoutineType::new("pg_catalog", "int8")?])?;
-/// let statement = "CREATE OR REPLACE FUNCTION app.total(amount bigint) RETURNS bigint
-///     LANGUAGE sql /* kept: inside the statement */ RETURN amount * 2;";
-/// let first = format!("-- Doubles an amount.\n{statement}");
-/// let reworded = format!("/* Doubles /* any */ amount. */\n\n{statement}");
-///
-/// assert_eq!(statement_start(&first)?, statement);
-/// assert_eq!(statement_start(&reworded)?, statement);
-/// // Rewording the header no longer changes the checksum.
-/// let declared = ManagedObject::function(signature.clone(), statement_start(&first)?.to_owned())?;
-/// let edited = ManagedObject::function(signature.clone(), statement_start(&reworded)?.to_owned())?;
-/// assert_eq!(declared.checksum(), edited.checksum());
-/// // Passing the whole file still works, and still checksums the header.
-/// assert_ne!(ManagedObject::function(signature, first)?.checksum(), declared.checksum());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-///
-/// # Errors
-/// Returns [`ManagedObjectError::SourceStatement`] for a NUL byte in the
-/// skipped text, which the slice would otherwise hide from construction, or a
-/// leading block comment that is never closed.
-pub fn statement_start(source: &str) -> Result<&str, ManagedObjectError> {
-    let bytes = source.as_bytes();
-    let mut index = 0;
-    while let Some(end) = trivia(bytes, index)? {
-        index = end;
-    }
-    // Every skipped item ends after an ASCII byte, before a line terminator or
-    // at the end of the source, so `index` is a character boundary.
-    let (skipped, statement) = source.split_at(index);
-    if skipped.contains('\0') {
-        return Err(ManagedObjectError::SourceStatement);
-    }
-    Ok(statement)
+/// Every skipped item ends after an ASCII byte, before a line terminator or at
+/// the end of the source, so the offset is a character boundary. This must
+/// keep returning the same offset for the same source: ledgers record
+/// checksums of the text from it on.
+pub(super) fn statement_start(source: &str) -> Result<usize, ManagedObjectError> {
+    trivia(source.as_bytes(), 0)
 }
 
 const fn identifier_start(byte: u8) -> bool {

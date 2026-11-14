@@ -4,7 +4,7 @@ use super::{Fixture, Role, catalog_state, pid};
 use crate::support::{Result, require};
 use batter_sqlx::managed::{
     ManagedApplyError, ManagedApplyWithError, ManagedObject, ManagedObjectManifest,
-    ManagedReleaseError, ManagedRevision, PublicExecute,
+    ManagedReleaseError, ManagedRevision, PublicExecute, SourceChecksum,
 };
 use batter_sqlx::verification::{FindingKind, QualifiedName, RoutineSignature, VerificationPlan};
 use sqlx::{AssertSqlSafe, PgPool};
@@ -20,6 +20,7 @@ fn manifest(fixture: &Fixture, revision: u64, value: i32) -> Result<ManagedObjec
         ManagedRevision::new(revision).expect("test revision"),
         QualifiedName::new(schema, "managed_objects")?,
         PublicExecute::Revoke,
+        SourceChecksum::WholeSource,
         [ManagedObject::function(
             RoutineSignature::new(schema, "release_value", [])?,
             format!(

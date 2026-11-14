@@ -770,7 +770,7 @@ Migrations keep tables, columns, constraints, policies and data changes. See
 
 ```rust,no_run
 use batter_core::operation::OperationContext;
-use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute}};
+use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, SourceChecksum}};
 use batter_sqlx::verification::{
     Identifier, QualifiedName, RoutineSignature, SqlxMigrationManifest, VerificationPlan,
     VerificationStatus, verify,
@@ -782,6 +782,7 @@ let objects = ManagedObjectManifest::new(
     ManagedRevision::new(1).expect("positive release revision"),
     QualifiedName::new("app", "managed_objects")?,
     PublicExecute::Revoke,
+    SourceChecksum::FromStatementStart,
     [
         ManagedObject::function(
             RoutineSignature::new("app", "touch_updated_at", [])?,
@@ -861,27 +862,32 @@ Batter releases, because every ledger stores it: `ManagedObjectDigest`'s rustdoc
 states the byte layout and a golden value, and a change of scheme would be a
 `Breaking:` change that ships at a higher revision.
 
-A `ManagedObject` checksums exactly the source it is given, so an edit to a
-comment above the statement changes the checksum, needs a higher revision and
-makes apply execute that object again. `managed::statement_start(source)`
-returns the source from its first token on, skipping leading whitespace and
-comments exactly as construction does. PostgreSQL stores nothing that precedes
-a statement, so passing that slice installs the same definition while header
-comments stay free to edit. A PostgreSQL 18 case applies one entry of each
-kind whole and then sliced and finds the stored definitions and rendered
-checksums unchanged.
+`SourceChecksum` has no default either. It is one rule for the whole set:
+the manifest computes every object's source checksum, which its ledger row
+records, and the set digest from it, so no object can be checksummed
+differently from the others. Apply always executes the whole source.
 
-- It is opt-in and per call. Slice every source, everywhere the set is built
-  or its digest computed; a source passed whole in one place gives a different
-  checksum.
-- Starting to pass slices is a set change. Every object whose source had
-  leading text gets a new checksum, so that release needs a higher revision
-  and apply executes all of those objects again in its one transaction. A
-  constraint trigger is dropped and re-created under `ACCESS EXCLUSIVE`, and
-  each plain trigger takes its table lock, until that transaction commits.
-- Only leading text is removed. Comments and whitespace inside the statement
-  and anything after it, such as a final newline, stay in the checksum even
-  where PostgreSQL does not store them.
+- `WholeSource` checksums every byte. Every ledger written before the rule
+  existed holds these checksums, so an existing set keeps its digest. An edit
+  to a comment above the statement is then a set change: it needs a higher
+  revision and makes apply execute that object again.
+- `FromStatementStart` checksums each source from its first token on, skipping
+  leading whitespace and comments exactly as the header check does.
+  PostgreSQL 18 stores nothing that precedes a statement, so header comments
+  stay free to edit. Only leading text is left out: comments and whitespace
+  inside the statement and anything after it, such as a final newline, stay in
+  the checksum even where PostgreSQL does not store them. A PostgreSQL 18 case
+  switches one entry of each kind between the rules and finds the deparsed
+  definitions and rendered checksums unchanged.
+- Switching an existing set's rule is a set change when any source has
+  leading text. Every such object gets a new checksum, so that release needs a
+  higher revision and apply executes all of them again in its one
+  transaction. A constraint trigger is dropped and re-created under
+  `ACCESS EXCLUSIVE`, and each plain trigger takes its table lock, until that
+  transaction commits. With no leading text the two rules agree.
+
+The manifest's `object_checksums()` returns each object with the checksum its
+ledger row records; an object has no checksum of its own.
 
 `PgLease::migrate_and_apply` and its `migrate_and_apply_with` form are the only
 apply path. A session advisory lock
@@ -1043,10 +1049,14 @@ same digest. Apply enforces both and refuses a release that breaks either. Any
 numbering that a correct release process never trips is valid.
 
 A single hand-written constant is valid for one line of work and awkward for
-several. Every branch that changes a routine or trigger rewrites the same line,
-so two such branches always conflict. Taking either side of that conflict is
-wrong: the merged tree holds a third set, and a number copied from one parent
-then names two sets.
+several. Every branch that changes a routine or trigger rewrites the same line.
+Branches that pick different numbers conflict there, and taking either side is
+wrong. Branches that each raise it to the same next number make identical
+edits, which Git merges, rebases and squashes without a conflict. Either way
+the merged tree holds a third set, and the number it keeps from a parent then
+names more than one set. After a clean merge nothing shows this until apply
+refuses that revision with `ManagedReleaseError::RevisionConflict` on a ledger
+that already holds a parent's set.
 
 One numbering that merges without a shared line is a frozen base plus a count
 of append-only records:
@@ -1063,29 +1073,42 @@ const REVISION: ManagedRevision = ManagedRevision::new(BASE + RECORDS as u64)
 ```
 
 Each change to the set (a source, a retirement or the `PUBLIC` policy) adds
-one new uniquely named file to the directory, and no record is ever edited,
-renamed or deleted. A merge then holds both parents' records, so its revision
-is above both and no line is shared. The same rule covers restoring earlier
-source: add a record, never remove one. With a base of zero the first record
-gives revision 1.
+one new uniquely named file to the directory, no record is added without a set
+change, and no record is ever edited, renamed or deleted. A merge then holds
+both parents' records, so its revision is above both and no line is shared.
+The same rule covers restoring earlier source: add a record, never remove one.
+With a base of zero the first record gives revision 1.
 
 Batter does not read the directory or check the rule. The application's build
 lists the records, and its review or CI must refuse a set change that adds no
-record and any edit to an existing record or to the base. Two build details
-decide whether the count is right:
+record, a record added without a set change, and any edit to or removal of an
+existing record or the base. Two build details decide whether the count is
+right:
 
-- Count only files that match the record naming, not every directory entry. A
-  stray file such as `.DS_Store` or `.gitkeep` otherwise raises the revision
-  of one local build, and applying that build publishes a revision the
-  releasing line will reach later with other content.
+- Count only files that match the record naming, not every directory entry.
+  An untracked file such as `.DS_Store` otherwise raises the revision of one
+  local build, and applying that build publishes a revision the releasing line
+  will reach later with other content. A committed placeholder such as
+  `.gitkeep` raises every build's count instead, so adding or deleting it
+  moves the revision without a set change.
 - Declare the records directory as a build-script input
-  (`cargo::rerun-if-changed`). Without it an incremental build keeps the old
-  count and ships a changed set at the old revision.
+  (`cargo::rerun-if-changed=<records directory>`). Once a build script prints
+  any `rerun-if-changed` or `rerun-if-env-changed` line, even one naming only
+  `build.rs`, Cargo reruns it only when a declared input changes, so without
+  the directory an incremental build keeps the old count and ships a changed
+  set at the old revision. A script that prints none is rerun when a file in
+  the package is added or modified, which misses a records directory outside
+  the package and a deleted record.
 
 This recipe comes from one downstream application; a library-owned form is
 tracked as `batter-ulfs`.
 
-The recipe is safe under one assumption: **one releasing line per ledger.**
+Beyond the record rules and build details above, the recipe assumes **one
+releasing line per ledger**. Its limits follow. Each fence outcome below
+assumes the build holds every migration the database has recorded: otherwise
+the SQLx migrator refuses first with `MigrateError::VersionMissing`, unless
+the application's migrator ignores missing migrations, before any migration
+or managed DDL runs.
 
 - Two unmerged branches that each add one record to the same parent commit
   build the same revision, one above that parent's, with different digests.

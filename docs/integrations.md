@@ -735,7 +735,14 @@ as content. Existing five-column ledgers require a matching-content baseline
 release before managed content can advance. Baseline adoption adds the sixth
 column that older library builds reject. SQLx migrations precede this check and
 may already have committed; this fence orders managed objects and the protected
-application callback, not arbitrary migrations. See
+application callback, not arbitrary migrations. The application chooses the
+revision. Every manifest declares one `SourceChecksum` rule for all its
+objects. Under `WholeSource` any edit to an object file, header comments
+included, is a set change that needs a higher revision; `FromStatementStart`
+keeps leading comments out of every checksum, and switching an existing set to
+it is itself a set change when any source has them. The adapter README's
+[Choosing a revision](../crates/batter-sqlx/README.md#choosing-a-revision)
+gives a merge-safe numbering and its one-releasing-line assumption. See
 [ADR-013](adr/013-managed-database-objects.md), the
 [adapter README](../crates/batter-sqlx/README.md#managed-routines-and-triggers)
 and the [lifecycle example](../examples/postgres-lifecycle/src/schema.rs).

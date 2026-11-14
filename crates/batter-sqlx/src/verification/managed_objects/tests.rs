@@ -1,5 +1,7 @@
 use super::*;
-use crate::managed::{ManagedObject, ManagedObjectKind, ManagedRevision, Retirement};
+use crate::managed::{
+    ManagedObject, ManagedObjectKind, ManagedRevision, Retirement, SourceChecksum,
+};
 use crate::verification::{
     AuthorityPolicyBuilder, Identifier, MigrationPolicy, PlanError, RoutineSignature,
     SchemaInspectionPolicy, SequencePolicy, SqlxLedgerMode, SqlxMigrationManifest,
@@ -19,6 +21,7 @@ fn manifest(policy: PublicExecute) -> ManagedObjectManifest {
         ManagedRevision::new(1).expect("valid revision"),
         ledger(),
         policy,
+        SourceChecksum::WholeSource,
         [
             ManagedObject::function(
                 total(),
@@ -160,6 +163,7 @@ fn row_comparison_reports_missing_mismatched_unexpected_and_set_rows() {
         ManagedRevision::new(1).expect("valid revision"),
         ledger(),
         PublicExecute::Unmanaged,
+        SourceChecksum::WholeSource,
         manifest.objects().to_vec(),
         manifest.retirements().to_vec(),
     )
@@ -266,6 +270,7 @@ fn plans_reject_duplicate_and_conflicting_managed_ledgers() {
         ManagedRevision::new(1).expect("valid revision"),
         QualifiedName::new("app", "other_objects").unwrap(),
         PublicExecute::Revoke,
+        SourceChecksum::WholeSource,
         managed.objects().to_vec(),
         [],
     )
@@ -333,6 +338,7 @@ fn with_constraint_trigger(policy: PublicExecute) -> ManagedObjectManifest {
         ManagedRevision::new(1).expect("valid revision"),
         ledger(),
         policy,
+        SourceChecksum::WholeSource,
         [
             ManagedObject::function(
                 total(),

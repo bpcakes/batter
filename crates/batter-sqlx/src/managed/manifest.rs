@@ -19,12 +19,13 @@ use super::*;
 /// retirement.
 ///
 /// ```
-/// use batter_sqlx::managed::{ManagedObjectError, ManagedObjectManifest, ManagedRevision, PublicExecute};
+/// use batter_sqlx::managed::{ManagedObjectError, ManagedObjectManifest, ManagedRevision, PublicExecute, SourceChecksum};
 /// use batter_sqlx::verification::QualifiedName;
 ///
 /// let empty = ManagedObjectManifest::new(ManagedRevision::new(1).expect("valid revision"),
 ///     QualifiedName::new("app", "managed_objects")?,
 ///     PublicExecute::Revoke,
+///     SourceChecksum::FromStatementStart,
 ///     [],
 ///     [],
 /// );
@@ -35,26 +36,37 @@ use super::*;
 /// A release revision cannot be omitted, including when migrating an old call:
 ///
 /// ```compile_fail,E0061
-/// use batter_sqlx::managed::{ManagedObjectManifest, PublicExecute};
+/// use batter_sqlx::managed::{ManagedObjectManifest, PublicExecute, SourceChecksum};
 /// use batter_sqlx::verification::QualifiedName;
 /// let ledger = QualifiedName::new("app", "managed_objects").unwrap();
-/// let _ = ManagedObjectManifest::new(ledger, PublicExecute::Revoke, [], []);
+/// let _ = ManagedObjectManifest::new(ledger, PublicExecute::Revoke, SourceChecksum::WholeSource, [], []);
 /// ```
 ///
 /// The policy has no default, so a manifest cannot silently leave new
 /// routines executable by `PUBLIC`:
 ///
 /// ```compile_fail,E0061
-/// use batter_sqlx::managed::{ManagedObjectManifest, ManagedRevision};
+/// use batter_sqlx::managed::{ManagedObjectManifest, ManagedRevision, SourceChecksum};
 /// use batter_sqlx::verification::QualifiedName;
 /// let ledger = QualifiedName::new("app", "managed_objects").unwrap();
-/// let _ = ManagedObjectManifest::new(ManagedRevision::new(1).expect("valid revision"), ledger, [], []);
+/// let _ = ManagedObjectManifest::new(ManagedRevision::new(1).expect("valid revision"), ledger, SourceChecksum::WholeSource, [], []);
+/// ```
+///
+/// Nor has the checksum rule one, so a set cannot leave each source's
+/// leading comments to be handled, or not, where it is declared:
+///
+/// ```compile_fail,E0061
+/// use batter_sqlx::managed::{ManagedObjectManifest, ManagedRevision, PublicExecute};
+/// use batter_sqlx::verification::QualifiedName;
+/// let ledger = QualifiedName::new("app", "managed_objects").unwrap();
+/// let _ = ManagedObjectManifest::new(ManagedRevision::new(1).expect("valid revision"), ledger, PublicExecute::Revoke, [], []);
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ManagedObjectManifest {
     ledger: QualifiedName,
     revision: ManagedRevision,
     public_execute: PublicExecute,
+    source_checksum: SourceChecksum,
     objects: Vec<ManagedObject>,
     retirements: Vec<Retirement>,
     digest: ManagedObjectDigest,
@@ -66,6 +78,15 @@ impl ManagedObjectManifest {
     /// Migration: `ManagedObjectManifest::new` now requires a `ManagedRevision`
     /// before the ledger argument. No implicit revision is supplied: reused
     /// revisions with different content and lower revisions are refused at apply.
+    ///
+    /// Migration: `ManagedObjectManifest::new` now also requires a
+    /// [`SourceChecksum`] rule after the [`PublicExecute`] policy. Pass
+    /// [`SourceChecksum::WholeSource`] to keep every existing ledger's checksums
+    /// and digest; [`SourceChecksum::FromStatementStart`] keeps leading comments
+    /// out of them, which is a set change for every source that has any.
+    ///
+    /// Every object's source checksum and the set digest are computed here,
+    /// under `source_checksum`, for the whole set at once.
     ///
     /// Inputs are consumed only up to the combined capacity of 10,000 objects
     /// plus retirements. Sources may total at most 64 MiB. Collection stops at
@@ -79,6 +100,7 @@ impl ManagedObjectManifest {
         revision: ManagedRevision,
         ledger: QualifiedName,
         public_execute: PublicExecute,
+        source_checksum: SourceChecksum,
         objects: impl IntoIterator<Item = ManagedObject>,
         retirements: impl IntoIterator<Item = Retirement>,
     ) -> Result<Self, ManagedObjectError> {
@@ -134,11 +156,15 @@ impl ManagedObjectManifest {
                 });
             }
         }
+        for object in &mut objects {
+            object.checksum_under(source_checksum);
+        }
         let digest = set_digest(public_execute, &objects, &retirements);
         Ok(Self {
             ledger,
             revision,
             public_execute,
+            source_checksum,
             objects,
             retirements,
             digest,
@@ -160,9 +186,50 @@ impl ManagedObjectManifest {
         self.public_execute
     }
 
+    /// Return the rule under which every object's source is checksummed.
+    pub const fn source_checksum(&self) -> SourceChecksum {
+        self.source_checksum
+    }
+
     /// Return the declared objects in sorted identity order.
     pub fn objects(&self) -> &[ManagedObject] {
         &self.objects
+    }
+
+    /// Return each declared object, in sorted identity order, with the
+    /// SHA-256 source checksum its ledger row records and the set digest
+    /// covers, computed under [`Self::source_checksum`].
+    ///
+    /// Migration: this replaces `ManagedObject::checksum`. An object no longer
+    /// has a checksum of its own, because the manifest's [`SourceChecksum`]
+    /// rule decides which source bytes it covers.
+    ///
+    /// ```
+    /// use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, SourceChecksum};
+    /// use batter_sqlx::verification::{QualifiedName, RoutineSignature};
+    /// use sha2::Digest as _;
+    ///
+    /// let statement = "CREATE OR REPLACE FUNCTION app.now_utc() RETURNS timestamptz LANGUAGE sql RETURN now();";
+    /// let manifest = ManagedObjectManifest::new(
+    ///     ManagedRevision::new(1).expect("valid revision"),
+    ///     QualifiedName::new("app", "managed_objects")?,
+    ///     PublicExecute::Revoke,
+    ///     SourceChecksum::FromStatementStart,
+    ///     [ManagedObject::function(RoutineSignature::new("app", "now_utc", [])?, format!("-- Current time.\n{statement}"))?],
+    ///     [],
+    /// )?;
+    /// let (object, checksum) = manifest.object_checksums().next().expect("one object");
+    /// assert_eq!(object.identity(), r#""app"."now_utc"()"#);
+    /// // The header comment is not checksummed.
+    /// assert_eq!(checksum, &<[u8; 32]>::from(sha2::Sha256::digest(statement)));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn object_checksums(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&ManagedObject, &[u8; 32])> + '_ {
+        self.objects
+            .iter()
+            .map(|object| (object, object.checksum()))
     }
 
     /// Return the retirements in sorted identity order.

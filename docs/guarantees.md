@@ -3576,8 +3576,10 @@ a guarantee: Batter reads no records, and the fence compares numbers without
 ancestry, so a stale branch with a higher number is applied. Both digests in
 the `manifest` row, the set digest and the digest of rendered definition
 hashes, have schemes that are fixed across releases and pinned by golden
-values computed independently of the implementation; the rendering of an
-identity is part of the first. SQLx migrations precede the gate and can already have committed;
+values computed independently of the implementation. The rendering of an
+identity is an input to both and is each object row's ledger key. The golden
+values for the second pin its framing only: the per-object rendered hashes it
+covers come from PostgreSQL's deparser and are not pinned. SQLx migrations precede the gate and can already have committed;
 arbitrary migrations, administrative SQL and ledger deletion are outside it.
 See ADR-013 on
 [release ordering](adr/013-managed-database-objects.md#release-ordering-and-legacy-adoption--2026-11-05)

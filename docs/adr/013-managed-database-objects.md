@@ -13,7 +13,9 @@ headings it changes.
 
 Amended 2026-11-14 (`batter-6d1g`, approved by the repository owner): the set
 digest scheme becomes a stated contract, `statement_start` is added, and
-revision choice is documented. See the dated section at the end.
+revision choice is documented. See the dated section near the end. Later the
+same day, before release, `statement_start` was replaced by the set-wide
+`SourceChecksum` rule; see the final section.
 
 ## Context
 
@@ -62,8 +64,8 @@ the SQLx ledger: Batter never reads or writes migration history for it.
 
 ### Shape
 
-- `managed::ManagedObjectManifest::new(revision, ledger, public_execute, objects,
-  retirements)` is pure and bounded: at most 10,000 entries plus retirements,
+- `managed::ManagedObjectManifest::new(revision, ledger, public_execute, source_checksum,
+  objects, retirements)` is pure and bounded: at most 10,000 entries plus retirements,
   1 MiB per source and 64 MiB in total. Entries are
   `ManagedObject::{function, procedure, trigger}`; retirements are
   `Retirement::{function, procedure, trigger}`. Routine identities reuse the
@@ -847,23 +849,36 @@ that need quoting, and `RoutineSignature`'s rustdoc no longer calls that
 rendering diagnostic only. A change of scheme
 is a `Breaking:` change under a new tag. Every ledger would then hold a digest
 the unchanged set no longer produces, which apply refuses at an equal revision
-as `RevisionConflict`, so such a release ships at a higher revision.
+as `RevisionConflict`, so such a release ships at a higher revision. An
+unversioned five-column ledger is adopted only on an exact digest match, at any
+revision, so that release also keeps the earlier scheme for its baseline
+comparison.
 
 The `manifest` row stores a second digest, over the rendered definition hashes
 (`catalog::rendered_set_digest`, tag `batter.managed-objects.rendered.v1`).
 Verification recomputes it, possibly from another build, so it is persisted in
 the same sense. It is internal and has no public type; its layout is stated
 beside its golden values in `managed/tests/manifest.rs`, and the same rule
-applies to it.
+applies to it. Apply does not compare it, though: a change of its scheme at an
+equal revision is not refused, and builds on the other scheme then report a
+set-digest finding, so its higher revision is release policy. Its golden
+values pin the framing over fixed hashes; the per-object rendered hashes come
+from PostgreSQL's deparser.
 
 ### `statement_start`
 
+Superseded before release by the
+[set-wide source checksum rule](#set-wide-source-checksum-rule--2026-11-14).
+This subsection, its review and its evidence record the per-call design as it
+was reviewed.
+
 `managed::statement_start(source)` returns the source from its first token on.
 `source::scan` and this function skip whitespace and comments through one
-private `trivia` function, so they cannot disagree. PostgreSQL stores nothing
-that precedes a statement, so the slice installs the same definition. A
-PostgreSQL 18 case applies one entry of each kind whole and then sliced, and
-finds the stored definitions and rendered checksums unchanged.
+private `trivia` function, so they cannot disagree. PostgreSQL 18 stores
+nothing that precedes a statement (since PostgreSQL 17, stored node trees carry
+no parse locations), so the slice installs the same definition. A PostgreSQL 18
+case applies one entry of each kind whole and then sliced, and finds the
+deparsed definitions and rendered checksums unchanged.
 
 It is opt-in. `ManagedObject` still checksums exactly the bytes it is given.
 Skipping leading trivia by default was rejected: it would change the digest of
@@ -872,7 +887,8 @@ historical-set comparison would then fail and block adoption of its older
 ledgers. The function exists because a byte-exact checksum otherwise turns a
 comment edit into a set change: a higher revision, a release in which processes
 built at the previous revision fail verification, and re-execution of the
-object with the table locks its statement takes.
+object with its table locks, which for a constraint trigger means a drop and
+re-create under `ACCESS EXCLUSIVE`.
 
 Adopting it is itself a set change. Every object whose source had leading text
 gets a new checksum, and apply executes all of them again in one transaction,
@@ -900,8 +916,11 @@ ADR-010 review of `statement_start`.
    or an unterminated comment there, so the slice hides nothing from
    construction. A source accepted whole is accepted sliced. The reverse fails
    only at a size bound: the function applies none, so a source that is over
-   the per-source or manifest bound because of its leading text is refused
-   whole and accepted sliced. Unit tests check both directions.
+   the per-source bound because of its leading text is refused whole and
+   accepted sliced, and leading text counts toward the manifest's source total
+   only when it is passed. Unit tests check both directions at the per-source
+   bound; the manifest total sums the slices' lengths and has no separate
+   sliced test.
 2. It is a per-call obligation, which is weaker than the canonical path. The
    function returns a plain `&str`, so nothing marks a source as sliced. A set
    stays stable only if every constructor call and every separate digest
@@ -967,18 +986,105 @@ and the constructors. Mutation controls, each run and reverted:
   each failed its golden test;
 - ending a `--` comment only at a line feed failed two statement tests;
 - removing the NUL refusal from `statement_start` failed the refusal test;
-- skipping only the first leading item failed two statement tests.
+- skipping only the first leading item failed four statement tests; after
+  review moved the skip loop into `trivia`, which `scan` and `statement_start`
+  share, the same mutation failed ten managed tests, those four included.
 
 One live PostgreSQL 18 case was added,
 `managed_statement_slices_install_what_their_whole_sources_install`, with a
 routine with a string body, a routine with a SQL-standard body, a procedure, a
 trigger and a constraint trigger. It applies them whole, then sliced at a
-higher revision, and requires five re-executions, unchanged stored
+higher revision, and requires five re-executions, unchanged deparsed
 definitions, unchanged rendered checksums in every ledger row and a clean
 verification; it then rewords the leading text of the sliced sources and
-requires no re-execution.
+requires no re-execution and no changed ledger row.
 
 No live case was added for the numbering. To the release fence a counted
 revision is an integer, and the existing live release cases cover conflict,
 downgrade, identical reapplication and a higher revision with identical
 content. Execution results belong to `batter-6d1g`.
+
+## Set-wide source checksum rule — 2026-11-14
+
+Approved by the repository owner, who directed that this design debt be
+removed before release.
+
+### Decision
+
+Review of `statement_start` (finding 2 of its ADR-010 review above) showed a
+per-call obligation that compiled silently when omitted: every constructor call
+and every digest computation had to slice, and a dropped call surfaced only as
+`RevisionConflict` after migrations had committed. Which bytes a checksum
+covers is a property of the set, so it moves to the set.
+
+- `ManagedObjectManifest::new` takes a required `SourceChecksum` after
+  `PublicExecute`, with no default. `WholeSource` checksums every byte, which
+  is what every existing ledger records, so an existing set keeps its digest.
+  `FromStatementStart` checksums each source from its first token on, through
+  the same `trivia` rule as the header check.
+- Objects always keep and execute their whole source. The manifest sets every
+  object's recorded checksum from its rule, whatever rule an earlier manifest
+  holding the same object value applied, so objects reused across sets carry
+  nothing of the old rule.
+- `ManagedObject::checksum` is removed: an object has no checksum independent
+  of a set. `ManagedObjectManifest::object_checksums` returns each object with
+  its recorded checksum, and `source_checksum` returns the rule.
+- `statement_start` is removed. It was never on master or in a release.
+- The set digest layout and tag are unchanged; item 3 now names the checksum
+  under the rule. The rule itself is not hashed: when no source has leading
+  text, both rules give the same checksums, so the sets are the same set.
+- The canonical example, whose object files open with comments, uses
+  `FromStatementStart`.
+
+Alternatives rejected:
+
+- Keeping `statement_start` beside the rule: a second, per-call way to reach
+  the same checksums would bring the obligation back.
+- A per-object rule with the manifest refusing mixed sets: a refusal at
+  construction is better than one at apply, but each call would still have to
+  name the rule.
+- `FromStatementStart` as the only behaviour: it would change the digest of
+  every existing set with header comments and block adoption of unversioned
+  ledgers, whose stored digest must match exactly.
+
+### ADR-010 review
+
+1. A set cannot mix checksummed forms, and no call can be dropped: no API
+   produces a checksum outside a manifest, and the manifest applies one rule.
+2. The rule cannot be omitted: `compile_fail` doctests on
+   `ManagedObjectManifest` check that a call without it does not compile, as
+   for the revision and the `PUBLIC` policy.
+3. Switching an existing set's rule is a set change when a source has leading
+   text: a higher revision, and re-execution of those objects with their table
+   locks, including a drop and re-create of a constraint trigger under
+   `ACCESS EXCLUSIVE`. That is an ordinary release that the fence already
+   handles, made once for the whole set and stated on the type.
+4. Bounds stay on the whole source under both rules, because apply executes
+   the whole source; the per-call design's size-bound exception is gone.
+5. Release tooling that computes checksums outside Rust remains able to drift
+   from the rule. That is application tooling; the manifest's digest and
+   `object_checksums` are the reference values.
+
+This is a `Breaking:` change to `ManagedObjectManifest::new` and removes
+`ManagedObject::checksum`; neither gets a deprecated shim, as the changelog
+entry records. Fresh-agent usability evaluation is unexecuted.
+
+### Evidence
+
+`managed/tests/statement.rs` keeps the leading-text vectors, now over the
+private offset, and adds a set-level property test: under
+`FromStatementStart` every recorded checksum and the digest are those of the
+bare statement for every leading form, and under `WholeSource` they change
+exactly when there is leading text. A second test reuses objects across sets
+under both rules. Mutation controls, each run and reverted: ignoring
+`FromStatementStart` failed both tests; keeping a previous manifest's checksum
+under `WholeSource` failed the reuse test. The golden digest values are
+unchanged.
+
+The live case is renamed
+`managed_statement_start_checksums_change_no_installed_definition`. It builds
+the same five entries under both rules, applies `WholeSource` and then
+`FromStatementStart` at a higher revision, and keeps its assertions. With it,
+the managed live target passed 53/53 on a disposable PostgreSQL 18.7 container
+(macOS aarch64) on 2026-11-14. The public-API surface diff is in
+[`managed-source-checksum-api-diff-2026-11-14`](../evidence/managed-source-checksum-api-diff-2026-11-14/README.md).

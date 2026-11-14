@@ -856,20 +856,37 @@ SQLx migration history.
 - PostgreSQL 18 [lexical structure](https://www.postgresql.org/docs/18/sql-syntax-lexical.html#SQL-SYNTAX-COMMENTS):
   a `--` comment runs to the end of the line and `/* */` comments nest; both
   are removed from the input before syntax analysis and replaced by whitespace.
-- PostgreSQL 18 [pg_proc](https://www.postgresql.org/docs/18/catalog-pg-proc.html):
-  `prosrc` holds a string body as written and `prosqlbody` holds a
-  SQL-standard body as a parsed tree; neither holds the `CREATE` statement
-  text, so nothing that precedes the statement is stored. Triggers are stored
-  as catalog rows.
+- PostgreSQL 18 [pg_proc](https://www.postgresql.org/docs/18/catalog-pg-proc.html)
+  and [pg_trigger](https://www.postgresql.org/docs/18/catalog-pg-trigger.html):
+  `prosrc` holds a string body as written, or an empty string for a
+  SQL-standard body; `prosqlbody`, `proargdefaults` and `tgqual` hold trees in
+  `nodeToString()` form, and triggers are otherwise catalog rows. None holds
+  the `CREATE` statement text, but a tree's parse location fields are byte
+  offsets into the submitted query, which leading text shifts.
+- PostgreSQL commit
+  [d20d8fbd3e4d](https://git.postgresql.org/gitweb/?p=postgresql.git;a=commit;h=d20d8fbd3e4d327dd0778a02d5661b51f4f6423a)
+  ("Do not output actual value of location fields in node serialization by
+  default", 2024-03-22), first released in PostgreSQL 17, makes
+  `nodeToString()` write `-1` for every location field;
+  [REL_18_STABLE `outfuncs.c`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/nodes/outfuncs.c)
+  keeps that default. PostgreSQL 16 and earlier stored the offsets, so there a
+  leading header changed the stored tree text, though not the deparsed
+  definition. On PostgreSQL 18 nothing that precedes the statement is stored.
 
-`managed::statement_start` relies on these two facts. The whitespace bytes and
-comment termination it skips are the manifest scanner's own. It removes leading
-text only: comments inside a string body are stored, and the function leaves
-every other comment and all trailing text in the checksum too, because the
-scanner does not separate stored from unstored text. The live case
-`managed_statement_slices_install_what_their_whole_sources_install` ran on
-PostgreSQL 18.6 on 2026-11-14: one entry of each managed kind, applied whole
-and then sliced, kept its stored definition and rendered checksum.
+`managed::SourceChecksum::FromStatementStart` relies on these facts. The
+whitespace bytes and comment termination it skips are the manifest scanner's
+own. It leaves out leading text only: comments inside a string body are stored,
+and the rule keeps every other comment and all trailing text in the checksum
+too, because the scanner does not separate stored from unstored text. Apply
+executes the whole source under either rule. The live case, then named
+`managed_statement_slices_install_what_their_whole_sources_install` and since
+renamed `managed_statement_start_checksums_change_no_installed_definition`, ran
+on PostgreSQL 18.6 on 2026-11-14, when it executed a per-call slice instead of
+the whole source, and before review strengthened its final ledger-row check:
+one entry of each managed kind, applied whole and then sliced, kept its
+deparsed definition and rendered checksum. The renamed case, which executes whole sources under both rules, passed on
+PostgreSQL 18.7 on 2026-11-14. A deparse never shows parse
+locations, so that case does not compare stored trees byte for byte.
 
 ## Intent reconciliation snapshot and grants (2026-11-05)
 

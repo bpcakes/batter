@@ -178,11 +178,12 @@ impl RoutineType {
 /// Callers provide canonical [`RoutineType`] values rather than a SQL
 /// signature string. This prevents named arguments, aliases, typmods and
 /// case-folding from silently selecting a different overload. The rendered
-/// string returned by [`Self::as_str`] appears in diagnostics and is never
-/// parsed back. It is also a managed object's ledger key and an input to the
-/// managed-object set digest, so its form is fixed: every identifier in double
-/// quotes with an embedded quote doubled, `[]` after an array's element type,
-/// and arguments joined by a comma and a space.
+/// string returned by [`Self::as_str`] appears in diagnostics, and Batter never
+/// parses it back into a signature. It is also a managed object's ledger key,
+/// an input to both managed-object digests and the routine reference in the SQL
+/// Batter renders, so its form is fixed and stays valid PostgreSQL syntax:
+/// every identifier in double quotes with an embedded quote doubled, `[]` after
+/// an array's element type, and arguments joined by a comma and a space.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RoutineSignature {
     schema: Identifier,
@@ -219,7 +220,8 @@ impl RoutineSignature {
         })
     }
 
-    /// Return the rendered identity for diagnostics and findings.
+    /// Return the rendered identity used in diagnostics and findings, as a
+    /// managed object's ledger key and as digest input; its form is fixed.
     pub fn as_str(&self) -> &str {
         &self.display
     }

@@ -16,15 +16,16 @@ use std::fmt;
 /// assert!(ManagedRevision::new(0).is_none());
 /// ```
 ///
-/// # Choosing the number
+/// # Choosing a revision
 ///
 /// For one ledger the revision must never decrease, and one revision must
-/// name one content digest. A single hand-written constant makes every two
-/// branches that change the set conflict on one line, and after the merge it
-/// names a set neither branch built. A frozen base plus a count of append-only
-/// records avoids the shared line: each set change adds one uniquely named
-/// record file, so a merge holds both parents' records and its revision is
-/// above both.
+/// name one content digest. A single hand-written constant is one line that
+/// every set-changing branch rewrites: branches that pick different numbers
+/// conflict on it, branches that raise it to the same number merge without a
+/// conflict, and either way the merged number can name a set neither branch
+/// built. A frozen base plus a count of append-only records avoids the shared
+/// line: each set change adds one uniquely named record file, so a merge holds
+/// both parents' records and its revision is above both.
 ///
 /// ```
 /// use batter_sqlx::managed::ManagedRevision;

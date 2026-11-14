@@ -698,8 +698,10 @@ pub(crate) async fn public_execute_holders(
 ///
 /// Apply stores it in the ledger's `manifest` row and verification recomputes
 /// it, possibly from another build, so the scheme is persisted: never change
-/// the tag, the framing or the order in place. `managed/tests/manifest.rs`
-/// holds golden values computed outside the crate.
+/// the tag, the framing, the order or the identity rendering it hashes in
+/// place. `managed/tests/manifest.rs` holds golden values computed outside the
+/// crate; they pin the framing over fixed hashes, not the hashes
+/// [`render_hashes`] computes.
 pub(crate) fn rendered_set_digest<'a>(
     hashes: impl IntoIterator<Item = (&'a str, &'a [u8])>,
 ) -> [u8; 32] {
