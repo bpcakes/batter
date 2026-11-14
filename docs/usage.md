@@ -753,7 +753,9 @@ route or layer outside the observer or hand the assembly to `axum::serve`. It
 accepts only arrival-shaped requests: a request built from a whole extension map
 cloned inside an earlier dispatch carries Axum routing records and is refused
 before any route runs, with the `ReusedRoutingState` response marker, so copy
-application extensions by type into a fresh request instead. An in-process
+application extensions by type into a fresh request instead. Runlimit's
+`PreparedHttp::in_process` test transport shares that refusal through
+`batter::axum::low_level::RouterClient`. An in-process
 response is not serving evidence; keep real socket tests for that.
 The individual middlewares (`request_admission`, `observe_http`,
 `request_scope`, `operational_http`) remain available through

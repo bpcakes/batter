@@ -16,7 +16,7 @@ autoexamples = false
 default = []
 memory = ["dep:runlimit-memory"]
 postgres = ["dep:runlimit-postgres", "dep:batter-sqlx", "dep:sqlx"]
-axum = ["dep:axum", "dep:batter-axum", "dep:tokio", "dep:tower", "dep:serde_json"]
+axum = ["dep:axum", "dep:batter-axum", "dep:tokio", "dep:serde_json"]
 # Native transport packages, reachable without selecting this adapter's own
 # protected HTTP assembly. They add no Batter-owned behaviour.
 native-http = ["dep:runlimit-http"]
@@ -35,12 +35,12 @@ runlimit-axum = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 batter-axum = { path = "../batter-axum", version = "0.0.1", optional = true }
 tokio = { workspace = true, features = ["net"], optional = true }
-tower = { workspace = true, features = ["util"], optional = true }
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "net", "io-util"] }
 http-body.workspace = true
+tower.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 

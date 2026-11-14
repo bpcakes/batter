@@ -639,6 +639,15 @@ Axum keeps the path-parameter and nested matched-path records private and
 resets routing state while keeping unknown application extensions; the check
 is rechecked whenever either pin changes.
 
+The check lives in `low_level::RouterClient`, the in-process transport over a
+caller-composed router, and `InProcessClient` delegates to it. A composition
+that `HttpBoundary` cannot express, such as Runlimit's authenticated quota
+assembly, gets the same one-time preparation, entry refusal, `ReusedRoutingState`
+marker and marker removal by holding a `RouterClient`; `batter_runlimit::http::TestClient`
+does. `RouterClient` establishes nothing about the router it dispatches, has no
+crate-root alias and cannot become an `InProcessClient`, so it never stands in
+for the protected client.
+
 An in-process response establishes response construction only. It is not
 evidence of serving, an accepted connection, a listener, a TLS handshake, a
 remote peer, body streaming or a stopped detached descendant; keep real socket

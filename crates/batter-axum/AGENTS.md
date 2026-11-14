@@ -31,7 +31,11 @@ Windows support and non-Unix fallbacks are out of scope.
   handlers, plus re-exports of `operational_http`,
   `operational_http_with_quota`, `dependency_readiness` and the three
   `register_http*` helpers. These eleven items have no crate-root alias; keep
-  them reachable only here. `read_unchecked_cookie` is the deliberately
+  them reachable only here. `src/low_level/router_client.rs` owns
+  `RouterClient`, the in-process transport over a caller-composed router: the
+  one-time router preparation, the arrival-shaped entry check and the
+  dispatched-response marker removal. It has no crate-root alias either, and
+  cannot become an `InProcessClient`. `read_unchecked_cookie` is the deliberately
   unchecked cookie reader that replaced `browser::read_cookie`; keep it here,
   under a name distinct from the removed one, with no `browser` alias, and keep the supported types, `AdmittedRequest`,
   `CorrelationId`, `render_infrastructure_failure`, `readiness_status`,
@@ -43,10 +47,11 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
-  `InProcessClient`, including the one-time router preparation, the entry
-  check that refuses a request carrying Axum routing records from an earlier
-  dispatch with the `ReusedRoutingState` response marker, and the
-  compile-fail controls that reject recovering, mutating or serving it.
+  `InProcessClient`, which delegates preparation and every request to the
+  `RouterClient` in its private field, the `ReusedRoutingState` response marker that
+  `RouterClient`'s entry check attaches to a refusal, and the compile-fail
+  controls that reject recovering, mutating or serving the client or forging
+  the marker.
   `src/boundary/guarded.rs` owns the `GuardedRouter` builder. Probe
   routes remain outside admission while the guarded router's default, custom,
   nested, and method fallbacks remain inside it. `src/boundary/fallback.rs`
@@ -257,8 +262,14 @@ Application extensions such as
 `ConnectInfo` stay accepted untouched. Recheck that every Router-dispatched map
 still carries a detected record, and that Axum's private nested matched-path
 record is still written only with the path-parameter record, whenever the
-Axum or `http` pin changes. Wrappers that hold an `InProcessClient` inherit the
-check by delegating; do not duplicate it there. The outermost observer owns
+Axum or `http` pin changes. The check, the refusal and the marker removal
+live once, in `low_level::RouterClient::request`; `InProcessClient::request`
+delegates to it, and so does every other in-process transport in this
+workspace, including `batter_runlimit::http::TestClient`. Wrappers that hold an
+`InProcessClient` or a `RouterClient` inherit the check by delegating; do not
+duplicate it there or give the marker a second constructor. `RouterClient`
+establishes nothing about its router's composition, so keep it out of the
+crate root and never let it convert into an `InProcessClient`. The outermost observer owns
 emission and nested observation entrypoints perform only their other duties.
 Do not log cause contents or untrusted request fields. `operational_http` must
 replace inbound header, Tower and adapter identities before observation and must

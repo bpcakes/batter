@@ -15,6 +15,8 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 - `src/quota/observation.rs`: private consuming unstarted/started observation owners;
   the runner publishes native terminal facts before invoking work.
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
+- `src/http/test_client.rs`: the `TestClient` synthetic transport over
+  `batter_axum::low_level::RouterClient`.
 - `src/attempts.rs`: native pre-authentication reserve, verification, receipt claim,
   transactional final decision and native completion; no limiter persistence here.
 - `src/maintenance.rs`: `register_in`, the canonical supervised PostgreSQL limiter
@@ -67,6 +69,11 @@ Preserve a protected root fallback when provided, and the default unmatched
 404 otherwise.
 Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority,
 and `batter_axum::AdmittedRequest` for the admitted context and correlation.
+`TestClient` holds a `batter_axum::low_level::RouterClient` and only inserts
+the synthetic peer before delegating, so it inherits the adapter's
+arrival-shaped entry check, `ReusedRoutingState` refusal and marker removal.
+Never dispatch the prepared Router directly or copy that check here; the
+refusal must precede admission, authentication and the native quota check.
 The allowed result retains native scalar decision metadata without exposing a
 denial arm. Match every native `DenialView` reason explicitly; a future reason
 must force an adapter and contract update when the native contract changes.

@@ -9,6 +9,8 @@ mod multi_policy;
 mod observation_ownership;
 #[path = "http/response_contract.rs"]
 mod response_contract;
+#[path = "http/reused_routing.rs"]
+mod reused_routing;
 mod support;
 
 use axum::{

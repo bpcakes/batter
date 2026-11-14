@@ -1,16 +1,12 @@
 //! The opaque in-process request client that sealed assembly consumes into.
 
-use crate::{HttpFailure, render_infrastructure_failure};
-use axum::{
-    body::Body,
-    extract::{
-        FromRequestParts, MatchedPath, NestedPath, OriginalUri, RawPathParams, Request,
-        rejection::RawPathParamsRejection,
-    },
-    http::request::Parts,
-    response::Response,
+use crate::low_level::RouterClient;
+use axum::{body::Body, extract::Request, response::Response};
+#[cfg(doc)]
+use {
+    crate::{HttpFailure, render_infrastructure_failure},
+    axum::extract::{MatchedPath, NestedPath, OriginalUri, RawPathParams},
 };
-use tower::ServiceExt;
 
 /// An assembled boundary consumed into an in-process request transport.
 ///
@@ -124,7 +120,7 @@ use tower::ServiceExt;
 #[derive(Clone)]
 #[must_use = "issue requests through the client"]
 pub struct InProcessClient {
-    prepared: axum::Router,
+    prepared: RouterClient,
 }
 
 impl InProcessClient {
@@ -133,11 +129,12 @@ impl InProcessClient {
     /// Pinned Axum 0.8.9 `Router::into_make_service` and
     /// `Router::into_make_service_with_connect_info` both call
     /// `Router::with_state(())` so that endpoints become routes eagerly instead
-    /// of once per request. This uses the same preparation, so a layer wrapping
-    /// a lazily built endpoint is constructed here and never again.
+    /// of once per request. This uses the same preparation, through
+    /// [`RouterClient::new`], so a layer wrapping a lazily built endpoint is
+    /// constructed here and never again.
     pub(super) fn new(router: axum::Router) -> Self {
         Self {
-            prepared: router.with_state(()),
+            prepared: RouterClient::new(router),
         }
     }
 
@@ -224,66 +221,29 @@ impl InProcessClient {
     /// record is only ever written in the same routing step as the
     /// path-parameter record, so it never arrives without a detected one.
     /// Recheck these facts whenever the Axum or `http` pin changes.
+    ///
+    /// The check and the marker removal live in [`RouterClient::request`],
+    /// which this method delegates to. Lower-level transports that hold a
+    /// [`RouterClient`], such as `batter-runlimit`'s test client, share this
+    /// one implementation rather than a copy of it.
     pub async fn request(&self, request: Request<Body>) -> Response {
-        let (mut parts, body) = request.into_parts();
-        if carries_routing_record(&mut parts).await {
-            return refuse_reused_routing_state();
-        }
-        let request = Request::from_parts(parts, body);
-        match self.prepared.clone().oneshot(request).await {
-            Ok(mut response) => {
-                // The marker is `Copy`, so application code can put one it
-                // read from an earlier refusal on the response it returns.
-                // Only the refusal above may leave this method carrying it.
-                response.extensions_mut().remove::<ReusedRoutingState>();
-                response
-            }
-            Err(never) => match never {},
-        }
+        self.prepared.request(request).await
     }
-}
-
-/// Whether the request carries a record that Axum routing writes.
-///
-/// Only public Axum types and the public extractor are consulted. Any
-/// path-parameter result except the missing-parameters rejection counts as
-/// present, so a rejection added by a later Axum release fails closed.
-async fn carries_routing_record(parts: &mut Parts) -> bool {
-    let extensions = &parts.extensions;
-    if extensions.get::<MatchedPath>().is_some()
-        || extensions.get::<NestedPath>().is_some()
-        || extensions.get::<OriginalUri>().is_some()
-    {
-        return true;
-    }
-    !matches!(
-        RawPathParams::from_request_parts(parts, &()).await,
-        Err(RawPathParamsRejection::MissingPathParams(_))
-    )
-}
-
-fn refuse_reused_routing_state() -> Response {
-    tracing::error!(
-        target: "batter",
-        "in-process request refused: its extensions carry routing state from an earlier dispatch"
-    );
-    let mut response = render_infrastructure_failure(HttpFailure::Internal, None);
-    response
-        .extensions_mut()
-        .insert(ReusedRoutingState { _private: () });
-    response
 }
 
 /// Response extension marking a request that [`InProcessClient::request`]
 /// refused because its extensions carried Axum routing state from an earlier
 /// dispatch.
 ///
-/// The refused response is otherwise the sanitized internal failure of
-/// [`render_infrastructure_failure`] for [`HttpFailure::Internal`], so this
-/// marker is what tells a client refusal apart from a 500 the boundary built:
-/// on a response returned by [`InProcessClient::request`] it means that call
-/// refused the request, and no route, layer, renderer or handler of the
-/// boundary ran. It has no public constructor and no public field, so an
+/// The check belongs to the lower-level [`RouterClient::request`], which the
+/// protected client delegates to, so every transport that holds a
+/// [`RouterClient`], such as `batter-runlimit`'s test client, refuses with
+/// this same marker. The refused response is otherwise the sanitized internal
+/// failure of [`render_infrastructure_failure`] for [`HttpFailure::Internal`],
+/// so this marker is what tells a client refusal apart from a 500 the router
+/// built: on a response returned by one of those clients it means that call
+/// refused the request, and no route, layer, renderer or handler of its
+/// router ran. It has no public constructor and no public field, so an
 /// application cannot make one. It is `Copy`, so an application can read one
 /// from a refused response and put it on a response of its own, for example
 /// by returning an inner client's refusal from a handler; the client removes
@@ -331,14 +291,28 @@ fn refuse_reused_routing_state() -> Response {
 /// # Ok(()) }
 /// ```
 ///
-/// An application cannot construct it:
+/// An application cannot construct it, by its field or by the crate's own
+/// constructor:
 ///
 /// ```compile_fail,E0451
 /// fn forge() -> batter_axum::ReusedRoutingState {
 ///     batter_axum::ReusedRoutingState { _private: () }
 /// }
 /// ```
+///
+/// ```compile_fail,E0624
+/// fn forge() -> batter_axum::ReusedRoutingState {
+///     batter_axum::ReusedRoutingState::new()
+/// }
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct ReusedRoutingState {
     _private: (),
+}
+
+impl ReusedRoutingState {
+    /// The marker of a refusal by [`RouterClient::request`], its only caller.
+    pub(crate) const fn new() -> Self {
+        Self { _private: () }
+    }
 }
