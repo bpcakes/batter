@@ -38,9 +38,11 @@ use tokio::time::{Instant, Sleep};
 ///
 /// A stream meant to run indefinitely still needs a total: choose the longest
 /// connection the service accepts. Reaching it truncates the body and is
-/// logged at WARN, so a stream whose peer should instead see a clean end
-/// finishes by itself shortly before, for example when
-/// [`BodyScope::context`]'s `remaining()` runs low.
+/// logged at WARN; the peer sees that truncation, except an HTTP/1.0 peer
+/// given no declared length (see [`AdmittedRequest::into_streaming_response`]).
+/// A stream whose peer should instead see a clean end finishes by itself
+/// shortly before, for example when [`BodyScope::context`]'s `remaining()`
+/// runs low.
 ///
 /// ```
 /// use batter_axum::BodyBudget;

@@ -2684,7 +2684,8 @@ tuple declares after the hand-over, or a response rebuilt around the body
 declares, which decides `failed` when short and `completed` when met, and an
 HTTP/1.0 request whose body, ended at its idle
 bound and reported `idle_timeout`, reaches the peer without a declared length
-or chunked framing and as an orderly close.
+or chunked framing and as an orderly close, while the same body with a declared
+ten-byte `Content-Length` reaches it framed by that length and six bytes short.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
 cancellation wakeup, the captured dispatcher, the per-frame bound check, the

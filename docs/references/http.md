@@ -465,8 +465,10 @@ sources in the locked registry.
   body error still closes the connection (`dispatch.rs:401-405`), so such a
   peer receives an orderly end of stream after the data already written and
   cannot tell an interrupted body from a complete one; a declared length keeps
-  the shortfall visible. Checked on 2026-11-12; a real-socket HTTP/1.0 test
-  observes the clean close.
+  the shortfall visible. Checked on 2026-11-12 and 2026-11-14; real-socket
+  HTTP/1.0 tests observe the clean close without a declared length and, with a
+  declared `Content-Length`, a message framed by it that reaches the peer
+  shorter than declared.
 
 Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
 operations instead of owning the accept loop. A connection need not be waiting

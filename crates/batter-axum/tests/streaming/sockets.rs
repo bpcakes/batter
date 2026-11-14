@@ -435,21 +435,23 @@ fn a_length_declared_after_the_hand_over_decides_the_outcome() {
     }
 }
 
-/// Hyper answers an HTTP/1.0 request in HTTP/1.0, where a body without a
-/// declared length is delimited by closing the connection. A body the library
-/// ends there reaches the peer as a clean close after the data it produced,
-/// indistinguishable on the wire from a complete message: the documented
-/// limit of the truncation guarantee.
-#[test]
-fn an_interrupted_body_without_a_declared_length_reaches_an_http10_peer_as_a_clean_close() {
-    let capture = Capture::new();
-    let text = capture.block_on(async {
+/// Serve an HTTP/1.0 request a body that the library's idle bound ends after
+/// its first frame, declaring `length` when given. Returns what the peer read
+/// before its stream ended and whether it ended in an orderly way.
+fn served_to_http10(capture: &Capture, length: Option<&'static str>) -> (String, bool) {
+    capture.block_on(async {
         let served = serve(GuardedRouter::new().route(
             "/",
-            route(|admitted: AdmittedRequest| async move {
+            route(move |admitted: AdmittedRequest| async move {
                 let budget =
                     BodyBudget::new(Duration::from_secs(600), Duration::from_millis(100)).unwrap();
-                admitted.into_streaming_response(budget, |_scope| stuck())
+                admitted.into_streaming_response(budget, move |_scope| {
+                    let mut headers = HeaderMap::new();
+                    if let Some(length) = length {
+                        headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static(length));
+                    }
+                    (headers, stuck())
+                })
             }),
         ))
         .await;
@@ -458,21 +460,48 @@ fn an_interrupted_body_without_a_declared_length_reaches_an_http10_peer_as_a_cle
             .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
             .await
             .unwrap();
-        let mut text = String::new();
-        // An orderly end of stream, as a complete close-delimited message ends.
-        timeout(WAIT, client.read_to_string(&mut text))
-            .await
-            .unwrap()
-            .unwrap();
-        wait_for_finished(&capture).await;
+        let mut bytes = Vec::new();
+        let read = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
+        wait_for_finished(capture).await;
         served.shut_down().await;
-        text
-    });
+        (String::from_utf8_lossy(&bytes).into_owned(), read.is_ok())
+    })
+}
+
+/// Hyper answers an HTTP/1.0 request in HTTP/1.0, where a body without a
+/// declared length is delimited by closing the connection. A body the library
+/// ends there reaches the peer as a clean close after the data it produced,
+/// indistinguishable on the wire from a complete message: the documented
+/// limit of the truncation guarantee.
+#[test]
+fn an_interrupted_body_without_a_declared_length_reaches_an_http10_peer_as_a_clean_close() {
+    let capture = Capture::new();
+    let (text, orderly) = served_to_http10(&capture, None);
+    // An orderly end of stream, as a complete close-delimited message ends.
+    assert!(orderly, "{text}");
     let (head, body) = text.split_once("\r\n\r\n").unwrap();
     assert!(head.starts_with("HTTP/1.0 200 "), "{text}");
     let head = head.to_ascii_lowercase();
     assert!(!head.contains("content-length"), "{text}");
     assert!(!head.contains("transfer-encoding"), "{text}");
+    assert_eq!(body, "first;");
+    assert_finished(&capture, "WARN", "idle_timeout");
+}
+
+/// The documented remedy for that limit: with a declared `Content-Length`,
+/// Hyper frames the HTTP/1.0 message by it, so the same interrupted body
+/// reaches the peer shorter than declared, which it can tell from a complete
+/// message however the stream ends.
+#[test]
+fn a_declared_length_keeps_an_interrupted_body_visible_to_an_http10_peer() {
+    let capture = Capture::new();
+    let (text, _orderly) = served_to_http10(&capture, Some("10"));
+    let (head, body) = text.split_once("\r\n\r\n").unwrap();
+    assert!(head.starts_with("HTTP/1.0 200 "), "{text}");
+    let head = head.to_ascii_lowercase();
+    assert!(head.contains("\r\ncontent-length: 10"), "{text}");
+    assert!(!head.contains("transfer-encoding"), "{text}");
+    // Six of the ten declared bytes.
     assert_eq!(body, "first;");
     assert_finished(&capture, "WARN", "idle_timeout");
 }
