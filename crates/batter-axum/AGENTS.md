@@ -40,6 +40,11 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admitted.rs` owns the private admission record, the `AdmittedRequest`
   extractor that guarded handlers use instead of raw extensions and its
   sanitized `AdmittedRequestRejection`.
+- `src/streaming.rs` owns `AdmittedRequest::into_streaming_response`,
+  `BodyBudget`, `BodyScope` and the private `OwnedBody` that wraps the built
+  response's body. The admission record carries the private
+  `OperationContinuation` and the shared observation state it starts from;
+  `src/observation.rs` publishes the request's span context there once.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
@@ -93,13 +98,24 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/serving.rs` registers any bound `axum::serve::Listener` plus a router with
   the supervisor, including the listener's opt-in direct peer `ConnectInfo`
   through protected authority. Transport policy stays with the listener.
+  `src/serving/forced_close.rs` owns the private gate that wraps the listener
+  and fails every accepted connection's I/O halfway between forced
+  cancellation and the supervisor's abort deadline.
+  `src/serving/completion.rs` owns the private make-service wrapper whose
+  per-connection service, response futures and response bodies hold tokens,
+  so the registered server returns only after each was destroyed.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
-  all readiness reasons, native startup/drain and a body surviving wrapper abort;
+  all readiness reasons and native startup/drain; `tests/operational/forced_close.rs`
+  covers connections closed within the cancel allowance with cleanup run, and
+  a body surviving wrapper abort when that allowance is zero;
+  `tests/operational/forced_close/slow_destructor.rs` covers a pending body or
+  in-flight handler still being destroyed after Axum counted its connection
+  finished;
   `tests/operational/rendered_probes.rs` covers application-rendered probes
   outside admission, every decision through a contradicting renderer and
   application conditions. `tests/operational/admitted_request.rs` covers the
@@ -183,6 +199,72 @@ streaming or detached connection-task shutdown. Keep probe routes separate from
 guarded business routes. Serving accepts any `axum::serve::Listener`; never move
 certificate, provider, protocol-version, ALPN or handshake policy into the
 adapter, and never claim that a listener's own spawned work was joined.
+Keep the forced-close gate inside the registered component future, never in a
+spawned task, and close it only after cancelled handlers have had part of the
+cancel allowance to write their interruption responses. Fail reads and writes
+alike once it is closed. Record the polling task's waker on every I/O poll,
+before reading the closed flag, not only on a pending one: Hyper can wait on a
+body alone after ready polls, with pipelined bytes buffered or its read side
+closed. Keep that to one uncontended lock and a `will_wake` compare per poll,
+recompute the close instant when `ShutdownSignal::abort_deadline_before`
+reports an earlier abort, and wake outside the registry lock. Keep that
+computation behind the private `StopClock` trait, implemented by
+`ShutdownSignal`, so its paused-clock unit test drives the same code. Never close
+when no interval is left, whether at cancellation, as with a zero cancel
+allowance, or after the deadline moved to an instant already passed: that only
+races the wrapper abort and fails interruption responses.
+Do not describe upgraded connections, handler-detached tasks, a connection
+task that never yields or a zero cancel allowance as covered; the
+wrapper-abort contract still applies to them. Never treat Axum's graceful
+return as proof that connections were destroyed: it counts one finished before
+its task destroys the connection future, which still holds the in-flight
+handler future and the response body after an I/O error. Keep the completion
+token in every connection's service, response future and response body,
+declared after what it guards, and await every token's release after Axum
+returns, inside the registered future; a destructor still running at the abort
+deadline must leave the wrapper to be aborted.
+An owned body starts its context from the admission record's continuation,
+never from a second `admit_root`. Keep that continuation in the record's
+take-once slot shared by every clone, and honour it only while the request's
+own context is live; a refused start gets an already-cancelled standalone
+owner, never a root under process cancellation. Cancel the body's context on
+every ending, including destruction and a panicking builder. Report an application panic (a builder
+that never returned, a poll that unwound, an end or size query that unwound,
+destruction while unwinding) as `panicked`, never as a departed peer. Ask the
+source for its end during destruction only under the captured dispatcher and
+inside `catch_unwind`, finishing before the panic continues, and never ask it
+again after a transport's query unwound. A body the transport finishes without
+asking for its end is `completed` only once its advertised length is produced,
+or, without one, after `is_end_stream` or trailers; a source that ends short of
+that length is `failed`, because Hyper aborts the message; a source already
+ended when Hyper writes the head stays `failed` although Hyper sends an empty
+`content-length: 0` message, so never promise the peer a truncation there.
+Take no advertised
+length from a response Hyper writes without a body: mirror its
+`can_have_body` rule for the request method and response status. Settle the
+advertised length again from the response request admission returns, through
+the admission record's shared `FramingSlot` that only a started body fills,
+because a handler's tuple or an inner layer can declare it after the
+hand-over; never carry it on the response, which a handler can rebuild around
+the body. Own the built body before asking it anything, so a query that
+unwinds at the hand-over still ends it before it is destroyed. Do not
+claim truncation is visible to an HTTP/1.0 peer for a body without a declared
+length: Hyper delimits it by closing the connection. The observer publishes the request span
+in its shared state only while it is alive and clears it when it finishes;
+never let a kept request extension or admitted request own that span. Check the
+bounds before each poll of the source and again before accepting the frame or
+end it returned, since a poll can outlast them, and
+register for forced cancellation and the nearer bound only when the source is
+pending. End a library-ended body with an error, never `None`. Poll, query and
+destroy the application's body under the dispatcher current at the hand-over;
+emit the completion event and release the request span under the dispatcher
+that recorded the span, nesting the body's destruction inside it, because
+closing a span releases its parent through the current default and a handler
+may have switched subscribers before the hand-over. Emit the event once, before application
+destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`
+without a public constructor, and do not claim the bounds for a peer that is
+not reading. `tests/streaming.rs` and `tests/streaming/` cover the owner on a
+paused clock and over real sockets.
 Canonical probes accept only validated `ProbePath`
 values, and duplicate paths must fail through the boundary's sanitized
 configuration error before Axum routing. The canonical guarded builder must

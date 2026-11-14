@@ -337,3 +337,84 @@ pub(crate) enum ConnectionLifetime {
     Close,
     KeepAlive,
 }
+
+/// A body that never completes holds its TLS connection past drain. The
+/// registered server closes that connection's I/O above the TLS stream within
+/// the cancel allowance, so the wrapper is joined and dependent cleanup runs.
+#[tokio::test]
+async fn pending_body_over_tls_is_closed_within_the_cancel_allowance_and_cleanup_runs() {
+    const DRAIN: std::time::Duration = std::time::Duration::from_millis(50);
+    const CANCEL: std::time::Duration = std::time::Duration::from_millis(400);
+    let (server_config, client_config) = support::certificates();
+    let supervisor =
+        Supervisor::new(ShutdownBudget::new(DRAIN, CANCEL, WAIT, cleanup_budget()).unwrap());
+    let handle = supervisor.handle();
+    let assembling = handle.clone();
+    let (address_tx, address_rx) = oneshot::channel();
+    let (cleanup_tx, cleanup_rx) = oneshot::channel();
+    let (_release_tx, release) = oneshot::channel();
+    let starting = Startup::scoped(
+        supervisor,
+        request_context(),
+        cleanup_budget(),
+        move |scope| {
+            Box::pin(async move {
+                scope.stage("bind").unwrap();
+                let (listener, _observations) = TlsListener::bind(server_config).await;
+                let address = listener.address();
+                scope
+                    .reserve_cleanup("dependency")
+                    .unwrap()
+                    .register(move || async move {
+                        cleanup_tx.send(()).unwrap();
+                        Ok(())
+                    });
+                let held = HeldBody {
+                    sent_first: false,
+                    sent_last: false,
+                    release,
+                };
+                boundary(&assembling, Some(held))
+                    .await
+                    .register_with_connect_info_in(scope, "http", listener)
+                    .unwrap();
+                address_tx.send(address).unwrap();
+                Ok::<_, std::io::Error>(())
+            })
+        },
+    )
+    .start();
+    let running = timeout(WAIT, starting.finish()).await.unwrap().unwrap();
+    timeout(WAIT, handle.status().wait_ready())
+        .await
+        .unwrap()
+        .unwrap();
+    let address = address_rx.await.unwrap();
+    let mut open = support::connect(&client_config, address).await;
+    open.write_all(&request("/stream", ConnectionLifetime::Close))
+        .await
+        .unwrap();
+    let mut streamed = Vec::new();
+    timeout(WAIT, async {
+        while !streamed.windows(5).any(|chunk| chunk == b"first") {
+            assert_ne!(open.read_buf(&mut streamed).await.unwrap(), 0);
+        }
+    })
+    .await
+    .unwrap();
+
+    handle.request();
+    let report = timeout(WAIT, running.wait()).await.unwrap().unwrap();
+    assert!(report.is_success(), "{report:?}");
+    assert!(report.forced_cancellation);
+    assert!(report.abort_requested.is_empty());
+    assert!(report.all_direct_tasks_joined());
+    assert!(report.cleanup.skipped.is_empty());
+    timeout(WAIT, cleanup_rx).await.unwrap().unwrap();
+    // The stream ends without its last frame; how the truncation surfaces to
+    // the client is the TLS stack's choice.
+    let _ = timeout(WAIT, open.read_to_end(&mut streamed))
+        .await
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&streamed).contains("last"));
+}

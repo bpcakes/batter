@@ -243,6 +243,131 @@ the missing type. To migrate, replace `Extension<OperationContext>`,
 handler arguments with one `AdmittedRequest` and its three accessors. The raw
 extensions remain for Batter's adapters and existing handlers.
 
+### Bodies that outlive their handler
+
+The request's context ends when the handler returns: admission cancels it, and
+Hyper polls the body afterwards on its own connection task. A stream that kept
+`admitted.context()` therefore finds its first step already interrupted. For a
+body still being produced when the handler returns (server-sent events, a
+chunked export, a proxied download), hand it to the library instead:
+
+```rust
+use axum::{body::{Body, Bytes}, response::Response};
+use batter_axum::{AdmittedRequest, BodyBudget};
+use batter_core::operation::OperationError;
+use futures_util::stream;
+use std::{convert::Infallible, io, time::Duration};
+
+async fn export(admitted: AdmittedRequest) -> Response {
+    let budget = BodyBudget::new(Duration::from_secs(600), Duration::from_secs(30))
+        .expect("a positive total no shorter than the idle bound");
+    admitted.into_streaming_response(budget, |scope| {
+        Body::from_stream(stream::unfold((scope, 0_u32), |(scope, index)| async move {
+            if index == 1_000 {
+                return None;
+            }
+            let step = scope
+                .context()
+                .run("export.chunk", |_step| async move {
+                    Ok::<_, Infallible>(Bytes::from(format!("chunk {index}\n")))
+                })
+                .await;
+            match step {
+                Ok(chunk) => Some((Ok(chunk), (scope, index + 1))),
+                // An error, not a normal end, so the message stays visibly
+                // truncated to an HTTP/1.1 peer. The transport stops polling
+                // after it.
+                Err(OperationError::Interrupted(reason)) => {
+                    Some((Err(io::Error::other(reason.to_string())), (scope, index)))
+                }
+                Err(OperationError::Failed(never)) => match never {},
+            }
+        }))
+    })
+}
+```
+
+`into_streaming_response` consumes the admitted request and accepts anything
+that is `IntoResponse`, including `axum::response::Sse`. The closure receives a
+`BodyScope`:
+
+- `scope.context()` lives until the body ends, the budget's total bound passes
+  or the process forces cancellation. It starts from the request's own
+  admission, so a body that begins while the process drains is not refused.
+  A clone kept beyond the body observes the body's end as cancellation.
+  One request starts at most one owned body, and only while its response is
+  being constructed: a second call, even on another extraction of the same
+  request, or a call on a request kept after its response gets a scope that
+  is already cancelled. A body with content ends at its first poll,
+  truncated, and every refused start is reported `cancelled`, including an
+  empty body the transport never polls.
+- `scope.shutdown()` observes drain. Ending at drain is the stream's decision:
+  an event stream usually ends there so its client reconnects elsewhere, a
+  download does not. The runnable `http_service` example's `/events` route
+  shows the first.
+
+The library then owns the body whether or not the stream cooperates. A wait for
+the next frame longer than the idle bound, the total bound and forced
+cancellation each end it with a body error, so the peer sees a truncated
+message and never a final chunk it could take for a complete one. The
+exception is an HTTP/1.0 request: Hyper answers it in HTTP/1.0, where a body
+without a declared length ends when the connection closes, so that peer
+cannot tell the library's truncation from the message's end. Declare a
+`Content-Length` where an HTTP/1.0 peer, such as a proxy speaking HTTP/1.0
+upstream, must detect it. Both bounds
+are checked before and after each poll of the source, so a frame that became
+ready, or that a poll outlasting the bound returned, only after its wait
+expired does not extend the body. The body is
+polled, asked for its end and size, and destroyed under the tracing dispatcher
+and request span of the handler that handed it over, on whichever task asks;
+its completion event and the span's release stay with the subscriber that
+recorded the span, should the handler have switched subscribers before the
+hand-over. It holds that `batter.http` span open until it
+ends: span-close timing, such as an exported span's duration, then covers the
+body, while `latency_ms` and the request's completion event still measure
+response construction. Exactly one `HTTP response body finished` event
+carries `request_id`, `bytes`, `duration_ms` and `body_outcome`: `completed`
+and `dropped` at INFO; `failed`, `deadline_exceeded`, `idle_timeout`,
+`cancelled` and `panicked` (a builder or stream that panicked, a body whose
+answer to Hyper's or the library's question about its end or size panicked,
+or a handler that panicked after handing the body over) at WARN. `completed` means the
+source produced its whole message, including a body Hyper finishes without
+asking for its end: after its advertised `Content-Length` or exact size, or
+after trailers. The advertised length is the one the response carries when
+request admission returns it, however it was built, so a length added by the
+handler's tuple or an inner layer after `into_streaming_response`, or carried
+by a response the handler rebuilt around the body, counts; a layer outside
+admission that changes it is not observed. A source that ends, reports its end or yields trailers short of
+its advertised length is `failed`: Hyper aborts that message and the peer sees
+it truncated. A source that already reports its end when Hyper writes the head
+is the exception: Hyper writes no body and frames the message as
+`content-length: 0`, so the peer receives a complete empty response, though the
+event still reports `failed`. A response Hyper writes without a body (to HEAD, a 2xx answer to
+CONNECT, or a 1xx, 204 or 304 status) frames no length, so its empty body is
+`completed`. `dropped` means the body's holder discarded it before its end: a
+peer that went away, a HEAD request on a GET route, whose body Axum strips, or
+a response discarded because response construction ended without it. The request's own completion event is
+unchanged, still measures response construction and, with its method and
+status, tells those cases apart.
+
+The library checks the scope's context before each poll, so its own bounds and
+forced cancellation end the body as the library's truncation; a step's
+`Interrupted` arm is reached only for a tighter deadline the stream set itself
+with `scope.context().child(..)`. A stream meant to run indefinitely still
+needs a total bound, of at most one year: reaching it truncates the body at
+WARN, visibly except to an HTTP/1.0 peer given no declared length (above), so
+end the stream yourself shortly before if its peer should see a clean close.
+The completion
+event is the only notification of a body's end; there is no application hook.
+
+Limits: the bounds are observed only when the transport polls the body, so a
+peer that stops reading is ended by the registered server's forced connection
+close at shutdown and not by the budget; no write-stall timeout exists. An
+upgraded connection is not a body. Admission permits, such as a bulkhead's, are
+not held for the body's lifetime. An unowned body still compiles: nothing
+prevents moving the request's context into a plain `Body::from_stream`, because
+`OperationContext` is deliberately `Clone`.
+
 ### Routers built by another router builder
 
 A router built by another router builder, for example an OpenAPI router
@@ -476,9 +601,10 @@ manual composition.
 snapshot of request parts. Establish trusted metadata outside the boundary.
 Handlers should use the application's renderer for their own failures.
 
-The deadline ends at response construction. Streaming bodies, WebSockets, client
-disconnect lifetime, authentication, proxy trust, and request body limits need
-application policy. A joined server wrapper does not prove detached connection
+The deadline ends at response construction. A body that outlives its handler
+gets its own bounds through `AdmittedRequest::into_streaming_response`;
+WebSockets, client disconnect lifetime, authentication, proxy trust, and request
+body limits need application policy. A joined server wrapper does not prove detached connection
 tasks have stopped. Automatic observations omit raw error/request contents;
 the application installs its tracing subscriber. A polled response future dropped
 before completion emits `dropped` without a status, under its first-poll subscriber.
@@ -555,11 +681,24 @@ the root needs the bound address;
 router for compositions outside the boundary. It acknowledges when
 the registered task runs and delegates graceful drain to Axum. Registration
 failure and abandoned startup release the listener. Native accept errors are
-retried by Axum. Streaming bodies can outlive response deadlines and direct
-wrapper abortion; dependent cleanup remains conservatively skipped on forced
-abort. `low_level::register_http(&mut Supervisor, ...)` keeps the direct
-supervisor signature for the lower-level path. The [operational tests](tests/operational.rs) exercise that limit with a
-real socket and explicitly release the outstanding body afterward.
+retried by Axum. Streaming bodies can outlive response deadlines, and so can a
+peer that stops reading or never finishes its request head. The registered
+server closes the I/O of every connection still open halfway through the cancel
+allowance, after cancelled handlers have written their interruption responses,
+and returns joined once every accepted connection's handler future and
+response body is destroyed, so dependent cleanup runs only after them; a
+destructor still running at the abort deadline gets the wrapper aborted and
+cleanup skipped instead. That includes a connection
+Hyper leaves waiting on its body alone, and the instant is recomputed when a
+component moves the abort deadline earlier. With a zero cancel allowance, or
+once a deadline moved earlier has already passed, the connections are not
+closed: the wrapper is aborted instead and cleanup
+remains conservatively skipped, as it is when a connection task never yields.
+Upgraded connections are the application's and are not joined.
+`low_level::register_http(&mut Supervisor, ...)` keeps the direct
+supervisor signature for the lower-level path. The
+[forced-close tests](tests/operational/forced_close.rs) exercise both outcomes
+with real sockets.
 
 When authentication admission needs the direct TCP peer, replace the registration
 call with `AssembledHttp::register_with_connect_info_in(scope, "http", listener)`,

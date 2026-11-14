@@ -233,6 +233,58 @@ async fn guarded_handlers_extract_the_admitted_request_with_its_generated_identi
 }
 
 #[tokio::test(start_paused = true)]
+async fn event_stream_outlives_its_handler_and_ends_at_drain() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
+    use batter::{
+        health::{HealthMonitor, HealthPolicy},
+        lifecycle::ShutdownHandle,
+    };
+    use futures_util::StreamExt;
+
+    let second = Duration::from_secs(1);
+    let policy = HealthPolicy::new(second, second * 2, second * 4, second).unwrap();
+    let monitor = HealthMonitor::new(policy, || async { Ok::<_, io::Error>(()) });
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    let app = router(
+        handle.status(),
+        handle.operation_admission(),
+        ResponseConstructionBudget::new(second).unwrap(),
+        monitor.reader(),
+        BulkheadCapacity::new(32).unwrap(),
+    )
+    .await
+    .unwrap()
+    .in_process();
+    let response = app
+        .request(
+            Request::builder()
+                .uri("/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/event-stream"
+    );
+    let mut frames = response.into_body().into_data_stream();
+    // Each event is read after the handler returned, through the body's scope.
+    assert_eq!(frames.next().await.unwrap().unwrap(), "data: 0\n\n");
+    assert_eq!(frames.next().await.unwrap().unwrap(), "data: 1\n\n");
+    handle.request();
+    assert_eq!(
+        frames.next().await.unwrap().unwrap(),
+        "event: closing\ndata: draining\n\n"
+    );
+    assert!(frames.next().await.is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_observations() {
     use axum::{
         body::Body,

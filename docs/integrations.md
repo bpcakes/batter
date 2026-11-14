@@ -380,9 +380,12 @@ The [HTTP composition root](../crates/batter/examples/http_service.rs) deletes
 its local ID, renderer, readiness and serve implementations in favor of these
 helpers. Authentication/metadata policy remains application-owned.
 [Real socket tests](../crates/batter-axum/tests/operational/serving.rs)
-prove graceful startup/drain and demonstrate an outstanding stream surviving
-wrapper abortion with cleanup skipped; they do not establish a general body,
-WebSocket or disconnect ownership contract.
+prove graceful startup/drain. The
+[forced-close tests](../crates/batter-axum/tests/operational/forced_close.rs)
+show connections that outlast drain being closed within the cancel allowance
+with cleanup run, and an outstanding stream surviving wrapper abortion with
+cleanup skipped when that allowance is zero; they do not establish a general
+body, WebSocket or disconnect ownership contract.
 
 The reference consumer assembles its routes through `HttpBoundary`, so requests
 pass `operational_http -> request admission and deadline -> direct-peer

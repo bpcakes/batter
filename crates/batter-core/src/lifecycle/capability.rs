@@ -257,6 +257,22 @@ impl OperationAdmission {
         &self,
         deadline: crate::operation::RootDeadline,
     ) -> Result<crate::operation::OperationOwner, Readiness> {
+        self.admit(deadline)
+    }
+
+    /// Admit as [`Self::admit_root`] does, with the lifecycle state that
+    /// [`super::low_level::admit_root_with_continuation`] continues under.
+    pub(super) fn admit_with_state(
+        &self,
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<(crate::operation::OperationOwner, Arc<Shared>), Readiness> {
+        Ok((self.admit(deadline)?, self.shared.clone()))
+    }
+
+    fn admit(
+        &self,
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<crate::operation::OperationOwner, Readiness> {
         let readiness = self.shared.readiness();
         let admitted = if readiness == Readiness::Ready {
             let parent = self.shared.operation_token();
@@ -309,6 +325,10 @@ pub struct ShutdownSignal {
 }
 
 impl ShutdownSignal {
+    pub(super) fn observing(shared: Arc<Shared>) -> Self {
+        Self { shared }
+    }
+
     /// Wait until admission closes and draining begins.
     pub async fn draining(&self) {
         self.shared.draining().await;
@@ -330,6 +350,74 @@ impl ShutdownSignal {
     /// Whether forced cooperative cancellation has already been requested.
     pub fn is_cancelled(&self) -> bool {
         self.shared.is_cancelled()
+    }
+
+    /// When the owning supervisor stops waiting for cooperative cancellation
+    /// and requests abort of unfinished direct tasks: its recorded stop time
+    /// plus its drain and cancel allowances.
+    ///
+    /// `None` before drain is requested, and always for a standalone handle,
+    /// which no supervisor budget governs. A component that owns descendants
+    /// can use the remaining interval to end them itself, so that it returns
+    /// joined rather than aborted; an abort makes the supervisor skip
+    /// dependent cleanup. This is an observation, not a guarantee: a tighter
+    /// stop clock can move the instant earlier, never later, so read it again
+    /// after waiting or wait for that move with
+    /// [`Self::abort_deadline_before`]; scheduling delay can pass it
+    /// unnoticed; and an abandoned driver cancels without phases.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget,
+    ///     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor}};
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = std::time::Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let handle = supervisor.handle();
+    /// let signal = handle.signal();
+    /// assert!(signal.abort_deadline().is_none());
+    /// let before = tokio::time::Instant::now();
+    /// handle.request();
+    /// let abort = signal.abort_deadline().expect("drain was requested");
+    /// assert!(abort >= before + 2 * second);
+    /// assert!(ShutdownHandle::new_unapproved().signal().abort_deadline().is_none());
+    /// # Ok(()) }
+    /// ```
+    pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
+        self.shared.abort_deadline()
+    }
+
+    /// Wait until [`Self::abort_deadline`] is earlier than `known`, and return
+    /// the new instant.
+    ///
+    /// The deadline moves only earlier, when a component reveals a stop time
+    /// before the recorded one, such as a native runtime that had already
+    /// begun stopping. Work scheduled against a deadline it read waits on this
+    /// beside that work and reschedules when it resolves. It resolves at once
+    /// if the deadline is already earlier, and never for a standalone handle,
+    /// which no supervisor budget governs. Read-only: waiting changes nothing.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}};
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = std::time::Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let handle = supervisor.handle();
+    /// let signal = handle.signal();
+    /// handle.request();
+    /// let abort = signal.abort_deadline().expect("drain was requested");
+    /// // Nothing revealed an earlier stop, so the deadline has not moved.
+    /// let moved = signal.abort_deadline_before(abort);
+    /// assert!(tokio::time::timeout(second / 100, moved).await.is_err());
+    /// // A caller holding a later instant learns the current one at once.
+    /// assert_eq!(signal.abort_deadline_before(abort + second).await, abort);
+    /// # Ok(()) }
+    /// ```
+    pub async fn abort_deadline_before(&self, known: tokio::time::Instant) -> tokio::time::Instant {
+        self.shared.abort_before(known).await
     }
 }
 
@@ -562,6 +650,34 @@ impl RunningComponent {
     /// Whether forced cooperative cancellation has already been requested.
     pub fn is_cancelled(&self) -> bool {
         self.shutdown.is_cancelled()
+    }
+
+    /// When the owning supervisor requests abort of unfinished direct tasks;
+    /// see [`ShutdownSignal::abort_deadline`] for its limits.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}};
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = std::time::Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let mut supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// supervisor.register("worker", |startup| async move {
+    ///     let running = startup.acknowledge_started();
+    ///     assert!(running.abort_deadline().is_none());
+    ///     running.draining().await;
+    ///     // Descendants ended before this instant leave the component joined.
+    ///     assert!(running.abort_deadline().expect("drained") > tokio::time::Instant::now());
+    ///     Ok(running.stopped())
+    /// })?;
+    /// let (handle, process) = (supervisor.handle(), supervisor.start());
+    /// handle.status().wait_ready().await.expect("the worker acknowledged");
+    /// handle.request();
+    /// assert!(process.wait().await.expect("the report is published").is_success());
+    /// # Ok(()) }
+    /// ```
+    pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
+        self.shutdown.abort_deadline()
     }
 
     /// Produce the exit proof once the component's running work has finished.

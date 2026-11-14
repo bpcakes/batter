@@ -262,10 +262,10 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let Some(deadline) = Instant::now().checked_add(policy.budget) else {
         return policy.render_failure(HttpFailure::Internal, &parts);
     };
-    let Ok(owner) = policy
-        .admission
-        .admit_root(batter_core::operation::RootDeadline::at(deadline))
-    else {
+    let Ok((owner, continuation)) = batter_core::lifecycle::low_level::admit_root_with_continuation(
+        &policy.admission,
+        batter_core::operation::RootDeadline::at(deadline),
+    ) else {
         return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
     let context = owner.into_context();
@@ -278,9 +278,22 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
-            admitted::record(request.extensions_mut(), scope.clone(), interruption);
+            let method = request.method().clone();
+            let framing = crate::streaming::FramingSlot::default();
+            admitted::record(
+                request.extensions_mut(),
+                scope.clone(),
+                interruption,
+                continuation,
+                method.clone(),
+                framing.clone(),
+            );
             request.extensions_mut().insert(scope);
-            Ok::<_, Infallible>(next.run(request).await)
+            let response = next.run(request).await;
+            // An owned body is framed by the response Hyper writes, which the
+            // handler may have rebuilt and inner layers changed since.
+            framing.settle(&method, &response);
+            Ok::<_, Infallible>(response)
         },
         |result| resolve_response(result, &responder),
     )

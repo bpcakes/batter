@@ -91,3 +91,60 @@ after exercise and teardown, and reject ordinary zero-test exits. The private
 EventLog owns locking and returns snapshots so failed assertions preserve Drop
 recording. HTTP fixture policy lives with these suites, outside generic process
 mechanics and the public test-support crate.
+
+## Amendment, 2026-11-11: forced connection close (`batter-9wig.1`)
+
+Context: the wrapper-abort row above is reachable by any client. A pending
+streaming body, a peer that stops reading a large fixed response and a request
+head that never completes each hold Axum's graceful wait past the cancel
+allowance. The supervisor then aborts the server wrapper and, under ADR-002,
+skips every dependent finalizer. A real-socket probe reproduced this with an
+ordinary non-streaming handler returning 64 MiB to a client that stopped
+reading.
+
+Decision: `low_level::register_http`, `register_http_in`,
+`register_http_with_connect_info_in` and both `AssembledHttp` registration
+methods wrap the listener in a private gate. `ShutdownSignal::abort_deadline`
+exposes the stop time plus the drain and cancel allowances. The registered
+component future, not a spawned task, waits for forced cancellation, then until
+halfway to that deadline, and closes the gate: every accepted connection's reads
+and writes fail and the task that last polled each connection's I/O is woken,
+whether or not that poll was pending, because Hyper can wait on a body alone
+after ready polls. A component that reveals an earlier stop moves the deadline
+earlier; `ShutdownSignal::abort_deadline_before` reports that, and the midpoint
+is recomputed from the same cancellation instant. A deadline that has already
+passed leaves the gate open, as a zero cancel allowance does. Hyper ends those connections in their
+own tasks and Axum's graceful wait returns. Axum counts a connection finished
+before its task destroys the connection future, which after an I/O error still
+holds the in-flight handler future and the response body, so each connection's
+service, response futures and response bodies hold a completion token and the
+registered task also waits for every token to be released before the wrapper
+is joined; a destructor still running at the abort deadline leaves the wrapper
+to be aborted and cleanup skipped. The first
+half of the allowance is reserved because forced cancellation also cancels
+admitted request contexts, and the 503 `operation_cancelled` those handlers
+render must still be written whole. Owning the accept loop was rejected: it
+would duplicate Axum's serving path and gain nothing the transport gate lacks.
+
+The response-construction boundary, ADR-002's conservative skipping and the
+public registration signatures are unchanged. The amended row is:
+
+| Trigger | Independently asserted outcome |
+| --- | --- |
+| Connection still open halfway through the cancel allowance, served through a registration helper | Its I/O fails; body or handler is destroyed before the server returns joined; `forced_cancellation` is true, no abort is requested and cleanup runs after that destruction. |
+| The same, with a body or handler destructor still running at the abort deadline | The wrapper-abort row: named abort, cleanup skipped. |
+| The same with a zero cancel allowance (the gate never closes), a connection task that never yields, or a server registered directly with `axum::serve` | The original wrapper-abort row: named abort, body still owned at report inspection, cleanup skipped. |
+
+Consequences: the two HTTP lifetime suites keep registering `axum::serve`
+directly, because they instrument the native graceful milestones; they remain
+evidence for the ungated native composition, including the abort row. The
+library path is covered by `tests/operational/forced_close.rs` and a TLS case.
+Not covered: HTTP/2, upgraded connections (which leave Axum's accounting at the
+upgrade and stay application-owned), tasks a handler detached, and a
+connection task that never yields.
+A library-owned lifetime for streaming bodies was assessed in `batter-9wig.2` and
+delivered as `AdmittedRequest::into_streaming_response` under `batter-9wig.6`.
+The response-construction boundary itself is unchanged: the owner starts a
+second lifetime from the same admission and does not extend the first. Its
+contract and limits are in the [HTTP guarantees](../guarantees.md#http-boundary).
+See [primary sources](../references.md#forced-connection-close-at-shutdown-2026-11-11).

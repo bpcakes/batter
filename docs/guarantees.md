@@ -890,6 +890,38 @@ Ready results are harvested before escalation and final reporting. Being present
 in a JoinSet does not alone make a task an abort target: already-finished tasks
 retain their actual outcomes and do not suppress cleanup as requested aborts.
 
+`ShutdownSignal::abort_deadline` and `RunningComponent::abort_deadline` report
+when that abort would be requested: the recorded stop time plus the drain and
+cancel allowances. It is `None` before drain and for a standalone handle, which
+no budget governs. A component that owns descendants can use the remaining
+interval to end them itself and return joined, as the Axum serving adapter does
+for connections. It is read-only observation of the phase clock: an earlier
+native stop time moves it earlier and nothing moves it later, a task set that
+finishes sooner is never aborted, scheduling delay can pass it, and an abandoned
+driver cancels without phases. `ShutdownSignal::abort_deadline_before` waits,
+read-only, until the deadline is earlier than one the caller holds, so work
+scheduled against it can follow a tightened clock; the Axum serving adapter
+reschedules its connection close that way. State unit tests cover the unset,
+standalone, extended and tightened cases and that wait.
+
+`lifecycle::low_level::admit_root_with_continuation` is a lower-level adapter
+seam, placed apart from `OperationAdmission::admit_root`, the protected path. It
+admits exactly as `admit_root` does and also returns an
+`lifecycle::low_level::OperationContinuation`, proof that the readiness
+decision was made. The proof can start one root that inherits only process
+forced cancellation, with its own deadline and without reading readiness again,
+which is what lets admitted work continue through drain. It has no public
+constructor, is not `Clone`, and `start` consumes it, so one admission
+continues into at most one root; a compile-fail doctest rejects a second start
+and a copy. A start after the admitted operation was cancelled or passed its
+deadline returns an already-cancelled owner; a unit test covers a live, a
+cancelled, an expired and a forced-cancelled start. Its holder owns the
+obligations the type cannot express: an admitted owner abandoned without
+cancellation stays live until its deadline, so when the continued work starts,
+and that it ends, remain the caller's. The Axum adapter keeps it private to one
+admitted request and starts at most one body from it, only while that
+request's response is being constructed.
+
 Total configured allowance is drain + cancel + abort observation + cleanup work
 + cleanup final abort observation. Scheduling delays, synchronous blocking,
 non-yielding task bodies/destructors, and OS suspension can exceed it. This is
@@ -1693,6 +1725,12 @@ Dropping CleanupStack does NOT call the hooks. It emits a count-only warning.
 Skipping or dropping a hook still drops its captured values using their native
 Rust Drop behavior; it does not keep resources alive indefinitely or suppress
 those types' own destruction protocols.
+For `CleanupSlot::acquire_semaphore` and `bind_udp` that drop is the whole
+finalizer, so a skipped stack releases the permit and the library's socket
+reference while its report lists both names under `skipped`: the entry means
+the factory was not invoked and dependents were not shown to have stopped, not
+that the resource is still held. A unit test asserts both the release and the
+report entries. The report types are unchanged.
 Dropping close mid-flight aborts its local task but cannot await completion or
 return a report. Shutdown/readiness, resource acquisition, and cleanup are not
 interruptibility-masked like a full managed effect runtime.
@@ -1743,6 +1781,17 @@ This establishes neither connectivity nor readiness. SQLx may
 start native minimum-connection maintenance during construction; constructor
 panics and runtime death remain native limits. Dependent work must be joined and
 checked-out connections released before successful cleanup can be expected.
+When cleanup is skipped, the registered close is not awaited: the finalizer's
+pool handle is dropped, which closes nothing while another handle exists. A
+session whose connection is dropped with the last handle, or at process exit,
+ends when its socket closes, without a Terminate message, and PostgreSQL rolls
+back an open transaction; a statement already running outside a transaction
+block may still commit. Handles kept by surviving tasks keep their sessions for
+as long as those tasks live, and their pool's maintenance still closes idle or
+expired connections gracefully, with Terminate.
+This follows from the PostgreSQL 18 protocol text and the resolved SQLx source
+([references](references.md#postgresql-execution-managed-objects-and-verification));
+it is unverified against a live server.
 Local completion evidence requires the named successful cleanup record, zero
 remaining pool size and `PoolClosed` from a later acquisition; `is_closed()` alone
 only witnesses that close began. These facts still say nothing about detached
@@ -2556,7 +2605,174 @@ admission, and all responses remain observed.
 The timeout ends when Next returns a Response. It does not bound streaming body
 polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring
 outside this layer. An escaped request context is cancelled at response
-construction, so a streaming design needs a distinct owner.
+construction, so a body that outlives its handler needs the distinct owner
+below.
+
+`AdmittedRequest::into_streaming_response` consumes the admitted request and
+gives the body of the built response a lifetime of its own. Its `BodyScope`
+context starts from the request's admission through a private
+`OperationContinuation`, so no second readiness decision is made and a body that
+begins during drain is not refused. That context is cancelled by process forced
+cancellation and when the body ends or is destroyed, including when the builder
+panics, and never by response construction; a clone kept beyond the body
+observes cancellation. The authority to start a body belongs to the request,
+not to one extracted value: every extraction shares one take-once slot, and the
+slot is honoured only while the request's own context is live, that is, during
+response construction. A second call, or a call on a request the application
+kept after its response, builds the response with a scope that is already
+cancelled and never starts work that drain admission would refuse. A body with
+content ends at its first poll, truncated, and every refused start is reported
+`cancelled`, including an empty body that the transport learns has ended from
+`is_end_stream` and never polls. `BodyBudget` requires a positive total and a
+positive idle bound no longer than it. The library enforces both without the stream's
+cooperation: the total bound and an armed idle wait are checked before every
+poll of the source and again before what it returned is accepted, so an
+always-ready source cannot outrun them and a frame that became ready, or that a
+poll outlasting the bound returned, only after its wait expired does not extend
+the body, and a pending body
+registers for forced cancellation and the nearer bound. The idle wait starts at
+the body's first pending poll after a frame, so time the transport spends not
+polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
+Hyper turns into a closed connection without a final chunk; a library-ended
+body is never reported to the peer as complete over HTTP/1.1. An HTTP/1.0
+request is the exception: Hyper answers it in HTTP/1.0, where a body without a
+declared length is delimited by closing the connection, so that peer receives
+an orderly end of stream after the data already written and cannot tell the
+truncation from the message's end. A declared `Content-Length` keeps the
+shortfall visible to it. Ending at drain is left to the
+stream through `BodyScope::shutdown`.
+
+The body is polled, and asked for its end and size, under the tracing
+dispatcher current when the handler handed it over and inside the request's
+span context, whichever task asks. The application's body is also destroyed
+under it. The completion event and the release of that span happen under the
+dispatcher that recorded the span, the same one unless the handler switched
+subscribers before the hand-over: closing a span releases its parent through
+the current default dispatcher, so releasing it on the transport's task
+unprotected, or under the handler's switched subscriber, would hand another
+registry a span it never saw, which `tracing-subscriber` rejects with a
+panic. The request's observer publishes
+that span to the body only while the observer is alive and releases its copy
+when it finishes, so an admitted request or request extension kept beyond the
+response holds no span. An owned body holds its own copy until it ends, so the
+`batter.http` span closes when the body ends and span-close timing, including
+exported span durations, covers the body, while `latency_ms` and the boundary
+completion event still measure response construction only. Exactly one
+`HTTP response body finished` event carries
+`request_id`, `bytes`, `duration_ms` and `body_outcome` (`completed`, `failed`,
+`deadline_exceeded`, `idle_timeout`, `cancelled`, `panicked`, `dropped`),
+emitted before application destructors run. A stream error, either bound,
+cancellation and a panic are WARN; completion and `dropped` are INFO.
+`dropped` names a body discarded before its end by whoever held it, not ended
+by the library, a panic or the stream: a peer that went away, a HEAD response
+whose body Axum strips, or a response discarded because response construction
+ended without it; the request's own completion event, with its method and
+status, tells these apart. `panicked` names a builder that never returned, a poll of the body that
+unwound (the transport destroys such a body after catching the unwind), a
+question about the body's end or size that unwound, whether the owner asked it
+at the hand-over, the transport asked it, or the owner asked it while
+destroying the body (the owner owns the body before its first question, so it
+still finishes under the captured dispatcher before the application's body is
+destroyed, and the panic then continues), or destruction
+during unwinding, such as a handler panicking after the hand-over; it carries
+no payload. A body destroyed after its scope was cancelled or
+expired reports that reason instead of `dropped`, and a source that produced
+its whole message is `completed` even when the transport never polls for its
+end: Hyper stops once `is_end_stream` reports the end, once the advertised
+`Content-Length` or exact size has been written, and after trailers. The
+advertised length is taken again from the response request admission returns,
+because Hyper frames the message by the headers it encodes and Axum applies a
+handler tuple's headers after `into_streaming_response` returns. The started
+body hands its framing to request admission through the admission record, not
+through the response, so a response the handler rebuilt around the body, which
+keeps nothing else the built response carried, is settled the same way; a
+layer outside admission that changes the length is not observed. A source
+that yields its end, reports it through `is_end_stream` or yields trailers
+before producing its advertised length is `failed` (WARN): Hyper aborts that
+message and the peer sees it truncated, except when the source already reports
+its end as Hyper writes the head: Hyper then writes no body and frames the
+message as `content-length: 0`, so the peer receives a complete empty response
+while the event still reports `failed`. Hyper, not the owner, enforces the
+framing. A response Hyper writes without a body (to a HEAD request, a 2xx
+answer to CONNECT, or a 1xx, 204 or 304 status) frames nothing, so a length it
+declares is not held against its body: an empty body there is `completed`. Error contents are not
+copied into the event. The request's own completion event is unchanged, and no
+metric is recorded for bodies.
+
+[In-process tests](../crates/batter-axum/tests/streaming/) on a paused clock
+cover steps that run after the handler returned beside the unowned control,
+the escaped context, both bounds and their restart on each frame, a frame ready
+only after its idle wait expired, a frame returned on real time by a poll that
+outlasted the idle or the total bound, an always-ready source, a parked frame woken by forced cancellation, drain as the
+stream's choice, a body started during drain, a stream error, a builder
+panic, a handler panic after the hand-over and a panicking stream, the event
+before application destructors, an admitted request kept beyond its response,
+a second and a late body start for one request, a refused second start that
+leaves the length declared after the hand-over to the body that started, a
+refused empty body that is never polled, a HEAD request, a declared length on a 304, a 204, a HEAD
+response and a 2xx answer to CONNECT, a body whose answer about its end panics during destruction and when
+the transport asks first, a body whose first answer about its size panics at
+the hand-over, its end and size answered under the handler's subscriber and
+request span when a foreign subscriber asks, and a
+response-construction timeout after the hand-over, a dropped and a never-polled body, server-sent events and a sized body, a
+foreign subscriber on the polling task, and a handler that hands the body over
+under another subscriber, whose completion event and request span stay in the
+request's registry, where the span is shown to close, while the body's own
+events and destruction follow the switch.
+[Real-socket tests](../crates/batter-axum/tests/streaming/sockets.rs) through
+the registered server show a pending owned body ending itself at forced
+cancellation before the server's forced close, a stalled reader ended only by
+that close and reported `cancelled`, a departed peer reported `dropped`, and a
+stream that produced its declared `Content-Length` and one that ended with
+trailers, neither of which yields its end, each reported `completed`, and a
+source that ended or reported its end five bytes short of a declared ten,
+each reported `failed` with the peer's message truncated, a body already ended
+when the head is written, reported `failed` while the peer receives a complete
+`content-length: 0` message, a length a handler
+tuple declares after the hand-over, or a response rebuilt around the body
+declares, which decides `failed` when short and `completed` when met, and an
+HTTP/1.0 request whose body, ended at its idle
+bound and reported `idle_timeout`, reaches the peer without a declared length
+or chunked framing and as an orderly close, while the same body with a declared
+ten-byte `Content-Length` reaches it framed by that length and six bytes short.
+Mutation checks were run by hand on 2026-11-11, each applied temporarily and
+reverted; they are not an automated gate. Removing scope cancellation, the
+cancellation wakeup, the captured dispatcher, the per-frame bound check, the
+expired-idle check before a frame, the advertised-length completion or the
+trailers completion each failed at least one of these tests, as did keeping the observer's published
+span after it finishes, destroying the application's body before the event,
+dropping either panic check, dropping either the take-once slot or the
+liveness check on the body-start authority, releasing the request span or
+destroying the application's body outside the captured dispatcher (with the
+request inside a parent span), and dropping the refused-start record for an
+empty body. Restoring `Clone` and a borrowing `start` on
+`OperationContinuation` made its compile-fail doctests compile. In the same
+way on 2026-11-12, reporting a short end as `completed` failed both
+short-length cases, and holding a declared length against a response without a
+body failed the 304 case, and the HEAD case on its own. Later the same day,
+skipping the framing settled at request admission failed the late-declared
+length case, asking the source for its end in destruction without catching
+the unwind failed the panicking-answer case, as did forgetting a transport
+question that unwound, and starting a continuation without checking its
+admitted operation failed the core unit test. On 2026-11-13, asking the
+body for its end or size outside the captured dispatcher failed the
+foreign-subscriber query case, asking for its size before owning it failed the
+hand-over panic case, dropping the admission-owned framing hand-off failed the
+late-declared length case, the committed extension-based hand-off failed
+its rebuilt-response half, and letting a refused start hand over its framing
+failed the refused-start framing case. On 2026-11-14, dropping the 204 or the
+CONNECT arm of the no-body framing rule failed the corresponding no-body case,
+and dropping the one-year ceiling on the total failed the budget validation
+test. Later that day, removing the bound check after the source's poll failed
+the outlasting-poll case for the idle and the total bound alike.
+
+Limits: the bounds are observed only when the transport polls the body. A peer
+that stops reading leaves it unpolled, so only the forced connection close at
+shutdown ends it; there is no write-stall timeout. The owner covers response
+bodies, not upgraded connections. Admission permits are not held for the body's
+lifetime. An unowned streaming body still compiles, because `OperationContext`
+is `Clone` and `'static` by design; the owner makes the supported composition
+available, it does not make the other unrepresentable. HTTP/2 was not exercised.
 
 A response returned from `RequestInterruptionResponder::render` carries private
 interruption evidence. Admission uses it to classify the response-construction
@@ -2907,10 +3123,116 @@ running finalizers.
 Binding and its errors belong to owned Startup. Axum retries native accept errors
 and spawns its own connection and graceful-signal tasks. Native graceful return
 waits for connection completion; wrapper abortion does not join descendants.
-A real streaming regression holds a body beyond the request budget and through
-wrapper abort: the report is unsuccessful and dependent cleanup is skipped even
-though every direct task was joined. The test separately releases the body.
-There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
+
+A connection can outlast drain without limit: a response body that stays
+pending, a peer that stops reading a large fixed response, or a request head
+that never completes. Each of them once forced abort of the wrapper and skipped
+every dependent finalizer, at any client's choice. The registered task now wraps
+its listener, and every accepted connection's reads and writes fail once forced
+cancellation is halfway to `ShutdownSignal::abort_deadline`, the stop time plus
+the drain and cancel allowances. The first half of the cancel allowance is left
+to cancelled handlers, whose interruption responses are still written whole. In
+the second half Hyper ends each remaining connection in that connection's own
+task. Axum counts a connection finished when its task drops its completion
+receiver, which it does before the connection future, and with it the handler
+future or response body Hyper still holds after the I/O error, is destroyed. So
+each accepted connection's service, response futures and response bodies hold a
+token, and the registered task returns only after Axum's graceful wait and the
+release of every token; Hyper destroys the response body last. The wrapper is
+then joined, the report is successful with `forced_cancellation` set and
+dependent cleanup runs, never beside a connection's destructor: one still
+running at the abort deadline leaves the wrapper to be aborted and cleanup
+skipped. Each response body gains one wrapper allocation for this, and each
+request a few atomic increments and decrements of one server-wide counter; a
+lock is taken only when the last token is released or the server waits. The peer sees a truncated message or a closed
+connection; an HTTP/1.0 peer receiving a body without a declared length cannot
+tell that close from the message's end. Each I/O poll records its task's waker before reading the closed
+flag, not only a poll the transport leaves pending: Hyper can wait on a response
+body alone after ready polls, holding bytes of a following request or with its
+read side closed, and the close must still wake that task, whose next pass
+flushes and fails. That costs one uncontended lock per I/O poll and one registry
+entry per connection. A component that reveals an earlier stop time moves the
+abort deadline earlier after cancellation was observed;
+`ShutdownSignal::abort_deadline_before` reports it and the close instant is
+recomputed, halfway from the same cancellation instant to the new deadline. A
+new deadline that has already passed leaves no interval, exactly like a zero
+cancel allowance, so the gate stays open and the wrapper abort decides.
+
+[Real socket tests](../crates/batter-axum/tests/operational/forced_close.rs)
+cover a pending body through both registration helpers, a pending body after
+pipelined request bytes that Hyper's first read returned with the head, a
+stalled reader of a 64 MiB fixed body, a half-sent request head that the
+server is observed to have read before shutdown and that outlasts drain, a
+cancelled handler whose 503 `operation_cancelled` still arrives
+complete, an abort deadline that a managed component moves earlier after
+forced cancellation, a connection task blocked inside its body's poll
+across the close and the abort deadline, which still aborts the wrapper and
+skips cleanup, and, through both registration helpers, a pending body whose
+destructor hands its worker over and blocks after Axum counted its connection
+finished, with the same for an in-flight handler (a fallback outside
+admission that never returns and holds such a guard): destroyed within the
+allowance, cleanup runs only after it; still destroying at the abort deadline,
+the wrapper is aborted and cleanup skipped. With a zero cancel allowance, on
+both a current-thread and a multi-thread runtime, a held body still aborts the
+wrapper and skips cleanup while a cancelled handler on another connection
+receives its whole 503 `operation_cancelled`. A gate unit test shows that a zero
+cancel allowance never closes the gate while a positive one does. On a paused
+clock, a gate unit test drives the close computation through a private stop
+clock: cancellation observed with the abort 4 s away, then the abort moved to
+1 s, and the gate closes at exactly the recomputed 0.5 s; moved instead to the
+cancellation instant, the gate stays open, as it does when it is first polled
+only after both its stale 2 s midpoint and a deadline tightened into the past
+are due, while a passed midpoint with the abort still ahead closes it at once. Another runs it
+against a real supervisor, whose native component reveals an earlier stop only
+after the gate computed its first close; holding that component needs a
+multi-thread runtime and real time, so its outcome rests on a wall-clock
+margin: the original close is about 15 s away and the recomputed one about
+0.5 s, against a 5 s wait. A unit test shows the completion
+wait holds for a response body that outlives its connection's service. A
+[TLS case](../crates/batter-axum/tests/tls_serving/serving.rs) repeats the
+pending body through the assembled boundary over rustls. With the close
+removed, the four plain-socket cases that depend on it fail and the
+interruption response still passes; the TLS case was not mutation-checked.
+Hand-run mutation checks on 2026-11-11, applied temporarily and reverted and
+not an automated gate: recording wakers only on pending polls failed the
+pipelined case and a gate unit test of a task whose last I/O poll was ready,
+and a close instant fixed at cancellation failed the moved-deadline case. On
+2026-11-12, closing with no interval left failed the zero-allowance gate test,
+and returning from the server once the gate closed failed the never-yielding
+case. On 2026-11-13, returning without waiting for the connections' tokens, or
+giving them only to the connection's service and not to its response bodies,
+failed the slow-destructor case, as removing the wait also failed the
+in-flight handler case, removing the wait from the connect-info path
+alone failed that path's case, and dropping the `abort_deadline_before`
+recomputation failed both moved-deadline gate unit tests, the paused-clock one
+by closing at the original 2 s. Later the same day, checking for a passed
+abort deadline only when cancellation is first observed failed the
+passed-deadline gate test, checking it only before each recomputation, so that
+a stale midpoint winning the race still closed, failed its stale case at
+2.5 s, releasing the request span and emitting the completion event under the
+handler's switched subscriber failed the switched-subscriber streaming test
+with `tracing-subscriber`'s `no such span exists` panic, and leaking the
+request span instead failed that test's close assertion.
+
+The limits remain. When forced cancellation is observed with no interval left,
+as with a zero cancel allowance, or the abort deadline later moves to an
+instant already passed, the gate never closes, so the earlier contract
+holds unchanged on any runtime flavour: a real streaming regression is aborted
+with its body still owned, the report is unsuccessful, cleanup is skipped with
+`UnsafeTaskExit` and detached connections still write their interruption
+responses. A connection task that never yields cannot be ended by failing its
+I/O: it outlives the close and the abort deadline, and the wrapper is aborted
+with cleanup skipped. An abort deadline moved so close that half the remaining interval
+cannot end the connections still aborts the wrapper. An upgraded connection
+leaves Axum's connection accounting
+at the upgrade, and Hyper destroys its service and response body there, so the
+completion wait does not include it either (read from Hyper's source, not
+exercised): its task belongs to the application, is never joined here, and
+its I/O fails only if the server is still serving another connection when the
+close happens. Tasks a handler detached are untouched. Applications that serve
+`axum::serve` themselves, as the two HTTP lifetime suites deliberately do, get
+none of this. There is no new async-drop, response-stream, WebSocket or
+disconnect guarantee.
 `low_level::register_http` and `low_level::register_http_in` accept a plain
 Router and supply no ConnectInfo extension. Their opt-in companion
 `low_level::register_http_with_connect_info_in`
@@ -2921,7 +3243,7 @@ socket's remote address and port. Forwarded,
 X-Forwarded-For and X-Real-IP headers are not interpreted; behind a proxy the peer
 is the proxy. Authentication, proxy trust and application extension replacement
 remain application-owned. The companion shares the registration, acknowledgement,
-listener-release, graceful-drain and conservative wrapper-abort contracts above.
+listener-release, graceful-drain, forced-close and conservative wrapper-abort contracts above.
 It accepts no arbitrary make-service or custom metadata type. Pinned Axum 0.8.9
 implements `Connected` for a bare listener only for TcpListener and generically
 only for `ListenerExt::tap_io`, so the companion applies an empty tap itself; it

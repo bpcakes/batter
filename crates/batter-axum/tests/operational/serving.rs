@@ -1,26 +1,17 @@
-use axum::{
-    Router,
-    body::{Body, Bytes},
-    routing::get,
-};
-use batter_axum::{
-    ResponseConstructionBudget,
-    low_level::{register_http, register_http_in, register_http_with_connect_info_in},
-};
+use axum::{Router, routing::get};
+use batter_axum::low_level::{register_http, register_http_in, register_http_with_connect_info_in};
 use batter_core::{
-    cleanup::{CleanupBudget, SkipReason},
+    cleanup::CleanupBudget,
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
 use std::{
-    convert::Infallible,
     ops::{Deref, DerefMut},
-    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    task::{Context, Poll},
+    task::Poll,
     time::Duration,
 };
 use tokio::{
@@ -180,137 +171,6 @@ async fn invalid_registration_and_unstarted_supervisor_drop_release_the_bound_li
             break;
         }
     }
-}
-
-struct StreamingBody {
-    first: bool,
-    release: oneshot::Receiver<()>,
-    dropped: Option<oneshot::Sender<()>>,
-}
-
-impl http_body::Body for StreamingBody {
-    type Data = Bytes;
-    type Error = Infallible;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<http_body::Frame<Bytes>, Infallible>>> {
-        if self.first {
-            self.first = false;
-            return Poll::Ready(Some(Ok(http_body::Frame::data(Bytes::from_static(
-                b"first",
-            )))));
-        }
-        use std::future::Future;
-        Pin::new(&mut self.release).poll(cx).map(|_| None)
-    }
-}
-
-impl Drop for StreamingBody {
-    fn drop(&mut self) {
-        if let Some(dropped) = self.dropped.take() {
-            let _ = dropped.send(());
-        }
-    }
-}
-
-#[tokio::test]
-async fn streaming_outlives_response_budget_and_forced_wrapper_abort_skips_cleanup() {
-    streaming_abort(register_http).await;
-}
-
-#[tokio::test]
-async fn peer_server_forced_wrapper_abort_still_skips_dependent_cleanup() {
-    streaming_abort(register_http_with_connect_info_in).await;
-}
-
-async fn streaming_abort(register: RegisterHttp) {
-    let (release_tx, release_rx) = oneshot::channel();
-    let (dropped_tx, mut dropped_rx) = oneshot::channel();
-    let body = Arc::new(std::sync::Mutex::new(Some(StreamingBody {
-        first: true,
-        release: release_rx,
-        dropped: Some(dropped_tx),
-    })));
-    let mut supervisor = supervisor();
-    let handle = supervisor.handle();
-    let cleaned = Arc::new(AtomicBool::new(false));
-    let cleanup = cleaned.clone();
-    supervisor
-        .on_cleanup("dependency", move || async move {
-            cleanup.store(true, Ordering::SeqCst);
-            Ok(())
-        })
-        .unwrap();
-    let policy = batter_axum::RequestPolicy::new(
-        handle.operation_admission(),
-        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
-    );
-    let app = Router::new()
-        .route(
-            "/",
-            get(move || async move { Body::new(body.lock().unwrap().take().unwrap()) }),
-        )
-        .route_layer(axum::middleware::from_fn_with_state(
-            policy,
-            batter_axum::low_level::request_admission,
-        ))
-        .layer(axum::middleware::from_fn(
-            batter_axum::low_level::operational_http,
-        ));
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    register(&mut supervisor, "http", listener, app).unwrap();
-    let running = supervisor.start();
-    timeout(Duration::from_secs(1), handle.status().wait_ready())
-        .await
-        .unwrap()
-        .unwrap();
-    let mut client = connect(address).await;
-    let mut bytes = Vec::new();
-    timeout(Duration::from_secs(2), async {
-        while !bytes.windows(5).any(|chunk| chunk == b"first") {
-            assert_ne!(client.read_buf(&mut bytes).await.unwrap(), 0);
-        }
-    })
-    .await
-    .unwrap();
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(2)).await;
-    handle.request();
-    let report = timeout(Duration::from_secs(2), running.wait())
-        .await
-        .unwrap()
-        .unwrap();
-    tokio::time::resume();
-    let body_still_owned = matches!(
-        dropped_rx.try_recv(),
-        Err(oneshot::error::TryRecvError::Empty)
-    );
-    // Release and await the native connection body even if the assertions below fail.
-    let _ = release_tx.send(());
-    timeout(Duration::from_secs(2), client.read_to_end(&mut bytes))
-        .await
-        .unwrap()
-        .unwrap();
-    timeout(Duration::from_secs(2), dropped_rx)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&bytes).starts_with("HTTP/1.1 200 "));
-    assert!(
-        body_still_owned,
-        "joining the wrapper did not establish a stopped body"
-    );
-    assert!(!report.is_success());
-    assert!(report.forced_cancellation);
-    assert_eq!(report.abort_requested, ["http"]);
-    assert!(report.all_direct_tasks_joined());
-    assert_eq!(report.cleanup.skipped.len(), 1);
-    assert_eq!(report.cleanup.skipped[0].name, "dependency");
-    assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
-    assert!(!cleaned.load(Ordering::SeqCst));
 }
 
 /// A layer that counts how often Axum builds the service it wraps.

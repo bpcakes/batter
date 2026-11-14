@@ -12,7 +12,7 @@ pub(crate) use readiness::ReadinessProgress;
 
 use super::{ProcessAdmissionError, Readiness};
 use std::sync::{
-    Arc, Mutex, MutexGuard,
+    Arc, Mutex, MutexGuard, OnceLock,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use tokio::{sync::Notify, time::Instant};
@@ -25,6 +25,9 @@ pub(super) struct Shared {
     support_stop: CancellationToken,
     cancel: CancellationToken,
     changed: Notify,
+    /// Drain plus cancel allowance of the supervisor that owns the phase
+    /// clock. Standalone coordinators have no phases and leave it unset.
+    abort_allowance: OnceLock<std::time::Duration>,
 }
 
 /// One pending component-start acknowledgement paired with its lifecycle.
@@ -105,7 +108,21 @@ impl Shared {
             support_stop: CancellationToken::new(),
             cancel: CancellationToken::new(),
             changed: Notify::new(),
+            abort_allowance: OnceLock::new(),
         }
+    }
+
+    /// Record, once, how long after the stop time the owning supervisor
+    /// requests abort. A budget is immutable, so a second call is ignored.
+    pub(super) fn bound_abort(&self, allowance: std::time::Duration) {
+        let _ = self.abort_allowance.set(allowance);
+    }
+
+    /// The stop time plus the recorded allowance. A tightened stop clock moves
+    /// it earlier, never later.
+    pub(super) fn abort_deadline(&self) -> Option<Instant> {
+        let allowance = *self.abort_allowance.get()?;
+        self.stop_started()?.checked_add(allowance)
     }
 
     fn lock(&self) -> MutexGuard<'_, AdmissionState> {
@@ -218,6 +235,20 @@ impl Shared {
             changed.as_mut().enable();
             if let Some(started) = self.stop_started().filter(|started| *started < known) {
                 return started;
+            }
+            changed.await;
+        }
+    }
+
+    /// Wait until the abort deadline is earlier than `known`. Only a stop
+    /// clock moving earlier changes it, and every such move notifies.
+    pub(super) async fn abort_before(&self, known: Instant) -> Instant {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(abort) = self.abort_deadline().filter(|abort| *abort < known) {
+                return abort;
             }
             changed.await;
         }
