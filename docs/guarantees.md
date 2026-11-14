@@ -91,7 +91,15 @@ it consumes no quota and has no completion event. The refusal and its
 Without the check, a whole extension map cloned inside an earlier protected
 handler would be authenticated and charged one quota unit before `Path`
 extraction failed with the inherited captures, and the inherited observation
-state would suppress the completion event. Retained bounded quota facts survive outer
+state would suppress the completion event. The check detects Axum routing
+records only, so the HTTP boundary's residual applies here with a cost: a map
+captured in a protected custom fallback for a request no pattern matched, such
+as `OPTIONS *`, carries only `OriginalUri` among the detected records, and once
+the caller removes it the request is not refused. It is authenticated and
+charged one native quota check like a fresh request, but answered without a
+fresh `x-request-id`, with the client's inbound `x-request-id` unreplaced and
+without a completion event, because the inherited observation and operational
+records stay in place. Retained bounded quota facts survive outer
 timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.

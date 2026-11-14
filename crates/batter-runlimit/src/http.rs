@@ -17,7 +17,7 @@ use batter_axum::{
     // deliberately orders Batter's HTTP middleware itself: authenticated quota
     // checking has to sit between admission and body extraction, which
     // `HttpBoundary` does not express. See ADR-012 and the crate guide.
-    low_level::{operational_http_with_quota, request_admission},
+    low_level::{RouterClient, operational_http_with_quota, request_admission},
     quota_observation::QuotaRecorder,
 };
 use batter_core::{
@@ -384,11 +384,13 @@ impl PreparedHttp {
     }
     /// Consumes the prepared service into an explicit synthetic test transport.
     ///
-    /// The router is prepared once, as [`Self::register_in`] serving prepares
-    /// it, so an application layer wrapping a handler route is built here and
-    /// never again per request.
+    /// The router is prepared once by `batter_axum::low_level::RouterClient::new`,
+    /// as [`Self::register_in`] serving prepares it, so an application layer
+    /// wrapping a handler route is built here and never again per request.
     pub fn in_process(self) -> TestClient {
-        TestClient::prepare(self.router)
+        TestClient {
+            client: RouterClient::new(self.router),
+        }
     }
 }
 

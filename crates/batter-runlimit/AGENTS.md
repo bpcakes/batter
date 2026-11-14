@@ -74,6 +74,10 @@ the synthetic peer before delegating, so it inherits the adapter's
 arrival-shaped entry check, `ReusedRoutingState` refusal and marker removal.
 Never dispatch the prepared Router directly or copy that check here; the
 refusal must precede admission, authentication and the native quota check.
+The check detects Axum routing records only. Keep the documented residual, a
+map with Batter's own records and no detected Axum record that is still
+authenticated and charged, stated on `TestClient::request` and in the
+contract until the adapter refuses it.
 The allowed result retains native scalar decision metadata without exposing a
 denial arm. Match every native `DenialView` reason explicitly; a future reason
 must force an adapter and contract update when the native contract changes.

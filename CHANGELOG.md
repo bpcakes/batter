@@ -28,9 +28,14 @@ contracts, capability facts and validation history.
   `render_infrastructure_failure(HttpFailure::Internal, None)` carrying
   `ReusedRoutingState`, with one static ERROR event, no completion event, no
   `x-request-id` header and no consumed quota. The marker is removed from every
-  dispatched response. `RouterClient` establishes nothing about its router's
+  dispatched response. The check still detects Axum routing records only: a
+  map that keeps Batter's own observation and operational records after the
+  caller removes its only detected record (the `OriginalUri` of an
+  `OPTIONS *` dispatch) is authenticated and charged, but gets no fresh
+  correlation and no completion event; that residual is documented, not
+  closed. `RouterClient` establishes nothing about its router's
   composition, has no crate-root alias and has no conversion into
-  `InProcessClient`. The change adds `RouterClient` and removes no name, so it
+  `InProcessClient` or back into a `Router`. The change adds `RouterClient` and removes no name, so it
   needs no deprecated shim; public signatures are unchanged.
   `batter-runlimit` no longer declares `tower` as a normal dependency; its
   `axum` feature still selects Axum, which depends on it. Behavior change: a

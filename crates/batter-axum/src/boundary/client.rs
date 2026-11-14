@@ -124,14 +124,9 @@ pub struct InProcessClient {
 }
 
 impl InProcessClient {
-    /// Prepare the assembled router once, exactly as a served router is prepared.
-    ///
-    /// Pinned Axum 0.8.9 `Router::into_make_service` and
-    /// `Router::into_make_service_with_connect_info` both call
-    /// `Router::with_state(())` so that endpoints become routes eagerly instead
-    /// of once per request. This uses the same preparation, through
-    /// [`RouterClient::new`], so a layer wrapping a lazily built endpoint is
-    /// constructed here and never again.
+    /// Prepare the assembled router once, exactly as a served router is
+    /// prepared, through [`RouterClient::new`], which documents the pinned
+    /// Axum preparation.
     pub(super) fn new(router: axum::Router) -> Self {
         Self {
             prepared: RouterClient::new(router),

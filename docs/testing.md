@@ -224,9 +224,9 @@ serving. In-process tests select an explicit synthetic peer through the opaque
 client. They exercise boundary assembly without claiming socket provenance.
 Route-group tests refuse a whole extension map reused from an earlier dispatch,
 and [Runlimit's reused-routing tests](../crates/batter-runlimit/tests/http/reused_routing.rs)
-prove its test transport shares that refusal before authentication, the quota
-check or a handler runs, accepts a fresh request's application extensions and
-strips a forwarded refusal marker.
+prove its test transport shares that refusal before lifecycle admission,
+authentication, the quota check, a public probe or a handler runs, accepts a
+fresh request's application extensions and strips a forwarded refusal marker.
 
 ## Probe response policy
 

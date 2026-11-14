@@ -80,6 +80,39 @@ use tower::ServiceExt;
 /// }
 /// ```
 ///
+/// Each conversion and accessor that could hand the router back has its own
+/// control:
+///
+/// ```compile_fail,E0599
+/// fn cannot_take_the_router(client: batter_axum::low_level::RouterClient) {
+///     let _ = client.into_router();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn converts_into_a_router<T: Into<axum::Router>>() {}
+///
+/// fn cannot_convert_into_a_router() {
+///     converts_into_a_router::<batter_axum::low_level::RouterClient>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn borrows_a_router<T: AsRef<axum::Router>>() {}
+///
+/// fn cannot_borrow_a_router() {
+///     borrows_a_router::<batter_axum::low_level::RouterClient>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn dereferences_to_a_router<T: std::ops::Deref<Target = axum::Router>>() {}
+///
+/// fn cannot_dereference_to_a_router() {
+///     dereferences_to_a_router::<batter_axum::low_level::RouterClient>();
+/// }
+/// ```
+///
 /// A bare router has none of the boundary's layers, yet a reused routing
 /// record is still refused before it runs:
 ///
@@ -148,6 +181,18 @@ impl RouterClient {
     /// dispatch. Application extensions, such as a chosen
     /// [`ConnectInfo`](axum::extract::ConnectInfo), are accepted and reach the
     /// router untouched. The marker is removed from every dispatched response.
+    ///
+    /// The check looks only for Axum routing records, so it does not refuse a
+    /// request for carrying Batter's own observation or operational record.
+    /// Such a request can arrive with no detected Axum record, for example
+    /// the map of a dispatch no pattern matched, such as `OPTIONS *`, after
+    /// the caller removed its `OriginalUri`. It is then accepted, and Batter's
+    /// observer and correlation layers in the router keep the inherited
+    /// record and install none of that kind: the response gets no fresh
+    /// `x-request-id`, an inbound `x-request-id` is not replaced and no
+    /// completion event is emitted. That residual is not covered by this
+    /// check; everything inside the router, including authentication or a
+    /// quota check it composes, still runs.
     pub async fn request(&self, request: Request<Body>) -> Response {
         let (mut parts, body) = request.into_parts();
         if carries_routing_record(&mut parts).await {

@@ -19,9 +19,9 @@ const REFUSAL_BODY: &str =
 #[derive(Clone, Debug)]
 struct Label(&'static str);
 
-/// Counts of protected work: authentication calls, native batch checks and
-/// destination handler calls.
-type Counts = (usize, usize, usize);
+/// Counts of work behind the entry check: authentication calls, native batch
+/// checks, destination handler calls and public probe calls.
+type Counts = (usize, usize, usize, usize);
 
 struct Fixture {
     client: TestClient,
@@ -30,6 +30,7 @@ struct Fixture {
     authentications: Arc<AtomicUsize>,
     backend: Backend,
     views: Arc<AtomicUsize>,
+    probes: Arc<AtomicUsize>,
 }
 
 impl Fixture {
@@ -39,11 +40,13 @@ impl Fixture {
         let authentications = Arc::new(AtomicUsize::new(0));
         let backend = Backend::new(Mode::Return(allowed()));
         let views = Arc::new(AtomicUsize::new(0));
-        let (slot, marker, counted, calls) = (
+        let probes = Arc::new(AtomicUsize::new(0));
+        let (slot, marker, counted, calls, probed) = (
             captured.clone(),
             forwarded.clone(),
             views.clone(),
             authentications.clone(),
+            probes.clone(),
         );
         let routes = Router::new()
             .route(
@@ -112,6 +115,14 @@ impl Fixture {
             },
         )
         .unwrap()
+        .with_public_probes(
+            PublicProbes::new()
+                .get("/live", move || {
+                    probed.fetch_add(1, Ordering::SeqCst);
+                    async { "live" }
+                })
+                .unwrap(),
+        )
         .prepare(request_policy(running, 1000), routes)
         .in_process();
         Self {
@@ -121,6 +132,7 @@ impl Fixture {
             authentications,
             backend,
             views,
+            probes,
         }
     }
 
@@ -129,6 +141,7 @@ impl Fixture {
             self.authentications.load(Ordering::SeqCst),
             self.backend.calls.load(Ordering::SeqCst),
             self.views.load(Ordering::SeqCst),
+            self.probes.load(Ordering::SeqCst),
         )
     }
 
@@ -172,7 +185,7 @@ async fn a_reused_captured_route_map_is_refused_before_the_protected_assembly() 
     assert_eq!(
         fixture.counts(),
         before,
-        "authentication, the quota check or the destination handler ran"
+        "authentication, the quota check, a handler or a probe ran"
     );
     let output = capture.text();
     assert_eq!(
@@ -221,7 +234,10 @@ async fn a_fresh_request_with_application_extensions_reaches_the_assembly_untouc
         text(response).await,
         r#"id=9;route=/view/{id};owner=owner-a;label=Some("chosen");peer=Some(127.0.0.1:12345)"#
     );
-    assert_eq!(fixture.counts(), (before.0 + 1, before.1 + 1, before.2 + 1));
+    assert_eq!(
+        fixture.counts(),
+        (before.0 + 1, before.1 + 1, before.2 + 1, before.3)
+    );
     let events = capture.events();
     assert_eq!(events.len(), 1, "{}", capture.text());
     assert!(
@@ -258,5 +274,63 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         Some("kept")
     );
     assert_eq!(text(response).await, "forwarded");
+    finish(running).await;
+}
+
+#[tokio::test]
+async fn a_reused_map_is_refused_before_a_public_probe_runs() {
+    let running = running().await;
+    let fixture = Fixture::new(&running);
+    let captured = fixture.captured_map().await;
+    let probe = |extensions: Option<Extensions>| {
+        let mut request = Request::builder().uri("/live").body(Body::empty()).unwrap();
+        if let Some(extensions) = extensions {
+            *request.extensions_mut() = extensions;
+        }
+        request
+    };
+    let before = fixture.counts();
+
+    let refused = fixture.client.request(probe(Some(captured)), peer()).await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert_eq!(text(refused).await, REFUSAL_BODY);
+    assert_eq!(fixture.counts(), before, "the public probe ran");
+
+    // The same probe answers a fresh request, so the refusal decided it.
+    let fresh = fixture.client.request(probe(None), peer()).await;
+    assert_eq!(fresh.status(), StatusCode::OK);
+    assert_eq!(text(fresh).await, "live");
+    assert_eq!(
+        fixture.counts(),
+        (before.0, before.1, before.2, before.3 + 1)
+    );
+    finish(running).await;
+}
+
+#[tokio::test]
+async fn a_reused_map_is_refused_before_lifecycle_admission() {
+    let running = running().await;
+    let fixture = Fixture::new(&running);
+    let captured = fixture.captured_map().await;
+    running.handle().request();
+    let before = fixture.counts();
+
+    // Draining admission answers a fresh request itself, before authentication.
+    let fresh = fixture
+        .client
+        .request(request("/view/9", "Bearer secret-a"), peer())
+        .await;
+    assert_eq!(fresh.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(fresh.extensions().get::<ReusedRoutingState>().is_none());
+
+    // A reused map is refused at entry instead, with the marker and not 503.
+    let mut reused = request("/view/9", "Bearer secret-a");
+    *reused.extensions_mut() = captured;
+    let refused = fixture.client.request(reused, peer()).await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert_eq!(text(refused).await, REFUSAL_BODY);
+    assert_eq!(fixture.counts(), before);
     finish(running).await;
 }

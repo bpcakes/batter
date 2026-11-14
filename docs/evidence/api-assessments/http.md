@@ -751,14 +751,31 @@ Invalid-state review of `RouterClient`:
    caller keeps the ordering obligations that each `low_level` helper its
    router uses already documents.
 3. It is not a Tower service and has no router accessor, public field or
-   serving conversion, and it has no conversion into `InProcessClient`; each
-   has a compile-fail control. `TestClient` gains a control against being
+   serving conversion, and it has no conversion into `InProcessClient`. Each
+   has a compile-fail control, as `InProcessClient` has: `axum::serve`,
+   `tower::Service<Request>`, reading the private field, an `into_router`
+   method, `Into<Router>`, `AsRef<Router>`, `Deref<Target = Router>` and
+   `Into<InProcessClient>`. `TestClient` gains a control against being
    returned as an `InProcessClient` and keeps its `axum::serve` control.
 4. The canonical path is unchanged: `AssembledHttp::in_process` still returns
    the protected client. `RouterClient` is reachable only under `low_level`,
    with a crate-root import control.
-5. The `batter-oj37` residual is unchanged: Batter's private records with no
-   detected Axum record are not cleared.
+5. The `batter-oj37` residual is unchanged and costs more here. Batter's
+   private records with no detected Axum record are neither refused nor
+   cleared. Reproduced by hand through `TestClient`: a map captured in a
+   protected custom root fallback for `OPTIONS *` carries `OriginalUri` as its
+   only detected record, and is refused whole. With `OriginalUri` removed by
+   the caller it is accepted, authenticated (1 to 2) and charged one native
+   check (1 to 2), and answers 200 with no `x-request-id`, while the handler
+   sees the client's unreplaced inbound `x-request-id` and no completion event
+   is emitted, because the inherited operational and observation records stay
+   in place. The residual takes two deliberate caller steps and is stated on
+   `RouterClient::request`, `TestClient::request` and in the contracts.
+   `RouterClient` lives in `batter-axum` and could detect those private
+   records itself; that would widen the `batter-oj37` contract and is left to
+   follow-up `batter-28kb`. Making Runlimit's quota stage expressible by
+   `HttpBoundary`, so its client could be a real `InProcessClient`, is
+   follow-up `batter-uskw`.
 
 Signatures are unchanged and no name is removed, so there is no hard cut and no
 deprecated shim. A rustdoc JSON comparison with
@@ -782,13 +799,17 @@ extension by type into a fresh request that also carries a caller-chosen
 principal, label and the transport's synthetic peer, one completion event for
 `/view/{id}` and one more authentication, check and handler call each. A third
 test has a handler attach a copied marker and asserts the dispatched response
-drops it and keeps its own extension. The existing `batter-axum` reused-routing
+drops it and keeps its own extension. Two more pin the documented order: a
+reused map sent to the public `/live` probe is refused without running the
+probe, which then answers a fresh request; and after drain is requested a
+fresh request receives admission's 503 while a reused map still receives the
+marked 500 refusal, with no authentication, check, handler or probe call. The existing `batter-axum` reused-routing
 route-group tests now exercise the delegated implementation through
 `InProcessClient`, and the `RouterClient` rustdoc example exercises it over a
 bare router. Negative controls were run once by hand and are not part of the
-suite: with the entry check disabled, the refusal and copied-marker tests fail
-while the accepted test passes; with marker removal disabled, the copied-marker
-test fails. Compile-fail error codes were checked with nightly rustdoc, because
+suite: with the entry check disabled, the refusal, probe, lifecycle and
+copied-marker tests fail while the accepted test passes; with marker removal
+disabled, the copied-marker test fails. Compile-fail error codes were checked with nightly rustdoc, because
 stable rustdoc does not compare them. Fresh-agent usability evaluation remains
 proposed and unexecuted.
 

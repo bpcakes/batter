@@ -1,7 +1,6 @@
 //! The explicit synthetic test transport of a prepared quota boundary.
 
 use axum::{
-    Router,
     body::Body,
     extract::{ConnectInfo, Request},
     response::Response,
@@ -35,41 +34,34 @@ use std::net::SocketAddr;
 /// ```
 #[derive(Clone)]
 pub struct TestClient {
-    client: RouterClient,
+    /// Built only by `PreparedHttp::in_process`.
+    pub(super) client: RouterClient,
 }
 
 impl TestClient {
-    /// Prepare the assembled router once, as served registration prepares it.
-    ///
-    /// `RouterClient::new` performs the `with_state(())` preparation that
-    /// `into_make_service_with_connect_info` performs when served; pinned Axum
-    /// 0.8.9 would otherwise rebuild lazily layered handler routes on every
-    /// call.
-    pub(super) fn prepare(router: Router) -> Self {
-        Self {
-            client: RouterClient::new(router),
-        }
-    }
-
     /// Dispatches with the supplied synthetic peer, replacing any request peer.
     ///
-    /// The request must be arrival-shaped, exactly as for
-    /// `batter_axum::InProcessClient::request`: its extensions may carry
-    /// application values, which reach the assembly untouched, but no Axum
-    /// routing record, namely the path-parameter record that `RawPathParams`
-    /// reads, `MatchedPath`, `NestedPath` or `OriginalUri`. Every request an
-    /// Axum `Router` dispatched carries at least one of them, so a request
-    /// built from a whole extension map cloned inside an earlier dispatch is
-    /// refused whole, and nothing is stripped. The refusal happens at entry,
-    /// before lifecycle admission, authentication, the native quota check,
-    /// public probes or any handler run, so no quota is consumed and no
-    /// completion event or `x-request-id` header is produced. It returns
-    /// `batter_axum::render_infrastructure_failure(HttpFailure::Internal,
-    /// None)` carrying the `batter_axum::ReusedRoutingState` response
-    /// extension, and emits one ERROR event with a fixed message and no
-    /// request-derived field. That marker is removed from every dispatched
-    /// response, so a returned response carries it only when this call
-    /// refused the request.
+    /// The request must be arrival-shaped. The entry contract is
+    /// `batter_axum::low_level::RouterClient::request`, the one that
+    /// `batter_axum::InProcessClient::request` also delegates to, which lists
+    /// the detected Axum routing records and the refusal: a request built
+    /// from a whole extension map cloned inside an earlier dispatch is
+    /// refused whole, nothing is stripped, and the response carries the
+    /// `batter_axum::ReusedRoutingState` marker; a dispatched response never
+    /// does. Here that refusal happens at entry, before lifecycle admission,
+    /// authentication, the native quota check, public probes or any handler
+    /// run, so it consumes no quota and has no completion event or
+    /// `x-request-id` header. Application extensions reach the assembly
+    /// untouched.
+    ///
+    /// The check covers Axum routing records only. A map that carries this
+    /// boundary's own observation and operational records but no detected
+    /// Axum record, such as one captured in a protected custom fallback for an
+    /// `OPTIONS *` request after the caller removed its `OriginalUri`, is not
+    /// refused: it is authenticated and charged by the native quota check
+    /// like a fresh request, yet answered without a fresh `x-request-id`,
+    /// with the client's inbound `x-request-id` unreplaced and without a
+    /// completion event.
     ///
     /// Migration: build a fresh request and copy each application extension
     /// by type instead of the whole map:

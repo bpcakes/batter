@@ -412,8 +412,9 @@ Deliberately caller-ordered composition lives in `batter_axum::low_level`
 `observe_http`, `request_admission`, `request_scope`, `operational_http`,
 `operational_http_with_quota`, `readiness`, `liveness`,
 `dependency_readiness`, `register_http`, `register_http_in` and
-`register_http_with_connect_info_in` have no crate-root aliases. Importing one
-from the root does not compile. Policy and value types, `AdmittedRequest`,
+`register_http_with_connect_info_in` have no crate-root aliases, and neither
+has `RouterClient`, the in-process transport over a caller-composed router.
+Importing one from the root does not compile. Policy and value types, `AdmittedRequest`,
 `CorrelationId`, `render_infrastructure_failure`, `readiness_status`,
 `default_readiness_level`, the `browser` primitives and `quota_observation`
 keep their existing supported paths, because the canonical path uses them too.

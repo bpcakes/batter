@@ -1034,7 +1034,12 @@ with the sanitized `HttpFailure::Internal` response carrying
 `ReusedRoutingState`, one static ERROR event, no completion event and no
 consumed quota. The marker is removed from every dispatched response.
 Application extensions reach the assembly untouched, and the synthetic peer
-still replaces any `ConnectInfo` the request carried. Probe routes
+still replaces any `ConnectInfo` the request carried. The check detects Axum
+routing records only: a map captured in a protected custom fallback for an
+`OPTIONS *` request, with its `OriginalUri` removed by the caller, is
+authenticated and charged like a fresh request but keeps the earlier
+observation and operational records, so it gets no fresh correlation and no
+completion event ([residual](guarantees.md#native-quota-execution)). Probe routes
 are explicitly unguarded. All routes, probes and fallback are covered by one root
 observer with fresh server correlation. Opt-in
 `low_level::operational_http_with_quota` retains

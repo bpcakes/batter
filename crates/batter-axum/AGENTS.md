@@ -235,7 +235,7 @@ comparison. Apply `low_level::observe_http` after
 assembling routes/fallback; use `low_level::request_admission` inside it. If
 generated correlation is required, `low_level::operational_http` must be outside
 admission, `request_scope`, deadlines, authentication and any other
-short-circuiting middleware. Keep the eleven relocated helpers out of the crate
+short-circuiting middleware. Keep the eleven relocated helpers and `RouterClient` out of the crate
 root: a root alias would make a known-invalid composition look equivalent to the
 protected path, which ADR-010 forbids. `AssembledHttp` must keep exactly two
 outcomes, and `InProcessClient` must keep its router private, implement no Tower
