@@ -88,7 +88,8 @@ Windows support and non-Unix fallbacks are out of scope.
   Its private operational marker carries the generated identity that admission
   records. Its private `renderer_parts` filter removes quota, observation and
   operational ownership state and the admission record at every application
-  renderer boundary, retaining public metadata.
+  renderer boundary, retaining public metadata. Its `carries_private_record`
+  predicate names the same records for the in-process entry check.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
   `low_level::operational_http_with_quota`; its consuming start/finish states prevent terminal
   facts from being downgraded. Native quota execution belongs in batter-runlimit.
@@ -142,6 +143,12 @@ Windows support and non-Unix fallbacks are out of scope.
   arrival-shaped requests with application extensions, a copied or forwarded
   refusal marker removed from a dispatched response, the copy-by-type
   migration and nested captures accumulating inside one dispatch.
+  `reused_request_state.rs` covers the refusal of a map that keeps only the
+  boundary's own records, of maps captured behind `low_level` wrappers around
+  a service that is not a `Router`, and of a live request an outer router
+  forwards, with the rebuilt request it must send instead and a copied public
+  `CorrelationId` that is not refused; `src/correlation/tests.rs` and
+  `src/observation/tests.rs` cover each private record alone.
   The pattern unit tests also compare the parser with Axum's own route
   registration, and the declared-pattern index with native routing.
 - `benches/declared_dispatch.rs` measures in-process request cost through
@@ -250,7 +257,15 @@ records: the path-parameter record read through `RawPathParams` (any result
 except `MissingPathParams`, so a new rejection fails closed), `MatchedPath`,
 `NestedPath` or `OriginalUri`. Use only public Axum and `http` APIs for that
 check: no private-layout tricks, no length heuristics, no stripping or repair,
-and no second entry point or `Result` variant. The refusal is
+and no second entry point or `Result` variant. Refuse the same way a request
+carrying one of the crate's own private request records, through
+`correlation::carries_private_record`: the quota record, the observation state,
+the operational wrapper's marker, the admission record and the browser
+credential record. Keep that list identical to the one `renderer_parts`
+removes, add a new private request record to both, and never add a public type
+to it: a public value is a caller's choice. Keep refusing a live request that
+an outer Axum router forwards; the client is not a service to mount behind a
+router. The refusal is
 `render_infrastructure_failure(HttpFailure::Internal, None)` with the
 `ReusedRoutingState` response extension, which has no public constructor or
 field, plus one static ERROR event with no request-derived field; it has no
@@ -262,7 +277,8 @@ Application extensions such as
 `ConnectInfo` stay accepted untouched. Recheck that every Router-dispatched map
 still carries a detected record, and that Axum's private nested matched-path
 record is still written only with the path-parameter record, whenever the
-Axum or `http` pin changes. The check, the refusal and the marker removal
+Axum or `http` pin changes; they are verified for Axum 0.8.9 only, and the
+dependency requirement admits later 0.8 releases. The check, the refusal and the marker removal
 live once, in `low_level::RouterClient::request`; `InProcessClient::request`
 delegates to it, and so does every other in-process transport in this
 workspace, including `batter_runlimit::http::TestClient`. Wrappers that hold an

@@ -61,9 +61,9 @@ does, so it accepts only arrival-shaped requests: a request built from a whole
 extension map cloned inside an earlier dispatch is refused at entry, before
 admission, authentication or the quota check, with the `ReusedRoutingState`
 response marker. Copy application extensions into a fresh request by type
-instead. The check detects Axum routing records only; a map that keeps
-Batter's own records after the caller strips its only Axum record is still
-authenticated and charged, as the `TestClient::request` rustdoc describes. See the
+instead. The check also detects the adapter's own private request records, so
+a map that keeps them after the caller strips its only Axum record is refused
+before authentication and the quota check as well. See the
 [facade compiling example](../batter/examples/quota_service.rs), [API docs](src/http.rs) and
 [integration contract](../../docs/integrations.md#runlimit-optional-protected-native-quota-adapter).
 

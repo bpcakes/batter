@@ -84,3 +84,20 @@ fn cancelled_observation_keeps_destruction_under_the_owning_dispatch() {
     assert!(!text.contains("status="), "{text}");
     assert!(other.text().is_empty());
 }
+
+#[test]
+fn an_observation_state_alone_is_a_private_record_the_entry_check_refuses() {
+    let mut extensions = axum::http::Extensions::new();
+    assert!(!crate::correlation::carries_private_record(&extensions));
+    extensions.insert(ObservationState::new(None, None));
+    assert!(crate::correlation::carries_private_record(&extensions));
+    let (parts, ()) = {
+        let mut request = Request::new(());
+        *request.extensions_mut() = extensions;
+        request.into_parts()
+    };
+    let filtered = crate::correlation::renderer_parts(parts);
+    assert!(!crate::correlation::carries_private_record(
+        &filtered.extensions
+    ));
+}

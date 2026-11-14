@@ -115,3 +115,10 @@ pub fn assert_not_private(headers: &HeaderMap) {
         "{headers:?}"
     );
 }
+
+/// The completion events in captured log output.
+pub fn completions(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.contains("HTTP response boundary finished"))
+        .collect()
+}

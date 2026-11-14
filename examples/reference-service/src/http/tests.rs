@@ -707,6 +707,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
 }
 
 mod admission_order;
+mod reused_request;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RequestHeaders {

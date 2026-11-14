@@ -116,6 +116,11 @@ impl Fixture {
         self.captured(get_request(path)).await
     }
 
+    /// Requests that reached the application's own layer so far.
+    pub fn entered(&self) -> usize {
+        count(&self.entered)
+    }
+
     /// Send `request`, which the client must refuse before any application
     /// layer or handler runs.
     pub async fn assert_refused(&self, request: Request) {
@@ -347,7 +352,7 @@ fn a_refusal_emits_one_error_and_no_completion_or_request_fields() {
     );
     assert!(
         text.contains(
-            "in-process request refused: its extensions carry routing state from an earlier dispatch"
+            "in-process request refused: its extensions carry state from an earlier dispatch"
         ),
         "{text}"
     );

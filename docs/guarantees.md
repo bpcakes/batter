@@ -91,15 +91,13 @@ it consumes no quota and has no completion event. The refusal and its
 Without the check, a whole extension map cloned inside an earlier protected
 handler would be authenticated and charged one quota unit before `Path`
 extraction failed with the inherited captures, and the inherited observation
-state would suppress the completion event. The check detects Axum routing
-records only, so the HTTP boundary's residual applies here with a cost: a map
-captured in a protected custom fallback for a request no pattern matched, such
-as `OPTIONS *`, carries only `OriginalUri` among the detected records, and once
-the caller removes it the request is not refused. It is authenticated and
-charged one native quota check like a fresh request, but answered without a
-fresh `x-request-id`, with the client's inbound `x-request-id` unreplaced and
-without a completion event, because the inherited observation and operational
-records stay in place. Retained bounded quota facts survive outer
+state would suppress the completion event. The check also detects the
+adapter's own private request records: a map captured in a protected custom
+fallback for a request no pattern matched, such as `OPTIONS *`, carries only
+`OriginalUri` among the Axum records, and with that removed by the caller it
+is still refused, before authentication and with no quota consumed, because it
+carries the earlier request's observation and operational records. Retained
+bounded quota facts survive outer
 timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.
@@ -2425,9 +2423,17 @@ future destroyed, inside the caller's task under the boundary's existing
 dispatch and observation ownership, with nothing spawned, so dropping a
 `request` future drops the boundary's future as a dropped connection would. A
 request may carry explicitly inserted synthetic extensions, such as a chosen
-`ConnectInfo`; choosing them and their meaning belongs to the caller, and this
-constrains direct API conversions, not an application's own transport wrapper or
-remote peer authenticity. The client accepts only an arrival-shaped request:
+`ConnectInfo`; choosing them and their meaning belongs to the caller, and the
+sealed conversions constrain direct API conversions, not remote peer
+authenticity or what an application's own wrapper puts around the client. A
+wrapper is still bound by the entry check below: one that hands the client a
+live request another Axum router dispatched, from a route, fallback or
+`nest_service` closure, is refused on every request, because that request
+carries the outer router's records; it must build a fresh request from the
+arrival's method, target, headers and body and copy application extensions by
+type. Axum's routing records are the exception to caller-chosen extensions:
+the client cannot tell a hand-inserted `OriginalUri` from an inherited one and
+refuses both. The client accepts only an arrival-shaped request:
 at entry, before the router, any layer or any application code is polled, it
 refuses the whole request when its extensions carry any public Axum routing
 record, namely the path-parameter record that `RawPathParams` reads (any
@@ -2439,7 +2445,13 @@ route, a path fallback or a `nest_service` service (a path no pattern matches,
 such as `*`, reaches the catch-all fallback with `OriginalUri` alone), and
 writes its private nested matched-path record only in the same routing step as
 the path-parameter record, so a whole extension map cloned from a dispatched
-request always carries a detected record. Nothing is stripped or repaired. A refusal returns
+request always carries a detected record. These facts are verified against
+Axum 0.8.9 only; the crate's dependency requirement also admits later 0.8
+releases, for which detection is unverified. The same refusal applies when the
+extensions carry one of the adapter's own private request records, which only
+its layers write and no other crate can name or build: the observation state,
+the operational wrapper's marker, the admission record, the browser credential
+record or the quota record. Nothing is stripped or repaired. A refusal returns
 `render_infrastructure_failure(HttpFailure::Internal, None)` carrying the
 `ReusedRoutingState` response extension, which has no public constructor or
 field, and emits one ERROR event with a fixed message and no request-derived
@@ -2459,12 +2471,14 @@ Batter observation and operational state suppress the destination's request
 span and completion event. Axum keeps the path-parameter and nested
 matched-path records private and `http` 1.5.0 `Extensions` has no iteration or
 retain, so individual records cannot be reset while keeping unknown application
-extensions. A map can still carry Batter's private records with no detected
-Axum record: one captured behind a `low_level` wrapper around a service that is
-not a `Router`, or the map of a dispatch no pattern matched, whose only Axum
-record is the public `OriginalUri`, after the application removed that record.
-Clearing Batter's private records is not part of this check, so that residual
-is not addressed. The check, the refusal and the marker removal are
+extensions. A map that carries Batter's private records with no Axum record
+left, such as one captured behind a `low_level` wrapper around a service that
+is not a `Router`, or the map of a dispatch no pattern matched after the
+application removed its `OriginalUri`, is refused by the private-record check.
+Public values a caller copies by type, such as a `CorrelationId`, are not
+refused; the boundary generates its own identity. The status and body of a
+refusal are those of any sanitized internal failure, so only the marker
+identifies one. The check, the refusal and the marker removal are
 implemented once, in `low_level::RouterClient::request`, which
 `InProcessClient::request` delegates to. `RouterClient` is the lower-level
 in-process transport over a caller-composed router: it adds the same one-time

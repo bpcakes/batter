@@ -5,7 +5,7 @@
 use super::{
     capture::Capture,
     reused_routing::{Fixture, Label, REFUSAL_BODY, get_request, reusing},
-    support::{SECOND, body_text, count, ready_handle, request_policy},
+    support::{SECOND, body_text, completions, count, ready_handle, request_policy},
 };
 use axum::{
     Router,
@@ -17,12 +17,6 @@ use axum::{
 use batter_axum::{CorrelationId, GuardedRouter, HttpBoundary, ReusedRoutingState, RouteInventory};
 use std::net::SocketAddr;
 use tracing::instrument::WithSubscriber;
-
-fn completions(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter(|line| line.contains("HTTP response boundary finished"))
-        .collect()
-}
 
 #[tokio::test]
 async fn a_fresh_request_keeps_its_application_extensions() {
