@@ -19,8 +19,9 @@ contracts, capability facts and validation history.
   `duration_ms` and `body_outcome`. A bound or forced cancellation truncates
   the message visibly, except to an HTTP/1.0 peer receiving a body without a
   declared length, which Hyper delimits by closing the connection; both bounds
-  are checked before a frame is accepted, so a frame ready only after its wait
-  expired does not extend the body. A body whose source produced its whole
+  are checked before a frame is accepted, including after a poll that
+  outlasted them, so a frame ready or returned only after its wait expired
+  does not extend the body. A body whose source produced its whole
   message is `completed` even when Hyper never polls for its end: after its
   advertised `Content-Length` or exact size, taken from the response request
   admission returns however the handler built it, or after trailers; one that ends, reports its end or
@@ -87,8 +88,10 @@ contracts, capability facts and validation history.
   drops its capture, and skipping drops it too. `SkippedCleanup` now says so.
   No type or behavior changes (`batter-9wig.4`).
 - Document what a skipped `batter_sqlx::pool_in` close leaves on the server:
-  sessions end when their sockets close, without a Terminate message, and
-  PostgreSQL rolls back open transactions. Source reading against PostgreSQL 18
+  sessions dropped with the last pool handle, or at process exit, end when
+  their sockets close, without a Terminate message, and PostgreSQL rolls back
+  open transactions; a surviving handle's pool still closes idle or expired
+  connections gracefully. Source reading against PostgreSQL 18
   and SQLx 0.9.0, not a live observation (`batter-9wig.5`).
 - Add `ShutdownSignal::abort_deadline` and `RunningComponent::abort_deadline`:
   the stop time plus the supervisor's drain and cancel allowances, `None`

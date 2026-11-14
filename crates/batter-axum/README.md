@@ -315,8 +315,9 @@ without a declared length ends when the connection closes, so that peer
 cannot tell the library's truncation from the message's end. Declare a
 `Content-Length` where an HTTP/1.0 peer, such as a proxy speaking HTTP/1.0
 upstream, must detect it. Both bounds
-are checked before a frame is accepted, so a frame that became ready only after
-its wait expired does not extend the body. The body is
+are checked before and after each poll of the source, so a frame that became
+ready, or that a poll outlasting the bound returned, only after its wait
+expired does not extend the body. The body is
 polled, asked for its end and size, and destroyed under the tracing dispatcher
 and request span of the handler that handed it over, on whichever task asks;
 its completion event and the span's release stay with the subscriber that

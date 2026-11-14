@@ -9,12 +9,13 @@ use axum::{
 use batter_axum::{AdmittedRequest, BodyBudget, GuardedRouter};
 use batter_core::{ConfigurationError, operation::Interruption};
 use futures_util::stream;
+use http_body::Frame;
 use std::{
     convert::Infallible,
     future::poll_fn,
     pin::Pin,
     sync::{Arc, Mutex},
-    task::Poll,
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::{sync::mpsc, time::Instant};
@@ -157,6 +158,82 @@ fn a_frame_ready_only_after_the_idle_bound_expired_is_not_accepted() {
     assert_eq!(source, "response body ended: idle_timeout");
     let event = assert_finished(&capture, "WARN", "idle_timeout");
     assert!(event.contains("bytes=0"), "{event}");
+}
+
+/// Answers its first poll with a frame and its second with `Pending`, waking
+/// itself at once; its third poll blocks the task for `blocks` before
+/// answering with another frame, as synchronous work inside a poll may.
+struct SlowToAnswer {
+    polls: u8,
+    blocks: Duration,
+}
+
+impl HttpBody for SlowToAnswer {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        self.polls += 1;
+        match self.polls {
+            1 => Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"first;"))))),
+            2 => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            3 => {
+                std::thread::sleep(self.blocks);
+                Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"late;")))))
+            }
+            _ => Poll::Pending,
+        }
+    }
+}
+
+/// The bounds are checked again once the source answers: a frame returned by
+/// a poll that began inside the armed wait but outlasted the idle bound, or
+/// the total bound, is not accepted. On real time, because a paused clock
+/// cannot move during a poll.
+#[test]
+fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
+    let blocks = Duration::from_millis(400);
+    for (total, outcome) in [(60_000, "idle_timeout"), (200, "deadline_exceeded")] {
+        let capture = Capture::new();
+        let escaped = Escaped::default();
+        let (frames, error, _) = capture.block_on({
+            let escaped = escaped.clone();
+            async move {
+                let handle = ready();
+                let app = client(
+                    &handle,
+                    GuardedRouter::new().route(
+                        "/",
+                        route(move |admitted: AdmittedRequest| async move {
+                            let budget = BodyBudget::new(
+                                Duration::from_millis(total),
+                                Duration::from_millis(200),
+                            )
+                            .unwrap();
+                            admitted.into_streaming_response(budget, move |scope| {
+                                escaped.keep(scope.context());
+                                Body::new(SlowToAnswer { polls: 0, blocks })
+                            })
+                        }),
+                    ),
+                )
+                .await;
+                let mut response = get(&app, "/").await;
+                until_error(response.body_mut()).await
+            }
+        });
+        assert_eq!(frames, 1, "{outcome}");
+        assert_eq!(error, format!("response body ended: {outcome}"));
+        assert!(escaped.context().check().is_err());
+        let event = assert_finished(&capture, "WARN", outcome);
+        assert!(event.contains("bytes=6"), "{event}");
+    }
 }
 
 #[test]

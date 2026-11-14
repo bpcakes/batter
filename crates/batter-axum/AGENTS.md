@@ -252,7 +252,8 @@ claim truncation is visible to an HTTP/1.0 peer for a body without a declared
 length: Hyper delimits it by closing the connection. The observer publishes the request span
 in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
-bounds before each frame and
+bounds before each poll of the source and again before accepting the frame or
+end it returned, since a poll can outlast them, and
 register for forced cancellation and the nearer bound only when the source is
 pending. End a library-ended body with an error, never `None`. Poll, query and
 destroy the application's body under the dispatcher current at the hand-over;

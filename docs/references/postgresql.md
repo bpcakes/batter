@@ -25,10 +25,16 @@ finalizer is skipped instead of awaited:
   and returns permits to a parent pool. A dropped pool handle therefore closes
   nothing while another handle exists; dropping the last one drops the idle
   connections, which closes their sockets without Terminate.
+- While a handle survives, SQLx keeps maintaining the pool: its reaper closes an
+  idle connection past `idle_timeout` or one past `max_lifetime`
+  (`sqlx-core` `src/pool/inner.rs:548-554`; both enabled by default,
+  `src/pool/options.rs:161-162`) through the native close, which sends
+  Terminate (`sqlx-postgres` `src/connection/mod.rs:162-169`).
 
 So a skipped close does not leave sessions the server cannot end: each backend
 exits when its socket closes, at the latest when the process does, and rolls
-back an open transaction. What is lost is the Terminate message, the wait for
+back an open transaction. What is lost is the Terminate message for
+connections dropped rather than closed by a surviving pool, the wait for
 checked-out connections to return, and any bound on how long handles held by
 surviving tasks keep sessions open. This is source reading; no live server
 observed `pg_stat_activity` after a skipped close.

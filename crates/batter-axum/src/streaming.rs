@@ -186,8 +186,8 @@ impl AdmittedRequest {
     ///   admission, so a body that begins during drain is not refused.
     /// - A wait for the next frame longer than `budget`'s idle bound, the total
     ///   bound and forced cancellation each end the body with an error. Both
-    ///   bounds are checked before a frame is accepted, so a frame that became
-    ///   ready only after its wait expired does not extend the body. The peer
+    ///   bounds are checked before and after each poll of the source, so a frame
+    ///   ready or returned only after its wait expired is never accepted. The peer
     ///   sees a truncated message, never a final chunk it could mistake for a
     ///   complete one, except over HTTP/1.0: Hyper answers an HTTP/1.0 request
     ///   in HTTP/1.0, where a body without a declared length ends when the
@@ -647,6 +647,15 @@ impl OwnedBody {
         Poll::Ready(Some(Err(axum::Error::new(BodyInterrupted(end)))))
     }
 
+    /// The bound that has already ended the body, if any: cancellation, the
+    /// total deadline, or an armed idle wait that expired.
+    fn overdue(&self) -> Option<BodyEnd> {
+        match self.owner.context().check() {
+            Err(reason) => Some(BodyEnd::interrupted(reason)),
+            Ok(()) => self.wake.as_ref().and_then(Wake::due),
+        }
+    }
+
     /// Register this task for forced cancellation and the nearer of the idle
     /// and total bounds, ending the body if either is already due.
     fn wait(&mut self, cx: &mut Context<'_>) -> Option<BodyEnd> {
@@ -695,10 +704,7 @@ impl HttpBody for OwnedBody {
         }
         // A source that is always ready must not outrun its bounds, and one
         // that became ready after its armed wait expired is not accepted.
-        if let Err(reason) = this.owner.context().check() {
-            return this.interrupt(BodyEnd::interrupted(reason));
-        }
-        if let Some(end) = this.wake.as_ref().and_then(Wake::due) {
+        if let Some(end) = this.overdue() {
             return this.interrupt(end);
         }
         let Some(inner) = this.inner.as_mut() else {
@@ -710,6 +716,11 @@ impl HttpBody for OwnedBody {
             Pin::new(inner).poll_frame(cx)
         });
         this.polling = false;
+        // Nor is a frame or end the source returned from a poll that outlasted
+        // a bound: the check above ran before that poll started.
+        if let (Poll::Ready(Some(Ok(_)) | None), Some(end)) = (&polled, this.overdue()) {
+            return this.interrupt(end);
+        }
         match polled {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(data) = frame.data_ref() {

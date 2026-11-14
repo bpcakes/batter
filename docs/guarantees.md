@@ -1782,11 +1782,13 @@ start native minimum-connection maintenance during construction; constructor
 panics and runtime death remain native limits. Dependent work must be joined and
 checked-out connections released before successful cleanup can be expected.
 When cleanup is skipped, the registered close is not awaited: the finalizer's
-pool handle is dropped, which closes nothing while another handle exists. Each
-server session then ends when its socket closes, at the latest at process exit,
-without a Terminate message, and PostgreSQL rolls back an open transaction; a
-statement already running outside a transaction block may still commit. Handles
-kept by surviving tasks keep their sessions for as long as those tasks live.
+pool handle is dropped, which closes nothing while another handle exists. A
+session whose connection is dropped with the last handle, or at process exit,
+ends when its socket closes, without a Terminate message, and PostgreSQL rolls
+back an open transaction; a statement already running outside a transaction
+block may still commit. Handles kept by surviving tasks keep their sessions for
+as long as those tasks live, and their pool's maintenance still closes idle or
+expired connections gracefully, with Terminate.
 This follows from the PostgreSQL 18 protocol text and the resolved SQLx source
 ([references](references.md#postgresql-execution-managed-objects-and-verification));
 it is unverified against a live server.
@@ -2624,8 +2626,10 @@ content ends at its first poll, truncated, and every refused start is reported
 `is_end_stream` and never polls. `BodyBudget` requires a positive total and a
 positive idle bound no longer than it. The library enforces both without the stream's
 cooperation: the total bound and an armed idle wait are checked before every
-frame, so an always-ready source cannot outrun them and a frame that became
-ready only after its wait expired does not extend the body, and a pending body
+poll of the source and again before what it returned is accepted, so an
+always-ready source cannot outrun them and a frame that became ready, or that a
+poll outlasting the bound returned, only after its wait expired does not extend
+the body, and a pending body
 registers for forced cancellation and the nearer bound. The idle wait starts at
 the body's first pending poll after a frame, so time the transport spends not
 polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
@@ -2698,7 +2702,8 @@ metric is recorded for bodies.
 [In-process tests](../crates/batter-axum/tests/streaming/) on a paused clock
 cover steps that run after the handler returned beside the unowned control,
 the escaped context, both bounds and their restart on each frame, a frame ready
-only after its idle wait expired, an always-ready source, a parked frame woken by forced cancellation, drain as the
+only after its idle wait expired, a frame returned on real time by a poll that
+outlasted the idle or the total bound, an always-ready source, a parked frame woken by forced cancellation, drain as the
 stream's choice, a body started during drain, a stream error, a builder
 panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
@@ -2758,7 +2763,8 @@ its rebuilt-response half, and letting a refused start hand over its framing
 failed the refused-start framing case. On 2026-11-14, dropping the 204 or the
 CONNECT arm of the no-body framing rule failed the corresponding no-body case,
 and dropping the one-year ceiling on the total failed the budget validation
-test.
+test. Later that day, removing the bound check after the source's poll failed
+the outlasting-poll case for the idle and the total bound alike.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
