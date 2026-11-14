@@ -412,8 +412,9 @@ Deliberately caller-ordered composition lives in `batter_axum::low_level`
 `observe_http`, `request_admission`, `request_scope`, `operational_http`,
 `operational_http_with_quota`, `readiness`, `liveness`,
 `dependency_readiness`, `register_http`, `register_http_in` and
-`register_http_with_connect_info_in` have no crate-root aliases. Importing one
-from the root does not compile. Policy and value types, `AdmittedRequest`,
+`register_http_with_connect_info_in` have no crate-root aliases, and neither
+has `RouterClient`, the in-process transport over a caller-composed router.
+Importing one from the root does not compile. Policy and value types, `AdmittedRequest`,
 `CorrelationId`, `render_infrastructure_failure`, `readiness_status`,
 `default_readiness_level`, the `browser` primitives and `quota_observation`
 keep their existing supported paths, because the canonical path uses them too.
@@ -638,6 +639,15 @@ Axum keeps the path-parameter and nested matched-path records private and
 `http` 1.5.0 `Extensions` cannot be iterated or filtered, so no supported API
 resets routing state while keeping unknown application extensions; the check
 is rechecked whenever either pin changes.
+
+The check lives in `low_level::RouterClient`, the in-process transport over a
+caller-composed router, and `InProcessClient` delegates to it. A composition
+that `HttpBoundary` cannot express, such as Runlimit's authenticated quota
+assembly, gets the same one-time preparation, entry refusal, `ReusedRoutingState`
+marker and marker removal by holding a `RouterClient`; `batter_runlimit::http::TestClient`
+does. `RouterClient` establishes nothing about the router it dispatches, has no
+crate-root alias and cannot become an `InProcessClient`, so it never stands in
+for the protected client.
 
 An in-process response establishes response construction only. It is not
 evidence of serving, an accepted connection, a listener, a TLS handshake, a

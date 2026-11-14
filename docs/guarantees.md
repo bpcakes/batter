@@ -80,7 +80,26 @@ handler extractor only after authentication. Applications must extract that
 type for authority; raw `Extension<P>` remains unrelated application metadata.
 It uses the transport peer, never forwarding headers. The opaque prepared service
 installs native peer metadata and exactly one observer across assembled business
-routes, public probes and fallback. Retained bounded quota facts survive outer
+routes, public probes and fallback. Its explicit `in_process` test transport
+supplies a caller-chosen synthetic peer and dispatches through the Axum
+adapter's `low_level::RouterClient`, so it accepts only an arrival-shaped
+request: one whose extensions carry an Axum routing record from an earlier
+dispatch is refused whole at entry, before lifecycle admission,
+authentication, the native quota check, a public probe or a handler runs, so
+it consumes no quota and has no completion event. The refusal and its
+`ReusedRoutingState` marker are the [HTTP boundary](#http-boundary) client's.
+Without the check, a whole extension map cloned inside an earlier protected
+handler would be authenticated and charged one quota unit before `Path`
+extraction failed with the inherited captures, and the inherited observation
+state would suppress the completion event. The check detects Axum routing
+records only, so the HTTP boundary's residual applies here with a cost: a map
+captured in a protected custom fallback for a request no pattern matched, such
+as `OPTIONS *`, carries only `OriginalUri` among the detected records, and once
+the caller removes it the request is not refused. It is authenticated and
+charged one native quota check like a fresh request, but answered without a
+fresh `x-request-id`, with the client's inbound `x-request-id` unreplaced and
+without a completion event, because the inherited observation and operational
+records stay in place. Retained bounded quota facts survive outer
 timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.
@@ -2445,9 +2464,15 @@ Axum record: one captured behind a `low_level` wrapper around a service that is
 not a `Router`, or the map of a dispatch no pattern matched, whose only Axum
 record is the public `OriginalUri`, after the application removed that record.
 Clearing Batter's private records is not part of this check, so that residual
-is not addressed. Wrappers that hold an
-`InProcessClient`, such as the reference service's request client, inherit the
-refusal by delegating to it. An in-process response establishes response
+is not addressed. The check, the refusal and the marker removal are
+implemented once, in `low_level::RouterClient::request`, which
+`InProcessClient::request` delegates to. `RouterClient` is the lower-level
+in-process transport over a caller-composed router: it adds the same one-time
+preparation and entry contract and establishes nothing about the router's
+composition, has no crate-root alias, and has no conversion into an
+`InProcessClient` (compile-fail controls). Wrappers that hold either client,
+such as the reference service's request client and
+`batter_runlimit::http::TestClient`, inherit the refusal by delegating to it. An in-process response establishes response
 construction only: it is not evidence of serving, an accepted connection, a
 listener, a TLS handshake, a remote peer, body streaming or a stopped detached
 descendant. Because the boundary's own observer is outermost and the plain

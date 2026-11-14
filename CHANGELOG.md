@@ -8,6 +8,54 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Refuse reused Axum routing state in Runlimit's in-process test transport
+  (`batter-gp93`;
+  [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
+  `batter_runlimit::http::PreparedHttp::in_process` returned a `TestClient`
+  that dispatched its own prepared router, so it did not inherit the
+  `InProcessClient` entry check below. A request built from a whole extension
+  map cloned inside an earlier protected handler was authenticated and charged
+  one native quota unit before `Path<u64>` answered 500 with the inherited
+  captures, and inherited observation state suppressed its completion event.
+  The check, the refusal and the marker removal now live once, in the new
+  `batter_axum::low_level::RouterClient` (also
+  `batter::axum::low_level::RouterClient`), an in-process transport over a
+  caller-composed router that prepares it once with `Router::with_state(())`.
+  `InProcessClient` and `TestClient` both delegate to it. `TestClient::request`
+  still replaces the request's peer with the synthetic one, then refuses such a
+  request at entry, before lifecycle admission, authentication, the quota
+  check, a public probe or any handler: the response is
+  `render_infrastructure_failure(HttpFailure::Internal, None)` carrying
+  `ReusedRoutingState`, with one static ERROR event, no completion event, no
+  `x-request-id` header and no consumed quota. The marker is removed from every
+  dispatched response. The check still detects Axum routing records only: a
+  map that keeps Batter's own observation and operational records after the
+  caller removes its only detected record (the `OriginalUri` of an
+  `OPTIONS *` dispatch) is authenticated and charged, but gets no fresh
+  correlation and no completion event; that residual is documented, not
+  closed. `RouterClient` establishes nothing about its router's
+  composition, has no crate-root alias and has no conversion into
+  `InProcessClient` or back into a `Router`. The change adds `RouterClient` and removes no name, so it
+  needs no deprecated shim; public signatures are unchanged.
+  `batter-runlimit` no longer declares `tower` as a normal dependency; its
+  `axum` feature still selects Axum, which depends on it. Behavior change: a
+  `TestClient` request whose extension map came from a dispatched request is
+  now refused.
+
+  ```rust,ignore
+  // Before: the whole map of an earlier dispatch, including its routing records.
+  let mut next = Request::builder().method("POST").uri("/view/9").body(Body::empty())?;
+  *next.extensions_mut() = earlier.clone();
+  let response = client.request(next, peer).await; // now refused: ReusedRoutingState
+
+  // After: a fresh request with each application extension copied by type.
+  let mut next = Request::builder().method("POST").uri("/view/9").body(Body::empty())?;
+  if let Some(label) = earlier.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  let response = client.request(next, peer).await;
+  ```
+
 - Refuse `batter-axum` in-process requests that reuse Axum routing state
   (`batter-oj37`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-routing-state-reuse-assessment-batter-oj37)).
@@ -29,10 +77,11 @@ contracts, capability facts and validation history.
   extension from every response it dispatched, so a marker a handler copied
   or forwarded never leaves `request`. Application extensions such
   as `ConnectInfo` are still accepted untouched. The reference service's
-  request client inherits the refusal by delegating;
-  `batter_runlimit::http::TestClient` dispatches its own router and is
-  unchanged. Public signatures are unchanged. Behavior change: a request whose
-  extension map came from a dispatched request is now refused.
+  request client inherits the refusal by delegating, and
+  `batter_runlimit::http::TestClient` shares it through
+  `low_level::RouterClient` (entry above). Public signatures are unchanged.
+  Behavior change: a request whose extension map came from a dispatched
+  request is now refused.
 
   ```rust,ignore
   // Before: the whole map of an earlier dispatch, including its routing records.

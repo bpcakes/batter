@@ -185,7 +185,9 @@ with guarded root/nested fallbacks; assembly is sealed, so `AssembledHttp` is
 consumed only into protected registration or `boundary/client.rs`'s opaque
 `InProcessClient`; `low_level.rs` is the only path to the deliberately
 caller-ordered middleware and registration helpers, which have no crate-root
-alias; `admitted.rs` owns the privately recorded
+alias, and to `low_level/router_client.rs`'s `RouterClient`, the in-process
+transport over a caller-composed router that owns the arrival-shaped entry
+check `InProcessClient` and Runlimit's `TestClient` delegate to; `admitted.rs` owns the privately recorded
 `AdmittedRequest` that guarded handlers extract instead of raw extensions;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics, and the
@@ -212,7 +214,8 @@ Its `native` module reexports `runledger-core`, `runledger-postgres`,
 `runledger-runtime` and, behind `test-support`, `runledger-test-support`, as the
 native packages themselves; `register_in` remains the protected path.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
-`http.rs` owns authenticated quota-before-body assembly; `maintenance.rs` owns the
+`http.rs` owns authenticated quota-before-body assembly and
+`http/test_client.rs` its `RouterClient`-backed test transport; `maintenance.rs` owns the
 supervised PostgreSQL limiter construction that registers native expiry cleanup as
 a periodic component. Native policy, storage, transactions, PostgreSQL
 initialization and the cleanup statements themselves remain owned by the distinct

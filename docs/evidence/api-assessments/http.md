@@ -664,7 +664,9 @@ the caller chose; an upstream reset facility does not exist at the pinned
 versions. Wrappers that hold an `InProcessClient`, such as the reference
 service's request client, inherit the refusal by delegating to it.
 `batter_runlimit::http::TestClient` does not wrap `InProcessClient`: it
-dispatches its own prepared router, so it does not inherit this check.
+dispatches its own prepared router, so it does not inherit this check
+(follow-up `batter-gp93`, since resolved by the
+[Runlimit in-process assessment](#runlimit-in-process-routing-state-assessment-batter-gp93)).
 
 Evidence: route-group tests capture maps from a captured route, a nested route,
 an invalid UTF-8 capture, a path fallback, the catch-all fallback and a native
@@ -693,6 +695,129 @@ public `OriginalUri`, which an application can remove. Clearing Batter's
 private records stays outside this change, so neither is addressed.
 Fresh-agent usability evaluation of the refusal and migration remains proposed
 and unexecuted.
+
+## Runlimit in-process routing state assessment (`batter-gp93`)
+
+`batter_runlimit::http::PreparedHttp::in_process` returned a `TestClient` that
+held its own prepared router and dispatched `router.clone().oneshot(request)`.
+It did not wrap `InProcessClient`, so the `batter-oj37` entry check above did
+not apply to it. Reproduced through `TestClient` itself on pinned Axum 0.8.9,
+with the shared check disabled by hand: a whole extension map captured in a
+protected `/source/{source_id}` handler and reused for `/view/{id}` passed
+lifecycle admission, was authenticated (authentication calls 1 to 2) and
+charged one native batch check (1 to 2), then `Path<u64>` answered 500 with
+"Expected 1 but got 2", and the inherited observation state suppressed the
+completion event entirely. A known-invalid input therefore reached the
+protected assembly's authentication and consumed quota before failing, which is
+the shape ADR-010 names as design debt.
+
+The contract is the one `batter-oj37` decided: arrival-shaped requests only,
+refused whole at entry, nothing stripped, with the sanitized
+`HttpFailure::Internal` response carrying `ReusedRoutingState`. The check, the
+refusal and the dispatched-response marker removal moved, unchanged, into one
+lower-level type, `batter_axum::low_level::RouterClient`, which also owns the
+one-time `Router::with_state(())` preparation. `InProcessClient` holds one in
+its private field and delegates to it; `TestClient` holds one, inserts the
+caller's synthetic peer and delegates. The refusal therefore precedes lifecycle
+admission, authentication, the native quota check, public probes and handlers.
+`ReusedRoutingState` gains only a crate-private constructor whose one caller is
+that refusal, so it still has no public constructor (field and constructor
+compile-fail controls).
+
+Wrapping `InProcessClient` was rejected. That type is the proof of a sealed
+`HttpBoundary` assembly, with correlation and the single observer outermost,
+probes outside admission and every route group's policy, and its only
+constructor is `AssembledHttp::in_process`. Runlimit's assembly orders the
+`low_level` middleware itself, putting the quota check between admission and
+body extraction, which `HttpBoundary` cannot express. A public constructor
+from an arbitrary router would let any caller-composed router claim that proof,
+making a known-invalid composition look equivalent to the protected path.
+Duplicating the check in Runlimit was rejected: two copies of a pin-sensitive
+check would each need rechecking whenever the Axum or `http` pin changes, and
+because the marker has no public constructor Runlimit would need a second marker
+for the same refusal. A bare shared check function was rejected because it
+would leave three paired caller duties: call it before dispatch, strip the
+marker from every dispatched response and prepare the router once. The type
+owns all three.
+
+Invalid-state review of `RouterClient`:
+
+1. `RouterClient::new` accepts any `Router<()>`. Nothing about a router's
+   composition can be validated at construction, and execution never has to
+   reject a constructed client; this is the low-level weakness, and its rustdoc
+   states that it establishes nothing about correlation, observation,
+   admission, probe placement, route-group policy or authentication.
+2. Preparation, the entry check and marker removal are library-owned. The
+   caller keeps the ordering obligations that each `low_level` helper its
+   router uses already documents.
+3. It is not a Tower service and has no router accessor, public field or
+   serving conversion, and it has no conversion into `InProcessClient`. Each
+   has a compile-fail control, as `InProcessClient` has: `axum::serve`,
+   `tower::Service<Request>`, reading the private field, an `into_router`
+   method, `Into<Router>`, `AsRef<Router>`, `Deref<Target = Router>` and
+   `Into<InProcessClient>`. `TestClient` gains a control against being
+   returned as an `InProcessClient` and keeps its `axum::serve` control.
+4. The canonical path is unchanged: `AssembledHttp::in_process` still returns
+   the protected client. `RouterClient` is reachable only under `low_level`,
+   with a crate-root import control.
+5. The `batter-oj37` residual is unchanged and costs more here. Batter's
+   private records with no detected Axum record are neither refused nor
+   cleared. Reproduced through `TestClient`, first by hand and now by the
+   characterization test
+   `residual_a_map_with_only_inherited_batter_records_is_authenticated_and_charged`:
+   a map captured in a
+   protected custom root fallback for `OPTIONS *` carries `OriginalUri` as its
+   only detected record, and is refused whole. With `OriginalUri` removed by
+   the caller it is accepted, authenticated (1 to 2) and charged one native
+   check (1 to 2), and answers 200 with no `x-request-id`, while the handler
+   sees the client's unreplaced inbound `x-request-id` and no completion event
+   is emitted, because the inherited operational and observation records stay
+   in place. The residual takes two deliberate caller steps and is stated on
+   `RouterClient::request`, `TestClient::request` and in the contracts. The
+   test fails if the entry check starts refusing the inherited observation
+   record (checked by hand by adding that check temporarily), so closing
+   `batter-28kb` must invert it together with those statements.
+   `RouterClient` lives in `batter-axum` and could detect those private
+   records itself; that would widen the `batter-oj37` contract and is left to
+   follow-up `batter-28kb`. Making Runlimit's quota stage expressible by
+   `HttpBoundary`, so its client could be a real `InProcessClient`, is
+   follow-up `batter-uskw`.
+
+Signatures are unchanged and no name is removed, so there is no hard cut and no
+deprecated shim. A rustdoc JSON comparison with
+[`surface.py`](../public-api-diff-2026-10-09/surface.py) against the
+`batter-oj37` commit `f3224582` (nightly rustdoc, all features) found no
+removed entry in `batter-axum` or `batter-runlimit`. The additions are
+`RouterClient` with `new`, `request`, `Clone` and its `low_level` re-export,
+and `TestClient`'s re-export from its new private module, at the unchanged
+`batter_runlimit::http::TestClient` path. `batter-runlimit` no longer declares `tower` as a normal
+dependency because its library no longer calls `oneshot`; the dependency
+graph is unchanged because Axum still depends on it.
+
+Evidence: [Runlimit reused-routing tests](../../../crates/batter-runlimit/tests/http/reused_routing.rs)
+reuse a map captured in a protected captured route and assert the 500 refusal,
+its marker, the exact sanitized body, `Cache-Control: no-store`, no
+`x-request-id`, unchanged authentication, quota-check and handler counts, one
+static ERROR event, no completion event, and no path, credential, principal or
+label text in the captured output. The accepted case copies an application
+extension by type into a fresh request that also carries a caller-chosen
+`ConnectInfo`, and asserts the destination's own capture, `MatchedPath`,
+principal, label and the transport's synthetic peer, one completion event for
+`/view/{id}` and one more authentication, check and handler call each. A third
+test has a handler attach a copied marker and asserts the dispatched response
+drops it and keeps its own extension. Two more pin the documented order: a
+reused map sent to the public `/live` probe is refused without running the
+probe, which then answers a fresh request; and after drain is requested a
+fresh request receives admission's 503 while a reused map still receives the
+marked 500 refusal, with no authentication, check, handler or probe call. The existing `batter-axum` reused-routing
+route-group tests now exercise the delegated implementation through
+`InProcessClient`, and the `RouterClient` rustdoc example exercises it over a
+bare router. Negative controls were run once by hand and are not part of the
+suite: with the entry check disabled, the refusal, probe, lifecycle and
+copied-marker tests fail while the accepted test passes; with marker removal
+disabled, the copied-marker test fails. Compile-fail error codes were checked with nightly rustdoc, because
+stable rustdoc does not compare them. Fresh-agent usability evaluation remains
+proposed and unexecuted.
 
 ## Public-origin invalid-state review (`batter-321j`)
 
