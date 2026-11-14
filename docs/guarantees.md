@@ -2662,8 +2662,8 @@ panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
 a second and a late body start for one request, a refused second start that
 leaves the length declared after the hand-over to the body that started, a
-refused empty body that is never polled, a HEAD request, a declared length on a 304 and on a HEAD
-response, a body whose answer about its end panics during destruction and when
+refused empty body that is never polled, a HEAD request, a declared length on a 304, a 204, a HEAD
+response and a 2xx answer to CONNECT, a body whose answer about its end panics during destruction and when
 the transport asks first, a body whose first answer about its size panics at
 the hand-over, its end and size answered under the handler's subscriber and
 request span when a foreign subscriber asks, and a
@@ -2711,7 +2711,10 @@ foreign-subscriber query case, asking for its size before owning it failed the
 hand-over panic case, dropping the admission-owned framing hand-off failed the
 late-declared length case, the committed extension-based hand-off failed
 its rebuilt-response half, and letting a refused start hand over its framing
-failed the refused-start framing case.
+failed the refused-start framing case. On 2026-11-14, dropping the 204 or the
+CONNECT arm of the no-body framing rule failed the corresponding no-body case,
+and dropping the one-year ceiling on the total failed the budget validation
+test.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at

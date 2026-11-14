@@ -446,7 +446,9 @@ sources in the locked registry.
   `role.rs:965`). Axum 0.8.9 also replaces a HEAD response's body with an empty
   one after setting its length (`routing/route.rs:166-171`). The owned body
   therefore takes no advertised length from such a response. Checked on
-  2026-11-12; in-process tests cover a 304 and a HEAD response.
+  2026-11-12 and 2026-11-14; in-process tests cover a 304, a 204, a HEAD
+  response and a 2xx answer to CONNECT. Axum cannot return a 1xx as a final
+  response, so that case rests on the rule alone.
 - Hyper frames a body whose size it does not know by the `Content-Length`
   header present when it encodes the head (`role.rs:746-766`), and Axum 0.8.9
   applies a tuple's headers after the inner response is built

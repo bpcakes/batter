@@ -58,6 +58,16 @@ fn budget_rejects_zero_unrepresentable_and_inverted_bounds() {
         BodyBudget::new(Duration::MAX, second),
         Err(ConfigurationError::TooLarge("HTTP body total budget"))
     );
+    // The total is capped at one year, well inside what Tokio can represent.
+    let year = Duration::from_secs(365 * 24 * 60 * 60);
+    assert_eq!(
+        BodyBudget::new(year, second).map(BodyBudget::total),
+        Ok(year)
+    );
+    assert_eq!(
+        BodyBudget::new(year + second, second),
+        Err(ConfigurationError::TooLarge("HTTP body total budget"))
+    );
     assert_eq!(
         BodyBudget::new(second, 2 * second),
         Err(ConfigurationError::TooLarge("HTTP body idle budget"))

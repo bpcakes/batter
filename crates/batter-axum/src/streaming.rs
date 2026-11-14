@@ -37,9 +37,10 @@ use tokio::time::{Instant, Sleep};
 /// that outlives its handler has no other bound.
 ///
 /// A stream meant to run indefinitely still needs a total: choose the longest
-/// connection the service accepts. Reaching it truncates the body and is
-/// logged at WARN; the peer sees that truncation, except an HTTP/1.0 peer
-/// given no declared length (see [`AdmittedRequest::into_streaming_response`]).
+/// connection the service accepts, at most one year. Reaching it truncates
+/// the body and is logged at WARN; the peer sees that truncation, except an
+/// HTTP/1.0 peer given no declared length (see
+/// [`AdmittedRequest::into_streaming_response`]).
 /// A stream whose peer should instead see a clean end finishes by itself
 /// shortly before, for example when [`BodyScope::context`]'s `remaining()`
 /// runs low.
@@ -63,8 +64,9 @@ pub struct BodyBudget {
 }
 
 impl BodyBudget {
-    /// Validate a positive total that Tokio can represent as a deadline and a
-    /// positive idle bound no longer than it.
+    /// Validate a positive total of at most one year (365 days) that Tokio can
+    /// represent as a deadline, and a positive idle bound no longer than it.
+    /// A longer total is rejected as [`ConfigurationError::TooLarge`].
     pub fn new(total: Duration, idle: Duration) -> Result<Self, ConfigurationError> {
         const TOTAL: &str = "HTTP body total budget";
         const IDLE: &str = "HTTP body idle budget";

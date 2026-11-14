@@ -350,9 +350,10 @@ The library checks the scope's context before each poll, so its own bounds and
 forced cancellation end the body as the library's truncation; a step's
 `Interrupted` arm is reached only for a tighter deadline the stream set itself
 with `scope.context().child(..)`. A stream meant to run indefinitely still
-needs a total bound: reaching it truncates the body at WARN, visibly except to
-an HTTP/1.0 peer given no declared length (above), so end the stream yourself
-shortly before if its peer should see a clean close. The completion
+needs a total bound, of at most one year: reaching it truncates the body at
+WARN, visibly except to an HTTP/1.0 peer given no declared length (above), so
+end the stream yourself shortly before if its peer should see a clean close.
+The completion
 event is the only notification of a body's end; there is no application hook.
 
 Limits: the bounds are observed only when the transport polls the body, so a
