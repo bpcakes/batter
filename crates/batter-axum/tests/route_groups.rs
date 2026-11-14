@@ -17,6 +17,10 @@ mod consumer;
 mod credentials;
 #[path = "route_groups/guarantees.rs"]
 mod guarantees;
+#[path = "route_groups/reused_routing.rs"]
+mod reused_routing;
+#[path = "route_groups/reused_routing_accepted.rs"]
+mod reused_routing_accepted;
 #[path = "route_groups/support.rs"]
 mod support;
 #[path = "route_groups/validation.rs"]

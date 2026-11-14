@@ -278,8 +278,16 @@ outside the observer and neither value can reach `axum::serve`. It prepares the
 router once with the same preparation pinned Axum performs for a served router,
 then clones it per request, and polls each request inside the caller's task
 under the boundary's existing dispatch and observation ownership, spawning
-nothing. An in-process response establishes response construction only; keep
-real socket and TLS tests for serving.
+nothing. It accepts only an arrival-shaped request: a request whose extensions
+carry an Axum routing record from an earlier dispatch (the path-parameter record
+that `RawPathParams` reads, `MatchedPath`, `NestedPath` or `OriginalUri`) is
+refused whole at entry, before any layer or handler runs, with the sanitized
+`HttpFailure::Internal` infrastructure response carrying the
+`ReusedRoutingState` response extension and one static ERROR event, and no
+completion event; the client removes that extension from every response it
+dispatched. Copy application extensions by type into a fresh request
+instead of cloning a whole extension map. An in-process response establishes
+response construction only; keep real socket and TLS tests for serving.
 
 Keep authentication, authorization, request body limits, CORS, TLS, proxy trust,
 trace-header validation, tenant resolution, and user admission policy external.
@@ -399,8 +407,10 @@ mode. The lower-level `in_process_client` awaits the same assembly, consumes it
 with `AssembledHttp::in_process` and wraps the adapter's opaque
 `InProcessClient` in a non-service type that requires a synthetic peer for every
 request; it owns insertion of the exact `ConnectInfo<SocketAddr>` and exposes
-neither the adapter client nor a router. A synthetic peer is not evidence of a
-remote client, and an in-process response is not evidence of serving.
+neither the adapter client nor a router. It delegates every request to the
+adapter client, so it inherits that client's refusal of reused routing records.
+A synthetic peer is not evidence of a remote client, and an in-process response
+is not evidence of serving.
 `MockConnectInfo` affects extractor
 fallback only and is not read by this middleware. No proxy allowlist/CIDR mode
 or forwarded-header parser exists. Liveness and readiness are boundary probes

@@ -43,7 +43,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
-  `InProcessClient`, including the one-time router preparation and the
+  `InProcessClient`, including the one-time router preparation, the entry
+  check that refuses a request carrying Axum routing records from an earlier
+  dispatch with the `ReusedRoutingState` response marker, and the
   compile-fail controls that reject recovering, mutating or serving it.
   `src/boundary/guarded.rs` owns the `GuardedRouter` builder. Probe
   routes remain outside admission while the guarded router's default, custom,
@@ -127,7 +129,14 @@ Windows support and non-Unix fallbacks are out of scope.
   probe, inventory and overlap rejections without polling application code.
   `tests/route_groups/credentials.rs` covers every row of the credential
   decision, method rewriting by an application layer, an admitted router and
-  lower-level compositions.
+  lower-level compositions. `tests/route_groups/reused_routing.rs` covers the
+  client's refusal of whole extension maps captured from routed, nested,
+  invalid UTF-8, fallback and native `nest_service` dispatches and of each
+  routing record alone, before any layer or handler runs, with one static
+  ERROR event and no completion; `reused_routing_accepted.rs` covers
+  arrival-shaped requests with application extensions, a copied or forwarded
+  refusal marker removed from a dispatched response, the copy-by-type
+  migration and nested captures accumulating inside one dispatch.
   The pattern unit tests also compare the parser with Axum's own route
   registration, and the declared-pattern index with native routing.
 - `benches/declared_dispatch.rs` measures in-process request cost through
@@ -228,8 +237,29 @@ outcomes, and `InProcessClient` must keep its router private, implement no Tower
 service and add no route, layer or serving conversion. Prepare that router once,
 with the same `Router::with_state(())` preparation the pinned Axum
 make-service conversions perform, and recheck the pin when it changes. An
-in-process response is not serving evidence; keep real socket and TLS tests. The outermost observer owns emission and nested observation
-entrypoints perform only their other duties.
+in-process response is not serving evidence; keep real socket and TLS tests.
+`InProcessClient::request` accepts only an arrival-shaped request. At entry,
+before the router, any layer or application code is polled, it refuses the
+whole request when its extensions carry any of the four public Axum routing
+records: the path-parameter record read through `RawPathParams` (any result
+except `MissingPathParams`, so a new rejection fails closed), `MatchedPath`,
+`NestedPath` or `OriginalUri`. Use only public Axum and `http` APIs for that
+check: no private-layout tricks, no length heuristics, no stripping or repair,
+and no second entry point or `Result` variant. The refusal is
+`render_infrastructure_failure(HttpFailure::Internal, None)` with the
+`ReusedRoutingState` response extension, which has no public constructor or
+field, plus one static ERROR event with no request-derived field; it has no
+completion event or correlation header. The marker is `Copy`, so a handler can
+put one it read from an earlier refusal on its own response: remove it from
+every dispatched response before `request` returns, keep every other response
+extension, and let only the refusal path leave `request` carrying it.
+Application extensions such as
+`ConnectInfo` stay accepted untouched. Recheck that every Router-dispatched map
+still carries a detected record, and that Axum's private nested matched-path
+record is still written only with the path-parameter record, whenever the
+Axum or `http` pin changes. Wrappers that hold an `InProcessClient` inherit the
+check by delegating; do not duplicate it there. The outermost observer owns
+emission and nested observation entrypoints perform only their other duties.
 Do not log cause contents or untrusted request fields. `operational_http` must
 replace inbound header, Tower and adapter identities before observation and must
 replace inner response IDs. Keep typed server correlation on completion events
