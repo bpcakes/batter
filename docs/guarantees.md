@@ -2685,7 +2685,10 @@ keeps nothing else the built response carried, is settled the same way; a
 layer outside admission that changes the length is not observed. A source
 that yields its end, reports it through `is_end_stream` or yields trailers
 before producing its advertised length is `failed` (WARN): Hyper aborts that
-message and the peer sees it truncated. Hyper, not the owner, enforces the
+message and the peer sees it truncated, except when the source already reports
+its end as Hyper writes the head: Hyper then writes no body and frames the
+message as `content-length: 0`, so the peer receives a complete empty response
+while the event still reports `failed`. Hyper, not the owner, enforces the
 framing. A response Hyper writes without a body (to a HEAD request, a 2xx
 answer to CONNECT, or a 1xx, 204 or 304 status) frames nothing, so a length it
 declares is not held against its body: an empty body there is `completed`. Error contents are not
@@ -2718,7 +2721,9 @@ that close and reported `cancelled`, a departed peer reported `dropped`, and a
 stream that produced its declared `Content-Length` and one that ended with
 trailers, neither of which yields its end, each reported `completed`, and a
 source that ended or reported its end five bytes short of a declared ten,
-each reported `failed` with the peer's message truncated, a length a handler
+each reported `failed` with the peer's message truncated, a body already ended
+when the head is written, reported `failed` while the peer receives a complete
+`content-length: 0` message, a length a handler
 tuple declares after the hand-over, or a response rebuilt around the body
 declares, which decides `failed` when short and `completed` when met, and an
 HTTP/1.0 request whose body, ended at its idle
@@ -3161,7 +3166,10 @@ destructor hands its worker over and blocks after Axum counted its connection
 finished, with the same for an in-flight handler (a fallback outside
 admission that never returns and holds such a guard): destroyed within the
 allowance, cleanup runs only after it; still destroying at the abort deadline,
-the wrapper is aborted and cleanup skipped. A gate unit test shows that a zero
+the wrapper is aborted and cleanup skipped. With a zero cancel allowance, on
+both a current-thread and a multi-thread runtime, a held body still aborts the
+wrapper and skips cleanup while a cancelled handler on another connection
+receives its whole 503 `operation_cancelled`. A gate unit test shows that a zero
 cancel allowance never closes the gate while a positive one does. On a paused
 clock, a gate unit test drives the close computation through a private stop
 clock: cancellation observed with the abort 4 s away, then the abort moved to
@@ -3211,7 +3219,9 @@ I/O: it outlives the close and the abort deadline, and the wrapper is aborted
 with cleanup skipped. An abort deadline moved so close that half the remaining interval
 cannot end the connections still aborts the wrapper. An upgraded connection
 leaves Axum's connection accounting
-at the upgrade: its task belongs to the application, is never joined here, and
+at the upgrade, and Hyper destroys its service and response body there, so the
+completion wait does not include it either (read from Hyper's source, not
+exercised): its task belongs to the application, is never joined here, and
 its I/O fails only if the server is still serving another connection when the
 close happens. Tasks a handler detached are untouched. Applications that serve
 `axum::serve` themselves, as the two HTTP lifetime suites deliberately do, get

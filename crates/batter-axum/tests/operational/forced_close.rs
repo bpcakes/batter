@@ -492,6 +492,64 @@ async fn zero_cancel_allowance_still_aborts_the_wrapper_and_skips_cleanup() {
     assert!(!served.cleaned.load(Ordering::SeqCst));
 }
 
+/// With a zero cancel allowance the gate never closes, so while a held body
+/// still aborts the wrapper and skips cleanup, a cancelled handler on another
+/// connection delivers its whole interruption response, on either runtime
+/// flavour.
+#[tokio::test]
+async fn zero_cancel_allowance_keeps_interruption_responses_on_a_current_thread_runtime() {
+    zero_allowance_keeps_interruption_responses().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn zero_cancel_allowance_keeps_interruption_responses_on_a_multi_thread_runtime() {
+    zero_allowance_keeps_interruption_responses().await;
+}
+
+async fn zero_allowance_keeps_interruption_responses() {
+    let (entered_tx, entered) = oneshot::channel();
+    let entered_tx = Arc::new(Mutex::new(Some(entered_tx)));
+    let mut held = None;
+    let served = Served::start(register_http, Duration::ZERO, |router| {
+        let (router, body) = held_route(router);
+        held = Some(body);
+        router.route(
+            "/cancelled",
+            get(move || async move {
+                entered_tx.lock().unwrap().take().unwrap().send(()).unwrap();
+                std::future::pending::<()>().await;
+            }),
+        )
+    })
+    .await;
+    let Held { release, dropped } = held.unwrap();
+    let mut holding = served.request(GET).await;
+    let mut bytes = read_first_frame(&mut holding).await;
+    let mut cancelled = served
+        .request(b"GET /cancelled HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await;
+    timeout(WAIT, entered).await.unwrap().unwrap();
+
+    let report = served.shut_down().await;
+    let mut answered = String::new();
+    let delivered = timeout(WAIT, cancelled.read_to_string(&mut answered)).await;
+    // Release and await the held body even if the assertions below fail.
+    let _ = release.send(());
+    timeout(WAIT, holding.read_to_end(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(WAIT, dropped).await.unwrap().unwrap();
+    delivered.unwrap().unwrap();
+    assert!(answered.starts_with("HTTP/1.1 503 "), "{answered}");
+    assert!(answered.contains("operation_cancelled"), "{answered}");
+    assert!(report.forced_cancellation);
+    assert_eq!(report.abort_requested, ["http"]);
+    assert_eq!(report.cleanup.skipped.len(), 1);
+    assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
+    assert!(!served.cleaned.load(Ordering::SeqCst));
+}
+
 /// One frame, then, once started, a poll that blocks its connection task
 /// until released or for at most `WAIT`: a task that never yields.
 struct BlockingBody {

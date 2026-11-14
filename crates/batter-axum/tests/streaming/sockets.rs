@@ -361,6 +361,26 @@ fn a_body_that_ended_before_its_declared_length_is_observed_as_failed() {
     assert_short_and_failed(&capture, &text);
 }
 
+/// A body that already reports its end when Hyper writes the head is written
+/// as no body at all: Hyper drops the declared length and frames the message
+/// as `content-length: 0`, so the peer receives a complete empty response. The
+/// source still produced none of the length its response declared, so the
+/// owner reports `failed` all the same.
+#[test]
+fn a_body_ended_before_its_head_reaches_the_peer_as_a_complete_empty_message() {
+    let capture = Capture::new();
+    let text = served_short(&capture, Body::empty);
+    let (head, body) = text.split_once("\r\n\r\n").unwrap();
+    assert!(head.starts_with("HTTP/1.1 200 "), "{text}");
+    let head = head.to_ascii_lowercase();
+    assert!(head.contains("\r\ncontent-length: 0"), "{text}");
+    assert!(!head.contains("content-length: 10"), "{text}");
+    assert!(!head.contains("transfer-encoding"), "{text}");
+    assert_eq!(body, "");
+    let event = assert_finished(&capture, "WARN", "failed");
+    assert!(event.contains("bytes=0"), "{event}");
+}
+
 /// How a handler declares a length after the hand-over.
 #[derive(Clone, Copy)]
 enum Declared {

@@ -66,7 +66,9 @@ mod forced_close;
 /// and a connection task that never yields cannot be ended this way. In both
 /// cases the wrapper is aborted, which does not prove its descendants stopped,
 /// and the supervisor conservatively skips cleanup. An upgraded connection
-/// leaves Axum's connection accounting at the upgrade: the task that holds it
+/// leaves Axum's connection accounting at the upgrade, and Hyper destroys its
+/// service and response body there, so the completion wait does not include it
+/// either (read from Hyper's source, not exercised): the task that holds it
 /// belongs to the application and is never joined here, and its I/O fails only
 /// if the server is still serving another connection when the close happens.
 /// Request deadlines/observations do not bound streaming bodies or WebSockets.

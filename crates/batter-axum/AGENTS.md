@@ -236,7 +236,10 @@ inside `catch_unwind`, finishing before the panic continues, and never ask it
 again after a transport's query unwound. A body the transport finishes without
 asking for its end is `completed` only once its advertised length is produced,
 or, without one, after `is_end_stream` or trailers; a source that ends short of
-that length is `failed`, because Hyper aborts the message. Take no advertised
+that length is `failed`, because Hyper aborts the message; a source already
+ended when Hyper writes the head stays `failed` although Hyper sends an empty
+`content-length: 0` message, so never promise the peer a truncation there.
+Take no advertised
 length from a response Hyper writes without a body: mirror its
 `can_have_body` rule for the request method and response status. Settle the
 advertised length again from the response request admission returns, through

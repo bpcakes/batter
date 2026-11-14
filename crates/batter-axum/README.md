@@ -338,7 +338,10 @@ handler's tuple or an inner layer after `into_streaming_response`, or carried
 by a response the handler rebuilt around the body, counts; a layer outside
 admission that changes it is not observed. A source that ends, reports its end or yields trailers short of
 its advertised length is `failed`: Hyper aborts that message and the peer sees
-it truncated. A response Hyper writes without a body (to HEAD, a 2xx answer to
+it truncated. A source that already reports its end when Hyper writes the head
+is the exception: Hyper writes no body and frames the message as
+`content-length: 0`, so the peer receives a complete empty response, though the
+event still reports `failed`. A response Hyper writes without a body (to HEAD, a 2xx answer to
 CONNECT, or a 1xx, 204 or 304 status) frames no length, so its empty body is
 `completed`. `dropped` means the body's holder discarded it before its end: a
 peer that went away, a HEAD request on a GET route, whose body Axum strips, or

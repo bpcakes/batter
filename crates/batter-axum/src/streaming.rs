@@ -215,9 +215,12 @@ impl AdmittedRequest {
     ///   outside admission that changes it is not observed. A source that
     ///   ends, reports its end or yields trailers short of its advertised
     ///   length is `failed`: the transport aborts that message and the peer
-    ///   sees it truncated. A response written without a body (to HEAD, a 2xx
-    ///   answer to CONNECT, or a 1xx, 204 or 304 status) frames no length, so
-    ///   its empty body is `completed`.
+    ///   sees it truncated. The exception is a source that already reports its
+    ///   end when Hyper writes the head: Hyper then writes no body and frames
+    ///   the message as `content-length: 0`, so the peer receives a complete
+    ///   empty response, still reported `failed`. A response written without
+    ///   a body (to HEAD, a 2xx answer to CONNECT, or a 1xx, 204 or 304
+    ///   status) frames no length, so its empty body is `completed`.
     ///   `dropped` names a body its holder discarded
     ///   before its end without the library, a panic or the stream ending it:
     ///   a peer that went away, a HEAD response whose body Axum strips, or a
@@ -599,7 +602,8 @@ impl OwnedBody {
     /// for the end, if it did. A transport stops once the advertised length is
     /// written, once `is_end_stream` reports the end and after trailers. A
     /// source that ends short of its advertised length failed: the transport
-    /// aborts the message and the peer sees it truncated.
+    /// aborts the message and the peer sees it truncated, or, if it had ended
+    /// before the head was written, Hyper sent it as an empty message.
     fn source_end(&self) -> Option<BodyEnd> {
         let ended = self.trailers || self.inner.as_ref().is_some_and(HttpBody::is_end_stream);
         match self.framing.length().map(|length| self.bytes >= length) {

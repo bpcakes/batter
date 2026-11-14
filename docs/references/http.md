@@ -484,7 +484,13 @@ sources in the locked registry.
   future pending in `poll_flush` for as long as TCP keeps the connection.
 - `serve_connection_with_upgrades` resolves its connection future when the
   upgrade is handed over, so an upgraded connection no longer holds Axum's
-  graceful wait.
+  graceful wait. At that point Hyper's `UpgradeableConnection` takes the
+  connection and calls `into_inner`, keeping only the I/O and read buffer and
+  discarding the dispatcher with its service, in-flight future and response
+  body (`server/conn/http1.rs:555-562`, `proto/h1/dispatch.rs:102-105`), so
+  every completion token an upgraded connection held is released at the
+  upgrade. Source reading against Hyper 1.11.1 on 2026-11-14; no upgrade is
+  exercised.
 - Hyper `src/proto/h1/dispatch.rs` `poll_write`: a response body frame error
   becomes `Error::new_user_body` and ends the connection future, so a chunked
   message whose body errors receives no final chunk. It polls the body only
@@ -505,6 +511,13 @@ sources in the locked registry.
   `encode.rs:248-251`). Either way the peer receives a truncated
   message, so the owned body reports such an end as `failed`. Checked against
   Hyper 1.11.1 on 2026-11-12; real-socket tests assert both short ends.
+- A body that already reports `is_end_stream` when Hyper writes the head is
+  treated as no body at all (`dispatch.rs:366-368`): a declared non-zero
+  `Content-Length` is skipped with a warning (`role.rs:785-795`) and the head
+  carries `content-length: 0` (`role.rs:942`), so the peer receives a complete
+  empty response. The owned body still produced none of the declared length
+  and reports `failed`. Checked on 2026-11-14; a real-socket test asserts the
+  empty framing and the event.
 - Hyper writes no response body, whatever length is declared, to a HEAD
   request, for a 2xx answer to CONNECT and for 1xx, 204 and 304 statuses
   (`role.rs:515-527`, `can_have_body`, forcing the body to zero at

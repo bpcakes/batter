@@ -25,7 +25,9 @@ contracts, capability facts and validation history.
   advertised `Content-Length` or exact size, taken from the response request
   admission returns however the handler built it, or after trailers; one that ends, reports its end or
   yields trailers short of its advertised length is `failed`, since Hyper
-  aborts that message, except on a response Hyper writes without a body (HEAD,
+  aborts that message (a source already ended when Hyper writes the head is
+  still `failed`, although Hyper then sends a complete empty
+  `content-length: 0` message), except on a response Hyper writes without a body (HEAD,
   a 2xx answer to CONNECT, 1xx, 204, 304), whose declared length frames
   nothing. A body whose answer about its end or size panics is `panicked`,
   including at the hand-over, and is ended before it is destroyed; those
