@@ -3,8 +3,8 @@
 use super::{
     capture::Capture,
     support::{
-        ORIGIN, SECOND, assert_not_private, assert_private, body_text, browser_group, exact_origin,
-        from_origin, ready_handle, request, request_policy,
+        ORIGIN, SECOND, assert_not_private, assert_private, body_text, browser_group, completions,
+        exact_origin, from_origin, ready_handle, request, request_policy,
     },
 };
 use axum::{
@@ -54,12 +54,6 @@ async fn grouped(
         .await
         .unwrap()
         .in_process()
-}
-
-fn completions(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter(|line| line.contains("HTTP response boundary finished"))
-        .collect()
 }
 
 #[test]

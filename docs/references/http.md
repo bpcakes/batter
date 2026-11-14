@@ -361,6 +361,16 @@ native `nest_service` dispatches and assert the record set each carries.
 Re-verify these facts, and those tests, whenever the Axum, axum-core or `http`
 pin changes. No dependency or `Cargo.lock` change was required.
 
+Rechecked on 2026-11-14 for `batter-nff2` and `batter-28kb`, with the lockfile
+still resolving Axum 0.8.9. These facts describe private Axum internals and are
+verified for 0.8.9 only. The workspace requirement `axum = "0.8.9"` also admits
+later 0.8 releases in a consumer's own lockfile; a release that added a routing
+record, or stopped writing `OriginalUri` or the path-parameter record on some
+dispatch path, would not be detected by this check, and the route-group tests
+run only against this workspace's lockfile. Detection for any later 0.8 release
+is unverified. The same check now also refuses the adapter's own private
+request records, which depend on no upstream behavior.
+
 ### PostgreSQL session-profile batching and idle authority (2026-10-06)
 
 PostgreSQL 18 distinguishes the authenticated session identity from the active

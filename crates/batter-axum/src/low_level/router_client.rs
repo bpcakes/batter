@@ -44,9 +44,10 @@ use tower::ServiceExt;
 ///   inside its make-service conversions, so a layer wrapping a lazily built
 ///   endpoint is constructed here and never again per request.
 /// - [`request`](Self::request) accepts only an arrival-shaped request. It
-///   refuses one whose extensions carry an Axum routing record from an earlier
-///   dispatch before the router is polled, with the sanitized internal failure
-///   carrying [`ReusedRoutingState`].
+///   refuses one whose extensions carry an Axum routing record, or one of
+///   Batter's own private request records, from an earlier dispatch before
+///   the router is polled, with the sanitized internal failure carrying
+///   [`ReusedRoutingState`].
 /// - That marker is removed from every dispatched response, so a response
 ///   carries it only when the same call refused the request.
 /// - Nothing is spawned: the request is polled, and its future destroyed,
@@ -169,7 +170,7 @@ impl RouterClient {
     ///
     /// This is the entry contract of
     /// [`InProcessClient::request`](crate::InProcessClient::request), which
-    /// documents the four detected records, the refusal and the migration.
+    /// documents the detected records, the refusal and the migration.
     /// In short: a request whose extensions carry the path-parameter record
     /// that [`RawPathParams`] reads (any result except its missing-parameters
     /// rejection), [`MatchedPath`], [`NestedPath`] or [`OriginalUri`] is
@@ -182,20 +183,23 @@ impl RouterClient {
     /// [`ConnectInfo`](axum::extract::ConnectInfo), are accepted and reach the
     /// router untouched. The marker is removed from every dispatched response.
     ///
-    /// The check looks only for Axum routing records, so it does not refuse a
-    /// request for carrying Batter's own observation or operational record.
-    /// Such a request can arrive with no detected Axum record, for example
+    /// A request is refused the same way when its extensions carry one of
+    /// the private request records that only this crate's layers write: the
+    /// observation state, the operational wrapper's marker, the admission
+    /// record, the browser credential record or the quota record. None of
+    /// those types can be named or built outside this crate, so one is
+    /// present only in a map copied from a request a Batter layer already
+    /// processed. That covers a map with no Axum record left, for example
     /// the map of a dispatch no pattern matched, such as `OPTIONS *`, after
-    /// the caller removed its `OriginalUri`. It is then accepted, and Batter's
-    /// observer and correlation layers in the router keep the inherited
-    /// record and install none of that kind: the response gets no fresh
-    /// `x-request-id`, an inbound `x-request-id` is not replaced and no
-    /// completion event is emitted. That residual is not covered by this
-    /// check; everything inside the router, including authentication or a
-    /// quota check it composes, still runs.
+    /// the caller removed its `OriginalUri`, or one captured behind a
+    /// lower-level wrapper around a service that is not a `Router`. The
+    /// refusal precedes everything inside the router, including
+    /// authentication or a quota check it composes.
     pub async fn request(&self, request: Request<Body>) -> Response {
         let (mut parts, body) = request.into_parts();
-        if carries_routing_record(&mut parts).await {
+        if carries_routing_record(&mut parts).await
+            || crate::correlation::carries_private_record(&parts.extensions)
+        {
             return refuse_reused_routing_state();
         }
         let request = Request::from_parts(parts, body);
@@ -212,7 +216,9 @@ impl RouterClient {
     }
 }
 
-/// Whether the request carries a record that Axum routing writes.
+/// Whether the request carries a record that Axum routing writes. Batter's
+/// own private records are checked separately, by
+/// `correlation::carries_private_record`.
 ///
 /// Only public Axum types and the public extractor are consulted. Any
 /// path-parameter result except the missing-parameters rejection counts as
@@ -234,7 +240,7 @@ async fn carries_routing_record(parts: &mut Parts) -> bool {
 fn refuse_reused_routing_state() -> Response {
     tracing::error!(
         target: "batter",
-        "in-process request refused: its extensions carry routing state from an earlier dispatch"
+        "in-process request refused: its extensions carry state from an earlier dispatch"
     );
     let mut response = render_infrastructure_failure(HttpFailure::Internal, None);
     response.extensions_mut().insert(ReusedRoutingState::new());

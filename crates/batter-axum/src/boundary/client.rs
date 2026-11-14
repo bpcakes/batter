@@ -21,14 +21,17 @@ use {
 /// body streaming and no detached descendant. Register the assembled boundary
 /// for those. Requests may carry explicitly inserted synthetic extensions, such
 /// as a chosen [`ConnectInfo`](axum::extract::ConnectInfo); choosing them, and
-/// their meaning, belongs to the caller.
+/// their meaning, belongs to the caller. Axum's own routing records are the
+/// exception: the client cannot tell a hand-inserted one, such as an
+/// [`OriginalUri`], from an inherited one, and refuses both.
 ///
 /// The client accepts only an arrival-shaped request: one whose extensions
-/// carry no Axum routing record from an earlier dispatch. A request built from
-/// a whole extension map that a router already dispatched is refused before
-/// the boundary runs, with a response carrying [`ReusedRoutingState`]; see
-/// [`InProcessClient::request`] for the records, the outcome and the
-/// migration.
+/// carry no Axum routing record and none of Batter's own private request
+/// records. A request built from a whole extension map that a router already
+/// dispatched, and a live request that another Axum router forwards into the
+/// client, are refused before the boundary runs, with a response carrying
+/// [`ReusedRoutingState`]; see [`InProcessClient::request`] for the records,
+/// the outcome and the migration.
 ///
 /// The inner router stays private. The client is not a Tower service, cannot
 /// become a [`Router`](axum::Router), and cannot be served:
@@ -142,20 +145,14 @@ impl InProcessClient {
     ///
     /// Every call reuses the router prepared at construction. Application
     /// extensions the caller inserts are kept, while a request carrying an
-    /// Axum routing record is refused, as described below. The entry check
-    /// looks only for Axum routing records, so it does not refuse a request
-    /// for carrying Batter's own observation or operational record. The
-    /// observer installs an observation record on a request that carries
-    /// none, and the correlation layer installs an operational record on a
-    /// request that carries none. Where the request already carries that
-    /// kind of record, the layer leaves the inherited record in place and
-    /// installs none of that kind; the adapter's contract records that as a
-    /// residual the entry check does not cover.
+    /// Axum routing record or one of Batter's own private request records is
+    /// refused, as described below.
     ///
     /// # Accepted requests
     ///
     /// The request must be arrival-shaped: its extensions carry no record that
-    /// Axum routing writes. Four such records are detected, using only public
+    /// Axum routing writes and none that only this crate's layers write. Four
+    /// routing records are detected, using only public
     /// Axum types: the path-parameter record that
     /// [`RawPathParams`] reads (any result except its missing-parameters
     /// rejection counts, including an empty capture list or an invalid UTF-8
@@ -165,7 +162,21 @@ impl InProcessClient {
     /// or a service mounted with `nest_service` also gains a path-parameter
     /// record, so cloning the whole extension map of a dispatched request, for
     /// example `request.extensions().clone()` inside a handler, always carries
-    /// at least one of them. Application extensions, such as a chosen
+    /// at least one of them. A live request that another Axum router
+    /// dispatched and a route, fallback or `nest_service` closure hands on
+    /// carries the same records and is refused too: the client is an arrival
+    /// transport, not a service to mount behind a router.
+    ///
+    /// Five private records are detected as well: the observation state, the
+    /// operational wrapper's marker, the admission record, the browser
+    /// credential record and the quota record. Their types cannot be named or
+    /// built outside this crate, so one is present only in a map copied from
+    /// a request that a Batter layer already processed, including a map that
+    /// no longer carries any routing record. Public values such as a
+    /// [`CorrelationId`](crate::CorrelationId) are not among them; a copied
+    /// one is not refused, and the boundary generates its own identity.
+    ///
+    /// Application extensions, such as a chosen
     /// [`ConnectInfo`](axum::extract::ConnectInfo) or an application's own
     /// types, are accepted and reach handlers untouched.
     ///
@@ -185,7 +196,9 @@ impl InProcessClient {
     /// forwarded a marker from another refusal. One ERROR event with a fixed
     /// message and no request-derived field is emitted on the caller's
     /// dispatch. Because the request never entered the boundary, there is no
-    /// completion event, no request span and no `x-request-id` header.
+    /// completion event, no request span and no `x-request-id` header. The
+    /// status and body are those of any sanitized internal failure, so only
+    /// the response extension identifies a refusal.
     ///
     /// Without the refusal, pinned Axum 0.8.9 would treat the inherited
     /// records as an outer router's state: path parameters are appended to,
@@ -215,6 +228,31 @@ impl InProcessClient {
     /// # let _ = redispatch(&Extensions::new());
     /// ```
     ///
+    /// A handler of another router that hands a request on does the same
+    /// with the request it received, instead of passing it through whole:
+    ///
+    /// ```
+    /// use axum::{body::Body, extract::Request};
+    ///
+    /// #[derive(Clone)]
+    /// struct Label(&'static str);
+    ///
+    /// fn rebuild(arrival: Request<Body>) -> Request<Body> {
+    ///     let (parts, body) = arrival.into_parts();
+    ///     let mut request = Request::builder()
+    ///         .method(parts.method)
+    ///         .uri(parts.uri)
+    ///         .body(body)
+    ///         .unwrap();
+    ///     *request.headers_mut() = parts.headers;
+    ///     if let Some(label) = parts.extensions.get::<Label>() {
+    ///         request.extensions_mut().insert(label.clone());
+    ///     }
+    ///     request
+    /// }
+    /// # let _ = rebuild(Request::new(Body::empty()));
+    /// ```
+    ///
     /// The detection is a run-time check because the records cannot be reset
     /// individually: Axum keeps its path-parameter record and its nested
     /// matched-path record private, and `http` 1.5.0 `Extensions` cannot be
@@ -222,7 +260,9 @@ impl InProcessClient {
     /// keeping unknown application extensions. A private nested matched-path
     /// record is only ever written in the same routing step as the
     /// path-parameter record, so it never arrives without a detected one.
-    /// Recheck these facts whenever the Axum or `http` pin changes.
+    /// These facts are verified against Axum 0.8.9 only. The crate's
+    /// dependency requirement also admits later 0.8 releases, for which they
+    /// are unverified; recheck them whenever the Axum or `http` pin changes.
     ///
     /// The check and the marker removal live in [`RouterClient::request`],
     /// which this method delegates to. Lower-level transports that hold a
@@ -234,8 +274,10 @@ impl InProcessClient {
 }
 
 /// Response extension marking a request that [`InProcessClient::request`]
-/// refused because its extensions carried Axum routing state from an earlier
-/// dispatch.
+/// refused because its extensions carried state from an earlier dispatch: an
+/// Axum routing record or one of Batter's own private request records. The
+/// client cannot tell a hand-inserted routing record from an inherited one,
+/// so a never-dispatched request carrying one is marked the same way.
 ///
 /// The check belongs to the lower-level [`RouterClient::request`], which the
 /// protected client delegates to, so every transport that holds a

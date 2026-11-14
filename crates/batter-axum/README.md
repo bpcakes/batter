@@ -596,26 +596,40 @@ inside the caller's task under the boundary's existing dispatch and observation
 ownership, with nothing spawned, so dropping a `request` future drops the
 boundary's future as a dropped connection would. Requests may carry explicitly
 inserted synthetic extensions, such as a chosen `ConnectInfo`; choosing them,
-and their meaning, belongs to the caller.
+and their meaning, belongs to the caller. Axum's routing records are the
+exception: the client cannot tell a hand-inserted `OriginalUri` from an
+inherited one and refuses both.
 
 The client accepts only an arrival-shaped request, whose extensions carry no
-record that Axum routing writes. Before the router, any layer or any handler is
+record that Axum routing writes and none of the adapter's own private request
+records. Before the router, any layer or any handler is
 polled, it checks four public records: the path-parameter record that
 `RawPathParams` reads (any result except its missing-parameters rejection,
 including an empty or invalid UTF-8 capture list), `MatchedPath`, `NestedPath`
 and `OriginalUri`. Every request a `Router` dispatches gains `OriginalUri`, and
 every request it routes to a route, a path fallback or a `nest_service` service
 also gains the path-parameter record, so a request built from a whole extension
-map cloned inside an earlier dispatch is refused whole. Nothing is stripped or
-repaired. The refusal is the sanitized `HttpFailure::Internal` response of
+map cloned inside an earlier dispatch is refused whole. So is a live request
+that another Axum router dispatched and a route, fallback or `nest_service`
+closure hands on: the client is an arrival transport, not a service to mount
+behind a router. These facts are verified against Axum 0.8.9 only; later 0.8
+releases, which the dependency requirement admits, are unverified. The client
+also checks the adapter's five private request records (the observation state,
+the operational wrapper's marker, the admission record, the browser credential
+record and the quota record). Only the adapter's layers write them and no other
+crate can name them, so a map that carries one came from an earlier dispatch
+even when no routing record is left on it. A public `CorrelationId` copied by
+type is not refused; the boundary generates its own identity. Nothing is
+stripped or repaired. The refusal is the sanitized `HttpFailure::Internal` response of
 `render_infrastructure_failure` with no correlation identifier, carrying the
 `ReusedRoutingState` response extension, which has no public constructor, plus
 one ERROR event with a fixed message and no request field. The marker is
 `Copy`, so a handler can put one it read from an earlier refusal on its own
 response; the client removes it from every response it dispatched, so a
 returned response carries it only when that call refused the request. The request never entered the boundary, so it has
-no completion event and no `x-request-id` header. Application extensions are
-accepted and reach handlers untouched.
+no completion event and no `x-request-id` header. Its status and body are those
+of any sanitized internal failure, so only the marker identifies a refusal.
+Application extensions are accepted and reach handlers untouched.
 
 ```rust,ignore
 // Before: the destination inherits the source's captures, matched path and
@@ -628,6 +642,12 @@ let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
 if let Some(label) = earlier.get::<Label>() {
     next.extensions_mut().insert(label.clone());
 }
+
+// A handler of another router does the same with the request it received,
+// instead of passing it to the client whole.
+let (parts, body) = arrival.into_parts();
+let mut next = Request::builder().method(parts.method).uri(parts.uri).body(body)?;
+*next.headers_mut() = parts.headers;
 ```
 
 Without the refusal, pinned Axum 0.8.9 would treat inherited records as outer

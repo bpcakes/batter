@@ -54,14 +54,12 @@ impl TestClient {
     /// `x-request-id` header. Application extensions reach the assembly
     /// untouched.
     ///
-    /// The check covers Axum routing records only. A map that carries this
-    /// boundary's own observation and operational records but no detected
-    /// Axum record, such as one captured in a protected custom fallback for an
-    /// `OPTIONS *` request after the caller removed its `OriginalUri`, is not
-    /// refused: it is authenticated and charged by the native quota check
-    /// like a fresh request, yet answered without a fresh `x-request-id`,
-    /// with the client's inbound `x-request-id` unreplaced and without a
-    /// completion event.
+    /// The check also covers the adapter's own private request records. A
+    /// map that carries this boundary's observation and operational records
+    /// but no Axum record, such as one captured in a protected custom
+    /// fallback for an `OPTIONS *` request after the caller removed its
+    /// `OriginalUri`, is refused the same way, before authentication and the
+    /// native quota check.
     ///
     /// Migration: build a fresh request and copy each application extension
     /// by type instead of the whole map:

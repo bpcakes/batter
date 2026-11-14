@@ -2,7 +2,7 @@
 //! Axum adapter's in-process client does: a whole extension map from an
 //! earlier dispatch is refused at entry, before lifecycle admission,
 //! authentication, the native quota check or any handler runs. The last test
-//! characterizes the residual that check does not cover.
+//! covers a map that keeps only the adapter's own request records.
 
 use super::*;
 use axum::{
@@ -93,7 +93,7 @@ impl Fixture {
                     }
                 }),
             );
-        let routes = with_residual_routes(routes, &captured);
+        let routes = with_unmatched_routes(routes, &captured);
         let hasher = KeyHasher::new([9; 32]).unwrap();
         let client = HttpQuota::new(
             Quota::new(backend.clone()),
@@ -172,10 +172,10 @@ impl Fixture {
     }
 }
 
-/// Add the routes the residual characterization uses: one that echoes the
-/// request identity its handler sees, and a protected custom root fallback,
-/// which also receives a request no pattern matches, such as `OPTIONS *`.
-fn with_residual_routes(routes: Router, captured: &Arc<Mutex<Option<Extensions>>>) -> Router {
+/// Add the routes the last test uses: one that echoes the request identity
+/// its handler sees, and a protected custom root fallback, which also
+/// receives a request no pattern matches, such as `OPTIONS *`.
+fn with_unmatched_routes(routes: Router, captured: &Arc<Mutex<Option<Extensions>>>) -> Router {
     let unmatched = captured.clone();
     routes
         .route(
@@ -373,14 +373,12 @@ async fn a_reused_map_is_refused_before_lifecycle_admission() {
     finish(running).await;
 }
 
-/// Characterizes the documented residual that the entry check does not
-/// cover: Batter's own observation and operational records with no detected
-/// Axum record. `batter-28kb` owns closing it; when such a map is refused,
-/// invert this test together with the residual statements on
-/// `RouterClient::request`, `TestClient::request`, the guarantees and the
-/// integration contract.
+/// A map that keeps the adapter's own observation and operational records
+/// with no Axum record left is refused like any other reused map, before
+/// authentication and the quota check. Until `batter-28kb` this was accepted,
+/// authenticated and charged, and answered without fresh correlation.
 #[tokio::test]
-async fn residual_a_map_with_only_inherited_batter_records_is_authenticated_and_charged() {
+async fn a_map_with_only_inherited_batter_records_is_refused_before_authentication() {
     let running = running().await;
     let fixture = Fixture::new(&running);
 
@@ -403,26 +401,30 @@ async fn residual_a_map_with_only_inherited_batter_records_is_authenticated_and_
     let refused = fixture.client.request(whole, peer()).await;
     assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
 
-    // Once the caller removes it, the inherited Batter records pass the check.
+    // Once the caller removes it, no Axum record is left, and the inherited
+    // Batter records are what the check refuses.
     unmatched.remove::<OriginalUri>();
     let before = fixture.counts();
     let capture = Capture::new("info");
     let mut reused = request("/inbound", "Bearer secret-a");
     *reused.extensions_mut() = unmatched;
-    let response = capture.run(fixture.client.request(reused, peer())).await;
+    let refused = capture.run(fixture.client.request(reused, peer())).await;
 
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
-    assert!(response.headers().get("x-request-id").is_none());
-    // The handler sees the client's own identity, not a generated one.
-    assert_eq!(text(response).await, "secret-client-id");
-    // Authenticated and charged like a fresh request.
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.headers().get("x-request-id").is_none());
+    assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(
         fixture.counts(),
-        (before.0 + 1, before.1 + 1, before.2, before.3)
+        before,
+        "authentication, the quota check, a handler or a probe ran"
     );
     let output = capture.text();
+    assert_eq!(
+        output.matches("in-process request refused").count(),
+        1,
+        "{output}"
+    );
     assert!(capture.events().is_empty(), "{output}");
-    assert!(!output.contains("in-process request refused"), "{output}");
     finish(running).await;
 }

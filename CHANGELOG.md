@@ -8,6 +8,47 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Refuse in-process requests that carry the adapter's own request records
+  (`batter-nff2`, `batter-28kb`;
+  [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)).
+  The entry check of `batter_axum::low_level::RouterClient::request`, which
+  `InProcessClient::request` and `batter_runlimit::http::TestClient::request`
+  delegate to, looked only for Axum routing records. A map that kept Batter's
+  own records with no Axum record left, such as the map of an `OPTIONS *`
+  dispatch after the caller removed its `OriginalUri`, or one captured behind
+  a `low_level` wrapper around a service that is not a `Router`, was accepted:
+  the destination answered with the earlier request's correlation, no
+  `x-request-id` and no completion event, and through `TestClient` it was
+  authenticated and charged. The check now also refuses a request carrying
+  any of the adapter's five private request records (quota record, observation
+  state, operational marker, admission record, browser credential record),
+  with the same `ReusedRoutingState` response and static ERROR event, before
+  the router or any application code is polled. Public values copied by type,
+  such as `CorrelationId`, are not refused. The contract documents now state
+  three things the earlier entries left open: a live request that an outer
+  Axum router forwards into the client is refused, and must be rebuilt; a
+  hand-inserted `OriginalUri` is refused like an inherited one; and detection
+  of Axum's records is verified for Axum 0.8.9 only, although the dependency
+  requirement admits later 0.8 releases. The reference service's request
+  client now has a test for the refusal it inherits. Public signatures are
+  unchanged. Behavior change: a request whose extensions carry one of those
+  private records is now refused.
+
+  ```rust,ignore
+  // Before: a handler of another router passes its request to the client whole.
+  let response = client.request(arrival).await; // refused: ReusedRoutingState
+
+  // After: a fresh request from the arrival's own parts, with each
+  // application extension copied by type.
+  let (parts, body) = arrival.into_parts();
+  let mut next = Request::builder().method(parts.method).uri(parts.uri).body(body)?;
+  *next.headers_mut() = parts.headers;
+  if let Some(label) = parts.extensions.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  let response = client.request(next).await;
+  ```
+
 - Refuse reused Axum routing state in Runlimit's in-process test transport
   (`batter-gp93`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
@@ -28,12 +69,9 @@ contracts, capability facts and validation history.
   `render_infrastructure_failure(HttpFailure::Internal, None)` carrying
   `ReusedRoutingState`, with one static ERROR event, no completion event, no
   `x-request-id` header and no consumed quota. The marker is removed from every
-  dispatched response. The check still detects Axum routing records only: a
-  map that keeps Batter's own observation and operational records after the
-  caller removes its only detected record (the `OriginalUri` of an
-  `OPTIONS *` dispatch) is authenticated and charged, but gets no fresh
-  correlation and no completion event; that residual is documented, not
-  closed. `RouterClient` establishes nothing about its router's
+  dispatched response. At this change the check detected Axum routing records
+  only; the entry above closes the residual it left for a map that keeps
+  Batter's own records. `RouterClient` establishes nothing about its router's
   composition, has no crate-root alias and has no conversion into
   `InProcessClient` or back into a `Router`. The change adds `RouterClient` and removes no name, so it
   needs no deprecated shim; public signatures are unchanged.
