@@ -61,6 +61,7 @@ impl Fixture {
         let layer = entered.clone();
         let routes = GuardedRouter::new()
             .route("/source/{source_id}", capturing(&slot))
+            .route("/source", capturing(&slot))
             .nest(
                 "/outer/{outer_id}",
                 GuardedRouter::new().route("/source/{source_id}", capturing(&slot)),
@@ -291,6 +292,10 @@ async fn each_routing_record_alone_is_refused() {
     let routed = fixture.captured_at("/source/7").await;
     let nested = fixture.captured_at("/outer/3/source/7").await;
     let unmatched = fixture.captured_at("/missing").await;
+    // A static route has no capture, and its match still writes a list.
+    let fixed = fixture.captured_at("/source").await;
+    assert_eq!(fixed.get::<MatchedPath>().unwrap().as_str(), "/source");
+    assert!(raw_params(&fixed).await.unwrap().is_empty());
 
     let mut alone = Extensions::new();
     alone.insert(routed.get::<MatchedPath>().cloned().unwrap());
@@ -305,8 +310,9 @@ async fn each_routing_record_alone_is_refused() {
     fixture.assert_refused(reusing("/view/9", alone)).await;
 
     // The path-parameter record has no public type; remove every nameable
-    // record around it, with captures and with the fallback's empty list.
-    for mut parameters in [routed, unmatched] {
+    // record around it, with captures and with the empty list of a fallback
+    // and of a static route.
+    for mut parameters in [routed, unmatched, fixed] {
         parameters.remove::<MatchedPath>();
         parameters.remove::<NestedPath>();
         parameters.remove::<OriginalUri>();
