@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::any,
 };
-use batter_axum::{CorrelationId, ReusedRoutingState, low_level};
+use batter_axum::{CorrelationId, InProcessRefusal, low_level};
 use std::{
     convert::Infallible,
     sync::{Arc, Mutex},
@@ -93,7 +93,7 @@ async fn a_public_correlation_copied_by_type_is_replaced_not_refused() {
     fresh.extensions_mut().insert(earlier.clone());
     let response = fixture.client.request(fresh).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     let generated = response.headers()["x-request-id"].to_str().unwrap();
     assert_ne!(generated, earlier.as_str());
     assert_eq!(count(&fixture.views), 1);

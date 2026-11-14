@@ -3,7 +3,7 @@
 
 use super::{CorrelationId, OperationalScope, carries_private_record, renderer_parts};
 use crate::{
-    RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget, ReusedRoutingState,
+    InProcessRefusal, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
     admitted,
     browser::{CredentialAccess, record_credential_access},
     low_level::RouterClient,
@@ -94,7 +94,7 @@ async fn each_private_record_alone_is_detected_and_refused_before_the_router_run
             "{name}"
         );
         assert!(
-            response.extensions().get::<ReusedRoutingState>().is_some(),
+            response.extensions().get::<InProcessRefusal>().is_some(),
             "{name}"
         );
     }

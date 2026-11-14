@@ -71,7 +71,7 @@ Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority,
 and `batter_axum::AdmittedRequest` for the admitted context and correlation.
 `TestClient` holds a `batter_axum::low_level::RouterClient` and only inserts
 the synthetic peer before delegating, so it inherits the adapter's
-arrival-shaped entry check, `ReusedRoutingState` refusal and marker removal.
+arrival-shaped entry check, `InProcessRefusal` refusal and marker removal.
 Never dispatch the prepared Router directly or copy that check here; the
 refusal must precede admission, authentication and the native quota check.
 The adapter's check detects Axum routing records and its own private request

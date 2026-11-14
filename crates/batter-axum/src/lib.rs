@@ -45,8 +45,8 @@ pub mod browser;
 pub use admitted::{AdmittedRequest, AdmittedRequestRejection};
 pub use boundary::{
     AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
-    InProcessClient, MutationCheckWaiver, ProbePath, ProbePathError, ProbeRegistrationError,
-    ReusedRoutingState, RouteGroup, RouteGroupError, RouteInventory, RouteInventoryError,
+    InProcessClient, InProcessRefusal, MutationCheckWaiver, ProbePath, ProbePathError,
+    ProbeRegistrationError, RouteGroup, RouteGroupError, RouteInventory, RouteInventoryError,
 };
 pub use correlation::{CorrelationId, render_infrastructure_failure};
 pub use readiness::{

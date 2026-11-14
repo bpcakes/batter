@@ -10,7 +10,7 @@ use axum::{
     http::{Extensions, HeaderValue, Uri},
     response::{IntoResponse, Response},
 };
-use batter_axum::ReusedRoutingState;
+use batter_axum::InProcessRefusal;
 use batter_runlimit::http::TestClient;
 
 const REFUSAL_BODY: &str =
@@ -27,7 +27,7 @@ type Counts = (usize, usize, usize, usize);
 struct Fixture {
     client: TestClient,
     captured: Arc<Mutex<Option<Extensions>>>,
-    forwarded: Arc<Mutex<Option<ReusedRoutingState>>>,
+    forwarded: Arc<Mutex<Option<InProcessRefusal>>>,
     authentications: Arc<AtomicUsize>,
     backend: Backend,
     views: Arc<AtomicUsize>,
@@ -37,7 +37,7 @@ struct Fixture {
 impl Fixture {
     fn new(running: &batter_core::lifecycle::RunningSupervisor) -> Self {
         let captured = Arc::new(Mutex::new(None));
-        let forwarded = Arc::new(Mutex::new(None::<ReusedRoutingState>));
+        let forwarded = Arc::new(Mutex::new(None::<InProcessRefusal>));
         let authentications = Arc::new(AtomicUsize::new(0));
         let backend = Backend::new(Mode::Return(allowed()));
         let views = Arc::new(AtomicUsize::new(0));
@@ -216,7 +216,7 @@ async fn a_reused_captured_route_map_is_refused_before_the_protected_assembly() 
     let refused = capture.run(fixture.client.request(reused, peer())).await;
 
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert!(refused.headers().get("x-request-id").is_none());
     assert_eq!(refused.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(text(refused).await, REFUSAL_BODY);
@@ -266,7 +266,7 @@ async fn a_fresh_request_with_application_extensions_reaches_the_assembly_untouc
     let response = capture.run(fixture.client.request(fresh, peer())).await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert!(response.headers().contains_key("x-request-id"));
     assert_eq!(
         text(response).await,
@@ -296,7 +296,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         .extensions_mut()
         .insert(OriginalUri(Uri::from_static("/earlier")));
     let refused = fixture.client.request(alone, peer()).await;
-    let marker = refused.extensions().get::<ReusedRoutingState>().copied();
+    let marker = refused.extensions().get::<InProcessRefusal>().copied();
     assert!(marker.is_some());
     *fixture.forwarded.lock().unwrap() = marker;
 
@@ -306,7 +306,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         .await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert_eq!(
         response.extensions().get::<Label>().map(|label| label.0),
         Some("kept")
@@ -331,7 +331,7 @@ async fn a_reused_map_is_refused_before_a_public_probe_runs() {
 
     let refused = fixture.client.request(probe(Some(captured)), peer()).await;
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(fixture.counts(), before, "the public probe ran");
 
@@ -360,14 +360,14 @@ async fn a_reused_map_is_refused_before_lifecycle_admission() {
         .request(request("/view/9", "Bearer secret-a"), peer())
         .await;
     assert_eq!(fresh.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(fresh.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(fresh.extensions().get::<InProcessRefusal>().is_none());
 
     // A reused map is refused at entry instead, with the marker and not 503.
     let mut reused = request("/view/9", "Bearer secret-a");
     *reused.extensions_mut() = captured;
     let refused = fixture.client.request(reused, peer()).await;
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(fixture.counts(), before);
     finish(running).await;
@@ -399,7 +399,7 @@ async fn a_map_with_only_inherited_batter_records_is_refused_before_authenticati
     let mut whole = request("/inbound", "Bearer secret-a");
     *whole.extensions_mut() = unmatched.clone();
     let refused = fixture.client.request(whole, peer()).await;
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
 
     // Once the caller removes it, no Axum record is left, and the inherited
     // Batter records are what the check refuses.
@@ -411,7 +411,7 @@ async fn a_map_with_only_inherited_batter_records_is_refused_before_authenticati
     let refused = capture.run(fixture.client.request(reused, peer())).await;
 
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert!(refused.headers().get("x-request-id").is_none());
     assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(

@@ -284,7 +284,7 @@ that `RawPathParams` reads, `MatchedPath`, `NestedPath` or `OriginalUri`), or
 one of the adapter's own private request records, is
 refused whole at entry, before any layer or handler runs, with the sanitized
 `HttpFailure::Internal` infrastructure response carrying the
-`ReusedRoutingState` response extension and one static ERROR event, and no
+`InProcessRefusal` response extension and one static ERROR event, and no
 completion event; the client removes that extension from every response it
 dispatched. Copy application extensions by type into a fresh request
 instead of cloning a whole extension map, and rebuild a request another Axum
@@ -1033,7 +1033,7 @@ a request whose extensions carry an Axum routing record from an earlier
 dispatch is refused whole at entry, before lifecycle admission,
 authentication, the native quota check, a public probe or any handler runs,
 with the sanitized `HttpFailure::Internal` response carrying
-`ReusedRoutingState`, one static ERROR event, no completion event and no
+`InProcessRefusal`, one static ERROR event, no completion event and no
 consumed quota. The marker is removed from every dispatched response.
 Application extensions reach the assembly untouched, and the synthetic peer
 still replaces any `ConnectInfo` the request carried. The check also detects

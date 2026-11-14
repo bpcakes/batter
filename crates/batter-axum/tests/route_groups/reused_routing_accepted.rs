@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use batter_axum::{CorrelationId, GuardedRouter, HttpBoundary, ReusedRoutingState, RouteInventory};
+use batter_axum::{CorrelationId, GuardedRouter, HttpBoundary, InProcessRefusal, RouteInventory};
 use std::net::SocketAddr;
 use tracing::instrument::WithSubscriber;
 
@@ -27,7 +27,7 @@ async fn a_fresh_request_keeps_its_application_extensions() {
     fresh.extensions_mut().insert(ConnectInfo(peer));
     let response = fixture.client.request(fresh).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert!(response.headers().contains_key("x-request-id"));
     assert_eq!(
         body_text(response).await,
@@ -41,7 +41,7 @@ async fn a_boundary_built_internal_failure_carries_no_refusal_marker() {
     let fixture = Fixture::new().await;
     let response = fixture.client.request(get_request("/broken")).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert!(response.headers().contains_key("x-request-id"));
     // The same sanitized body: only the marker separates a refusal from it.
     assert_eq!(body_text(response).await, REFUSAL_BODY);
@@ -55,7 +55,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         .client
         .request(reusing("/view/9", captured.clone()))
         .await;
-    let marker = *refused.extensions().get::<ReusedRoutingState>().unwrap();
+    let marker = *refused.extensions().get::<InProcessRefusal>().unwrap();
 
     let forwarding = inner.client.clone();
     let routes = GuardedRouter::new()
@@ -86,7 +86,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
 
     let copied = outer.request(get_request("/copied")).await;
     assert_eq!(copied.status(), StatusCode::OK);
-    assert!(copied.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(copied.extensions().get::<InProcessRefusal>().is_none());
     let kept = copied.extensions().get::<Label>().map(|label| label.0);
     assert_eq!(kept, Some("kept"), "other response extensions stay");
     assert!(copied.headers().contains_key("x-request-id"));
@@ -97,7 +97,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
     // marker.
     let forwarded = outer.request(get_request("/forwarded")).await;
     assert_eq!(forwarded.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(forwarded.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(forwarded.extensions().get::<InProcessRefusal>().is_none());
     assert!(forwarded.headers().contains_key("x-request-id"));
     assert_eq!(body_text(forwarded).await, REFUSAL_BODY);
 }
@@ -125,7 +125,7 @@ fn copying_application_extensions_by_type_routes_as_a_fresh_arrival() {
             .with_subscriber(scoped.dispatch.clone())
             .await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+        assert!(response.extensions().get::<InProcessRefusal>().is_none());
         let response_id = response.headers()["x-request-id"]
             .to_str()
             .unwrap()

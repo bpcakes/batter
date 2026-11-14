@@ -30,7 +30,7 @@ use {
 /// records. A request built from a whole extension map that a router already
 /// dispatched, and a live request that another Axum router forwards into the
 /// client, are refused before the boundary runs, with a response carrying
-/// [`ReusedRoutingState`]; see [`InProcessClient::request`] for the records,
+/// [`InProcessRefusal`]; see [`InProcessClient::request`] for the records,
 /// the outcome and the migration.
 ///
 /// The inner router stays private. The client is not a Tower service, cannot
@@ -190,7 +190,7 @@ impl InProcessClient {
     /// The response is the sanitized internal failure that
     /// [`render_infrastructure_failure`] renders for
     /// [`HttpFailure::Internal`] with no correlation identifier, and it carries
-    /// the [`ReusedRoutingState`] response extension. The client removes that
+    /// the [`InProcessRefusal`] response extension. The client removes that
     /// extension from every response it dispatched, so a returned response
     /// carries it only when this call refused the request, even if a handler
     /// forwarded a marker from another refusal. One ERROR event with a fixed
@@ -274,10 +274,19 @@ impl InProcessClient {
 }
 
 /// Response extension marking a request that [`InProcessClient::request`]
-/// refused because its extensions carried state from an earlier dispatch: an
-/// Axum routing record or one of Batter's own private request records. The
-/// client cannot tell a hand-inserted routing record from an inherited one,
-/// so a never-dispatched request carrying one is marked the same way.
+/// refused at entry, before its router ran.
+///
+/// The name states the outcome, not a cause. Today the client refuses a
+/// request that is not arrival-shaped: one whose extensions carry an Axum
+/// routing record or one of Batter's own private request records. That is
+/// usually state copied from an earlier dispatch, but the client cannot tell
+/// a hand-inserted routing record from an inherited one, and a live request
+/// another router forwards carries the same records, so both are marked the
+/// same way. [`InProcessClient::request`] lists the records.
+///
+/// Migration: this marker was named `ReusedRoutingState` when it was
+/// introduced and was renamed before its first release, so no deprecated
+/// alias exists; replace that name with `InProcessRefusal`.
 ///
 /// The check belongs to the lower-level [`RouterClient::request`], which the
 /// protected client delegates to, so every transport that holds a
@@ -303,7 +312,7 @@ impl InProcessClient {
 ///     routing::get,
 /// };
 /// use batter_axum::{
-///     GuardedRouter, HttpBoundary, RequestPolicy, ResponseConstructionBudget, ReusedRoutingState,
+///     GuardedRouter, HttpBoundary, InProcessRefusal, RequestPolicy, ResponseConstructionBudget,
 /// };
 /// use batter_core::lifecycle::ShutdownHandle;
 /// use std::time::Duration;
@@ -325,13 +334,13 @@ impl InProcessClient {
 ///     .insert(OriginalUri(Uri::from_static("/earlier")));
 /// let refused = client.request(reused).await;
 /// assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-/// assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+/// assert!(refused.extensions().get::<InProcessRefusal>().is_some());
 ///
 /// // A response the boundary builds never carries it.
 /// let fresh = Request::builder().uri("/work").body(Body::empty())?;
 /// let served = client.request(fresh).await;
 /// assert_eq!(served.status(), StatusCode::OK);
-/// assert!(served.extensions().get::<ReusedRoutingState>().is_none());
+/// assert!(served.extensions().get::<InProcessRefusal>().is_none());
 /// # Ok(()) }
 /// ```
 ///
@@ -339,22 +348,22 @@ impl InProcessClient {
 /// constructor:
 ///
 /// ```compile_fail,E0451
-/// fn forge() -> batter_axum::ReusedRoutingState {
-///     batter_axum::ReusedRoutingState { _private: () }
+/// fn forge() -> batter_axum::InProcessRefusal {
+///     batter_axum::InProcessRefusal { _private: () }
 /// }
 /// ```
 ///
 /// ```compile_fail,E0624
-/// fn forge() -> batter_axum::ReusedRoutingState {
-///     batter_axum::ReusedRoutingState::new()
+/// fn forge() -> batter_axum::InProcessRefusal {
+///     batter_axum::InProcessRefusal::new()
 /// }
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct ReusedRoutingState {
+pub struct InProcessRefusal {
     _private: (),
 }
 
-impl ReusedRoutingState {
+impl InProcessRefusal {
     /// The marker of a refusal by [`RouterClient::request`], its only caller.
     pub(crate) const fn new() -> Self {
         Self { _private: () }

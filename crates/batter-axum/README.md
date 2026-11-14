@@ -622,7 +622,7 @@ even when no routing record is left on it. A public `CorrelationId` copied by
 type is not refused; the boundary generates its own identity. Nothing is
 stripped or repaired. The refusal is the sanitized `HttpFailure::Internal` response of
 `render_infrastructure_failure` with no correlation identifier, carrying the
-`ReusedRoutingState` response extension, which has no public constructor, plus
+`InProcessRefusal` response extension, which has no public constructor, plus
 one ERROR event with a fixed message and no request field. The marker is
 `Copy`, so a handler can put one it read from an earlier refusal on its own
 response; the client removes it from every response it dispatched, so a
@@ -663,7 +663,7 @@ is rechecked whenever either pin changes.
 The check lives in `low_level::RouterClient`, the in-process transport over a
 caller-composed router, and `InProcessClient` delegates to it. A composition
 that `HttpBoundary` cannot express, such as Runlimit's authenticated quota
-assembly, gets the same one-time preparation, entry refusal, `ReusedRoutingState`
+assembly, gets the same one-time preparation, entry refusal, `InProcessRefusal`
 marker and marker removal by holding a `RouterClient`; `batter_runlimit::http::TestClient`
 does. `RouterClient` establishes nothing about the router it dispatches, has no
 crate-root alias and cannot become an `InProcessClient`, so it never stands in

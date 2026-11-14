@@ -22,7 +22,7 @@ contracts, capability facts and validation history.
   authenticated and charged. The check now also refuses a request carrying
   any of the adapter's five private request records (quota record, observation
   state, operational marker, admission record, browser credential record),
-  with the same `ReusedRoutingState` response and static ERROR event, before
+  with the same `InProcessRefusal` response and static ERROR event, before
   the router or any application code is polled. Public values copied by type,
   such as `CorrelationId`, are not refused. The contract documents now state
   three things the earlier entries left open: a live request that an outer
@@ -30,13 +30,24 @@ contracts, capability facts and validation history.
   hand-inserted `OriginalUri` is refused like an inherited one; and detection
   of Axum's records is verified for Axum 0.8.9 only, although the dependency
   requirement admits later 0.8 releases. The reference service's request
-  client now has a test for the refusal it inherits. Public signatures are
-  unchanged. Behavior change: a request whose extensions carry one of those
-  private records is now refused.
+  client now has a test for the refusal it inherits. The response marker of a
+  refusal is renamed from `ReusedRoutingState` to `InProcessRefusal`: the old
+  name stated one cause and no longer fitted, the new one states the outcome.
+  The old name was introduced by the `batter-oj37` entry below and was never
+  released, so there is no deprecated alias; the entries below use the new
+  name. No other public signature changed. Behavior change: a request whose
+  extensions carry one of those private records is now refused.
+
+  ```rust,ignore
+  // Before, on unreleased master only:
+  response.extensions().get::<batter::axum::ReusedRoutingState>()
+  // After:
+  response.extensions().get::<batter::axum::InProcessRefusal>()
+  ```
 
   ```rust,ignore
   // Before: a handler of another router passes its request to the client whole.
-  let response = client.request(arrival).await; // refused: ReusedRoutingState
+  let response = client.request(arrival).await; // refused: InProcessRefusal
 
   // After: a fresh request from the arrival's own parts, with each
   // application extension copied by type.
@@ -67,7 +78,7 @@ contracts, capability facts and validation history.
   request at entry, before lifecycle admission, authentication, the quota
   check, a public probe or any handler: the response is
   `render_infrastructure_failure(HttpFailure::Internal, None)` carrying
-  `ReusedRoutingState`, with one static ERROR event, no completion event, no
+  `InProcessRefusal`, with one static ERROR event, no completion event, no
   `x-request-id` header and no consumed quota. The marker is removed from every
   dispatched response. At this change the check detected Axum routing records
   only; the entry above closes the residual it left for a map that keeps
@@ -84,7 +95,7 @@ contracts, capability facts and validation history.
   // Before: the whole map of an earlier dispatch, including its routing records.
   let mut next = Request::builder().method("POST").uri("/view/9").body(Body::empty())?;
   *next.extensions_mut() = earlier.clone();
-  let response = client.request(next, peer).await; // now refused: ReusedRoutingState
+  let response = client.request(next, peer).await; // now refused: InProcessRefusal
 
   // After: a fresh request with each application extension copied by type.
   let mut next = Request::builder().method("POST").uri("/view/9").body(Body::empty())?;
@@ -108,8 +119,8 @@ contracts, capability facts and validation history.
   path-parameter record that `RawPathParams` reads, `MatchedPath`, `NestedPath`
   and `OriginalUri`; any one refuses the whole request, and nothing is
   stripped. A refusal returns `render_infrastructure_failure(HttpFailure::Internal,
-  None)` carrying the new `ReusedRoutingState` response extension (also
-  `batter::axum::ReusedRoutingState`), which has no public constructor, and
+  None)` carrying the new `InProcessRefusal` response extension (also
+  `batter::axum::InProcessRefusal`), which has no public constructor, and
   emits one ERROR event with a fixed message and no request field; it has no
   completion event and no `x-request-id` header. The client removes that
   extension from every response it dispatched, so a marker a handler copied
@@ -125,7 +136,7 @@ contracts, capability facts and validation history.
   // Before: the whole map of an earlier dispatch, including its routing records.
   let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
   *next.extensions_mut() = earlier.clone();
-  let response = client.request(next).await; // now refused: ReusedRoutingState
+  let response = client.request(next).await; // now refused: InProcessRefusal
 
   // After: a fresh request with each application extension copied by type.
   let mut next = Request::builder().uri("/view/9").body(Body::empty())?;

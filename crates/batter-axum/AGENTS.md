@@ -48,7 +48,7 @@ Windows support and non-Unix fallbacks are out of scope.
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
   `InProcessClient`, which delegates preparation and every request to the
-  `RouterClient` in its private field, the `ReusedRoutingState` response marker that
+  `RouterClient` in its private field, the `InProcessRefusal` response marker that
   `RouterClient`'s entry check attaches to a refusal, and the compile-fail
   controls that reject recovering, mutating or serving the client or forging
   the marker.
@@ -267,7 +267,7 @@ to it: a public value is a caller's choice. Keep refusing a live request that
 an outer Axum router forwards; the client is not a service to mount behind a
 router. The refusal is
 `render_infrastructure_failure(HttpFailure::Internal, None)` with the
-`ReusedRoutingState` response extension, which has no public constructor or
+`InProcessRefusal` response extension, which has no public constructor or
 field, plus one static ERROR event with no request-derived field; it has no
 completion event or correlation header. The marker is `Copy`, so a handler can
 put one it read from an earlier refusal on its own response: remove it from

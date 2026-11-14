@@ -23,7 +23,7 @@ mod probe;
 mod tests;
 
 pub use assembled::AssembledHttp;
-pub use client::{InProcessClient, ReusedRoutingState};
+pub use client::{InProcessClient, InProcessRefusal};
 pub use declared::{RouteInventory, RouteInventoryError};
 pub use group::{BrowserPolicy, GroupPolicy, MutationCheckWaiver, RouteGroup, RouteGroupError};
 pub use guarded::GuardedRouter;

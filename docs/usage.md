@@ -753,7 +753,7 @@ route or layer outside the observer or hand the assembly to `axum::serve`. It
 accepts only arrival-shaped requests: a request built from a whole extension map
 cloned inside an earlier dispatch carries Axum routing records and the
 adapter's own request records, and is refused
-before any route runs, with the `ReusedRoutingState` response marker, so copy
+before any route runs, with the `InProcessRefusal` response marker, so copy
 application extensions by type into a fresh request instead. A request another
 Axum router dispatched is refused the same way; rebuild it instead of
 forwarding it whole. Runlimit's

@@ -59,7 +59,7 @@ synthetic peer. That transport dispatches through
 `batter_axum::low_level::RouterClient`, as the Axum adapter's `InProcessClient`
 does, so it accepts only arrival-shaped requests: a request built from a whole
 extension map cloned inside an earlier dispatch is refused at entry, before
-admission, authentication or the quota check, with the `ReusedRoutingState`
+admission, authentication or the quota check, with the `InProcessRefusal`
 response marker. Copy application extensions into a fresh request by type
 instead. The check also detects the adapter's own private request records, so
 a map that keeps them after the caller strips its only Axum record is refused

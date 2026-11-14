@@ -1,7 +1,7 @@
 //! The in-process transport over a caller-composed router, and the
 //! arrival-shaped entry check it shares with the protected client.
 
-use crate::{HttpFailure, ReusedRoutingState, render_infrastructure_failure};
+use crate::{HttpFailure, InProcessRefusal, render_infrastructure_failure};
 use axum::{
     Router,
     body::Body,
@@ -47,7 +47,7 @@ use tower::ServiceExt;
 ///   refuses one whose extensions carry an Axum routing record, or one of
 ///   Batter's own private request records, from an earlier dispatch before
 ///   the router is polled, with the sanitized internal failure carrying
-///   [`ReusedRoutingState`].
+///   [`InProcessRefusal`].
 /// - That marker is removed from every dispatched response, so a response
 ///   carries it only when the same call refused the request.
 /// - Nothing is spawned: the request is polled, and its future destroyed,
@@ -125,7 +125,7 @@ use tower::ServiceExt;
 ///     http::{StatusCode, Uri},
 ///     routing::get,
 /// };
-/// use batter_axum::{ReusedRoutingState, low_level::RouterClient};
+/// use batter_axum::{InProcessRefusal, low_level::RouterClient};
 ///
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -134,7 +134,7 @@ use tower::ServiceExt;
 /// let fresh = Request::builder().uri("/work").body(Body::empty())?;
 /// let served = client.request(fresh).await;
 /// assert_eq!(served.status(), StatusCode::OK);
-/// assert!(served.extensions().get::<ReusedRoutingState>().is_none());
+/// assert!(served.extensions().get::<InProcessRefusal>().is_none());
 ///
 /// let mut reused = Request::builder().uri("/work").body(Body::empty())?;
 /// reused
@@ -142,7 +142,7 @@ use tower::ServiceExt;
 ///     .insert(OriginalUri(Uri::from_static("/earlier")));
 /// let refused = client.request(reused).await;
 /// assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-/// assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+/// assert!(refused.extensions().get::<InProcessRefusal>().is_some());
 /// # Ok(()) }
 /// ```
 #[derive(Clone)]
@@ -177,7 +177,7 @@ impl RouterClient {
     /// refused whole before the router, any layer or any application code is
     /// polled, and nothing is stripped. The refusal is
     /// [`render_infrastructure_failure`] for [`HttpFailure::Internal`] with no
-    /// correlation identifier, carrying [`ReusedRoutingState`], plus one ERROR
+    /// correlation identifier, carrying [`InProcessRefusal`], plus one ERROR
     /// event with a fixed message and no request-derived field on the caller's
     /// dispatch. Application extensions, such as a chosen
     /// [`ConnectInfo`](axum::extract::ConnectInfo), are accepted and reach the
@@ -200,7 +200,7 @@ impl RouterClient {
         if carries_routing_record(&mut parts).await
             || crate::correlation::carries_private_record(&parts.extensions)
         {
-            return refuse_reused_routing_state();
+            return refuse_at_entry();
         }
         let request = Request::from_parts(parts, body);
         match self.prepared.clone().oneshot(request).await {
@@ -208,7 +208,7 @@ impl RouterClient {
                 // The marker is `Copy`, so application code can put one it
                 // read from an earlier refusal on the response it returns.
                 // Only the refusal above may leave this method carrying it.
-                response.extensions_mut().remove::<ReusedRoutingState>();
+                response.extensions_mut().remove::<InProcessRefusal>();
                 response
             }
             Err(never) => match never {},
@@ -237,12 +237,12 @@ async fn carries_routing_record(parts: &mut Parts) -> bool {
     )
 }
 
-fn refuse_reused_routing_state() -> Response {
+fn refuse_at_entry() -> Response {
     tracing::error!(
         target: "batter",
         "in-process request refused: its extensions carry state from an earlier dispatch"
     );
     let mut response = render_infrastructure_failure(HttpFailure::Internal, None);
-    response.extensions_mut().insert(ReusedRoutingState::new());
+    response.extensions_mut().insert(InProcessRefusal::new());
     response
 }

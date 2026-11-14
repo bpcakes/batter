@@ -633,7 +633,7 @@ and nothing is stripped or repaired. Any `RawPathParams` result except
 `MissingPathParams` counts as present, so a rejection Axum adds later fails
 closed. The refusal is the existing sanitized `HttpFailure::Internal`
 infrastructure response with no correlation identifier, carrying the new
-`ReusedRoutingState` response extension, which has no public constructor or
+`InProcessRefusal` response extension, which has no public constructor or
 field, so a caller or test can tell the refusal from a 500 the boundary built;
 one ERROR event with a fixed message and no request-derived field records it.
 The marker is `Copy`, and a handler can return an inner client's refused
@@ -714,14 +714,14 @@ the shape ADR-010 names as design debt.
 
 The contract is the one `batter-oj37` decided: arrival-shaped requests only,
 refused whole at entry, nothing stripped, with the sanitized
-`HttpFailure::Internal` response carrying `ReusedRoutingState`. The check, the
+`HttpFailure::Internal` response carrying `InProcessRefusal`. The check, the
 refusal and the dispatched-response marker removal moved, unchanged, into one
 lower-level type, `batter_axum::low_level::RouterClient`, which also owns the
 one-time `Router::with_state(())` preparation. `InProcessClient` holds one in
 its private field and delegates to it; `TestClient` holds one, inserts the
 caller's synthetic peer and delegates. The refusal therefore precedes lifecycle
 admission, authentication, the native quota check, public probes and handlers.
-`ReusedRoutingState` gains only a crate-private constructor whose one caller is
+`InProcessRefusal` gains only a crate-private constructor whose one caller is
 that refusal, so it still has no public constructor (field and constructor
 compile-fail controls).
 
@@ -865,10 +865,17 @@ Decisions recorded with it:
   its marker. A `Result`-returning signature remains rejected for the reasons
   recorded under `batter-oj37`; the documents now say that status and body do
   not identify a refusal.
-- The marker keeps its name, `ReusedRoutingState`, although it now also marks
-  Batter's own records: renaming a public item that Runlimit's transport and
-  its tests already use would be a hard cut for no behavioral gain. Its
-  rustdoc states what it covers.
+- The marker is renamed from `ReusedRoutingState` to `InProcessRefusal`. The
+  old name stated a cause, and went stale twice within days: it never fitted a
+  hand-inserted `OriginalUri` on a request that was never dispatched, and it
+  stopped fitting once the client also refused Batter's own records, which are
+  not routing state. The new name states the outcome, a refusal by the
+  in-process client before its router ran, which stays true whatever the
+  client refuses. The old name was introduced under `batter-oj37` and never
+  released, so this is not a cut against a released surface and no deprecated
+  alias exists; the marker's rustdoc carries a `Migration:` sentence naming
+  the old name, and the changelog shows the replacement. Earlier assessment
+  sections on this page use the new name for the same marker.
 
 Evidence: in-crate tests insert the quota, operational, admission and
 credential records alone, and the observation state alone, and assert the

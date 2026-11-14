@@ -2,7 +2,7 @@
 //! check: it only adds the synthetic peer before delegating.
 
 use super::*;
-use batter::axum::ReusedRoutingState;
+use batter::axum::InProcessRefusal;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
@@ -33,7 +33,7 @@ async fn the_request_client_refuses_a_map_from_an_earlier_dispatch() {
 
     let served = client.request(fresh(), peer).await;
     assert_eq!(served.status(), StatusCode::OK);
-    assert!(served.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(served.extensions().get::<InProcessRefusal>().is_none());
     let earlier = captured.lock().unwrap().take().unwrap();
 
     // The whole map of that dispatch, on an otherwise identical request.
@@ -41,7 +41,7 @@ async fn the_request_client_refuses_a_map_from_an_earlier_dispatch() {
     *reused.extensions_mut() = earlier;
     let refused = client.request(reused, peer).await;
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert!(refused.headers().get("x-request-id").is_none());
     assert_eq!(
         calls.load(Ordering::SeqCst),

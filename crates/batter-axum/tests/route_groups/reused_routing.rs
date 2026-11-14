@@ -18,7 +18,7 @@ use axum::{
     routing::{MethodRouter, any, get},
 };
 use batter_axum::{
-    GuardedRouter, HttpBoundary, HttpFailure, InProcessClient, ReusedRoutingState,
+    GuardedRouter, HttpBoundary, HttpFailure, InProcessClient, InProcessRefusal,
     render_infrastructure_failure,
 };
 use std::{
@@ -154,7 +154,7 @@ pub fn reusing(path: &str, extensions: Extensions) -> Request {
 pub async fn assert_refusal(response: Response) {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
-        response.extensions().get::<ReusedRoutingState>().is_some(),
+        response.extensions().get::<InProcessRefusal>().is_some(),
         "the refusal marker is missing"
     );
     assert!(!response.headers().contains_key("x-request-id"));

@@ -171,7 +171,7 @@ impl InProcessRequestClient {
     /// delegates to requires: one whose extensions came from an earlier
     /// dispatch, such as a whole map cloned inside a handler, is refused
     /// before any route runs, with the sanitized internal failure carrying
-    /// `batter::axum::ReusedRoutingState`. Build a fresh request and copy
+    /// `batter::axum::InProcessRefusal`. Build a fresh request and copy
     /// application extensions by type instead.
     pub async fn request(&self, mut request: Request<Body>, peer: SocketAddr) -> Response {
         request

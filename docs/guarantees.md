@@ -87,7 +87,7 @@ request: one whose extensions carry an Axum routing record from an earlier
 dispatch is refused whole at entry, before lifecycle admission,
 authentication, the native quota check, a public probe or a handler runs, so
 it consumes no quota and has no completion event. The refusal and its
-`ReusedRoutingState` marker are the [HTTP boundary](#http-boundary) client's.
+`InProcessRefusal` marker are the [HTTP boundary](#http-boundary) client's.
 Without the check, a whole extension map cloned inside an earlier protected
 handler would be authenticated and charged one quota unit before `Path`
 extraction failed with the inherited captures, and the inherited observation
@@ -2453,7 +2453,7 @@ its layers write and no other crate can name or build: the observation state,
 the operational wrapper's marker, the admission record, the browser credential
 record or the quota record. Nothing is stripped or repaired. A refusal returns
 `render_infrastructure_failure(HttpFailure::Internal, None)` carrying the
-`ReusedRoutingState` response extension, which has no public constructor or
+`InProcessRefusal` response extension, which has no public constructor or
 field, and emits one ERROR event with a fixed message and no request-derived
 field on the caller's dispatch.
 The marker is `Copy`, so application code can put one it read from an earlier
