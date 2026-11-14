@@ -580,3 +580,8 @@ pub(crate) enum CompletionStatus {
     Succeeded,
     Failed,
 }
+
+/// The package README, compiled so its examples cannot drift from the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;

@@ -197,6 +197,29 @@ the kind managed: apply owns the drop, its order after routines and the
 transaction that installs the trigger with the body it binds, so the rule is
 no longer needed. The review is in ADR-013.
 
+2026-11-14 (`batter-6d1g`): a `ManagedObject` checksums every source byte, so
+editing a header comment is a set change that needs a higher revision.
+`managed::statement_start` keeps leading comments out of the checksum, but it
+is opt-in per call and returns a plain `&str`: a set stays stable only if every
+constructor call and digest computation slices, and a call dropped later is
+refused at an equal revision as `RevisionConflict` after migrations commit.
+That obligation is weaker than the canonical path, which still passes whole
+sources. The base-plus-record-count revision numbering is documented, not
+enforced. The review is in
+[ADR-013](../../adr/013-managed-database-objects.md#revision-choice-header-comments-and-digest-stability--2026-11-14);
+fresh-agent usability evaluation is unexecuted.
+
+2026-11-14, later (`batter-6d1g`): that per-call obligation was the design-debt
+signal above, so it was removed before release. `statement_start` is gone; the
+rule is now `SourceChecksum`, a required argument of `ManagedObjectManifest::new`
+with no default. The manifest computes every object's ledger checksum and the
+set digest from it, so one set cannot mix checksummed forms and a dropped call
+cannot exist. `ManagedObject::checksum` was removed for the same reason, and
+`ManagedObjectManifest::object_checksums` replaces it. The canonical example
+uses `FromStatementStart`. The review is in
+[ADR-013](../../adr/013-managed-database-objects.md#set-wide-source-checksum-rule--2026-11-14);
+fresh-agent usability evaluation is unexecuted.
+
 ## Fixture login pool assessment (`batter-7r3.8`)
 
 A consumer needed fixture-managed pools that authenticate as a real restricted

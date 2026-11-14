@@ -14,7 +14,9 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
   `PgProfiledPool` only after registering closure; caller-owned construction and
   native-hook composition live in `low_level`.
 - `src/managed.rs` and `src/managed/`: the pure `ManagedObjectManifest`
-  (`source.rs` lexer and header validation), the migrate-then-apply transaction
+  (`source.rs` lexer, header validation and the statement offset that
+  `SourceChecksum::FromStatementStart` uses, both through the scanner's one
+  `trivia` rule; `checksum.rs` owns that set-wide rule), the migrate-then-apply transaction
   (`apply.rs`) and the catalog resolution, ledger shape and canonical rendering
   shared with verification (`catalog.rs`). ADR-013 owns the boundary.
 - `src/native_query.rs`, `src/pooled_query.rs`: sealed native query dispatch, fixed
@@ -158,6 +160,20 @@ with a different digest are refused. Existing unversioned ledgers upgrade only
 with a matching baseline digest, adding the sixth `release_revision` column that
 older writers reject. Keep revision publication and application SQL in the same
 transaction; arbitrary migrations still precede that transaction.
+The set digest scheme (`batter.managed-objects.v1`) is persisted in every
+ledger: never change its layout, tag, kind names or identity rendering in
+place. Identity rendering is `RoutineSignature`'s and `QualifiedName`'s quoted
+display in `verification/policy.rs`, so it is not free to tidy. The same holds
+for `catalog::rendered_set_digest` (`batter.managed-objects.rendered.v1`),
+which the `manifest` row also stores. `managed/tests/manifest.rs` and
+`ManagedObjectDigest`'s doctest hold golden values computed outside the crate;
+a failing one is a breaking scheme change, not a value to update.
+Source checksums are a manifest's, never an object's: `ManagedObjectManifest::new`
+sets every object's from its one required `SourceChecksum` rule, so do not add
+a per-object or per-call way to choose or normalize them. `WholeSource` must
+keep checksumming every byte; `FromStatementStart` removes leading text only and
+must keep giving the same offset for the same source, because ledgers record
+checksums of the text from it on. Apply executes the whole source under both.
 New supported semantics require primary PostgreSQL18 evidence and native tests.
 
 ## Common commands

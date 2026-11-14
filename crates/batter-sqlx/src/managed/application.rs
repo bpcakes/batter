@@ -266,7 +266,7 @@ async fn public_policy_holds(
 mod tests {
     use super::super::ManagedObject;
     use super::*;
-    use crate::managed::ManagedRevision;
+    use crate::managed::{ManagedRevision, SourceChecksum};
     use crate::verification::{QualifiedName, RoutineSignature};
     use std::error::Error;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -305,6 +305,7 @@ mod tests {
             ManagedRevision::new(1).expect("valid revision"),
             QualifiedName::new("app", "objects").unwrap(),
             PublicExecute::Revoke,
+            SourceChecksum::WholeSource,
             [ManagedObject::function(
                 RoutineSignature::new("app", "total", []).unwrap(),
                 "CREATE OR REPLACE FUNCTION app.total() RETURNS bigint LANGUAGE sql RETURN 1",

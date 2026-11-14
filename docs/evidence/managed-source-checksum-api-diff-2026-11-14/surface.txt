@@ -1,0 +1,15 @@
+## batter-sqlx: 1379 -> 1391 entries; 1 removed, 13 added
+- REMOVED method batter_sqlx::managed::ManagedObject::checksum
++ ADDED   enum batter_sqlx::managed::SourceChecksum
++ ADDED   impl batter_sqlx::managed::SourceChecksum: Clone
++ ADDED   impl batter_sqlx::managed::SourceChecksum: Copy
++ ADDED   impl batter_sqlx::managed::SourceChecksum: Debug
++ ADDED   impl batter_sqlx::managed::SourceChecksum: Eq
++ ADDED   impl batter_sqlx::managed::SourceChecksum: Hash
++ ADDED   impl batter_sqlx::managed::SourceChecksum: PartialEq
++ ADDED   impl batter_sqlx::managed::SourceChecksum: StructuralPartialEq
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::object_checksums
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::source_checksum
++ ADDED   use batter_sqlx::managed::SourceChecksum <- checksum::SourceChecksum
++ ADDED   variant batter_sqlx::managed::SourceChecksum::FromStatementStart
++ ADDED   variant batter_sqlx::managed::SourceChecksum::WholeSource

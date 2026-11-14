@@ -8,6 +8,74 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** managed-object manifests declare one source checksum rule for
+  the whole set (`batter-6d1g`). `batter_sqlx::managed::ManagedObjectManifest::new`
+  (also `batter::sqlx::managed`) takes a required `SourceChecksum` after the
+  `PublicExecute` policy, with no default, and computes every object's
+  recorded source checksum and the set digest from it. Ledger shape and the
+  digest layout are unchanged.
+  - `SourceChecksum::WholeSource` checksums every byte, as before: an existing
+    set keeps its checksums and digest.
+  - `SourceChecksum::FromStatementStart` checksums each source from its first
+    token on, skipping leading whitespace and comments through the same rule as
+    the header check, so header comments are free to edit. Apply still executes
+    the whole source. Switching an existing set to it is a set change when any
+    source has leading text: that release needs a higher revision, and apply
+    executes those objects again in one transaction, with their table locks.
+    Text inside and after the statement stays in the checksum. A PostgreSQL 18
+    live case checks that the switch changes no installed definition.
+
+    ```rust
+    // Before
+    ManagedObjectManifest::new(revision, ledger, PublicExecute::Revoke, objects, retirements)?;
+    // After: the same checksums and digest as before
+    ManagedObjectManifest::new(revision, ledger, PublicExecute::Revoke,
+        SourceChecksum::WholeSource, objects, retirements)?;
+    ```
+  - `ManagedObject::checksum` is removed, because an object's recorded checksum
+    now depends on its manifest's rule. Use
+    `ManagedObjectManifest::object_checksums`, which yields each object with
+    its recorded checksum in identity order; `source_checksum()` returns the
+    rule.
+
+    ```rust
+    // Before
+    let checksum = manifest.objects()[0].checksum();
+    // After
+    let (object, checksum) = manifest.object_checksums().next().expect("one object");
+    ```
+  - No deprecated shims. A `new` without the rule would have to pick one
+    silently, which is the omission the required argument removes. A
+    `ManagedObject::checksum` shim would return a checksum the ledger does not
+    record whenever the set uses `FromStatementStart`.
+  - `managed::statement_start`, added earlier on this unreleased branch as a
+    per-call slice, is removed before release. Every call site had to slice,
+    and a call dropped later surfaced only as `RevisionConflict` after
+    migrations had committed. It was never on master or in a release, so it
+    needs no migration. The canonical `postgres-lifecycle` example now uses
+    `FromStatementStart`. See the
+    [ADR-013 section](docs/adr/013-managed-database-objects.md#set-wide-source-checksum-rule--2026-11-14)
+    and the
+    [surface diff](docs/evidence/managed-source-checksum-api-diff-2026-11-14/README.md).
+- Managed objects (`batter-6d1g`), additive: digest stability and revision choice.
+  - The set digest scheme is now a stated contract. `ManagedObjectDigest`'s
+    rustdoc gives the byte layout under the tag `batter.managed-objects.v1`,
+    including how an identity is rendered, and golden values computed
+    independently of the implementation pin it. The framing of the `manifest`
+    row's digest of rendered definition hashes is pinned the same way, over
+    fixed hashes; the per-object rendered hashes come from PostgreSQL's
+    deparser and are not pinned. A future change of either scheme would be a
+    `Breaking:` entry. Apply refuses a changed set digest at an equal
+    revision, so such a release ships at a higher revision and keeps the
+    previous scheme for adopting unversioned ledgers. Apply does not compare
+    the rendered digest, so a higher revision for a change of that scheme is
+    release policy only.
+  - `ManagedRevision`'s rustdoc and the `batter-sqlx` README gain "Choosing a
+    revision": what the release fence needs, and a base-plus-record-count
+    numbering that merges without a shared line, with its one-releasing-line
+    assumption. Batter does not read or check such records. See
+    [ADR-013](docs/adr/013-managed-database-objects.md#revision-choice-header-comments-and-digest-stability--2026-11-14).
+
 - Refuse reused Axum routing state in Runlimit's in-process test transport
   (`batter-gp93`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).

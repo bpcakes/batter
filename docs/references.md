@@ -68,6 +68,7 @@ have been removed; Git retains their history.
 - <a id="protected-postgresql-catalog-safeguards-2026-09-14"></a>[Protected PostgreSQL catalog safeguards, 2026-09-14](references/postgresql.md#protected-postgresql-catalog-safeguards-2026-09-14)
 - <a id="exact-role-grant-rendering-2026-09-13"></a>[Exact-role grant rendering, 2026-09-13](references/postgresql.md#exact-role-grant-rendering-2026-09-13)
 - <a id="managed-object-release-fence--2026-11-05"></a>[Managed-object release fence — 2026-11-05](references/postgresql.md#managed-object-release-fence--2026-11-05)
+- <a id="leading-comments-and-whitespace--2026-11-14"></a>[Leading comments and whitespace — 2026-11-14](references/postgresql.md#leading-comments-and-whitespace--2026-11-14)
 - <a id="intent-reconciliation-snapshot-and-grants-2026-11-05"></a>[Intent reconciliation snapshot and grants (2026-11-05)](references/postgresql.md#intent-reconciliation-snapshot-and-grants-2026-11-05)
 - <a id="shared-profiled-pool-ownership-2026-11-05"></a>[Shared profiled pool ownership (2026-11-05)](references/postgresql.md#shared-profiled-pool-ownership-2026-11-05)
 

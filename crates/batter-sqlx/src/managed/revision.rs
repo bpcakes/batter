@@ -15,6 +15,39 @@ use std::fmt;
 /// assert_eq!(revision.get(), 12);
 /// assert!(ManagedRevision::new(0).is_none());
 /// ```
+///
+/// # Choosing a revision
+///
+/// For one ledger the revision must never decrease, and one revision must
+/// name one content digest. A single hand-written constant is one line that
+/// every set-changing branch rewrites: branches that pick different numbers
+/// conflict on it, branches that raise it to the same number merge without a
+/// conflict, and either way the merged number can name a set neither branch
+/// built. A frozen base plus a count of append-only records avoids the shared
+/// line: each set change adds one uniquely named record file, so a merge holds
+/// both parents' records and its revision is above both.
+///
+/// ```
+/// use batter_sqlx::managed::ManagedRevision;
+///
+/// /// The last hand-chosen revision, or zero for a new ledger. Never changes.
+/// const BASE: u64 = 41;
+/// const fn revision(records: usize) -> ManagedRevision {
+///     ManagedRevision::new(BASE + records as u64).expect("a positive bigint revision")
+/// }
+/// // Two branches from a tree with three records each add one; the merge has both.
+/// const BRANCH: ManagedRevision = revision(4);
+/// const MERGED: ManagedRevision = revision(5);
+/// assert!(BRANCH < MERGED);
+/// assert_eq!(MERGED.get(), 46);
+/// ```
+///
+/// Batter neither reads such records nor checks that they are append-only;
+/// that stays with the application's build and review. The recipe assumes one
+/// releasing line per ledger: two unmerged branches share a revision with
+/// different content, which apply refuses, and a stale branch holding more
+/// records than the releasing line is a higher revision, which apply accepts.
+/// See "Choosing a revision" in this package's README.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ManagedRevision(i64);
 
