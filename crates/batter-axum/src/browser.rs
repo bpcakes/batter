@@ -15,7 +15,7 @@
 //! [`BrowserCredentials`](crate::browser::BrowserCredentials) and call
 //! [`BrowserCredentials::cookie`](crate::browser::BrowserCredentials::cookie); the
 //! deliberately unchecked reader is
-//! [`low_level::read_unchecked_cookie`](crate::low_level::read_unchecked_cookie).
+//! [`crate::low_level::read_unchecked_cookie`].
 //!
 //! ```compile_fail,E0432
 //! use batter_axum::browser::read_cookie;

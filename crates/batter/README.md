@@ -79,7 +79,7 @@ cargo run -p batter --example finite_command
 cargo run -p batter --features outbound-http --example outbound_exchange
 ```
 
-Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed,
+Version 0.0.1; Rust 1.100.0 minimum; the manifest targets crates.io. MIT licensed,
 including the optional `batter-at-rest` dependency.
 
 Select `otlp` for `batter::otlp`: explicit bounded metrics export through

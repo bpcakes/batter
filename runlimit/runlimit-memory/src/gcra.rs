@@ -215,7 +215,7 @@ impl<C: Clock> GcraStore<C> {
     pub fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, GcraCheckError> {
         let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_inner(check);
-        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
+        let elapsed = started.map_or_default(|start| start.elapsed());
         match &result {
             Ok(evaluation) => {
                 self.observe_shard_effect(&evaluation.effect);
@@ -247,7 +247,7 @@ impl<C: Clock> GcraStore<C> {
         let cleanup_requested = self.config.max_expired_removals_per_check();
         let started = self.observer.as_ref().map(|_| Instant::now());
         let cleanup_removed = shard.prune_expired(now_millis, cleanup_requested);
-        let cleanup_elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
+        let cleanup_elapsed = started.map_or_default(|start| start.elapsed());
 
         let decision = match evaluated {
             QuotaEvaluation::Allowed(allowance) => {
@@ -296,7 +296,7 @@ impl<C: Clock> GcraStore<C> {
     ) -> Result<BatchDecision, GcraBatchError> {
         let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_all_inner(checks);
-        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
+        let elapsed = started.map_or_default(|start| start.elapsed());
         match &result {
             Ok(evaluation) => {
                 self.observe_shard_effects(&evaluation.effect);
@@ -359,7 +359,7 @@ impl<C: Clock> GcraStore<C> {
             cleanup_effects.push(CleanupEffect {
                 requested,
                 removed,
-                elapsed: started.map(|start| start.elapsed()).unwrap_or_default(),
+                elapsed: started.map_or_default(|start| start.elapsed()),
             });
         }
 

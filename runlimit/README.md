@@ -773,7 +773,7 @@ work admitted during a time window.
 
 ## Development
 
-Run from the Batter repository root. Rust 1.98.1, the default workspace
+Run from the Batter repository root. Rust 1.100.0, the default workspace
 toolchain, is also the minimum. Root `scripts/verify.sh` includes all native tests,
 default-feature tests/lint, strict all-feature lint, doctests, and the release-mode
 memory corruption/fail-closed regression. Use the root Beads tracker and
