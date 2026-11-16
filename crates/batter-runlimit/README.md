@@ -55,7 +55,15 @@ arrive through `batter_axum::AdmittedRequest` in the same way. Authentication re
 selection uses its result and the actual peer, not forwarded headers. Closure
 signatures are checked at `new`. Prepared serving installs peer metadata and one
 retained HTTP observer; the alternative test transport requires an explicit
-synthetic peer. See the
+synthetic peer. That transport dispatches through
+`batter_axum::low_level::RouterClient`, as the Axum adapter's `InProcessClient`
+does, so it accepts only arrival-shaped requests: a request built from a whole
+extension map cloned inside an earlier dispatch is refused at entry, before
+admission, authentication or the quota check, with the `ReusedRoutingState`
+response marker. Copy application extensions into a fresh request by type
+instead. The check detects Axum routing records only; a map that keeps
+Batter's own records after the caller strips its only Axum record is still
+authenticated and charged, as the `TestClient::request` rustdoc describes. See the
 [facade compiling example](../batter/examples/quota_service.rs), [API docs](src/http.rs) and
 [integration contract](../../docs/integrations.md#runlimit-optional-protected-native-quota-adapter).
 

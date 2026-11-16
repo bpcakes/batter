@@ -222,6 +222,15 @@ forwarded headers cannot supply that authority.
 Compile-fail examples reject access to an assembled raw router and unregistered
 serving. In-process tests select an explicit synthetic peer through the opaque
 client. They exercise boundary assembly without claiming socket provenance.
+Route-group tests refuse a whole extension map reused from an earlier dispatch,
+and [Runlimit's reused-routing tests](../crates/batter-runlimit/tests/http/reused_routing.rs)
+prove its test transport shares that refusal before lifecycle admission,
+authentication, the quota check, a public probe or a handler runs, accepts a
+fresh request's application extensions and strips a forwarded refusal marker.
+A characterization test in the same file pins the documented residual: a map
+whose only detected record, an `OPTIONS *` dispatch's `OriginalUri`, was
+removed is authenticated and charged without fresh correlation or a completion
+event, until `batter-28kb` closes it.
 
 ## Probe response policy
 

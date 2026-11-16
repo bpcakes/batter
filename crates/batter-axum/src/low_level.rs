@@ -21,6 +21,12 @@
 //! reads a cookie from any header map without the route group's decision that
 //! [`BrowserCredentials`](crate::browser::BrowserCredentials) enforces.
 //!
+//! [`RouterClient`] is the one transport here: an in-process request client
+//! over a caller-composed router. It owns the arrival-shaped entry check and
+//! one-time router preparation that the protected
+//! [`InProcessClient`](crate::InProcessClient) delegates to, and establishes
+//! nothing about the router's composition.
+//!
 //! Migration: before assembly was sealed, every helper in this module was
 //! exported at the crate root. A `use batter_axum::<helper>` or
 //! `batter::axum::<helper>` import now fails to resolve; the replacement is the
@@ -80,6 +86,10 @@
 //! use batter_axum::register_http_with_connect_info_in;
 //! ```
 //!
+//! ```compile_fail,E0432
+//! use batter_axum::RouterClient;
+//! ```
+//!
 //! The unchecked cookie reader stays out of both canonical namespaces:
 //!
 //! ```compile_fail,E0432
@@ -109,9 +119,12 @@ use batter_core::{
 use std::convert::Infallible;
 use tokio::time::Instant;
 
+mod router_client;
+
 pub use crate::correlation::{operational_http, operational_http_with_quota};
 pub use crate::readiness::dependency_readiness;
 pub use crate::serving::{register_http, register_http_in, register_http_with_connect_info_in};
+pub use router_client::RouterClient;
 
 /// Observe response construction independently of admission or deadlines.
 ///
