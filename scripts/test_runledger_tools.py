@@ -45,7 +45,7 @@ class SourceTests(unittest.TestCase):
             native.mkdir()
             text = (root / "runledger/README.md").read_text()
             paths = ["producer_worker/" + name + ".rs" for name in ("shared", "producer", "worker")]
-            paths.append("support/database.rs")
+            paths.extend("support/" + name + ".rs" for name in ("database", "worker"))
             for name in paths:
                 relative = Path('runledger-runtime/examples') / name
                 path = native / relative
@@ -55,7 +55,7 @@ class SourceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'differs'):
                 validate_readme(copy_root)
             (native / 'README.md').write_text('No compiled snippets')
-            with self.assertRaisesRegex(ValueError, 'all four'):
+            with self.assertRaisesRegex(ValueError, 'all five'):
                 validate_readme(copy_root)
 
     def test_copy_retains_build_assets_without_git_secrets_or_outputs(self):
