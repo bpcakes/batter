@@ -218,7 +218,7 @@ fn a_head_hyper_refuses_is_recognised() {
             status,
             headers: &headers,
         };
-        head.refused(&hinted(hint))
+        head.refused(Some(&hinted(hint)))
     };
     let (http11, http10, ok) = (Version::HTTP_11, Version::HTTP_10, StatusCode::OK);
     let encoding_first = [(ENCODING, "chunked"), (LENGTH, "10")];
@@ -249,11 +249,62 @@ fn a_head_hyper_refuses_is_recognised() {
             status: ok,
             headers: &headers,
         };
-        head.refused(&SizeHint::with_exact(0))
+        head.refused(Some(&SizeHint::with_exact(0)))
     };
     assert!(connect(&[(LENGTH, "0")]));
     assert!(connect(&[(ENCODING, "chunked")]));
     assert!(!connect(&[]));
+}
+
+/// A body that has ended is written as none: Hyper skips every
+/// `Content-Length` unparsed, so only a `Transfer-Encoding` before one in an
+/// answer that may be chunked is refused, besides a final 1xx and any length
+/// header on a 2xx answer to CONNECT. Answering HEAD, it writes the first
+/// `Content-Length` as given and refuses a length header after it.
+#[test]
+fn an_ended_body_is_refused_only_as_hyper_writes_it_as_none() {
+    let refused = |method: Method, version, status, headers: &[(&'static str, &'static str)]| {
+        let headers = map(headers);
+        let head = Head {
+            method: &method,
+            version,
+            status,
+            headers: &headers,
+        };
+        head.refused(None)
+    };
+    let (get, head) = (Method::GET, Method::HEAD);
+    let (http11, http10, ok) = (Version::HTTP_11, Version::HTTP_10, StatusCode::OK);
+    let length_first = [(LENGTH, "0"), (ENCODING, "chunked")];
+    let encoding_first = [(ENCODING, "chunked"), (LENGTH, "0")];
+    assert!(!refused(get.clone(), http10, ok, &length_first));
+    assert!(!refused(get.clone(), http11, ok, &length_first));
+    assert!(refused(get.clone(), http11, ok, &encoding_first));
+    assert!(!refused(get.clone(), http10, ok, &encoding_first));
+    assert!(!refused(
+        get.clone(),
+        http11,
+        StatusCode::NO_CONTENT,
+        &encoding_first
+    ));
+    assert!(!refused(get.clone(), http11, ok, &[(LENGTH, "+5")]));
+    assert!(!refused(
+        get.clone(),
+        http11,
+        ok,
+        &[(LENGTH, "10"), (LENGTH, "12")]
+    ));
+    assert!(refused(get.clone(), http11, StatusCode::EARLY_HINTS, &[]));
+    assert!(refused(Method::CONNECT, http11, ok, &[(LENGTH, "0")]));
+    assert!(!refused(head.clone(), http11, ok, &[(LENGTH, "10")]));
+    assert!(refused(
+        head.clone(),
+        http11,
+        ok,
+        &[(LENGTH, "10"), (LENGTH, "10")]
+    ));
+    assert!(refused(head.clone(), http11, ok, &length_first));
+    assert!(!refused(head, http11, ok, &encoding_first));
 }
 
 /// Hyper writes no final 1xx but 101, answering any other with a 500 whatever
@@ -268,7 +319,7 @@ fn a_final_informational_head_is_refused_unless_switching_protocols() {
             status,
             headers: &headers,
         };
-        head.refused(&hinted(hint))
+        head.refused(Some(&hinted(hint)))
     };
     for status in [
         StatusCode::CONTINUE,
@@ -305,7 +356,8 @@ fn only_the_written_head_records_a_refusal() {
     start.hand_over(&framing);
     start.settle(&refused());
     assert!(!framing.unwritable());
-    // `Body::empty()` has an exact size, so Hyper does not parse its length.
+    // `Body::empty()` has ended, so Hyper writes it as none and skips its
+    // length unparsed.
     let sized = Response::builder()
         .header(LENGTH, "+5")
         .body(Body::empty())

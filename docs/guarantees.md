@@ -2746,7 +2746,13 @@ on a 2xx answer to CONNECT, a
 `Content-Length` beside `Transfer-Encoding` unless `Transfer-Encoding` comes
 first in an answer that cannot be chunked, and an unparsable or conflicting
 `Content-Length` on a body of unknown size, including under a 204 or 304. A
-body under such a head is reported `failed`, whether or not its source had
+body that already reports its end when Hyper writes the head is written as
+none (`dispatch.rs:367-379`), and Hyper then skips every `Content-Length`
+unparsed (`role.rs:784-804`), except answering HEAD, where it writes the first
+value and refuses a length header after it; for such a body only a final 1xx,
+a length header on a 2xx answer to CONNECT and a `Transfer-Encoding` before a
+`Content-Length` in an answer that may be chunked are refused. A
+body under a refused head is reported `failed`, whether or not its source had
 already ended or a handler polled it first, not as a departed peer or a
 complete empty message; neither admission's head nor the provisional head the
 handler built records a refusal, so a body discarded with them stays
@@ -2766,9 +2772,18 @@ it; admission a layer polls on another task, such as one awaiting
 in-process response a served handler returns as its own are each judged by the
 message Hyper writes for them; and an in-process body a served handler keeps
 rather than returns is never reached by that transport, so it keeps the
-framing its own admission settled. Only a body that a layer polls on another
-task than its connection's, for example by pumping it through a channel, is
-not reached: it keeps admission's framing and records no refusal, so a length
+framing its own admission settled. Application code that runs inside such a
+call is no part of the transport's chain: an owned body runs its source's
+polls, queries and destruction with no framing current, so a body that source
+forwards keeps its own framing and only the outermost owned body adopts; and a
+body started while a framing is current, by work such as a plain stream
+dispatching in-process while Hyper polls it, never adopts one. A plain stream
+or body layer that consumes an owned body started elsewhere, while Hyper polls
+it, still lets that body adopt the message's framing: from inside the call,
+consuming code and a forwarding layer look alike. A body that a layer polls on
+another task than its connection's, for example by pumping it through a
+channel, is not reached at all: it keeps admission's framing and records no
+refusal, so a length
 a layer outside admission adds, or a head Hyper refuses, goes unseen and the
 event can report `completed` or `dropped` for a message Hyper aborted or never
 wrote. Lengths are compared with the bytes the owned body yielded, so a layer
@@ -2845,8 +2860,12 @@ body under a final 103 head, which Hyper answers with a 500, reported `failed`,
 as are an already ended body and one its handler polled first under that head,
 admission polled on a spawned task under an outer ten-byte length and an
 in-process response a served handler returns under a ten-byte length it
-declares, both reported `failed` while the peer receives fewer bytes, and an
-HTTP/1.0 response to an
+declares, both reported `failed` while the peer receives fewer bytes, an
+ended body under the HTTP/1.0 head refused for a pending one written as a
+complete empty response and reported `completed`, a body a plain stream
+starts in-process while Hyper polls it keeping its own ten-byte framing and
+reported `failed`, a body an owned source forwards keeping its own framing so
+that both report `completed`, and an HTTP/1.0 response to an
 HTTP/1.1 request, framed by its `Content-Length` despite `Transfer-Encoding`
 and reported `failed` when short. Unit tests check the framing rules
 against Hyper's parser: plain digits only, repeated values equal, no length
@@ -2854,7 +2873,8 @@ under `Transfer-Encoding` except for HTTP/1.0, none for a bodyless response,
 the refused heads including a final 100, 102 or 103 but not a 101, a body
 adopting the first transport's framing once and no later settle, and the
 written framing current only during the transport's call, restored after an
-inner call or an unwind. An in-process case checks that a handler's poll before
+inner call or an unwind, and the refusal rules for a body Hyper writes as
+none. An in-process case checks that a handler's poll before
 the transport leaves a length declared afterwards to admission.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
@@ -2913,7 +2933,11 @@ by containment, disabling the adoption of the written framing failed seven of
 the framing socket cases, including the spawned-admission and returned
 in-process cases; asking the source for its end before the recorded refusal
 failed the ended-body 103 case; and fixing the framing at any first poll failed
-the in-process poll-before-transport case and the handler-polled 103 case.
+the in-process poll-before-transport case and the handler-polled 103 case. On
+2026-11-16, letting a body started inside a transport's call adopt failed the
+in-process-from-a-polled-stream case, running an owned source with the framing
+current failed the forwarded-body case, and ignoring a body's end in the
+refusal rule failed the ended HTTP/1.0 case.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at

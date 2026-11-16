@@ -198,6 +198,45 @@ fn a_refused_zero_length_head_is_failed_not_completed() {
     assert!(event.contains("bytes=0"), "{event}");
 }
 
+/// A body that has ended when Hyper writes the head is written as none, and
+/// Hyper then skips `Content-Length` unparsed and drops `Transfer-Encoding`
+/// from an HTTP/1.0 answer: the head refused above for a pending body is
+/// written here, the peer receives a complete empty response and the body is
+/// `completed`.
+#[test]
+fn an_ended_body_under_a_head_refused_for_a_pending_one_is_completed() {
+    let capture = Capture::new();
+    let text = capture.block_on(async {
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(|admitted: AdmittedRequest| async move {
+                admitted.into_streaming_response(budget(600, 300), |_scope| {
+                    Response::builder()
+                        .version(Version::HTTP_10)
+                        .header(header::CONTENT_LENGTH, "0")
+                        .header(header::TRANSFER_ENCODING, "chunked")
+                        .body(Body::empty())
+                        .unwrap()
+                })
+            }),
+        ))
+        .await;
+        let mut client = served.request().await;
+        let mut text = String::new();
+        timeout(WAIT, client.read_to_string(&mut text))
+            .await
+            .unwrap()
+            .unwrap();
+        wait_for_finished(&capture).await;
+        served.shut_down().await;
+        text
+    });
+    assert!(text.starts_with("HTTP/1.0 200 OK\r\n"), "{text}");
+    assert!(text.ends_with("\r\n\r\n"), "{text}");
+    let event = assert_finished(&capture, "INFO", "completed");
+    assert!(event.contains("bytes=0"), "{event}");
+}
+
 /// What a final 1xx answer carries.
 #[derive(Clone, Copy, Debug)]
 enum Carried {
@@ -491,4 +530,137 @@ fn an_in_process_response_a_served_handler_returns_is_judged_by_the_written_mess
         String::from_utf8_lossy(&bytes).into_owned()
     });
     assert_short_and_failed(&capture, &text);
+}
+
+/// A response stream that Hyper polls and that dispatches in-process starts
+/// an owned body that is no part of the message Hyper is writing: that body,
+/// sent elsewhere, keeps its own framing, so a source short of the ten bytes
+/// it declares is `failed`, although the outer message's five bytes are met.
+#[test]
+fn a_body_started_by_a_stream_hyper_polls_is_no_part_of_its_message() {
+    let capture = Capture::new();
+    let (text, drained) = capture.block_on(async {
+        let handle = super::super::support::ready();
+        let inner = super::super::support::client(
+            &handle,
+            GuardedRouter::new().route(
+                "/inner",
+                route(|admitted: AdmittedRequest| async move {
+                    admitted.into_streaming_response(budget(600, 300), |_scope| {
+                        let source =
+                            stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
+                        ([(header::CONTENT_LENGTH, "10")], Body::from_stream(source))
+                    })
+                }),
+            ),
+        )
+        .await;
+        let (sent, received) = tokio::sync::oneshot::channel::<Body>();
+        let sent = Arc::new(std::sync::Mutex::new(Some(sent)));
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(move || {
+                let (inner, sent) = (inner.clone(), sent.clone());
+                async move {
+                    // Not owned: Hyper polls this stream itself.
+                    let outer = stream::once(async move {
+                        let request = axum::http::Request::get("/inner")
+                            .body(Body::empty())
+                            .unwrap();
+                        let started = inner.request(request).await.into_body();
+                        let _ = sent.lock().unwrap().take().unwrap().send(started);
+                        Ok::<_, Infallible>(Bytes::from_static(b"outer"))
+                    });
+                    ([(header::CONTENT_LENGTH, "5")], Body::from_stream(outer))
+                }
+            }),
+        ))
+        .await;
+        let mut client = served.request().await;
+        let mut text = String::new();
+        timeout(WAIT, client.read_to_string(&mut text))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut started = received.await.unwrap();
+        let drained = super::super::support::drain(&mut started).await;
+        drop(started);
+        wait_for_finished(&capture).await;
+        served.shut_down().await;
+        (text, drained)
+    });
+    assert!(text.ends_with("\r\n\r\nouter"), "{text}");
+    assert_eq!(drained, ("hello".to_owned(), None));
+    let event = assert_finished(&capture, "WARN", "failed");
+    assert!(event.contains("bytes=5"), "{event}");
+}
+
+/// An owned body whose source forwards another owned body is the one the
+/// message carries: the forwarded body, reached only through that source,
+/// keeps its own five-byte framing rather than the outer eight, so both
+/// complete when Hyper stops after the outer message's prefix and the
+/// forwarded five bytes, without asking either for its end.
+#[test]
+fn a_body_an_owned_source_forwards_keeps_its_own_framing() {
+    let capture = Capture::new();
+    let text = capture.block_on(async {
+        let handle = super::super::support::ready();
+        let inner = super::super::support::client(
+            &handle,
+            GuardedRouter::new().route(
+                "/inner",
+                route(|admitted: AdmittedRequest| async move {
+                    admitted.into_streaming_response(budget(600, 300), |_scope| {
+                        let source =
+                            stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
+                        ([(header::CONTENT_LENGTH, "5")], Body::from_stream(source))
+                    })
+                }),
+            ),
+        )
+        .await;
+        let served = serve(GuardedRouter::new().route(
+            "/",
+            route(move |admitted: AdmittedRequest| {
+                let inner = inner.clone();
+                async move {
+                    let request = axum::http::Request::get("/inner")
+                        .body(Body::empty())
+                        .unwrap();
+                    let forwarded = inner.request(request).await.into_body();
+                    admitted.into_streaming_response(budget(600, 300), move |_scope| {
+                        let prefix =
+                            stream::iter([Ok::<_, axum::Error>(Bytes::from_static(b"abc"))]);
+                        let source = prefix.chain(forwarded.into_data_stream());
+                        ([(header::CONTENT_LENGTH, "8")], Body::from_stream(source))
+                    })
+                }
+            }),
+        ))
+        .await;
+        let mut client = served.request().await;
+        let mut text = String::new();
+        timeout(WAIT, client.read_to_string(&mut text))
+            .await
+            .unwrap()
+            .unwrap();
+        timeout(WAIT, async {
+            while finished(&capture).len() < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        served.shut_down().await;
+        text
+    });
+    assert!(text.ends_with("\r\n\r\nabchello"), "{text}");
+    let events = finished(&capture);
+    assert_eq!(events.len(), 2, "{}", capture.text());
+    for event in &events {
+        assert!(event.trim_start().starts_with("INFO"), "{event}");
+        assert!(event.contains("body_outcome=\"completed\""), "{event}");
+    }
+    assert!(events.iter().any(|event| event.contains("bytes=5")));
+    assert!(events.iter().any(|event| event.contains("bytes=8")));
 }

@@ -565,10 +565,20 @@ sources in the locked registry.
   reached by one, through whatever layers wrap it, adopts the framing of the
   message that actually carries it. That reaches admission polled on a task a
   layer spawned with `tokio::spawn(next.run(request))`, a nested admission and
-  an in-process response a served handler returns, and misses only a body a
-  layer polls on another task than the connection's. Checked on 2026-11-15;
-  real-socket tests cover the spawned, nested and returned in-process cases
-  and an in-process body the handler keeps. Hyper encodes that
+  an in-process response a served handler returns, and misses a body a layer
+  polls on another task than the connection's. Application code also runs
+  inside such a call, so an owned body runs its source with no framing
+  current, and a body started while one is current, such as by a stream that
+  dispatches in-process, never adopts. Checked on 2026-11-15 and 2026-11-16;
+  real-socket tests cover the spawned, nested and returned in-process cases,
+  an in-process body the handler keeps, one a polled stream starts and one an
+  owned source forwards. Dispatch asks `is_end_stream` before anything else
+  and writes an ended body as none (`dispatch.rs:367-379`); `Server::encode`
+  then skips each `Content-Length` unparsed, except answering HEAD, where it
+  writes the value and sets the length as written (`role.rs:784-804`), so a
+  later length header is refused. Checked on 2026-11-16 against an HTTP/1.0
+  `Content-Length: 0` before `Transfer-Encoding: chunked`, written as a
+  complete empty response. Hyper encodes that
   response's headers: `Server::encode` (`role.rs:653-940`) frames a body of
   unknown size by a `Content-Length` it parses with `from_digits`
   (`headers.rs:66-68`, `101-123`: plain digits, no sign, whitespace or
@@ -621,4 +631,3 @@ reader and the half-sent head each holding the wrapper until abort without the
 close and ending inside the cancel allowance with it; a pending body after
 pipelined request bytes did the same when only pending polls were recorded.
 HTTP/2 and an upgraded connection were not exercised.
-

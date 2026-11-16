@@ -42,9 +42,13 @@ contracts, capability facts and validation history.
   makes its message's framing current for every call Hyper makes into it, so
   spawned admission, a nested `low_level::request_admission` router and an
   in-process response a served handler returns are each judged by the message
-  Hyper writes, and a poll before the transport's fixes nothing. Only a body a
-  layer polls on another task than the connection's keeps admission's
-  framing, and lengths are compared with the bytes the owned body yielded. A
+  Hyper writes, and a poll before the transport's fixes nothing. A body
+  another owned body's source forwards, one started by work running while
+  Hyper polls a response (a stream dispatching in-process), and one a layer
+  polls on another task than the connection's keep admission's framing;
+  lengths are compared with the bytes the owned body yielded. For a body
+  already at its end, which Hyper writes as none, only the refusals Hyper
+  still applies to such a head count. A
   body whose answer about its end or size panics is `panicked`,
   including at the hand-over, and is ended before it is destroyed; so is one
   whose swallowed empty frame panics when the library destroys it, even if the

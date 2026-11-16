@@ -275,7 +275,12 @@ response it hands Hyper, and `ConnectionBody` makes it current, in a
 thread-local restored even on unwind, around every call Hyper makes into the
 body (poll, end and size queries, destruction); an owned body adopts it in each
 of those calls and in its destructor, once, and nothing settles it again. A
-poll by anyone outside such a call fixes nothing. Never reintroduce a
+poll by anyone outside such a call fixes nothing. Run every call into an owned
+body's application source (poll, queries, destruction, discarded answers)
+with no framing current (`Written::outside`, through `OwnedBody::application`
+wherever the borrow allows), so only the
+outermost owned body in the chain adopts; record at `Framing::started` whether
+a framing was current, and never let such a nested body adopt. Never reintroduce a
 task-local or request-carried association: it judged a spawned admission, a
 nested router or a returned in-process response against the wrong head. A body
 a layer polls on another task than its connection's is not reached and keeps
@@ -295,7 +300,9 @@ and wake the task before yielding; ask the source for its end only after
 destroying the frame, and end the body at once if it has ended. A
 recorded refusal outranks everything else destruction asks: a source already
 at its end and a length that looks produced, since Hyper never polls a body
-under a head it refuses. Record, only in the registered server's `Written`, whether
+under a head it refuses. Judge refusal as Hyper encodes the head: ask the body
+for its end first, and for an ended body, which Hyper writes as none, apply
+only the rules its no-body branch keeps. Record, only in the registered server's `Written`, whether
 Hyper refuses the head (by its rules before the no-body rule, so under 204/304 and a
 2xx CONNECT answer too, and any final 1xx but 101, which Hyper answers with a
 500) and report a body under one `failed`; never record a refusal from the

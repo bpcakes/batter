@@ -345,14 +345,17 @@ after trailers. The advertised length is the one Hyper frames the written
 message with: through the registered server, that of the response carrying the
 body when Hyper writes it, after every layer and wherever admission ran,
 including a response a served handler returns from the in-process client;
-otherwise the one request admission returns. Only a body that a layer polls on
-another task than the connection's, for example by pumping it through a
-channel, is not reached by the transport and keeps admission's framing. A
+otherwise the one request admission returns. A body that another owned body's
+source forwards keeps its own framing, as does one started by work running
+while Hyper polls a response, such as a stream dispatching in-process; and a
+body that a layer polls on another task than the connection's, for example by
+pumping it through a channel, is not reached by the transport and keeps
+admission's framing. A
 length added by the handler's tuple or any layer after
 `into_streaming_response`, or carried by a response the handler rebuilt around
 the body, counts. Lengths are compared with the bytes the owned body yielded,
-so a layer that changes them under a declared length, or a message joining the
-body with others, is judged against that whole message. As in Hyper, a
+so a layer that changes them under a declared length, or a plain stream or
+layer that joins the body with others, is judged against that whole message. As in Hyper, a
 `Content-Length` counts only as plain digits, repeated only with one value,
 else the body's exact size does, and `Transfer-Encoding` frames none except in
 an HTTP/1.0 answer. A declared length that the body's exact size contradicts,
@@ -360,7 +363,9 @@ which Hyper does not support, still counts, being what the peer reads. Axum's
 router adds a `Content-Length` to a body of exact
 size even beside `Transfer-Encoding`, and Hyper then refuses the message;
 through the registered server, a body whose head Hyper refuses is `failed`,
-even if its source had already ended or its handler polled it first. A source that ends, reports its end or yields trailers short of
+even if its source had already ended or its handler polled it first. Hyper
+writes a body already at its end as none and then ignores `Content-Length`
+(answering HEAD, it keeps only the first), so it refuses fewer heads for one. A source that ends, reports its end or yields trailers short of
 its advertised length is `failed`: Hyper aborts that message and the peer sees
 it truncated. A source that already reports its end when Hyper writes the head
 is the exception: Hyper writes no body and frames the message as

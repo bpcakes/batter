@@ -226,8 +226,11 @@ impl AdmittedRequest {
     ///   the one admission returns. A length a handler's tuple or a layer adds
     ///   after this call counts, as does one on a response rebuilt around this
     ///   body or on one a served handler returns from the in-process client.
-    ///   It is compared with the bytes this body yielded, so a layer that
-    ///   changes them under a declared length, or a message joining this body
+    ///   A body this one's source forwards keeps its own framing, as does one
+    ///   started by work that runs while Hyper polls another response, such
+    ///   as a stream dispatching in-process. The length is compared with the
+    ///   bytes this body yielded, so a layer that changes them under a
+    ///   declared length, or a plain stream or layer that joins this body
     ///   with others, is judged against that whole message. Like Hyper, a `Content-Length` counts only as plain digits,
     ///   repeated only with one value, else the body's exact size does, and
     ///   `Transfer-Encoding` frames none, except in an HTTP/1.0 answer, which
@@ -375,7 +378,7 @@ impl AdmittedRequest {
             idle: budget.idle,
             wake: None,
             bytes: 0,
-            framing: Framing::default(),
+            framing: Framing::started(),
             trailers: false,
             ended: false,
             polling: false,
@@ -450,7 +453,7 @@ impl OwnedBody {
     /// captured dispatcher and inside the request span.
     fn finish_destroying<T>(&mut self, end: BodyEnd, rejected: T) {
         if self.ended {
-            tracing::dispatcher::with_default(&self.dispatch, || drop(rejected));
+            self.application(|| drop(rejected));
             return;
         }
         self.ended = true;
@@ -497,7 +500,7 @@ impl OwnedBody {
                 // An unwinding destructor still releases the span under its
                 // owner, which this closure's guard keeps current.
                 let inner = (self.inner.take(), rejected);
-                tracing::dispatcher::with_default(&self.dispatch, || drop(inner));
+                self.application(|| drop(inner));
             }
             drop(context);
         });
@@ -540,11 +543,19 @@ impl OwnedBody {
         }
     }
 
+    /// Run application code for this body under the captured dispatcher and
+    /// with no transport's framing current: a body that code reaches, such as
+    /// one the source forwards or starts by dispatching in-process, is no part
+    /// of the message this body is.
+    fn application<T>(&self, application: impl FnOnce() -> T) -> T {
+        Written::outside(|| tracing::dispatcher::with_default(&self.dispatch, application))
+    }
+
     /// Run application code under the captured dispatcher and span, as a
     /// poll is, marking it so one that unwinds is reported as a panic.
     fn call<T>(&self, application: impl FnOnce() -> T) -> T {
         self.calling.set(true);
-        let answer = tracing::dispatcher::with_default(&self.dispatch, || {
+        let answer = self.application(|| {
             let _entered = self.context.as_ref().map(tracing::Span::enter);
             application()
         });
@@ -642,9 +653,12 @@ impl HttpBody for OwnedBody {
             return Poll::Ready(None);
         };
         this.polling = true;
-        let polled = tracing::dispatcher::with_default(&this.dispatch, || {
-            let _entered = this.context.as_ref().map(tracing::Span::enter);
-            Pin::new(inner).poll_frame(cx)
+        // The source's poll is application code; see `application`.
+        let polled = Written::outside(|| {
+            tracing::dispatcher::with_default(&this.dispatch, || {
+                let _entered = this.context.as_ref().map(tracing::Span::enter);
+                Pin::new(inner).poll_frame(cx)
+            })
         });
         this.polling = false;
         // Nor is a frame, end or error the source returned from a poll that
@@ -736,7 +750,7 @@ impl Drop for OwnedBody {
             // Asking the source for its end runs application code, so it runs
             // under the captured dispatcher and span, and one that unwinds
             // still ends the body under protection before the panic continues.
-            let queried = tracing::dispatcher::with_default(&self.dispatch, || {
+            let queried = self.application(|| {
                 let _entered = self.context.as_ref().map(tracing::Span::enter);
                 catch_unwind(AssertUnwindSafe(|| self.source_end()))
             });

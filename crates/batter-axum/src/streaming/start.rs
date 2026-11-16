@@ -40,8 +40,9 @@ use std::{
 /// Admission settles it from the response it returns, after the handler's
 /// head at the hand-over. On the registered server the message that actually
 /// carries the body decides instead: once the transport writing a response
-/// calls into the body, through any layer, the body adopts that message's
-/// [`Written`] framing, and nothing settles it again.
+/// calls into the body, through any layer but another owned body's source,
+/// the body adopts that message's [`Written`] framing, and nothing settles it
+/// again.
 #[derive(Clone, Default)]
 pub(crate) struct Framing(Arc<Mutex<Settled>>);
 
@@ -54,6 +55,10 @@ struct Settled {
     /// The registered server's transport reached the body: this is the
     /// framing of the message it writes.
     written: bool,
+    /// The body was started by work running inside a transport's call into
+    /// another message, such as an in-process dispatch from a response
+    /// stream, so it is no part of that message and never adopts.
+    nested: bool,
 }
 
 /// What decides how Hyper frames one response.
@@ -94,7 +99,15 @@ impl Head<'_> {
     /// comes first in an answer that cannot be chunked, which drops it; or,
     /// for a body of unknown size, a `Content-Length` it cannot parse or whose
     /// values differ.
-    fn refused(&self, hint: &SizeHint) -> bool {
+    ///
+    /// `body` is the body's size hint, or `None`, as Hyper passes it, for a
+    /// body that already reports its end. Such a body is written as none
+    /// (`dispatch.rs:367-379`), and Hyper then skips every `Content-Length`
+    /// unparsed (`role.rs:784-804`), except in answer to HEAD, where it writes
+    /// the first value as given and refuses a length header after it. Beyond
+    /// the first two rules, only a `Transfer-Encoding` before a
+    /// `Content-Length` in an answer that may be chunked is then refused.
+    fn refused(&self, body: Option<&SizeHint>) -> bool {
         if self.status.is_informational() && self.status != StatusCode::SWITCHING_PROTOCOLS {
             return true;
         }
@@ -106,11 +119,20 @@ impl Head<'_> {
         }
         // Only a head carrying both headers depends on their order, so only
         // that one is scanned.
-        let conflicting = length && encoding && {
+        let length_first = || {
             let position = |name| self.headers.keys().position(|key| key == name);
-            let chunkable = self.version != Version::HTTP_10 && !self.bodyless();
-            position(CONTENT_LENGTH) < position(TRANSFER_ENCODING) || chunkable
+            position(CONTENT_LENGTH) < position(TRANSFER_ENCODING)
         };
+        let chunkable = self.version != Version::HTTP_10 && !self.bodyless();
+        let Some(hint) = body else {
+            return if self.method == Method::HEAD {
+                let repeated = self.headers.get_all(CONTENT_LENGTH).iter().nth(1).is_some();
+                length && (repeated || encoding && length_first())
+            } else {
+                length && encoding && chunkable && !length_first()
+            };
+        };
+        let conflicting = length && encoding && (chunkable || length_first());
         let unparsable =
             length && hint.exact().is_none() && declared_length(self.headers).is_none();
         conflicting || unparsable
@@ -128,6 +150,16 @@ fn answered(request: Version, response: Version) -> Version {
 }
 
 impl Framing {
+    /// The framing of a body started now, outside or inside a transport's
+    /// call.
+    pub(super) fn started() -> Self {
+        let nested = Written::current().is_some();
+        Self(Arc::new(Mutex::new(Settled {
+            nested,
+            ..Settled::default()
+        })))
+    }
+
     /// Take the length `head` frames the body with, unless the transport
     /// writing the body already decided it.
     fn settle(&self, head: &Head<'_>, hint: &SizeHint) {
@@ -145,11 +177,12 @@ impl Framing {
             return;
         };
         let mut settled = lock(&self.0);
-        if !settled.written {
+        if !settled.written && !settled.nested {
             *settled = Settled {
                 length: written.length,
                 unwritable: written.refused,
                 written: true,
+                nested: false,
             };
         }
     }
@@ -204,9 +237,12 @@ pub(crate) struct Written {
 
 impl Written {
     /// The framing of `response`, answering a `method` request in `version`.
-    /// Asks the response body its size, which can run application code.
+    /// Asks the response body, as Hyper does, whether it has ended and else
+    /// its size, which can run application code.
     pub(crate) fn of(method: &Method, version: Version, response: &Response) -> Self {
-        let hint = response.body().size_hint();
+        // As Hyper does: no size for a body that has ended.
+        let body = (!response.body().is_end_stream()).then(|| response.body().size_hint());
+        let ended = SizeHint::with_exact(0);
         let head = Head {
             method,
             version: answered(version, response.version()),
@@ -214,8 +250,8 @@ impl Written {
             headers: response.headers(),
         };
         Self {
-            length: head.length(&hint),
-            refused: head.refused(&hint),
+            length: head.length(body.as_ref().unwrap_or(&ended)),
+            refused: head.refused(body.as_ref()),
         }
     }
 
@@ -225,20 +261,33 @@ impl Written {
     /// a body polled on another task is not reached; the previous value is
     /// restored even if `call` unwinds.
     pub(crate) fn writing<T>(self, call: impl FnOnce() -> T) -> T {
-        struct Restore(Option<Written>);
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                let _ = WRITING.try_with(|current| current.set(self.0));
-            }
-        }
-        let previous = WRITING.try_with(|current| current.replace(Some(self)));
-        let _restore = Restore(previous.ok().flatten());
-        call()
+        scoped(Some(self), call)
+    }
+
+    /// Run `call`, application code an owned body runs for its source, with
+    /// no transport's framing current: a body that code reaches is no part of
+    /// the message this owned body is.
+    pub(super) fn outside<T>(call: impl FnOnce() -> T) -> T {
+        scoped(None, call)
     }
 
     fn current() -> Option<Self> {
         WRITING.try_with(Cell::get).ok().flatten()
     }
+}
+
+/// Run `call` with `current` as the transport's framing, restoring the
+/// previous value afterwards, even if `call` unwinds.
+fn scoped<T>(current: Option<Written>, call: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Written>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = WRITING.try_with(|value| value.set(self.0));
+        }
+    }
+    let previous = WRITING.try_with(|value| value.replace(current));
+    let _restore = Restore(previous.ok().flatten());
+    call()
 }
 
 /// One request's owned-body start: a single allocation per admitted request,

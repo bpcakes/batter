@@ -47,12 +47,15 @@ mod forced_close;
 /// Hyper, after every layer of `application`, and that response's body makes
 /// the framing current for each call Hyper makes into it, destruction
 /// included. An owned body the message carries, through any layer, wherever
-/// its admission ran, is therefore judged by the message Hyper writes. Only a
-/// body polled on another task than the connection's, as one a body layer
-/// pumps through a channel is, goes unreached: it keeps the framing its
-/// admission returned, so a length added outside admission or a head Hyper
-/// refuses goes unseen, and its completion event can read `completed` or
-/// `dropped` for a message Hyper aborted or never wrote.
+/// its admission ran, is therefore judged by the message Hyper writes, except
+/// one that another owned body's source forwards, and one started by work
+/// running inside such a call, such as a stream dispatching in-process: those
+/// keep their own framing. A body polled on another task than the
+/// connection's, as one a body layer pumps through a channel is, goes
+/// unreached too: it keeps the framing its admission returned, so a length
+/// added outside admission or a head Hyper refuses goes unseen, and its
+/// completion event can read `completed` or `dropped` for a message Hyper
+/// aborted or never wrote.
 ///
 /// Axum internally spawns connection and graceful-signal tasks, and its graceful
 /// return waits for every connection. A connection can outlast drain without
