@@ -162,9 +162,18 @@ impl RuntimeShutdownSignal {
     /// let supervisor = runledger_runtime::Supervisor::builder_from_env(pool)?.with_registry(registry).build()?;
     /// let report = supervisor.run_until_shutdown_report(signal, budget).await;
     /// match report.classify() {
-    ///     runledger_runtime::RuntimeSettlement::Clean(clean) => { let _permit = clean.into_cleanup_permit(); }
-    ///     runledger_runtime::RuntimeSettlement::StoppedWithFailures(stopped) => { let (_permit, _failure) = stopped.into_parts(); }
-    ///     runledger_runtime::RuntimeSettlement::Unsettled(unsettled) => { let _failure = unsettled.into_failure(); }
+    ///     runledger_runtime::RuntimeSettlement::Clean(clean) => {
+    ///         let _permit = clean.into_cleanup_permit();
+    ///         pool.close().await;
+    ///     }
+    ///     runledger_runtime::RuntimeSettlement::StoppedWithFailures(stopped) => {
+    ///         let (_permit, failure) = stopped.into_parts();
+    ///         pool.close().await;
+    ///         return Err(failure.into());
+    ///     }
+    ///     runledger_runtime::RuntimeSettlement::Unsettled(unsettled) => {
+    ///         return Err(unsettled.into_failure().into());
+    ///     }
     /// }
     /// # Ok(()) }
     /// ```
