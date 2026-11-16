@@ -1,5 +1,7 @@
 #[path = "../support/database.rs"]
 mod database;
+#[path = "../support/worker.rs"]
+mod worker;
 
 pub mod shared;
 
@@ -42,21 +44,22 @@ impl JobHandler for PrintGreeting {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let signal = RuntimeShutdownSignal::unix_termination()?;
+    let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
     let database = database::connect(&std::env::var("DATABASE_URL")?).await?;
     let pool = database.pool().clone();
     // For a fresh database. Existing deployments must follow the migration runbook.
     runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
     let catalog = JobCatalog::new().handler(PrintGreeting);
     catalog.sync_definitions(&pool).await?;
-    println!("worker ready; producers can now enqueue greetings");
 
     let supervisor = Supervisor::builder_from_env(&pool)?
         .with_catalog(&catalog)
         .build()?;
-    let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
-    let report = supervisor
-        .run_until_shutdown_report(RuntimeShutdownSignal::ctrl_c(), budget)
-        .await;
+    let report = worker::run(supervisor, signal, budget, || {
+        println!("worker ready; local runtime loops initialized");
+    })
+    .await;
     match report.classify() {
         RuntimeSettlement::Clean(clean) => {
             close_accounted_pool(clean.into_cleanup_permit(), &pool).await;

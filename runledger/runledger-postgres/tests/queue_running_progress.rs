@@ -3,15 +3,9 @@ use runledger_core::jobs::{JobEventType, JobStage, JobStatus, JobType};
 use runledger_postgres::DbPool;
 use runledger_postgres::jobs::{
     JobDefinitionUpsert, JobEnqueue, JobLeaseIdentity, JobOrdinaryProgressUpdate, JobQueueRecord,
-    JobRunningUpdate, claim_jobs, enqueue_job, get_job_by_id, list_job_events,
-    mark_job_running_for_lease, update_job_ordinary_progress, upsert_job_definition_tx,
-};
-#[allow(
-    deprecated,
-    reason = "the integration test validates the explicit stage-bearing compatibility bridge"
-)]
-use runledger_postgres::jobs::{
-    JobProgressUpdate, update_job_progress, update_job_progress_for_lease,
+    JobRunningUpdate, claim_jobs, enqueue_job, get_job_by_id, list_job_events, mark_job_running,
+    mark_job_running_for_lease, update_job_ordinary_progress,
+    update_job_ordinary_progress_for_lease, upsert_job_definition_tx,
 };
 use runledger_test_support::{setup_ephemeral_pool, teardown_ephemeral_pool};
 use serde_json::json;
@@ -315,42 +309,52 @@ async fn ordinary_progress_is_stage_free_and_does_not_mark_execution_started() {
     teardown_ephemeral_pool(pool, database).await;
 }
 
-#[allow(
-    deprecated,
-    reason = "the test confirms the staged compatibility API retains historical stage semantics"
-)]
 #[tokio::test]
-async fn stage_bearing_progress_compatibility_path_preserves_arbitrary_stage_writes() {
-    let (pool, database) = setup_ephemeral_pool("postgres_stage_progress_compatibility", 4).await;
-    record_postgres_server_version(&pool, "stage-bearing progress compatibility regression").await;
+async fn ordinary_progress_preserves_running_stage_and_execution_marker() {
+    let (pool, database) = setup_ephemeral_pool("postgres_running_stage_preserved", 4).await;
     register_job_definition(&pool).await;
-
-    let claimed = enqueue_and_claim(&pool, "worker-stage-progress-compatibility").await;
-    let worker_id = claimed
-        .worker_id
-        .clone()
-        .expect("claimed job has worker id");
-
-    update_job_progress(
+    let claimed = enqueue_and_claim(&pool, "worker-stage-preserved").await;
+    let worker_id = claimed.worker_id.as_deref().expect("claimed worker");
+    let identity =
+        JobLeaseIdentity::new(claimed.id, claimed.run_number, claimed.attempt, worker_id);
+    mark_job_running(
         &pool,
         claimed.id,
         claimed.run_number,
         claimed.attempt,
-        worker_id.as_str(),
-        &JobProgressUpdate {
-            stage: Some(JobStage::Scheduled),
-            progress_done: Some(3),
-            progress_total: Some(8),
+        worker_id,
+        &JobRunningUpdate {
+            progress_done: Some(1),
+            progress_total: Some(3),
             checkpoint: None,
         },
     )
     .await
-    .expect("legacy stage-bearing progress remains supported during migration");
-
+    .expect("start execution");
+    let started = execution_started_persisted_at(&pool, identity).await;
+    assert!(started.is_some());
+    let checkpoint = json!({"cursor": 2});
+    update_job_ordinary_progress_for_lease(
+        &pool,
+        identity,
+        &JobOrdinaryProgressUpdate {
+            progress_done: Some(2),
+            progress_total: Some(3),
+            checkpoint: Some(&checkpoint),
+        },
+    )
+    .await
+    .expect("ordinary update after start");
     let persisted = load_job(&pool, claimed.id).await;
-    assert_eq!(persisted.stage, JobStage::Scheduled);
-    assert_eq!(persisted.progress_done, Some(3));
-    assert_eq!(persisted.progress_total, Some(8));
+    assert_eq!(persisted.status, JobStatus::Leased);
+    assert_eq!(persisted.stage, JobStage::Running);
+    assert_eq!(persisted.progress_done, Some(2));
+    assert_eq!(persisted.progress_total, Some(3));
+    assert_eq!(persisted.checkpoint, Some(checkpoint));
+    assert_eq!(
+        execution_started_persisted_at(&pool, identity).await,
+        started
+    );
     assert_eq!(
         event_types(&pool, claimed.id).await,
         vec![
@@ -358,43 +362,8 @@ async fn stage_bearing_progress_compatibility_path_preserves_arbitrary_stage_wri
             JobEventType::Leased,
             JobEventType::StageChanged,
             JobEventType::Progress,
+            JobEventType::Progress,
         ]
     );
-
-    let claimed_for_lease = enqueue_and_claim(&pool, "worker-stage-progress-for-lease").await;
-    let for_lease_worker_id = claimed_for_lease
-        .worker_id
-        .clone()
-        .expect("claimed job has worker id");
-    let for_lease_identity = JobLeaseIdentity::new(
-        claimed_for_lease.id,
-        claimed_for_lease.run_number,
-        claimed_for_lease.attempt,
-        for_lease_worker_id.as_str(),
-    );
-    update_job_progress_for_lease(
-        &pool,
-        for_lease_identity,
-        &JobProgressUpdate {
-            stage: Some(JobStage::Running),
-            progress_done: Some(1),
-            progress_total: Some(1),
-            checkpoint: None,
-        },
-    )
-    .await
-    .expect("legacy lease-bearing running update remains supported during migration");
-
-    let legacy_running = load_job(&pool, claimed_for_lease.id).await;
-    assert_eq!(legacy_running.stage, JobStage::Running);
-    assert_eq!(legacy_running.progress_done, Some(1));
-    assert_eq!(legacy_running.progress_total, Some(1));
-    assert!(
-        execution_started_persisted_at(&pool, for_lease_identity)
-            .await
-            .is_some(),
-        "the legacy lease-bearing RUNNING update preserves its execution marker"
-    );
-
     teardown_ephemeral_pool(pool, database).await;
 }

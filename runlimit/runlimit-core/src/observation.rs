@@ -1,8 +1,4 @@
-use std::{
-    fmt,
-    panic::{AssertUnwindSafe, catch_unwind},
-    time::Duration,
-};
+use std::{fmt, time::Duration};
 
 use crate::{
     BatchDecision, BatchDecisionView, Check, Decision, DecisionView, Denial, PolicyFingerprint,
@@ -14,7 +10,11 @@ use crate::{
 /// Implementations must return quickly and should hand expensive work to
 /// another thread. Backends invoke observers only after releasing internal
 /// locks and finalizing database transactions. A panic from an observer is
-/// caught and ignored so telemetry cannot change an admission result.
+/// caught so telemetry cannot change an admission result. Caught `String` and
+/// `&'static str` payloads are released; other payloads and their owned resources
+/// are deliberately leaked without running application destructors. This does
+/// not suppress the process panic hook, contain aborting/double panics, or bound
+/// a blocking callback. Hook policy belongs to the application root.
 ///
 /// Observations deliberately contain no subject keys, backend error text, or
 /// other high-cardinality sensitive values.
@@ -408,7 +408,7 @@ impl CapacityObservation {
 /// their observer implementation.
 #[doc(hidden)]
 pub fn observe_safely(observer: &dyn Observer, observation: &Observation<'_>) {
-    let _ = catch_unwind(AssertUnwindSafe(|| observer.observe(observation)));
+    crate::observer_panic::isolate(|| observer.observe(observation));
 }
 
 #[cfg(test)]

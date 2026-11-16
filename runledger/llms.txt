@@ -370,7 +370,12 @@ independently owned `RuntimeShutdownDriver`:
 a `RuntimeShutdownReport`. Dropping the driver requests stop without cancelling
 its independent owner. Bounded settlement continues, and every unobserved report
 emits one redacted diagnostic, including a queued report dropped before polling.
-Pass `RuntimeShutdownSignal::ctrl_c()`, `fallible(future)` for `Result<(), E>`,
+Install `RuntimeShutdownSignal::unix_termination()?` at the executable root
+before application startup for SIGINT/SIGTERM. It requires a current Tokio
+runtime with I/O enabled and returns setup errors immediately. Tokio retains
+process-wide handlers after drop. Startup signals are retained until submission,
+not immediate startup cancellation. `ctrl_c()` handles Ctrl-C alone.
+Use `fallible(future)` for `Result<(), E>`,
 `infallible(future)` for `()`, or `pending()` for handle-only shutdown.
 Custom futures require `Send + 'static` and cancellation safety: dropping them
 must not leave detached application children. The signal runs as the tracked
@@ -399,7 +404,7 @@ cause and failure keep priority while the later error remains inspectable.
 Native settlement continues, and a normally joined error permits cleanup when
 all other owned work settled. If another cause starts shutdown and the budget
 cancels the
-library-authored Ctrl-C or pending listener, its completed cancellation join is
+library-authored Unix termination, Ctrl-C or pending listener, its completed cancellation join is
 accounted because it proves guarded destruction completed. A force-aborted custom
 listener retains its cancelled join and denies cleanup, as does a signal polling
 or destruction panic or an unjoined signal. A non-triggering listener must retire
@@ -419,6 +424,11 @@ payloads are normalized and their opaque allocations retained to avoid invoking
 possibly panicking payload destructors.
 
 ```rust
+let signal = RuntimeShutdownSignal::unix_termination()?;
+let budget = RuntimeShutdownBudget::new(
+    std::time::Duration::from_secs(30),
+    std::time::Duration::from_secs(5),
+)?;
 let supervisor = Supervisor::builder_from_env(&pool)?
     .with_registry(registry)
     .build()?;
@@ -430,13 +440,8 @@ async fn close_accounted_pool(
     pool.close().await;
 }
 
-// Cooperative drain time, then time to abort and join whatever did not stop.
-let budget = RuntimeShutdownBudget::new(
-    std::time::Duration::from_secs(30),
-    std::time::Duration::from_secs(5),
-)?;
 let report = supervisor
-    .run_until_shutdown_report(RuntimeShutdownSignal::ctrl_c(), budget)
+    .run_until_shutdown_report(signal, budget)
     .await;
 
 match report.classify() {
@@ -472,6 +477,9 @@ supervisor requests shutdown but yields no report and detaches the handles.
 
 Use `worker::run_worker_loop`, `scheduler::run_scheduler_loop`, and
 `reaper::run_reaper_loop` only for custom runtime orchestration.
+All three environment readers return `Result`; defaults apply only when absent.
+Invalid values fail with a redacted setting name, propagated by
+`Supervisor::builder_from_env` as `RuntimeError::InvalidEnvironment`.
 If constructing `JobsConfig` directly, validate it; invalid configs can surface
 as `RuntimeError::InvalidJobsConfig` or `RuntimeLoopExit::InvalidConfig`.
 
@@ -481,8 +489,9 @@ pass it to `heartbeat_job_for_lease`, `mark_job_running_for_lease` with a
 `JobRunningUpdate`, `update_job_ordinary_progress_for_lease` with a
 `JobOrdinaryProgressUpdate`, and the appropriate success/failure/continuation
 `_for_lease` completion function. Reuse that value for the claim so fields from
-different leases cannot be mixed. The older stage-bearing
-`update_job_progress_for_lease` remains a deprecated compatibility wrapper.
+different leases cannot be mixed. `JobProgressUpdate`, `update_job_progress`
+and `update_job_progress_for_lease` are removed: use the running or ordinary
+progress methods above. Terminal stages belong to completion operations.
 
 ## Error Handling
 

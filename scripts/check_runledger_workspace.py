@@ -88,9 +88,10 @@ def validate_readme(root):
                           (native / "README.md").read_text(), re.DOTALL)
     expected = {"runledger-runtime/examples/producer_worker/" + name + ".rs"
                 for name in ("shared", "producer", "worker")}
-    expected.add("runledger-runtime/examples/support/database.rs")
+    expected.update("runledger-runtime/examples/support/" + name + ".rs"
+                    for name in ("database", "worker"))
     if len(snippets) != len(expected) or {path for path, _ in snippets} != expected:
-        raise ValueError("README must retain all four compiled quick-start snippets")
+        raise ValueError("README must retain all five compiled quick-start snippets")
     for path, snippet in snippets:
         compiled = (native / path).read_text().split("\n#[cfg(test)]", 1)[0].rstrip()
         if snippet != compiled:

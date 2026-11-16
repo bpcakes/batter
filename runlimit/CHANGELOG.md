@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Fixed
 
+- Contain observer panic-payload destruction for quota and attempt callbacks
+  (`batter-6p9u`). The shared native helper releases caught string payloads and
+  deliberately leaks opaque payloads without invoking application destructors,
+  preserving results after state mutation. Repeated opaque panics may retain
+  unbounded memory; panic hooks, aborting/double panics and blocking callbacks
+  remain outside containment. No public API or dependency changes.
 - `PostgresGcraLimiter::cleanup_expired` advanced every candidate shard to the
   most advanced candidate's watermark instead of each shard's own clamped
   clock. After a database clock regression, one cleanup pass could therefore

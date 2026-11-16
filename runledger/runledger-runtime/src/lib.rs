@@ -86,6 +86,8 @@
 //! #     ) -> std::result::Result<JobCompletion, JobFailure> { Ok(JobCompletion::success()) }
 //! # }
 //!
+//! let signal = RuntimeShutdownSignal::unix_termination()?;
+//! let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
 //! let catalog = JobCatalog::new().handler(MyHandler);
 //! catalog.sync_definitions(&pool).await?;
 //! async fn close_accounted_pool(
@@ -99,9 +101,8 @@
 //!     .with_catalog(&catalog)
 //!     .build()?;
 //!
-//! let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
 //! let report = supervisor
-//!     .run_until_shutdown_report(RuntimeShutdownSignal::ctrl_c(), budget)
+//!     .run_until_shutdown_report(signal, budget)
 //!     .await;
 //!
 //! match report.classify() {

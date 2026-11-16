@@ -106,9 +106,9 @@ pub enum RunledgerOperation {
     /// `job_queue` at all, so it cannot submit work: the promoted enqueue
     /// belongs to [`Self::IntentPromotion`] and the materialized scheduled job
     /// to [`Self::ScheduledDispatch`]. Also excludes
-    /// `reap_expired_leases_with_terminal_records` and the deprecated
-    /// stage-bearing `update_job_progress`, neither of which this version's
-    /// requirements were derived from.
+    /// `reap_expired_leases_with_terminal_records`, which this version's
+    /// requirements were not derived from. Stage-bearing progress entrypoints
+    /// have been removed; progress cannot choose an arbitrary lifecycle stage.
     DirectJobExecution,
     /// Durable intent promotion, including its enqueue of the promoted job.
     ///

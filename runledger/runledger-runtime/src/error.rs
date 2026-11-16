@@ -132,6 +132,9 @@ pub enum ReaperError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RuntimeError {
+    /// A supplied environment setting is invalid. Values are never retained.
+    #[error(transparent)]
+    InvalidEnvironment(#[from] crate::config::JobsEnvironmentError),
     /// The supervisor builder received an invalid [`JobsConfig`] value. This
     /// usually means the config was constructed directly instead of through
     /// [`JobsConfig::from_env`]. Validation is strict for the whole supervisor

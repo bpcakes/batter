@@ -21,7 +21,8 @@ pub(crate) const TASK_NAME: &str = "shutdown_signal";
 
 /// An owned, supervised input that requests runtime shutdown.
 ///
-/// Use [`Self::ctrl_c`] for Ctrl-C, [`Self::fallible`] for a signal that can
+/// Use [`Self::unix_termination`] for SIGINT/SIGTERM, [`Self::ctrl_c`] for
+/// Ctrl-C alone, [`Self::fallible`] for a signal that can
 /// fail, or [`Self::infallible`] for a notification with no error result.
 /// Signal errors are retained in the shutdown report. Completion or a caught
 /// polling panic publishes stop as soon as it is observed, before guarded
@@ -36,7 +37,7 @@ pub(crate) const TASK_NAME: &str = "shutdown_signal";
 /// drop the signal. They must not leave detached application work using runtime
 /// dependencies. If the budget force-aborts a custom signal, its cancelled join
 /// is retained and dependency cleanup is denied. Only the library-authored
-/// [`Self::ctrl_c`] and [`Self::pending`] listeners can account for owner
+/// [`Self::unix_termination`], [`Self::ctrl_c`] and [`Self::pending`] listeners account for owner
 /// cancellation after their guarded destruction joins. Like any Tokio task, a
 /// signal must yield; a blocking poll or destructor cannot be forcibly stopped
 /// by an async shutdown budget.
@@ -135,6 +136,54 @@ impl ShutdownSignalTaskState {
 }
 
 impl RuntimeShutdownSignal {
+    /// Install SIGINT and SIGTERM listeners on the current Tokio runtime.
+    ///
+    /// Call this at the executable root before starting application work. Both
+    /// listeners are installed before this returns; a signal arriving before
+    /// submission remains observable by the supervised signal future. Setup
+    /// errors are returned to the root, never replaced by an inert listener.
+    /// The returned signal has runtime-owned cancellation accounting, like
+    /// [`Self::ctrl_c`]. Dropping it does not restore OS default dispositions:
+    /// Tokio's process-wide signal handlers remain installed.
+    ///
+    /// # Errors
+    /// Returns the native I/O error if either listener cannot be installed.
+    ///
+    /// # Panics
+    /// Panics outside a Tokio runtime with I/O enabled. Keep that runtime alive
+    /// and driven through shutdown, including while waiting on another runtime.
+    ///
+    /// ```no_run
+    /// # async fn example(pool: &runledger_postgres::DbPool) -> Result<(), Box<dyn std::error::Error>> {
+    /// let signal = runledger_runtime::RuntimeShutdownSignal::unix_termination()?;
+    /// let budget = runledger_runtime::RuntimeShutdownBudget::new(
+    ///     std::time::Duration::from_secs(30), std::time::Duration::from_secs(5),
+    /// )?;
+    /// let supervisor = runledger_runtime::Supervisor::builder_from_env(pool)?.build()?;
+    /// let report = supervisor.run_until_shutdown_report(signal, budget).await;
+    /// match report.classify() {
+    ///     runledger_runtime::RuntimeSettlement::Clean(clean) => { let _permit = clean.into_cleanup_permit(); }
+    ///     runledger_runtime::RuntimeSettlement::StoppedWithFailures(stopped) => { let (_permit, _failure) = stopped.into_parts(); }
+    ///     runledger_runtime::RuntimeSettlement::Unsettled(unsettled) => { let _failure = unsettled.into_failure(); }
+    /// }
+    /// # Ok(()) }
+    /// ```
+    pub fn unix_termination() -> std::io::Result<Self> {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        let mut terminate = signal(SignalKind::terminate())?;
+        Ok(Self::from_runtime_future(
+            async move {
+                tokio::select! {
+                    received = interrupt.recv() => received,
+                    received = terminate.recv() => received,
+                }
+                .ok_or_else(|| std::io::Error::other("Unix termination listener closed"))
+            },
+            |result| result.err().map(RuntimeShutdownSignalError::new),
+        ))
+    }
+
     /// Wait for Ctrl-C, preserving signal-handler setup errors in the report.
     /// The handler is installed on the runtime captured by the supervisor.
     /// On Unix, a custom captured runtime must enable I/O (or all drivers) so

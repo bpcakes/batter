@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use runledger_core::jobs::{JobFailureKind, JobRetryTiming, JobStage, JobTypeName};
+use runledger_core::jobs::{JobFailureKind, JobRetryTiming, JobTypeName};
 use serde_json::Value;
 use sqlx::types::Uuid;
 
@@ -39,6 +39,11 @@ impl<'a> JobLeaseIdentity<'a> {
 /// into a stage-only call followed by an ordinary progress update: a crash
 /// between separate writes would lose the durable resume state for the started
 /// attempt.
+///
+/// Migration: replace `JobProgressUpdate { stage: Some(JobStage::Running), .. }`
+/// with `JobRunningUpdate` and [`crate::jobs::mark_job_running`], or its
+/// `_for_lease` form. No stage-bearing shim is retained because it would restore
+/// arbitrary stage writes through a progress operation.
 #[derive(Clone, Debug)]
 pub struct JobRunningUpdate<'a> {
     pub progress_done: Option<i64>,
@@ -52,28 +57,29 @@ pub struct JobRunningUpdate<'a> {
 /// [`JobRunningUpdate`] with [`crate::jobs::mark_job_running`] when execution
 /// starts so the `RUNNING` transition and durable resume state remain one
 /// transaction.
+///
+/// Migration: replace `JobProgressUpdate { stage: None, .. }` with
+/// `JobOrdinaryProgressUpdate`; ordinary progress has no stage field. Completion
+/// and rescheduling belong to their lifecycle operations, not progress updates.
+///
+/// ```compile_fail,E0432
+/// use runledger_postgres::jobs::JobProgressUpdate;
+/// ```
+///
+/// ```compile_fail,E0432
+/// use runledger_postgres::prelude::JobProgressUpdate;
+/// ```
+///
+/// ```compile_fail,E0560
+/// use runledger_core::jobs::JobStage;
+/// use runledger_postgres::jobs::JobOrdinaryProgressUpdate;
+/// let update = JobOrdinaryProgressUpdate {
+///     stage: Some(JobStage::Scheduled),
+///     progress_done: None, progress_total: None, checkpoint: None,
+/// };
+/// ```
 #[derive(Clone, Debug)]
 pub struct JobOrdinaryProgressUpdate<'a> {
-    pub progress_done: Option<i64>,
-    pub progress_total: Option<i64>,
-    pub checkpoint: Option<&'a Value>,
-}
-
-/// Legacy stage-bearing progress input.
-///
-/// New callers should use [`JobRunningUpdate`] with
-/// [`crate::jobs::mark_job_running`] for a `RUNNING` transition, or
-/// [`JobOrdinaryProgressUpdate`] with
-/// [`crate::jobs::update_job_ordinary_progress`] for ordinary progress. This
-/// compatibility input preserves arbitrary historical stage writes while
-/// downstream callers migrate to the typed lifecycle APIs.
-#[deprecated(
-    since = "0.11.0",
-    note = "use JobRunningUpdate with mark_job_running for RUNNING, or JobOrdinaryProgressUpdate with update_job_ordinary_progress for ordinary progress"
-)]
-#[derive(Clone, Debug)]
-pub struct JobProgressUpdate<'a> {
-    pub stage: Option<JobStage>,
     pub progress_done: Option<i64>,
     pub progress_total: Option<i64>,
     pub checkpoint: Option<&'a Value>,

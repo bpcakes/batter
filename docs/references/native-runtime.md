@@ -222,3 +222,24 @@ does not acquire row locks.
   awaits the server-bounded read and rollback instead of cancelling the query
   future. Pool acquisition retains its configured timeout; no absolute
   transport deadline or general async-drop guarantee is claimed.
+
+## Native observer disposal and Unix signals, 2026-11-16
+
+Rechecked against the pinned Rust 1.100.0 and Cargo.lock Tokio 1.54.1:
+
+- Rust's [`catch_unwind` contract](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html)
+  explicitly warns that dropping the returned panic payload can itself panic.
+  Unwind capture does not suppress the panic hook or recover from aborting panics.
+  Runlimit's private observer boundary therefore destroys known string payloads
+  only and deliberately forgets opaque allocations/resources.
+- Tokio's [`signal` constructor](https://docs.rs/tokio/latest/tokio/signal/unix/fn.signal.html)
+  installs a listener and returns registration errors. A current reactor is
+  required. Its [`Signal` contract](https://docs.rs/tokio/latest/tokio/signal/unix/struct.Signal.html)
+  describes coalescing notifications before polling, cancellation-safe `recv`,
+  and the process-wide OS handler remaining installed after listener drop.
+  These pages resolved to 1.54.1 when checked; the same contracts were inspected
+  in the local Cargo registry's `tokio-1.54.1/src/signal/unix.rs`. Runledger owns
+  both streams before returning its opaque signal, then submits them through its
+  existing tracked shutdown path. This retains startup notifications without
+  claiming immediate interruption of startup work or restoration of default
+  signal dispositions.
