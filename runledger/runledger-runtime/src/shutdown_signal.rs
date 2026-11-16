@@ -154,12 +154,12 @@ impl RuntimeShutdownSignal {
     /// and driven through shutdown, including while waiting on another runtime.
     ///
     /// ```no_run
-    /// # async fn example(pool: &runledger_postgres::DbPool) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(pool: &runledger_postgres::DbPool, registry: runledger_runtime::registry::JobRegistry) -> Result<(), Box<dyn std::error::Error>> {
     /// let signal = runledger_runtime::RuntimeShutdownSignal::unix_termination()?;
     /// let budget = runledger_runtime::RuntimeShutdownBudget::new(
     ///     std::time::Duration::from_secs(30), std::time::Duration::from_secs(5),
     /// )?;
-    /// let supervisor = runledger_runtime::Supervisor::builder_from_env(pool)?.build()?;
+    /// let supervisor = runledger_runtime::Supervisor::builder_from_env(pool)?.with_registry(registry).build()?;
     /// let report = supervisor.run_until_shutdown_report(signal, budget).await;
     /// match report.classify() {
     ///     runledger_runtime::RuntimeSettlement::Clean(clean) => { let _permit = clean.into_cleanup_permit(); }
