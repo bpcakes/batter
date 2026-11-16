@@ -253,6 +253,9 @@ pub enum AttemptObservation {
 }
 
 /// Observer must not contain raw subjects. Panics are isolated by backends.
+/// Caught string payloads are released; opaque payloads and their resources are
+/// deliberately leaked without running their destructors. The same panic-hook,
+/// abort and blocking limits as [`crate::Observer`] apply.
 pub trait AttemptObserver: Send + Sync {
     /// Receives an attempt lifecycle event.
     fn observe(&self, observation: AttemptObservation);
@@ -260,7 +263,5 @@ pub trait AttemptObserver: Send + Sync {
 
 /// Backend helper that isolates observer panics from decisions.
 pub fn observe_attempt_safely(observer: &dyn AttemptObserver, observation: AttemptObservation) {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        observer.observe(observation);
-    }));
+    crate::observer_panic::isolate(|| observer.observe(observation));
 }

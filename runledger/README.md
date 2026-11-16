@@ -180,7 +180,7 @@ removed; there is no view compatibility bridge.
 Run a producer and a worker as separate processes against the same PostgreSQL 18
 database. This example prints a greeting, using one shared job identity and typed
 payload. It needs only the dependencies above. For a new service, create the
-following files under `src/bin/`, with the shared module at
+following files at the paths shown, with the shared module at
 `src/bin/shared/mod.rs` (so Cargo does not treat it as another binary).
 
 Database policy (`src/support/database.rs`):
@@ -205,6 +205,37 @@ pub async fn connect(url: &str) -> Result<RunledgerDatabase, Box<dyn std::error:
         Duration::from_secs(5),
     )?;
     Ok(runledger_postgres::low_level::connect_database(options, profile, 5).await?)
+}
+```
+
+Worker driver (`src/support/worker.rs`):
+
+<!-- quick-start-source: runledger-runtime/examples/support/worker.rs -->
+```rust
+use runledger_runtime::{
+    RuntimeShutdownBudget, RuntimeShutdownReport, RuntimeShutdownSignal, Supervisor,
+};
+
+/// Observe initialization while the native owner drives shutdown independently.
+/// This announces local loop initialization, not database health or job success.
+pub async fn run(
+    supervisor: Supervisor,
+    signal: RuntimeShutdownSignal,
+    budget: RuntimeShutdownBudget,
+    initialized: impl FnOnce(),
+) -> RuntimeShutdownReport {
+    let startup = supervisor.startup_observer();
+    let mut driver = supervisor.run_until_shutdown_report(signal, budget);
+    tokio::select! {
+        biased;
+        report = &mut driver => report,
+        state = startup.wait_initialized() => {
+            if state.is_ok() {
+                initialized();
+            }
+            driver.await
+        }
+    }
 }
 ```
 
@@ -245,6 +276,8 @@ Worker (`src/bin/worker.rs`):
 ```rust
 #[path = "../support/database.rs"]
 mod database;
+#[path = "../support/worker.rs"]
+mod worker;
 
 pub mod shared;
 
@@ -287,21 +320,22 @@ impl JobHandler for PrintGreeting {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let signal = RuntimeShutdownSignal::unix_termination()?;
+    let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
     let database = database::connect(&std::env::var("DATABASE_URL")?).await?;
     let pool = database.pool().clone();
     // For a fresh database. Existing deployments must follow the migration runbook.
     runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
     let catalog = JobCatalog::new().handler(PrintGreeting);
     catalog.sync_definitions(&pool).await?;
-    println!("worker ready; producers can now enqueue greetings");
 
     let supervisor = Supervisor::builder_from_env(&pool)?
         .with_catalog(&catalog)
         .build()?;
-    let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
-    let report = supervisor
-        .run_until_shutdown_report(RuntimeShutdownSignal::ctrl_c(), budget)
-        .await;
+    let report = worker::run(supervisor, signal, budget, || {
+        println!("worker ready; local runtime loops initialized");
+    })
+    .await;
     match report.classify() {
         RuntimeSettlement::Clean(clean) => {
             close_accounted_pool(clean.into_cleanup_permit(), &pool).await;
@@ -394,7 +428,14 @@ Notes on the worker lifecycle:
   emits one redacted diagnostic, even if it was queued before the driver was
   dropped. There is deliberately no terminal method whose success value can
   be mistaken for proof that everything settled.
-- Pass a `RuntimeShutdownSignal`: use `ctrl_c()` for Ctrl-C, `fallible(future)`
+- At the executable root, call `RuntimeShutdownSignal::unix_termination()?`
+  before application startup to install SIGINT and SIGTERM handlers. It requires
+  a current Tokio runtime with I/O enabled; setup errors return immediately.
+  Tokio keeps its process-wide handlers after the listener is dropped. Signals
+  received during startup are retained until submission, not immediate startup
+  cancellation. Readiness is announced only after local loop initialization; it
+  does not prove database health or job success.
+- Other `RuntimeShutdownSignal` options are `ctrl_c()` for Ctrl-C alone, `fallible(future)`
   for `Result<(), E>`, `infallible(future)` for `()`, or `pending()` for
   handle-only shutdown. Custom futures must be `Send + 'static` (use owned
   `async move` captures) and cancellation-safe: dropping them must not leave
@@ -422,7 +463,7 @@ Notes on the worker lifecycle:
   Destruction and join remain tracked settlement obligations. A normally joined
   observed error therefore permits
   dependency cleanup when all other owned work settled. If another cause starts
-  shutdown and the budget cancels a library-authored Ctrl-C or pending listener,
+  shutdown and the budget cancels a library-authored Unix termination, Ctrl-C or pending listener,
   its completed cancellation join is accounted: it proves guarded destruction
   completed. A force-aborted custom listener retains its cancelled join and
   denies cleanup, as does a signal polling or destruction panic or an unjoined
@@ -787,9 +828,10 @@ completion type was removed; use `JobCompletion::success()` or
 `JobRunningUpdate` with `mark_job_running` for the atomic `RUNNING`
 transition, and `JobOrdinaryProgressUpdate` with
 `update_job_ordinary_progress` for stage-free progress. The older
-stage-bearing `JobProgressUpdate` and `update_job_progress` remain deprecated
-compatibility APIs while callers migrate. Completion disposition and final
-output are intentionally private; inspect them with `disposition()` /
+stage-bearing `JobProgressUpdate`, `update_job_progress`, and
+`update_job_progress_for_lease` have been removed: completion and rescheduling
+must use their lifecycle operations, never a progress update. Completion
+disposition and final output are intentionally private; inspect them with `disposition()` /
 `output()` and use constructors rather than struct literals.
 
 ### Live handler execution services
@@ -1501,17 +1543,22 @@ configuration from the environment. Worker settings come from
 
 | Variable | Purpose |
 | --- | --- |
-| `JOBS_WORKER_ID` | Worker identity; blank falls back to `worker-<uuidv7>` |
+| `JOBS_WORKER_ID` | Worker identity; absent generates `worker-<uuidv7>`, blank is rejected |
 | `JOBS_POLL_INTERVAL_MS` | Queue poll interval; a worker at capacity also claims when a local job exits |
 | `JOBS_CLAIM_BATCH_SIZE` | Jobs claimed per poll |
-| `JOBS_LEASE_TTL_SECONDS` | Lease duration; clamped to at least `10` |
+| `JOBS_LEASE_TTL_SECONDS` | Lease duration; at least `10` seconds |
 | `JOBS_MAX_GLOBAL_CONCURRENCY` | Max concurrent handler executions |
 | `JOBS_REAPER_INTERVAL_SECONDS` | Reaper sweep interval; a whole batch that reaped a lease sweeps again at once |
 | `JOBS_SCHEDULE_POLL_INTERVAL_SECONDS` | Longest idle wait between schedule passes; a whole batch polls again at once |
 | `JOBS_REAPER_RETRY_DELAY_MS` | Delay before reaped jobs become claimable |
 
-Interval and concurrency values are clamped to safe minimums.
-`JobsConfig::from_env()` produces a valid config; if you construct `JobsConfig`
+`JobsConfig::from_env()` and both `IntentPromoterConfig` environment readers
+return `Result`. Only absent variables use defaults; supplied blank, malformed,
+non-Unicode, overflowing or out-of-range values are rejected. Numeric minima
+are one except lease TTL (10 seconds) and reaper retry delay (1000 ms); claim
+and promoter batches cannot exceed 1000. `JobsEnvironmentError` names only the
+setting, retaining neither its value nor a parser source.
+`Supervisor::builder_from_env()` propagates `RuntimeError::InvalidEnvironment`; if you construct `JobsConfig`
 directly, call `validate()` before starting runtime loops. Supervisor builders
 reject invalid configs with `RuntimeError::InvalidJobsConfig`, and low-level
 loops can return `RuntimeLoopExit::InvalidConfig`.
@@ -1536,7 +1583,7 @@ indefinitely.
 Code that already owns a `JobsConfig` should continue to use
 `Supervisor::builder`; it deliberately derives promoter settings from that
 explicit config and does not inspect the environment. For custom composition,
-pass `IntentPromoterConfig::from_env()` to
+pass `IntentPromoterConfig::from_env()?` to
 `SupervisorBuilder::with_intent_promoter_config`.
 
 ## Database schema and migrations
@@ -1997,7 +2044,8 @@ Stable behaviors worth knowing when integrating against `runledger-postgres`:
   `JobOrdinaryProgressUpdate` for stage-free progress. Reuse one identity
   derived from the claimed row and worker ID so lifecycle lease fences cannot
   be mixed across jobs. The older stage-bearing
-  `update_job_progress_for_lease` remains a deprecated compatibility wrapper.
+  `update_job_progress_for_lease` has been removed; use the running or ordinary
+  progress operation according to the intended transition.
 - **Transactional enqueue state.** Use `run_atomic` and `scope.queue().enqueue_job`.
   Inside the callback, the locked job status, run number and inserted/existing
   disposition are provisional. The runner returns output only after acknowledged commit.

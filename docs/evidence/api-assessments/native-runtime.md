@@ -506,3 +506,45 @@ phase seam retains its documented host-ownership obligations. Existing live
 interruption tests exercise the new owner; the committed-fence probe now withholds
 acknowledgement inside real exchange execution rather than setting a marker.
 Fresh-agent implementation/modification evaluation remains unexecuted.
+
+## Native consumer pattern repairs, 2026-11-16
+
+Owners: `batter-6p9u`, `batter-bwc7`, `batter-ad1e`, `batter-hixn`, `batter-f1j7`.
+
+The former arbitrary-stage progress mutation let public callers mark terminal
+stages without their corresponding completion bookkeeping. It is a local API
+gap: remove the deprecated type and both entrypoints, retaining only running
+and stage-free ordinary progress. Completion still validates live lease/database
+authority. No shim can preserve that argument without restoring the bypass.
+Compile-fail cases prove old imports and stage fields are rejected; live SQL
+regressions check ordinary progress preserves stage and started markers.
+
+Environment parsing previously erased invalid supplied configuration. All three
+readers now return a redacted typed error; only absence selects a default. A
+private lookup seam tests malformed, non-Unicode and out-of-range values without
+mutating shared process environment. Subprocess tests exercise the public builder.
+The error has private fields and retains no rejected value or parser source.
+Direct struct construction remains a deliberate low-level path validated by
+supervisors/loops; arbitrary operator meaning stays application policy. No
+infallible shim is retained. Existing environment minima and defaults remain.
+
+The added opaque `unix_termination` constructor installs both native listeners
+before returning and carries library-owned cancellation accounting. Setup failure
+cannot produce an inert success value. It uses the existing tracked descendant
+and exhaustive settlement path. Executable roots prepare signals and shutdown
+budgets before building a live supervisor. The example helper starts the driver,
+then observes native initialization; stopped startup cannot announce readiness.
+This does not prove external readiness or cancel unrelated startup work. Signal
+registration and process-wide handler lifetime are upstream Tokio behavior.
+
+Runlimit's observer boundary previously caught the callback unwind but dropped
+its opaque payload outside containment. A private shared helper now releases
+known string payloads and forgets opaque ones. Tests use a panicking Drop payload
+at real post-mutation quota/attempt boundaries; negative controls restore the old
+disposal and fail. This does not claim panic-hook suppression or recovery from
+aborting/blocking code. Opaque resource retention is an explicit tradeoff.
+
+The [surface/signature review and executed focused evidence](../native-consumer-weeding-2026-11-16/README.md)
+cover the source cuts. Independent maintenance review found no material lifecycle
+or parser defect and requested the added pre-submission signal regression.
+Fresh-agent downstream implementation/modification exercises remain unexecuted.

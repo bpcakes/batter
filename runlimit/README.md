@@ -453,8 +453,13 @@ unknown effect; it never borrows the quota-consumption vocabulary.
 
 Callbacks run synchronously after memory locks are released or database
 transactions are finalized. Keep them fast and hand expensive export work to
-another thread. Runlimit catches observer panics so telemetry cannot change an
-admission result. PostgreSQL observations preserve the distinction between
+another thread. Runlimit catches unwinding observer panics so telemetry cannot
+change an admission result. It releases caught `String` and `&'static str`
+payloads, and deliberately leaks other payloads and their owned resources
+without running application destructors. Repeated opaque panics can therefore
+retain unbounded memory. This does not suppress the process panic hook, contain
+aborting or double panics, or bound a blocking callback. Hook policy remains
+with the application root. PostgreSQL observations preserve the distinction between
 definite non-consumption and a commit result that may already have consumed
 quota.
 
@@ -600,7 +605,8 @@ The low-level API cannot own commit acknowledgement; its distinct
 also available for owners whose outcome is already final. An autocommit executor
 must not be used for application atomicity.
 
-Attempt observations use their own enum and panic-isolated observer. Standalone
+Attempt observations use their own enum and the same panic isolation and payload
+disposal policy described above. Standalone
 owners report admitted, denied, completed, stale, and uncertain-commit outcomes;
 low-level staging deliberately emits no committed event. The host transaction
 owner is responsible for reporting its final disposition. Observations never

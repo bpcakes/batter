@@ -1,0 +1,44 @@
+## runledger-postgres: 3398 -> 3376 entries; 22 removed, 0 added
+- REMOVED field runledger_postgres::jobs::JobProgressUpdate.checkpoint
+- REMOVED field runledger_postgres::jobs::JobProgressUpdate.progress_done
+- REMOVED field runledger_postgres::jobs::JobProgressUpdate.progress_total
+- REMOVED field runledger_postgres::jobs::JobProgressUpdate.stage
+- REMOVED field runledger_postgres::prelude::JobProgressUpdate.checkpoint
+- REMOVED field runledger_postgres::prelude::JobProgressUpdate.progress_done
+- REMOVED field runledger_postgres::prelude::JobProgressUpdate.progress_total
+- REMOVED field runledger_postgres::prelude::JobProgressUpdate.stage
+- REMOVED function runledger_postgres::jobs::update_job_progress
+- REMOVED function runledger_postgres::jobs::update_job_progress_for_lease
+- REMOVED function runledger_postgres::prelude::update_job_progress_for_lease
+- REMOVED impl runledger_postgres::jobs::JobProgressUpdate: Clone
+- REMOVED impl runledger_postgres::jobs::JobProgressUpdate: Debug
+- REMOVED impl runledger_postgres::prelude::JobProgressUpdate: Clone
+- REMOVED impl runledger_postgres::prelude::JobProgressUpdate: Debug
+- REMOVED struct runledger_postgres::jobs::JobProgressUpdate
+- REMOVED struct runledger_postgres::prelude::JobProgressUpdate
+- REMOVED use runledger_postgres::jobs::JobProgressUpdate <- types::JobProgressUpdate
+- REMOVED use runledger_postgres::jobs::update_job_progress <- queue::update_job_progress
+- REMOVED use runledger_postgres::jobs::update_job_progress_for_lease <- queue::update_job_progress_for_lease
+- REMOVED use runledger_postgres::prelude::JobProgressUpdate <- crate::jobs::JobProgressUpdate
+- REMOVED use runledger_postgres::prelude::update_job_progress_for_lease <- crate::jobs::update_job_progress_for_lease
+
+
+## runledger-runtime: 1497 -> 1514 entries; 0 removed, 17 added
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: Clone
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: Copy
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: Debug
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: Display
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: Eq
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: Error
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: From
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: PartialEq
++ ADDED   impl runledger_runtime::config::JobsEnvironmentError: StructuralPartialEq
++ ADDED   method runledger_runtime::RuntimeShutdownSignal::unix_termination
++ ADDED   method runledger_runtime::config::JobsEnvironmentError::setting
++ ADDED   method runledger_runtime::prelude::RuntimeShutdownSignal::unix_termination
++ ADDED   struct runledger_runtime::config::JobsEnvironmentError
++ ADDED   use runledger_runtime::config::JobsEnvironmentError <- environment::JobsEnvironmentError
++ ADDED   variant runledger_runtime::RuntimeError::InvalidEnvironment
++ ADDED   variant runledger_runtime::error::RuntimeError::InvalidEnvironment
++ ADDED   variant runledger_runtime::prelude::RuntimeError::InvalidEnvironment
+

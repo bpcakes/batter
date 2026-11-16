@@ -120,9 +120,9 @@ impl Supervisor {
     pub fn builder_from_env(
         pool: &runledger_postgres::DbPool,
     ) -> std::result::Result<SupervisorBuilder<'_>, RuntimeError> {
-        let config = JobsConfig::from_env();
+        let config = JobsConfig::from_env()?;
         let intent_promoter_config =
-            IntentPromoterConfig::from_env_with_jobs_config_defaults(&config);
+            IntentPromoterConfig::from_env_with_jobs_config_defaults(&config)?;
 
         Self::builder(pool, config)
             .map(|builder| builder.with_intent_promoter_config(intent_promoter_config))
@@ -242,7 +242,7 @@ impl Supervisor {
     /// poll/drop panics appear as descendant join failures. Neither interrupts
     /// native settlement. A normally joined error denies success but permits
     /// cleanup. If another cause starts shutdown and the budget cancels a
-    /// library-authored Ctrl-C or pending listener, its completed cancellation
+    /// library-authored Unix termination, Ctrl-C or pending listener, its completed cancellation
     /// join is accounted because it proves guarded destruction finished. A
     /// force-aborted custom listener retains its cancellation failure and denies
     /// cleanup, as does a panic or unjoined signal. A non-triggering listener must

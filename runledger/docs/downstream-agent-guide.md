@@ -235,9 +235,12 @@ optional. The identity form is available in 0.9.0 and later.
 `mark_job_running_for_lease` deliberately takes `JobRunningUpdate`: persist the
 first checkpoint and progress with the `RUNNING` transition rather than making
 a zero-argument stage call followed by another write. The older stage-bearing
-`JobProgressUpdate` and `update_job_progress_for_lease` remain deprecated only
-for staged downstream migration. This running/progress API split is available
-in 0.11.0 and later.
+`JobProgressUpdate`, `update_job_progress`, and `update_job_progress_for_lease`
+have been removed. Use `JobRunningUpdate` for a running transition and
+`JobOrdinaryProgressUpdate` for stage-free progress; completion and rescheduling
+use their own lifecycle operations. The typed replacements have been available
+since 0.11.0. Migrate source callers before upgrading; this cut changes no
+persisted rows, queued payloads, or migration files.
 
 ## Workflow DAG Rule
 
@@ -1347,8 +1350,13 @@ dependencies on it. `shutdown` and `shutdown_with_timeout` become
 of `join` and `shutdown` have no replacement on purpose: every stop now states a
 budget.
 
-The signal argument is now the opaque `RuntimeShutdownSignal`. Replace Ctrl-C
-wrappers with `RuntimeShutdownSignal::ctrl_c()`; use `fallible(future)` for
+The signal argument is the opaque `RuntimeShutdownSignal`. At a Unix executable
+root, install `RuntimeShutdownSignal::unix_termination()?` before application
+startup. It handles SIGINT and SIGTERM; setup errors return immediately and
+require a current Tokio runtime with I/O enabled. Tokio keeps the process-wide
+handlers after listener drop. Signals during startup remain observable after
+submission, without interrupting arbitrary startup work. Use `ctrl_c()` for
+Ctrl-C alone, or `fallible(future)` for
 `Future<Output = Result<(), E>>` where
 `E: std::error::Error + Send + Sync + 'static`, `infallible(future)` for
 `Future<Output = ()>`, and `pending()` for handle-only shutdown.
@@ -1381,7 +1389,7 @@ error wins, the cause is `RuntimeShutdownCause::SignalFailed` and the failure is
 cause and failure keep priority while the later signal error remains inspectable.
 A normally destroyed and joined signal error does not deny dependency cleanup when
 all other owned work settled. If another cause starts shutdown and the budget
-cancels a library-authored Ctrl-C or pending listener, its completed cancellation
+cancels a library-authored Unix termination, Ctrl-C or pending listener, its completed cancellation
 join is accounted because it proves guarded destruction completed. A
 force-aborted custom listener retains its cancelled join and denies cleanup, as
 does a panic or unjoined signal. A non-triggering listener must retire within the
@@ -1447,8 +1455,11 @@ controls independent from ordinary worker claiming. Full promotion batches are
 drained immediately; partial and empty passes wait for the configured cadence.
 
 Prefer `Supervisor::builder_from_env()` for standard environment-based runtime
-configuration. Intent-promoter variables override the inherited worker cadence
-independently when present. If code constructs `JobsConfig` directly, use
+configuration. All environment readers return `Result`; only absent settings
+use defaults. Blank, malformed, non-Unicode and out-of-range values return
+`JobsEnvironmentError`, propagated as `RuntimeError::InvalidEnvironment` by
+the builder. Diagnostics retain only the setting name. Intent-promoter variables
+override the inherited worker cadence independently when present and valid. If code constructs `JobsConfig` directly, use
 `Supervisor::builder`, which deliberately avoids ambient environment reads, and
 validate the config before startup; supervisors return
 `RuntimeError::InvalidJobsConfig` and low-level loops can return

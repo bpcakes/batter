@@ -36,6 +36,8 @@ have been removed; Git retains their history.
 
 ## Native Runledger and Runlimit integration
 
+- [Native observer disposal and Unix signals (2026-11-16)](references/native-runtime.md#native-observer-disposal-and-unix-signals-2026-11-16)
+
 - [Scheduler hint statement bound (2026-11-10)](references/native-runtime.md#scheduler-hint-statement-bound-2026-11-10)
 - <a id="native-postgresql-docker-dependency-removal-reviewed-2026-11-06"></a>[Native PostgreSQL Docker dependency removal: reviewed 2026-11-06](references/native-runtime.md#native-postgresql-docker-dependency-removal-reviewed-2026-11-06)
 - <a id="runledger-claim-write-batching-2026-10-14"></a>[Runledger claim-write batching (2026-10-14)](references/native-runtime.md#runledger-claim-write-batching-2026-10-14)
