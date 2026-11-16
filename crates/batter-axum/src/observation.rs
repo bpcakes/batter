@@ -32,8 +32,10 @@ struct Retained {
     /// while its observer is alive so an owned response body can enter it
     /// again. The observer clears it when it finishes: a request extension or
     /// admitted request kept beyond the response must neither keep the span
-    /// open nor release it under another dispatcher.
-    context: Mutex<Option<tracing::Span>>,
+    /// open nor release it under another dispatcher. Shared behind an `Arc`,
+    /// so a reader clones the span, which calls into the subscriber, only
+    /// after releasing this lock.
+    context: Mutex<Option<Arc<tracing::Span>>>,
 }
 
 #[derive(Clone, Default)]
@@ -69,13 +71,14 @@ impl ObservationState {
         self.lock().clone()
     }
 
-    fn published(&self) -> MutexGuard<'_, Option<tracing::Span>> {
+    fn published(&self) -> MutexGuard<'_, Option<Arc<tracing::Span>>> {
         crate::lock(&self.0.context)
     }
 
     /// The observing request's span context while its observer is alive.
     pub(super) fn context(&self) -> Option<tracing::Span> {
-        self.published().clone()
+        let published = self.published().clone();
+        published.map(|span| tracing::Span::clone(&span))
     }
 }
 
@@ -140,7 +143,7 @@ impl HttpObservation {
         // Choose once on first poll. A disabled explicit parent means a root
         // event, and looking up a fallback at Drop could adopt another request.
         let context = span.clone().or_current();
-        *state.published() = Some(context.clone());
+        *state.published() = Some(Arc::new(context.clone()));
         Self {
             state,
             span,

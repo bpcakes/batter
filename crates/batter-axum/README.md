@@ -323,7 +323,8 @@ are checked before and after each poll of the source, so a frame that became
 ready, or that a poll outlasting the bound returned, only after its wait
 expired does not extend the body, and an error such a poll returned is
 reported as that bound; the library destroys such a rejected answer as it
-does the source. The body is
+does the source. An empty data frame is no progress, so a source of nothing but
+empty frames ends at the idle bound, and its task yields meanwhile. The body is
 polled, asked for its end and size, and destroyed under the tracing dispatcher
 and request span of the handler that handed it over, on whichever task asks;
 its completion event and the span's release stay with the subscriber that
@@ -334,30 +335,40 @@ body, while `latency_ms` and the request's completion event still measure
 response construction. Exactly one `HTTP response body finished` event
 carries `request_id`, `bytes`, `duration_ms` and `body_outcome`: `completed`
 and `dropped` at INFO; `failed`, `deadline_exceeded`, `idle_timeout`,
-`cancelled` and `panicked` (a builder or stream that panicked, a body whose
+`cancelled` and `panicked` (a builder or stream that panicked, including in
+destroying an empty frame it yielded, which Hyper never sees, a body whose
 answer to Hyper's or the library's question about its end or size panicked,
 or a handler that panicked after handing the body over) at WARN. `completed` means the
 source produced its whole message, including a body Hyper finishes without
 asking for its end: after its advertised `Content-Length` or exact size, or
 after trailers. The advertised length is the one Hyper frames the written
-response with: through the registered server, the response handed to Hyper
-after every layer, otherwise the one request admission returns. A length added
-by the handler's tuple or any layer after `into_streaming_response`, or carried
-by a response the handler rebuilt around the body, counts. As in Hyper, a
+message with: through the registered server, that of the response carrying the
+body when Hyper writes it, after every layer and wherever admission ran,
+including a response a served handler returns from the in-process client;
+otherwise the one request admission returns. Only a body that a layer polls on
+another task than the connection's, for example by pumping it through a
+channel, is not reached by the transport and keeps admission's framing. A
+length added by the handler's tuple or any layer after
+`into_streaming_response`, or carried by a response the handler rebuilt around
+the body, counts. Lengths are compared with the bytes the owned body yielded,
+so a layer that changes them under a declared length, or a message joining the
+body with others, is judged against that whole message. As in Hyper, a
 `Content-Length` counts only as plain digits, repeated only with one value,
 else the body's exact size does, and `Transfer-Encoding` frames none except in
 an HTTP/1.0 answer. A declared length that the body's exact size contradicts,
 which Hyper does not support, still counts, being what the peer reads. Axum's
 router adds a `Content-Length` to a body of exact
-size even beside `Transfer-Encoding`, and Hyper then refuses the message, so
-the body is `dropped`. A source that ends, reports its end or yields trailers short of
+size even beside `Transfer-Encoding`, and Hyper then refuses the message;
+through the registered server, a body whose head Hyper refuses is `failed`,
+even if its source had already ended or its handler polled it first. A source that ends, reports its end or yields trailers short of
 its advertised length is `failed`: Hyper aborts that message and the peer sees
 it truncated. A source that already reports its end when Hyper writes the head
 is the exception: Hyper writes no body and frames the message as
 `content-length: 0`, so the peer receives a complete empty response, though the
 event still reports `failed`. A response Hyper writes without a body (to HEAD, a 2xx answer to
-CONNECT, or a 1xx, 204 or 304 status) frames no length, so its empty body is
-`completed`. `dropped` means the body's holder discarded it before its end: a
+CONNECT, or a 101, 204 or 304 status) frames no length, so its empty body is
+`completed`; Hyper answers any other final 1xx with a 500 instead, so a body
+dropped unpolled under one is `failed`. `dropped` means the body's holder discarded it before its end: a
 peer that went away, a HEAD request on a GET route, whose body Axum strips, or
 a response discarded because response construction ended without it. The request's own completion event is
 unchanged, still measures response construction and, with its method and

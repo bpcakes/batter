@@ -10,8 +10,8 @@
 //!
 //! Choosing this module is choosing those obligations. A composition assembled
 //! here can put a probe inside an admission gate, add a second observer, place
-//! correlation inside admission so rejections lose their generated identity, or
-//! append routes that bypass every layer. None of that is reachable through
+//! correlation inside admission so rejections lose their generated identity,
+//! or append routes that bypass every layer. None of that is reachable through
 //! [`HttpBoundary`](crate::HttpBoundary).
 //!
 //! Supported value and policy types are *not* here: they stay at the crate
@@ -210,6 +210,11 @@ pub async fn observe_http(request: Request, next: Next) -> Response {
 /// Operation events and full inner-future destruction retain the first-poll
 /// subscriber. This middleware does not create a `batter.http` span or HTTP event.
 ///
+/// An owned body this admission starts is framed by the response it returns
+/// and, on the registered server, by the message Hyper writes for whichever
+/// response carries that body (see [`register_http`]), on whatever task this
+/// layer runs and in whatever router a handler dispatches.
+///
 /// Migration: `batter_axum::request_admission` moved to
 /// `batter_axum::low_level::request_admission` with the same caller obligations.
 pub async fn request_admission(
@@ -224,7 +229,8 @@ pub async fn request_admission(
 ///
 /// Use with `axum::middleware::from_fn_with_state(policy, request_scope)`.
 /// Retains [`request_admission`]'s policy/context/rendering behavior and
-/// [`observe_http`]'s sanitized response-construction events. Keep probes outside
+/// owned-body obligations, and [`observe_http`]'s sanitized
+/// response-construction events. Keep probes outside
 /// this middleware's readiness gate. Inside an outer observer this entry point
 /// performs admission only; the outer observer emits the single HTTP event.
 /// When combined with [`operational_http`], install `operational_http` as the
@@ -278,7 +284,7 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
-            let start = crate::streaming::BodyStart::claim(&mut request);
+            let start = crate::streaming::BodyStart::new(&request);
             admitted::record(
                 request.extensions_mut(),
                 scope.clone(),
@@ -289,9 +295,9 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
             request.extensions_mut().insert(scope);
             let response = next.run(request).await;
             // An owned body is framed by the response Hyper writes, which the
-            // handler may have rebuilt and inner layers changed since. The
-            // registered server settles it again from the response it hands
-            // Hyper, after any layer outside admission.
+            // handler may have rebuilt and inner layers changed since. On the
+            // registered server the message that carries the body decides
+            // instead, after any layer outside admission.
             start.settle(&response);
             Ok::<_, Infallible>(response)
         },

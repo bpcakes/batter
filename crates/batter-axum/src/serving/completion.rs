@@ -11,13 +11,16 @@
 //!
 //! Each connection's service, each of its response futures and every response
 //! body it produces hold a token instead, and the server completes only once
-//! every token has been released. Each response future also settles, from the
-//! response it hands Hyper, the framing of the owned body its request started.
+//! every token has been released. Each response future also computes, from the
+//! response it hands Hyper, how Hyper frames that message, and its body makes
+//! that framing current for every call Hyper makes into it, so an owned body
+//! the message carries, through whatever layers, is judged by it.
 
-use crate::streaming::BodyStart;
+use crate::streaming::Written;
 use axum::{
     body::{Body, Bytes},
     extract::Request,
+    http::{Method, Version},
     response::Response,
     serve::{IncomingStream, Listener},
 };
@@ -150,14 +153,13 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut request: Request) -> Self::Future {
-        // Request admission claims this record, so the response handed to
-        // Hyper settles the framing of the body the request starts.
-        let start = BodyStart::served(&request);
-        request.extensions_mut().insert(start.clone());
+    fn call(&mut self, request: Request) -> Self::Future {
+        // The request head decides, with the response, how Hyper frames it.
+        let (method, version) = (request.method().clone(), request.version());
         Responding {
             inner: self.inner.call(request),
-            start,
+            method,
+            version,
             token: Some(self.token.clone()),
         }
     }
@@ -169,7 +171,8 @@ pin_project! {
     pub(super) struct Responding<F> {
         #[pin]
         inner: F,
-        start: BodyStart,
+        method: Method,
+        version: Version,
         token: Option<TaskTrackerToken>,
     }
 }
@@ -183,22 +186,28 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let response = ready!(this.inner.poll(cx))?;
-        // The response Hyper writes, after every layer outside admission.
-        this.start.settle(&response);
+        // The response Hyper writes, after every layer.
+        let written = Written::of(this.method, *this.version, &response);
         let token = this.token.take();
         Poll::Ready(Ok(response.map(|inner| {
             Body::new(ConnectionBody {
-                inner,
+                inner: Some(inner),
+                written,
                 _token: token,
             })
         })))
     }
 }
 
-/// A response body that keeps its connection's token until it is destroyed.
-/// It forwards every frame, end and size unchanged, so framing is unaffected.
+/// A response body that keeps its connection's token until it is destroyed,
+/// and makes its message's framing current for every call Hyper makes into
+/// it, destruction included. It forwards every frame, end and size unchanged,
+/// so framing is unaffected.
 struct ConnectionBody {
-    inner: Body,
+    /// `None` only while it is being destroyed.
+    inner: Option<Body>,
+    written: Written,
+    /// Declared last, so it is released after the body was destroyed.
     _token: Option<TaskTrackerToken>,
 }
 
@@ -210,15 +219,31 @@ impl http_body::Body for ConnectionBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
-        Pin::new(&mut self.inner).poll_frame(cx)
+        let this = &mut *self;
+        match this.inner.as_mut() {
+            Some(inner) => this.written.writing(|| Pin::new(inner).poll_frame(cx)),
+            None => Poll::Ready(None),
+        }
     }
 
     fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
+        self.inner
+            .as_ref()
+            .is_none_or(|inner| self.written.writing(|| inner.is_end_stream()))
     }
 
     fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
+        self.inner.as_ref().map_or_else(
+            || SizeHint::with_exact(0),
+            |inner| self.written.writing(|| inner.size_hint()),
+        )
+    }
+}
+
+impl Drop for ConnectionBody {
+    fn drop(&mut self) {
+        let inner = self.inner.take();
+        self.written.writing(|| drop(inner));
     }
 }
 

@@ -49,18 +49,18 @@ async fn a_zero_cancel_allowance_never_closes_the_gate() {
     assert!(closed_after_forced_cancellation(Duration::from_secs(2)).await);
 }
 
-/// A stop clock the test moves by hand: forced cancellation, and an abort
-/// deadline that only moves earlier.
+/// A stop clock the test moves by hand: forced cancellation, recorded when it
+/// happens, and an abort deadline that only moves earlier.
 #[derive(Clone)]
-struct ManualClock(Arc<watch::Sender<(bool, Option<Instant>)>>);
+struct ManualClock(Arc<watch::Sender<(Option<Instant>, Option<Instant>)>>);
 
 impl ManualClock {
     fn new(abort: Instant) -> Self {
-        Self(Arc::new(watch::Sender::new((false, Some(abort)))))
+        Self(Arc::new(watch::Sender::new((None, Some(abort)))))
     }
 
     fn cancel(&self) {
-        self.0.send_modify(|state| state.0 = true);
+        self.0.send_modify(|state| state.0 = Some(Instant::now()));
     }
 
     fn tighten(&self, abort: Instant) {
@@ -72,8 +72,12 @@ impl StopClock for ManualClock {
     fn cancelled(&self) -> impl Future<Output = ()> + Send {
         let mut state = self.0.subscribe();
         async move {
-            let _ = state.wait_for(|state| state.0).await;
+            let _ = state.wait_for(|state| state.0.is_some()).await;
         }
+    }
+
+    fn cancelled_at(&self) -> Option<Instant> {
+        self.0.borrow().0
     }
 
     fn abort_deadline(&self) -> Option<Instant> {
@@ -162,12 +166,44 @@ async fn closed_after_tightening(after: Duration, tightened: Duration) -> Option
     timeout(Duration::from_secs(5), watching).await.ok()
 }
 
+/// The halves are measured from when forced cancellation began, not from
+/// when this task first observed it: cancelled with the abort 4 s away but
+/// first polled a second later, the gate still closes at the 2 s midpoint.
+#[tokio::test(start_paused = true)]
+async fn the_close_is_measured_from_cancellation_not_from_its_observation() {
+    let start = Instant::now();
+    let clock = ManualClock::new(start + Duration::from_secs(4));
+    let gate = Gate::new();
+    let mut serving = pin!(serve(
+        std::future::pending::<io::Result<()>>(),
+        clock.clone(),
+        gate.clone()
+    ));
+    clock.cancel();
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let closed_at = loop {
+        tokio::select! {
+            biased;
+            _ = serving.as_mut() => unreachable!("the serving future never returns"),
+            () = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+        if gate.is_closed() {
+            break Instant::now();
+        }
+    };
+    let elapsed = closed_at - start;
+    assert!(
+        elapsed >= Duration::from_secs(2) && elapsed <= Duration::from_millis(2001),
+        "{elapsed:?}"
+    );
+}
+
 /// A clock that reports no abort deadline gives no interval to share with
 /// cancelled handlers, so the gate stays open after cancellation, as with a
 /// deadline already passed. The supervisor's registration always sets one.
 #[tokio::test(start_paused = true)]
 async fn an_unknown_abort_deadline_never_closes_the_gate() {
-    let clock = ManualClock(Arc::new(watch::Sender::new((false, None))));
+    let clock = ManualClock(Arc::new(watch::Sender::new((None, None))));
     let gate = Gate::new();
     let mut serving = pin!(serve(
         std::future::pending::<io::Result<()>>(),

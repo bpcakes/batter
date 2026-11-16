@@ -56,9 +56,10 @@ struct Served {
 enum Composed {
     /// Assembled by the protected boundary.
     Boundary(GuardedRouter),
-    /// A lower-level composition: the router's routes inside request
-    /// admission, `outside` between admission and the operational wrapper.
-    LowLevel(Router, fn(Router) -> Router),
+    /// A lower-level composition: the router's routes inside `admissions`
+    /// nested request admissions, `outside` between admission and the
+    /// operational wrapper.
+    LowLevel(Router, fn(Router) -> Router, usize),
 }
 
 async fn serve(guarded: GuardedRouter) -> Served {
@@ -91,11 +92,13 @@ async fn serve_composed(composed: Composed) -> Served {
             .unwrap()
             .register_in(&mut supervisor, "http", listener)
             .unwrap(),
-        Composed::LowLevel(router, outside) => {
-            let admitted = router.route_layer(axum::middleware::from_fn_with_state(
-                policy,
-                low_level::request_admission,
-            ));
+        Composed::LowLevel(router, outside, admissions) => {
+            let admitted = (0..admissions).fold(router, |router, _| {
+                router.route_layer(axum::middleware::from_fn_with_state(
+                    policy.clone(),
+                    low_level::request_admission,
+                ))
+            });
             let app =
                 outside(admitted).layer(axum::middleware::from_fn(low_level::operational_http));
             low_level::register_http(&mut supervisor, "http", listener, app).unwrap();
@@ -481,139 +484,6 @@ fn a_length_declared_after_the_hand_over_decides_the_outcome() {
     }
 }
 
-/// Claims an exact size of ten bytes, yields five and ends.
-struct Overstated {
-    sent: bool,
-}
-
-impl http_body::Body for Overstated {
-    type Data = Bytes;
-    type Error = Infallible;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
-        if std::mem::replace(&mut self.sent, true) {
-            return Poll::Ready(None);
-        }
-        Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"hello")))))
-    }
-
-    fn size_hint(&self) -> SizeHint {
-        SizeHint::with_exact(10)
-    }
-}
-
-/// Axum's route declares a `Content-Length` for a body of exact size even
-/// beside a `Transfer-Encoding` header, after every layer of the router, and
-/// Hyper refuses a message carrying both: the peer receives nothing and the
-/// owned body, never polled, is reported `dropped`. So through Axum's router
-/// Hyper chunk-encodes only a body of unknown size, which the owned body's
-/// framing never held to a length anyway.
-#[test]
-fn a_transfer_encoding_beside_a_body_of_exact_size_is_refused() {
-    let capture = Capture::new();
-    let text = capture.block_on(async {
-        let served = serve(GuardedRouter::new().route(
-            "/",
-            route(|admitted: AdmittedRequest| async move {
-                admitted.into_streaming_response(budget(600, 300), |_scope| {
-                    (
-                        [(header::TRANSFER_ENCODING, "chunked")],
-                        Body::new(Overstated { sent: false }),
-                    )
-                })
-            }),
-        ))
-        .await;
-        let mut client = served.request().await;
-        let mut bytes = Vec::new();
-        let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
-        wait_for_finished(&capture).await;
-        served.shut_down().await;
-        String::from_utf8_lossy(&bytes).into_owned()
-    });
-    assert_eq!(text, "");
-    let event = assert_finished(&capture, "INFO", "dropped");
-    assert!(event.contains("bytes=0"), "{event}");
-}
-
-/// Hyper answers in the response's own version unless the request was
-/// HTTP/1.0, and an HTTP/1.0 answer drops `Transfer-Encoding`: an HTTP/1.0
-/// response to an HTTP/1.1 request is framed by its `Content-Length`, so a
-/// source ending short of it is `failed`, not taken for a chunked message.
-#[test]
-fn an_http10_response_is_framed_by_its_length_despite_transfer_encoding() {
-    let capture = Capture::new();
-    let text = capture.block_on(async {
-        let served = serve(GuardedRouter::new().route(
-            "/",
-            route(|admitted: AdmittedRequest| async move {
-                admitted.into_streaming_response(budget(600, 300), |_scope| {
-                    let source = stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
-                    Response::builder()
-                        .version(Version::HTTP_10)
-                        .header(header::TRANSFER_ENCODING, "chunked")
-                        .header(header::CONTENT_LENGTH, "10")
-                        .body(Body::from_stream(source))
-                        .unwrap()
-                })
-            }),
-        ))
-        .await;
-        let mut client = served.request().await;
-        let mut bytes = Vec::new();
-        // Hyper aborts the message, so the read may end in a reset.
-        let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
-        wait_for_finished(&capture).await;
-        served.shut_down().await;
-        String::from_utf8_lossy(&bytes).into_owned()
-    });
-    assert_short_and_failed(&capture, &text);
-}
-
-/// On the registered server the length is settled from the response handed
-/// to Hyper: a layer between request admission and the operational wrapper
-/// that declares one frames the message, so a source ending short of it is
-/// `failed`, since Hyper aborts that message.
-#[test]
-fn a_length_declared_outside_admission_decides_the_outcome() {
-    fn declare_ten(outside: Router) -> Router {
-        outside.layer(axum::middleware::map_response(
-            |mut response: Response| async move {
-                response
-                    .headers_mut()
-                    .insert(header::CONTENT_LENGTH, HeaderValue::from_static("10"));
-                response
-            },
-        ))
-    }
-    let capture = Capture::new();
-    let text = capture.block_on(async {
-        let router = Router::new().route(
-            "/",
-            route(|admitted: AdmittedRequest| async move {
-                admitted.into_streaming_response(budget(600, 300), |_scope| {
-                    Body::from_stream(stream::iter([Ok::<_, Infallible>(Bytes::from_static(
-                        b"hello",
-                    ))]))
-                })
-            }),
-        );
-        let served = serve_composed(Composed::LowLevel(router, declare_ten)).await;
-        let mut client = served.request().await;
-        let mut bytes = Vec::new();
-        // Hyper aborts the message, so the read may end in a reset.
-        let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
-        wait_for_finished(&capture).await;
-        served.shut_down().await;
-        String::from_utf8_lossy(&bytes).into_owned()
-    });
-    // Hyper aborts the message, so the peer may receive none of it.
-    assert_short_and_failed(&capture, &text);
-}
-
 /// Serve an HTTP/1.0 request a body that the library's idle bound ends after
 /// its first frame, declaring `length` when given. Returns what the peer read
 /// before its stream ended and whether it ended in an orderly way.
@@ -784,3 +654,5 @@ fn a_body_that_ended_with_trailers_is_observed_as_completed() {
     assert!(event.contains("bytes=5"), "{event}");
     assert_eq!(finished(&capture).len(), 1);
 }
+
+mod framing;

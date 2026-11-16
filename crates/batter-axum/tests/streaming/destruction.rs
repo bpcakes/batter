@@ -272,10 +272,11 @@ fn a_size_query_that_panics_at_the_hand_over_ends_the_body_before_destroying_it(
 /// A body its holder discards before its end is `dropped`, not a failure: here
 /// Axum strips the body of a HEAD request routed to the GET handler, and
 /// admission discards a response the handler built before its
-/// response-construction budget ran out.
+/// response-construction budget ran out, even one under a head Hyper would
+/// refuse, which Hyper was never handed.
 #[test]
 fn a_body_discarded_by_head_or_by_a_construction_timeout_is_observed_as_dropped() {
-    for head in [true, false] {
+    for (head, length) in [(true, None), (false, None), (false, Some("+5"))] {
         let capture = Capture::new();
         let escaped = Escaped::default();
         let kept = escaped.clone();
@@ -288,7 +289,16 @@ fn a_body_discarded_by_head_or_by_a_construction_timeout_is_observed_as_dropped(
                     route(move |admitted: AdmittedRequest| async move {
                         let response = admitted.into_streaming_response(budget(60, 5), |scope| {
                             kept.keep(scope.context());
-                            Body::from_stream(stream::pending::<Result<Bytes, io::Error>>())
+                            let mut built = axum::response::IntoResponse::into_response(
+                                Body::from_stream(stream::pending::<Result<Bytes, io::Error>>()),
+                            );
+                            if let Some(length) = length {
+                                built.headers_mut().insert(
+                                    header::CONTENT_LENGTH,
+                                    header::HeaderValue::from_static(length),
+                                );
+                            }
+                            built
                         });
                         if !head {
                             // Outlasts the one-second construction budget.
@@ -321,8 +331,8 @@ fn a_body_discarded_by_head_or_by_a_construction_timeout_is_observed_as_dropped(
 /// A response without a body frames none, so a length it declares is not one
 /// the body must produce: an empty body behind a 304 or a 204, answering a HEAD
 /// request, or a 2xx answer to CONNECT, completed rather than ending short.
-/// Axum cannot return a 1xx as a final response, so that case of the rule is
-/// not reachable here.
+/// Hyper refuses any other final 1xx (see `sockets::framing`); the bodyless 101
+/// is not exercised, since upgrades are a non-goal.
 #[test]
 fn a_declared_length_on_a_response_without_a_body_is_observed_as_completed() {
     for (method, status) in [
@@ -485,6 +495,45 @@ fn a_refused_start_leaves_the_framing_to_the_body_that_started() {
     assert!(started.trim_start().starts_with("WARN"), "{started}");
     assert!(started.contains("body_outcome=\"failed\""), "{started}");
     assert!(started.contains("bytes=5"), "{started}");
+}
+
+/// A poll before the transport's does not fix the framing: a handler that
+/// polls its owned body once before returning it under a declared length
+/// leaves that length to request admission, so a source that falls short of
+/// it is still `failed`.
+#[test]
+fn a_poll_before_the_transport_leaves_the_framing_to_the_returned_response() {
+    let capture = Capture::new();
+    let drained = paused(&capture, async {
+        let handle = ready();
+        let app = client(
+            &handle,
+            GuardedRouter::new().route(
+                "/",
+                route(|admitted: AdmittedRequest| async move {
+                    let source = stream::once(async {
+                        tokio::task::yield_now().await;
+                        Ok::<_, io::Error>(Bytes::from_static(b"hello"))
+                    });
+                    let mut body = admitted
+                        .into_streaming_response(budget(60, 5), |_scope| Body::from_stream(source))
+                        .into_body();
+                    std::future::poll_fn(|cx| {
+                        assert!(std::pin::Pin::new(&mut body).poll_frame(cx).is_pending());
+                        Poll::Ready(())
+                    })
+                    .await;
+                    ([(header::CONTENT_LENGTH, "10")], body)
+                }),
+            ),
+        )
+        .await;
+        let mut response = get(&app, "/").await;
+        drain(response.body_mut()).await
+    });
+    assert_eq!(drained, ("hello".to_owned(), None));
+    let event = assert_finished(&capture, "WARN", "failed");
+    assert!(event.contains("bytes=5"), "{event}");
 }
 
 /// The request span belongs to the observer. An admitted request the

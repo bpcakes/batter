@@ -44,7 +44,9 @@ Windows support and non-Unix fallbacks are out of scope.
   `BodyBudget`, `BodyScope` and the private `OwnedBody` that wraps the built
   response's body. `src/streaming/start.rs` owns the private per-request
   `BodyStart` (the `OperationContinuation`, the request head and the started
-  body's framing hand-off) and the framing rule that mirrors Hyper's encoder.
+  body's framing hand-off), the framing rule that mirrors Hyper's encoder and
+  the private `Written` framing that the registered server makes current while
+  Hyper calls into a response body.
   The admission record carries that `BodyStart` and the shared observation
   state the body starts from; `src/observation.rs` publishes the request's span
   context there once.
@@ -107,8 +109,9 @@ Windows support and non-Unix fallbacks are out of scope.
   `src/serving/completion.rs` owns the private make-service wrapper whose
   per-connection service, response futures and response bodies hold
   `TaskTracker` tokens, so the registered server returns only after each was
-  destroyed, and whose response future creates each request's `BodyStart` and
-  settles the started body's framing from the response it hands Hyper.
+  destroyed, and whose response future computes each response's `Written`
+  framing from the request head and the response it hands Hyper, which the
+  response body makes current around every call Hyper makes into it.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
@@ -211,7 +214,9 @@ alike once it is closed. Record the polling task's waker on every I/O poll,
 before reading the closed flag, not only on a pending one: Hyper can wait on a
 body alone after ready polls, with pipelined bytes buffered or its read side
 closed. Keep that to one `AtomicWaker` registration per poll, with no lock,
-recompute the close instant when `ShutdownSignal::abort_deadline_before`
+measure the halves from `ShutdownSignal::forced_cancellation_at`, not from
+when this task observed cancellation, recompute the close instant when
+`ShutdownSignal::abort_deadline_before`
 reports an earlier abort, and wake outside the registry lock. Keep that
 computation behind the private `StopClock` trait, implemented by
 `ShutdownSignal`, so its paused-clock unit test drives the same code. Never close
@@ -236,7 +241,10 @@ own context is live; a refused start gets an already-cancelled standalone
 owner, never a root under process cancellation. Cancel the body's context on
 every ending, including destruction and a panicking builder. Report an application panic (a builder
 that never returned, a poll that unwound, an end or size query that unwound,
-destruction while unwinding) as `panicked`, never as a departed peer. Ask the
+the destruction of a swallowed empty frame that unwound, destruction while
+unwinding) as `panicked`, never as a departed peer; mark every call into
+application code outside a poll, other than destruction's own caught query,
+through the one `call` helper. Ask the
 source for its end during destruction only under the captured dispatcher and
 inside `catch_unwind`, finishing before the panic continues, and never ask it
 again after a transport's query unwound. A body the transport finishes without
@@ -252,12 +260,22 @@ encoder: `Content-Length` as plain digits with every value equal, else the
 body's exact size, and no length under `Transfer-Encoding` except in an HTTP/1.0
 answer, judged by Hyper's effective version (HTTP/1.0 for an HTTP/1.0 request,
 else the response's own). Settle the advertised length again from the response request
-admission returns and, on the registered server, from the response
-`completion::Responding` hands Hyper, through the one private `BodyStart` per
-request that the connection service creates, admission claims once and only a
-started body's framing fills, because a handler's tuple or any layer can
-declare it after the hand-over; never carry it on the response, which a
-handler can rebuild around the body. Own the built body before asking it anything, so a query that
+admission returns, through the admitted request's private `BodyStart`, which
+only a started body's framing fills, because a handler's tuple or any layer can
+declare it after the hand-over; never carry it on the request or the response,
+which a layer can replace or rebuild. On the registered server associate a body
+with its message by containment, never by which request's work started it:
+`completion::Responding` computes `Written` once from the request head and the
+response it hands Hyper, and `ConnectionBody` makes it current, in a
+thread-local restored even on unwind, around every call Hyper makes into the
+body (poll, end and size queries, destruction); an owned body adopts it in each
+of those calls and in its destructor, once, and nothing settles it again. A
+poll by anyone outside such a call fixes nothing. Never reintroduce a
+task-local or request-carried association: it judged a spawned admission, a
+nested router or a returned in-process response against the wrong head. A body
+a layer polls on another task than its connection's is not reached and keeps
+admission's framing; state that limit wherever settlement after every layer is
+promised. Own the built body before asking it anything, so a query that
 unwinds at the hand-over still ends it before it is destroyed. Do not
 claim truncation is visible to an HTTP/1.0 peer for a body without a declared
 length: Hyper delimits it by closing the connection. The observer publishes the request span
@@ -265,9 +283,18 @@ in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
 bounds before each poll of the source and again before accepting the frame,
 end or error it returned, since a poll can outlast them, reporting that bound
-and destroying the rejected answer inside the protected ending, with the source,
-and
-register for forced cancellation and the nearer bound only when the source is
+and destroying the rejected answer inside the protected ending, with the source.
+Treat an empty data frame as no progress: Hyper discards it and polls again
+without yielding, so destroy it under protection, keep or start the idle wait,
+and wake the task before yielding; ask the source for its end only after
+destroying the frame, and end the body at once if it has ended. A
+recorded refusal outranks everything else destruction asks: a source already
+at its end and a length that looks produced, since Hyper never polls a body
+under a head it refuses. Record, only in the registered server's `Written`, whether
+Hyper refuses the head (by its rules before the no-body rule, so under 204/304 and a
+2xx CONNECT answer too, and any final 1xx but 101, which Hyper answers with a
+500) and report a body under one `failed`; never record a refusal from the
+handler's provisional head or admission's response. Register for forced cancellation and the nearer bound only when the source is
 pending. End a library-ended body with an error, never `None`. Poll, query and
 destroy the application's body under the dispatcher current at the hand-over;
 emit the completion event and release the request span under the dispatcher

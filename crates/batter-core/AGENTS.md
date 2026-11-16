@@ -129,6 +129,11 @@ construction: read-only observation that confers no authority, unset for
 standalone handles, and never a promise that abort happens at that instant.
 `ShutdownSignal::abort_deadline_before` only waits on the same clock's change
 notification; keep it read-only and resolving only for an earlier deadline.
+`ShutdownSignal::forced_cancellation_at` is the first forced-cancellation
+instant, recorded under the transition mutex before the cancellation token
+fires, so an observer of the cancellation always finds it; keep it read-only
+and never move it. The stop-clock accessors live in
+`lifecycle/capability/stop_clock.rs`.
 `OperationContinuation` is created only by a successful
 `lifecycle::low_level::admit_root_with_continuation`; keep both under
 `lifecycle::low_level`, apart from `OperationAdmission::admit_root`. Keep it

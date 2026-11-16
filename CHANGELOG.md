@@ -23,18 +23,32 @@ contracts, capability facts and validation history.
   are checked before a frame is accepted, including after a poll that
   outlasted them, so a frame ready or returned only after its wait expired
   does not extend the body, and an error such a poll returned is reported as
-  that bound. A body whose source produced its whole
+  that bound; an empty data frame is no progress, so a source of nothing but
+  empty frames still ends at the idle bound, and its task yields meanwhile. A body whose source produced its whole
   message is `completed` even when Hyper never polls for its end: after its
   advertised `Content-Length` or exact size, taken as Hyper frames it from the
-  response finally written (on the registered server the one handed to Hyper,
-  after every layer), or after trailers; one that ends, reports its end or
+  response finally written (on the registered server the one carrying the body
+  when Hyper writes it, after every layer and wherever admission ran), or after
+  trailers; one that ends, reports its end or
   yields trailers short of its advertised length is `failed`, since Hyper
   aborts that message (a source already ended when Hyper writes the head is
   still `failed`, although Hyper then sends a complete empty
-  `content-length: 0` message), except on a response Hyper writes without a body (HEAD,
-  a 2xx answer to CONNECT, 1xx, 204, 304), whose declared length frames
-  nothing. A body whose answer about its end or size panics is `panicked`,
-  including at the hand-over, and is ended before it is destroyed; those
+  `content-length: 0` message), except on a response Hyper writes without a
+  body (HEAD, a 2xx answer to CONNECT, 101, 204, 304), whose declared length
+  frames nothing; and, through the registered server, a body under a head
+  Hyper refuses to write, including a final 1xx other than 101, which Hyper
+  answers with a 500, is `failed`, even if it had already ended. The server
+  finds the message that carries a body by containment: each response body
+  makes its message's framing current for every call Hyper makes into it, so
+  spawned admission, a nested `low_level::request_admission` router and an
+  in-process response a served handler returns are each judged by the message
+  Hyper writes, and a poll before the transport's fixes nothing. Only a body a
+  layer polls on another task than the connection's keeps admission's
+  framing, and lengths are compared with the bytes the owned body yielded. A
+  body whose answer about its end or size panics is `panicked`,
+  including at the hand-over, and is ended before it is destroyed; so is one
+  whose swallowed empty frame panics when the library destroys it, even if the
+  caller catches that unwind before dropping the response; those
   answers, like its polls, run under the handler's dispatcher and span; its
   completion event and the request span's release stay with the subscriber
   that recorded the span, even if the handler switched subscribers. A
@@ -69,8 +83,9 @@ contracts, capability facts and validation history.
   destroyed, which Axum's graceful return alone does not establish; a
   destructor still running at the abort deadline aborts the wrapper and skips
   cleanup, including when Axum's serving future returns an error. Each
-  response body gains one wrapper allocation, and each request one small
-  shared record and a few atomic updates of one server-wide `TaskTracker`.
+  response body gains one wrapper allocation and one size query when its head
+  is framed, and each request a few atomic updates of one server-wide
+  `TaskTracker`.
   Public signatures are unchanged. Behavior change: such a shutdown now reports
   success with `forced_cancellation` set and runs cleanup, where it reported
   `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
@@ -105,8 +120,10 @@ contracts, capability facts and validation history.
   can use the remaining interval to end them itself and return joined rather
   than aborted. `ShutdownSignal::abort_deadline_before` waits, read-only, until
   that deadline is earlier than one the caller holds, so such work can follow
-  a component that reveals an earlier stop. Additive; no existing caller
-  changes (`batter-9wig.1`).
+  a component that reveals an earlier stop. `ShutdownSignal::forced_cancellation_at`
+  reports when forced cancellation was first requested, so work sharing the
+  cancel allowance measures from that instant rather than from a late
+  observation. Additive; no existing caller changes (`batter-9wig.1`).
 
 - Refuse `batter-axum` in-process requests that reuse Axum routing state
   (`batter-oj37`;

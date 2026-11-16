@@ -25,8 +25,6 @@ struct OperationalScope(CorrelationId);
 /// clone Parts into another request and run supported middleware, so removing
 /// only the direct quota writer would leave shared observation mutation
 /// reachable, and a kept admission record would admit the new request. A kept
-/// body-start record would tie the new request's owned body to the original
-/// response's framing, so it is removed with the admission record. A kept
 /// browser credential record would let the new request present cookies under
 /// the original request's decision; no current renderer runs after a group's
 /// gate records one, so its removal guards future layer orders.
@@ -38,7 +36,6 @@ pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
     parts.extensions.remove::<ObservationState>();
     parts.extensions.remove::<OperationalScope>();
     parts.extensions.remove::<crate::admitted::Admission>();
-    parts.extensions.remove::<crate::streaming::BodyStart>();
     parts
         .extensions
         .remove::<crate::browser::CredentialAccess>();

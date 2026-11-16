@@ -903,6 +903,13 @@ read-only, until the deadline is earlier than one the caller holds, so work
 scheduled against it can follow a tightened clock; the Axum serving adapter
 reschedules its connection close that way. State unit tests cover the unset,
 standalone, extended and tightened cases and that wait.
+`ShutdownSignal::forced_cancellation_at` reports when forced cancellation was
+first requested, recorded before its token fires, so work that shares the
+cancel allowance with the cancelled operations measures from that instant
+rather than from when a busy runtime let it observe the cancellation; the Axum
+serving adapter measures its connection close that way. It is `None` until
+then, read-only, and kept at its first instant; a state unit test and its
+example cover it.
 
 `lifecycle::low_level::admit_root_with_continuation` is a lower-level adapter
 seam, placed apart from `OperationAdmission::admit_root`, the protected path. It
@@ -2631,7 +2638,12 @@ always-ready source cannot outrun them and a frame that became ready, or that a
 poll outlasting the bound returned, only after its wait expired does not extend
 the body; an error such a poll returned is reported as that bound, not
 `failed`, and the library destroys that rejected answer as it does the source,
-under the captured dispatcher and inside the request span; and a pending body
+under the captured dispatcher and inside the request span. An empty data frame
+is no progress: Hyper discards it and polls again without yielding, so the
+library destroys it the same way, keeps or starts the idle wait instead of
+restarting it, and yields, so an always-ready source of empty frames ends at
+the idle bound without starving its runtime; a final empty frame, after which
+the source reports its end, ends the body at once, as Hyper ends the message; and a pending body
 registers for forced cancellation and the nearer bound. The idle wait starts at
 the body's first pending poll after a frame, so time the transport spends not
 polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
@@ -2670,7 +2682,8 @@ by the library, a panic or the stream: a peer that went away, a HEAD response
 whose body Axum strips, or a response discarded because response construction
 ended without it; the request's own completion event, with its method and
 status, tells these apart. `panicked` names a builder that never returned, a poll of the body that
-unwound (the transport destroys such a body after catching the unwind), a
+unwound (the transport destroys such a body after catching the unwind), the
+destruction of a swallowed empty frame that unwound (likewise), a
 question about the body's end or size that unwound, whether the owner asked it
 at the hand-over, the transport asked it, or the owner asked it while
 destroying the body (the owner owns the body before its first question, so it
@@ -2685,14 +2698,13 @@ end: Hyper stops once `is_end_stream` reports the end, once the advertised
 advertised length is taken again from the response finally written, because
 Hyper frames the message by the headers it encodes and Axum applies a handler
 tuple's headers after `into_streaming_response` returns. Request admission
-settles it from the response it returns; the registered server settles it once
-more from the response its connection hands Hyper, after every layer outside
-admission, so only servers that call `axum::serve` themselves and the
-in-process client stop at admission. The started body hands its framing over
-through one private per-request record that the registered server creates and
-admission claims, not through the response, so a response the handler rebuilt
-around the body, which keeps nothing else the built response carried, is
-settled the same way. The framing follows Hyper 1.11.1's encoder: a
+settles it from the response it returns, through one private per-request
+record the started body hands its framing to, not through the response, so a
+response the handler rebuilt around the body, which keeps nothing else the
+built response carried, is settled the same way. On the registered server the
+message that carries the body decides instead (below), so only servers that
+call `axum::serve` themselves, the in-process client and a body polled on
+another task than its connection's stop at admission. The framing follows Hyper 1.11.1's encoder: a
 `Content-Length` of plain digits, repeated only with one value, else the body's
 exact size; none under `Transfer-Encoding`, except in an HTTP/1.0 answer, which
 drops that header. The answer's version is Hyper's: HTTP/1.0 for an HTTP/1.0
@@ -2701,7 +2713,42 @@ one. A declared length that the body's exact size contradicts, which Hyper
 does not support (it frames by the size and only debug builds assert they
 match), still counts, being what the peer reads. Axum's router adds a `Content-Length` to a body of
 exact size after every layer, even beside `Transfer-Encoding`, and Hyper
-refuses such a message, so that body is reported `dropped`. A source
+refuses such a message. From the head it hands Hyper, the registered server
+therefore also records whether Hyper refuses it, by the rules Hyper applies
+before its no-body rule: a final 1xx status other than 101, which Hyper
+answers with a 500 instead and which Axum passes through, any length header
+on a 2xx answer to CONNECT, a
+`Content-Length` beside `Transfer-Encoding` unless `Transfer-Encoding` comes
+first in an answer that cannot be chunked, and an unparsable or conflicting
+`Content-Length` on a body of unknown size, including under a 204 or 304. A
+body under such a head is reported `failed`, whether or not its source had
+already ended or a handler polled it first, not as a departed peer or a
+complete empty message; neither admission's head nor the provisional head the
+handler built records a refusal, so a body discarded with them stays
+`dropped`. The registered server associates a body with a message by
+containment, not by which request's work started it: each response future
+computes that framing and refusal once, from the request head and the response
+it hands Hyper, and that response's body makes them current, in a thread-local,
+around each synchronous call Hyper makes into it: a poll, an end or size query
+and its destruction. An owned body reached by such a call, through whatever
+layers wrap it, adopts the framing once and keeps it; a poll by anyone else,
+such as a handler or a layer before the transport, fixes nothing. Hence a
+layer that replaces the request's extensions, even with an earlier request's,
+or rebuilds the response cannot detach the body from the message that carries
+it; admission a layer polls on another task, such as one awaiting
+`tokio::spawn(next.run(request))`, a router holding
+`low_level::request_admission` that a served handler dispatches itself, and an
+in-process response a served handler returns as its own are each judged by the
+message Hyper writes for them; and an in-process body a served handler keeps
+rather than returns is never reached by that transport, so it keeps the
+framing its own admission settled. Only a body that a layer polls on another
+task than its connection's, for example by pumping it through a channel, is
+not reached: it keeps admission's framing and records no refusal, so a length
+a layer outside admission adds, or a head Hyper refuses, goes unseen and the
+event can report `completed` or `dropped` for a message Hyper aborted or never
+wrote. Lengths are compared with the bytes the owned body yielded, so a layer
+that changes them under a declared length, or a message joining the body with
+others, is judged against that whole message. A source
 that yields its end, reports it through `is_end_stream` or yields trailers
 before producing its advertised length is `failed` (WARN): Hyper aborts that
 message and the peer sees it truncated, except when the source already reports
@@ -2709,7 +2756,7 @@ its end as Hyper writes the head: Hyper then writes no body and frames the
 message as `content-length: 0`, so the peer receives a complete empty response
 while the event still reports `failed`. Hyper, not the owner, enforces the
 framing. A response Hyper writes without a body (to a HEAD request, a 2xx
-answer to CONNECT, or a 1xx, 204 or 304 status) frames nothing, so a length it
+answer to CONNECT, or a 101, 204 or 304 status) frames nothing, so a length it
 declares is not held against its body: an empty body there is `completed`. Error contents are not
 copied into the event. The request's own completion event is unchanged, and no
 metric is recorded for bodies.
@@ -2757,12 +2804,33 @@ They also show a length that a layer between request admission and the
 operational wrapper declares, reported `failed` when the source ends short of
 it, a `Transfer-Encoding` beside a body of exact size, which Axum's router
 also gives a `Content-Length`, refused by Hyper so that the peer receives
-nothing and the body is reported `dropped`, and an HTTP/1.0 response to an
+nothing and the body is reported `failed`, a length declared by a layer that
+rebuilds the response outside two nested admissions, an empty-frame source ended at its
+idle bound while another task on its current-thread runtime keeps running,
+data that follows an empty frame from a source that never wakes itself
+delivered at once, a swallowed empty frame destroyed under the handler's
+subscriber while a foreign one polls, one whose destructor panics, caught by
+the caller before it drops the response, reported `panicked`, a refused zero-length HTTP/1.0 head
+reported `failed`, a length declared outside admission over a request whose
+extensions a layer replaced with an earlier request's and whose response it
+rebuilt, reported `failed`, a final empty frame completing the body before a
+next poll that comes after the idle bound, an in-process response read after
+the served response around it was written keeping its own framing, a pending
+body under a final 103 head, which Hyper answers with a 500, reported `failed`,
+as are an already ended body and one its handler polled first under that head,
+admission polled on a spawned task under an outer ten-byte length and an
+in-process response a served handler returns under a ten-byte length it
+declares, both reported `failed` while the peer receives fewer bytes, and an
+HTTP/1.0 response to an
 HTTP/1.1 request, framed by its `Content-Length` despite `Transfer-Encoding`
 and reported `failed` when short. Unit tests check the framing rules
 against Hyper's parser: plain digits only, repeated values equal, no length
 under `Transfer-Encoding` except for HTTP/1.0, none for a bodyless response,
-and the per-request record claimed by one admission only.
+the refused heads including a final 100, 102 or 103 but not a 101, a body
+adopting the first transport's framing once and no later settle, and the
+written framing current only during the transport's call, restored after an
+inner call or an unwind. An in-process case checks that a handler's poll before
+the transport leaves a length declared afterwards to admission.
 Mutation checks were run by hand on 2026-11-11, each applied temporarily and
 reverted; they are not an automated gate. Removing scope cancellation, the
 cancellation wakeup, the captured dispatcher, the per-frame bound check, the
@@ -2801,7 +2869,26 @@ the response handed to Hyper failed the outside-admission length case. Later,
 dropping a rejected answer outside the protected ending failed the late-answer
 destruction case, and framing by the request's version instead of Hyper's
 effective one failed both the version unit test and the HTTP/1.0 response
-case.
+case. In the last round, passing empty frames on failed the empty-frame case,
+reporting a refused head as `dropped` or ignoring the version in the refusal
+rule failed the refusal cases, dropping the link to the server's record or the
+started flag failed the outside-admission length case under a second
+admission, letting a bodyless status suppress a refusal failed the refusal
+unit test, recording a refusal from the handler's provisional head failed the
+construction-timeout case, settling an already polled body failed the linked
+record unit test, and measuring the close from its observation failed the
+gate's late-observation unit test; then dropping the body's self-wake after an
+empty frame, destroying that frame outside protection, or letting a produced
+zero length win over a recorded refusal each failed its new case, and
+ignoring the server's current record failed four of the framing socket cases;
+finally, treating a final empty frame as no progress failed the final-frame
+case, and dispatching in-process inside the server's record failed the
+in-process case. On 2026-11-15, after the task-local association was replaced
+by containment, disabling the adoption of the written framing failed seven of
+the framing socket cases, including the spawned-admission and returned
+in-process cases; asking the source for its end before the recorded refusal
+failed the ended-body 103 case; and fixing the framing at any first poll failed
+the in-process poll-before-transport case and the handler-polled 103 case.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
@@ -3167,7 +3254,9 @@ that never completes. Each of them once forced abort of the wrapper and skipped
 every dependent finalizer, at any client's choice. The registered task now wraps
 its listener, and every accepted connection's reads and writes fail once forced
 cancellation is halfway to `ShutdownSignal::abort_deadline`, the stop time plus
-the drain and cancel allowances. The first half of the cancel allowance is left
+the drain and cancel allowances, measured from
+`ShutdownSignal::forced_cancellation_at`, not from when the server's task
+observed the cancellation. The first half of the cancel allowance is left
 to cancelled handlers, whose interruption responses are still written whole. In
 the second half Hyper ends each remaining connection in that connection's own
 task. Axum counts a connection finished when its task drops its completion
@@ -3216,7 +3305,9 @@ the wrapper is aborted and cleanup skipped. Unit tests show the server's
 destruction wait holding when Axum's serving future returns an error, a ready
 response future handing its completion token to the response body, and a stop
 clock without an abort deadline leaving the gate open; each failed by hand on
-2026-11-14 with its behaviour reverted. With a zero cancel allowance, on
+2026-11-14 with its behaviour reverted. Another shows the close measured from
+the recorded cancellation instant when the gate first observes it a second
+late. With a zero cancel allowance, on
 both a current-thread and a multi-thread runtime, a held body still aborts the
 wrapper and skips cleanup while a cancelled handler on another connection
 receives its whole 503 `operation_cancelled`. A gate unit test shows that a zero

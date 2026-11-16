@@ -115,11 +115,10 @@ pub(crate) fn record(
 ///
 /// ```compile_fail,E0423
 /// use batter_axum::AdmittedRequest;
-/// use batter_core::{lifecycle::low_level::OperationContinuation, operation::OperationContext};
 ///
-/// fn forge(context: OperationContext) -> AdmittedRequest {
-///     AdmittedRequest(context)
-/// }
+/// // The constructor itself is private, so it cannot even be named; with a
+/// // public field this line would compile.
+/// let _forge = AdmittedRequest;
 /// ```
 ///
 /// Request extensions accept only `Clone` values, and this one is not

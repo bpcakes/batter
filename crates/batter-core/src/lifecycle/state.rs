@@ -59,6 +59,8 @@ struct AdmissionState {
     /// is later than ordinary drain and no later than forced cancellation.
     support_closed: bool,
     stop_started: Option<Instant>,
+    /// When forced cancellation was first requested.
+    cancelled_at: Option<Instant>,
 }
 
 impl AdmissionState {
@@ -102,6 +104,7 @@ impl Shared {
                 failed: false,
                 support_closed: false,
                 stop_started: None,
+                cancelled_at: None,
             }),
             published_readiness: AtomicU8::new(Readiness::Starting as u8),
             drain: CancellationToken::new(),
@@ -228,6 +231,10 @@ impl Shared {
         self.lock().stop_started
     }
 
+    pub(super) fn cancelled_at(&self) -> Option<Instant> {
+        self.lock().cancelled_at
+    }
+
     pub(super) async fn stop_before(&self, known: Instant) -> Instant {
         loop {
             let changed = self.changed.notified();
@@ -269,7 +276,11 @@ impl Shared {
     pub(super) fn force_cancel(&self) {
         {
             let mut state = self.lock();
-            state.request_drain(Instant::now());
+            let now = Instant::now();
+            state.request_drain(now);
+            // Recorded before the token fires, so whoever observes the
+            // cancellation finds when it began.
+            state.cancelled_at.get_or_insert(now);
             state.forced = true;
             state.support_closed = true;
             self.publish_readiness(&state);

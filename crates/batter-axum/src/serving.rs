@@ -43,6 +43,17 @@ mod forced_close;
 /// route and method; it is neither rebuilt per connection nor one server-wide
 /// value.
 ///
+/// Each response future computes how Hyper frames the response it hands
+/// Hyper, after every layer of `application`, and that response's body makes
+/// the framing current for each call Hyper makes into it, destruction
+/// included. An owned body the message carries, through any layer, wherever
+/// its admission ran, is therefore judged by the message Hyper writes. Only a
+/// body polled on another task than the connection's, as one a body layer
+/// pumps through a channel is, goes unreached: it keeps the framing its
+/// admission returned, so a length added outside admission or a head Hyper
+/// refuses goes unseen, and its completion event can read `completed` or
+/// `dropped` for a message Hyper aborted or never wrote.
+///
 /// Axum internally spawns connection and graceful-signal tasks, and its graceful
 /// return waits for every connection. A connection can outlast drain without
 /// limit: a response body that stays pending, a peer that stops reading a large
@@ -106,8 +117,8 @@ pub fn register_http(
 /// Register an already-bound Axum server through constrained registration authority.
 ///
 /// This is the canonical companion to [`batter_core::startup::Startup::scoped`]. It
-/// has the same runtime, listener, router-preparation and native descendant
-/// limits as [`register_http`], while preventing the adapter from receiving
+/// has the same runtime, listener, router-preparation, owned-body framing and
+/// native descendant limits as [`register_http`], while preventing the adapter from receiving
 /// process-start or cleanup-extraction authority.
 /// It does not install connection metadata; use [`register_http_with_connect_info_in`]
 /// for the listener's peer address.

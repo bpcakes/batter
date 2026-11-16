@@ -107,7 +107,8 @@ Decision: `low_level::register_http`, `register_http_in`,
 methods wrap the listener in a private gate. `ShutdownSignal::abort_deadline`
 exposes the stop time plus the drain and cancel allowances. The registered
 component future, not a spawned task, waits for forced cancellation, then until
-halfway to that deadline, and closes the gate: every accepted connection's reads
+halfway from `ShutdownSignal::forced_cancellation_at`, when that cancellation
+began, to that deadline, and closes the gate: every accepted connection's reads
 and writes fail and the task that last polled each connection's I/O is woken,
 whether or not that poll was pending, because Hyper can wait on a body alone
 after ready polls. A component that reveals an earlier stop moves the deadline

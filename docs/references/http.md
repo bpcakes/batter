@@ -535,8 +535,13 @@ sources in the locked registry.
   one after setting its length (`routing/route.rs:166-171`). The owned body
   therefore takes no advertised length from such a response. Checked on
   2026-11-12 and 2026-11-14; in-process tests cover a 304, a 204, a HEAD
-  response and a 2xx answer to CONNECT. Axum cannot return a 1xx as a final
-  response, so that case rests on the rule alone.
+  response and a 2xx answer to CONNECT. A final 1xx other than 101 is never
+  written at all: Hyper replaces it with a 500, drops the body and reports
+  `unsupported_status_code` (`role.rs:403-408`), and Axum 0.8.9's
+  `RouteFuture` passes such a status through, rewriting only a 2xx answer to
+  CONNECT and top-level heads (`routing/route.rs:146-175`), so the registered
+  server records that head as refused. Checked on 2026-11-15; a real-socket
+  test returns a 103 over a pending body and observes `failed`.
 - Hyper frames a body whose size it does not know by the `Content-Length`
   header present when it encodes the head (`role.rs:746-766`), and Axum 0.8.9
   applies a tuple's headers after the inner response is built
@@ -549,19 +554,32 @@ sources in the locked registry.
   private per-request record rather than the response. Checked on
   2026-11-12 and 2026-11-13; real-socket tests cover a length declared through
   a tuple and on a response rebuilt around the body, both short and met.
-- The registered server's connection service creates that record before the
-  router runs, admission claims it from the request's extensions, and the
-  connection's response future settles the framing again from the response it
-  returns to Hyper, after every layer outside admission. Hyper encodes that
+- On the registered server the message that carries the body decides
+  instead. Hyper 1.11.1's dispatcher makes every call into a response body
+  synchronously on the connection task: `is_end_stream` and `size_hint` before
+  it writes the head, `poll_frame` while it writes the body, and the body's
+  destruction once it stops (`dispatch.rs:356-447`). Each response future
+  therefore computes the framing and refusal from the request head and the
+  response it hands Hyper, after every layer, and that response's body makes
+  them current in a thread-local around each such call, so an owned body
+  reached by one, through whatever layers wrap it, adopts the framing of the
+  message that actually carries it. That reaches admission polled on a task a
+  layer spawned with `tokio::spawn(next.run(request))`, a nested admission and
+  an in-process response a served handler returns, and misses only a body a
+  layer polls on another task than the connection's. Checked on 2026-11-15;
+  real-socket tests cover the spawned, nested and returned in-process cases
+  and an in-process body the handler keeps. Hyper encodes that
   response's headers: `Server::encode` (`role.rs:653-940`) frames a body of
   unknown size by a `Content-Length` it parses with `from_digits`
   (`headers.rs:66-68`, `101-123`: plain digits, no sign, whitespace or
   overflow), requires repeated values to match (`role.rs:756-781`), refuses
   an unparsable one, and chunk-encodes under any `Transfer-Encoding` unless
   the answer is HTTP/1.0 or bodyless, where it drops that header
-  (`role.rs:806-830`); a `Content-Length` beside `Transfer-Encoding` refuses
-  the message whenever it follows it, or precedes it in an answer that may be
-  chunked (`role.rs:706-710`, `806-810`). The answer's version is the
+  (`role.rs:806-830`). With both headers, a `Content-Length` written before
+  `Transfer-Encoding` refuses the message in every answer (`role.rs:806-810`),
+  while one written after it refuses the message only in an answer that may be
+  chunked, because an HTTP/1.0 or bodyless answer drops the leading
+  `Transfer-Encoding` (`role.rs:706-710`). The answer's version is the
   response's own (`dispatch.rs:600-610`) except that `enforce_version` forces
   HTTP/1.0 for an HTTP/1.0 request (`conn.rs:692-704`). A body of exact size is
   framed by that size whatever `Content-Length` says, which is written
@@ -572,7 +590,14 @@ sources in the locked registry.
   (`routing/route.rs:167`, `190-207`), and `Router::layer` wraps each route in
   another `Route`, so it does so after every router layer, even beside
   `Transfer-Encoding`; Hyper then refuses the message and the body is dropped
-  unpolled. Checked on 2026-11-14; unit tests cover the parsing rules, and
+  unpolled, which the owned body reports `failed` from the refusal the
+  registered server records from that head. Hyper parses the headers before
+  its no-body rule (`role.rs:965`), so a 204 or 304 refuses an unparsable
+  length too, and a 2xx answer to CONNECT starts with its length counted as
+  written (`role.rs:396-401`), so any length header there is refused. Hyper also discards an empty data chunk and polls the body again at
+  once without yielding (`dispatch.rs:420-423`), so the owned body treats one as
+  no progress, but ends a message whose final data frame is empty at once
+  (`dispatch.rs:410-415`), as the owned body does. Checked on 2026-11-14; unit tests cover the parsing rules, and
   real-socket tests cover a length a layer outside admission declares and the
   refused `Transfer-Encoding`.
 - Hyper answers an HTTP/1.0 request in HTTP/1.0 (`conn.rs:692-699`,

@@ -407,3 +407,18 @@ async fn abort_before_resolves_only_when_the_deadline_moves_earlier() {
     state.request_since(earliest);
     assert_eq!(waiting.await.unwrap(), earliest + allowance);
 }
+
+/// Forced cancellation records when it began before its token fires, and a
+/// later request keeps the first instant.
+#[tokio::test(start_paused = true)]
+async fn forced_cancellation_records_its_first_instant() {
+    let state = ready();
+    assert_eq!(state.cancelled_at(), None);
+    let forced = Instant::now();
+    state.force_cancel();
+    assert!(state.is_cancelled());
+    assert_eq!(state.cancelled_at(), Some(forced));
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    state.force_cancel();
+    assert_eq!(state.cancelled_at(), Some(forced));
+}

@@ -116,11 +116,17 @@ pub(super) trait StopClock {
     fn cancelled(&self) -> impl Future<Output = ()> + Send;
     fn abort_deadline(&self) -> Option<Instant>;
     fn abort_deadline_before(&self, known: Instant) -> impl Future<Output = Instant> + Send;
+    /// When forced cancellation began, which can precede its observation.
+    fn cancelled_at(&self) -> Option<Instant>;
 }
 
 impl StopClock for ShutdownSignal {
     fn cancelled(&self) -> impl Future<Output = ()> + Send {
         ShutdownSignal::cancelled(self)
+    }
+
+    fn cancelled_at(&self) -> Option<Instant> {
+        ShutdownSignal::forced_cancellation_at(self)
     }
 
     fn abort_deadline(&self) -> Option<Instant> {
@@ -137,7 +143,8 @@ impl StopClock for ShutdownSignal {
 ///
 /// Forced cancellation also cancels every admitted request context, so
 /// handlers render their own interruption responses first. The gate closes
-/// halfway between that instant and the supervisor's abort deadline, which
+/// halfway between that instant, as the stop clock recorded it rather than
+/// when this task observed it, and the supervisor's abort deadline, which
 /// leaves the first half for those responses to be written and the second for
 /// Axum to observe the closed connections finish. A component that reveals an
 /// earlier stop time moves the abort deadline earlier, and the midpoint is
@@ -158,7 +165,9 @@ where
     let mut serving = pin!(serving);
     let closing = async {
         signal.cancelled().await;
-        let cancelled = Instant::now();
+        // A busy runtime can poll this task late; the halves are measured
+        // from when cancellation began.
+        let cancelled = signal.cancelled_at().unwrap_or_else(Instant::now);
         while let Some(abort) = signal.abort_deadline() {
             let close = cancelled + abort.saturating_duration_since(cancelled) / 2;
             tokio::select! {
