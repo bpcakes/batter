@@ -5,7 +5,7 @@ use crate::{
     observation::ObservationState, streaming::BodyStart,
 };
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, Request},
     http::{Extensions, request::Parts},
     response::{IntoResponse, Response},
 };
@@ -40,32 +40,43 @@ pub(crate) struct Admission {
     pub(crate) observation: Option<ObservationState>,
 }
 
-/// Record the admitted request for [`AdmittedRequest`].
+/// The server correlation under which admission records `extensions`'
+/// request, if the operational wrapper that generated it owns the request.
+/// Admission reads it first, so a request that will not be recorded takes
+/// neither a continuation nor a body-start record.
+pub(crate) fn recorded_under(extensions: &Extensions) -> Option<CorrelationId> {
+    correlation::server_correlation(extensions)
+}
+
+/// Record the admitted request for [`AdmittedRequest`], returning its
+/// owned-body start.
 ///
 /// Only a request inside the operational wrapper that generated its server
-/// correlation is recorded. Without one, any record copied from another
-/// request is removed and nothing replaces it, so the extractor rejects.
+/// correlation is recorded: `recorded` carries that correlation, read by
+/// [`recorded_under`], and the continuation admission returned. Without one,
+/// any record copied from another request is removed and nothing replaces it,
+/// so the extractor rejects and no owned body can start.
 pub(crate) fn record(
-    extensions: &mut Extensions,
+    request: &mut Request,
     context: OperationContext,
     interruption: RequestInterruptionResponder,
-    continuation: OperationContinuation,
-    start: BodyStart,
-) {
-    extensions.remove::<Admission>();
-    if let Some(correlation_id) = correlation::server_correlation(extensions) {
-        let observation = extensions.get::<ObservationState>().cloned();
-        let shutdown = continuation.signal();
-        start.admit(continuation);
-        extensions.insert(Admission {
-            context,
-            correlation_id,
-            interruption,
-            start,
-            shutdown,
-            observation,
-        });
-    }
+    recorded: Option<(CorrelationId, OperationContinuation)>,
+) -> Option<BodyStart> {
+    request.extensions_mut().remove::<Admission>();
+    let (correlation_id, continuation) = recorded?;
+    let start = BodyStart::new(request);
+    let observation = request.extensions().get::<ObservationState>().cloned();
+    let shutdown = continuation.signal();
+    start.admit(continuation);
+    request.extensions_mut().insert(Admission {
+        context,
+        correlation_id,
+        interruption,
+        start: start.clone(),
+        shutdown,
+        observation,
+    });
+    Some(start)
 }
 
 /// The request that lifecycle admission let in: its operation context, its

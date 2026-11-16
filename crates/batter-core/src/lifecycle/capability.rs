@@ -125,9 +125,7 @@ impl ShutdownHandle {
     /// component must obtain its running observer by consuming the
     /// [`ComponentStartup`] supplied to its factory.
     pub fn signal(&self) -> ShutdownSignal {
-        ShutdownSignal {
-            shared: self.shared.clone(),
-        }
+        ShutdownSignal::observing(self.shared.clone())
     }
 }
 
@@ -327,6 +325,7 @@ pub struct ShutdownSignal {
 }
 
 impl ShutdownSignal {
+    /// The one constructor: read-only observation of `shared`.
     pub(super) fn observing(shared: Arc<Shared>) -> Self {
         Self { shared }
     }
@@ -379,9 +378,7 @@ impl LifecycleCoordinator {
     }
 
     pub(super) fn signal(&self) -> ShutdownSignal {
-        ShutdownSignal {
-            shared: self.shared.clone(),
-        }
+        ShutdownSignal::observing(self.shared.clone())
     }
 
     pub(super) fn is_draining(&self) -> bool {

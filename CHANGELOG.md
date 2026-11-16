@@ -91,8 +91,8 @@ contracts, capability facts and validation history.
   destroyed, which Axum's graceful return alone does not establish; a
   destructor still running at the abort deadline aborts the wrapper and skips
   cleanup, including when Axum's serving future returns an error. Each
-  response body gains one wrapper allocation and one size query when its head
-  is framed, and each request a few atomic updates of one server-wide
+  response body gains one wrapper allocation and one end and size query when
+  its head is framed, and each request a few atomic updates of one server-wide
   `TaskTracker`.
   Public signatures are unchanged. Behavior change: such a shutdown now reports
   success with `forced_cancellation` set and runs cleanup, where it reported

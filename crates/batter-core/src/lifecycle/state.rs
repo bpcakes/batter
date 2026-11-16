@@ -236,26 +236,25 @@ impl Shared {
     }
 
     pub(super) async fn stop_before(&self, known: Instant) -> Instant {
-        loop {
-            let changed = self.changed.notified();
-            tokio::pin!(changed);
-            changed.as_mut().enable();
-            if let Some(started) = self.stop_started().filter(|started| *started < known) {
-                return started;
-            }
-            changed.await;
-        }
+        self.earlier_than(known, Self::stop_started).await
     }
 
     /// Wait until the abort deadline is earlier than `known`. Only a stop
     /// clock moving earlier changes it, and every such move notifies.
     pub(super) async fn abort_before(&self, known: Instant) -> Instant {
+        self.earlier_than(known, Self::abort_deadline).await
+    }
+
+    /// Wait until `read` reports an instant earlier than `known`, reading it
+    /// again after each change. The notification is enabled before each read,
+    /// so a change between the read and the wait is not missed.
+    async fn earlier_than(&self, known: Instant, read: fn(&Self) -> Option<Instant>) -> Instant {
         loop {
             let changed = self.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            if let Some(abort) = self.abort_deadline().filter(|abort| *abort < known) {
-                return abort;
+            if let Some(instant) = read(self).filter(|instant| *instant < known) {
+                return instant;
             }
             changed.await;
         }

@@ -281,10 +281,17 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let Some(deadline) = Instant::now().checked_add(policy.budget) else {
         return policy.render_failure(HttpFailure::Internal, &parts);
     };
-    let Ok((owner, continuation)) = batter_core::lifecycle::low_level::admit_root_with_continuation(
-        &policy.admission,
-        batter_core::operation::RootDeadline::at(deadline),
-    ) else {
+    let root = batter_core::operation::RootDeadline::at(deadline);
+    // Only a recorded request can start an owned body, so only it takes the
+    // continuation that body starts from.
+    let admitted = match admitted::recorded_under(&parts.extensions) {
+        Some(correlation_id) => {
+            batter_core::lifecycle::low_level::admit_root_with_continuation(&policy.admission, root)
+                .map(|(owner, continuation)| (owner, Some((correlation_id, continuation))))
+        }
+        None => policy.admission.admit_root(root).map(|owner| (owner, None)),
+    };
+    let Ok((owner, recorded)) = admitted else {
         return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
     let context = owner.into_context();
@@ -297,21 +304,16 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
-            let start = crate::streaming::BodyStart::new(&request);
-            admitted::record(
-                request.extensions_mut(),
-                scope.clone(),
-                interruption,
-                continuation,
-                start.clone(),
-            );
+            let start = admitted::record(&mut request, scope.clone(), interruption, recorded);
             request.extensions_mut().insert(scope);
             let response = next.run(request).await;
             // An owned body is framed by the response Hyper writes, which the
             // handler may have rebuilt and inner layers changed since. On the
             // registered server the message that carries the body decides
             // instead, after any layer outside admission.
-            start.settle(&response);
+            if let Some(start) = start {
+                start.settle(&response);
+            }
             Ok::<_, Infallible>(response)
         },
         |result| resolve_response(result, &responder),
