@@ -30,6 +30,7 @@ use std::{
 /// digits, repeated only with the same value, frames it, else the body's exact
 /// size does. The answer's version is Hyper's effective one: HTTP/1.0 for an
 /// HTTP/1.0 request, else the response's own (`conn.rs` `enforce_version`).
+/// None of this applies to a request in another protocol, such as HTTP/2.
 ///
 /// A declared length that differs from the body's exact size is an
 /// application error Hyper does not support: it frames by the exact size and
@@ -71,6 +72,13 @@ pub(super) struct Head<'a> {
 }
 
 impl Head<'_> {
+    /// Whether Hyper's HTTP/1 encoder writes this answer. Another protocol,
+    /// such as HTTP/2, polls a body until it reports its end, so no HTTP/1
+    /// length or refusal applies to it.
+    fn http1(&self) -> bool {
+        matches!(self.version, Version::HTTP_10 | Version::HTTP_11)
+    }
+
     fn bodyless(&self) -> bool {
         self.method == Method::HEAD
             || self.method == Method::CONNECT && self.status.is_success()
@@ -84,7 +92,7 @@ impl Head<'_> {
     fn length(&self, hint: &SizeHint) -> Option<u64> {
         let chunked =
             self.version != Version::HTTP_10 && self.headers.contains_key(TRANSFER_ENCODING);
-        if self.bodyless() || chunked {
+        if !self.http1() || self.bodyless() || chunked {
             None
         } else {
             declared_length(self.headers).or_else(|| hint.exact())
@@ -108,6 +116,9 @@ impl Head<'_> {
     /// the first two rules, only a `Transfer-Encoding` before a
     /// `Content-Length` in an answer that may be chunked is then refused.
     fn refused(&self, body: Option<&SizeHint>) -> bool {
+        if !self.http1() {
+            return false;
+        }
         if self.status.is_informational() && self.status != StatusCode::SWITCHING_PROTOCOLS {
             return true;
         }
@@ -139,13 +150,17 @@ impl Head<'_> {
     }
 }
 
-/// The version Hyper writes an answer in: HTTP/1.0 to an HTTP/1.0 request,
-/// else the response's own.
+/// The version Hyper writes an answer in. Its HTTP/1 server parses only
+/// HTTP/1.0 and HTTP/1.1 requests: it answers HTTP/1.0 in HTTP/1.0 and
+/// HTTP/1.1 in the response's own version, writing one built as HTTP/2 as
+/// HTTP/1.1 (`role.rs:428-435`). Any other request, such as HTTP/2, which
+/// Axum's server accepts when `hyper-util`'s `http2` feature is in the build,
+/// is answered in its own protocol.
 fn answered(request: Version, response: Version) -> Version {
-    if request == Version::HTTP_10 {
-        Version::HTTP_10
-    } else {
-        response
+    match request {
+        Version::HTTP_11 if response == Version::HTTP_10 => Version::HTTP_10,
+        Version::HTTP_11 => Version::HTTP_11,
+        other => other,
     }
 }
 

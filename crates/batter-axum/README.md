@@ -323,7 +323,9 @@ are checked before and after each poll of the source, so a frame that became
 ready, or that a poll outlasting the bound returned, only after its wait
 expired does not extend the body, and an error such a poll returned is
 reported as that bound; the library destroys such a rejected answer as it
-does the source. An empty data frame is no progress, so a source of nothing but
+does the source. A wait starts with the poll that first asks for the next
+frame, so synchronous work inside that poll counts against the idle bound; a
+poll that never returns cannot be ended. An empty data frame is no progress, so a source of nothing but
 empty frames ends at the idle bound, and its task yields meanwhile. The body is
 polled, asked for its end and size, and destroyed under the tracing dispatcher
 and request span of the handler that handed it over, on whichever task asks;
@@ -392,7 +394,10 @@ event is the only notification of a body's end; there is no application hook.
 Limits: the bounds are observed only when the transport polls the body, so a
 peer that stops reading is ended by the registered server's forced connection
 close at shutdown and not by the budget; no write-stall timeout exists. An
-upgraded connection is not a body. Admission permits, such as a bulkhead's, are
+upgraded connection is not a body. Axum's server also accepts HTTP/2 when
+`hyper-util`'s `http2` feature is in the build; no HTTP/1 framing is applied
+to such a request, so its body is `completed` only once its source ends or
+yields trailers, and HTTP/2 serving is not otherwise exercised. Admission permits, such as a bulkhead's, are
 not held for the body's lifetime. An unowned body still compiles: nothing
 prevents moving the request's context into a plain `Body::from_stream`, because
 `OperationContext` is deliberately `Clone`.

@@ -125,7 +125,8 @@ Windows support and non-Unix fallbacks are out of scope.
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
   all readiness reasons and native startup/drain; `tests/operational/forced_close.rs`
   covers connections closed within the cancel allowance with cleanup run, and
-  a body surviving wrapper abort when that allowance is zero;
+  a body surviving wrapper abort when that allowance is zero, through both
+  `register_http` and the direct-peer registration;
   `tests/operational/forced_close/slow_destructor.rs` covers a pending body or
   in-flight handler still being destroyed after Axum counted its connection
   finished;
@@ -292,7 +293,9 @@ length: Hyper delimits it by closing the connection. The observer publishes the 
 in its shared state only while it is alive and clears it when it finishes;
 never let a kept request extension or admitted request own that span. Check the
 bounds before each poll of the source and again before accepting the frame,
-end or error it returned, since a poll can outlast them, reporting that bound
+end or error it returned, since a poll can outlast them; start an unarmed
+idle wait at the start of the poll that begins it, so synchronous work in that
+poll counts, reporting that bound
 and destroying the rejected answer inside the protected ending, with the source.
 Treat an empty data frame as no progress: Hyper discards it and polls again
 without yielding, so destroy it under protection, keep or start the idle wait,
@@ -300,7 +303,10 @@ and wake the task before yielding; ask the source for its end only after
 destroying the frame, and end the body at once if it has ended. A
 recorded refusal outranks everything else destruction asks: a source already
 at its end and a length that looks produced, since Hyper never polls a body
-under a head it refuses. Judge refusal as Hyper encodes the head: ask the body
+under a head it refuses. Apply the HTTP/1 framing mirror only to HTTP/1.0 and HTTP/1.1
+requests, the versions Hyper's HTTP/1 server parses: Axum's server accepts
+HTTP/2 when `hyper-util`'s `http2` feature is in the build, and HTTP/2 polls a
+body to its end. Judge refusal as Hyper encodes the head: ask the body
 for its end first, and for an ended body, which Hyper writes as none, apply
 only the rules its no-body branch keeps. Record, only in the registered server's `Written`, whether
 Hyper refuses the head (by its rules before the no-body rule, so under 204/304 and a

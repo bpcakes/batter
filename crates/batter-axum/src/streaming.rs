@@ -37,8 +37,9 @@ use tokio::time::Instant;
 /// Validated bounds for one owned response body.
 ///
 /// `total` bounds the whole body from the moment the handler hands it over.
-/// `idle` bounds each wait for the body's next frame, so a source that stops
-/// producing is ended long before a generous total. Both are required: a body
+/// `idle` bounds each wait for the body's next frame, from the poll that first
+/// asks for it, so a source that stops producing, or spends that long inside
+/// one poll, is ended long before a generous total. Both are required: a body
 /// that outlives its handler has no other bound.
 ///
 /// A stream meant to run indefinitely still needs a total: choose the longest
@@ -195,8 +196,11 @@ impl AdmittedRequest {
     ///   bounds are checked before and after each poll of the source, so a frame
     ///   ready or returned only after its wait expired is never accepted, and
     ///   an error returned then is reported as that bound; such a rejected
-    ///   answer is destroyed like the body, below. An empty data frame is no
-    ///   progress: it does not restart the idle wait. The peer
+    ///   answer is destroyed like the body, below. A wait starts with the poll
+    ///   that first asks for the next frame, so synchronous work the source
+    ///   does inside that poll counts; a poll that never returns cannot be
+    ///   ended. An empty data frame is no progress: it does not restart the
+    ///   idle wait. The peer
     ///   sees a truncated message, never a final chunk it could mistake for a
     ///   complete one, except over HTTP/1.0: Hyper answers an HTTP/1.0 request
     ///   in HTTP/1.0, as it does a response built as HTTP/1.0, and there a
@@ -235,7 +239,11 @@ impl AdmittedRequest {
     ///   repeated only with one value, else the body's exact size does, and
     ///   `Transfer-Encoding` frames none, except in an HTTP/1.0 answer, which
     ///   drops that header; a declared length the body's exact size contradicts
-    ///   still counts, as the peer reads it. A source that ends, reports its
+    ///   still counts, as the peer reads it. None of these HTTP/1 rules applies
+    ///   to a request in another protocol, such as HTTP/2, which Axum's server
+    ///   accepts when `hyper-util`'s `http2` feature is in the build: there the
+    ///   body is `completed` only once its source ends or yields trailers, and
+    ///   HTTP/2 serving is not otherwise exercised. A source that ends, reports its
     ///   end or yields trailers short of its advertised length is `failed`: the
     ///   transport aborts that message and the peer sees it truncated. The
     ///   exception is a source that already reports its end when Hyper writes
@@ -589,17 +597,22 @@ impl OwnedBody {
     }
 
     /// The bound that has already ended the body, if any: cancellation, the
-    /// total deadline, or an armed idle wait that expired.
-    fn overdue(&self) -> Option<BodyEnd> {
+    /// total deadline, or the idle bound, measured by an armed wait or, when
+    /// none is armed, from `asked`, the start of the poll that began the wait.
+    fn overdue(&self, asked: Option<Instant>) -> Option<BodyEnd> {
         match self.owner.context().check() {
             Err(reason) => Some(BodyEnd::interrupted(reason)),
-            Ok(()) => self.wake.as_ref().and_then(Wake::due),
+            Ok(()) => self.wake.as_ref().and_then(Wake::due).or_else(|| {
+                let idle = asked?.checked_add(self.idle)?;
+                (idle <= Instant::now()).then_some(BodyEnd::IdleTimeout)
+            }),
         }
     }
 
     /// Register this task for forced cancellation and the nearer of the idle
-    /// and total bounds, ending the body if either is already due.
-    fn wait(&mut self, cx: &mut Context<'_>) -> Option<BodyEnd> {
+    /// and total bounds, ending the body if either is already due. A wait not
+    /// yet armed began at `asked`, or now.
+    fn wait(&mut self, cx: &mut Context<'_>, asked: Option<Instant>) -> Option<BodyEnd> {
         let context = self.owner.context();
         let wake = self.wake.get_or_insert_with(|| {
             let cancellation = context.clone();
@@ -615,7 +628,8 @@ impl OwnedBody {
         }
         if !wake.armed {
             let total = context.deadline();
-            let idle = Instant::now().checked_add(self.idle).unwrap_or(total);
+            let since = asked.unwrap_or_else(Instant::now);
+            let idle = since.checked_add(self.idle).unwrap_or(total);
             wake.idle_first = idle < total;
             wake.timer.as_mut().reset(idle.min(total));
             wake.armed = true;
@@ -646,9 +660,13 @@ impl HttpBody for OwnedBody {
         this.framing.adopt_written();
         // A source that is always ready must not outrun its bounds, and one
         // that became ready after its armed wait expired is not accepted.
-        if let Some(end) = this.overdue() {
+        if let Some(end) = this.overdue(None) {
             return this.interrupt(end);
         }
+        // A wait for the next frame starts with the poll that first asks for
+        // it, so synchronous work the source does in that poll counts too.
+        let armed = this.wake.as_ref().is_some_and(|wake| wake.armed);
+        let asked = (!armed).then(Instant::now);
         let Some(inner) = this.inner.as_mut() else {
             return Poll::Ready(None);
         };
@@ -665,7 +683,7 @@ impl HttpBody for OwnedBody {
         // outlasted a bound: the check above ran before that poll started, and
         // the bound, not the source, then ended the body.
         let overdue = if polled.is_ready() {
-            this.overdue()
+            this.overdue(asked)
         } else {
             None
         };
@@ -685,7 +703,7 @@ impl HttpBody for OwnedBody {
                     this.finish(end);
                     return Poll::Ready(None);
                 }
-                if let Some(end) = this.wait(cx) {
+                if let Some(end) = this.wait(cx, asked) {
                     return this.interrupt(end);
                 }
                 cx.waker().wake_by_ref();
@@ -709,7 +727,7 @@ impl HttpBody for OwnedBody {
                 this.finish(this.yielded_end());
                 Poll::Ready(None)
             }
-            Poll::Pending => match this.wait(cx) {
+            Poll::Pending => match this.wait(cx, asked) {
                 Some(end) => this.interrupt(end),
                 None => Poll::Pending,
             },

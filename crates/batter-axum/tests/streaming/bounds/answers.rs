@@ -33,11 +33,13 @@ impl Drop for SpannedError {
     }
 }
 
-/// Answers its first poll with a frame and its second with `Pending`, waking
-/// itself at once; its third poll blocks the task for `blocks` before
-/// answering with `late`, as synchronous work inside a poll may.
+/// Answers its first poll with a frame and, if it `waits`, its second with
+/// `Pending`, waking itself at once; its next poll blocks the task for
+/// `blocks` before answering with `late`, as synchronous work inside a poll
+/// may.
 struct SlowToAnswer {
     polls: u8,
+    waits: bool,
     blocks: Duration,
     late: Late,
 }
@@ -51,13 +53,13 @@ impl HttpBody for SlowToAnswer {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
         self.polls += 1;
-        match self.polls {
-            1 => Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"first;"))))),
-            2 => {
+        match (self.polls, self.waits) {
+            (1, _) => Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"first;"))))),
+            (2, true) => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            3 => {
+            (2, false) | (3, true) => {
                 std::thread::sleep(self.blocks);
                 Poll::Ready(Some(match self.late {
                     Late::Frame => Ok(Frame::data(Bytes::from_static(b"late;"))),
@@ -73,17 +75,19 @@ impl HttpBody for SlowToAnswer {
 }
 
 /// The bounds are checked again once the source answers: a frame returned by
-/// a poll that began inside the armed wait but outlasted the idle bound, or
-/// the total bound, is not accepted, and an error returned then, as a step
-/// interrupted by the body's own deadline yields, is reported as that bound.
-/// On real time, because a paused clock cannot move during a poll.
+/// a poll that outlasted the idle bound, or the total bound, is not accepted,
+/// whether the poll began inside an armed wait or straight after a delivered
+/// frame, whose wait then starts with that poll; and an error returned then,
+/// as a step interrupted by the body's own deadline yields, is reported as
+/// that bound. On real time, because a paused clock cannot move during a poll.
 #[test]
 fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
     let blocks = Duration::from_millis(400);
     let cases = [(60_000, "idle_timeout"), (200, "deadline_exceeded")];
-    for ((total, outcome), late) in cases
+    for (((total, outcome), late), waits) in cases
         .into_iter()
         .flat_map(|case| [(case, Late::Frame), (case, Late::Error)])
+        .flat_map(|case| [(case, true), (case, false)])
     {
         let capture = Capture::new();
         let escaped = Escaped::default();
@@ -105,6 +109,7 @@ fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
                                 escaped.keep(scope.context());
                                 Body::new(SlowToAnswer {
                                     polls: 0,
+                                    waits,
                                     blocks,
                                     late,
                                 })
@@ -117,7 +122,7 @@ fn a_frame_returned_by_a_poll_that_outlasted_a_bound_is_not_accepted() {
                 until_error(response.body_mut()).await
             }
         });
-        assert_eq!(frames, 1, "{outcome} {late:?}");
+        assert_eq!(frames, 1, "{outcome} {late:?} waits={waits}");
         assert_eq!(error, format!("response body ended: {outcome}"));
         assert!(escaped.context().check().is_err());
         let event = assert_finished(&capture, "WARN", outcome);
@@ -148,6 +153,7 @@ fn a_late_answer_is_destroyed_under_the_handlers_subscriber() {
                     admitted.into_streaming_response(budget, |_scope| {
                         Body::new(SlowToAnswer {
                             polls: 0,
+                            waits: true,
                             blocks: Duration::from_millis(400),
                             late: Late::Spanned,
                         })

@@ -24,7 +24,9 @@ contracts, capability facts and validation history.
   outlasted them, so a frame ready or returned only after its wait expired
   does not extend the body, and an error such a poll returned is reported as
   that bound; an empty data frame is no progress, so a source of nothing but
-  empty frames still ends at the idle bound, and its task yields meanwhile. A body whose source produced its whole
+  empty frames still ends at the idle bound, and its task yields meanwhile; a
+  wait starts with the poll that first asks for the next frame, so a source's
+  synchronous work inside that poll counts against the idle bound. A body whose source produced its whole
   message is `completed` even when Hyper never polls for its end: after its
   advertised `Content-Length` or exact size, taken as Hyper frames it from the
   response finally written (on the registered server the one carrying the body
@@ -48,7 +50,9 @@ contracts, capability facts and validation history.
   polls on another task than the connection's keep admission's framing;
   lengths are compared with the bytes the owned body yielded. For a body
   already at its end, which Hyper writes as none, only the refusals Hyper
-  still applies to such a head count. A
+  still applies to such a head count. No HTTP/1 framing applies to an HTTP/2
+  request, which Axum's server accepts when `hyper-util`'s `http2` feature is
+  in the build; there a body completes only when its source ends. A
   body whose answer about its end or size panics is `panicked`,
   including at the hand-over, and is ended before it is destroyed; so is one
   whose swallowed empty frame panics when the library destroys it, even if the

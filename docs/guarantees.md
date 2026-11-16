@@ -2937,7 +2937,10 @@ the in-process poll-before-transport case and the handler-polled 103 case. On
 2026-11-16, letting a body started inside a transport's call adopt failed the
 in-process-from-a-polled-stream case, running an owned source with the framing
 current failed the forwarded-body case, and ignoring a body's end in the
-refusal rule failed the ended HTTP/1.0 case.
+refusal rule failed the ended HTTP/1.0 case. Later that day, measuring the
+idle bound only from an armed wait failed the outlasting-poll case for a poll
+straight after a delivered frame, and applying HTTP/1 rules to every request
+version failed the HTTP/2 framing unit test.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
@@ -2945,7 +2948,15 @@ shutdown ends it; there is no write-stall timeout. The owner covers response
 bodies, not upgraded connections. Admission permits are not held for the body's
 lifetime. An unowned streaming body still compiles, because `OperationContext`
 is `Clone` and `'static` by design; the owner makes the supported composition
-available, it does not make the other unrepresentable. HTTP/2 was not exercised.
+available, it does not make the other unrepresentable. A poll that never
+returns cannot be ended; one that returns is measured from its start, so
+synchronous work inside the poll that begins a wait counts against the idle
+bound. Axum 0.8.9's `serve` builds hyper-util's automatic connection builder
+without restricting it to HTTP/1 (`serve/mod.rs:391-394`), so it accepts
+HTTP/2 whenever `hyper-util`'s `http2` feature is in the build. The framing
+mirror applies only to HTTP/1.0 and HTTP/1.1 requests, the only versions
+Hyper's HTTP/1 server parses; for any other the body is `completed` only once
+its source ends or yields trailers. HTTP/2 serving was not exercised.
 
 A response returned from `RequestInterruptionResponder::render` carries private
 interruption evidence. Admission uses it to classify the response-construction
@@ -3356,10 +3367,10 @@ response future handing its completion token to the response body, and a stop
 clock without an abort deadline leaving the gate open; each failed by hand on
 2026-11-14 with its behaviour reverted. Another shows the close measured from
 the recorded cancellation instant when the gate first observes it a second
-late. With a zero cancel allowance, on
-both a current-thread and a multi-thread runtime, a held body still aborts the
-wrapper and skips cleanup while a cancelled handler on another connection
-receives its whole 503 `operation_cancelled`. A gate unit test shows that a zero
+late. With a zero cancel allowance, a held body still aborts the wrapper and
+skips cleanup through both registration helpers, and on both a current-thread
+and a multi-thread runtime it does so while a cancelled handler on another
+connection receives its whole 503 `operation_cancelled`. A gate unit test shows that a zero
 cancel allowance never closes the gate while a positive one does. On a paused
 clock, a gate unit test drives the close computation through a private stop
 clock: cancellation observed with the abort 4 s away, then the abort moved to

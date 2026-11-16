@@ -307,6 +307,48 @@ fn an_ended_body_is_refused_only_as_hyper_writes_it_as_none() {
     assert!(!refused(head, http11, ok, &encoding_first));
 }
 
+/// Hyper's HTTP/1 server parses only HTTP/1.0 and HTTP/1.1 requests. Any
+/// other, such as HTTP/2, is answered in its own protocol, which polls a body
+/// until its end, so no HTTP/1 length or refusal applies; a response built as
+/// HTTP/2 for an HTTP/1.1 request is still written, and framed, as HTTP/1.1.
+#[test]
+fn only_an_http1_request_is_framed_by_hyper_http1_rules() {
+    let unknown = || {
+        Body::from_stream(futures_util::stream::empty::<
+            Result<axum::body::Bytes, std::convert::Infallible>,
+        >())
+    };
+    let conflicting = |version| {
+        Response::builder()
+            .version(version)
+            .header(LENGTH, "10")
+            .header(ENCODING, "chunked")
+            .body(unknown())
+            .unwrap()
+    };
+    let declared = |version| {
+        Response::builder()
+            .version(version)
+            .header(LENGTH, "10")
+            .body(unknown())
+            .unwrap()
+    };
+    let unframed = Written {
+        length: None,
+        refused: false,
+    };
+    for request in [Version::HTTP_2, Version::HTTP_3] {
+        for response in [Version::HTTP_11, request] {
+            let get = |built: &Response| Written::of(&Method::GET, request, built);
+            assert_eq!(get(&conflicting(response)), unframed);
+            assert_eq!(get(&declared(response)), unframed);
+        }
+    }
+    let http11 = |built: &Response| Written::of(&Method::GET, Version::HTTP_11, built);
+    assert_eq!(http11(&declared(Version::HTTP_2)).length, Some(10));
+    assert!(http11(&conflicting(Version::HTTP_2)).refused);
+}
+
 /// Hyper writes no final 1xx but 101, answering any other with a 500 whatever
 /// its headers, version or body.
 #[test]

@@ -455,8 +455,19 @@ async fn partial_request_head_does_not_force_an_abort() {
 /// owned by its detached connection task and dependent cleanup is skipped.
 #[tokio::test]
 async fn zero_cancel_allowance_still_aborts_the_wrapper_and_skips_cleanup() {
+    zero_allowance_aborts(register_http).await;
+}
+
+/// The same holds for the direct-peer server, whose listener and
+/// make-service composition differ.
+#[tokio::test]
+async fn peer_server_zero_cancel_allowance_still_aborts_the_wrapper_and_skips_cleanup() {
+    zero_allowance_aborts(register_http_with_connect_info_in).await;
+}
+
+async fn zero_allowance_aborts(register: RegisterHttp) {
     let mut held = None;
-    let served = Served::start(register_http, Duration::ZERO, |router| {
+    let served = Served::start(register, Duration::ZERO, |router| {
         let (router, body) = held_route(router);
         held = Some(body);
         router

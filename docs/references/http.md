@@ -630,4 +630,10 @@ and fails. Local real-socket tests observed the pending body, the stalled
 reader and the half-sent head each holding the wrapper until abort without the
 close and ending inside the cancel allowance with it; a pending body after
 pipelined request bytes did the same when only pending polls were recorded.
-HTTP/2 and an upgraded connection were not exercised.
+HTTP/2 and an upgraded connection were not exercised. Axum 0.8.9's `serve`
+uses hyper-util's automatic builder without `http1_only`
+(`serve/mod.rs:391-394`), so it serves HTTP/2 whenever `hyper-util`'s `http2`
+feature is unified into the build. Hyper's HTTP/1 server parses only
+HTTP/1.0 and HTTP/1.1 requests and writes a response built as HTTP/2 as
+HTTP/1.1 (`role.rs:428-435`), so the owned body's framing mirror applies only
+to those request versions. Checked on 2026-11-16.
