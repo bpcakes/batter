@@ -4,7 +4,7 @@ This page describes capabilities in the source tree. It does not establish a
 successful verification run against the current checkout. Record executed
 commands, revisions, platforms and limitations in the owning Bead.
 
-Rust 1.98.1 is the pinned toolchain and every package's declared minimum.
+Rust 1.100.0 is the pinned toolchain and every package's declared minimum.
 Linux and macOS are in scope; other Unix targets remain unverified and Windows
 is unsupported. PostgreSQL integrations require PostgreSQL 18 or newer.
 

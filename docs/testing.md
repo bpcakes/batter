@@ -5,13 +5,13 @@
 
 ## Verification
 
-From the repository root, with the pinned Rust 1.98.1 toolchain:
+From the repository root, with the pinned Rust 1.100.0 toolchain:
 
 ```sh
 bash scripts/verify.sh
 ```
 
-Rust 1.98.1 is also the declared minimum; there is no separate MSRV run.
+Rust 1.100.0 is also the declared minimum; there is no separate MSRV run.
 Prerequisites include Python 3.9+, Docker for native Runledger PostgreSQL 18
 tests, loopback TCP, Unix subprocess permissions and a host certificate store.
 Initial dependency and file-budget-runtime downloads require network access.

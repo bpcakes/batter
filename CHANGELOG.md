@@ -133,6 +133,9 @@ contracts, capability facts and validation history.
   cancel allowance measures from that instant rather than from a late
   observation. Additive; no existing caller changes (`batter-9wig.1`).
 
+- Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
+  (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
+
 - Refuse reused Axum routing state in Runlimit's in-process test transport
   (`batter-gp93`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
