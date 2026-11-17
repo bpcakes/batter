@@ -298,6 +298,7 @@ dependencies = [
  "batter-sqlx",
  "batter-test-support",
  "chrono",
+ "futures-util",
  "runlimit-axum",
  "runlimit-core",
  "runlimit-http",
@@ -329,9 +330,11 @@ dependencies = [
 name = "batter-axum"
 version = "0.0.1"
 dependencies = [
+ "atomic-waker",
  "axum",
  "batter-core",
  "cookie",
+ "futures-util",
  "http-body",
  "pin-project-lite",
  "rcgen",
@@ -339,6 +342,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
  "tracing",
@@ -3886,6 +3890,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",

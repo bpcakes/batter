@@ -11,7 +11,7 @@ use axum::{
 };
 use std::{
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::time::Instant;
 use tracing::{Instrument, Level};
@@ -23,7 +23,29 @@ use tracing::{Instrument, Level};
 /// cannot suppress correlation setup. Nested Batter middleware publishes facts
 /// here without taking ownership of a second completion event.
 #[derive(Clone, Default)]
-pub(super) struct ObservationState(Arc<Mutex<ObservationFacts>>);
+pub(super) struct ObservationState(Arc<Retained>);
+
+#[derive(Default)]
+struct Retained {
+    facts: Mutex<ObservationFacts>,
+    /// The span this request's events and nested work belong to, published
+    /// while its observer is alive so an owned response body can enter it
+    /// again. The observer clears it when it finishes: a request extension or
+    /// admitted request kept beyond the response must neither keep the span
+    /// open nor release it under another dispatcher. Shared behind an `Arc`,
+    /// so a reader clones the span, which calls into the subscriber, only
+    /// after releasing this lock.
+    context: Mutex<Option<Arc<Published>>>,
+}
+
+/// A request's span context and the dispatcher its observer began under.
+///
+/// The dispatcher is kept apart from the span: a span that subscriber filtered
+/// out carries no dispatcher, and the request's events still belong to it.
+struct Published {
+    span: tracing::Span,
+    dispatch: tracing::Dispatch,
+}
 
 #[derive(Clone, Default)]
 struct ObservationFacts {
@@ -36,31 +58,37 @@ impl ObservationState {
         quota: Option<crate::quota_observation::QuotaObservation>,
         correlation: Option<CorrelationId>,
     ) -> Self {
-        Self(Arc::new(Mutex::new(ObservationFacts {
-            quota,
-            correlation,
-        })))
+        Self(Arc::new(Retained {
+            facts: Mutex::new(ObservationFacts { quota, correlation }),
+            context: Mutex::new(None),
+        }))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, ObservationFacts> {
+        crate::lock(&self.0.facts)
     }
 
     pub(super) fn replace_quota(&self, quota: crate::quota_observation::QuotaObservation) {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .quota = Some(quota);
+        self.lock().quota = Some(quota);
     }
 
     pub(super) fn replace_correlation(&self, correlation: CorrelationId) {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .correlation = Some(correlation);
+        self.lock().correlation = Some(correlation);
     }
 
     fn facts(&self) -> ObservationFacts {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        self.lock().clone()
+    }
+
+    fn published(&self) -> MutexGuard<'_, Option<Arc<Published>>> {
+        crate::lock(&self.0.context)
+    }
+
+    /// The observing request's span context, and the dispatcher its observer
+    /// began under, while its observer is alive.
+    pub(super) fn context(&self) -> Option<(tracing::Span, tracing::Dispatch)> {
+        let published = self.published().clone();
+        published.map(|published| (published.span.clone(), published.dispatch.clone()))
     }
 }
 
@@ -125,6 +153,12 @@ impl HttpObservation {
         // Choose once on first poll. A disabled explicit parent means a root
         // event, and looking up a fallback at Drop could adopt another request.
         let context = span.clone().or_current();
+        // The span's own dispatcher when it is enabled, and still the
+        // request's when its subscriber filtered the span out.
+        *state.published() = Some(Arc::new(Published {
+            span: context.clone(),
+            dispatch: tracing::dispatcher::get_default(Clone::clone),
+        }));
         Self {
             state,
             span,
@@ -160,6 +194,10 @@ impl Drop for HttpObservation {
             }
         });
         self.emit_completion(level, outcome, latency_ms);
+        // Release the published copy here, under this observer's dispatcher,
+        // and outside the lock: closing a span may call into the subscriber.
+        let published = self.state.published().take();
+        drop(published);
     }
 }
 

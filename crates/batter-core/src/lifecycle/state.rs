@@ -12,7 +12,7 @@ pub(crate) use readiness::ReadinessProgress;
 
 use super::{ProcessAdmissionError, Readiness};
 use std::sync::{
-    Arc, Mutex, MutexGuard,
+    Arc, Mutex, MutexGuard, OnceLock,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use tokio::{sync::Notify, time::Instant};
@@ -25,6 +25,9 @@ pub(super) struct Shared {
     support_stop: CancellationToken,
     cancel: CancellationToken,
     changed: Notify,
+    /// Drain plus cancel allowance of the supervisor that owns the phase
+    /// clock. Standalone coordinators have no phases and leave it unset.
+    abort_allowance: OnceLock<std::time::Duration>,
 }
 
 /// One pending component-start acknowledgement paired with its lifecycle.
@@ -56,6 +59,8 @@ struct AdmissionState {
     /// is later than ordinary drain and no later than forced cancellation.
     support_closed: bool,
     stop_started: Option<Instant>,
+    /// When forced cancellation was first requested.
+    cancelled_at: Option<Instant>,
 }
 
 impl AdmissionState {
@@ -99,13 +104,28 @@ impl Shared {
                 failed: false,
                 support_closed: false,
                 stop_started: None,
+                cancelled_at: None,
             }),
             published_readiness: AtomicU8::new(Readiness::Starting as u8),
             drain: CancellationToken::new(),
             support_stop: CancellationToken::new(),
             cancel: CancellationToken::new(),
             changed: Notify::new(),
+            abort_allowance: OnceLock::new(),
         }
+    }
+
+    /// Record, once, how long after the stop time the owning supervisor
+    /// requests abort. A budget is immutable, so a second call is ignored.
+    pub(super) fn bound_abort(&self, allowance: std::time::Duration) {
+        let _ = self.abort_allowance.set(allowance);
+    }
+
+    /// The stop time plus the recorded allowance. A tightened stop clock moves
+    /// it earlier, never later.
+    pub(super) fn abort_deadline(&self) -> Option<Instant> {
+        let allowance = *self.abort_allowance.get()?;
+        self.stop_started()?.checked_add(allowance)
     }
 
     fn lock(&self) -> MutexGuard<'_, AdmissionState> {
@@ -211,13 +231,30 @@ impl Shared {
         self.lock().stop_started
     }
 
+    pub(super) fn cancelled_at(&self) -> Option<Instant> {
+        self.lock().cancelled_at
+    }
+
     pub(super) async fn stop_before(&self, known: Instant) -> Instant {
+        self.earlier_than(known, Self::stop_started).await
+    }
+
+    /// Wait until the abort deadline is earlier than `known`. Only a stop
+    /// clock moving earlier changes it, and every such move notifies.
+    pub(super) async fn abort_before(&self, known: Instant) -> Instant {
+        self.earlier_than(known, Self::abort_deadline).await
+    }
+
+    /// Wait until `read` reports an instant earlier than `known`, reading it
+    /// again after each change. The notification is enabled before each read,
+    /// so a change between the read and the wait is not missed.
+    async fn earlier_than(&self, known: Instant, read: fn(&Self) -> Option<Instant>) -> Instant {
         loop {
             let changed = self.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            if let Some(started) = self.stop_started().filter(|started| *started < known) {
-                return started;
+            if let Some(instant) = read(self).filter(|instant| *instant < known) {
+                return instant;
             }
             changed.await;
         }
@@ -238,7 +275,11 @@ impl Shared {
     pub(super) fn force_cancel(&self) {
         {
             let mut state = self.lock();
-            state.request_drain(Instant::now());
+            let now = Instant::now();
+            state.request_drain(now);
+            // Recorded before the token fires, so whoever observes the
+            // cancellation finds when it began.
+            state.cancelled_at.get_or_insert(now);
             state.forced = true;
             state.support_closed = true;
             self.publish_readiness(&state);

@@ -96,10 +96,7 @@ pub(crate) struct QuotaObservation(Arc<Mutex<QuotaRecord>>);
 
 impl QuotaObservation {
     pub(crate) fn snapshot(&self) -> QuotaFacts {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .facts
+        crate::lock(&self.0).facts
     }
 }
 
@@ -191,10 +188,7 @@ impl QuotaRecorder {
     pub fn take(request: &mut Request) -> Option<Self> {
         let observation = request.extensions_mut().remove::<QuotaObservation>()?;
         {
-            let mut record = observation
-                .0
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut record = crate::lock(&observation.0);
             if record.writer_taken {
                 return None;
             }
@@ -207,11 +201,7 @@ impl QuotaRecorder {
     ///
     /// Dropping the returned writer before completion retains `Unresolved`.
     pub fn start(self) -> StartedQuotaRecorder {
-        self.0
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .facts = QuotaFacts::Unresolved;
+        crate::lock(&self.0.0).facts = QuotaFacts::Unresolved;
         StartedQuotaRecorder(self.0)
     }
 }
@@ -222,11 +212,7 @@ impl StartedQuotaRecorder {
     /// Consumes the only writer. A later nonterminal update cannot be expressed.
     /// This does not prove that the adapter's fact matches the native result.
     pub fn finish(self, facts: QuotaTerminalFacts) {
-        self.0
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .facts = facts.into();
+        crate::lock(&self.0.0).facts = facts.into();
     }
 }
 

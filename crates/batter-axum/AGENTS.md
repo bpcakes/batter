@@ -44,6 +44,16 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admitted.rs` owns the private admission record, the `AdmittedRequest`
   extractor that guarded handlers use instead of raw extensions and its
   sanitized `AdmittedRequestRejection`.
+- `src/streaming.rs` owns `AdmittedRequest::into_streaming_response`,
+  `BodyBudget`, `BodyScope` and the private `OwnedBody` that wraps the built
+  response's body. `src/streaming/start.rs` owns the private per-request
+  `BodyStart` (the `OperationContinuation`, the request head and the started
+  body's framing hand-off), the framing rule that mirrors Hyper's encoder and
+  the private `Written` framing that the registered server makes current while
+  Hyper calls into a response body.
+  The admission record carries that `BodyStart` and the shared observation
+  state the body starts from; `src/observation.rs` publishes the request's span
+  context there once.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
@@ -98,13 +108,28 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/serving.rs` registers any bound `axum::serve::Listener` plus a router with
   the supervisor, including the listener's opt-in direct peer `ConnectInfo`
   through protected authority. Transport policy stays with the listener.
+  `src/serving/forced_close.rs` owns the private gate that wraps the listener
+  and fails every accepted connection's I/O halfway between forced
+  cancellation and the supervisor's abort deadline.
+  `src/serving/completion.rs` owns the private make-service wrapper whose
+  per-connection service, response futures and response bodies hold
+  `TaskTracker` tokens, so the registered server returns only after each was
+  destroyed, and whose response future computes each response's `Written`
+  framing from the request head and the response it hands Hyper, which the
+  response body makes current around every call Hyper makes into it.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
-  all readiness reasons, native startup/drain and a body surviving wrapper abort;
+  all readiness reasons and native startup/drain; `tests/operational/forced_close.rs`
+  covers connections closed within the cancel allowance with cleanup run, and
+  a body surviving wrapper abort when that allowance is zero, through both
+  `register_http` and the direct-peer registration;
+  `tests/operational/forced_close/slow_destructor.rs` covers a pending body or
+  in-flight handler still being destroyed after Axum counted its connection
+  finished;
   `tests/operational/rendered_probes.rs` covers application-rendered probes
   outside admission, every decision through a contradicting renderer and
   application conditions. `tests/operational/admitted_request.rs` covers the
@@ -188,6 +213,117 @@ streaming or detached connection-task shutdown. Keep probe routes separate from
 guarded business routes. Serving accepts any `axum::serve::Listener`; never move
 certificate, provider, protocol-version, ALPN or handshake policy into the
 adapter, and never claim that a listener's own spawned work was joined.
+Keep the forced-close gate inside the registered component future, never in a
+spawned task, and close it only after cancelled handlers have had part of the
+cancel allowance to write their interruption responses. Fail reads and writes
+alike once it is closed. Record the polling task's waker on every I/O poll,
+before reading the closed flag, not only on a pending one: Hyper can wait on a
+body alone after ready polls, with pipelined bytes buffered or its read side
+closed. Keep that to one `AtomicWaker` registration per poll, with no lock,
+measure the halves from `ShutdownSignal::forced_cancellation_at`, not from
+when this task observed cancellation, recompute the close instant when
+`ShutdownSignal::abort_deadline_before`
+reports an earlier abort, and wake outside the registry lock. Keep that
+computation behind the private `StopClock` trait, implemented by
+`ShutdownSignal`, so its paused-clock unit test drives the same code. Never close
+when no interval is left, whether at cancellation, as with a zero cancel
+allowance, or after the deadline moved to an instant already passed, nor when
+no abort deadline is known: that only races the wrapper abort and fails
+interruption responses.
+Do not describe upgraded connections, handler-detached tasks, a connection
+task that never yields or a zero cancel allowance as covered; the
+wrapper-abort contract still applies to them. Never treat Axum's graceful
+return as proof that connections were destroyed: it counts one finished before
+its task destroys the connection future, which still holds the in-flight
+handler future and the response body after an I/O error. Keep the completion
+token in every connection's service, response future and response body,
+declared after what it guards, and await every token's release after Axum
+returns, inside the registered future; a destructor still running at the abort
+deadline must leave the wrapper to be aborted.
+An owned body starts its context from the admission record's continuation,
+never from a second `admit_root`. Keep that continuation in the record's
+take-once slot shared by every clone, and honour it only while the request's
+own context is live; a refused start gets an already-cancelled standalone
+owner, never a root under process cancellation. Cancel the body's context on
+every ending, including destruction and a panicking builder. Report an application panic (a builder
+that never returned, a poll that unwound, an end or size query that unwound,
+the destruction of a swallowed empty frame that unwound, destruction while
+unwinding) as `panicked`, never as a departed peer; mark every call into
+application code outside a poll, other than destruction's own caught query,
+through the one `call` helper. Ask the
+source for its end during destruction only under the captured dispatcher and
+inside `catch_unwind`, finishing before the panic continues, and never ask it
+again after a transport's query unwound. A body the transport finishes without
+asking for its end is `completed` only once its advertised length is produced,
+or, without one, after `is_end_stream` or trailers; a source that ends short of
+that length is `failed`, because Hyper aborts the message; a source already
+ended when Hyper writes the head stays `failed` although Hyper sends an empty
+`content-length: 0` message, so never promise the peer a truncation there.
+Take no advertised
+length from a response Hyper writes without a body: mirror its
+`can_have_body` rule for the request method and response status, and its
+encoder: `Content-Length` as plain digits with every value equal, else the
+body's exact size, and no length under `Transfer-Encoding` except in an HTTP/1.0
+answer, judged by Hyper's effective version (HTTP/1.0 for an HTTP/1.0 request,
+else the response's own). Settle the advertised length again from the response request
+admission returns, through the admitted request's private `BodyStart`, which
+only a started body's framing fills, because a handler's tuple or any layer can
+declare it after the hand-over; never carry it on the request or the response,
+which a layer can replace or rebuild. On the registered server associate a body
+with its message by containment, never by which request's work started it:
+`completion::Responding` computes `Written` once from the request head and the
+response it hands Hyper, and `ConnectionBody` makes it current, in a
+thread-local restored even on unwind, around every call Hyper makes into the
+body (poll, end and size queries, destruction); an owned body adopts it in each
+of those calls and in its destructor, once, and nothing settles it again. A
+poll by anyone outside such a call fixes nothing. Run every call into an owned
+body's application source (poll, queries, destruction, discarded answers)
+with no framing current (`Written::outside`, through `OwnedBody::application`
+wherever the borrow allows), so only the
+outermost owned body in the chain adopts; record at `Framing::started` whether
+a framing was current, and never let such a nested body adopt. Never reintroduce a
+task-local or request-carried association: it judged a spawned admission, a
+nested router or a returned in-process response against the wrong head. A body
+a layer polls on another task than its connection's is not reached and keeps
+admission's framing; state that limit wherever settlement after every layer is
+promised. Own the built body before asking it anything, so a query that
+unwinds at the hand-over still ends it before it is destroyed. Do not
+claim truncation is visible to an HTTP/1.0 peer for a body without a declared
+length: Hyper delimits it by closing the connection. The observer publishes the request span
+in its shared state only while it is alive and clears it when it finishes;
+never let a kept request extension or admitted request own that span. Check the
+bounds before each poll of the source and again before accepting the frame,
+end or error it returned, since a poll can outlast them; start an unarmed
+idle wait at the start of the poll that begins it, so synchronous work in that
+poll counts, reporting that bound
+and destroying the rejected answer inside the protected ending, with the source.
+Treat an empty data frame as no progress: Hyper discards it and polls again
+without yielding, so destroy it under protection, keep or start the idle wait,
+and wake the task before yielding; ask the source for its end only after
+destroying the frame, and end the body at once if it has ended. A
+recorded refusal outranks everything else destruction asks: a source already
+at its end and a length that looks produced, since Hyper never polls a body
+under a head it refuses. Apply the HTTP/1 framing mirror only to HTTP/1.0 and HTTP/1.1
+requests, the versions Hyper's HTTP/1 server parses: Axum's server accepts
+HTTP/2 when `hyper-util`'s `http2` feature is in the build, and HTTP/2 polls a
+body to its end. Judge refusal as Hyper encodes the head: ask the body
+for its end first, and for an ended body, which Hyper writes as none, apply
+only the rules its no-body branch keeps. Record, only in the registered server's `Written`, whether
+Hyper refuses the head (by its rules before the no-body rule, so under 204/304 and a
+2xx CONNECT answer too, and any final 1xx but 101, which Hyper answers with a
+500) and report a body under one `failed`; never record a refusal from the
+handler's provisional head or admission's response. Register for forced cancellation and the nearer bound only when the source is
+pending. End a library-ended body with an error, never `None`. Poll, query and
+destroy the application's body under the dispatcher current at the hand-over;
+emit the completion event and release the request span under the dispatcher
+the request's observer began under, published apart from the span because a
+filtered-out span names none, nesting the body's destruction inside it, because
+closing a span releases its parent through the current default and a handler
+may have switched subscribers before the hand-over. Emit the event once, before application
+destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`
+without a public constructor, and do not claim the bounds for a peer that is
+not reading. `tests/streaming.rs` and `tests/streaming/` cover the owner on a
+paused clock and over real sockets.
 Canonical probes accept only validated `ProbePath`
 values, and duplicate paths must fail through the boundary's sanitized
 configuration error before Axum routing. The canonical guarded builder must

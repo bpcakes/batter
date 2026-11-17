@@ -8,6 +8,132 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `AdmittedRequest::into_streaming_response`, with `BodyBudget` and
+  `BodyScope`, in `batter-axum`: a library-owned lifetime for a response body
+  that outlives its handler. The body gets a context that starts from the
+  request's admission and survives response construction, required total and
+  idle bounds (the idle bound shorter than the total, the total at most one
+  year) enforced without the stream's cooperation, polling and
+  destruction under the handler's tracing dispatcher and request span (which
+  then closes when the body ends, so span-close timing includes the body), and
+  one `HTTP response body finished` event with `request_id`, `bytes`,
+  `duration_ms` and `body_outcome`. A bound or forced cancellation truncates
+  the message visibly, except to an HTTP/1.0 peer receiving a body without a
+  declared length, which Hyper delimits by closing the connection; both bounds
+  are checked before a frame is accepted, including after a poll that
+  outlasted them, so a frame ready or returned only after its wait expired
+  does not extend the body, and an error such a poll returned is reported as
+  that bound; an empty data frame is no progress, so a source of nothing but
+  empty frames still ends at the idle bound, and its task yields meanwhile; a
+  wait starts with the poll that first asks for the next frame, so a source's
+  synchronous work inside that poll counts against the idle bound. A body whose source produced its whole
+  message is `completed` even when Hyper never polls for its end: after its
+  advertised `Content-Length` or exact size, taken as Hyper frames it from the
+  response finally written (on the registered server the one carrying the body
+  when Hyper writes it, after every layer and wherever admission ran), or after
+  trailers; one that ends, reports its end or
+  yields trailers short of its advertised length is `failed`, since Hyper
+  aborts that message (a source already ended when Hyper writes the head is
+  still `failed`, although Hyper then sends a complete empty
+  `content-length: 0` message), except on a response Hyper writes without a
+  body (HEAD, a 2xx answer to CONNECT, 101, 204, 304), whose declared length
+  frames nothing; and, through the registered server, a body under a head
+  Hyper refuses to write, including a final 1xx other than 101, which Hyper
+  answers with a 500, is `failed`, even if it had already ended. The server
+  finds the message that carries a body by containment: each response body
+  makes its message's framing current for every call Hyper makes into it, so
+  spawned admission, a nested `low_level::request_admission` router and an
+  in-process response a served handler returns are each judged by the message
+  Hyper writes, and a poll before the transport's fixes nothing. A body
+  another owned body's source forwards, one started by work running while
+  Hyper polls a response (a stream dispatching in-process), and one a layer
+  polls on another task than the connection's keep admission's framing;
+  lengths are compared with the bytes the owned body yielded. For a body
+  already at its end, which Hyper writes as none, only the refusals Hyper
+  still applies to such a head count. No HTTP/1 framing applies to an HTTP/2
+  request, which Axum's server accepts when `hyper-util`'s `http2` feature is
+  in the build; there a body completes only when its source ends. A
+  body whose answer about its end or size panics is `panicked`,
+  including at the hand-over, and is ended before it is destroyed; so is one
+  whose swallowed empty frame panics when the library destroys it, even if the
+  caller catches that unwind before dropping the response; those
+  answers, like its polls, run under the handler's dispatcher and span; its
+  completion event and the request span's release stay with the request's
+  subscriber, the one its observer began under, even if the handler switched
+  subscribers or that subscriber filtered the request span out. A
+  request starts at most one owned body, and only while its response is being
+  constructed. The existing completion event and every
+  existing signature are unchanged, and an unowned streaming body still
+  compiles. Not covered: a peer that stops reading (ended only by the forced
+  connection close), upgraded connections, and admission permits held for a
+  body's lifetime. `batter-axum` now depends on `http-body`, `tokio-util`
+  (with `rt`, for `TaskTracker`) and `atomic-waker` directly, all already in
+  the dependency graph (`batter-9wig.6`).
+- Add the lower-level `lifecycle::low_level::admit_root_with_continuation` and
+  `lifecycle::low_level::OperationContinuation` in `batter-core`: proof of an
+  admission from which an adapter starts work that continues the admitted
+  operation under its own deadline, without a second readiness read. The proof
+  is not `Clone` and `start` consumes it, so one admission continues into at
+  most one root, and a start after the admitted operation was cancelled or
+  passed its deadline is already cancelled. Additive (`batter-9wig.6`).
+- The `http_service` example gains an `/events` route that streams server-sent
+  events through `into_streaming_response` and ends at drain.
+
+- Fix `batter-axum` served connections that outlast drain forcing an abort of
+  the server wrapper, which skipped every dependent finalizer. A response body
+  that stays pending, a peer that stops reading a large fixed response and a
+  request head that never completes each held Axum's graceful wait past the
+  cancel allowance, at any client's choice. `AssembledHttp::register_in`,
+  `register_with_connect_info_in` and the three `low_level::register_http*`
+  helpers now wrap the listener: every accepted connection's reads and writes
+  fail halfway between forced cancellation and the supervisor's abort
+  deadline, Hyper ends the connection, and the wrapper returns joined once
+  every accepted connection's service, handler future and response body is
+  destroyed, which Axum's graceful return alone does not establish; a
+  destructor still running at the abort deadline aborts the wrapper and skips
+  cleanup, including when Axum's serving future returns an error. Each
+  response body gains one wrapper allocation and one end and size query when
+  its head is framed, and each request a few atomic updates of one server-wide
+  `TaskTracker`.
+  Public signatures are unchanged. Behavior change: such a shutdown now reports
+  success with `forced_cancellation` set and runs cleanup, where it reported
+  `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
+  message or a closed connection in the second half of the cancel allowance
+  instead of after process exit, though an HTTP/1.0 peer receiving a body
+  without a declared length cannot tell that close from the message's end.
+  Cancelled handlers still deliver their 503
+  `operation_cancelled` first. With a zero cancel allowance, once a deadline
+  moved earlier has already passed, or with no known abort deadline, the gate
+  never closes, so the
+  earlier abort-and-skip outcome holds on any runtime flavour,
+  as it does for a connection task that never yields. The close also reaches a connection that never
+  waited in transport I/O, such as one whose first read returned a request head
+  with bytes of a following request, after which Hyper waits on the response
+  body alone; and its instant is recomputed when a component moves the abort
+  deadline earlier. Upgraded connections, HTTP/2 and servers that call
+  `axum::serve` themselves are not covered. Each connection adds one registry
+  entry, and each I/O poll one atomic waker registration (`batter-9wig.1`).
+- Document that a skipped `CleanupSlot::acquire_semaphore` or `bind_udp`
+  finalizer has still released its permit or socket reference: the hook only
+  drops its capture, and skipping drops it too. `SkippedCleanup` now says so.
+  No type or behavior changes (`batter-9wig.4`).
+- Document what a skipped `batter_sqlx::pool_in` close leaves on the server:
+  sessions dropped with the last pool handle, or at process exit, end when
+  their sockets close, without a Terminate message, and PostgreSQL rolls back
+  open transactions; a surviving handle's pool still closes idle or expired
+  connections gracefully. Source reading against PostgreSQL 18
+  and SQLx 0.9.0, not a live observation (`batter-9wig.5`).
+- Add `ShutdownSignal::abort_deadline` and `RunningComponent::abort_deadline`:
+  the stop time plus the supervisor's drain and cancel allowances, `None`
+  before drain and for a standalone handle. A component that owns descendants
+  can use the remaining interval to end them itself and return joined rather
+  than aborted. `ShutdownSignal::abort_deadline_before` waits, read-only, until
+  that deadline is earlier than one the caller holds, so such work can follow
+  a component that reveals an earlier stop. `ShutdownSignal::forced_cancellation_at`
+  reports when forced cancellation was first requested, so work sharing the
+  cancel allowance measures from that instant rather than from a late
+  observation. Additive; no existing caller changes (`batter-9wig.1`).
+
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
 
