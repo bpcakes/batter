@@ -58,8 +58,9 @@ contracts, capability facts and validation history.
   whose swallowed empty frame panics when the library destroys it, even if the
   caller catches that unwind before dropping the response; those
   answers, like its polls, run under the handler's dispatcher and span; its
-  completion event and the request span's release stay with the subscriber
-  that recorded the span, even if the handler switched subscribers. A
+  completion event and the request span's release stay with the request's
+  subscriber, the one its observer began under, even if the handler switched
+  subscribers or that subscriber filtered the request span out. A
   request starts at most one owned body, and only while its response is being
   constructed. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still

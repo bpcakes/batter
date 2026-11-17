@@ -316,7 +316,8 @@ handler's provisional head or admission's response. Register for forced cancella
 pending. End a library-ended body with an error, never `None`. Poll, query and
 destroy the application's body under the dispatcher current at the hand-over;
 emit the completion event and release the request span under the dispatcher
-that recorded the span, nesting the body's destruction inside it, because
+the request's observer began under, published apart from the span because a
+filtered-out span names none, nesting the body's destruction inside it, because
 closing a span releases its parent through the current default and a handler
 may have switched subscribers before the hand-over. Emit the event once, before application
 destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`

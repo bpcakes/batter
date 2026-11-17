@@ -329,9 +329,10 @@ poll that never returns cannot be ended. An empty data frame is no progress, so 
 empty frames ends at the idle bound, and its task yields meanwhile. The body is
 polled, asked for its end and size, and destroyed under the tracing dispatcher
 and request span of the handler that handed it over, on whichever task asks;
-its completion event and the span's release stay with the subscriber that
-recorded the span, should the handler have switched subscribers before the
-hand-over. It holds that `batter.http` span open until it
+its completion event and the span's release stay with the request's
+subscriber, the one its observer began under, should the handler have switched
+subscribers before the hand-over, even where that subscriber filtered the span
+out. It holds that `batter.http` span open until it
 ends: span-close timing, such as an exported span's duration, then covers the
 body, while `latency_ms` and the request's completion event still measure
 response construction. Exactly one `HTTP response body finished` event

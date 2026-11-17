@@ -388,6 +388,42 @@ fn a_body_handed_over_under_another_subscriber_keeps_the_request_span_in_its_own
     assert!(names.contains(&"caller"), "{names:?}");
 }
 
+/// A request subscriber that filters the request span out leaves the span no
+/// dispatcher to name. The completion event still belongs to that subscriber,
+/// not to one the handler switched to before handing a failing body over.
+#[test]
+fn a_filtered_request_span_keeps_the_completion_event_with_the_request_subscriber() {
+    let capture = Capture::with_max_level(tracing::Level::WARN);
+    let other = Capture::new();
+    let switched = other.dispatch.clone();
+    paused(&capture, async move {
+        let handle = ready();
+        let app = client(
+            &handle,
+            GuardedRouter::new().route(
+                "/",
+                route(move |admitted: AdmittedRequest| {
+                    let switched = switched.clone();
+                    async move {
+                        tracing::dispatcher::with_default(&switched, || {
+                            admitted.into_streaming_response(budget(60, 5), |_scope: BodyScope| {
+                                let failed = io::Error::other("source failed");
+                                Body::from_stream(stream::iter([Err::<Bytes, _>(failed)]))
+                            })
+                        })
+                    }
+                }),
+            ),
+        )
+        .await;
+        let mut response = get(&app, "/").await;
+        assert!(next(response.body_mut()).await.unwrap().is_err());
+    });
+    assert_finished(&capture, "WARN", "failed");
+    let elsewhere = other.text();
+    assert!(!elsewhere.contains(FINISHED), "{elsewhere}");
+}
+
 const END_ANSWERED: &str = "end query answered";
 const SIZE_ANSWERED: &str = "size query answered";
 

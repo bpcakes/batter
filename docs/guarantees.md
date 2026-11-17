@@ -2685,8 +2685,11 @@ The body is polled, and asked for its end and size, under the tracing
 dispatcher current when the handler handed it over and inside the request's
 span context, whichever task asks. The application's body is also destroyed
 under it. The completion event and the release of that span happen under the
-dispatcher that recorded the span, the same one unless the handler switched
-subscribers before the hand-over: closing a span releases its parent through
+dispatcher the request's observer began under, which recorded the span when it
+enabled it. The observer publishes that dispatcher apart from the span, so a
+subscriber that filtered the span out still receives the event. It is the
+hand-over dispatcher unless the handler switched subscribers before the
+hand-over: closing a span releases its parent through
 the current default dispatcher, so releasing it on the transport's task
 unprotected, or under the handler's switched subscriber, would hand another
 registry a span it never saw, which `tracing-subscriber` rejects with a

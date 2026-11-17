@@ -35,7 +35,16 @@ struct Retained {
     /// open nor release it under another dispatcher. Shared behind an `Arc`,
     /// so a reader clones the span, which calls into the subscriber, only
     /// after releasing this lock.
-    context: Mutex<Option<Arc<tracing::Span>>>,
+    context: Mutex<Option<Arc<Published>>>,
+}
+
+/// A request's span context and the dispatcher its observer began under.
+///
+/// The dispatcher is kept apart from the span: a span that subscriber filtered
+/// out carries no dispatcher, and the request's events still belong to it.
+struct Published {
+    span: tracing::Span,
+    dispatch: tracing::Dispatch,
 }
 
 #[derive(Clone, Default)]
@@ -71,14 +80,15 @@ impl ObservationState {
         self.lock().clone()
     }
 
-    fn published(&self) -> MutexGuard<'_, Option<Arc<tracing::Span>>> {
+    fn published(&self) -> MutexGuard<'_, Option<Arc<Published>>> {
         crate::lock(&self.0.context)
     }
 
-    /// The observing request's span context while its observer is alive.
-    pub(super) fn context(&self) -> Option<tracing::Span> {
+    /// The observing request's span context, and the dispatcher its observer
+    /// began under, while its observer is alive.
+    pub(super) fn context(&self) -> Option<(tracing::Span, tracing::Dispatch)> {
         let published = self.published().clone();
-        published.map(|span| tracing::Span::clone(&span))
+        published.map(|published| (published.span.clone(), published.dispatch.clone()))
     }
 }
 
@@ -143,7 +153,12 @@ impl HttpObservation {
         // Choose once on first poll. A disabled explicit parent means a root
         // event, and looking up a fallback at Drop could adopt another request.
         let context = span.clone().or_current();
-        *state.published() = Some(Arc::new(context.clone()));
+        // The span's own dispatcher when it is enabled, and still the
+        // request's when its subscriber filtered the span out.
+        *state.published() = Some(Arc::new(Published {
+            span: context.clone(),
+            dispatch: tracing::dispatcher::get_default(Clone::clone),
+        }));
         Self {
             state,
             span,

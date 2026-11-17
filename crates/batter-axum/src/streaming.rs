@@ -211,9 +211,10 @@ impl AdmittedRequest {
     /// - The body is polled, asked for its end and size, and destroyed under
     ///   the tracing dispatcher current here and inside the request's span, on
     ///   whichever task the transport uses. The completion event and the
-    ///   request span itself stay with the subscriber that recorded the span:
-    ///   if the handler switched subscribers before this call, the event is
-    ///   emitted, and the span released, under the request's subscriber.
+    ///   request span itself stay with the request's subscriber, the one its
+    ///   observer began under, even where that subscriber filtered the span
+    ///   out: if the handler switched subscribers before this call, the event
+    ///   is emitted, and the span released, under the request's subscriber.
     /// - Exactly one `HTTP response body finished` event carries the request
     ///   id, the bytes yielded, the duration and a `body_outcome` of
     ///   `completed`, `failed`, `deadline_exceeded`, `idle_timeout`,
@@ -365,14 +366,13 @@ impl AdmittedRequest {
             shutdown: admission.shutdown.clone(),
             correlation_id: admission.correlation_id().clone(),
         };
-        let context = admission
+        // The handler may have switched subscribers since the request began,
+        // and the request's subscriber may have filtered its span out.
+        let (context, request_dispatch) = admission
             .observation
             .as_ref()
-            .and_then(ObservationState::context);
-        // The handler may have switched subscribers since the request began.
-        let request_dispatch = context
-            .as_ref()
-            .and_then(|span| span.with_subscriber(|(_, dispatch)| dispatch.clone()));
+            .and_then(ObservationState::context)
+            .unzip();
         // Owned before the application builds anything, so a panicking builder
         // still cancels the scope it was given and is still observed.
         let mut owned = OwnedBody {
@@ -419,8 +419,9 @@ struct OwnedBody {
     /// body is polled, queried and destroyed.
     dispatch: tracing::Dispatch,
     context: Option<tracing::Span>,
-    /// The dispatcher that recorded the request span, if one is published.
-    /// The completion event and the span's release belong to it: a span must
+    /// The dispatcher the request's observer began under, if one is published,
+    /// whether or not it enabled the request span. The completion event and
+    /// the span's release belong to it: a span must
     /// close, and release its parent, in the registry that owns it.
     request_dispatch: Option<tracing::Dispatch>,
     correlation_id: CorrelationId,
