@@ -28,6 +28,7 @@
 //! ```
 
 mod acquisition;
+mod admin;
 mod plan;
 mod report;
 mod runner;
@@ -210,10 +211,11 @@ impl FixtureSuite {
     /// deferred drain. Use [`FixtureScope::template`] inside [`Self::start`] for
     /// owned preparation and panic-to-abort handling. Neither path joins detached
     /// initializer operations or promises cleanup of initializer-owned live pools.
-    /// Both validate the URL with [`crate::connect_options`] before the
-    /// initializer receives it, refusing an ambient or declared `hostaddr`; the
-    /// harness then aborts the template and returns its failure. Initializers should build pools with
-    /// [`crate::connect_options`].
+    /// Before any harness work, both refuse a harness admin URL containing `#`
+    /// or failing [`crate::connect_options`] with [`FixtureError::Connect`] and
+    /// no cleanup; both also validate the derived URL before the initializer
+    /// receives it. `empty` and `from_template` apply the same admin check.
+    /// Initializers should build pools with [`crate::connect_options`].
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
@@ -223,6 +225,7 @@ impl FixtureSuite {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     {
+        admin::admin_endpoint(self.harness.admin_database_url())?;
         let template = self
             .harness
             .template(spec, |url| async move {
@@ -250,6 +253,7 @@ impl FixtureSuite {
     /// SQLx maintains minimum connections in the background.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        admin::admin_endpoint(self.harness.admin_database_url())?;
         let lease = self
             .harness
             .empty_database()
@@ -266,6 +270,7 @@ impl FixtureSuite {
         plan: &ConnectionPlan,
     ) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        admin::admin_endpoint(self.harness.admin_database_url())?;
         let template = self
             .templates
             .iter()

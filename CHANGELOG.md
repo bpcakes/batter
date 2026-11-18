@@ -30,7 +30,10 @@ contracts, capability facts and validation history.
   `PGHOSTADDR` is set or the URL declares `hostaddr`, because SQLx 0.9.1
   connects to the former and can replace the latter with a Unix socket.
   `ConnectionPlan` resolution and both template initializer paths validate the
-  same way before any pool or caller code exists. Every checked-in test,
+  same way before any pool or caller code exists, and every fixture template
+  and lease operation first refuses a harness admin URL that contains `#` or
+  fails that boundary, with `FixtureError::Connect` and no cleanup: the
+  harness's own parser reads past `#`, which SQLx and the derived URLs do not. Every checked-in test,
   example, consumer and native root builds URL options through it or a native
   boundary. Clippy `disallowed-methods` rejects every URL-taking public SQLx
   API, including the `MigrateDatabase` maintenance methods, and the native

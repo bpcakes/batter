@@ -94,6 +94,7 @@ impl FixtureScope {
         F: FnOnce(String) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
     {
+        super::admin::admin_endpoint(self.harness.admin_database_url())?;
         let harness = self.harness.clone();
         let resources = self.resources.clone();
         produce(&self.resources, async move {
@@ -129,6 +130,7 @@ impl FixtureScope {
     /// all its pools registered. SQLx owns background minimum-connection
     /// maintenance; an eager `min_connections` pool may connect as soon as it exists.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<FixtureDatabase, FixtureError> {
+        super::admin::admin_endpoint(self.harness.admin_database_url())?;
         let harness = self.harness.clone();
         self.acquire(plan, async move { harness.empty_database().await })
             .await
@@ -141,6 +143,7 @@ impl FixtureScope {
         plan: &ConnectionPlan,
     ) -> Result<FixtureDatabase, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        super::admin::admin_endpoint(self.harness.admin_database_url())?;
         let template = self
             .resources
             .lock()

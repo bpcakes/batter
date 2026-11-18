@@ -263,21 +263,31 @@ fn build_database_name(prefix: &str) -> String {
 fn with_database_name(admin_url: &str, database_name: &str) -> String {
     let mut url = url::Url::parse(admin_url).expect("admin database URL must be a valid URL");
     url.set_path(&format!("/{database_name}"));
-    // Keep every retained pair's raw text: re-serializing would write `%20` as
-    // `+`, which SQLx decodes as a space but libpq and tokio-postgres do not.
-    let kept: Vec<&str> = url
-        .query()
-        .unwrap_or_default()
-        .split('&')
-        .filter(|pair| {
-            let key = pair.split('=').next().unwrap_or_default();
-            !pair.is_empty()
-                && url::form_urlencoded::parse(key.as_bytes()).all(|(key, _)| key != "dbname")
-        })
-        .collect();
-    let query = kept.join("&");
+    // libpq and tokio-postgres read neither `#` as a fragment nor `+` as a space,
+    // unlike SQLx. Drop the fragment and re-encode every retained pair from its
+    // SQLx-decoded value, so each client reads the settings SQLx provisioned with.
+    url.set_fragment(None);
+    let query = url
+        .query_pairs()
+        .filter(|(key, _)| key != "dbname")
+        .map(|(key, value)| format!("{}={}", strict_encode(&key), strict_encode(&value)))
+        .collect::<Vec<_>>()
+        .join("&");
     url.set_query((!query.is_empty()).then_some(query.as_str()));
     url.into()
+}
+
+/// Percent-encode everything but RFC 3986 unreserved bytes, so a space is
+/// `%20` and a literal `+` is `%2B` for every PostgreSQL client.
+fn strict_encode(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(byte).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -337,10 +347,14 @@ mod tests {
         );
         assert_eq!(
             with_database_name(
-                "postgres://u:p@db.invalid/postgres?host=%2Ftmp%2Fpg%20socket&db%6Eame=x&password=a%20b",
+                "postgres://u:p@db.invalid/postgres?host=%2Ftmp%2Fpg%20socket&db%6Eame=x&password=a+b%2Bc",
                 "lease_1"
             ),
-            "postgres://u:p@db.invalid/lease_1?host=%2Ftmp%2Fpg%20socket&password=a%20b"
+            "postgres://u:p@db.invalid/lease_1?host=%2Ftmp%2Fpg%20socket&password=a%20b%2Bc"
+        );
+        assert_eq!(
+            with_database_name("postgres://u:p@db.invalid/postgres#tag", "lease_1"),
+            "postgres://u:p@db.invalid/lease_1"
         );
     }
 

@@ -23,7 +23,9 @@ and can replace a declared `hostaddr` with a Unix socket: shared startup
 refuses `PGHOSTADDR` before any container starts, and every fixture
 connection builds options through `src/endpoint.rs` (`connect_options`), which
 refuses both, so teardown cannot be redirected either. Derived database URLs
-keep the admin URL's query and drop only `dbname`. Never pass fixture URLs to
+keep the admin URL's query, drop `dbname` and any fragment, and re-encode
+retained pairs strictly (`%20`, `%2B`) so every PostgreSQL client reads them
+as SQLx did. Never pass fixture URLs to
 SQLx's URL-taking `connect` forms; Clippy and the root endpoint scan reject them. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.

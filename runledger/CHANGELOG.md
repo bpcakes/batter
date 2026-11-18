@@ -392,10 +392,15 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   setter cannot clear a socket kept in the URL; they require a TCP fixture.
   `scripts/refresh_runledger_sqlx.py` also refuses a literal `#` in
   `DATABASE_URL` (libpq does not treat it as a fragment; encode it as `%23`),
-  reports an unparseable URL without echoing it, and refuses `PGHOSTADDR` in an
-  applicable Cargo `[env]` table, which `cargo sqlx prepare` would pass to the
-  query macros. The fault proxies strip IPv6 URL brackets before dialing, and
-  derived fixture URLs keep each retained query pair's raw encoding.
+  reports an unparseable URL without echoing it, and refuses `PGHOSTADDR` that
+  Cargo would give the compiler from any applicable `[env]` setting, including
+  included and home configuration files, which `cargo sqlx prepare` would pass
+  to the query macros; a throwaway probe crate asks Cargo directly, so the
+  script needs no TOML parser and still runs on Python 3.9. The fault proxies
+  strip IPv6 URL brackets before dialing. Derived fixture URLs drop any
+  fragment and re-encode retained query pairs from their SQLx-decoded values
+  (spaces as `%20`, literal plus signs as `%2B`), so libpq and tokio-postgres
+  clients of `EphemeralDatabase::url()` read the same settings SQLx used.
 - `runledger_postgres` re-exports the SQLx foundation's `connect_options`,
   `AmbientHostAddress` and `DeclaredHostAddress`. `runledger-tui` and the native
   examples now build options through it, so they refuse an ambient or declared

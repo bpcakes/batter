@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import tomllib
 from urllib.parse import parse_qsl, urlsplit
 
 from runledger_source import copy_source, run
@@ -43,26 +42,31 @@ def sync_files(source, destination, suffix):
 
 
 def cargo_env_defines(directory, name):
-    """Whether a Cargo configuration that applies in `directory` sets `[env].name`.
+    """Whether Cargo, run from `directory`, gives `name` to the compiler.
 
-    `cargo sqlx prepare` runs `cargo check`, which gives `[env]` settings to the
-    query macros even when the parent shell has none.
+    `cargo sqlx prepare` runs `cargo check`, which passes `[env]` settings,
+    including those from included or home configuration files, to the query
+    macros even when the parent shell has none. Ask Cargo itself by compiling a
+    throwaway probe from the same directory rather than re-reading its
+    configuration rules here.
     """
-    directory = Path(directory).resolve()
-    home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
-    candidates = [base / ".cargo" / file for base in (directory, *directory.parents)
-                  for file in ("config.toml", "config")]
-    candidates += [home / "config.toml", home / "config"]
-    for path in candidates:
+    with tempfile.TemporaryDirectory(prefix="batter-cargo-env-probe-") as scratch:
+        probe = Path(scratch)
+        (probe / "src").mkdir()
+        (probe / "Cargo.toml").write_text(
+            '[package]\nname = "cargo-env-probe"\nversion = "0.0.0"\nedition = "2021"\n\n[workspace]\n')
+        (probe / "src/main.rs").write_text(
+            'fn main() { print!("{}", option_env!("' + name + '").is_some()); }\n')
         try:
-            settings = tomllib.loads(path.read_text())
-        except FileNotFoundError:
-            continue
-        except (OSError, tomllib.TOMLDecodeError):
-            raise ValueError("could not read Cargo configuration " + str(path)) from None
-        if isinstance(settings.get("env"), dict) and name in settings["env"]:
-            return True
-    return False
+            result = subprocess.run(
+                ["cargo", "run", "--quiet", "--offline", "--manifest-path", str(probe / "Cargo.toml"),
+                 "--target-dir", str(probe / "target")],
+                cwd=directory, capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ValueError("could not ask Cargo which [env] settings apply") from None
+    if result.returncode or result.stdout not in ("true", "false"):
+        raise ValueError("could not ask Cargo which [env] settings apply")
+    return result.stdout == "true"
 
 
 def refuse_cargo_host_address(directory):

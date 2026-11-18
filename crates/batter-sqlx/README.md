@@ -1115,8 +1115,12 @@ refuses through [`connect_options`](#postgresql-endpoint-boundary) before
 parsing whenever that variable is present, with `AmbientHostAddress` carried
 the same way. Both template paths refuse before the initializer receives the
 URL, so its upstream template aborts through the harness's failure path.
-Offline unit tests cover the resolution refusal; the template refusal has no
-executed test. Unset `PGHOSTADDR` for fixture runs and do not change the
+Before any harness work, every template, `empty` and `from_template` call also
+refuses a harness admin URL that contains `#` or fails `connect_options`,
+returning `FixtureError::Connect` with no cleanup: the harness parses the admin
+URL with tokio-postgres, which reads past `#`, and strips the fragment from the
+URLs it derives. Offline unit tests cover the resolution and admin-URL
+refusals; that no initializer runs after a refusal has no executed test. Unset `PGHOSTADDR` for fixture runs and do not change the
 environment while fixtures resolve. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
