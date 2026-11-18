@@ -58,6 +58,42 @@ fn lease_login_resolves_to_the_parsed_lease_url() {
 }
 
 #[test]
+fn ambient_host_address_refuses_resolution_whatever_its_value() {
+    let declared = plan(vec![
+        PlannedPool::lease_login(one()),
+        PlannedPool::password_login(one(), "restricted", secret("restrictedsecret")),
+    ]);
+    for value in ["192.0.2.1", "", "not-an-address"] {
+        let mut asked = Vec::new();
+        let error = declared
+            .resolve_with(LEASE, "pgh_probe_1", |name| {
+                asked.push(name.to_owned());
+                Some(value.into())
+            })
+            .unwrap_err();
+        assert_eq!(asked, ["PGHOSTADDR"]);
+        assert!(
+            matches!(&error, sqlx::Error::Configuration(source) if source.is::<AmbientHostAddress>())
+        );
+        assert!(!error.to_string().contains(value) || value.is_empty());
+    }
+    // A mismatched lease is not even parsed while the address is present.
+    let error = declared
+        .resolve_with("not a url", "pgh_probe_1", |_| Some("192.0.2.1".into()))
+        .unwrap_err();
+    assert!(
+        matches!(&error, sqlx::Error::Configuration(source) if source.is::<AmbientHostAddress>())
+    );
+    assert_eq!(
+        declared
+            .resolve_with(LEASE, "pgh_probe_1", |_| None)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
 fn password_login_replaces_only_credentials() {
     let expected: PgConnectOptions = LEASE.parse().unwrap();
     let resolved = plan(vec![

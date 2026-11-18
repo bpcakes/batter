@@ -533,7 +533,7 @@ probe and cleanup budgets remain application choices. Its fixed process diagnost
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain after `wait_checked().await?`. No database abstraction or generic
 transaction retry is introduced.
-The example uses SQLx 0.9.0, which requires Rust 1.94 or newer; the workspace
+The example uses SQLx 0.9.1, which requires Rust 1.94 or newer; the workspace
 minimum is the pinned Rust 1.100.0. Compiling the
 example does not establish pool closure.
 
@@ -1139,7 +1139,9 @@ exists. Only the owned `FixtureScope` path keeps every pool registered when its
 acquisition waiter is cancelled; cancelling low-level `empty`/`from_template`
 still drops the half-built fixture and can invoke destructive lease Drop. A lease URL selecting another database (for example through a `dbname`
 query parameter) is refused with `LeaseDatabaseMismatch` inside
-`sqlx::Error::Configuration` before any pool exists.
+`sqlx::Error::Configuration` before any pool exists. A process environment
+that sets `PGHOSTADDR` is refused the same way with `AmbientHostAddress`:
+SQLx 0.9.1 would connect to that address instead of the lease host.
 
 `ConnectionPlan::declare` collects `PlannedPool::lease_login` and
 `PlannedPool::password_login` declarations, each returning a `PoolKey` that
@@ -1613,8 +1615,9 @@ handed to the harness encodes query `+` as `%20`, so the harness's native
 tokio-postgres parser receives the same spaces as maintenance preparation and SQLx. It also
 serializes the validated hostname and database, canonicalizes the disabled TLS
 mode and retains an explicit empty password instead of permitting SQLx passfile
-fallback. IPv6 literals are rejected at this private live boundary: the locked
-SQLx URL parser retains brackets during TCP lookup. Use `localhost` or
+fallback. IPv6 literals are rejected at this private live boundary. The rule
+dates from SQLx 0.9.0, which kept brackets during TCP lookup; 0.9.1 strips them,
+but no live IPv6 fixture run has been executed. Use `localhost` or
 `127.0.0.1`; direct application construction still supports native IPv6 options. Userinfo
 `+` and existing percent escapes retain their meaning. The Python runner
 owns budgets and exact case inventory, not endpoint parsing or credential

@@ -12,6 +12,7 @@ pub(crate) const POSTGRES_PASSWORD: &str = "runledger";
 pub(crate) const POSTGRES_DB: &str = "postgres";
 const TEST_ADMIN_DATABASE_URL_ENV: &str = "RUNLEDGER_TEST_ADMIN_DATABASE_URL";
 const TEST_PG_IMAGE_ENV: &str = "RUNLEDGER_TEST_PG_IMAGE";
+const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 const POSTGRES_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
 const POSTGRES_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const POSTGRES_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -41,7 +42,20 @@ async fn shared_admin_database_url() -> &'static str {
 }
 
 async fn initialize_shared_postgres() -> SharedPostgres {
+    reject_ambient_host_address(std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some());
     initialize_postgres(configured_postgres_source()).await
+}
+
+/// SQLx 0.9.1 parses every URL on top of ambient `PGHOSTADDR` and connects to
+/// that address instead of the URL host. The admin URL and every derived test
+/// database URL must reach the server this fixture owns or was given, so refuse
+/// before starting a container, whatever the variable's value.
+fn reject_ambient_host_address(present: bool) {
+    assert!(
+        !present,
+        "unset {AMBIENT_HOST_ADDRESS_ENV} for Runledger PostgreSQL fixtures: SQLx would connect \
+         to it instead of the fixture URL's host"
+    );
 }
 
 fn configured_postgres_source() -> PostgresSource {
@@ -214,6 +228,17 @@ mod tests {
 
     use super::*;
     const CONCURRENT_CALLERS: usize = 8;
+
+    #[test]
+    fn absent_ambient_host_address_permits_fixture_startup() {
+        reject_ambient_host_address(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "unset PGHOSTADDR for Runledger PostgreSQL fixtures")]
+    fn ambient_host_address_refuses_fixture_startup() {
+        reject_ambient_host_address(true);
+    }
 
     #[tokio::test]
     async fn bootstrap_deadline_bounds_a_stalled_handshake() {

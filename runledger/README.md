@@ -104,7 +104,7 @@ runledger-postgres = { path = "../batter/runledger/runledger-postgres" }
 runledger-runtime = { path = "../batter/runledger/runledger-runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+sqlx = { version = "0.9.1", features = ["runtime-tokio", "postgres"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 
 [dev-dependencies]
@@ -2144,10 +2144,10 @@ copies so builds do not depend on the working directory. Canonical migrations
 are in `runledger/migrations/`, with identical copies in the PostgreSQL and test
 support packages. Root verification rejects drift in either set.
 
-When SQL or schema changes, install SQLx CLI 0.9.0 and make `psql` available:
+When SQL or schema changes, install SQLx CLI 0.9.1 and make `psql` available:
 
 ```bash
-cargo install sqlx-cli --version 0.9.0 --no-default-features --features rustls,postgres
+cargo install sqlx-cli --version 0.9.1 --no-default-features --features rustls,postgres
 # From the Batter root, with DATABASE_URL pointing to PostgreSQL 18
 # and the canonical migrations already applied:
 python3 scripts/refresh_runledger_sqlx.py

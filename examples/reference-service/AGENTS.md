@@ -106,7 +106,8 @@ Never use native from_env/builder_from_env or raw URL parsing after this validat
 The private live-endpoint handoff canonicalizes selected host/database/TLS values,
 preserves explicit empty passwords and encodes query spaces as `%20` for the
 external harness's required URL API. Reject IPv6 literals at this private live
-boundary; SQLx's URL consumer cannot use their brackets for TCP lookup. Direct
+boundary until a live IPv6 fixture run supports relaxing it (SQLx 0.9.1 now
+strips brackets for TCP lookup; 0.9.0 did not). Direct
 root native IPv6 options remain supported. Native parser tests guard the handoff.
 Use one native SQLx graph and explicit application-owned transactions. Delivery
 submission uses `run_atomic` and one READ COMMITTED transaction for command,

@@ -64,6 +64,7 @@ fn connection_plans_can_be_held_across_owned_fixture_awaits() {
     key::<batter_sqlx::test_support::PoolKey>();
     fn cause<T: std::error::Error + Send + Sync + Copy + 'static>() {}
     cause::<batter_sqlx::test_support::LeaseDatabaseMismatch>();
+    cause::<batter_sqlx::test_support::AmbientHostAddress>();
 }
 
 #[test]

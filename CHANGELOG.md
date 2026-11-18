@@ -8,6 +8,23 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Upgrade SQLx from 0.9.0 to 0.9.1 in every package, the generated consumer
+  manifests and the SQLx CLI refresh check (`batter-c5ci`). Upstream behavior
+  now relied on: a cancelled or failed `begin_with` queues its own `ROLLBACK`,
+  and IPv6 URL hosts keep correct brackets, so the reference native-options test
+  now round-trips `[::1]`. The private live fixture still rejects IPv6
+  literals. Newly disclosed upstream regressions: outside a server transaction
+  SQLx re-sends a statement whose first response is SQLSTATE `26000` or a stale
+  cached-plan `0A000`, which can repeat a non-transactional effect; with the
+  statement cache disabled, a transaction's first query returning an uncached
+  custom type fails; and ambient `PGHOSTADDR` now overrides every URL host.
+  See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
+- Add `batter_sqlx::test_support::AmbientHostAddress` (`batter-c5ci`).
+  `ConnectionPlan` resolution refuses with it, inside
+  `sqlx::Error::Configuration` and before any pool exists, whenever
+  `PGHOSTADDR` is set, so fixture pools cannot reach a server other than the
+  lease's. Unset `PGHOSTADDR` for fixture runs.
+
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
 

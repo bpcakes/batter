@@ -1065,7 +1065,12 @@ passfile) is always replaced. Each lease parses its URL once and refuses a URL
 whose database is not the lease's own, as a `dbname` query parameter would
 cause, with `LeaseDatabaseMismatch` inside `sqlx::Error::Configuration` before
 any pool exists. The `fixture_lease_database_mismatch_retained` live probe proves
-that refusal and its retention on both the owned and low-level paths. Select pools with `FixtureDatabase::pool(key)` (or
+that refusal and its retention on both the owned and low-level paths. SQLx 0.9.1
+connects to an ambient `PGHOSTADDR` instead of the URL host, so resolution
+refuses before parsing whenever that variable is present, with
+`AmbientHostAddress` carried the same way; an offline unit test covers the
+refusal. Unset `PGHOSTADDR` for fixture runs and do not change the environment
+while fixtures resolve. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
 checks; on a `declare` plan an index does not record which login a pool uses.

@@ -107,7 +107,7 @@ class RefreshTests(unittest.TestCase):
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'
         with patch.dict(os.environ, DATABASE_URL=secret), \
-             patch('refresh_runledger_sqlx.run', return_value='sqlx-cli 0.9.0') as command, \
+             patch('refresh_runledger_sqlx.run', return_value='sqlx-cli 0.9.1') as command, \
              patch('refresh_runledger_sqlx.subprocess.run',
                    return_value=subprocess.CompletedProcess([], 2, '', secret)) as psql:
             with self.assertRaisesRegex(RuntimeError, 'version query failed') as error:
@@ -142,7 +142,7 @@ class RefreshTests(unittest.TestCase):
 
                 def command(args, cwd, **_kwargs):
                     if '--version' in args:
-                        return 'sqlx-cli-sqlx 0.9.0'
+                        return 'sqlx-cli-sqlx 0.9.1'
                     if 'info' in args:
                         return '001/installed initial'
                     if fail_at in args:
@@ -167,7 +167,7 @@ class RefreshTests(unittest.TestCase):
 
             def command(args, _cwd):
                 calls.append(args)
-                return 'sqlx-cli 0.9.0' if '--version' in args else info
+                return 'sqlx-cli 0.9.1' if '--version' in args else info
 
             with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
                  patch('refresh_runledger_sqlx.run', side_effect=command), \
@@ -182,14 +182,14 @@ class RefreshTests(unittest.TestCase):
                 root = Path(directory)
                 self.fixture(root)
                 with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
-                     patch('refresh_runledger_sqlx.run', side_effect=['sqlx-cli 0.9.0', '1/installed initial']) as command, \
+                     patch('refresh_runledger_sqlx.run', side_effect=['sqlx-cli 0.9.1', '1/installed initial']) as command, \
                      patch('refresh_runledger_sqlx.query', side_effect=['180006', inventory]):
                     with self.assertRaisesRegex(ValueError, 'inventory must exactly match'):
                         refresh(root)
                     self.assertEqual(command.call_count, 2)
 
     @unittest.skipUnless(os.environ.get('RUNLEDGER_REFRESH_LIVE') == '1',
-                         'set RUNLEDGER_REFRESH_LIVE=1 with Docker, psql and SQLx CLI 0.9.0')
+                         'set RUNLEDGER_REFRESH_LIVE=1 with Docker, psql and SQLx CLI 0.9.1')
     def test_database_ahead_of_checkout_is_rejected_before_preparation(self):
         root = Path(__file__).resolve().parent.parent
         container = run(['docker', 'run', '-d', '--rm', '-e', 'POSTGRES_PASSWORD=fixture',

@@ -6,6 +6,85 @@ These source checks support current contracts. Each record names the
 version and date actually inspected; it is not a new dependency audit.
 Re-check the resolved dependency before changing an integration.
 
+## SQLx 0.9.1 upgrade, 2026-11-18
+
+For `batter-c5ci`, every SQLx requirement, the consumer manifests and the
+SQLx CLI refresh check moved from 0.9.0 to 0.9.1; Cargo resolves one SQLx
+0.9.1 graph and drops the SHA-2 0.10 duplicate
+([#4301](https://github.com/transact-rs/sqlx/pull/4301)). Rust remains 1.100.0
+(SQLx declares 1.94.0). The
+[0.9.1 changelog](https://docs.rs/crate/sqlx/0.9.1/source/CHANGELOG.md) and a
+diff of the downloaded 0.9.0 and 0.9.1 `sqlx-core`, `sqlx-postgres` and
+`sqlx-macros-core` registry sources were inspected for behavior that current
+contracts cite:
+
+- BEGIN depth is counted before its round trip
+  ([#4394](https://github.com/transact-rs/sqlx/pull/4394)); see
+  [failed bounded BEGIN](postgresql.md#postgresql-18-guarded-index-removal-2026-10-27).
+  Batter's owned atomic and snapshot transactions send `BEGIN` as raw
+  commands and do not use that manager.
+- Outside a transaction, the PostgreSQL executor now invalidates a cached
+  statement and sends it again when the first response to the statement is
+  `0A000` from `RevalidateCachedQuery` or `26000`
+  ([#4375](https://github.com/transact-rs/sqlx/pull/4375),
+  [`executor.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/connection/executor.rs)).
+  This is an automatic upstream replay, not only a re-send of a rejected
+  bind. It also applies to the simple-query path of `sqlx::raw_sql` and other
+  unprepared execution, and the check reads only the error code. A statement
+  that has already caused a non-transactional effect, such as `nextval` or a
+  session advisory lock, before one of those errors repeats that effect:
+  an external review's PostgreSQL 18 comparison (not a checked-in test)
+  advanced a sequence twice with 0.9.1 and once with 0.9.0 for one autocommit
+  `DO` that raised `26000`. Owned
+  `run_atomic`, `low_level::PgAtomicTransaction` and snapshot work run inside
+  a server transaction, so SQLx returns the error there; low-level
+  `PgSession` and pooled execution outside a transaction can replay. Batter
+  cannot disable this. Statement counts in the reset-accounting references
+  assume no such error.
+- With the statement cache disabled (`statement_cache_capacity(0)` or
+  `statement-cache-capacity=0`), a persistent query now uses the unnamed
+  statement ([#4337](https://github.com/transact-rs/sqlx/pull/4337)), but the
+  re-parse after a custom-type catalog lookup applies only to nonpersistent
+  queries ([#4361](https://github.com/transact-rs/sqlx/pull/4361)). The first
+  query returning an uncached custom type, such as an enum, therefore fails
+  with `26000` inside a transaction, including `run_atomic`; outside one the
+  replay above hides it. The same external review reproduced this on PostgreSQL
+  18 with 0.9.1, not 0.9.0. Unverified workarounds: keep the cache enabled or
+  mark such queries
+  `.persistent(false)`. No checked-in package disables the cache.
+- IPv6 URL hosts are bracketed and unbracketed consistently
+  ([#4529](https://github.com/transact-rs/sqlx/pull/4529)); see
+  [native live URL compatibility](fixtures.md#native-live-url-compatibility-2026-09-10).
+- `hostaddr` and `PGHOSTADDR` no longer replace `host`
+  ([#4514](https://github.com/transact-rs/sqlx/pull/4514)). URL parsing starts
+  from `new_without_pgpass`, which now reads ambient `PGHOSTADDR` into a
+  separate address that the connection prefers over the URL host; SQLx
+  exposes no getter or reset for it. In 0.9.0 the URL host overrode the
+  variable. Any URL-built connection can therefore be redirected by the
+  environment. The reference root rejects every PG* variable and accepts only
+  `password`, `sslmode` and `application_name` URL query keys. Batter SQLx
+  fixture resolution now refuses with `AmbientHostAddress` and Runledger's
+  Docker fixtures refuse at startup whenever `PGHOSTADDR` is present.
+  Application pools built from URLs remain exposed and own this environment
+  policy.
+- A `.sql` file in a migration directory that does not match
+  `<VERSION>_<DESCRIPTION>.sql` is now a resolve error
+  ([#4367](https://github.com/transact-rs/sqlx/pull/4367)). Every checked-in
+  migration directory conforms.
+- Pool `release` now publishes the idle count before the connection becomes
+  acquirable, and maintenance caps its idle sweep at `max_connections`
+  ([#4289](https://github.com/transact-rs/sqlx/pull/4289)). TCP sockets set
+  `TCP_NODELAY` ([#4336](https://github.com/transact-rs/sqlx/pull/4336)); the
+  rustls connector is cached per options value
+  ([#4242](https://github.com/transact-rs/sqlx/pull/4242)). Non-listener
+  connections discard `NotificationResponse`
+  ([#4485](https://github.com/transact-rs/sqlx/pull/4485)).
+- The offline query-metadata format is unchanged; 0.9.1 only scopes `.env`
+  lookup to the workspace and tracks fewer paths. The checked-in `.sqlx`
+  caches compile unchanged.
+
+Dated records below that cite 0.9.0 sources describe what was inspected then.
+
 ## Dependency refresh, 2026-11-04
 
 For `batter-8e8r`, Cargo updated Tokio 1.54.1, thiserror 2.0.21,

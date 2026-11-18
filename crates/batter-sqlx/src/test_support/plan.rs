@@ -117,6 +117,22 @@ impl ConnectionPlan {
         lease_url: &str,
         lease_name: &str,
     ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
+        self.resolve_with(lease_url, lease_name, |name| std::env::var_os(name))
+    }
+
+    fn resolve_with(
+        &self,
+        lease_url: &str,
+        lease_name: &str,
+        environment: impl FnOnce(&str) -> Option<std::ffi::OsString>,
+    ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
+        // SQLx 0.9.1 parses every URL on top of ambient `PGHOSTADDR` and then
+        // connects to that address instead of the URL host, so the harness
+        // could provision on one server while these pools log in to another.
+        // SQLx exposes no way to read or clear the parsed address.
+        if environment(AMBIENT_HOST_ADDRESS).is_some() {
+            return Err(sqlx::Error::Configuration(Box::new(AmbientHostAddress)));
+        }
         let lease: PgConnectOptions = lease_url.parse()?;
         // SQLx lets a `dbname` query parameter override the URL path, and the
         // harness keeps the admin URL's query when it builds the lease URL.
@@ -307,6 +323,37 @@ impl fmt::Display for LeaseDatabaseMismatch {
 }
 
 impl std::error::Error for LeaseDatabaseMismatch {}
+
+const AMBIENT_HOST_ADDRESS: &str = "PGHOSTADDR";
+
+/// The process environment sets `PGHOSTADDR`, which would redirect fixture
+/// pools away from the lease's server.
+///
+/// SQLx 0.9.1 reads `PGHOSTADDR` while parsing any PostgreSQL URL and then
+/// connects to that address instead of the URL host. A lease URL names the
+/// server that provisioned it, so resolution refuses when the variable is
+/// present, whatever its value, before parsing the lease or constructing a pool.
+/// It is carried and reported exactly like [`LeaseDatabaseMismatch`]. Unset
+/// `PGHOSTADDR` for fixture runs; the process must not change its environment
+/// while fixtures resolve. Formatting names no address.
+///
+/// ```
+/// # fn example(error: &sqlx::Error) -> bool {
+/// use batter_sqlx::test_support::AmbientHostAddress;
+/// matches!(error, sqlx::Error::Configuration(source) if source.is::<AmbientHostAddress>())
+/// # }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AmbientHostAddress;
+
+impl fmt::Display for AmbientHostAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PGHOSTADDR is set and would redirect fixture pools from the lease host")
+    }
+}
+
+impl std::error::Error for AmbientHostAddress {}
 
 /// Construct each resolved pool and register it before constructing the next,
 /// so a construction panic never leaves an earlier pool unregistered.

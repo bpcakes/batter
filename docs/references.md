@@ -10,6 +10,7 @@ have been removed; Git retains their history.
 
 ## Dependency selection and Effect v4 rationale
 
+- <a id="sqlx-091-upgrade-2026-11-18"></a>[SQLx 0.9.1 upgrade, 2026-11-18](references/ecosystem.md#sqlx-091-upgrade-2026-11-18)
 - <a id="dependency-refresh-2026-11-04"></a>[Dependency refresh, 2026-11-04](references/ecosystem.md#dependency-refresh-2026-11-04)
 - <a id="macos-refusal-fixture-repair"></a>[macOS refusal fixture repair](references/ecosystem.md#macos-refusal-fixture-repair)
 - <a id="facade-feature-and-resolver-semantics-reviewed-2026-09-18-resolver-rechecked-2026-09-30"></a>[Facade feature and resolver semantics: reviewed 2026-09-18; resolver rechecked 2026-09-30](references/ecosystem.md#facade-feature-and-resolver-semantics-reviewed-2026-09-18-resolver-rechecked-2026-09-30)

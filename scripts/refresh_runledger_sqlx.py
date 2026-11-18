@@ -62,8 +62,8 @@ def refresh(root):
     if not database:
         raise ValueError("DATABASE_URL must identify an already migrated PostgreSQL 18 database")
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
-    if not cli_version or cli_version[-1] != "0.9.0":
-        raise ValueError("SQLx CLI 0.9.0 is required to match the workspace dependency")
+    if not cli_version or cli_version[-1] != "0.9.1":
+        raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")
     version = query(root, database, "SELECT current_setting('server_version_num')", "version")
     if not re.fullmatch(r"18\d{4}", version):
         raise ValueError("SQLx metadata refresh requires PostgreSQL 18")

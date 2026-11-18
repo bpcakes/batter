@@ -629,7 +629,7 @@ def run_composed_handler_case(cargo: list[str], host: str, root_lock: bytes,
         'axum = "0.8.9"',
         "runlimit-core = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-core")) + " }",
         "runlimit-memory = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-memory")) + " }",
-        'sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres"] }',
+        'sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "postgres"] }',
         'tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }',
     ]
     (case / "Cargo.toml").write_text(

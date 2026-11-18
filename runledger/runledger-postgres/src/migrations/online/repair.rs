@@ -136,9 +136,11 @@ async fn settle(
     }
 }
 
-/// A server error in a bound statement aborts the block its BEGIN opened, but
-/// SQLx returns before recording a transaction. End that block explicitly so
-/// the session can restore its profile; ROLLBACK outside a block only warns.
+/// A server error in a bound statement aborts the block its BEGIN opened.
+/// SQLx 0.9.1 counts the transaction before that round trip, so its begin guard
+/// queues a ROLLBACK that this request flushes first; the explicit ROLLBACK
+/// then runs outside a block and only warns. Keep it: the session must end the
+/// block before restoring its profile, whichever side sends the statement.
 async fn end_failed_begin(conn: &mut PgConnection, cause: sqlx::Error) -> SchemaCompatibilityError {
     match sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await {
         Ok(_) => cause.into(),

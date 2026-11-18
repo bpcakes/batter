@@ -82,15 +82,19 @@ creation runs only after commit.
   bounds in the `BEGIN` message: the build session has lifted its profile
   timeouts, so a separate exchange would leave the server idle in the
   transaction without any bound until it arrived.
-- [SQLx 0.9.0 `PgTransactionManager::begin`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/transaction.rs)
-  (rechecked 2026-10-29): `Connection::begin_with` queues the custom statement
-  as one simple query and waits for `ReadyForQuery`, discarding row data. Its
-  [`PgStream::recv`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/connection/stream.rs)
-  returns a server `ErrorResponse` before that `ReadyForQuery`, and the begin
-  guard rolls back only an already counted transaction, so a failed bound
-  statement leaves an aborted block SQLx does not track. Repair sends
-  `ROLLBACK` itself in that case and retains both errors; outside a block it
-  only warns. The next request drains the pending `ReadyForQuery` first.
+- [SQLx 0.9.1 `PgTransactionManager::begin`](https://github.com/transact-rs/sqlx/blob/v0.9.1/sqlx-postgres/src/transaction.rs)
+  (rechecked 2026-11-18 for `batter-c5ci`): `Connection::begin_with` queues the
+  custom statement as one simple query and waits for `ReadyForQuery`,
+  discarding row data. Its
+  [`PgStream::recv`](https://github.com/transact-rs/sqlx/blob/v0.9.1/sqlx-postgres/src/connection/stream.rs)
+  returns a server `ErrorResponse` before that `ReadyForQuery`. Since 0.9.1
+  ([#4394](https://github.com/transact-rs/sqlx/pull/4394)) the depth is counted
+  before that round trip, so the begin guard queues `ROLLBACK` for a failed
+  bound statement or a cancelled BEGIN; 0.9.0 counted it afterwards and left
+  the aborted block untracked. Repair still sends `ROLLBACK` itself and
+  retains both errors: its request first flushes SQLx's queued `ROLLBACK` and
+  drains both pending `ReadyForQuery` messages, so its own statement runs
+  outside a block and only warns.
   Unverified end to end: every statement in that message is static and
   instant, so no executable test can make one fail without changing the SQL
   under test, and this recovery rests on the cited sources only.

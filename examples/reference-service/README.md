@@ -334,8 +334,9 @@ endpoints for focused probes; neither preflight nor configured probes read a pas
 budgets and exact test inventory, not a second URL parser or client policy.
 
 The live fixture URL path accepts `localhost` and `127.0.0.1`. IPv6 literals
-fail preflight before connection work because the locked SQLx URL parser retains
-their brackets in TCP lookup. The separate native-options constructor below
+fail preflight before connection work. SQLx 0.9.0 kept their brackets in TCP
+lookup; 0.9.1 strips them, but no live IPv6 fixture run has been executed, so
+the rejection remains. The separate native-options constructor below
 still supports IPv6. The live handoff canonicalizes selected host, database and
 TLS values and explicitly retains empty passwords so fixture parsing does not
 fall back to a passfile.
@@ -527,9 +528,10 @@ values, but those accessors are not the canonical runtime handoff. Native SQLx
 options can expose secrets through Debug and URL conversion.
 The selected graph has no SQLx TLS backend: settings preserve requested modes,
 but TLS connection execution requires the application's native SQLx TLS feature;
-no TLS negotiation result is claimed. SQLx 0.9's URL formatter cannot represent
-bare setter-provided IPv6 hosts. Offline tests verify that endpoint and credentials
-through a controlled native PostgreSQL handshake rather than that formatter.
+no TLS negotiation result is claimed. SQLx 0.9.1's URL formatter brackets bare
+setter-provided IPv6 hosts, and the offline mapping test round-trips them. A
+separate offline test verifies the IPv6 endpoint and credentials through a
+controlled native PostgreSQL handshake.
 
 The reference rejects all PG* environment settings and rechecks before constructing
 SQLx options. It uses `new_without_pgpass` and explicit setters, with no native URL

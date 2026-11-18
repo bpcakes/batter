@@ -21,17 +21,15 @@ pub(crate) fn native_options() {
         assert_eq!(options.get_application_name(), Some("configured app"));
         assert!(options.get_socket().is_none());
         assert!(options.get_options().is_none());
-        // Deliberate native URL exposure with fake credentials only.
-        // SQLx 0.9's URL formatter does not bracket a setter-provided IPv6 host.
-        // Credential round-tripping is checked on DNS/IPv4; the separate native
-        // wire test below proves IPv6 credentials and endpoint consumption.
-        if host != "[::1]" {
-            let native_url = options.to_url_lossy();
-            let password = percent_encoding::percent_decode_str(native_url.password().unwrap())
-                .decode_utf8()
-                .unwrap();
-            assert_eq!(password, "fake%40pass:word");
-        }
+        // Deliberate native URL exposure with fake credentials only. SQLx 0.9.1
+        // brackets a setter-provided IPv6 host, so every host round-trips; the
+        // separate native wire test below proves IPv6 endpoint consumption.
+        let native_url = options.to_url_lossy();
+        assert_eq!(native_url.host_str(), Some(host));
+        let password = percent_encoding::percent_decode_str(native_url.password().unwrap())
+            .decode_utf8()
+            .unwrap();
+        assert_eq!(password, "fake%40pass:word");
     }
     let root = load(&[(
         "DATABASE_URL",

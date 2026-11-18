@@ -47,7 +47,7 @@ batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", defaul
   "at-rest",              # batter::at_rest
 ] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+sqlx = { version = "0.9.1", features = ["runtime-tokio", "postgres"] }
 
 [dev-dependencies]
 batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", default-features = false, features = [
@@ -216,7 +216,7 @@ A focused Cargo probe does not establish complete live-suite verification.
 
 | Required contract | Public API and probe | Evidence / limitation |
 | --- | --- | --- |
-| Native types | Example library native pool/connection signatures; canonical `run_atomic` with scoped SQLx execution | Compiler-checked identities and rustdoc sample. `cargo metadata --locked --format-version 1` and `cargo tree -p batter-example-reference-service --duplicates` resolve SQLx 0.9.0 only |
+| Native types | Example library native pool/connection signatures; canonical `run_atomic` with scoped SQLx execution | Compiler-checked identities and rustdoc sample. `cargo metadata --locked --format-version 1` and `cargo tree -p batter-example-reference-service --duplicates` resolve SQLx 0.9.1 only |
 | Independent SQLx verification | `cargo test -p batter-example-postgres-lifecycle --test native_sqlx --locked` | Native pool, connection and transaction signatures compile; an unpolled factory opens no connection. This focused target requires neither Runledger nor the harness and provides a template for optional adapter verification |
 | Fresh/repeated startup | `migrate_after_idempotency_cutover`, `ensure_schema_compatible_after_idempotency_cutover`; `migrations_and_transactional_enqueue` | Empty startup is rejected before initialization; upstream/application migrations share `_sqlx_migrations`; checksums/history survive repeated startup |
 | Initialized-schema upgrade | Same public migration/check entrypoints; `initialized_schema_upgrade` | Fixture through upstream version `202608240002` is rejected for missing `202609050001`, then upgrades; the application owner-epoch sequence advances and application row 42/history survive repeated startup |
@@ -399,8 +399,8 @@ this application package.
 Offline configuration tests execute native field assertions, HTTP deadline and
 admission behavior, partial startup failure, child-process PG*/passfile policy,
 tracing redaction and an IPv6 PostgreSQL startup/password handshake. Native SQLx
-option formatting remains a trusted exposure and its bare-IPv6 URL formatter
-limitation is documented in [references](references.md). TLS mode preservation
+option formatting remains a trusted exposure; SQLx 0.9.1 brackets a bare IPv6
+host, which the native field test round-trips (see [references](references.md)). TLS mode preservation
 is tested through native options; the graph has no SQLx TLS backend and TLS
 negotiation is unverified.
 

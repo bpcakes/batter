@@ -34,7 +34,10 @@ mod runner;
 mod sessions;
 mod verification;
 
-pub use plan::{ConnectionPlan, LeaseDatabaseMismatch, PlanDeclaration, PlannedPool, PoolKey};
+pub use plan::{
+    AmbientHostAddress, ConnectionPlan, LeaseDatabaseMismatch, PlanDeclaration, PlannedPool,
+    PoolKey,
+};
 pub use sessions::{CleanupPhase, DatabaseProgress, SessionObserver};
 
 pub use report::{
