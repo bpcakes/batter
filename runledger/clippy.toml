@@ -14,4 +14,9 @@ disallowed-methods = [
     { path = "sqlx_core::connection::Connection::connect", reason = "use connect_with(&endpoint-boundary options)", allow-invalid = true },
     { path = "sqlx_core::connection::ConnectOptions::from_url", reason = "use the endpoint boundary", allow-invalid = true },
     { path = "sqlx_postgres::listener::PgListener::connect", reason = "use connect_with on a pool built from endpoint-boundary options", allow-invalid = true },
+    { path = "sqlx_core::migrate::MigrateDatabase::create_database", reason = "parses the URL itself; connect with endpoint-boundary options", allow-invalid = true },
+    { path = "sqlx_core::migrate::MigrateDatabase::database_exists", reason = "parses the URL itself; connect with endpoint-boundary options", allow-invalid = true },
+    { path = "sqlx_core::migrate::MigrateDatabase::drop_database", reason = "parses the URL itself; connect with endpoint-boundary options", allow-invalid = true },
+    { path = "sqlx_core::migrate::MigrateDatabase::force_drop_database", reason = "parses the URL itself; connect with endpoint-boundary options", allow-invalid = true },
+    { path = "sqlx_postgres::PgConnectOptions::hostaddr", reason = "select the server by host or socket only", allow-invalid = true },
 ]

@@ -64,7 +64,7 @@ contracts cite:
   environment. The reference root rejects every PG* variable and accepts only
   `password`, `sslmode` and `application_name` URL query keys. Point guards
   missed further sites, so `batter-c5ci.1` adds one endpoint boundary:
-  `batter_sqlx::connect_options` and `refuse_ambient_host_address` refuse with
+  `batter_sqlx::connect_options` and `setter_connect_options` refuse with
   `AmbientHostAddress` whenever `PGHOSTADDR` is present. Fixture resolution,
   template initializers, every Batter test, example and consumer, native
   Runledger fixtures (`runledger_test_support::connect_options`) and Runlimit's

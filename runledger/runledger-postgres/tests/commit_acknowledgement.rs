@@ -38,8 +38,12 @@ impl CommitAcknowledgementDropProxy {
             target_options.get_socket().is_none() && !target_options.get_host().starts_with('/'),
             "the commit acknowledgement proxy requires a TCP fixture; SQLx keeps a Unix socket that the proxy's host setter cannot clear"
         );
+        // SQLx 0.9.1 keeps URL brackets on an IPv6 host; Tokio's lookup needs it bare.
+        let host = target_options.get_host();
         let target = (
-            target_options.get_host().to_owned(),
+            host.trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_owned(),
             target_options.get_port(),
         );
         let listener = TcpListener::bind("127.0.0.1:0")

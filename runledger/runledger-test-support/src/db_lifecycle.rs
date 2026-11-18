@@ -263,16 +263,20 @@ fn build_database_name(prefix: &str) -> String {
 fn with_database_name(admin_url: &str, database_name: &str) -> String {
     let mut url = url::Url::parse(admin_url).expect("admin database URL must be a valid URL");
     url.set_path(&format!("/{database_name}"));
-    let kept: Vec<(String, String)> = url
-        .query_pairs()
-        .filter(|(key, _)| key != "dbname")
-        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+    // Keep every retained pair's raw text: re-serializing would write `%20` as
+    // `+`, which SQLx decodes as a space but libpq and tokio-postgres do not.
+    let kept: Vec<&str> = url
+        .query()
+        .unwrap_or_default()
+        .split('&')
+        .filter(|pair| {
+            let key = pair.split('=').next().unwrap_or_default();
+            !pair.is_empty()
+                && url::form_urlencoded::parse(key.as_bytes()).all(|(key, _)| key != "dbname")
+        })
         .collect();
-    if kept.is_empty() {
-        url.set_query(None);
-    } else {
-        url.query_pairs_mut().clear().extend_pairs(kept);
-    }
+    let query = kept.join("&");
+    url.set_query((!query.is_empty()).then_some(query.as_str()));
     url.into()
 }
 
@@ -331,6 +335,13 @@ mod tests {
             ),
             "postgres://u:p@db.invalid/lease_1?host=other.invalid&sslmode=disable"
         );
+        assert_eq!(
+            with_database_name(
+                "postgres://u:p@db.invalid/postgres?host=%2Ftmp%2Fpg%20socket&db%6Eame=x&password=a%20b",
+                "lease_1"
+            ),
+            "postgres://u:p@db.invalid/lease_1?host=%2Ftmp%2Fpg%20socket&password=a%20b"
+        );
     }
 
     const CLEANUP_ATTEMPTS: usize = 100;
@@ -376,7 +387,9 @@ mod tests {
         );
         assert_eq!(database.name(), name);
         assert_eq!(database.url(), url);
-        assert!(url.ends_with(&format!("/{name}")));
+        // The admin URL's query is kept, so compare the parsed path, not a suffix.
+        let parsed = url::Url::parse(&url).expect("ephemeral database URL");
+        assert_eq!(parsed.path(), format!("/{name}"));
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT current_database()")
                 .fetch_one(&pool)

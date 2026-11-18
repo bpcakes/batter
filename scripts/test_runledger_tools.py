@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
-from refresh_runledger_sqlx import migrations_current, query, refresh
+from refresh_runledger_sqlx import cargo_env_defines, migrations_current, query, refresh
 from runledger_source import copy_source, run, validate_consumer
 
 
@@ -154,6 +154,29 @@ class RefreshTests(unittest.TestCase):
                 self.assertTrue(error.exception.__suppress_context__ or error.exception.__context__ is None)
                 command.assert_not_called()
                 psql.assert_not_called()
+
+    def test_cargo_env_host_address_is_refused_before_any_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'workspace'
+            nested = root / 'crate'
+            nested.mkdir(parents=True)
+            (root / '.cargo').mkdir()
+            home = Path(directory) / 'cargo-home'
+            home.mkdir()
+            with patch.dict(os.environ, CARGO_HOME=str(home)):
+                self.assertFalse(cargo_env_defines(nested, 'PGHOSTADDR'))
+                (root / '.cargo/config.toml').write_text('[env]\nPGHOSTADDR = { value = "192.0.2.1" }\n')
+                self.assertTrue(cargo_env_defines(nested, 'PGHOSTADDR'))
+                (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
+                (home / 'config.toml').write_text('[env]\nPGHOSTADDR = "192.0.2.1"\n')
+                self.assertTrue(cargo_env_defines(nested, 'PGHOSTADDR'))
+                with patch.dict(os.environ, DATABASE_URL='postgresql://u@db.invalid/database'), \
+                     patch('refresh_runledger_sqlx.run') as command, \
+                     patch('refresh_runledger_sqlx.subprocess.run') as psql:
+                    with self.assertRaisesRegex(ValueError, r'Cargo \[env\]'):
+                        refresh(nested)
+                    command.assert_not_called()
+                    psql.assert_not_called()
 
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'

@@ -1017,9 +1017,12 @@ construction from the process environment and connects to an ambient
 `hostaddr` is given; the options expose no way to read or clear it. Build
 options from a URL with `connect_options(url)?` and pass them to
 `connect_with` or `connect_lazy_with`, never to the URL-taking `connect`,
-`connect_lazy`, `PgConnection::connect`, `from_str` or `parse`. Call
-`refuse_ambient_host_address()?` before building connecting options from
-setters. Both refuse with `AmbientHostAddress` inside
+`connect_lazy`, `PgConnection::connect`, `MigrateDatabase` methods, `from_str`
+or `parse`. For a listener, pass `&pool` built from those options to
+`PgListener::connect_with`. Start setter-built connecting options from
+`setter_connect_options()?`, which checks the environment and constructs the
+options in one call, never from `new_without_pgpass` directly. Both refuse
+with `AmbientHostAddress` inside
 `sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
 value; other PG* variables stay native defaults that explicit URL parts and
 setters override. SQLx 0.9.1 also checks a Unix socket before an explicit
@@ -1041,9 +1044,10 @@ let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(options);
 
 Every checked-in test, example and standalone consumer follows this rule.
 Clippy's `disallowed-methods` in the repository's `clippy.toml` files rejects
-the URL-taking `Pool`/`PoolOptions` `connect`/`connect_lazy`,
-`Connection::connect`, `ConnectOptions::from_url` and `PgListener::connect` in
-every workspace crate, resolving aliases such as `DbPool`; downstream
+every URL-taking public SQLx 0.9.1 API (`Pool`/`PoolOptions`
+`connect`/`connect_lazy`, `Connection::connect`, `ConnectOptions::from_url`,
+`PgListener::connect` and the four `MigrateDatabase` methods) and the native
+`hostaddr` setter in every workspace crate, resolving aliases such as `DbPool`; downstream
 applications can copy that configuration. `crates/batter/tests/postgres_endpoint_boundary.rs`
 adds a text scan for `from_str` and `parse`, which Clippy cannot restrict by
 target type, and for the standalone consumers. Both are checks over this

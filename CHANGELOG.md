@@ -20,20 +20,25 @@ contracts, capability facts and validation history.
   custom type fails; and ambient `PGHOSTADDR` now overrides every URL host.
   See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
 - Add the PostgreSQL endpoint boundary `batter_sqlx::connect_options`, with
-  `refuse_ambient_host_address`, `AmbientHostAddress` and `DeclaredHostAddress`
-  (also under `batter::sqlx` and `runledger_postgres`; `batter-c5ci`,
-  `batter-c5ci.1`). Servers are selected only by URL host or socket: it
+  `setter_connect_options`, `AmbientHostAddress` and `DeclaredHostAddress`, all
+  also under `batter::sqlx` (`batter-c5ci`, `batter-c5ci.1`).
+  `runledger_postgres` re-exports `connect_options`, `AmbientHostAddress` and
+  `DeclaredHostAddress`. `setter_connect_options` returns fresh
+  `new_without_pgpass` options only after the same environment check, so
+  setter-built options cannot keep an address captured earlier. Servers are selected only by URL host or socket: it
   refuses inside `sqlx::Error::Configuration`, before parsing, whenever
   `PGHOSTADDR` is set or the URL declares `hostaddr`, because SQLx 0.9.1
   connects to the former and can replace the latter with a Unix socket.
   `ConnectionPlan` resolution and both template initializer paths validate the
   same way before any pool or caller code exists. Every checked-in test,
   example, consumer and native root builds URL options through it or a native
-  boundary. Clippy `disallowed-methods` rejects the URL-taking SQLx
-  constructors in every workspace crate, and
+  boundary. Clippy `disallowed-methods` rejects every URL-taking public SQLx
+  API, including the `MigrateDatabase` maintenance methods, and the native
+  `hostaddr` setter in every workspace crate, and
   `crates/batter/tests/postgres_endpoint_boundary.rs` scans for `from_str` and
-  `parse` forms, including path-qualified turbofish targets and declarations
-  whose `parse` follows on a later line. Build options with
+  `parse` forms, including path-qualified turbofish targets, declarations
+  whose `parse` follows on a later line, PostgreSQL URL literals and parses
+  passed straight to `connect_with`. Build options with
   `connect_options(url)?` and pass them to `connect_with`/`connect_lazy_with`;
   unset `PGHOSTADDR` and remove `hostaddr` from URLs to run fixtures, live
   tests and the SQLx examples.

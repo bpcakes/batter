@@ -446,8 +446,9 @@ owns generic coherent read-only inspections. See the
 [transaction contract](../crates/batter-sqlx/README.md#owned-transactions-and-snapshots).
 
 Build native options from a URL with `batter::sqlx::connect_options(url)?` and
-pass them to `connect_with` or `connect_lazy_with`; call
-`refuse_ambient_host_address()?` before connecting with setter-built options.
+pass them to `connect_with` or `connect_lazy_with` (for a listener, build a pool
+from them and pass `&pool` to `PgListener::connect_with`); start setter-built
+options from `setter_connect_options()?`.
 SQLx 0.9.1 otherwise connects to an ambient `PGHOSTADDR` instead of the
 selected host. Both refuse with `AmbientHostAddress` while it is set, and
 `connect_options` refuses with `DeclaredHostAddress` when a URL declares

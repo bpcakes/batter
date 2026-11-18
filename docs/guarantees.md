@@ -1931,7 +1931,7 @@ transaction, where SQLx returns the error. With the statement cache disabled,
 SQLx 0.9.1 also fails a transaction's first query that returns an uncached
 custom type. See the
 [SQLx 0.9.1 record](references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
-`connect_options` and `refuse_ambient_host_address` refuse, before parsing or
+`connect_options` and `setter_connect_options` refuse, before parsing or
 connecting, whenever `PGHOSTADDR` is set, so options they admit connect to the
 URL or setter host rather than an ambient address. `connect_options` also
 refuses any URL that declares `hostaddr`, so admitted URLs select their server

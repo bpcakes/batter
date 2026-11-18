@@ -193,7 +193,7 @@ fn setting_keys_are_case_insensitive_and_duplicates_are_rejected() {
 
 #[tokio::test]
 async fn profiled_pool_rejects_zero_capacity_before_connecting() {
-    let options = "postgres://login@127.0.0.1:1/unused".parse().unwrap();
+    let options = batter_sqlx::connect_options("postgres://login@127.0.0.1:1/unused").unwrap();
     assert!(matches!(
         batter_sqlx::low_level::connect_profiled_pool(
             options,

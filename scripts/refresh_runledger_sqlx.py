@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from urllib.parse import parse_qsl, urlsplit
 
 from runledger_source import copy_source, run
@@ -39,6 +40,34 @@ def sync_files(source, destination, suffix):
     for path in destination.glob("*" + suffix):
         if path.name not in names:
             path.unlink()
+
+
+def cargo_env_defines(directory, name):
+    """Whether a Cargo configuration that applies in `directory` sets `[env].name`.
+
+    `cargo sqlx prepare` runs `cargo check`, which gives `[env]` settings to the
+    query macros even when the parent shell has none.
+    """
+    directory = Path(directory).resolve()
+    home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    candidates = [base / ".cargo" / file for base in (directory, *directory.parents)
+                  for file in ("config.toml", "config")]
+    candidates += [home / "config.toml", home / "config"]
+    for path in candidates:
+        try:
+            settings = tomllib.loads(path.read_text())
+        except FileNotFoundError:
+            continue
+        except (OSError, tomllib.TOMLDecodeError):
+            raise ValueError("could not read Cargo configuration " + str(path)) from None
+        if isinstance(settings.get("env"), dict) and name in settings["env"]:
+            return True
+    return False
+
+
+def refuse_cargo_host_address(directory):
+    if cargo_env_defines(directory, "PGHOSTADDR"):
+        raise ValueError("remove PGHOSTADDR from Cargo [env]: SQLx would connect to it instead of DATABASE_URL's host")
 
 
 def query(root, database, sql, purpose):
@@ -78,6 +107,7 @@ def refresh(root):
         # psql honours it, but SQLx CLI 0.9.1 can use a Unix socket instead,
         # so the two tools could inspect and migrate different servers.
         raise ValueError("remove hostaddr from DATABASE_URL: psql and SQLx CLI could connect to different servers")
+    refuse_cargo_host_address(root)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
         raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")
@@ -104,6 +134,7 @@ def refresh(root):
         native = candidate / "runledger"
         for package in MIGRATION_PACKAGES:
             sync_files(native / "migrations", native / package / "migrations", ".sql")
+        refuse_cargo_host_address(candidate)
         run(["env", "CARGO_TARGET_DIR=" + str(target), "cargo", "sqlx", "prepare",
              "--workspace", "--no-dotenv", "--", "-p", "runledger-postgres", "-p", "runledger-runtime",
              "--all-targets", "--all-features", "--locked"], candidate)

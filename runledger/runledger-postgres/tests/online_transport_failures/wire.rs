@@ -250,7 +250,12 @@ fn tcp_upstream(options: &PgConnectOptions) -> (String, u16) {
         options.get_socket().is_none() && !options.get_host().starts_with('/'),
         "the online transport relay requires a TCP fixture, not a Unix socket"
     );
-    (options.get_host().to_owned(), options.get_port())
+    // SQLx 0.9.1 keeps URL brackets on an IPv6 host; Tokio's lookup needs it bare.
+    let host = options
+        .get_host()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    (host.to_owned(), options.get_port())
 }
 
 async fn rest_of_request(

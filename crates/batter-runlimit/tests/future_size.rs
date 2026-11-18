@@ -166,7 +166,7 @@ async fn attempt_runner_future_erases_native_admission_and_completion() {
     )
     .unwrap();
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
-        "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
+        batter_sqlx::connect_options("postgres://login@127.0.0.1:1/unused").unwrap(),
         profile,
         sqlx::postgres::PgPoolOptions::new().min_connections(0),
     )

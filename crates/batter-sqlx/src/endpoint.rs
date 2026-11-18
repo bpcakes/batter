@@ -23,8 +23,10 @@ const AMBIENT_HOST_ADDRESS: &str = "PGHOSTADDR";
 ///
 /// Use it instead of `str::parse`, `PgConnectOptions::from_str` or the
 /// URL-taking `PgPool::connect`, `PgPoolOptions::connect`, `connect_lazy`,
-/// `PgConnection::connect` and `PgListener::connect`; pass the result to their
-/// `_with` variants. Other PG* variables remain native defaults that explicit
+/// `PgConnection::connect` and the `MigrateDatabase` maintenance methods, and
+/// pass the result to the pool's or connection's `_with` variant. For a
+/// listener, build a pool from these options and pass `&pool` to
+/// `PgListener::connect_with` instead of calling `PgListener::connect(url)`. Other PG* variables remain native defaults that explicit
 /// URL parts and setters override. The process must not change its environment
 /// between this check and connection. Formatting a refusal names no address;
 /// the returned options can still expose credentials through `Debug` and URL
@@ -44,26 +46,34 @@ pub fn connect_options(url: &str) -> Result<PgConnectOptions, sqlx::Error> {
     connect_options_with(url, |name| std::env::var_os(name))
 }
 
-/// Refuse to build options while an ambient `PGHOSTADDR` would redirect them.
+/// Fresh native options for explicit setters, built only while no ambient
+/// `PGHOSTADDR` would redirect them.
 ///
-/// For native options built from `PgConnectOptions::new_without_pgpass` and
-/// explicit setters, which SQLx also starts from the environment: a later
-/// `host` setter does not clear the ambient address. Returns the same
-/// [`AmbientHostAddress`] refusal as [`connect_options`]. Do not call the
-/// native `hostaddr` setter on such options.
+/// SQLx starts `PgConnectOptions::new_without_pgpass` from the process
+/// environment, and a later `host` setter does not clear an ambient address
+/// captured then. Checking the environment and constructing the options in one
+/// call means the returned value cannot hold an address captured earlier:
+/// build setter-based connecting options from this, never from
+/// `new_without_pgpass` or `new` directly. Returns the same
+/// [`AmbientHostAddress`] refusal as [`connect_options`]. The passfile is not
+/// read; do not call the native `hostaddr` setter (Clippy rejects it here).
+///
+/// Migration: replaces `refuse_ambient_host_address()` followed by
+/// `PgConnectOptions::new_without_pgpass()`, which an earlier revision of this
+/// unreleased boundary required as two calls in order.
 ///
 /// ```
 /// # fn example() -> Result<(), sqlx::Error> {
-/// batter_sqlx::refuse_ambient_host_address()?;
-/// let options = sqlx::postgres::PgConnectOptions::new_without_pgpass()
+/// let options = batter_sqlx::setter_connect_options()?
 ///     .host("127.0.0.1")
 ///     .port(5432);
 /// # drop(options);
 /// # Ok(())
 /// # }
 /// ```
-pub fn refuse_ambient_host_address() -> Result<(), sqlx::Error> {
-    refuse_ambient_host_address_with(|name| std::env::var_os(name))
+pub fn setter_connect_options() -> Result<PgConnectOptions, sqlx::Error> {
+    refuse_ambient_host_address_with(|name| std::env::var_os(name))?;
+    Ok(PgConnectOptions::new_without_pgpass())
 }
 
 pub(crate) fn connect_options_with(
@@ -97,7 +107,7 @@ fn refuse_ambient_host_address_with(
 /// connection away from the explicitly selected host.
 ///
 /// Returned inside `sqlx::Error::Configuration` by [`connect_options`],
-/// [`refuse_ambient_host_address`], fixture resolution and template
+/// [`setter_connect_options`], fixture resolution and template
 /// preparation, before any parse, pool or connection exists. Unset
 /// `PGHOSTADDR` and select the server with the URL host. Formatting names no
 /// address.

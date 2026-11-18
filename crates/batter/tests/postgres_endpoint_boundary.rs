@@ -18,9 +18,9 @@
 //! Clippy cannot express or does not lint: `PgConnectOptions::from_str`, typed
 //! `parse` and inferred-type `parse` on a line naming a URL, for the workspace
 //! and the standalone consumers, plus the call forms for those consumers.
-//! Options built with `new_without_pgpass` and setters are not scanned; their
-//! connecting call sites call `batter_sqlx::refuse_ambient_host_address` first,
-//! and inert placeholders use an unreachable port. Named exemptions below are
+//! Options built with setters are not scanned; connecting ones start from
+//! `batter_sqlx::setter_connect_options`, and inert placeholders use an
+//! unreachable port. Named exemptions below are
 //! the boundaries themselves and files whose `connect` calls are TLS or TCP,
 //! not SQLx. Comments are not scanned. This is a source check, not a proof that
 //! no dependency or generated program parses a URL.
@@ -122,8 +122,18 @@ fn argument_after(line: &str, open: usize) -> &str {
 /// the line names another target type.
 fn untyped_url_parse(code: &str) -> bool {
     const OTHER_TARGETS: [&str; 3] = [": tokio_postgres::Config", ": url::Url", ": Url "];
+    const URL_RECEIVERS: [&str; 5] = [
+        "url",
+        "\"postgres://",
+        "\"postgresql://",
+        "connect_with(",
+        "connect_lazy_with(",
+    ];
+    let lower = code.to_ascii_lowercase();
     code.contains(".parse()")
-        && code.to_ascii_lowercase().contains("url")
+        && URL_RECEIVERS
+            .iter()
+            .any(|receiver| lower.contains(receiver))
         && !OTHER_TARGETS.iter().any(|target| code.contains(target))
 }
 
@@ -131,7 +141,7 @@ fn untyped_url_parse(code: &str) -> bool {
 /// path segment, so `PgProfiledPool::connect(` does not match `Pool::connect(`.
 fn contains_identifier(code: &str, needle: &str) -> bool {
     code.match_indices(needle).any(|(index, _)| {
-        needle.starts_with('>')
+        needle.starts_with(['>', ':'])
             || !code[..index]
                 .chars()
                 .next_back()
@@ -198,12 +208,19 @@ fn violations(line: &str) -> Vec<&'static str> {
     } else if untyped_url_parse(code) {
         found.push("untyped URL parse");
     }
+    if code.contains(".hostaddr(") {
+        found.push("hostaddr setter");
+    }
     for (constructor, name) in [
         ("Pool::connect(", "Pool::connect(url)"),
         ("Pool::connect_lazy(", "Pool::connect_lazy(url)"),
         ("DbPool::connect(", "Pool::connect(url)"),
         ("DbPool::connect_lazy(", "Pool::connect_lazy(url)"),
         ("PgListener::connect(", "PgListener::connect(url)"),
+        ("::create_database(", "MigrateDatabase(url)"),
+        ("::database_exists(", "MigrateDatabase(url)"),
+        ("::drop_database(", "MigrateDatabase(url)"),
+        ("::force_drop_database(", "MigrateDatabase(url)"),
         (">::connect(", "Pool::connect(url)"),
         (">::connect_lazy(", "Pool::connect_lazy(url)"),
     ] {
@@ -249,6 +266,12 @@ fn detector_recognizes_every_url_taking_form_and_its_allowances() {
         "    let pool = DbPool::connect(&url).await?;",
         "    let listener = PgListener::connect(&url).await?;",
         "    let options = dsn.parse::<postgres::PgConnectOptions>()?;",
+        "    let pool = PgPool::connect_with(\"postgres://db/jobs\".parse()?).await?;",
+        "    let options = \"postgresql://db/jobs\".parse().unwrap();",
+        "    let pool = PgPoolOptions::new().connect_lazy_with(dsn.parse()?);",
+        "    Postgres::drop_database(&database_url).await?;",
+        "    sqlx::Postgres::create_database(&dsn).await?;",
+        "    let options = connect_options(&dsn)?.hostaddr(address);",
         "    let options = dsn.parse::< sqlx::postgres::PgConnectOptions >()?;",
         "        .connect_lazy(\"postgres://db.example/jobs\")",
         "        .connect_lazy(UNUSED_LAZY_POOL_URL)",
