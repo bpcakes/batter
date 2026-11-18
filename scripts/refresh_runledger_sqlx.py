@@ -61,6 +61,9 @@ def refresh(root):
     database = os.environ.get("DATABASE_URL")
     if not database:
         raise ValueError("DATABASE_URL must identify an already migrated PostgreSQL 18 database")
+    if "PGHOSTADDR" in os.environ:
+        # psql and SQLx CLI 0.9.1 connect to it instead of DATABASE_URL's host.
+        raise ValueError("unset PGHOSTADDR: psql and SQLx CLI would connect to it instead of DATABASE_URL's host")
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
         raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")

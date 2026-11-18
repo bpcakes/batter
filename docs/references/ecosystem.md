@@ -62,11 +62,15 @@ contracts cite:
   exposes no getter or reset for it. In 0.9.0 the URL host overrode the
   variable. Any URL-built connection can therefore be redirected by the
   environment. The reference root rejects every PG* variable and accepts only
-  `password`, `sslmode` and `application_name` URL query keys. Batter SQLx
-  fixture resolution now refuses with `AmbientHostAddress` and Runledger's
-  Docker fixtures refuse at startup whenever `PGHOSTADDR` is present.
-  Application pools built from URLs remain exposed and own this environment
-  policy.
+  `password`, `sslmode` and `application_name` URL query keys. Point guards
+  missed further sites, so `batter-c5ci.1` adds one endpoint boundary:
+  `batter_sqlx::connect_options` and `refuse_ambient_host_address` refuse with
+  `AmbientHostAddress` whenever `PGHOSTADDR` is present. Fixture resolution,
+  template initializers, every Batter test, example and consumer, native
+  Runledger fixtures (`runledger_test_support::connect_options`) and Runlimit's
+  live tests use it or its native counterpart, and a source scan rejects the
+  URL-taking SQLx forms elsewhere. `runledger-tui` and the native examples keep
+  libpq semantics. Application pools that bypass the boundary remain exposed.
 - A `.sql` file in a migration directory that does not match
   `<VERSION>_<DESCRIPTION>.sql` is now a resolve error
   ([#4367](https://github.com/transact-rs/sqlx/pull/4367)). Every checked-in

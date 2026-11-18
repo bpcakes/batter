@@ -1009,6 +1009,36 @@ next apply. Lexical validation does not
 prove a body correct. The runnable consumer is
 [`examples/postgres-lifecycle`](../../examples/postgres-lifecycle/src/schema.rs).
 
+## PostgreSQL endpoint boundary
+
+SQLx 0.9.1, like libpq, starts every URL parse and `new_without_pgpass`
+construction from the process environment and connects to an ambient
+`PGHOSTADDR` instead of the URL host or a `host` setter whenever no explicit
+`hostaddr` is given; the options expose no way to read or clear it. Build
+options from a URL with `connect_options(url)?` and pass them to
+`connect_with` or `connect_lazy_with`, never to the URL-taking `connect`,
+`connect_lazy`, `PgConnection::connect`, `from_str` or `parse`. Call
+`refuse_ambient_host_address()?` before building connecting options from
+setters. Both refuse with `AmbientHostAddress` inside
+`sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
+value; other PG* variables stay native defaults that explicit URL parts and
+setters override. The process must not change its environment between the
+check and connection.
+
+```rust,no_run
+# async fn example(database_url: &str) -> Result<(), sqlx::Error> {
+let options = batter_sqlx::connect_options(database_url)?;
+let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(options);
+# pool.close().await;
+# Ok(())
+# }
+```
+
+Every checked-in test, example and standalone consumer follows this rule;
+`crates/batter/tests/postgres_endpoint_boundary.rs` rejects the URL-taking
+forms elsewhere. It is a source check over this repository, not a guarantee
+about application code or dependencies.
+
 ## Optional fixture support
 
 The `test-support` feature exposes `test_support::FixtureSuite`, declared native
@@ -1067,10 +1097,13 @@ cause, with `LeaseDatabaseMismatch` inside `sqlx::Error::Configuration` before
 any pool exists. The `fixture_lease_database_mismatch_retained` live probe proves
 that refusal and its retention on both the owned and low-level paths. SQLx 0.9.1
 connects to an ambient `PGHOSTADDR` instead of the URL host, so resolution
-refuses before parsing whenever that variable is present, with
-`AmbientHostAddress` carried the same way; an offline unit test covers the
-refusal. Unset `PGHOSTADDR` for fixture runs and do not change the environment
-while fixtures resolve. Select pools with `FixtureDatabase::pool(key)` (or
+refuses through [`connect_options`](#postgresql-endpoint-boundary) before
+parsing whenever that variable is present, with `AmbientHostAddress` carried
+the same way. Both template paths refuse before the initializer receives the
+URL, so its upstream template aborts through the harness's failure path.
+Offline unit tests cover the resolution refusal; the template refusal has no
+executed test. Unset `PGHOSTADDR` for fixture runs and do not change the
+environment while fixtures resolve. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
 checks; on a `declare` plan an index does not record which login a pool uses.

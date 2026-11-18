@@ -13,11 +13,11 @@ pub async fn pending_completion_recovers() -> ProbeResult {
     let harness = super::harness().await?;
     let pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let broken = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     broken.close().await;
     let observer = SessionObserver::new(broken.clone(), BOUND)?;

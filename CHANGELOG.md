@@ -19,11 +19,21 @@ contracts, capability facts and validation history.
   statement cache disabled, a transaction's first query returning an uncached
   custom type fails; and ambient `PGHOSTADDR` now overrides every URL host.
   See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
-- Add `batter_sqlx::test_support::AmbientHostAddress` (`batter-c5ci`).
-  `ConnectionPlan` resolution refuses with it, inside
-  `sqlx::Error::Configuration` and before any pool exists, whenever
-  `PGHOSTADDR` is set, so fixture pools cannot reach a server other than the
-  lease's. Unset `PGHOSTADDR` for fixture runs.
+- Add the PostgreSQL endpoint boundary `batter_sqlx::connect_options`, with
+  `refuse_ambient_host_address` and `AmbientHostAddress` (also under
+  `batter::sqlx`; `batter-c5ci`, `batter-c5ci.1`). It refuses inside
+  `sqlx::Error::Configuration`, before parsing, whenever `PGHOSTADDR` is set,
+  so a URL or explicit setters select the server. `ConnectionPlan` resolution
+  and both template initializer paths refuse the same way before any pool or
+  caller code exists. Every checked-in test, example and consumer now builds
+  URL options through it or a native boundary, and
+  `crates/batter/tests/postgres_endpoint_boundary.rs` rejects the URL-taking
+  SQLx forms elsewhere. Build options with `connect_options(url)?` and pass
+  them to `connect_with`/`connect_lazy_with`; unset `PGHOSTADDR` to run fixtures,
+  live tests and the SQLx examples.
+- Qualify the `PgLease`, `PgLease::migrate`, `migrate_and_apply` and
+  `PgQueryHandle` rustdoc: Batter adds no replay, but SQLx 0.9.1 can re-send a
+  statement outside a transaction, including `no_tx` migrations.
 
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.

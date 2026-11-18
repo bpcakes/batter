@@ -11,8 +11,8 @@ use batter::sqlx::verification::{
     QualifiedName, RelationGrantGroup, RolePolicy, SchemaGrantSpec, SqlxLedgerMode,
     SqlxMigrationManifest, VerificationPlan, VerificationStatus, verify,
 };
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::{process::ExitCode, str::FromStr, time::Duration};
+use sqlx::postgres::PgPoolOptions;
+use std::{process::ExitCode, time::Duration};
 
 #[tokio::main(flavor = "current_thread")]
 #[expect(
@@ -36,7 +36,7 @@ async fn main() -> ExitCode {
         eprintln!("DATABASE_URL must be valid Unicode");
         return ExitCode::FAILURE;
     };
-    let options = match PgConnectOptions::from_str(url) {
+    let options = match batter::sqlx::connect_options(url) {
         Ok(options) => options,
         Err(_) => {
             eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");

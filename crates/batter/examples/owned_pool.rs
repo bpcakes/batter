@@ -10,8 +10,8 @@ use batter::{
     command::{Command, CommandFailure},
     operation::{OperationError, OperationOwner},
 };
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::{error::Error, fmt, process::ExitCode, str::FromStr, time::Duration};
+use sqlx::postgres::PgPoolOptions;
+use std::{error::Error, fmt, process::ExitCode, time::Duration};
 
 enum ExampleError {
     Registration(RegistrationError),
@@ -65,7 +65,7 @@ async fn main() -> Result<ExitCode, BoxError> {
         eprintln!("DATABASE_URL must be valid Unicode");
         return Ok(ExitCode::FAILURE);
     };
-    let Ok(connect_options) = PgConnectOptions::from_str(database_url) else {
+    let Ok(connect_options) = batter::sqlx::connect_options(database_url) else {
         eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
         return Ok(ExitCode::FAILURE);
     };

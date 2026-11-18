@@ -25,7 +25,6 @@ use std::{
     fmt::Write as _,
     fs::File,
     io::Read,
-    str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -129,7 +128,7 @@ impl Fixture {
         let url = std::env::var("BATTER_SQLX_ADMIN_URL").map_err(|_| {
             fail("the grant-composition suite requires BATTER_SQLX_ADMIN_URL, a PostgreSQL superuser connection to a dedicated disposable PostgreSQL 18 cluster")
         })?;
-        let mut admin = PgConnection::connect(&url).await?;
+        let mut admin = PgConnection::connect_with(&batter::sqlx::connect_options(&url)?).await?;
         let superuser: bool = sqlx::query_scalar(
             "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = session_user",
         )
@@ -222,7 +221,7 @@ impl Fixture {
             .map(|schema| quote(schema))
             .collect::<Vec<_>>()
             .join(", ");
-        let options = PgConnectOptions::from_str(&self.url)?
+        let options = batter::sqlx::connect_options(&self.url)?
             .username(role)
             .password(&self.password)
             .options([("search_path", search_path.as_str())]);
@@ -238,7 +237,7 @@ impl Fixture {
 
     /// Connection options for `role`, for pools this suite does not own.
     pub(crate) fn options(&self, role: &str) -> Result<PgConnectOptions> {
-        Ok(PgConnectOptions::from_str(&self.url)?
+        Ok(batter::sqlx::connect_options(&self.url)?
             .username(role)
             .password(&self.password))
     }

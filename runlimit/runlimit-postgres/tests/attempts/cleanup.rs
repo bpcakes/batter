@@ -1,3 +1,7 @@
+// Declared here because the imported attempts.rs root has an exact line ceiling.
+#[path = "../support/endpoint.rs"]
+pub(super) mod endpoint;
+
 use super::Database;
 use sqlx::AssertSqlSafe;
 

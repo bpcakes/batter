@@ -1491,7 +1491,7 @@ async fn raw_version_missing_strands_session_lock_until_pool_close_but_safe_path
     let database_url = harness.database.url().to_owned();
     let raw_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&database_url)
+        .connect_with(runledger_test_support::connect_options(&database_url).expect("fixture URL"))
         .await
         .expect("connect disposable raw migration pool");
     let raw_backend_pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
@@ -1527,7 +1527,7 @@ async fn raw_version_missing_strands_session_lock_until_pool_close_but_safe_path
 
     let contender_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&database_url)
+        .connect_with(runledger_test_support::connect_options(&database_url).expect("fixture URL"))
         .await
         .expect("connect disposable contender migration pool");
     let contender_result =
@@ -1543,7 +1543,7 @@ async fn raw_version_missing_strands_session_lock_until_pool_close_but_safe_path
 
     let safe_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&database_url)
+        .connect_with(runledger_test_support::connect_options(&database_url).expect("fixture URL"))
         .await
         .expect("connect fresh safe migration pool");
     migrate_after_idempotency_cutover(&safe_pool)

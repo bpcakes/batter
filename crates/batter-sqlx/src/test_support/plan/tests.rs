@@ -42,7 +42,7 @@ fn password(options: &PgConnectOptions) -> Option<String> {
 
 #[test]
 fn lease_login_resolves_to_the_parsed_lease_url() {
-    let expected: PgConnectOptions = LEASE.parse().unwrap();
+    let expected = crate::connect_options(LEASE).unwrap();
     let resolved = plan(vec![
         PlannedPool::lease_login(one()),
         PlannedPool::lease_login(one()),
@@ -73,7 +73,7 @@ fn ambient_host_address_refuses_resolution_whatever_its_value() {
             .unwrap_err();
         assert_eq!(asked, ["PGHOSTADDR"]);
         assert!(
-            matches!(&error, sqlx::Error::Configuration(source) if source.is::<AmbientHostAddress>())
+            matches!(&error, sqlx::Error::Configuration(source) if source.is::<crate::AmbientHostAddress>())
         );
         assert!(!error.to_string().contains(value) || value.is_empty());
     }
@@ -82,7 +82,7 @@ fn ambient_host_address_refuses_resolution_whatever_its_value() {
         .resolve_with("not a url", "pgh_probe_1", |_| Some("192.0.2.1".into()))
         .unwrap_err();
     assert!(
-        matches!(&error, sqlx::Error::Configuration(source) if source.is::<AmbientHostAddress>())
+        matches!(&error, sqlx::Error::Configuration(source) if source.is::<crate::AmbientHostAddress>())
     );
     assert_eq!(
         declared
@@ -95,7 +95,7 @@ fn ambient_host_address_refuses_resolution_whatever_its_value() {
 
 #[test]
 fn password_login_replaces_only_credentials() {
-    let expected: PgConnectOptions = LEASE.parse().unwrap();
+    let expected = crate::connect_options(LEASE).unwrap();
     let resolved = plan(vec![
         PlannedPool::lease_login(one()),
         PlannedPool::password_login(
@@ -121,7 +121,7 @@ fn socket_hosts_survive_a_password_login() {
         "postgres://owner:ownersecret@localhost/pgh_probe_2?host=/var/run/postgresql",
         "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2",
     ] {
-        let expected: PgConnectOptions = url.parse().unwrap();
+        let expected = crate::connect_options(url).unwrap();
         assert!(expected.get_socket().is_some());
         let resolved = plan(vec![PlannedPool::password_login(
             one(),
@@ -212,7 +212,7 @@ async fn keys_select_their_own_pool_and_never_another_plans() {
     assert_ne!(first.id(), second.id());
     // A clone is the same declaration, so its keys stay valid.
     assert_eq!(first.clone().id(), first.id());
-    let options: PgConnectOptions = LEASE.parse().unwrap();
+    let options = crate::connect_options(LEASE).unwrap();
     let pools: Vec<PgPool> = (0..2)
         .map(|_| one().connect_lazy_with(options.clone()))
         .collect();

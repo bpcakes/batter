@@ -161,7 +161,7 @@ async fn run_boundaries() -> Result<(), BoxError> {
         let lease = harness.empty_database().await?;
         let pool = PgPoolOptions::new()
             .max_connections(4)
-            .connect(lease.database_url())
+            .connect_with(batter::sqlx::connect_options(lease.database_url())?)
             .await;
         let body = match pool {
             Ok(pool) => {

@@ -54,7 +54,7 @@ pub async fn setup_unmigrated_ephemeral_pool(
         .expect("create ephemeral database");
     let pool = PgPoolOptions::new()
         .max_connections(max_connections)
-        .connect(database.url())
+        .connect_with(database.connect_options().expect("ephemeral database URL"))
         .await
         .expect("connect postgres");
     (pool, database)
@@ -118,6 +118,13 @@ impl EphemeralDatabase {
     #[must_use]
     pub fn url(&self) -> &str {
         &self.identity.url
+    }
+
+    /// Native options for this database, refusing an ambient `PGHOSTADDR`
+    /// that would redirect them; see [`crate::connect_options`]. Prefer this to
+    /// passing [`Self::url`] to SQLx's URL-taking `connect` forms.
+    pub fn connect_options(&self) -> Result<sqlx::postgres::PgConnectOptions, sqlx::Error> {
+        crate::connect_options(self.url())
     }
 
     pub async fn teardown(mut self) -> Result<(), sqlx::Error> {
@@ -235,7 +242,7 @@ pub async fn drop_database(database_name: &str) -> Result<(), sqlx::Error> {
 async fn connect_admin_pool(admin_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(1)
-        .connect(admin_url)
+        .connect_with(crate::connect_options(admin_url)?)
         .await
 }
 

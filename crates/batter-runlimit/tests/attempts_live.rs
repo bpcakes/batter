@@ -34,7 +34,7 @@ struct Fixture {
 impl Fixture {
     async fn new(case: &str, lease_ms: u64) -> Self {
         let url = std::env::var("DATABASE_URL").expect("explicit live suite requires DATABASE_URL");
-        let options: sqlx::postgres::PgConnectOptions = url.parse().unwrap();
+        let options = batter_sqlx::connect_options(&url).unwrap();
         let login = options.get_username();
         let profile = PgSessionProfile::new(
             login,

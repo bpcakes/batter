@@ -90,7 +90,7 @@ async fn scheduler_shutdown_finishes_while_post_commit_hint_is_table_blocked() {
     let (gate, gate_pid) = materialization_gate(&pool).await;
     let scheduler_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(database.url())
+        .connect_with(database.connect_options().expect("fixture URL"))
         .await
         .expect("scheduler pool");
     sqlx::raw_sql("SET statement_timeout = '0'; SET lock_timeout = '0'")
@@ -151,7 +151,7 @@ async fn earliest_fire_preserves_stricter_timeout_and_restores_pooled_settings()
     let (pool, database) = setup_ephemeral_pool("scheduler_hint_stricter_timeout", 3).await;
     let reader = PgPoolOptions::new()
         .max_connections(1)
-        .connect(database.url())
+        .connect_with(database.connect_options().expect("fixture URL"))
         .await
         .expect("reader pool");
     sqlx::raw_sql("SET statement_timeout = '50ms'; SET lock_timeout = '0'")
@@ -196,7 +196,7 @@ async fn failed_hint_waits_the_poll_interval_before_another_materialization() {
     let (gate, gate_pid) = materialization_gate(&pool).await;
     let scheduler_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(database.url())
+        .connect_with(database.connect_options().expect("fixture URL"))
         .await
         .expect("scheduler pool");
     let scheduler_pid = backend(&scheduler_pool).await;

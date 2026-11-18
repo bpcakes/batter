@@ -16,12 +16,13 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + 
 async fn opaque_session_composes_intents_and_native_schema_verification() -> Result {
     let url = std::env::var("DATABASE_URL")?;
     // Retain an independent cleanup connection even if the body panics or closes its pool.
-    let mut control = sqlx::PgConnection::connect(&url).await?;
+    let mut control =
+        sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&url)?).await?;
     let suffix: String = sqlx::query_scalar("SELECT replace(uuidv7()::text, '-', '')")
         .fetch_one(&mut control)
         .await?;
     let table = format!("opaque_bridge_audit_{suffix}");
-    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
+    let options = batter_sqlx::connect_options(&url)?;
     let login = options.get_username();
     let profile = batter_runledger::PgSessionProfile::new(
         login,
@@ -154,8 +155,10 @@ async fn schema_cancellation_retires(
 ) -> Result {
     let pool = database.pool();
     let url = std::env::var("DATABASE_URL")?;
-    let mut blocker = sqlx::PgConnection::connect(&url).await?;
-    let mut observer = sqlx::PgConnection::connect(&url).await?;
+    let mut blocker =
+        sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&url)?).await?;
+    let mut observer =
+        sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&url)?).await?;
     let mut lock = blocker.begin().await?;
     sqlx::query("LOCK TABLE _sqlx_migrations IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *lock)

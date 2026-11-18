@@ -193,6 +193,9 @@ cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route
 group's browser policy accepts them, without owning credential meaning,
 authorization, CORS or application error envelopes.
+`crates/batter-sqlx/src/endpoint.rs` owns the URL-to-options boundary that refuses an
+ambient `PGHOSTADDR` (SQLx 0.9.1 would connect to it instead of the URL host);
+`crates/batter/tests/postgres_endpoint_boundary.rs` rejects URL-taking SQLx forms elsewhere.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and protected profiled-pool construction; `pool_in` registers
 closure before returning `PgProfiledPool`, and native Runledger can share that

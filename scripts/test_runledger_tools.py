@@ -104,6 +104,26 @@ class SourceTests(unittest.TestCase):
 
 
 class RefreshTests(unittest.TestCase):
+    def setUp(self):
+        # Refresh refuses an ambient PGHOSTADDR; keep the other cases independent of it.
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop('PGHOSTADDR', None)
+
+    def test_ambient_host_address_is_refused_before_any_command(self):
+        secret = 'postgresql://user:private-marker@127.0.0.1/database'
+        for value in ('192.0.2.1', ''):
+            with self.subTest(value=value), \
+                 patch.dict(os.environ, DATABASE_URL=secret, PGHOSTADDR=value), \
+                 patch('refresh_runledger_sqlx.run') as command, \
+                 patch('refresh_runledger_sqlx.subprocess.run') as psql:
+                with self.assertRaisesRegex(ValueError, 'unset PGHOSTADDR') as error:
+                    refresh(Path.cwd())
+                self.assertNotIn('private-marker', str(error.exception))
+                command.assert_not_called()
+                psql.assert_not_called()
+
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'
         with patch.dict(os.environ, DATABASE_URL=secret), \
@@ -202,6 +222,8 @@ class RefreshTests(unittest.TestCase):
                     self.fail('owned PostgreSQL fixture did not become ready')
                 time.sleep(0.25)
             port = run(['docker', 'port', container, '5432/tcp'], root).strip().rsplit(':', 1)[1]
+            # SQLx CLI 0.9.1 and psql would connect to an ambient PGHOSTADDR
+            # instead of the owned container; setUp already removed it.
             with tempfile.TemporaryDirectory() as directory, \
                  patch.dict(os.environ, DATABASE_URL=f'postgresql://postgres:fixture@127.0.0.1:{port}/postgres'):
                 source = Path(directory)

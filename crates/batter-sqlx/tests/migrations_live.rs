@@ -21,7 +21,10 @@ fn migrator(ledger: &str, statement: sqlx::SqlStr) -> Migrator {
 }
 
 async fn cleanup_ledger(ledger: &str) -> Result {
-    let mut connection = sqlx::PgConnection::connect(&std::env::var("DATABASE_URL")?).await?;
+    let mut connection = sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(
+        &std::env::var("DATABASE_URL")?,
+    )?)
+    .await?;
     let result = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DROP TABLE IF EXISTS {ledger}"
     )))

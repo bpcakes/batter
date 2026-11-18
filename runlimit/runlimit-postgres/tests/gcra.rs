@@ -22,6 +22,8 @@ use tokio::sync::Barrier;
 
 #[path = "gcra/clock.rs"]
 mod clock;
+#[path = "support/endpoint.rs"]
+mod endpoint;
 
 static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(0);
 
@@ -43,7 +45,7 @@ impl Database {
             .expect("disposable PostgreSQL URL required");
         let admin = PgPoolOptions::new()
             .max_connections(2)
-            .connect(&url)
+            .connect_with(endpoint::test_connect_options(&url))
             .await
             .unwrap();
         let schema = format!(
@@ -71,7 +73,7 @@ impl Database {
                     Ok(())
                 })
             })
-            .connect(&url)
+            .connect_with(endpoint::test_connect_options(&url))
             .await
             .unwrap();
         Self {

@@ -46,7 +46,7 @@ async fn verification_ledger_ddl_before_lock_is_observed() -> Result {
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&pool).await?;
         let oid: i64 = sqlx::query_scalar("SELECT $1::regclass::oid::bigint")
             .bind(&ledger).fetch_one(&mut fixture.admin).await?;
-        let mut mutator = PgConnection::connect(&fixture.url).await?;
+        let mut mutator = PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?).await?;
         let mut change = mutator.begin().await?;
         exec(&mut *change, format!("ALTER TABLE {ledger} ENABLE ROW LEVEL SECURITY")).await?;
         let policy = names_policy(&names, &names.schema_a, &names.ledger_a,
@@ -85,10 +85,10 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
         // Session setup may itself read the parameter ACL catalog. Acquire and
         // warm the mutator before the barrier, so only its DDL waits on the
         // verifier's ledger lock, not its connection setup on our catalog lock.
-        let mut mutator = bounded(PgConnection::connect(&fixture.url)).await??;
+        let mut mutator = bounded(PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)).await??;
         let mutator_pid: i32 = bounded(sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut mutator)).await??;
-        let mut blocker = PgConnection::connect(&fixture.url).await?;
+        let mut blocker = PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?).await?;
         let mut barrier = blocker.begin().await?;
         sqlx::query("LOCK TABLE pg_catalog.pg_parameter_acl IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *barrier).await?;
@@ -208,10 +208,10 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
         lock_is_pending(&mut fixture.admin, pid, catalog_oid).await?;
         let _: String = sqlx::query_scalar("SELECT query FROM pg_catalog.pg_stat_activity WHERE pid=$1")
             .bind(pid).fetch_one(&mut fixture.admin).await?;
-        let mut mutator = PgConnection::connect(&fixture.url).await?;
+        let mut mutator = PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?).await?;
         let mutator_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut mutator).await?;
         sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {child}"))).execute(&mut mutator).await?;
-        let mut blocker = PgConnection::connect(&fixture.url).await?;
+        let mut blocker = PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?).await?;
         let mut barrier = blocker.begin().await?;
         sqlx::query("LOCK TABLE pg_catalog.pg_attribute IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *barrier).await?;

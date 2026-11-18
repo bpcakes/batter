@@ -63,6 +63,8 @@ fn maintenance(interval: Duration, startup: PeriodicStartup) -> ExpiryMaintenanc
 }
 
 fn local_options(port: u16) -> PgConnectOptions {
+    // The `host` setter does not clear an ambient PGHOSTADDR.
+    batter_sqlx::refuse_ambient_host_address().expect("unset PGHOSTADDR for local listener tests");
     PgConnectOptions::new_without_pgpass()
         .host("127.0.0.1")
         .port(port)

@@ -37,6 +37,8 @@ const ADVISORY_LOCK_DOMAIN: &[u8] = b"runlimit/postgres-advisory-lock/v1\0";
 
 #[path = "postgres/cleanup_plan.rs"]
 mod cleanup_plan;
+#[path = "support/endpoint.rs"]
+mod endpoint;
 
 const PUBLISHED_CREATE_MIGRATION_SHA384: [u8; 48] = [
     0x31, 0xd9, 0x3f, 0xde, 0x98, 0xc2, 0x36, 0x4a, 0x33, 0x06, 0x2e, 0x37, 0x35, 0x08, 0xf5, 0x63,
@@ -153,7 +155,7 @@ async fn test_pool(maximum_connections: u32) -> PgPool {
         .expect("RUNLIMIT_POSTGRES_TEST_DATABASE_URL is required for ignored integration tests");
     let pool = PgPoolOptions::new()
         .max_connections(maximum_connections)
-        .connect(&database_url)
+        .connect_with(endpoint::test_connect_options(&database_url))
         .await
         .expect("connect to integration-test PostgreSQL");
     PostgresLimiter::new(pool.clone())
@@ -203,7 +205,7 @@ impl IsolatedSchema {
         );
         PgPoolOptions::new()
             .max_connections(maximum_connections)
-            .connect(&database_url)
+            .connect_with(endpoint::test_connect_options(&database_url))
             .await
             .expect("connect isolated-schema admin pool")
     }
@@ -244,7 +246,7 @@ impl IsolatedSchema {
                     Ok(())
                 })
             })
-            .connect(&database_url)
+            .connect_with(endpoint::test_connect_options(&database_url))
             .await
             .expect("connect isolated-schema pool");
         let search_path = sqlx::query_scalar::<_, Vec<String>>("SELECT current_schemas(false)")
@@ -2339,7 +2341,7 @@ async fn opposite_order_batches_across_pools_do_not_deadlock_or_over_admit() {
         std::env::var(TEST_DATABASE_URL).expect("test URL remains available during test");
     let second_pool = PgPoolOptions::new()
         .max_connections(4)
-        .connect(&database_url)
+        .connect_with(endpoint::test_connect_options(&database_url))
         .await
         .expect("connect second replica pool");
     let first_limiter = PostgresLimiter::new(first_pool.clone()).with_config(test_config());
@@ -2433,7 +2435,7 @@ async fn concurrent_pools_never_over_admit() {
         std::env::var(TEST_DATABASE_URL).expect("test URL remains available during test");
     let second_pool = PgPoolOptions::new()
         .max_connections(24)
-        .connect(&database_url)
+        .connect_with(endpoint::test_connect_options(&database_url))
         .await
         .expect("connect second replica pool");
     let first_limiter = PostgresLimiter::new(first_pool).with_config(test_config());

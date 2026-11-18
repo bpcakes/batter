@@ -47,6 +47,7 @@ mod atomic;
 mod atomic_context;
 mod atomic_policy;
 mod atomic_runner;
+mod endpoint;
 mod failure;
 mod native_query;
 mod pooled_query;
@@ -75,6 +76,7 @@ pub use atomic_runner::{
 /// Caller-owned transactions and pools. These entry points require explicit
 /// completion/cleanup and are not equivalent to the protected runners or [`pool_in`].
 pub mod low_level;
+pub use endpoint::{AmbientHostAddress, connect_options, refuse_ambient_host_address};
 pub use failure::{FailureClass, SqlxFailure};
 pub use native_query::PgNativeQuery;
 pub use pooled_query::PgQueryHandle;
@@ -118,8 +120,12 @@ pub(crate) fn acquire(
 /// until its caller drops it. Disposition follows the outcome of the work run
 /// through [`Self::with_connection`]. [`Self::with_retiring_connection`]
 /// consumes the same owner without any pool-return transition. There is no
-/// asynchronous Drop, transaction manager, automatic replay, or protection
-/// from process death.
+/// asynchronous Drop, transaction manager, Batter-initiated replay, or
+/// protection from process death. SQLx 0.9.1 itself sends a statement again,
+/// outside a server transaction, when its first response is SQLSTATE `26000` or
+/// a stale cached-plan `0A000`; a statement that already caused a
+/// non-transactional effect, such as `nextval`, can repeat it. Batter cannot
+/// disable that upstream replay.
 ///
 /// Pool return cannot be requested directly:
 ///
@@ -272,8 +278,10 @@ impl PgLease {
     /// before pool return. Await inside the caller's operation budget.
     ///
     /// The original `MigrateError` is retained as `sqlx::Error::Migrate` inside
-    /// the redacted [`SqlxFailure`]. No automatic replay or provisioning policy
-    /// is introduced.
+    /// the redacted [`SqlxFailure`]. Batter adds no replay or provisioning
+    /// policy. SQLx runs `no_tx` migrations outside a transaction, where its
+    /// 0.9.1 driver can itself send a statement again after a first-response
+    /// `26000` or stale-plan `0A000`, as described on [`PgLease`].
     pub async fn migrate(self, migrator: &sqlx::migrate::Migrator) -> Result<(), SqlxFailure> {
         self.with_connection(async |session| {
             migrator
@@ -359,7 +367,8 @@ impl PgLease {
     /// interruption nor retirement proves rollback or authorizes replay.
     /// Await inside the caller's operation budget. A retired
     /// session still waiting on a lock remains on the server until the lock is
-    /// granted; no automatic replay or provisioning policy is introduced.
+    /// granted. Batter adds no replay or provisioning policy; SQLx's own re-send
+    /// of `no_tx` migration statements is described on [`Self::migrate`].
     ///
     /// ```no_run
     /// use batter_core::operation::OperationContext;

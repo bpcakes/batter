@@ -34,10 +34,7 @@ mod runner;
 mod sessions;
 mod verification;
 
-pub use plan::{
-    AmbientHostAddress, ConnectionPlan, LeaseDatabaseMismatch, PlanDeclaration, PlannedPool,
-    PoolKey,
-};
+pub use plan::{ConnectionPlan, LeaseDatabaseMismatch, PlanDeclaration, PlannedPool, PoolKey};
 pub use sessions::{CleanupPhase, DatabaseProgress, SessionObserver};
 
 pub use report::{
@@ -213,6 +210,10 @@ impl FixtureSuite {
     /// deferred drain. Use [`FixtureScope::template`] inside [`Self::start`] for
     /// owned preparation and panic-to-abort handling. Neither path joins detached
     /// initializer operations or promises cleanup of initializer-owned live pools.
+    /// Both refuse with [`crate::AmbientHostAddress`] before the initializer
+    /// receives the URL while `PGHOSTADDR` is set; the harness then aborts the
+    /// template and returns its failure. Initializers should build pools with
+    /// [`crate::connect_options`].
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
@@ -224,7 +225,12 @@ impl FixtureSuite {
     {
         let template = self
             .harness
-            .template(spec, initializer)
+            .template(spec, |url| async move {
+                // Refuse before caller code receives the URL, so an ambient
+                // `PGHOSTADDR` cannot send initializer logins to another server.
+                crate::refuse_ambient_host_address()?;
+                initializer(url).await
+            })
             .await
             .map_err(FixtureError::Harness)?;
         if !self

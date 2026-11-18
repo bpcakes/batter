@@ -45,7 +45,7 @@ async fn initialize(url: String, sql: &'static str, count: Arc<AtomicUsize>) -> 
     count.fetch_add(1, Ordering::SeqCst);
     let pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&url)
+        .connect_with(batter::sqlx::connect_options(&url)?)
         .await?;
     let migrator = Migrator {
         migrations: Cow::Owned(vec![Migration::new(
@@ -269,7 +269,7 @@ pub async fn returned_body_failure() -> ProbeResult {
     let harness = super::harness().await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let report = FixtureSuite::new(harness)
         .start(|scope| {

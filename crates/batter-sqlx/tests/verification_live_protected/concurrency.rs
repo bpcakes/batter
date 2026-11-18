@@ -368,8 +368,12 @@ async fn protected_sqlx_late_attachment_cannot_supply_snapshot_rows() -> Result 
                     sqlx::query_scalar("SELECT 'pg_catalog.pg_namespace'::regclass::oid::bigint")
                         .fetch_one(&mut fixture.admin)
                         .await?;
-                let mut mutator = sqlx::PgConnection::connect(&fixture.url).await?;
-                let mut blocker = sqlx::PgConnection::connect(&fixture.url).await?;
+                let mut mutator =
+                    sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)
+                        .await?;
+                let mut blocker =
+                    sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)
+                        .await?;
                 exec(&mut mutator, "SET statement_timeout = '3s'".into()).await?;
                 let mutator_ledger_warmup: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT count(*) FROM {table}"

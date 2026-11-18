@@ -58,9 +58,10 @@ impl Fixture {
             runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
                 .await
                 .expect("public verifier database");
-        let mut gates = PgConnection::connect(harness.database.url())
-            .await
-            .expect("gate connection");
+        let mut gates =
+            PgConnection::connect_with(&harness.database.connect_options().expect("fixture URL"))
+                .await
+                .expect("gate connection");
         for gate in [DROP_GATE, VERIFIER_GATE, COMPLETION_GATE] {
             sqlx::query("SELECT pg_catalog.pg_advisory_lock($1, $2)")
                 .bind(GATE_CLASS)

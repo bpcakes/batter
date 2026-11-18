@@ -14,13 +14,12 @@ use batter_sqlx::verification::{
 use sqlx::{
     Connection, PgConnection, PgPool, SqlSafeStr,
     migrate::{Migration, MigrationType, Migrator},
-    postgres::{PgConnectOptions, PgPoolOptions},
+    postgres::PgPoolOptions,
 };
 use std::{
     fmt::Write as _,
     fs::File,
     io::Read,
-    str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -65,7 +64,10 @@ impl Fixture {
     async fn create() -> Result<Self> {
         let url = std::env::var("BATTER_SQLX_ADMIN_URL")
             .map_err(|_| std::io::Error::other("live checks require BATTER_SQLX_ADMIN_URL"))?;
-        let mut admin = bounded(PgConnection::connect(&url)).await??;
+        let mut admin = bounded(PgConnection::connect_with(&batter_sqlx::connect_options(
+            &url,
+        )?))
+        .await??;
         let superuser: bool = bounded(
             sqlx::query_scalar(
                 "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = session_user",
@@ -178,7 +180,7 @@ impl Fixture {
             Role::Migrator => &self.migrator,
             Role::Reader => &self.reader,
         };
-        let options = PgConnectOptions::from_str(&self.url)?
+        let options = batter_sqlx::connect_options(&self.url)?
             .username(login)
             .password(&self.password)
             .options([("search_path", self.schema.as_str())])

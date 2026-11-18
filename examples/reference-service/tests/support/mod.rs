@@ -60,7 +60,7 @@ pub async fn pool(url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(url)
+        .connect_with(batter::sqlx::connect_options(url)?)
         .await
 }
 

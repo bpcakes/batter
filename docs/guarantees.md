@@ -1928,6 +1928,13 @@ transaction, where SQLx returns the error. With the statement cache disabled,
 SQLx 0.9.1 also fails a transaction's first query that returns an uncached
 custom type. See the
 [SQLx 0.9.1 record](references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
+`connect_options` and `refuse_ambient_host_address` refuse, before parsing or
+connecting, whenever `PGHOSTADDR` is set, so options they admit connect to the
+URL or setter host rather than an ambient address. This holds only if the
+process environment does not change before connection, and only for options
+built through them; a repository source scan, not the type system, keeps
+checked-in code on that path. Other PG* defaults and native credential
+exposure are unchanged.
 The low-level session has no typed transaction lifecycle, and raw transaction-control
 SQL carries no typed atomic-result guarantee. If the return-time cleanup reports
 failure, `with_connection` preserves the application `Ok` but retires its

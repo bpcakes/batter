@@ -19,7 +19,9 @@ use std::{sync::Mutex, time::Duration};
 /// success attempts the ordinary idle-state handshake before pool return.
 /// An observed native result survives cancellation during that cleanup, whose
 /// interrupted connection is retired. Neither interruption nor a native error
-/// proves that a write had no effect; there is no automatic replay.
+/// proves that a write had no effect. Batter adds no replay, but these queries
+/// run outside a server transaction, where SQLx 0.9.1 itself sends a statement
+/// again after a first-response `26000` or stale-plan `0A000`; see [`crate::PgLease`].
 ///
 /// This is single-query execution. Use atomic runners for multi-query transactions.
 /// Cleanup resets transaction state, not arbitrary session settings or locks.

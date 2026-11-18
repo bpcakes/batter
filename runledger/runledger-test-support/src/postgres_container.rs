@@ -12,7 +12,6 @@ pub(crate) const POSTGRES_PASSWORD: &str = "runledger";
 pub(crate) const POSTGRES_DB: &str = "postgres";
 const TEST_ADMIN_DATABASE_URL_ENV: &str = "RUNLEDGER_TEST_ADMIN_DATABASE_URL";
 const TEST_PG_IMAGE_ENV: &str = "RUNLEDGER_TEST_PG_IMAGE";
-const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 const POSTGRES_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
 const POSTGRES_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const POSTGRES_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -42,19 +41,20 @@ async fn shared_admin_database_url() -> &'static str {
 }
 
 async fn initialize_shared_postgres() -> SharedPostgres {
-    reject_ambient_host_address(std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some());
+    reject_ambient_host_address(
+        std::env::var_os(crate::endpoint::AMBIENT_HOST_ADDRESS_ENV).is_some(),
+    );
     initialize_postgres(configured_postgres_source()).await
 }
 
-/// SQLx 0.9.1 parses every URL on top of ambient `PGHOSTADDR` and connects to
-/// that address instead of the URL host. The admin URL and every derived test
-/// database URL must reach the server this fixture owns or was given, so refuse
-/// before starting a container, whatever the variable's value.
+/// Fail before starting a container. Every later fixture connection also
+/// refuses through [`crate::connect_options`], so setting the variable after
+/// startup cannot redirect teardown either.
 fn reject_ambient_host_address(present: bool) {
     assert!(
         !present,
-        "unset {AMBIENT_HOST_ADDRESS_ENV} for Runledger PostgreSQL fixtures: SQLx would connect \
-         to it instead of the fixture URL's host"
+        "unset PGHOSTADDR for Runledger PostgreSQL fixtures: SQLx would connect to it instead \
+         of the fixture URL's host"
     );
 }
 
@@ -163,13 +163,14 @@ fn postgres_admin_url(port: u16) -> String {
 }
 
 async fn connect_postgres(admin_url: &str, timeout: Duration) -> Result<sqlx::PgPool, sqlx::Error> {
+    let options = crate::connect_options(admin_url)?;
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(remaining.min(POSTGRES_CONNECT_TIMEOUT))
-            .connect(admin_url)
+            .connect_with(options.clone())
             .await
         {
             Ok(pool) => return Ok(pool),
@@ -288,7 +289,7 @@ mod tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(1)
-            .connect(&admin_url)
+            .connect_with(crate::connect_options(&admin_url).expect("admin URL"))
             .await
             .expect("connect after delayed PostgreSQL startup");
         let server_version = sqlx::query_scalar::<_, String>("SHOW server_version")
@@ -358,7 +359,7 @@ mod tests {
         let admin_url = admin_database_url().await.to_owned();
         let pool = PgPoolOptions::new()
             .max_connections(1)
-            .connect(&admin_url)
+            .connect_with(crate::connect_options(&admin_url).expect("admin URL"))
             .await
             .expect("connect to shared PostgreSQL for initializer test");
         let server_version = sqlx::query_scalar::<_, String>("SHOW server_version")

@@ -1,5 +1,4 @@
 use std::io;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -10,7 +9,7 @@ use runledger_postgres::jobs::{
 use runledger_postgres::{CommitUnconfirmed, Error};
 use runledger_test_support::{setup_ephemeral_pool, teardown_ephemeral_pool};
 use serde_json::json;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::postgres::{PgPoolOptions, PgSslMode};
 use sqlx::types::Uuid;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -32,7 +31,7 @@ struct CommitAcknowledgementDropProxy {
 
 impl CommitAcknowledgementDropProxy {
     async fn connect(database_url: &str) -> Self {
-        let target_options = PgConnectOptions::from_str(database_url)
+        let target_options = runledger_test_support::connect_options(database_url)
             .expect("parse ephemeral PostgreSQL connection options")
             .ssl_mode(PgSslMode::Disable);
         let target = (

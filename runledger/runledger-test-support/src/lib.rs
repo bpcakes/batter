@@ -7,6 +7,7 @@ mod container_lifecycle;
 mod container_start;
 mod db_lifecycle;
 mod docker;
+mod endpoint;
 mod env;
 mod postgres_container;
 
@@ -16,4 +17,5 @@ pub use db_lifecycle::{
     setup_ephemeral_pool_with_untracked_migrations, setup_unmigrated_ephemeral_pool,
     teardown_ephemeral_pool,
 };
+pub use endpoint::{AmbientHostAddress, connect_options};
 pub use env::ScopedEnv;

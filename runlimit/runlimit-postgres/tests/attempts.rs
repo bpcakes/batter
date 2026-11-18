@@ -31,7 +31,7 @@ impl Database {
             .expect("disposable PostgreSQL URL required");
         let admin = PgPoolOptions::new()
             .max_connections(2)
-            .connect(&url)
+            .connect_with(cleanup::endpoint::test_connect_options(&url))
             .await
             .unwrap();
         let schema = format!(
@@ -59,7 +59,7 @@ impl Database {
                     Ok(())
                 })
             })
-            .connect(&url)
+            .connect_with(cleanup::endpoint::test_connect_options(&url))
             .await
             .unwrap();
         PostgresAttemptLimiter::new(pool.clone())

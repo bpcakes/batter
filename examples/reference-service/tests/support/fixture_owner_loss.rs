@@ -15,7 +15,7 @@ pub async fn waiter_loss() -> ProbeResult {
     let harness = super::harness().await?;
     let admin = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let (send, receive) = oneshot::channel();
     let run = FixtureSuite::new(harness.clone()).start(move |scope| {
@@ -57,7 +57,7 @@ pub async fn runtime_loss() -> ProbeResult {
     let harness = super::harness().await?;
     let admin = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let owned_harness = harness.clone();
     let (send_run, receive_run) = oneshot::channel();

@@ -27,11 +27,11 @@ where
     let harness = super::harness().await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let session_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let session_observer = batter::sqlx::test_support::SessionObserver::new(
         session_pool.clone(),
@@ -161,7 +161,7 @@ pub async fn close_order_and_resumable_wait() -> ProbeResult {
     let harness = super::harness().await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let (sender, receiver) = oneshot::channel();
     let mut run = FixtureSuite::new(harness).start(move |scope| {
@@ -284,7 +284,7 @@ async fn low_level_partial() -> ProbeResult {
     let harness = super::harness().await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let suite = FixtureSuite::new(harness.clone());
     let names = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -334,7 +334,7 @@ pub async fn pending_pool_error() -> ProbeResult {
     let url = url.expose_secret().to_owned();
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&url)
+        .connect_with(batter::sqlx::connect_options(&url)?)
         .await?;
     let body_observer = observer.clone();
     let calls = Arc::new(AtomicUsize::new(0));

@@ -145,7 +145,7 @@ async fn low_level_rejection(role: &str, password: &str) -> ProbeResult {
     let harness = super::harness().await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(harness.admin_database_url())
+        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
         .await?;
     let suite = FixtureSuite::new(harness.clone());
     let names = Arc::new(Mutex::new(Vec::new()));

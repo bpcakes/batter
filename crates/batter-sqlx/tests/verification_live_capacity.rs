@@ -11,11 +11,8 @@ use batter_sqlx::verification::{
     AllowedPrivilege, FindingKind, Identifier, ObjectPrivilege, QualifiedName, RelationPolicy,
     RolePolicy, VerificationStatus, verify,
 };
-use sqlx::{
-    Connection, PgConnection,
-    postgres::{PgConnectOptions, PgPoolOptions},
-};
-use std::{str::FromStr, time::Duration};
+use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
+use std::time::Duration;
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
@@ -29,8 +26,12 @@ async fn verification_uses_one_snapshot_for_concurrent_acl_changes() -> Result {
     fixture
         .run(move |fixture| {
             Box::pin(async move {
-                let mut blocker = PgConnection::connect(&fixture.url).await?;
-                let mut mutator = PgConnection::connect(&fixture.url).await?;
+                let mut blocker =
+                    PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)
+                        .await?;
+                let mut mutator =
+                    PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)
+                        .await?;
                 // Ownership avoids a membership lookup during the early ledger
                 // lock; this barrier exercises the later catalog snapshot read.
                 exec(
@@ -217,8 +218,8 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
     let fixture = AuthorityFixture::create().await?;
     let names = fixture.names.clone();
     fixture.run(move |fixture| Box::pin(async move {
-        let mut blocker = PgConnection::connect(&fixture.url).await?;
-        let mut observer = PgConnection::connect(&fixture.url).await?;
+        let mut blocker = PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?).await?;
+        let mut observer = PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?).await?;
         sqlx::query("BEGIN").execute(&mut blocker).await?;
         let lock_table = format!(
             "LOCK TABLE {}.{} IN ACCESS EXCLUSIVE MODE",
@@ -228,7 +229,7 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
         sqlx::query(sqlx::AssertSqlSafe(lock_table))
             .execute(&mut blocker)
             .await?;
-        let options = PgConnectOptions::from_str(&fixture.url)?
+        let options = batter_sqlx::connect_options(&fixture.url)?
             .username(&names.login_a)
             .password(&fixture.password);
         let pool = PgPoolOptions::new()

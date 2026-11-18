@@ -83,6 +83,8 @@ impl FixtureScope {
     /// Initializers must explicitly close any pools they create before returning.
     /// Preparation is an owned producer, so its initializer must be Send and static.
     /// Cancelling this waiter does not cancel preparation or discard its failure.
+    /// Refuses with [`crate::AmbientHostAddress`] before the initializer receives
+    /// the URL while `PGHOSTADDR` is set, as [`super::FixtureSuite::template`] does.
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
@@ -100,6 +102,9 @@ impl FixtureScope {
                     // Native template Drop can retain an initializing database. Turn
                     // initializer panic into its returned-error path so upstream
                     // awaits abort and preserves any independent abort failure.
+                    // Refuse before caller code receives the URL, so an ambient
+                    // `PGHOSTADDR` cannot send initializer logins to another server.
+                    crate::refuse_ambient_host_address()?;
                     tokio::spawn(with_current_dispatch(async move { initializer(url).await }))
                         .await
                         .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
