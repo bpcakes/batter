@@ -1,27 +1,29 @@
 //! PostgreSQL URLs reach SQLx only through an endpoint boundary that refuses
-//! an ambient `PGHOSTADDR`.
+//! an ambient or declared `hostaddr`.
 //!
-//! SQLx 0.9.1, like libpq, connects to an ambient `PGHOSTADDR` instead of a
-//! URL's host whenever the URL has no `hostaddr` parameter, and its options
-//! offer no way to read or clear that address. Every checked-in Rust source in
-//! the workspace members and the standalone consumers therefore turns a URL
-//! into native options only through `batter_sqlx::connect_options` (also
-//! `batter::sqlx::connect_options`), native Runledger's
+//! SQLx 0.9.1 connects to an ambient `PGHOSTADDR` instead of a URL's host,
+//! checks a Unix socket before a declared `hostaddr`, and offers no way to read
+//! or clear the address. Every checked-in Rust source in the workspace members
+//! and the standalone consumers therefore turns a URL into native options only
+//! through `batter_sqlx::connect_options` (also `batter::sqlx::connect_options`
+//! and `runledger_postgres::connect_options`), native Runledger's
 //! `runledger_test_support::connect_options` or Runlimit's private live-test
-//! helper. The scan rejects the URL-taking SQLx forms everywhere else:
-//! `PgConnection::connect`, `PgPool::connect`/`connect_lazy`, pool
-//! `connect`/`connect_lazy` with a non-literal URL,
-//! `PgConnectOptions::from_str`/`from_url`, typed `parse`, and an inferred-type
-//! `parse` whose line mentions a URL unless it names another target type.
+//! helper.
 //!
-//! Literal placeholder URLs passed to `connect_lazy` never connect and are
-//! allowed. Options built with `new_without_pgpass` and setters are not
-//! scanned; their connecting call sites call
-//! `batter_sqlx::refuse_ambient_host_address` first. Named exemptions below are
-//! the boundaries themselves, native operator roots that keep libpq semantics
-//! and files whose `connect` calls are TLS or TCP, not SQLx. Comments are not
-//! scanned. This is a source check, not a proof that no dependency or
-//! generated program parses a URL.
+//! Clippy's `disallowed-methods`, configured in the root, `runledger/` and
+//! `runlimit/` `clippy.toml` files, is the primary check: it resolves aliases
+//! and inferred types for the URL-taking `Pool`/`PoolOptions` `connect` and
+//! `connect_lazy`, `Connection::connect`, `ConnectOptions::from_url` and
+//! `PgListener::connect` in every workspace crate. This text scan adds what
+//! Clippy cannot express or does not lint: `PgConnectOptions::from_str`, typed
+//! `parse` and inferred-type `parse` on a line naming a URL, for the workspace
+//! and the standalone consumers, plus the call forms for those consumers.
+//! Options built with `new_without_pgpass` and setters are not scanned; their
+//! connecting call sites call `batter_sqlx::refuse_ambient_host_address` first,
+//! and inert placeholders use an unreachable port. Named exemptions below are
+//! the boundaries themselves and files whose `connect` calls are TLS or TCP,
+//! not SQLx. Comments are not scanned. This is a source check, not a proof that
+//! no dependency or generated program parses a URL.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
@@ -31,7 +33,7 @@ use std::{
 };
 
 /// Files allowed to contain URL-taking SQLx forms, with the reason.
-const EXEMPT: [(&str, &str); 10] = [
+const EXEMPT: [(&str, &str); 7] = [
     (
         "crates/batter/tests/postgres_endpoint_boundary.rs",
         "this scan's own pattern and fixture strings",
@@ -47,18 +49,6 @@ const EXEMPT: [(&str, &str); 10] = [
     (
         "runlimit/runlimit-postgres/tests/support/endpoint.rs",
         "the native Runlimit live-test boundary itself",
-    ),
-    (
-        "runledger/runledger-tui/src/database.rs",
-        "native operator root; honours PGHOSTADDR like psql",
-    ),
-    (
-        "runledger/runledger-postgres/examples/support/database.rs",
-        "native example root; keeps libpq semantics",
-    ),
-    (
-        "runledger/runledger-runtime/examples/support/database.rs",
-        "native example root; keeps libpq semantics",
     ),
     (
         "crates/batter-axum/tests/tls_serving/support.rs",
@@ -127,10 +117,6 @@ fn argument_after(line: &str, open: usize) -> &str {
     line[open..].trim_start()
 }
 
-fn allowed_lazy_argument(argument: &str) -> bool {
-    argument.starts_with('"') || argument.starts_with("UNUSED_LAZY_POOL_URL")
-}
-
 /// An inferred-type `.parse()` whose receiver names a URL: the target type is
 /// invisible to a text scan, so every such parse is treated as SQLx's unless
 /// the line names another target type.
@@ -185,6 +171,9 @@ fn violations(line: &str) -> Vec<&'static str> {
     for (constructor, name) in [
         ("Pool::connect(", "Pool::connect(url)"),
         ("Pool::connect_lazy(", "Pool::connect_lazy(url)"),
+        ("DbPool::connect(", "Pool::connect(url)"),
+        ("DbPool::connect_lazy(", "Pool::connect_lazy(url)"),
+        ("PgListener::connect(", "PgListener::connect(url)"),
         (">::connect(", "Pool::connect(url)"),
         (">::connect_lazy(", "Pool::connect_lazy(url)"),
     ] {
@@ -201,8 +190,7 @@ fn violations(line: &str) -> Vec<&'static str> {
             let open = from + offset + method.len();
             let argument = argument_after(code, open);
             let empty = argument.starts_with(')');
-            let placeholder = method == ".connect_lazy(" && allowed_lazy_argument(argument);
-            if !empty && !placeholder {
+            if !empty {
                 found.push(name);
             }
             from = open;
@@ -228,14 +216,18 @@ fn detector_recognizes_every_url_taking_form_and_its_allowances() {
         "    let pool = PgPool::connect(&url).await?;",
         "    let pool = sqlx::PgPool::connect_lazy(&url)?;",
         "    let pool = Pool::<Postgres>::connect(&url).await?;",
+        "    let pool = DbPool::connect(&url).await?;",
+        "    let listener = PgListener::connect(&url).await?;",
+        "        .connect_lazy(\"postgres://db.example/jobs\")",
+        "        .connect_lazy(UNUSED_LAZY_POOL_URL)",
     ] {
         assert!(!violations(line).is_empty(), "{line}");
     }
     for line in [
         "        .connect_with(batter::sqlx::connect_options(&url)?)",
-        "        .connect_lazy(\"postgres://unused@127.0.0.1:1/unused\")",
-        "        .connect_lazy(UNUSED_LAZY_POOL_URL)",
+        "        .connect_lazy_with(PgConnectOptions::new_without_pgpass().host(\"127.0.0.1\").port(1))",
         "    let mut probe = options.connect().await?;",
+        "    let listener = PgListener::connect_with(&pool).await?;",
         "    // PgConnection::connect(&url) in a comment",
         "    /// let o: PgConnectOptions = url.parse()?;",
         "let options = batter_sqlx::connect_options(url)?;",

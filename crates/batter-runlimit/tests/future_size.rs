@@ -42,9 +42,9 @@ fn bounded(name: &str, future: impl Future + Send) {
 }
 
 fn lazy_pool() -> sqlx::PgPool {
-    sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://unused@127.0.0.1:1/unused")
-        .unwrap()
+    sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
+        batter_sqlx::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
+    )
 }
 
 /// Register expiry cleanup on a supervisor that is never started.

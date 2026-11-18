@@ -22,10 +22,12 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::types::Uuid;
 
 fn disconnected_pool() -> DbPool {
-    PgPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy("postgres://runledger:runledger@127.0.0.1:1/runledger")
-        .expect("create lazy pool")
+    PgPoolOptions::new().max_connections(1).connect_lazy_with(
+        runledger_test_support::connect_options(
+            "postgres://runledger:runledger@127.0.0.1:1/runledger",
+        )
+        .expect("create lazy pool"),
+    )
 }
 
 async fn register_job_definition(pool: &DbPool, job_type: JobType<'static>) {

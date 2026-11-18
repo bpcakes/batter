@@ -6,9 +6,10 @@ use std::{future::ready, time::Duration};
 use tokio::time::timeout;
 
 async fn closed_pool() -> runledger_postgres::DbPool {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .expect("valid lazy pool");
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        runledger_test_support::connect_options("postgres://unused:unused@127.0.0.1:1/unused")
+            .expect("valid lazy pool"),
+    );
     // No runtime loop can complete any database operation against this pool.
     pool.close().await;
     pool

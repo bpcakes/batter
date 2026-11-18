@@ -1023,11 +1023,12 @@ setters. Both refuse with `AmbientHostAddress` inside
 `sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
 value; other PG* variables stay native defaults that explicit URL parts and
 setters override. SQLx 0.9.1 also checks a Unix socket before an explicit
-`hostaddr`: a `host=/dir` parameter, or `PGHOST` or local socket discovery for
-a URL with no host, silently replaces it. `connect_options` therefore refuses
-with `HostAddressShadowedBySocket` when the URL declares `hostaddr` and the
-options would use a socket; socket-only URLs and TCP hosts are accepted. The process must not change its environment between the
-check and connection.
+`hostaddr` (a `host=/dir` parameter, or `PGHOST` or local socket discovery for
+a URL with no host), so servers are selected only by host or socket:
+`connect_options` refuses with `DeclaredHostAddress` whenever the URL's query
+declares `hostaddr`, in any spelling, and setter-built options must not call
+the native `hostaddr` setter. Socket-only and TCP-host URLs are accepted. The
+process must not change its environment between the check and connection.
 
 ```rust,no_run
 # async fn example(database_url: &str) -> Result<(), sqlx::Error> {
@@ -1038,10 +1039,15 @@ let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(options);
 # }
 ```
 
-Every checked-in test, example and standalone consumer follows this rule;
-`crates/batter/tests/postgres_endpoint_boundary.rs` rejects the URL-taking
-forms elsewhere. It is a source check over this repository, not a guarantee
-about application code or dependencies.
+Every checked-in test, example and standalone consumer follows this rule.
+Clippy's `disallowed-methods` in the repository's `clippy.toml` files rejects
+the URL-taking `Pool`/`PoolOptions` `connect`/`connect_lazy`,
+`Connection::connect`, `ConnectOptions::from_url` and `PgListener::connect` in
+every workspace crate, resolving aliases such as `DbPool`; downstream
+applications can copy that configuration. `crates/batter/tests/postgres_endpoint_boundary.rs`
+adds a text scan for `from_str` and `parse`, which Clippy cannot restrict by
+target type, and for the standalone consumers. Both are checks over this
+repository, not guarantees about application code or dependencies.
 
 ## Optional fixture support
 

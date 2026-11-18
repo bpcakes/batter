@@ -60,9 +60,9 @@ fn config() -> JobsConfig {
 
 #[tokio::test(start_paused = true)]
 async fn native_local_initialization_requires_no_database_or_durable_witness() {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .unwrap();
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        batter_sqlx::connect_options("postgres://unused:unused@127.0.0.1:1/unused").unwrap(),
+    );
     pool.close().await;
     let mut process = process();
     let prepared = runledger_runtime::Supervisor::builder(&pool, config())
@@ -92,9 +92,9 @@ async fn native_local_initialization_requires_no_database_or_durable_witness() {
 
 #[tokio::test(start_paused = true)]
 async fn protected_startup_owns_native_local_initialization_and_settlement() {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .unwrap();
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        batter_sqlx::connect_options("postgres://unused:unused@127.0.0.1:1/unused").unwrap(),
+    );
     pool.close().await;
     let prepared = runledger_runtime::Supervisor::builder(&pool, config())
         .unwrap()
@@ -143,9 +143,9 @@ async fn rejected_registration_and_unstarted_drop_never_build_native_work() {
         OperationContext,
         runledger_runtime::PreparedSupervisor,
     ) -> Result<(), batter_core::RegistrationError> = register;
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .unwrap();
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        batter_sqlx::connect_options("postgres://unused:unused@127.0.0.1:1/unused").unwrap(),
+    );
     pool.close().await;
     tokio::task::yield_now().await;
     let runtime = tokio::runtime::Handle::current();
@@ -171,9 +171,9 @@ async fn rejected_registration_and_unstarted_drop_never_build_native_work() {
 
 #[tokio::test(start_paused = true)]
 async fn native_validation_failure_keeps_original_error_and_runs_dependency_cleanup() {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .unwrap();
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        batter_sqlx::connect_options("postgres://unused:unused@127.0.0.1:1/unused").unwrap(),
+    );
     let mut process = process();
     let closed = pool.clone();
     process

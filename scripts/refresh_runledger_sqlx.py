@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from urllib.parse import parse_qsl, urlsplit
 
 from runledger_source import copy_source, run
 
@@ -64,6 +65,10 @@ def refresh(root):
     if "PGHOSTADDR" in os.environ:
         # psql and SQLx CLI 0.9.1 connect to it instead of DATABASE_URL's host.
         raise ValueError("unset PGHOSTADDR: psql and SQLx CLI would connect to it instead of DATABASE_URL's host")
+    if any(key == "hostaddr" for key, _ in parse_qsl(urlsplit(database).query, keep_blank_values=True)):
+        # psql honours it, but SQLx CLI 0.9.1 can use a Unix socket instead,
+        # so the two tools could inspect and migrate different servers.
+        raise ValueError("remove hostaddr from DATABASE_URL: psql and SQLx CLI could connect to different servers")
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
         raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")

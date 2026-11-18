@@ -8,7 +8,7 @@ use runlimit_core::{
 };
 use runlimit_memory::{MemoryBatchError, MemoryStore, MemoryStoreConfig};
 use runlimit_postgres::{BatchCheckError, PostgresLimiter};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 async fn check_batch<L>(
     limiter: &L,
@@ -56,9 +56,11 @@ async fn one_generic_function_swaps_between_backends() {
         MemoryStoreConfig::new(4).expect("test memory-store configuration is valid"),
     );
     let postgres = PostgresLimiter::new(
-        PgPoolOptions::new()
-            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
-            .expect("test database URL is valid"),
+        PgPoolOptions::new().connect_lazy_with(
+            PgConnectOptions::new_without_pgpass()
+                .host("127.0.0.1")
+                .port(1),
+        ),
     );
     let single_policy = policy("single", 2);
     let single_check = Check::new(key(9).bind(&single_policy));

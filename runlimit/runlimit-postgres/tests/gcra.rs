@@ -17,7 +17,10 @@ use runlimit_postgres::{
     BatchCheckError, CREATE_RUNLIMIT_GCRA_SQL, CheckError, GCRA_MIGRATOR,
     INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL, MIGRATOR, PostgresConfig, PostgresGcraLimiter,
 };
-use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
+use sqlx::{
+    AssertSqlSafe, PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 use tokio::sync::Barrier;
 
 #[path = "gcra/clock.rs"]
@@ -185,9 +188,11 @@ fn migration_streams_are_independent_and_trait_remains_generic() {
 
 #[tokio::test]
 async fn invalid_batches_and_unpolled_futures_do_not_access_the_database() {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgresql://invalid:invalid@127.0.0.1:1/invalid")
-        .unwrap();
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        PgConnectOptions::new_without_pgpass()
+            .host("127.0.0.1")
+            .port(1),
+    );
     let recorder = Arc::new(Recorder::default());
     let limiter = PostgresGcraLimiter::new(pool).with_observer(recorder.clone());
     let policy = policy(1, 1000, 1);

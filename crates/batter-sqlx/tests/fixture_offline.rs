@@ -197,10 +197,9 @@ fn synthetic_report_preserves_every_failure_branch_and_redacts_contents() {
 #[tokio::test]
 async fn session_observation_rejects_unusable_budgets_before_acquisition() {
     use batter_sqlx::test_support::{FixtureError, SessionObserver};
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy("postgres://probe@localhost/unused")
-        .unwrap();
+    let pool = PgPoolOptions::new().max_connections(1).connect_lazy_with(
+        batter_sqlx::connect_options("postgres://probe@localhost/unused").unwrap(),
+    );
     for bound in [std::time::Duration::ZERO, std::time::Duration::MAX] {
         assert!(matches!(
             SessionObserver::new(pool.clone(), bound),

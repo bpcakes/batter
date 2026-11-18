@@ -257,11 +257,23 @@ fn build_database_name(prefix: &str) -> String {
     format!("{}_{}_{}", compact_prefix, std::process::id(), index)
 }
 
+/// Replace the admin URL's database while keeping its endpoint and other
+/// query settings, so the lease connects where the database was created. A
+/// `dbname` parameter would override the path, so it is dropped.
 fn with_database_name(admin_url: &str, database_name: &str) -> String {
-    let (base, _) = admin_url
-        .rsplit_once('/')
-        .expect("DATABASE_URL must include database name");
-    format!("{base}/{database_name}")
+    let mut url = url::Url::parse(admin_url).expect("admin database URL must be a valid URL");
+    url.set_path(&format!("/{database_name}"));
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| key != "dbname")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        url.set_query(None);
+    } else {
+        url.query_pairs_mut().clear().extend_pairs(kept);
+    }
+    url.into()
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -305,6 +317,21 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn derived_database_url_keeps_endpoint_settings_and_drops_dbname() {
+        assert_eq!(
+            with_database_name("postgres://u:p@127.0.0.1:5432/postgres", "lease_1"),
+            "postgres://u:p@127.0.0.1:5432/lease_1"
+        );
+        assert_eq!(
+            with_database_name(
+                "postgres://u:p@db.invalid/postgres?host=other.invalid&dbname=postgres&sslmode=disable",
+                "lease_1"
+            ),
+            "postgres://u:p@db.invalid/lease_1?host=other.invalid&sslmode=disable"
+        );
+    }
 
     const CLEANUP_ATTEMPTS: usize = 100;
     const CLEANUP_POLL_INTERVAL: Duration = Duration::from_millis(50);

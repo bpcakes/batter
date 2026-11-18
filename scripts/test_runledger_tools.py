@@ -124,6 +124,19 @@ class RefreshTests(unittest.TestCase):
                 command.assert_not_called()
                 psql.assert_not_called()
 
+    def test_declared_host_address_is_refused_before_any_command(self):
+        for secret in ('postgresql://user:private-marker@db.invalid/database?hostaddr=192.0.2.1',
+                       'postgresql://user:private-marker@/database?host=/tmp&host%61ddr=127.0.0.1'):
+            with self.subTest(url=secret), \
+                 patch.dict(os.environ, DATABASE_URL=secret), \
+                 patch('refresh_runledger_sqlx.run') as command, \
+                 patch('refresh_runledger_sqlx.subprocess.run') as psql:
+                with self.assertRaisesRegex(ValueError, 'remove hostaddr') as error:
+                    refresh(Path.cwd())
+                self.assertNotIn('private-marker', str(error.exception))
+                command.assert_not_called()
+                psql.assert_not_called()
+
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'
         with patch.dict(os.environ, DATABASE_URL=secret), \

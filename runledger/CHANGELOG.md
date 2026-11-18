@@ -379,15 +379,18 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
   runs outside a block and only warns. No schema or persisted data changes.
 - Add `runledger_test_support::{connect_options, AmbientHostAddress,
-  HostAddressShadowedBySocket}` and
-  `EphemeralDatabase::connect_options` (`batter-c5ci.1`). SQLx 0.9.1 would
-  connect to an ambient `PGHOSTADDR` instead of a fixture URL's host, so shared
-  startup refuses before any container starts and every fixture connection,
-  including teardown, refuses inside `sqlx::Error::Configuration`, as does a
-  URL whose declared `hostaddr` a Unix socket would replace. Native tests
-  now build fixture options through these. Unset `PGHOSTADDR` for native test
-  runs. `runledger-tui` and the native examples keep libpq semantics and honour
-  `PGHOSTADDR` like `psql`.
+  DeclaredHostAddress}` and `EphemeralDatabase::connect_options`
+  (`batter-c5ci.1`). SQLx 0.9.1 would connect to an ambient `PGHOSTADDR`
+  instead of a fixture URL's host, and can replace a declared `hostaddr` with a
+  Unix socket, so shared startup refuses `PGHOSTADDR` before any container
+  starts and every fixture connection, including teardown, refuses either form
+  inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
+  the admin URL's query and drop only `dbname`. Native tests build fixture
+  options through these; unset `PGHOSTADDR` for native test runs.
+- `runledger_postgres` re-exports the SQLx foundation's `connect_options`,
+  `AmbientHostAddress` and `DeclaredHostAddress`. `runledger-tui` and the native
+  examples now build options through it, so they refuse an ambient or declared
+  `hostaddr` instead of connecting where SQLx 0.9.1 would.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

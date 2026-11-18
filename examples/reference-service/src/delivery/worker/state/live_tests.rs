@@ -52,8 +52,9 @@ fn finish<T>(body: Result<T, BoxError>, cleanup: Result<(), BoxError>) -> Result
 
 #[tokio::test]
 async fn returned_storage_failure_retains_known_provider_delay() -> Result<(), BoxError> {
-    let pool =
-        PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
+    let pool = PgPoolOptions::new().connect_lazy_with(batter::sqlx::connect_options(
+        "postgres://fixture:fixture@127.0.0.1:9/fixture",
+    )?);
     let worker = worker(&pool)?;
     pool.close().await;
     let payload = inert_payload();
@@ -99,8 +100,9 @@ fn inert_payload() -> DeliveryJobPayload {
 
 #[tokio::test]
 async fn terminal_writers_reject_terminal_sources_before_sql_acquisition() -> Result<(), BoxError> {
-    let pool =
-        PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
+    let pool = PgPoolOptions::new().connect_lazy_with(batter::sqlx::connect_options(
+        "postgres://fixture:fixture@127.0.0.1:9/fixture",
+    )?);
     let worker = worker(&pool)?;
     pool.close().await;
     let payload = inert_payload();

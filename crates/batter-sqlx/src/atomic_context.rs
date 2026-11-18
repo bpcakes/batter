@@ -203,9 +203,9 @@ mod tests {
 
     #[tokio::test]
     async fn unpolled_and_cancelled_atomic_work_never_acquires_or_invokes_callback() {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://unused@127.0.0.1:1/unused")
-            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
+            crate::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
+        );
         let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
         let context = owner.context().clone();
         let called = AtomicUsize::new(0);

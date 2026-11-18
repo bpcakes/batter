@@ -450,8 +450,9 @@ pass them to `connect_with` or `connect_lazy_with`; call
 `refuse_ambient_host_address()?` before connecting with setter-built options.
 SQLx 0.9.1 otherwise connects to an ambient `PGHOSTADDR` instead of the
 selected host. Both refuse with `AmbientHostAddress` while it is set, and
-`connect_options` refuses with `HostAddressShadowedBySocket` when a Unix
-socket would replace a URL's `hostaddr`; see the
+`connect_options` refuses with `DeclaredHostAddress` when a URL declares
+`hostaddr`, which SQLx 0.9.1 can replace with a Unix socket. Select servers by
+URL host or socket only; see the
 [endpoint boundary](../crates/batter-sqlx/README.md#postgresql-endpoint-boundary).
 
 `PgLease::acquire`, `PgQueryHandle` helpers and every `run_atomic*` runner

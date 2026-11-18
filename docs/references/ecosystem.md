@@ -68,18 +68,23 @@ contracts cite:
   `AmbientHostAddress` whenever `PGHOSTADDR` is present. Fixture resolution,
   template initializers, every Batter test, example and consumer, native
   Runledger fixtures (`runledger_test_support::connect_options`) and Runlimit's
-  live tests use it or its native counterpart, and a source scan rejects the
-  URL-taking SQLx forms elsewhere. `runledger-tui` and the native examples keep
-  libpq semantics. Application pools that bypass the boundary remain exposed.
-  Relatedly, `make_socket_path` in
+  live tests use it or its native counterpart. Relatedly, `make_socket_path` in
   [`options/mod.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/mod.rs)
   is checked before `hostaddr`, and `default_host` returns a discovered socket
   directory (`/var/run/postgresql`, `/private/tmp`, `/tmp`) for a URL with no
   host, so `postgres:///db?hostaddr=127.0.0.1` uses that socket; in 0.9.0 the
-  `hostaddr` parameter replaced the host. The boundaries refuse that
-  combination with `HostAddressShadowedBySocket`. An external review observed
-  the socket selection with a local listener probe; the checked-in tests cover
-  the explicit `host=/dir` form only, since discovery depends on the machine.
+  `hostaddr` parameter replaced the host. An external review observed the
+  socket selection with a local listener probe. After four review rounds kept
+  finding further `hostaddr` divergences (templates, native roots, the
+  metadata refresh, derived database URLs), the boundaries select servers by
+  host or socket only and also refuse a declared URL `hostaddr` with
+  `DeclaredHostAddress`; `runledger-tui` and the native examples use the same
+  boundary through `runledger_postgres::connect_options`, and the metadata
+  refresh refuses both forms. Derived Runledger fixture URLs now keep the
+  admin URL's query and drop only `dbname`. Clippy `disallowed-methods`
+  resolves the URL-taking constructors, including the `DbPool` alias and
+  `PgListener::connect`, and a text scan covers `parse`. Application pools that
+  bypass the boundary remain exposed.
 - A `.sql` file in a migration directory that does not match
   `<VERSION>_<DESCRIPTION>.sql` is now a resolve error
   ([#4367](https://github.com/transact-rs/sqlx/pull/4367)). Every checked-in

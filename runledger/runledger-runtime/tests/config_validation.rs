@@ -21,9 +21,9 @@ use tokio::time::timeout;
 const UNUSED_LAZY_POOL_URL: &str = "postgres://postgres:postgres@127.0.0.1:65535/runledger";
 
 fn lazy_pool() -> runledger_postgres::DbPool {
-    PgPoolOptions::new()
-        .connect_lazy(UNUSED_LAZY_POOL_URL)
-        .expect("construct lazy pool")
+    PgPoolOptions::new().connect_lazy_with(
+        runledger_test_support::connect_options(UNUSED_LAZY_POOL_URL).expect("construct lazy pool"),
+    )
 }
 
 fn test_config() -> JobsConfig {

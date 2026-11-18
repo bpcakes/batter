@@ -381,8 +381,9 @@ pub(super) fn returned_failure(run: HandlerRun) -> JobFailure {
 }
 
 async fn offline_worker() -> Result<DeliveryWorker, batter::BoxError> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
+    let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
+        batter::sqlx::connect_options("postgres://fixture:fixture@127.0.0.1:9/fixture")?,
+    );
     pool.close().await;
     Ok(DeliveryWorker::new(
         pool,

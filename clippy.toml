@@ -4,3 +4,18 @@ max-fn-params-bools = 0
 # A panic is the assertion inside tests; production and example code still
 # propagates or states the invariant with expect.
 allow-unwrap-in-tests = true
+
+# SQLx 0.9.1 connects a URL-taking constructor to an ambient or declared
+# `hostaddr` (or a Unix socket in its place) instead of the URL host. Build
+# options with the endpoint boundary (`batter_sqlx::connect_options`,
+# `runledger_test_support::connect_options` or Runlimit's live-test helper) and
+# pass them to the `_with` variant. Paths resolve only where SQLx is linked.
+disallowed-methods = [
+    { path = "sqlx_core::pool::Pool::connect", reason = "use connect_with(endpoint-boundary options)", allow-invalid = true },
+    { path = "sqlx_core::pool::Pool::connect_lazy", reason = "use connect_lazy_with(endpoint-boundary options)", allow-invalid = true },
+    { path = "sqlx_core::pool::options::PoolOptions::connect", reason = "use connect_with(endpoint-boundary options)", allow-invalid = true },
+    { path = "sqlx_core::pool::options::PoolOptions::connect_lazy", reason = "use connect_lazy_with(endpoint-boundary options)", allow-invalid = true },
+    { path = "sqlx_core::connection::Connection::connect", reason = "use connect_with(&endpoint-boundary options)", allow-invalid = true },
+    { path = "sqlx_core::connection::ConnectOptions::from_url", reason = "use the endpoint boundary", allow-invalid = true },
+    { path = "sqlx_postgres::listener::PgListener::connect", reason = "use connect_with on a pool built from endpoint-boundary options", allow-invalid = true },
+]

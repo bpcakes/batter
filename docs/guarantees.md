@@ -1931,10 +1931,11 @@ custom type. See the
 `connect_options` and `refuse_ambient_host_address` refuse, before parsing or
 connecting, whenever `PGHOSTADDR` is set, so options they admit connect to the
 URL or setter host rather than an ambient address. `connect_options` also
-refuses a URL whose declared `hostaddr` a Unix socket would replace. This holds only if the
-process environment does not change before connection, and only for options
-built through them; a repository source scan, not the type system, keeps
-checked-in code on that path. Other PG* defaults and native credential
+refuses any URL that declares `hostaddr`, so admitted URLs select their server
+by host or socket alone. This holds only if the process environment does not
+change before connection, and only for options built through them. Clippy
+`disallowed-methods` and a source scan, not the type system, keep checked-in
+code on that path. Other PG* defaults and native credential
 exposure are unchanged.
 The low-level session has no typed transaction lifecycle, and raw transaction-control
 SQL carries no typed atomic-result guarantee. If the return-time cleanup reports

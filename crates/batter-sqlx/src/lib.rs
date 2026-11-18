@@ -77,7 +77,7 @@ pub use atomic_runner::{
 /// completion/cleanup and are not equivalent to the protected runners or [`pool_in`].
 pub mod low_level;
 pub use endpoint::{
-    AmbientHostAddress, HostAddressShadowedBySocket, connect_options, refuse_ambient_host_address,
+    AmbientHostAddress, DeclaredHostAddress, connect_options, refuse_ambient_host_address,
 };
 pub use failure::{FailureClass, SqlxFailure};
 pub use native_query::PgNativeQuery;

@@ -141,9 +141,10 @@ mod tests {
         // A closed native pool makes acquisition fail without network I/O.
         // Exercise the real hint failure boundary, including sub-floor and
         // non-round intervals, independently of loop scheduling tolerance.
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/hint_interval_test")
-            .expect("valid lazy pool");
+        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
+            runledger_test_support::connect_options("postgres://localhost/hint_interval_test")
+                .expect("valid lazy pool"),
+        );
         pool.close().await;
         for configured in [Duration::from_millis(73), Duration::from_millis(37_123)] {
             assert_eq!(until_next_due_fire(&pool, configured).await, configured);

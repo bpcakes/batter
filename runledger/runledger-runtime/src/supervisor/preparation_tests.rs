@@ -17,9 +17,10 @@ fn owner_runtime() -> tokio::runtime::Runtime {
 
 fn prepared_disabled_supervisor(runtime: &tokio::runtime::Runtime) -> PreparedSupervisor {
     let _entered = runtime.enter();
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .expect("valid inert pool URL");
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        runledger_test_support::connect_options("postgres://unused:unused@127.0.0.1:1/unused")
+            .expect("valid inert pool URL"),
+    );
     Supervisor::builder(&pool, test_config())
         .expect("owner runtime is entered during preparation")
         .disable_worker()
@@ -211,9 +212,10 @@ fn off_runtime_shutdown_collects_finished_loops_and_descendants() {
 
 #[tokio::test]
 async fn dropping_preparation_starts_no_native_tasks() {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .expect("valid inert pool URL");
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        runledger_test_support::connect_options("postgres://unused:unused@127.0.0.1:1/unused")
+            .expect("valid inert pool URL"),
+    );
     pool.close().await;
     tokio::task::yield_now().await;
     let runtime = tokio::runtime::Handle::current();
@@ -233,9 +235,10 @@ async fn dropping_preparation_starts_no_native_tasks() {
 #[tokio::test]
 async fn preparation_owns_its_pool_and_selected_loops() {
     let prepared = {
-        let pool = PgPoolOptions::new()
-            .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-            .expect("valid inert pool URL");
+        let pool = PgPoolOptions::new().connect_lazy_with(
+            runledger_test_support::connect_options("postgres://unused:unused@127.0.0.1:1/unused")
+                .expect("valid inert pool URL"),
+        );
         pool.close().await;
         Supervisor::builder(&pool, test_config())
             .expect("test runtime exists")
@@ -266,9 +269,10 @@ async fn preparation_owns_its_pool_and_selected_loops() {
 
 #[tokio::test]
 async fn preparation_rejects_missing_registry_without_starting_tasks() {
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
-        .expect("valid inert pool URL");
+    let pool = PgPoolOptions::new().connect_lazy_with(
+        runledger_test_support::connect_options("postgres://unused:unused@127.0.0.1:1/unused")
+            .expect("valid inert pool URL"),
+    );
     pool.close().await;
     tokio::task::yield_now().await;
     let runtime = tokio::runtime::Handle::current();
