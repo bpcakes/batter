@@ -5,15 +5,14 @@
 use super::support::{assert_finished, budget, finished};
 use crate::capture::Capture;
 use axum::{
-    Router,
     body::{Body, Bytes},
-    http::{HeaderMap, HeaderName, HeaderValue, Version, header},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, HeaderName, HeaderValue, header},
+    response::Response,
     routing::get as route,
 };
 use batter_axum::{
     AdmittedRequest, BodyBudget, GuardedRouter, HttpBoundary, RequestPolicy,
-    ResponseConstructionBudget, low_level,
+    ResponseConstructionBudget,
 };
 use batter_core::{
     cleanup::CleanupBudget,
@@ -52,21 +51,7 @@ struct Served {
     running: RunningSupervisor,
 }
 
-/// How a test's routes reach the registered server.
-enum Composed {
-    /// Assembled by the protected boundary.
-    Boundary(GuardedRouter),
-    /// A lower-level composition: the router's routes inside `admissions`
-    /// nested request admissions, `outside` between admission and the
-    /// operational wrapper.
-    LowLevel(Router, fn(Router) -> Router, usize),
-}
-
 async fn serve(guarded: GuardedRouter) -> Served {
-    serve_composed(Composed::Boundary(guarded)).await
-}
-
-async fn serve_composed(composed: Composed) -> Served {
     let cleanup = CleanupBudget::new(WAIT, WAIT, WAIT).unwrap();
     let mut supervisor =
         Supervisor::new(ShutdownBudget::new(DRAIN, CANCEL, WAIT, cleanup).unwrap());
@@ -85,25 +70,12 @@ async fn serve_composed(composed: Composed) -> Served {
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    match composed {
-        Composed::Boundary(guarded) => HttpBoundary::new(policy)
-            .assemble(guarded)
-            .await
-            .unwrap()
-            .register_in(&mut supervisor, "http", listener)
-            .unwrap(),
-        Composed::LowLevel(router, outside, admissions) => {
-            let admitted = (0..admissions).fold(router, |router, _| {
-                router.route_layer(axum::middleware::from_fn_with_state(
-                    policy.clone(),
-                    low_level::request_admission,
-                ))
-            });
-            let app =
-                outside(admitted).layer(axum::middleware::from_fn(low_level::operational_http));
-            low_level::register_http(&mut supervisor, "http", listener, app).unwrap();
-        }
-    }
+    HttpBoundary::new(policy)
+        .assemble(guarded)
+        .await
+        .unwrap()
+        .register_in(&mut supervisor, "http", listener)
+        .unwrap();
     let running = supervisor.start();
     timeout(WAIT, handle.status().wait_ready())
         .await
@@ -308,7 +280,7 @@ fn a_sized_owned_body_keeps_its_length_and_is_observed_as_completed() {
     assert!(event.contains("bytes=5"), "{event}");
 }
 
-/// Hyper writes an advertised length and then stops polling, without asking
+/// Hyper writes a declared length and then stops polling, without asking
 /// the stream for its end, so a body that produced that length completed even
 /// though its source never ends.
 #[test]
@@ -367,11 +339,21 @@ fn served_short(capture: &Capture, source: fn() -> Body) -> String {
     })
 }
 
+/// Whether a response head carries exactly this header line.
+fn declares(head: &str, line: &str) -> bool {
+    head.lines().any(|header| header.eq_ignore_ascii_case(line))
+}
+
 /// The peer received less than the declared length, and the owner reports a
-/// failure rather than a completed message.
+/// failure rather than a completed message. The connection may end before a
+/// complete head arrives; one that did arrive is the 200 declaring ten bytes,
+/// not another answer in its place.
 fn assert_short_and_failed(capture: &Capture, text: &str) {
-    let body = text.split_once("\r\n\r\n").map_or("", |(_, body)| body);
-    assert!(body.len() < 10, "{text}");
+    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+        assert!(head.starts_with("HTTP/1.1 200 "), "{text}");
+        assert!(declares(head, "content-length: 10"), "{text}");
+        assert!(body.len() < 10, "{text}");
+    }
     let event = assert_finished(capture, "WARN", "failed");
     assert!(event.contains("bytes=5"), "{event}");
     assert_eq!(finished(capture).len(), 1);
@@ -408,80 +390,6 @@ fn a_body_ended_before_its_head_reaches_the_peer_as_a_complete_empty_message() {
     assert_eq!(body, "");
     let event = assert_finished(&capture, "WARN", "failed");
     assert!(event.contains("bytes=0"), "{event}");
-}
-
-/// How a handler declares a length after the hand-over.
-#[derive(Clone, Copy)]
-enum Declared {
-    /// An Axum tuple applies headers to the response it wraps.
-    ByTuple,
-    /// A new response is built around the owned body, keeping nothing else
-    /// the built response carried.
-    OnRebuiltResponse,
-}
-
-/// Serve `source` and declare `length` only after the hand-over, `declared`,
-/// then return what the peer read before the connection ended.
-fn served_declared_afterwards(
-    capture: &Capture,
-    length: &'static str,
-    declared: Declared,
-    source: fn() -> Body,
-) -> String {
-    capture.block_on(async {
-        let served = serve(GuardedRouter::new().route(
-            "/",
-            route(move |admitted: AdmittedRequest| async move {
-                let response =
-                    admitted.into_streaming_response(budget(600, 300), move |_scope| source());
-                match declared {
-                    Declared::ByTuple => {
-                        ([(header::CONTENT_LENGTH, length)], response).into_response()
-                    }
-                    Declared::OnRebuiltResponse => Response::builder()
-                        .header(header::CONTENT_LENGTH, length)
-                        .body(response.into_body())
-                        .unwrap(),
-                }
-            }),
-        ))
-        .await;
-        let mut client = served.request().await;
-        let mut bytes = Vec::new();
-        // A short message is aborted, so the read may end in a reset.
-        let _ = timeout(WAIT, client.read_to_end(&mut bytes)).await.unwrap();
-        wait_for_finished(capture).await;
-        served.shut_down().await;
-        String::from_utf8_lossy(&bytes).into_owned()
-    })
-}
-
-/// Hyper frames the message by the length the returned response declares,
-/// not the one seen when the body was handed over, and so does the outcome,
-/// including on a response the handler rebuilt around the body.
-#[test]
-fn a_length_declared_after_the_hand_over_decides_the_outcome() {
-    for declared in [Declared::ByTuple, Declared::OnRebuiltResponse] {
-        let capture = Capture::new();
-        let text = served_declared_afterwards(&capture, "10", declared, || {
-            Body::from_stream(stream::iter([Ok::<_, Infallible>(Bytes::from_static(
-                b"hello",
-            ))]))
-        });
-        assert_short_and_failed(&capture, &text);
-
-        // Met: Hyper ends the message after five bytes and destroys the
-        // source without asking for its end.
-        let capture = Capture::new();
-        let text = served_declared_afterwards(&capture, "5", declared, || {
-            let source = stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"hello"))]);
-            Body::from_stream(source.chain(stream::pending()))
-        });
-        assert!(text.contains("content-length: 5\r\n"), "{text}");
-        assert!(text.ends_with("\r\n\r\nhello"), "{text}");
-        let event = assert_finished(&capture, "INFO", "completed");
-        assert!(event.contains("bytes=5"), "{event}");
-    }
 }
 
 /// Serve an HTTP/1.0 request a body that the library's idle bound ends after
@@ -548,7 +456,7 @@ fn a_declared_length_keeps_an_interrupted_body_visible_to_an_http10_peer() {
     let (head, body) = text.split_once("\r\n\r\n").unwrap();
     assert!(head.starts_with("HTTP/1.0 200 "), "{text}");
     let head = head.to_ascii_lowercase();
-    assert!(head.contains("\r\ncontent-length: 10"), "{text}");
+    assert!(declares(&head, "content-length: 10"), "{text}");
     assert!(!head.contains("transfer-encoding"), "{text}");
     // Six of the ten declared bytes.
     assert_eq!(body, "first;");
@@ -655,4 +563,5 @@ fn a_body_that_ended_with_trailers_is_observed_as_completed() {
     assert_eq!(finished(&capture).len(), 1);
 }
 
-mod framing;
+mod interrupted;
+mod undeclared;

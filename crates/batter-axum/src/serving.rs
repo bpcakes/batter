@@ -12,6 +12,8 @@ use std::{fmt::Debug, future::IntoFuture, sync::Arc};
 mod completion;
 mod forced_close;
 
+pub use forced_close::ForcedCloseIo;
+
 /// Register an already-bound native Axum server as a supervised critical task.
 ///
 /// `listener` is any bound [`axum::serve::Listener`]: [`tokio::net::TcpListener`],
@@ -43,20 +45,6 @@ mod forced_close;
 /// route and method; it is neither rebuilt per connection nor one server-wide
 /// value.
 ///
-/// Each response future computes how Hyper frames the response it hands
-/// Hyper, after every layer of `application`, and that response's body makes
-/// the framing current for each call Hyper makes into it, destruction
-/// included. An owned body the message carries, through any layer, wherever
-/// its admission ran, is therefore judged by the message Hyper writes, except
-/// one that another owned body's source forwards, and one started by work
-/// running inside such a call, such as a stream dispatching in-process: those
-/// keep their own framing. A body polled on another task than the
-/// connection's, as one a body layer pumps through a channel is, goes
-/// unreached too: it keeps the framing its admission returned, so a length
-/// added outside admission or a head Hyper refuses goes unseen, and its
-/// completion event can read `completed` or `dropped` for a message Hyper
-/// aborted or never wrote.
-///
 /// Axum internally spawns connection and graceful-signal tasks, and its graceful
 /// return waits for every connection. A connection can outlast drain without
 /// limit: a response body that stays pending, a peer that stops reading a large
@@ -79,12 +67,20 @@ mod forced_close;
 /// A zero cancel allowance leaves no such interval, so the I/O is never closed,
 /// and a connection task that never yields cannot be ended this way. In both
 /// cases the wrapper is aborted, which does not prove its descendants stopped,
-/// and the supervisor conservatively skips cleanup. An upgraded connection
-/// leaves Axum's connection accounting at the upgrade, and Hyper destroys its
-/// service and response body there, so the completion wait does not include it
-/// either (read from Hyper's source, not exercised): the task that holds it
-/// belongs to the application and is never joined here, and its I/O fails only
-/// if the server is still serving another connection when the close happens.
+/// and the supervisor conservatively skips cleanup. A connection upgraded
+/// over HTTP/1 leaves Axum's connection accounting at the upgrade, and Hyper
+/// destroys its service and response body there, so the completion wait does
+/// not include it either (the cause is read from Hyper's source; a joined
+/// shutdown beside a live upgraded connection is exercised): the task
+/// that holds it belongs to the application and is never joined here, and its
+/// I/O fails only if this server is still running when the close happens,
+/// which that connection itself does not prolong.
+/// The I/O inside an HTTP/1 upgrade is the listener's wrapped in
+/// [`ForcedCloseIo`], which is the type to name when recovering it by
+/// downcast, and which returns the listener's own. None of this is claimed
+/// for an HTTP/2 upgrade, which is one stream of a connection the server
+/// keeps driving and has no socket of its own (read from Hyper's source;
+/// HTTP/2 is not exercised).
 /// Request deadlines/observations do not bound streaming bodies or WebSockets.
 /// The native server retries accept errors; it does not report them as task exits.
 /// No bind policy, signals, budgets, subscriber or runtime are installed here.
@@ -120,7 +116,7 @@ pub fn register_http(
 /// Register an already-bound Axum server through constrained registration authority.
 ///
 /// This is the canonical companion to [`batter_core::startup::Startup::scoped`]. It
-/// has the same runtime, listener, router-preparation, owned-body framing and
+/// has the same runtime, listener, router-preparation and
 /// native descendant limits as [`register_http`], while preventing the adapter from receiving
 /// process-start or cleanup-extraction authority.
 /// It does not install connection metadata; use [`register_http_with_connect_info_in`]
@@ -296,7 +292,7 @@ where
     register_gated(registration, name, move |gate, connections, draining| {
         axum::serve(
             gate.listener(listener)
-                .tap_io(|_: &mut forced_close::ForcedCloseIo<L::Io>| {}),
+                .tap_io(|_: &mut ForcedCloseIo<L::Io>| {}),
             connections.track(application.into_make_service_with_connect_info::<L::Addr>()),
         )
         .with_graceful_shutdown(draining)

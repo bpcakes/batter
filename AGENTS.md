@@ -195,13 +195,20 @@ check `InProcessClient` and Runlimit's `TestClient` delegate to; `admitted.rs` o
 `crates/batter-axum/src/serving.rs` registers the native server, and
 `serving/forced_close.rs` fails accepted connections' I/O halfway through the
 cancel allowance so a connection that outlasts drain ends before wrapper abort,
+and owns the wrapping `low_level::ForcedCloseIo` an upgraded connection is
+recovered through,
 and `serving/completion.rs` holds the server until every accepted connection's
 service and response bodies are destroyed;
-`streaming.rs` owns `AdmittedRequest::into_streaming_response`, the validated
-`BodyBudget`, the `BodyScope` and the private owned body that gives a response
+`streaming.rs` owns `AdmittedRequest::into_streaming_response`, the
+`BodyScope` and the private owned body that gives a response
 body outliving its handler its own context, bounds, protected dispatch and
-completion event; `streaming/start.rs` owns its per-request start record and
-the framing rule that mirrors Hyper's encoder;
+completion event; `streaming/budget.rs` owns the validated `BodyBudget`,
+`streaming/scope.rs` the `BodyScope`, `streaming/poll.rs` one poll of the
+source and `streaming/end.rs` the outcome labels, the wait of a pending body
+and the unwind-safe ending guard;
+`streaming/start.rs` owns its per-request start record and the rule for the
+length a built response declares, the only length an owned body's outcome
+follows;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route

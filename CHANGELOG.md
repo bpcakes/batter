@@ -17,52 +17,59 @@ contracts, capability facts and validation history.
   destruction under the handler's tracing dispatcher and request span (which
   then closes when the body ends, so span-close timing includes the body), and
   one `HTTP response body finished` event with `request_id`, `bytes`,
-  `duration_ms` and `body_outcome`. A bound or forced cancellation truncates
-  the message visibly, except to an HTTP/1.0 peer receiving a body without a
-  declared length, which Hyper delimits by closing the connection; both bounds
+  `duration_ms` and `body_outcome`. A bound or forced cancellation ends the
+  body with an error at a poll. In the HTTP/1.1 cases exercised Hyper then
+  ended the connection without completing the message; an HTTP/1.0 peer
+  receiving a response without a `Content-Length` cannot tell, because Hyper
+  delimits that response by closing the connection; both bounds
   are checked before a frame is accepted, including after a poll that
   outlasted them, so a frame ready or returned only after its wait expired
   does not extend the body, and an error such a poll returned is reported as
   that bound; an empty data frame is no progress, so a source of nothing but
-  empty frames still ends at the idle bound, and its task yields meanwhile; a
+  empty frames still ends at the idle bound, and its task yields meanwhile,
+  and a final empty frame ends the message only if destroying it and asking
+  the source for its end stayed inside both bounds; a
   wait starts with the poll that first asks for the next frame, so a source's
-  synchronous work inside that poll counts against the idle bound. A body whose source produced its whole
-  message is `completed` even when Hyper never polls for its end: after its
-  advertised `Content-Length` or exact size, taken as Hyper frames it from the
-  response finally written (on the registered server the one carrying the body
-  when Hyper writes it, after every layer and wherever admission ran), or after
-  trailers; one that ends, reports its end or
-  yields trailers short of its advertised length is `failed`, since Hyper
-  aborts that message (a source already ended when Hyper writes the head is
-  still `failed`, although Hyper then sends a complete empty
-  `content-length: 0` message), except on a response Hyper writes without a
-  body (HEAD, a 2xx answer to CONNECT, 101, 204, 304), whose declared length
-  frames nothing; and, through the registered server, a body under a head
-  Hyper refuses to write, including a final 1xx other than 101, which Hyper
-  answers with a 500, is `failed`, even if it had already ended. The server
-  finds the message that carries a body by containment: each response body
-  makes its message's framing current for every call Hyper makes into it, so
-  spawned admission, a nested `low_level::request_admission` router and an
-  in-process response a served handler returns are each judged by the message
-  Hyper writes, and a poll before the transport's fixes nothing. A body
-  another owned body's source forwards, one started by work running while
-  Hyper polls a response (a stream dispatching in-process), and one a layer
-  polls on another task than the connection's keep admission's framing;
-  lengths are compared with the bytes the owned body yielded. For a body
-  already at its end, which Hyper writes as none, only the refusals Hyper
-  still applies to such a head count. No HTTP/1 framing applies to an HTTP/2
-  request, which Axum's server accepts when `hyper-util`'s `http2` feature is
-  in the build; there a body completes only when its source ends. A
+  synchronous work inside that poll counts against the idle bound. The
+  outcome describes the body, not the transport: it follows the length the
+  response the builder returns declares, read once at the hand-over (its
+  `Content-Length` as plain digits, repeated only with one value, else its
+  body's exact size, and none for a response without content: answering HEAD,
+  a 2xx answer to CONNECT, or a 1xx, 204 or 304 status), and what the source
+  then does. A source that reaches its end, including by trailers, which end
+  the body as it yields them, or a body destroyed once it yielded its declared
+  length, is `completed`; a source that reaches its end short of that length
+  is `failed`; a body its holder destroyed before either is `dropped`, or
+  carries the reason its scope was already cancelled or expired for. The
+  rule is the same in-process and on any server; the outcome also depends on
+  whether and when the body's holder stops polling and destroys it, so an
+  in-process outcome is not evidence of a served one, and it is not a
+  delivery receipt: a length added after the hand-over by a handler's tuple
+  or a layer, a size the body reports only later and a head Hyper refuses to
+  write are not seen, so, in the HTTP/1 cases exercised, `completed` stands
+  beside a message Hyper aborted or never wrote and `dropped` beside one it
+  delivered whole. Declare the length inside the builder for
+  the outcome to follow it. An earlier, unreleased form mirrored Hyper's
+  HTTP/1 encoder and tracked which message carried each body; it was removed
+  after five review rounds each found another wrong case (`batter-9wig.11`).
+  A
   body whose answer about its end or size panics is `panicked`,
   including at the hand-over, and is ended before it is destroyed; so is one
   whose swallowed empty frame panics when the library destroys it, even if the
   caller catches that unwind before dropping the response; those
   answers, like its polls, run under the handler's dispatcher and span; its
   completion event and the request span's release stay with the request's
-  subscriber, the one its observer began under, even if the handler switched
-  subscribers or that subscriber filtered the request span out. A
+  subscriber even if the handler switched subscribers: the one that owns the
+  span the request's observer published or, where there is none, the one the
+  request was admitted under. A
   request starts at most one owned body, and only while its response is being
-  constructed. The existing completion event and every
+  constructed; a start refused after the response still reports to the
+  request's subscriber, without its span, while that subscriber still
+  exists: the library's own request records hold none strongly, in an
+  admitted request or in extensions kept or copied beyond a response, and an
+  ended body holds no dispatcher. A request admitted under another request's copied observation record
+  reports its body to the subscriber it was admitted under once that
+  record's observer has finished. The existing completion event and every
   existing signature are unchanged, and an unowned streaming body still
   compiles. Not covered: a peer that stops reading (ended only by the forced
   connection close), upgraded connections, and admission permits held for a
@@ -92,15 +99,16 @@ contracts, capability facts and validation history.
   destroyed, which Axum's graceful return alone does not establish; a
   destructor still running at the abort deadline aborts the wrapper and skips
   cleanup, including when Axum's serving future returns an error. Each
-  response body gains one wrapper allocation and one end and size query when
-  its head is framed, and each request a few atomic updates of one server-wide
-  `TaskTracker`.
-  Public signatures are unchanged. Behavior change: such a shutdown now reports
+  response body gains one wrapper allocation, and each request costs a few
+  atomic updates of one server-wide `TaskTracker`.
+  Existing signatures are unchanged; the concrete I/O type inside an HTTP/1
+  upgrade changes, as the `Breaking:` entry below records. Behavior change: such a shutdown now reports
   success with `forced_cancellation` set and runs cleanup, where it reported
   `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
   message or a closed connection in the second half of the cancel allowance
-  instead of after process exit, though an HTTP/1.0 peer receiving a body
-  without a declared length cannot tell that close from the message's end.
+  instead of after process exit, though an HTTP/1.0 peer receiving a
+  response without a `Content-Length` cannot tell that close from the
+  message's end.
   Cancelled handlers still deliver their 503
   `operation_cancelled` first. With a zero cancel allowance, once a deadline
   moved earlier has already passed, or with no known abort deadline, the gate
@@ -113,6 +121,42 @@ contracts, capability facts and validation history.
   deadline earlier. Upgraded connections, HTTP/2 and servers that call
   `axum::serve` themselves are not covered. Each connection adds one registry
   entry, and each I/O poll one atomic waker registration (`batter-9wig.1`).
+- Breaking: the I/O inside an HTTP/1 upgrade served through
+  `AssembledHttp::register_in`, `register_with_connect_info_in` or the three
+  `low_level::register_http*` helpers is now the listener's I/O wrapped in the
+  forced-close gate, on every connection, whether or not shutdown starts. A
+  downcast of the upgraded connection to the listener's own type still
+  compiles and now always returns `Err`. Add `low_level::ForcedCloseIo<I>`,
+  with `get_ref` and `into_inner`, as the supported recovery: name it in the
+  downcast and unwrap it, keeping the downcast's `read_buf` beside the socket:
+  it holds any bytes Hyper read past the upgrade request, which the protocol
+  starts with. `into_inner` also takes the connection out of the
+  forced connection close, and an operation done on the inner I/O through
+  `get_ref` bypasses the close for that operation while the connection stays
+  registered; either way the application must then end the connection from
+  its own shutdown observation; an upgraded connection's task was never joined.
+  `Upgraded` used as a byte stream, as Axum's WebSocket extractor uses it,
+  needs no change, and nothing changes for servers that call `axum::serve`
+  themselves. No `#[deprecated]` shim is possible: no Batter item was removed
+  or renamed, and the old downcast target is a type the application names
+  from `tokio` and `hyper-util` (`batter-9wig.14`).
+
+  ```rust,ignore
+  use hyper_util::{rt::TokioIo, server::conn::auto::upgrade::downcast};
+  use tokio::net::TcpStream;
+
+  // Before: matched for a server registered over a `TcpListener`.
+  let parts = downcast::<TokioIo<TcpStream>>(upgraded).map_err(|_| "not TCP")?;
+  let (socket, buffered): (TcpStream, Bytes) = (parts.io.into_inner(), parts.read_buf);
+
+  // After: name the wrapper, then recover the listener's own I/O.
+  use batter_axum::low_level::ForcedCloseIo;
+
+  let parts = downcast::<TokioIo<ForcedCloseIo<TcpStream>>>(upgraded).map_err(|_| "not TCP")?;
+  let (socket, buffered): (TcpStream, Bytes) =
+      (parts.io.into_inner().into_inner(), parts.read_buf);
+  // Consume `buffered` before reading from `socket`.
+  ```
 - Document that a skipped `CleanupSlot::acquire_semaphore` or `bind_udp`
   finalizer has still released its permit or socket reference: the hook only
   drops its capture, and skipping drops it too. `SkippedCleanup` now says so.

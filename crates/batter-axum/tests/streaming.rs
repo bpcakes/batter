@@ -33,8 +33,11 @@ mod capture;
 mod streaming {
     mod bounds;
     mod destruction;
+    mod endings;
     mod lifetime;
     mod shutdown;
     mod sockets;
+    mod subscribers;
     mod support;
+    mod unwinding;
 }

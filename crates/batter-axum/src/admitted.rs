@@ -28,16 +28,25 @@ pub(crate) struct Admission {
     interruption: RequestInterruptionResponder,
     /// This request's owned-body start: the proof of its admission, from
     /// which one owned response body starts its own lifetime without a second
-    /// readiness decision, the request head that decides how the transport
-    /// frames the response, and that body's framing hand-off. Every clone of
-    /// the record shares the one allocation, so repeated extraction cannot
-    /// multiply the proof.
+    /// readiness decision, and the request method, which decides whether a
+    /// response carries content. Every clone of the record shares the one
+    /// allocation, so repeated extraction cannot multiply the proof.
     pub(crate) start: BodyStart,
     /// Read-only drain and forced-cancellation observation for that body.
     pub(crate) shutdown: ShutdownSignal,
-    /// The observing request, whose span an owned response body re-enters.
-    /// The observer publishes that span only while it is alive.
+    /// The observation record this request's extensions carried, whose span
+    /// an owned response body re-enters. The observer publishes that span
+    /// only while it is alive, and the record names no dispatcher.
     pub(crate) observation: Option<ObservationState>,
+    /// The dispatcher this request was admitted under. Its owned body's
+    /// completion event goes there where the request has no span to name
+    /// one: its subscriber enabled none, or its observer finished before a
+    /// start that is then refused. It is read here, beside the correlation
+    /// the event carries, so it is this request's whatever shared metadata
+    /// its extensions carry. It is held weakly: this record is a request
+    /// extension, which a layer may copy and keep, and none of the library's
+    /// request records may keep a subscriber alive.
+    pub(crate) dispatch: tracing::dispatcher::WeakDispatch,
 }
 
 /// The server correlation under which admission records `extensions`'
@@ -48,8 +57,7 @@ pub(crate) fn recorded_under(extensions: &Extensions) -> Option<CorrelationId> {
     correlation::server_correlation(extensions)
 }
 
-/// Record the admitted request for [`AdmittedRequest`], returning its
-/// owned-body start.
+/// Record the admitted request for [`AdmittedRequest`].
 ///
 /// Only a request inside the operational wrapper that generated its server
 /// correlation is recorded: `recorded` carries that correlation, read by
@@ -61,9 +69,11 @@ pub(crate) fn record(
     context: OperationContext,
     interruption: RequestInterruptionResponder,
     recorded: Option<(CorrelationId, OperationContinuation)>,
-) -> Option<BodyStart> {
+) {
     request.extensions_mut().remove::<Admission>();
-    let (correlation_id, continuation) = recorded?;
+    let Some((correlation_id, continuation)) = recorded else {
+        return;
+    };
     let start = BodyStart::new(request);
     let observation = request.extensions().get::<ObservationState>().cloned();
     let shutdown = continuation.signal();
@@ -72,11 +82,11 @@ pub(crate) fn record(
         context,
         correlation_id,
         interruption,
-        start: start.clone(),
+        start,
         shutdown,
         observation,
+        dispatch: tracing::dispatcher::get_default(tracing::Dispatch::downgrade),
     });
-    Some(start)
 }
 
 /// The request that lifecycle admission let in: its operation context, its

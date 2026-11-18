@@ -15,6 +15,7 @@ use axum::serve::Listener;
 use batter_core::lifecycle::ShutdownSignal;
 use std::{
     collections::HashMap,
+    fmt,
     future::Future,
     io::{self, IoSlice},
     pin::{Pin, pin},
@@ -215,11 +216,107 @@ impl<L: Listener> Listener for ForcedCloseListener<L> {
     }
 }
 
-pub(super) struct ForcedCloseIo<I> {
+/// One connection a registered server accepted: the listener's own I/O behind
+/// the forced connection close.
+///
+/// Every server registered through `AssembledHttp::register_in`,
+/// `AssembledHttp::register_with_connect_info_in` or the
+/// [`register_http`](crate::low_level::register_http) helpers gives Hyper this
+/// type in place of the listener's `Io`, so that the connection's reads and
+/// writes can be failed at forced shutdown. Ordinary handlers never see it.
+/// It matters only to code that recovers the connection after an HTTP/1
+/// upgrade by its concrete type: `I` is the listener's `Io`, such as
+/// [`tokio::net::TcpStream`] for a [`tokio::net::TcpListener`], and the type
+/// to name in `hyper_util::server::conn::auto::upgrade::downcast` is
+/// `hyper_util::rt::TokioIo<ForcedCloseIo<I>>`. That helper is required:
+/// the connection builder Axum uses keeps the I/O inside a private wrapper
+/// of hyper-util's, so `hyper::upgrade::Upgraded::downcast` with the same
+/// type returns `Err`.
+///
+/// Migration: a downcast of an upgraded connection to the listener's own
+/// type, such as
+/// `hyper_util::server::conn::auto::upgrade::downcast::<TokioIo<TcpStream>>`,
+/// matched while a server registered here handed Hyper the listener's `Io`
+/// unchanged. It now always returns `Err`; name
+/// `TokioIo<ForcedCloseIo<TcpStream>>` instead, then call
+/// [`into_inner`](Self::into_inner) for the socket. `Upgraded` used as a
+/// plain byte stream, as Axum's WebSocket extractor uses it, needs no change.
+///
+/// Hyper may have read past the upgrade request. Those bytes are the start of
+/// the upgraded protocol, the socket no longer has them, and the downcast
+/// returns them beside the I/O: keep them with the socket and consume them
+/// before reading from it.
+///
+/// ```
+/// use axum::body::Bytes;
+/// use batter_axum::low_level::ForcedCloseIo;
+/// use hyper_util::{rt::TokioIo, server::conn::auto::upgrade::downcast};
+/// use tokio::{io::AsyncReadExt, net::TcpStream};
+///
+/// // `upgraded` is what `hyper::upgrade::on` resolved to for a request served
+/// // over a `TcpListener`. The socket comes back with the bytes Hyper
+/// // already took from it.
+/// fn recover(upgraded: hyper::upgrade::Upgraded) -> Option<(TcpStream, Bytes)> {
+///     let parts = downcast::<TokioIo<ForcedCloseIo<TcpStream>>>(upgraded).ok()?;
+///     Some((parts.io.into_inner().into_inner(), parts.read_buf))
+/// }
+///
+/// // The upgraded protocol's opening bytes, at least `wanted` of them unless
+/// // the peer closes first: the buffered ones, then what the socket yields.
+/// async fn opening(
+///     upgraded: hyper::upgrade::Upgraded,
+///     wanted: usize,
+/// ) -> std::io::Result<(TcpStream, Vec<u8>)> {
+///     let (mut socket, buffered) =
+///         recover(upgraded).ok_or(std::io::ErrorKind::Unsupported)?;
+///     let mut protocol = buffered.to_vec();
+///     while protocol.len() < wanted && socket.read_buf(&mut protocol).await? != 0 {}
+///     Ok((socket, protocol))
+/// }
+/// # let _ = opening;
+/// ```
+///
+/// Caller obligations: an upgraded connection belongs to the application. The
+/// task that holds it is never joined by the registered server, and no
+/// request deadline, body bound or admission covers it. Reads and writes
+/// polled through this wrapper still fail at the forced close, but only if
+/// one happens: there is none with a zero cancel allowance, and it is
+/// skipped once the registered server has returned from its graceful
+/// shutdown and the connections it tracks were destroyed, which a
+/// connection upgraded over HTTP/1 does not prolong.
+/// And only those reads and writes fail: I/O done on the listener's own
+/// type, through [`get_ref`](Self::get_ref) or after
+/// [`into_inner`](Self::into_inner), never meets the close. The application
+/// must end such a connection from its own shutdown observation.
+pub struct ForcedCloseIo<I> {
     inner: I,
+    entry: Entry,
+}
+
+/// One connection's place in its gate's registry, removed when the connection
+/// is destroyed or its I/O is recovered.
+struct Entry {
     gate: Arc<Gate>,
     id: u64,
     pollers: Arc<Pollers>,
+}
+
+impl Entry {
+    /// Record the task polling for reads, then report whether the gate closed.
+    fn reading(&self, cx: &Context<'_>) -> bool {
+        self.gate.enter(&self.pollers.read, cx)
+    }
+
+    /// Record the task polling for writes, then report whether the gate closed.
+    fn writing(&self, cx: &Context<'_>) -> bool {
+        self.gate.enter(&self.pollers.write, cx)
+    }
+}
+
+impl Drop for Entry {
+    fn drop(&mut self) {
+        lock(&self.gate.connections).pollers.remove(&self.id);
+    }
 }
 
 impl<I> ForcedCloseIo<I> {
@@ -234,16 +331,51 @@ impl<I> ForcedCloseIo<I> {
         };
         Self {
             inner,
-            gate,
-            id,
-            pollers,
+            entry: Entry { gate, id, pollers },
         }
+    }
+
+    /// The listener's own I/O, for reading what it exposes, such as a
+    /// socket's addresses or a TLS session's negotiated parameters.
+    ///
+    /// A shared reference is not read-only access. Many I/O types read and
+    /// write through one: a [`tokio::net::TcpStream`] offers `readable`,
+    /// `try_read` and `try_write` on `&self`. An operation done that way
+    /// bypasses this wrapper: it is not failed at forced shutdown and
+    /// registers no waker with the forced close, so the close does not end a
+    /// wait in it. The connection itself stays registered, unlike after
+    /// [`into_inner`](Self::into_inner): reads and writes through the wrapper
+    /// still fail at the close, and a task whose last poll went through the
+    /// wrapper is still woken by it, which does not fail a direct operation
+    /// that task is then waiting in. Do I/O only through the wrapper's own
+    /// `AsyncRead` and `AsyncWrite`, or take on ending the connection from
+    /// the application's own shutdown observation.
+    pub fn get_ref(&self) -> &I {
+        &self.inner
+    }
+
+    /// Recover the listener's own I/O, leaving the forced connection close.
+    ///
+    /// The returned I/O is never failed at forced shutdown, and this
+    /// connection is removed from those a later close wakes. A close already
+    /// under way when this is called may still wake a task that polled the
+    /// wrapper earlier; that wake fails nothing. Use it only for a connection
+    /// the application owns after an upgrade, and end that connection from
+    /// the application's own shutdown observation.
+    pub fn into_inner(self) -> I {
+        // The registration goes first, while the I/O is still an owned
+        // local, so nothing runs after it is on its way out.
+        let Self { inner, entry } = self;
+        drop(entry);
+        inner
     }
 }
 
-impl<I> Drop for ForcedCloseIo<I> {
-    fn drop(&mut self) {
-        lock(&self.gate.connections).pollers.remove(&self.id);
+impl<I> fmt::Debug for ForcedCloseIo<I> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ForcedCloseIo")
+            .finish_non_exhaustive()
     }
 }
 
@@ -253,7 +385,7 @@ impl<I: AsyncRead + Unpin> AsyncRead for ForcedCloseIo<I> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        if self.gate.enter(&self.pollers.read, cx) {
+        if self.entry.reading(cx) {
             return Poll::Ready(Err(closed()));
         }
         Pin::new(&mut self.inner).poll_read(cx, buf)
@@ -266,7 +398,7 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.gate.enter(&self.pollers.write, cx) {
+        if self.entry.writing(cx) {
             return Poll::Ready(Err(closed()));
         }
         Pin::new(&mut self.inner).poll_write(cx, buf)
@@ -277,7 +409,7 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        if self.gate.enter(&self.pollers.write, cx) {
+        if self.entry.writing(cx) {
             return Poll::Ready(Err(closed()));
         }
         Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
@@ -288,7 +420,7 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.gate.enter(&self.pollers.write, cx) {
+        if self.entry.writing(cx) {
             return Poll::Ready(Err(closed()));
         }
         Pin::new(&mut self.inner).poll_flush(cx)
@@ -297,7 +429,7 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for ForcedCloseIo<I> {
     // A closed gate also fails shutdown: a transport that must write to finish
     // closing would otherwise wait on the same stalled peer.
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.gate.enter(&self.pollers.write, cx) {
+        if self.entry.writing(cx) {
             return Poll::Ready(Err(closed()));
         }
         Pin::new(&mut self.inner).poll_shutdown(cx)

@@ -27,6 +27,11 @@
 //! [`InProcessClient`](crate::InProcessClient) delegates to, and establishes
 //! nothing about the router's composition.
 //!
+//! [`ForcedCloseIo`] is the one I/O type here: what every registered server
+//! gives Hyper for an accepted connection. It is named only to recover the
+//! listener's own I/O from an upgraded connection, which also takes that
+//! connection out of the forced connection close.
+//!
 //! Migration: before assembly was sealed, every helper in this module was
 //! exported at the crate root. A `use batter_axum::<helper>` or
 //! `batter::axum::<helper>` import now fails to resolve; the replacement is the
@@ -90,6 +95,10 @@
 //! use batter_axum::RouterClient;
 //! ```
 //!
+//! ```compile_fail,E0432
+//! use batter_axum::ForcedCloseIo;
+//! ```
+//!
 //! The unchecked cookie reader stays out of both canonical namespaces:
 //!
 //! ```compile_fail,E0432
@@ -123,7 +132,9 @@ mod router_client;
 
 pub use crate::correlation::{operational_http, operational_http_with_quota};
 pub use crate::readiness::dependency_readiness;
-pub use crate::serving::{register_http, register_http_in, register_http_with_connect_info_in};
+pub use crate::serving::{
+    ForcedCloseIo, register_http, register_http_in, register_http_with_connect_info_in,
+};
 pub use router_client::RouterClient;
 
 /// Observe response construction independently of admission or deadlines.
@@ -223,11 +234,6 @@ pub async fn observe_http(request: Request, next: Next) -> Response {
 /// Operation events and full inner-future destruction retain the first-poll
 /// subscriber. This middleware does not create a `batter.http` span or HTTP event.
 ///
-/// An owned body this admission starts is framed by the response it returns
-/// and, on the registered server, by the message Hyper writes for whichever
-/// response carries that body (see [`register_http`]), on whatever task this
-/// layer runs and in whatever router a handler dispatches.
-///
 /// Migration: `batter_axum::request_admission` moved to
 /// `batter_axum::low_level::request_admission` with the same caller obligations.
 pub async fn request_admission(
@@ -304,17 +310,9 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
-            let start = admitted::record(&mut request, scope.clone(), interruption, recorded);
+            admitted::record(&mut request, scope.clone(), interruption, recorded);
             request.extensions_mut().insert(scope);
-            let response = next.run(request).await;
-            // An owned body is framed by the response Hyper writes, which the
-            // handler may have rebuilt and inner layers changed since. On the
-            // registered server the message that carries the body decides
-            // instead, after any layer outside admission.
-            if let Some(start) = start {
-                start.settle(&response);
-            }
-            Ok::<_, Infallible>(response)
+            Ok::<_, Infallible>(next.run(request).await)
         },
         |result| resolve_response(result, &responder),
     )

@@ -336,6 +336,8 @@ dependencies = [
  "cookie",
  "futures-util",
  "http-body",
+ "hyper",
+ "hyper-util",
  "pin-project-lite",
  "rcgen",
  "rustls",

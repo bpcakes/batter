@@ -45,12 +45,16 @@ Windows support and non-Unix fallbacks are out of scope.
   extractor that guarded handlers use instead of raw extensions and its
   sanitized `AdmittedRequestRejection`.
 - `src/streaming.rs` owns `AdmittedRequest::into_streaming_response`,
-  `BodyBudget`, `BodyScope` and the private `OwnedBody` that wraps the built
-  response's body. `src/streaming/start.rs` owns the private per-request
-  `BodyStart` (the `OperationContinuation`, the request head and the started
-  body's framing hand-off), the framing rule that mirrors Hyper's encoder and
-  the private `Written` framing that the registered server makes current while
-  Hyper calls into a response body.
+  `BodyScope` and the private `OwnedBody` that wraps the built
+  response's body; `src/streaming/budget.rs` owns the validated `BodyBudget`,
+  `src/streaming/scope.rs` the `BodyScope` a stream receives,
+  `src/streaming/poll.rs` one poll of the source, and
+  `src/streaming/end.rs` the outcome labels, the wait of a pending body
+  (its timer and cancellation wait, which hold the polling task's waker)
+  and the unwind-safe ending guard.
+  `src/streaming/start.rs` owns the private per-request
+  `BodyStart` (the `OperationContinuation` and the request method) and the
+  rule for the length a built response declares.
   The admission record carries that `BodyStart` and the shared observation
   state the body starts from; `src/observation.rs` publishes the request's span
   context there once.
@@ -110,13 +114,14 @@ Windows support and non-Unix fallbacks are out of scope.
   through protected authority. Transport policy stays with the listener.
   `src/serving/forced_close.rs` owns the private gate that wraps the listener
   and fails every accepted connection's I/O halfway between forced
-  cancellation and the supervisor's abort deadline.
+  cancellation and the supervisor's abort deadline, and `ForcedCloseIo`, the
+  connection I/O type Hyper holds, published only as
+  `low_level::ForcedCloseIo` so an application can name it when it recovers
+  an upgraded connection by downcast.
   `src/serving/completion.rs` owns the private make-service wrapper whose
   per-connection service, response futures and response bodies hold
   `TaskTracker` tokens, so the registered server returns only after each was
-  destroyed, and whose response future computes each response's `Written`
-  framing from the request head and the response it hands Hyper, which the
-  response body makes current around every call Hyper makes into it.
+  destroyed.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
@@ -129,7 +134,11 @@ Windows support and non-Unix fallbacks are out of scope.
   `register_http` and the direct-peer registration;
   `tests/operational/forced_close/slow_destructor.rs` covers a pending body or
   in-flight handler still being destroyed after Axum counted its connection
-  finished;
+  finished; `tests/operational/forced_close/upgraded.rs` covers recovering an
+  upgraded connection's socket through `low_level::ForcedCloseIo`, by both
+  registrations, and, over an in-memory listener, the bytes Hyper read with
+  the upgrade request returned in the downcast's buffer; assert a division of
+  bytes between that buffer and the I/O only there, never on a socket;
   `tests/operational/rendered_probes.rs` covers application-rendered probes
   outside admission, every decision through a contradicting renderer and
   application conditions. `tests/operational/admitted_request.rs` covers the
@@ -232,7 +241,20 @@ no abort deadline is known: that only races the wrapper abort and fails
 interruption responses.
 Do not describe upgraded connections, handler-detached tasks, a connection
 task that never yields or a zero cancel allowance as covered; the
-wrapper-abort contract still applies to them. Never treat Axum's graceful
+wrapper-abort contract still applies to them. The gate changes the concrete
+I/O type inside every HTTP/1 upgrade to `TokioIo<ForcedCloseIo<L::Io>>`, on
+both registrations: keep `ForcedCloseIo` nameable under `low_level` only,
+with `get_ref` and the consuming `into_inner` as its whole surface and no
+mutable access to the inner I/O, state on both that I/O done on the
+listener's own type bypasses the close (a shared `TcpStream` reference reads
+and writes), describe that bypass per operation, since only `into_inner`
+removes the registry entry and a task that last polled through the wrapper
+is still woken, even by a close already under way at recovery, call the
+downcast recovery HTTP/1 only, keep the buffered bytes of an upgrade beside the socket in every
+recovery example, keep its registry entry in a field of its
+own so recovery removes it, and treat any further wrapper around the
+listener's I/O as a public compatibility change that needs its own recovery
+path and `Breaking:` entry. Never treat Axum's graceful
 return as proof that connections were destroyed: it counts one finished before
 its task destroys the connection future, which still holds the in-flight
 handler future and the response body after an I/O error. Keep the completion
@@ -253,41 +275,80 @@ application code outside a poll, other than destruction's own caught query,
 through the one `call` helper. Ask the
 source for its end during destruction only under the captured dispatcher and
 inside `catch_unwind`, finishing before the panic continues, and never ask it
-again after a transport's query unwound. A body the transport finishes without
-asking for its end is `completed` only once its advertised length is produced,
-or, without one, after `is_end_stream` or trailers; a source that ends short of
-that length is `failed`, because Hyper aborts the message; a source already
-ended when Hyper writes the head stays `failed` although Hyper sends an empty
-`content-length: 0` message, so never promise the peer a truncation there.
-Take no advertised
-length from a response Hyper writes without a body: mirror its
-`can_have_body` rule for the request method and response status, and its
-encoder: `Content-Length` as plain digits with every value equal, else the
-body's exact size, and no length under `Transfer-Encoding` except in an HTTP/1.0
-answer, judged by Hyper's effective version (HTTP/1.0 for an HTTP/1.0 request,
-else the response's own). Settle the advertised length again from the response request
-admission returns, through the admitted request's private `BodyStart`, which
-only a started body's framing fills, because a handler's tuple or any layer can
-declare it after the hand-over; never carry it on the request or the response,
-which a layer can replace or rebuild. On the registered server associate a body
-with its message by containment, never by which request's work started it:
-`completion::Responding` computes `Written` once from the request head and the
-response it hands Hyper, and `ConnectionBody` makes it current, in a
-thread-local restored even on unwind, around every call Hyper makes into the
-body (poll, end and size queries, destruction); an owned body adopts it in each
-of those calls and in its destructor, once, and nothing settles it again. A
-poll by anyone outside such a call fixes nothing. Run every call into an owned
-body's application source (poll, queries, destruction, discarded answers)
-with no framing current (`Written::outside`, through `OwnedBody::application`
-wherever the borrow allows), so only the
-outermost owned body in the chain adopts; record at `Framing::started` whether
-a framing was current, and never let such a nested body adopt. Never reintroduce a
-task-local or request-carried association: it judged a spawned admission, a
-nested router or a returned in-process response against the wrong head. A body
-a layer polls on another task than its connection's is not reached and keeps
-admission's framing; state that limit wherever settlement after every layer is
-promised. Own the built body before asking it anything, so a query that
-unwinds at the hand-over still ends it before it is destroyed. Do not
+again after a transport's query unwound. End the body when it yields trailers, its last frame, with the outcome a
+source's end would get: Hyper destroys the body then, but another holder polls
+on and must find the end without the source being asked again. Judge the outcome only
+by what the body itself can know: the length the response the builder returned
+declares, read once at the hand-over through `BodyStart::declared`, and what
+the source then does. That length is the response's `Content-Length`, counted
+only as plain digits with every value equal, else the body's exact size, and
+none for a response that carries no content by HTTP's own rules (answering
+HEAD, a 2xx answer to CONNECT, any 1xx, 204 or 304). A source that reaches its
+end, or a body destroyed once it yielded its declared length, is `completed`;
+a source that reaches its end short of that length is `failed`; a body
+destroyed before either is `dropped`, or carries the reason its scope was
+already cancelled or expired for. Never make the outcome depend on how a
+transport frames or writes the message, on a header or size that appears after
+the hand-over, or on which message carries the body: do not mirror Hyper's
+encoder or its refusal rules, do not settle the length again from a later
+response, and do not reintroduce a thread-local, task-local or
+request-carried association between a body and a message. Five review rounds
+found a new defect in that machinery each time (`batter-9wig.11`); a body
+cannot observe what it guessed at. Keep the rule identical in-process and
+on the registered server, but never claim the outcome is: it also depends on
+whether the holder stops polling, as Hyper does once a length is written, or
+polls on, as a collecting test does, so an in-process result is evidence for
+the rule only. Never describe the outcome as what the peer received, or as
+detecting a head the transport refused: `completed` beside a message the
+transport aborted or never wrote, and `dropped` beside one it delivered
+whole, are all possible and documented. State the rule once, complete, and
+give an outcome example only as an exercised case that names every input it
+depends on: the length the built response declared, the bytes already
+yielded and to whom, whether the source reports its end, when the holder
+destroys the body, and the protocol (only HTTP/1 is exercised). Three review
+rounds each found a general example that omitted one. The registered
+server's response body only holds its completion token and forwards every
+call unchanged. Own the built body before asking it anything, so a query that
+unwinds at the hand-over still ends it before it is destroyed. Ask the
+built body for its size at the hand-over only where the status and headers
+leave the declaration to it, and drop the admission record, which can hold
+the last copy of application-supplied request extensions, before the
+response is assembled. The unwind contract covers the application's code
+for the body and nothing else: the builder, the source's polls and
+questions, and the destructors of the source and of what it yielded. Treat
+a poll or question that unwinds as the body's end at every entry point:
+remember it, cancel the scope with that unwind caught (not from a guard's
+destructor inside it; a body destroyed while its holder unwinds still
+cancels from its own destructor), return an error at the next poll, answer
+questions without the source, and never enter the source again. In the ending, one guard
+(`streaming/end.rs`) owns the source, any rejected answer, whatever the
+source yielded that the poll has yet to return (trailers, a stream error)
+and the wait: emit the event with the request span entered, not only
+parented, because span-scoped filters need it current; destroy the source
+inside the span and under the hand-over dispatcher, apart from a rejected
+answer and from the kept value, each with an unwind from another caught (so
+a second destructor that panics replaces the first panic instead of
+aborting, the superseded payload being destroyed under the same
+dispatcher); if any unwound, destroy the kept value too, let the unwind
+continue, release the wait, and keep
+the body off a clean end until one more poll has returned an error, without
+a second event, after which it reports its end and a size of zero. Never
+decide by `thread::panicking()`: a body destroyed during an unrelated unwind
+keeps its span. An ended body holds no dispatcher, span or timer. Create,
+arm, poll and destroy the body's wait under the hand-over dispatcher only,
+on every path: Tokio's timer carries tracing state of its own when built
+with `tokio_unstable` and `tracing`, and releasing it under another
+subscriber panics in `tracing-subscriber`.
+The boundary: the tracing subscriber and task wakers are infrastructure
+assumed not to unwind. `tracing-subscriber` does not restore its registry
+after a layer callback panics, Tokio stops notifying the remaining waiters
+after a waker panics (and tokio-util 0.7.19 poisons a parent cancellation
+token), and an event the body emits from its destructor during such an
+unwind aborts the process. Make no claim, add no machinery and write no
+test for a panicking subscriber or waker: fifteen review rounds showed that
+each defence widened the claim and failed at the next edge (ADR-008, third
+to fifth assessments).
+State a bound as ending the body at a poll, never as what the peer sees. Do not
 claim truncation is visible to an HTTP/1.0 peer for a body without a declared
 length: Hyper delimits it by closing the connection. The observer publishes the request span
 in its shared state only while it is alive and clears it when it finishes;
@@ -300,24 +361,24 @@ and destroying the rejected answer inside the protected ending, with the source.
 Treat an empty data frame as no progress: Hyper discards it and polls again
 without yielding, so destroy it under protection, keep or start the idle wait,
 and wake the task before yielding; ask the source for its end only after
-destroying the frame, and end the body at once if it has ended. A
-recorded refusal outranks everything else destruction asks: a source already
-at its end and a length that looks produced, since Hyper never polls a body
-under a head it refuses. Apply the HTTP/1 framing mirror only to HTTP/1.0 and HTTP/1.1
-requests, the versions Hyper's HTTP/1 server parses: Axum's server accepts
-HTTP/2 when `hyper-util`'s `http2` feature is in the build, and HTTP/2 polls a
-body to its end. Judge refusal as Hyper encodes the head: ask the body
-for its end first, and for an ended body, which Hyper writes as none, apply
-only the rules its no-body branch keeps. Record, only in the registered server's `Written`, whether
-Hyper refuses the head (by its rules before the no-body rule, so under 204/304 and a
-2xx CONNECT answer too, and any final 1xx but 101, which Hyper answers with a
-500) and report a body under one `failed`; never record a refusal from the
-handler's provisional head or admission's response. Register for forced cancellation and the nearer bound only when the source is
+destroying the frame, check both bounds after that destruction, before
+asking, because an expired body asks its source nothing more, and again
+after the query, which are application code like the poll, and only then end
+the body at once if it has ended. Register for forced cancellation and the nearer bound only when the source is
 pending. End a library-ended body with an error, never `None`. Poll, query and
 destroy the application's body under the dispatcher current at the hand-over;
-emit the completion event and release the request span under the dispatcher
-the request's observer began under, published apart from the span because a
-filtered-out span names none, nesting the body's destruction inside it, because
+emit the completion event and release the request span under the request's
+dispatcher: the one the published span itself names, so span and subscriber
+cannot disagree, and, where there is no such span (none enabled, or the
+observer finished before a start that is then refused), the one admission
+recorded beside the correlation, upgraded from a weak handle, else the one
+current at the hand-over. Never keep a strong dispatcher in the shared
+observation state, the admission record or any other copyable request
+extension, and release the request's when the body ends: four review rounds
+each found a defect in that (it reached other requests with copied
+extensions, liveness did not prove provenance, and it kept the subscriber
+alive, twice; ADR-008, second assessment of 2026-11-18). Nest
+the body's destruction inside that dispatcher, because
 closing a span releases its parent through the current default and a handler
 may have switched subscribers before the hand-over. Emit the event once, before application
 destructors, without error contents. Keep `BodyBudget` validated and `BodyScope`
@@ -371,7 +432,7 @@ comparison. Apply `low_level::observe_http` after
 assembling routes/fallback; use `low_level::request_admission` inside it. If
 generated correlation is required, `low_level::operational_http` must be outside
 admission, `request_scope`, deadlines, authentication and any other
-short-circuiting middleware. Keep the eleven relocated helpers and `RouterClient` out of the crate
+short-circuiting middleware. Keep the eleven relocated helpers, `RouterClient` and `ForcedCloseIo` out of the crate
 root: a root alias would make a known-invalid composition look equivalent to the
 protected path, which ADR-010 forbids. `AssembledHttp` must keep exactly two
 outcomes, and `InProcessClient` must keep its router private, implement no Tower

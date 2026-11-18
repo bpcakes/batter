@@ -630,10 +630,48 @@ and fails. Local real-socket tests observed the pending body, the stalled
 reader and the half-sent head each holding the wrapper until abort without the
 close and ending inside the cancel allowance with it; a pending body after
 pipelined request bytes did the same when only pending polls were recorded.
-HTTP/2 and an upgraded connection were not exercised. Axum 0.8.9's `serve`
+HTTP/2 was not exercised; of an upgraded connection only its I/O type and the
+recovery of its socket were (below). Axum 0.8.9's `serve`
 uses hyper-util's automatic builder without `http1_only`
 (`serve/mod.rs:391-394`), so it serves HTTP/2 whenever `hyper-util`'s `http2`
 feature is unified into the build. Hyper's HTTP/1 server parses only
 HTTP/1.0 and HTTP/1.1 requests and writes a response built as HTTP/2 as
 HTTP/1.1 (`role.rs:428-435`), so the owned body's framing mirror applies only
 to those request versions. Checked on 2026-11-16.
+
+Rechecked on 2026-11-18 for `batter-9wig.14`, against the same locked sources:
+
+- The owned response body no longer depends on the Hyper encoder and refusal
+  rules recorded above, nor on Hyper calling into a body synchronously on the
+  connection task. Those notes stay as the dated record of what was read; the
+  adapter stopped mirroring them (`batter-9wig.11`). The outcome now follows
+  the length the builder's own response declares, by HTTP's rules rather than
+  one implementation's: `Content-Length = 1*DIGIT`
+  ([RFC 9110, section 8.6](https://www.rfc-editor.org/rfc/rfc9110#section-8.6)),
+  and no content in a response to HEAD, a 2xx response to CONNECT, or a 1xx,
+  204 or 304 response
+  ([section 6.4.1](https://www.rfc-editor.org/rfc/rfc9110#section-6.4.1)). The
+  outcome rule still relies on one Hyper fact, the reason a declared length
+  completes a body at all (the owner's handling of empty frames, trailers and
+  body errors relies on the facts recorded in the bullets above): its HTTP/1
+  dispatcher asks `is_end_stream` once before writing the head and, only if
+  the body is not at its end, `size_hint` once (`dispatch.rs:367-379`; a body
+  already at its end is written as no body and never asked its size), and
+  stops polling
+  once a known length is written. Real-socket tests observe a body whose size
+  turns exact only after the hand-over written with `content-length: 5` and
+  reported `dropped`, and a stream that produced the length its builder
+  declared reported `completed`.
+- Axum 0.8.9 wraps each accepted connection's I/O in `TokioIo` and serves it
+  with `serve_connection_with_upgrades` (`serve/mod.rs:367`, `396`), and
+  `TapIo` keeps its listener's `Io` type (`serve/listener.rs:121-127`). The
+  I/O inside an HTTP/1 upgrade is therefore `TokioIo<L::Io>` for the listener handed
+  to `serve`, which hyper-util 0.1.20's
+  `server::conn::auto::upgrade::downcast::<T>` recovers by exact type from its
+  private `Rewind<T>` (`server/conn/auto/upgrade.rs:22-47`). Wrapping the
+  listener for the forced close makes that type
+  `TokioIo<ForcedCloseIo<L::Io>>` through both registrations, so a downcast to
+  the listener's bare type returns `Err`. A real-socket test observes both
+  downcasts, the wrapped socket's peer address read through `get_ref`, and a
+  write on the recovered socket after the
+  server shut down joined.

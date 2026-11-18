@@ -452,3 +452,20 @@ async fn dropping_a_connection_removes_its_registration() {
     // Closing an empty registry is inert.
     gate.close();
 }
+
+/// Recovery removes the registration at once, while the recovered I/O is
+/// still alive, and that I/O no longer meets the close.
+#[tokio::test]
+async fn recovering_the_inner_io_removes_its_registration() {
+    let gate = Gate::new();
+    let (first, mut first_peer) = connection(&gate, 8);
+    let (_second, _second_peer) = connection(&gate, 8);
+    assert_eq!(registered(&gate), 2);
+    let mut recovered = first.into_inner();
+    assert_eq!(registered(&gate), 1);
+    gate.close();
+    recovered.write_all(b"after").await.unwrap();
+    let mut read = [0_u8; 5];
+    first_peer.read_exact(&mut read).await.unwrap();
+    assert_eq!(&read, b"after");
+}

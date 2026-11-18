@@ -35,16 +35,14 @@ struct Retained {
     /// open nor release it under another dispatcher. Shared behind an `Arc`,
     /// so a reader clones the span, which calls into the subscriber, only
     /// after releasing this lock.
-    context: Mutex<Option<Arc<Published>>>,
-}
-
-/// A request's span context and the dispatcher its observer began under.
-///
-/// The dispatcher is kept apart from the span: a span that subscriber filtered
-/// out carries no dispatcher, and the request's events still belong to it.
-struct Published {
-    span: tracing::Span,
-    dispatch: tracing::Dispatch,
+    ///
+    /// This record holds no dispatcher. It is shared request metadata that a
+    /// layer may keep or copy into another request, so one here would keep a
+    /// subscriber alive beyond its observer and could reach a request that
+    /// observer never saw. An owned body takes its dispatcher from the span
+    /// published here while there is one, and otherwise from the private
+    /// record of its own request's admission.
+    context: Mutex<Option<Arc<tracing::Span>>>,
 }
 
 #[derive(Clone, Default)]
@@ -80,15 +78,14 @@ impl ObservationState {
         self.lock().clone()
     }
 
-    fn published(&self) -> MutexGuard<'_, Option<Arc<Published>>> {
+    fn published(&self) -> MutexGuard<'_, Option<Arc<tracing::Span>>> {
         crate::lock(&self.0.context)
     }
 
-    /// The observing request's span context, and the dispatcher its observer
-    /// began under, while its observer is alive.
-    pub(super) fn context(&self) -> Option<(tracing::Span, tracing::Dispatch)> {
+    /// The observing request's span context, while its observer is alive.
+    pub(super) fn span(&self) -> Option<tracing::Span> {
         let published = self.published().clone();
-        published.map(|published| (published.span.clone(), published.dispatch.clone()))
+        published.map(|span| tracing::Span::clone(&span))
     }
 }
 
@@ -153,12 +150,7 @@ impl HttpObservation {
         // Choose once on first poll. A disabled explicit parent means a root
         // event, and looking up a fallback at Drop could adopt another request.
         let context = span.clone().or_current();
-        // The span's own dispatcher when it is enabled, and still the
-        // request's when its subscriber filtered the span out.
-        *state.published() = Some(Arc::new(Published {
-            span: context.clone(),
-            dispatch: tracing::dispatcher::get_default(Clone::clone),
-        }));
+        *state.published() = Some(Arc::new(context.clone()));
         Self {
             state,
             span,

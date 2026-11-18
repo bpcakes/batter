@@ -92,6 +92,9 @@ fn a_handler_that_panics_after_the_hand_over_is_observed_as_panicked() {
 
 /// A transport's task catches a panicking poll and only then destroys the
 /// body, outside the unwind. The body still names the panic, not the peer.
+/// The unwind was the body's last call into its source, so its scope is
+/// cancelled at once, before the body is destroyed: a context that escaped
+/// the stream starts nothing more in between.
 #[test]
 fn a_stream_that_panics_while_polled_is_observed_as_panicked_when_destroyed() {
     let capture = Capture::new();
@@ -123,7 +126,7 @@ fn a_stream_that_panics_while_polled_is_observed_as_panicked_when_destroyed() {
                 .catch_unwind()
                 .await
                 .is_err();
-            assert!(observed.context().check().is_ok());
+            assert_eq!(observed.context().check(), Err(Interruption::Cancelled));
             drop(response);
             unwound
         }
@@ -331,7 +334,7 @@ fn a_body_discarded_by_head_or_by_a_construction_timeout_is_observed_as_dropped(
 /// A response without a body frames none, so a length it declares is not one
 /// the body must produce: an empty body behind a 304 or a 204, answering a HEAD
 /// request, or a 2xx answer to CONNECT, completed rather than ending short.
-/// Hyper refuses any other final 1xx (see `sockets::framing`); the bodyless 101
+/// Hyper refuses any other final 1xx (see `sockets::undeclared`); the bodyless 101
 /// is not exercised, since upgrades are a non-goal.
 #[test]
 fn a_declared_length_on_a_response_without_a_body_is_observed_as_completed() {
@@ -457,83 +460,6 @@ fn a_refused_start_with_an_empty_body_is_reported_cancelled_unpolled() {
         admitted.contains("body_outcome=\"completed\""),
         "{admitted}"
     );
-}
-
-/// Only the body that started hands its framing to request admission. A
-/// refused second start for the same request must not take the started body's
-/// place, so a length the returned response declares after the hand-over, and
-/// the source does not meet, still makes the started body `failed`.
-#[test]
-fn a_refused_start_leaves_the_framing_to_the_body_that_started() {
-    let capture = Capture::new();
-    let drained = paused(&capture, async {
-        let handle = ready();
-        let app = client(
-            &handle,
-            GuardedRouter::new().route(
-                "/",
-                route(|once: AdmittedRequest, again: AdmittedRequest| async move {
-                    let started = once.into_streaming_response(budget(60, 5), |_scope| {
-                        Body::from_stream(stream::iter([Ok::<_, io::Error>(Bytes::from_static(
-                            b"hello",
-                        ))]))
-                    });
-                    drop(again.into_streaming_response(budget(60, 5), |_scope| ()));
-                    ([(header::CONTENT_LENGTH, "10")], started)
-                }),
-            ),
-        )
-        .await;
-        let mut response = get(&app, "/").await;
-        drain(response.body_mut()).await
-    });
-    assert_eq!(drained, ("hello".to_owned(), None));
-    let events = finished(&capture);
-    assert_eq!(events.len(), 2, "{}", capture.text());
-    let (refused, started) = (&events[0], &events[1]);
-    assert!(refused.contains("body_outcome=\"cancelled\""), "{refused}");
-    assert!(started.trim_start().starts_with("WARN"), "{started}");
-    assert!(started.contains("body_outcome=\"failed\""), "{started}");
-    assert!(started.contains("bytes=5"), "{started}");
-}
-
-/// A poll before the transport's does not fix the framing: a handler that
-/// polls its owned body once before returning it under a declared length
-/// leaves that length to request admission, so a source that falls short of
-/// it is still `failed`.
-#[test]
-fn a_poll_before_the_transport_leaves_the_framing_to_the_returned_response() {
-    let capture = Capture::new();
-    let drained = paused(&capture, async {
-        let handle = ready();
-        let app = client(
-            &handle,
-            GuardedRouter::new().route(
-                "/",
-                route(|admitted: AdmittedRequest| async move {
-                    let source = stream::once(async {
-                        tokio::task::yield_now().await;
-                        Ok::<_, io::Error>(Bytes::from_static(b"hello"))
-                    });
-                    let mut body = admitted
-                        .into_streaming_response(budget(60, 5), |_scope| Body::from_stream(source))
-                        .into_body();
-                    std::future::poll_fn(|cx| {
-                        assert!(std::pin::Pin::new(&mut body).poll_frame(cx).is_pending());
-                        Poll::Ready(())
-                    })
-                    .await;
-                    ([(header::CONTENT_LENGTH, "10")], body)
-                }),
-            ),
-        )
-        .await;
-        let mut response = get(&app, "/").await;
-        drain(response.body_mut()).await
-    });
-    assert_eq!(drained, ("hello".to_owned(), None));
-    let event = assert_finished(&capture, "WARN", "failed");
-    assert!(event.contains("bytes=5"), "{event}");
 }
 
 /// The request span belongs to the observer. An admitted request the

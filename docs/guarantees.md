@@ -2653,8 +2653,8 @@ slot is honoured only while the request's own context is live, that is, during
 response construction. A second call, or a call on a request the application
 kept after its response, builds the response with a scope that is already
 cancelled and never starts work that drain admission would refuse. A body with
-content ends at its first poll, truncated, and every refused start is reported
-`cancelled`, including an empty body that the transport learns has ended from
+content ends at its first poll, truncated, and every refused start that does
+not panic is reported `cancelled`, including an empty body that the transport learns has ended from
 `is_end_stream` and never polls. `BodyBudget` requires a positive total and a
 positive idle bound shorter than it, so the idle bound can end a body first. The library enforces both without the stream's
 cooperation: the total bound and an armed idle wait are checked before every
@@ -2671,25 +2671,47 @@ the idle bound without starving its runtime; a final empty frame, after which
 the source reports its end, ends the body at once, as Hyper ends the message; and a pending body
 registers for forced cancellation and the nearer bound. The idle wait starts at
 the body's first pending poll after a frame, so time the transport spends not
-polling a body it cannot yet write is not counted. Each of the three ends the body with an error, which
-Hyper turns into a closed connection without a final chunk; a library-ended
-body is never reported to the peer as complete over HTTP/1.1. An HTTP/1.0
-request is the exception: Hyper answers it in HTTP/1.0, where a body without a
-declared length is delimited by closing the connection, so that peer receives
-an orderly end of stream after the data already written and cannot tell the
-truncation from the message's end. A declared `Content-Length` keeps the
-shortfall visible to it. Ending at drain is left to the
+polling a body it cannot yet write is not counted. Each of the three ends the body with an error at a
+poll: the library wakes a poll it left pending, a holder not waiting on one
+meets the bound at its next poll, and a body that is not polled
+again ends only when it is destroyed, by the destruction rule below, which
+reads cancellation and the total bound but not the idle bound. What the peer
+sees after such an error is the transport's to decide and is not predicted:
+in the HTTP/1.1 cases exercised, a response sent chunked and one framed by a
+`Content-Length` its body had not yet produced, Hyper turned the error into
+a closed connection without completing the message. An HTTP/1.0
+request is the exception: Hyper answers it in HTTP/1.0, where a response
+sent without a `Content-Length` is delimited by closing the connection, so
+that peer receives an orderly end of stream after the data already written
+and cannot tell the truncation from the message's end. A `Content-Length` on
+the response keeps the shortfall visible to it. Ending at drain is left to the
 stream through `BodyScope::shutdown`.
 
 The body is polled, and asked for its end and size, under the tracing
 dispatcher current when the handler handed it over and inside the request's
 span context, whichever task asks. The application's body is also destroyed
 under it. The completion event and the release of that span happen under the
-dispatcher the request's observer began under, which recorded the span when it
-enabled it. The observer publishes that dispatcher apart from the span, so a
-subscriber that filtered the span out still receives the event. It is the
-hand-over dispatcher unless the handler switched subscribers before the
-hand-over: closing a span releases its parent through
+request's dispatcher: the one that owns the span the request's observer
+published, which the span itself names, so the two can never belong to
+different subscribers. That span is the observer's `batter.http` span or,
+where its subscriber filtered that out, the span current when the observer
+began. Where there is no such span, because neither existed or the observer
+already finished before a start that is then refused, it is the one the
+request was admitted under, which admission records beside the correlation
+the event carries and holds only weakly; if that subscriber no longer
+exists, the one current at the call is used. The shared observation record
+holds no dispatcher and the admission record only a weak one, so neither
+keeps a subscriber alive in an admitted request or request extensions kept
+or copied beyond the response, and a body that has ended, which is when its
+completion event is emitted, holds no dispatcher, even while its holder
+keeps the exhausted body. A holder that stops at `is_end_stream` or at the
+declared length and keeps the body has not ended it, and it holds its
+dispatchers and span until it is destroyed. An application extension
+that holds a span, which the library preserves for failure renderers, still
+keeps that span's subscriber, and so does the published span while the
+observer is alive. The request's dispatcher is the
+hand-over dispatcher unless the handler, or a layer between the observer and
+the handler, switched subscribers before the hand-over: closing a span releases its parent through
 the current default dispatcher, so releasing it on the transport's task
 unprotected, or under the handler's switched subscriber, would hand another
 registry a span it never saw, which `tracing-subscriber` rejects with a
@@ -2706,10 +2728,14 @@ completion event still measure response construction only. Exactly one
 emitted before application destructors run. A stream error, either bound,
 cancellation and a panic are WARN; completion and `dropped` are INFO.
 `dropped` names a body discarded before its end by whoever held it, not ended
-by the library, a panic or the stream: a peer that went away, a HEAD response
-whose body Axum strips, or a response discarded because response construction
-ended without it; the request's own completion event, with its method and
-status, tells these apart. `panicked` names a builder that never returned, a poll of the body that
+by the library, a panic or the stream: a peer that went away, a body still
+pending and short of any declared length under a head the transport refused
+to write, a body not yet at its end that Axum strips from a HEAD response, a
+transport that stopped at a length the hand-over never saw, or a response
+discarded because response construction ended without it; the request's own
+completion event, with its method and status, tells some of these apart, but not a
+transport that stopped at such a length from a peer that went away after the
+same bytes. `panicked` names a builder that never returned, a poll of the body that
 unwound (the transport destroys such a body after catching the unwind), the
 destruction of a swallowed empty frame that unwound (likewise), a
 question about the body's end or size that unwound, whether the owner asked it
@@ -2719,88 +2745,113 @@ still finishes under the captured dispatcher before the application's body is
 destroyed, and the panic then continues), or destruction
 during unwinding, such as a handler panicking after the hand-over; it carries
 no payload. A body destroyed after its scope was cancelled or
-expired reports that reason instead of `dropped`, and a source that produced
-its whole message is `completed` even when the transport never polls for its
-end: Hyper stops once `is_end_stream` reports the end, once the advertised
-`Content-Length` or exact size has been written, and after trailers. The
-advertised length is taken again from the response finally written, because
-Hyper frames the message by the headers it encodes and Axum applies a handler
-tuple's headers after `into_streaming_response` returns. Request admission
-settles it from the response it returns, through one private per-request
-record the started body hands its framing to, not through the response, so a
-response the handler rebuilt around the body, which keeps nothing else the
-built response carried, is settled the same way. On the registered server the
-message that carries the body decides instead (below), so only servers that
-call `axum::serve` themselves, the in-process client and a body polled on
-another task than its connection's stop at admission. The framing follows Hyper 1.11.1's encoder: a
-`Content-Length` of plain digits, repeated only with one value, else the body's
-exact size; none under `Transfer-Encoding`, except in an HTTP/1.0 answer, which
-drops that header. The answer's version is Hyper's: HTTP/1.0 for an HTTP/1.0
-request, else the response's own, so a response built as HTTP/1.0 counts as
-one. A declared length that the body's exact size contradicts, which Hyper
-does not support (it frames by the size and only debug builds assert they
-match), still counts, being what the peer reads. Axum's router adds a `Content-Length` to a body of
-exact size after every layer, even beside `Transfer-Encoding`, and Hyper
-refuses such a message. From the head it hands Hyper, the registered server
-therefore also records whether Hyper refuses it, by the rules Hyper applies
-before its no-body rule: a final 1xx status other than 101, which Hyper
-answers with a 500 instead and which Axum passes through, any length header
-on a 2xx answer to CONNECT, a
-`Content-Length` beside `Transfer-Encoding` unless `Transfer-Encoding` comes
-first in an answer that cannot be chunked, and an unparsable or conflicting
-`Content-Length` on a body of unknown size, including under a 204 or 304. A
-body that already reports its end when Hyper writes the head is written as
-none (`dispatch.rs:367-379`), and Hyper then skips every `Content-Length`
-unparsed (`role.rs:784-804`), except answering HEAD, where it writes the first
-value and refuses a length header after it; for such a body only a final 1xx,
-a length header on a 2xx answer to CONNECT and a `Transfer-Encoding` before a
-`Content-Length` in an answer that may be chunked are refused. A
-body under a refused head is reported `failed`, whether or not its source had
-already ended or a handler polled it first, not as a departed peer or a
-complete empty message; neither admission's head nor the provisional head the
-handler built records a refusal, so a body discarded with them stays
-`dropped`. The registered server associates a body with a message by
-containment, not by which request's work started it: each response future
-computes that framing and refusal once, from the request head and the response
-it hands Hyper, and that response's body makes them current, in a thread-local,
-around each synchronous call Hyper makes into it: a poll, an end or size query
-and its destruction. An owned body reached by such a call, through whatever
-layers wrap it, adopts the framing once and keeps it; a poll by anyone else,
-such as a handler or a layer before the transport, fixes nothing. Hence a
-layer that replaces the request's extensions, even with an earlier request's,
-or rebuilds the response cannot detach the body from the message that carries
-it; admission a layer polls on another task, such as one awaiting
-`tokio::spawn(next.run(request))`, a router holding
-`low_level::request_admission` that a served handler dispatches itself, and an
-in-process response a served handler returns as its own are each judged by the
-message Hyper writes for them; and an in-process body a served handler keeps
-rather than returns is never reached by that transport, so it keeps the
-framing its own admission settled. Application code that runs inside such a
-call is no part of the transport's chain: an owned body runs its source's
-polls, queries and destruction with no framing current, so a body that source
-forwards keeps its own framing and only the outermost owned body adopts; and a
-body started while a framing is current, by work such as a plain stream
-dispatching in-process while Hyper polls it, never adopts one. A plain stream
-or body layer that consumes an owned body started elsewhere, while Hyper polls
-it, still lets that body adopt the message's framing: from inside the call,
-consuming code and a forwarding layer look alike. A body that a layer polls on
-another task than its connection's, for example by pumping it through a
-channel, is not reached at all: it keeps admission's framing and records no
-refusal, so a length
-a layer outside admission adds, or a head Hyper refuses, goes unseen and the
-event can report `completed` or `dropped` for a message Hyper aborted or never
-wrote. Lengths are compared with the bytes the owned body yielded, so a layer
-that changes them under a declared length, or a message joining the body with
-others, is judged against that whole message. A source
-that yields its end, reports it through `is_end_stream` or yields trailers
-before producing its advertised length is `failed` (WARN): Hyper aborts that
-message and the peer sees it truncated, except when the source already reports
-its end as Hyper writes the head: Hyper then writes no body and frames the
-message as `content-length: 0`, so the peer receives a complete empty response
-while the event still reports `failed`. Hyper, not the owner, enforces the
-framing. A response Hyper writes without a body (to a HEAD request, a 2xx
-answer to CONNECT, or a 101, 204 or 304 status) frames nothing, so a length it
-declares is not held against its body: an empty body there is `completed`. Error contents are not
+expired reports that reason instead of `dropped`.
+
+The outcome describes the body, not the transport. It is decided by three
+things only: the length the response the builder returned declares, read once
+at the hand-over; the bytes the owned body has yielded, to whoever polled it;
+and how the body ended. That length is the response's `Content-Length`,
+counted only as plain digits and repeated only with one value (RFC 9110,
+section 8.6), else its body's exact size. A response that carries no content
+by HTTP's own rules (answering HEAD, a 2xx answer to CONNECT, or a 1xx, 204 or
+304 status; RFC 9110, section 6.4.1) declares none, whatever its headers say.
+A body the library ended carries that reason, a panic `panicked`, and a
+returned stream error `failed`. A source that reaches its end, whether it
+yields the end, yields trailers or reports the end through `is_end_stream`,
+asked after an empty data frame, where the body then ends at once, or when
+the body is destroyed, is `failed` (WARN) if it yielded less than the
+declared length, because the application's own response promised more than
+its source produced, and `completed` otherwise. A body whose call unwound is
+`panicked` even if its holder caught the unwind: its scope is cancelled as
+the call unwinds, its next poll returns an error and its source is not
+entered again. If it was the source's own destruction that unwound as the
+body ended, the body had already ended and emitted its event with the
+outcome it had; the poll that drove it returned nothing, so the body does
+not report a clean end until one more poll has returned an error, after
+which it reports its end and a size of zero like any other. These unwind
+guarantees cover the application's code for the body: the builder, the
+source and what it yields. They do not cover a tracing subscriber or a task
+waker that panics. Neither `tracing-subscriber` nor Tokio restores its own
+state after one (a layer callback that panics leaves the registry's current
+span behind; a waker that panics when woken stops the notification of the
+remaining waiters), and an event the body emits from its destructor while
+such a panic unwinds aborts the process, so nothing sound can be promised
+above them. The body's wait, a timer and a cancellation wait, is created,
+armed, polled and destroyed under the hand-over dispatcher only, because a
+timer can carry tracing state of its own that belongs to the subscriber it
+was created under. Tokio's does when built with `tokio_unstable` and its
+`tracing` feature: the streaming tests for bounds, shutdown, lifetime and
+wakers were run once by hand under such a build on 2026-11-18 and passed,
+and the wait test fails there with the destruction moved to another
+dispatcher; that build is not part of `scripts/verify.sh`. Nor do the unwind
+guarantees cover an application destructor that panics while
+the thread is already unwinding for another reason, such as a body destroyed
+because its holder panicked: Rust aborts there. A body destroyed before its
+source's end is `completed` if it had yielded its declared length, because
+Hyper's HTTP/1 connection, in the cases exercised, stops polling there
+without asking for the end. Otherwise it reports the reason its scope was
+already cancelled or past its total bound for, and `dropped` if the scope was
+still live. Trailers end the owned body as it yields them, with the outcome
+its source's end would get, so a holder that polls on, as one collecting an
+in-process response does, finds the end at once and the source is not asked
+again.
+
+The owner does not predict how a transport frames or writes the message and
+does not track which message carries the body, so the rule is the same
+through the in-process client, the registered server and a server that calls
+`axum::serve` itself, on whatever task the body is polled. The outcome is
+not, because whether and when a holder stops polling and destroys the body is
+the holder's choice: in the HTTP/1 cases exercised Hyper, having taken from
+the body the length it framed the message by, stopped polling and destroyed a
+body that a
+holder collecting the in-process response polls on, into the source's end or
+a bound. An in-process outcome is
+therefore evidence for the rule, not for what a served response reports, and
+neither is a delivery receipt. Hyper's HTTP/2 connection was not exercised;
+its send loop keeps polling a body whose data frame carries no end
+(`proto/h2/mod.rs:183-199`, read only).
+
+A `Content-Length` that a handler's tuple or a layer adds after
+`into_streaming_response` returns, and a size the body reports only later,
+can still change how Hyper frames the message but are not read: the outcome then
+follows what the builder's response declared, by the rule above, and can part
+from the message either way. These cases were exercised over sockets with
+Hyper 1.11.1, each a GET over HTTP/1.1 answered 200. With
+no length and no exact size at the hand-over: a source that yields five bytes
+and ends once the peer has read them, under a ten-byte length added
+afterwards, is `completed` although Hyper ends the connection short; one
+that yields five bytes and then stays pending without reporting its end,
+under a five-byte length added afterwards, is `dropped`, because Hyper
+destroyed it once it had taken those bytes (whether they had reached the
+socket by then is not observed), although the peer received a complete message, and the same body
+collected in-process ends at its idle bound instead; and one that likewise
+yields five bytes and stays pending without reporting its end, whose size
+turns exact only after the hand-over, is `dropped` the same way. With a
+ten-byte length declared inside the builder: a source that yields five bytes
+and ends is `failed`, and so is one already at its end, for which Hyper
+writes no body and sends a complete `content-length: 0` message. Declare the
+length inside the builder for the outcome to follow it.
+
+The outcome does not detect a head Hyper refuses to write. Four such heads
+were exercised, each a GET over HTTP/1.1 whose body nobody had polled. Hyper
+polled none of the four bodies, which their sources count, the peer received
+none of them, and each was judged by the same rule from what it declared and
+what its source reports: under a final 103, which the peer reads as a 500, a
+pending body is `dropped` and an empty one `completed`; under a 103 status
+the handler's tuple set after the hand-over, read as a 500 too, an empty body
+that declared five bytes is `failed`; and under a zero `Content-Length`
+before `Transfer-Encoding: chunked`, where the peer reads nothing, a pending
+body is `completed`, its zero bytes being all it declared. A body a handler
+or layer polled before returning it under a refused head is judged with the
+bytes it yielded then; that was not exercised. Which other heads Hyper
+refuses is Hyper's to decide and is not predicted here.
+
+An earlier form of this owner mirrored Hyper 1.11.1's HTTP/1 encoder and
+refusal rules and associated each body with the message that carried it, to
+report what the peer received. Five review rounds each found another case
+where that prediction or association was wrong, so it was removed on
+2026-11-18 (`batter-9wig.11`, [ADR-008](adr/008-http-transport-ownership.md)).
+Error contents are not
 copied into the event. The request's own completion event is unchanged, and no
 metric is recorded for bodies.
 
@@ -2815,8 +2866,7 @@ an idle bound as long as the total refused at validation, an always-ready source
 stream's choice, a body started during drain, a stream error, a builder
 panic, a handler panic after the hand-over and a panicking stream, the event
 before application destructors, an admitted request kept beyond its response,
-a second and a late body start for one request, a refused second start that
-leaves the length declared after the hand-over to the body that started, a
+a second and a late body start for one request, a
 refused empty body that is never polled, a HEAD request, a declared length on a 304, a 204, a HEAD
 response and a 2xx answer to CONNECT, a body whose answer about its end panics during destruction and when
 the transport asks first, a body whose first answer about its size panics at
@@ -2836,53 +2886,111 @@ trailers, neither of which yields its end, each reported `completed`, and a
 source that ended or reported its end five bytes short of a declared ten,
 each reported `failed` with the peer's message truncated, a body already ended
 when the head is written, reported `failed` while the peer receives a complete
-`content-length: 0` message, a length a handler
-tuple declares after the hand-over, or a response rebuilt around the body
-declares, which decides `failed` when short and `completed` when met, and an
+`content-length: 0` message, and an
 HTTP/1.0 request whose body, ended at its idle
-bound and reported `idle_timeout`, reaches the peer without a declared length
+bound and reported `idle_timeout`, reaches the peer without a `Content-Length`
 or chunked framing and as an orderly close, while the same body with a declared
 ten-byte `Content-Length` reaches it framed by that length and six bytes short.
-They also show a length that a layer between request admission and the
-operational wrapper declares, reported `failed` when the source ends short of
-it, a `Transfer-Encoding` beside a body of exact size, which Axum's router
-also gives a `Content-Length`, refused by Hyper so that the peer receives
-nothing and the body is reported `failed`, a length declared by a layer that
-rebuilds the response outside two nested admissions, an empty-frame source ended at its
+[Further socket cases](../crates/batter-axum/tests/streaming/sockets/undeclared.rs)
+show what the owner does not know: a ten-byte length a handler's tuple adds
+after the hand-over over a source that yields five bytes and ends only once
+the peer holds the 200 head, its ten-byte declaration and those five bytes,
+reported `completed` while the connection then ends short; a five-byte length
+added the same way over a source that never ends, reported `dropped` while
+the peer receives a complete message; a body whose size turns exact only after the hand-over,
+written by Hyper with `content-length: 5` and reported `dropped` with five
+bytes; and four heads Hyper refuses without polling the body, whose sources
+count their polls. Under a final
+103, where the peer reads a 500 status line, a pending body is reported
+`dropped`, an empty one `completed`, and an empty one whose builder declared
+five bytes, the 103 set by the handler's tuple afterwards, `failed`; under a
+zero `Content-Length` before `Transfer-Encoding`, where the peer reads
+nothing before the connection ends, a pending body is reported `completed`.
+In-process cases show an empty-frame source ended at its
 idle bound while another task on its current-thread runtime keeps running,
 data that follows an empty frame from a source that never wakes itself
 delivered at once, a swallowed empty frame destroyed under the handler's
 subscriber while a foreign one polls, one whose destructor panics, caught by
-the caller before it drops the response, reported `panicked`, a refused zero-length HTTP/1.0 head
-reported `failed`, a length declared outside admission over a request whose
-extensions a layer replaced with an earlier request's and whose response it
-rebuilt, reported `failed`, a final empty frame completing the body before a
-next poll that comes after the idle bound, an in-process response read after
-the served response around it was written keeping its own framing, a pending
-body under a final 103 head, which Hyper answers with a 500, reported `failed`,
-as are an already ended body and one its handler polled first under that head,
-admission polled on a spawned task under an outer ten-byte length and an
-in-process response a served handler returns under a ten-byte length it
-declares, both reported `failed` while the peer receives fewer bytes, an
-ended body under the HTTP/1.0 head refused for a pending one written as a
-complete empty response and reported `completed`, a body a plain stream
-starts in-process while Hyper polls it keeping its own ten-byte framing and
-reported `failed`, a body an owned source forwards keeping its own framing so
-that both report `completed`, and an HTTP/1.0 response to an
-HTTP/1.1 request, framed by its `Content-Length` despite `Transfer-Encoding`
-and reported `failed` when short. Unit tests check the framing rules
-against Hyper's parser: plain digits only, repeated values equal, no length
-under `Transfer-Encoding` except for HTTP/1.0, none for a bodyless response,
-the refused heads including a final 100, 102 or 103 but not a 101, a body
-adopting the first transport's framing once and no later settle, and the
-written framing current only during the transport's call, restored after an
-inner call or an unwind, and the refusal rules for a body Hyper writes as
-none. An in-process case checks that a handler's poll before
-the transport leaves a length declared afterwards to admission.
-Mutation checks were run by hand on 2026-11-11, each applied temporarily and
-reverted; they are not an automated gate. Removing scope cancellation, the
+the caller before it drops the response, reported `panicked`, and a final
+empty frame completing the body before a next poll that comes after the idle
+bound. Unit tests check the declared-length rule: plain digits only, repeated
+values equal, overflow and malformed values declaring nothing, the body's
+exact size without a header, no part for `Transfer-Encoding`, and no length
+for a 1xx, 204 or 304 status, a HEAD request or a 2xx answer to CONNECT.
+[Further in-process cases](../crates/batter-axum/tests/streaming/endings.rs)
+show a body ended as it yields its trailers, its scope cancelled and its
+event emitted before any further poll while the holder still keeps it, the
+next poll finding the end and its pending source not polled again; the same
+over a source that reported an exact size of ten at the hand-over and yielded
+five bytes before its trailers, reported `failed`; a final empty frame whose destruction or end
+query outlasted the idle or the total bound reported as that bound with an
+error, not a clean end, the end not asked at all once the destruction had
+outlasted it; a start refused after the response reported, with the
+request's id, to the request's subscriber and not to the one current at the
+call; a pending body its handler kept while returning an empty 200
+reported `dropped`, not `completed` by that response's zero length; a
+length a handler's tuple adds after the hand-over ignored in-process exactly
+as on the server; and the late five-byte length over a source that never
+ends, which Hyper drops after five bytes, ended at its idle bound and reported
+`idle_timeout` when a holder collects the in-process response instead. The
+first four failed against the code before their fixes (2026-11-18).
+[Interruption cases](../crates/batter-axum/tests/streaming/sockets/interrupted.rs)
+show a body the idle bound ends after six bytes while Hyper writes its
+HTTP/1.1 message: sent chunked, the peer holds one chunk and no
+final chunk when the connection ends, and with a ten-byte length declared
+inside the builder it holds six bytes of the ten.
+[Unwinding cases](../crates/batter-axum/tests/streaming/unwinding.rs), all
+of them panics in the application's own code for the body, show a body whose
+swallowed empty frame panicked when destroyed, the unwind caught by its
+holder, with its scope cancelled at once, returning an error at its next
+poll and reported `panicked` once, its source, which would have yielded
+trailers, never entered again and its end and size answered without it, and
+the same for a source whose own poll panicked, the body afterwards reporting
+its end and a size of zero; an end query that unwinds cancelling the scope
+at once, and still waking a poll of the same body that another task left
+pending; a body destroyed while its holder unwinds for its own reason, its
+source still destroyed inside the request span after the `panicked` event;
+trailers and a stream error that the poll never returned because the
+source's destructor unwound as the body ended, destroyed inside the request
+span after the body's one event, the body then not at a clean end until one
+more poll has returned an error, and the polling task's waker released while
+the response is still held; trailers whose own destructor panics after the
+source's did, whether the poll was about to return them or the library had
+rejected them as too late, the second panic replacing the first for the
+holder to catch instead of aborting the process, and the first panic's
+payload destroyed under the hand-over dispatcher like the values; a pending
+body's wait released under the hand-over subscriber when another one polls
+and drops it, seen through the task waker it holds; and the
+hand-over asking no size of a body whose
+response states a `Content-Length` or carries no content, so a handler that
+keeps such a body is not unwound by a size query that panics.
+[Subscriber cases](../crates/batter-axum/tests/streaming/subscribers.rs) show
+a body admitted under an earlier request's finished observation record, which
+a layer copied with that request's extensions, reported to the subscriber its
+own request was admitted under; a start refused after the response on a
+request admitted while such a copied record's observer was still alive,
+reported with that request's id to the subscriber it was admitted under and
+neither to the earlier request's nor to the one current at the call; a body
+whose request was admitted under another subscriber than the one that owns
+its request span, reported inside that span to the span's owner; extensions
+kept from an observed request, and an admitted request with its extensions,
+keeping no subscriber alive, a start then refused reporting to the
+subscriber current at the call; an exhausted body its holder keeps holding
+no subscriber, whether or not the handler switched subscribers; and a body
+whose live observer published no span, reported to the subscriber its
+request was admitted under; the request span being the current one in its
+subscriber when the body's completion event arrives, which a span-scoped
+filter relies on. A body started while a copied record's observer is still alive
+enters that observer's span and reports to its subscriber: copying one live
+request's Batter records into another is outside the supported redispatch
+described above, a fresh request with each application extension copied by
+type, and that case is not exercised.
+Mutation checks were run by hand between 2026-11-11 and 2026-11-16, each
+applied temporarily and reverted; they are not an automated gate, and none was
+re-run after the outcome rule changed on 2026-11-18. Those that concern
+behaviour still present: removing scope cancellation, the
 cancellation wakeup, the captured dispatcher, the per-frame bound check, the
-expired-idle check before a frame, the advertised-length completion or the
+expired-idle check before a frame, the declared-length completion or the
 trailers completion each failed at least one of these tests, as did keeping the observer's published
 span after it finishes, destroying the application's body before the event,
 dropping either panic check, dropping either the take-once slot or the
@@ -2890,60 +2998,31 @@ liveness check on the body-start authority, releasing the request span or
 destroying the application's body outside the captured dispatcher (with the
 request inside a parent span), and dropping the refused-start record for an
 empty body. Restoring `Clone` and a borrowing `start` on
-`OperationContinuation` made its compile-fail doctests compile. In the same
-way on 2026-11-12, reporting a short end as `completed` failed both
-short-length cases, and holding a declared length against a response without a
-body failed the 304 case, and the HEAD case on its own. Later the same day,
-skipping the framing settled at request admission failed the late-declared
-length case, asking the source for its end in destruction without catching
-the unwind failed the panicking-answer case, as did forgetting a transport
-question that unwound, and starting a continuation without checking its
-admitted operation failed the core unit test. On 2026-11-13, asking the
+`OperationContinuation` made its compile-fail doctests compile. Reporting a
+short end as `completed` failed both short-length cases, and holding a
+declared length against a response without a body failed the 304 case, and the
+HEAD case on its own; dropping the 204 or the CONNECT arm of the no-content
+rule failed the corresponding case. Asking the source for its end in
+destruction without catching the unwind failed the panicking-answer case, as
+did forgetting a transport question that unwound; starting a continuation
+without checking its admitted operation failed the core unit test; asking the
 body for its end or size outside the captured dispatcher failed the
-foreign-subscriber query case, asking for its size before owning it failed the
-hand-over panic case, dropping the admission-owned framing hand-off failed the
-late-declared length case, the committed extension-based hand-off failed
-its rebuilt-response half, and letting a refused start hand over its framing
-failed the refused-start framing case. On 2026-11-14, dropping the 204 or the
-CONNECT arm of the no-body framing rule failed the corresponding no-body case,
-and dropping the one-year ceiling on the total failed the budget validation
-test. Later that day, removing the bound check after the source's poll failed
-the outlasting-poll case for the idle and the total bound alike; then
-accepting an idle bound equal to the total failed the budget test, reporting
-an error returned after an overrun as `failed` failed the outlasting-poll
-case, parsing `Content-Length` with Rust's integer parser or ignoring
-`Transfer-Encoding` failed the framing unit tests, and dropping the settle on
-the response handed to Hyper failed the outside-admission length case. Later,
-dropping a rejected answer outside the protected ending failed the late-answer
-destruction case, and framing by the request's version instead of Hyper's
-effective one failed both the version unit test and the HTTP/1.0 response
-case. In the last round, passing empty frames on failed the empty-frame case,
-reporting a refused head as `dropped` or ignoring the version in the refusal
-rule failed the refusal cases, dropping the link to the server's record or the
-started flag failed the outside-admission length case under a second
-admission, letting a bodyless status suppress a refusal failed the refusal
-unit test, recording a refusal from the handler's provisional head failed the
-construction-timeout case, settling an already polled body failed the linked
-record unit test, and measuring the close from its observation failed the
-gate's late-observation unit test; then dropping the body's self-wake after an
-empty frame, destroying that frame outside protection, or letting a produced
-zero length win over a recorded refusal each failed its new case, and
-ignoring the server's current record failed four of the framing socket cases;
-finally, treating a final empty frame as no progress failed the final-frame
-case, and dispatching in-process inside the server's record failed the
-in-process case. On 2026-11-15, after the task-local association was replaced
-by containment, disabling the adoption of the written framing failed seven of
-the framing socket cases, including the spawned-admission and returned
-in-process cases; asking the source for its end before the recorded refusal
-failed the ended-body 103 case; and fixing the framing at any first poll failed
-the in-process poll-before-transport case and the handler-polled 103 case. On
-2026-11-16, letting a body started inside a transport's call adopt failed the
-in-process-from-a-polled-stream case, running an owned source with the framing
-current failed the forwarded-body case, and ignoring a body's end in the
-refusal rule failed the ended HTTP/1.0 case. Later that day, measuring the
-idle bound only from an armed wait failed the outlasting-poll case for a poll
-straight after a delivered frame, and applying HTTP/1 rules to every request
-version failed the HTTP/2 framing unit test.
+foreign-subscriber query case, and asking for its size before owning it failed
+the hand-over panic case. Dropping the one-year ceiling on the total, or
+accepting an idle bound equal to the total, failed the budget validation test;
+removing the bound check after the source's poll failed the outlasting-poll
+case for the idle and the total bound alike, reporting an error returned after
+an overrun as `failed` failed the same case, and measuring the idle bound only
+from an armed wait failed it for a poll straight after a delivered frame.
+Parsing `Content-Length` with Rust's integer parser failed the length unit
+test of that time. Dropping a rejected answer outside the protected ending
+failed the late-answer destruction case; passing empty frames on, dropping the
+body's self-wake after one, destroying one outside protection, or treating a
+final empty frame as no progress each failed its case; and measuring the
+forced close from its observation failed the gate's late-observation unit
+test. The checks made in those rounds against the framing mirror, its
+admission settlement and its message association exercised code and tests
+that no longer exist.
 
 Limits: the bounds are observed only when the transport polls the body. A peer
 that stops reading leaves it unpolled, so only the forced connection close at
@@ -2956,10 +3035,8 @@ returns cannot be ended; one that returns is measured from its start, so
 synchronous work inside the poll that begins a wait counts against the idle
 bound. Axum 0.8.9's `serve` builds hyper-util's automatic connection builder
 without restricting it to HTTP/1 (`serve/mod.rs:391-394`), so it accepts
-HTTP/2 whenever `hyper-util`'s `http2` feature is in the build. The framing
-mirror applies only to HTTP/1.0 and HTTP/1.1 requests, the only versions
-Hyper's HTTP/1 server parses; for any other the body is `completed` only once
-its source ends or yields trailers. HTTP/2 serving was not exercised.
+HTTP/2 whenever `hyper-util`'s `http2` feature is in the build. The outcome
+rule does not depend on the protocol, but HTTP/2 serving was not exercised.
 
 A response returned from `RequestInterruptionResponder::render` carries private
 interruption evidence. Admission uses it to classify the response-construction
@@ -3335,8 +3412,8 @@ skipped. Each response body gains one wrapper allocation for this, and each
 request a few atomic increments and decrements of one server-wide Tokio
 `TaskTracker`, which wakes the waiting server when it is closed and empty. The
 wait holds when Axum's serving future returns an error too. The peer sees a truncated message or a closed
-connection; an HTTP/1.0 peer receiving a body without a declared length cannot
-tell that close from the message's end. Each I/O poll records its task's waker before reading the closed
+connection; an HTTP/1.0 peer receiving a response without a `Content-Length`
+cannot tell that close from the message's end. Each I/O poll records its task's waker before reading the closed
 flag, not only a poll the transport leaves pending: Hyper can wait on a response
 body alone after ready polls, holding bytes of a following request or with its
 read side closed, and the close must still wake that task, whose next pass
@@ -3421,13 +3498,43 @@ with its body still owned, the report is unsuccessful, cleanup is skipped with
 responses. A connection task that never yields cannot be ended by failing its
 I/O: it outlives the close and the abort deadline, and the wrapper is aborted
 with cleanup skipped. An abort deadline moved so close that half the remaining interval
-cannot end the connections still aborts the wrapper. An upgraded connection
-leaves Axum's connection accounting
+cannot end the connections still aborts the wrapper. A connection upgraded
+over HTTP/1 leaves Axum's connection accounting
 at the upgrade, and Hyper destroys its service and response body there, so the
-completion wait does not include it either (read from Hyper's source, not
-exercised): its task belongs to the application, is never joined here, and
-its I/O fails only if the server is still serving another connection when the
-close happens. Tasks a handler detached are untouched. Applications that serve
+completion wait does not include it either (the cause is read from Hyper's
+source; a joined shutdown beside a live upgraded connection is exercised): its
+task belongs to the application, is never joined here, and
+its I/O fails only if the registered server is still running when the close
+happens, that is, has not yet returned from its graceful shutdown and the
+destruction of the connections it tracks, which such a connection does not
+prolong, and only where it is polled through the wrapper. An HTTP/2 upgrade
+is a stream of a connection the server keeps driving, and none of this is
+claimed for it. The gate also changes the concrete type inside every HTTP/1
+upgrade: the I/O is `TokioIo<ForcedCloseIo<L::Io>>`, so a downcast to the
+listener's own type, which matched before the gate, always fails. The
+supported recovery is `low_level::ForcedCloseIo`: name it in the downcast,
+then `get_ref` borrows the listener's I/O and `into_inner` returns it. I/O
+done on that type either way, including through a shared reference, which a
+`TcpStream` reads and writes through, bypasses the gate: it is not failed at
+the close and the application must end the connection itself. Only
+`into_inner` removes the connection from the gate, at once and while the
+recovered I/O is alive (unit-tested); behind `get_ref` it stays
+registered, so later I/O through the wrapper still fails at the close and a
+task whose last poll went through the wrapper is still woken by it. The downcast
+also returns the bytes Hyper read past the upgrade request, which the
+upgraded protocol starts with and the socket no longer holds.
+[A socket test](../crates/batter-axum/tests/operational/forced_close/upgraded.rs)
+shows, through both registrations, the bare type refused, the wrapper
+matched, six protocol bytes sent with the upgrade request reaching the
+application whole and in order, the wrapped socket reporting through `get_ref` the accepted
+peer, the server shut down joined without it and the socket still writing
+afterwards. It asserts no division of those bytes between the buffer and the
+socket, which TCP decides. A test beside it over an in-memory listener, where
+the test decides what the server can have read, shows through `register_http`
+three bytes written with the request head returned in that buffer exactly and
+read before the three written afterwards.
+I/O through `get_ref` bypassing the close is read from the wrapper's source,
+not exercised. Tasks a handler detached are untouched. Applications that serve
 `axum::serve` themselves, as the two HTTP lifetime suites deliberately do, get
 none of this. There is no new async-drop, response-stream, WebSocket or
 disconnect guarantee.

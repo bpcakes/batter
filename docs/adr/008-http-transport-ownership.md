@@ -149,3 +149,112 @@ The response-construction boundary itself is unchanged: the owner starts a
 second lifetime from the same admission and does not extend the first. Its
 contract and limits are in the [HTTP guarantees](../guarantees.md#http-boundary).
 See [primary sources](../references.md#forced-connection-close-at-shutdown-2026-11-11).
+
+## Amendment, 2026-11-18: owned-body outcomes describe the body (`batter-9wig.11`)
+
+The owned body first reported what the peer received. To do that it mirrored
+Hyper 1.11.1's private HTTP/1 encoder and refusal rules, settled the
+advertised length again at request admission, and associated each body with
+the message that carried it through a thread-local the registered server set
+around Hyper's calls. Review rounds under `batter-9wig.6`, `.8`, `.9`, `.10`
+and `.14` each confirmed another case where the prediction or the association was
+wrong: a nested in-process response, an HTTP/2 request, a spawned admission, a
+body whose size changed between two questions, a body its handler kept while
+returning another response. Under ADR-010 this is a library design gap, not a
+series of implementation mistakes: the adapter reconstructed a decision that
+belongs to the transport and that a body cannot observe, and `batter-axum`
+declares no Hyper version that could pin it.
+
+Decision: an owned body's outcome follows only the length the response its
+builder returned declares, read once at the hand-over, and what its source
+then does. The mirror, the admission settlement, the message association and
+the registered server's framing record are removed. The rule is identical
+in-process and on any server. The outcome is not, since it also depends on
+whether the body's holder stops polling or polls on, so an in-process result
+is not evidence of a served one. The outcome is documented as a description
+of the body, not a delivery receipt.
+
+Accepted costs: a head Hyper refuses is no longer detected, so the body under
+it, which Hyper did not poll in the four cases exercised, is judged like any
+other, by the length its
+builder's response declared, the bytes it had yielded and what its source
+reports, where it was `failed` at WARN: in the cases exercised, none polled
+before, `dropped` if pending with no length declared, `completed` if already
+at its end or pending having declared zero bytes, and still `failed` at its
+end short of its declared length. A length added after the hand-over is not
+read, so where it is the only declaration a source ending short of it is
+`completed` rather than `failed`, and a source that yields those bytes and
+stays pending is `dropped` rather than `completed` when its holder destroys
+it there, as Hyper's HTTP/1 connection does. The public API
+still lets a handler declare the length outside the builder. That is recorded
+as a residual under ADR-010: the invariant cannot be enforced locally without
+sealing the response, and the misuse changes only an observation label.
+Alternatives rejected: keeping the mirror behind a pinned Hyper version, which
+leaves the association defects; and keeping only the admission settlement,
+which keeps the mechanism the last confirmed defect came from.
+
+A second assessment followed the same day, from review rounds under
+`batter-9wig.14`. So that a start refused after the response still reports to
+the request's subscriber, the request's dispatcher had been kept in the
+shared observation record. Three consecutive rounds each confirmed a defect in
+that: the record outlived its observer and reached a later request with
+copied extensions; a check that the observer was alive did not establish
+which request it had seen; and the record kept its subscriber alive for as
+long as any copy of the request's extensions existed. This is the same kind
+of gap: shared, copyable request metadata was asked to prove which request an
+event belongs to. Decision: the shared record holds no dispatcher. The
+event's dispatcher is the one that owns the request span, which the span
+itself names, so the two cannot disagree; where there is no such span, it
+is the one the request was admitted under, recorded beside the correlation
+the event carries and held only weakly, because the admission record is a
+copyable request extension too: the first form of this decision kept it
+strongly there, and the next round found that a copied extension map then
+kept the subscriber alive. Once the request's observer has finished, none of
+the library's request records holds a subscriber strongly, and an ended body
+holds none. A body started while a
+copied record's observer is still alive still enters that observer's span;
+copying one live request's Batter records into another is outside the
+supported redispatch and stays a documented limit. For a related reason the
+outcome documentation states the complete rule once and gives examples only
+as exercised cases with every input named: three rounds had each found an
+example that omitted a fact its outcome depends on.
+
+A third assessment, same day and task. To keep foreign waker code out of the
+body's ending, the body was given a waker of its own between the polling
+task and everything it waits on. The next two review rounds found three
+defects in it each: muting it stranded a pending poll of a shared body, its
+replacement at a poll was not unwind-safe, and it shifted idle accounting.
+It also could not cover other tasks waiting on the same scope. Decision: no
+such waker. After a poll or a question of the body unwinds, its scope is
+cancelled with that unwind caught, not from a guard's destructor inside it.
+A body destroyed while its holder unwinds for a reason of its own still
+cancels its scope from its own destructor, during that unwind.
+
+A fourth assessment set the boundary those rounds had been circling. The
+next review showed that a task waker which panics when woken defeats Tokio
+itself: its notification of the remaining waiters stops, and tokio-util
+0.7.19 poisons a parent cancellation token. A library cannot promise more
+than the primitives it stands on. Decision: the owned body's unwind
+guarantees cover the code it calls on the application's behalf, namely the
+response body and what it yields, and the tracing subscriber. Task wakers
+are runtime infrastructure assumed not to unwind when woken, cloned or
+destroyed; the library makes no claim for a waker that does, and the code
+and tests that had tried to were removed.
+
+A fifth assessment applied the same reasoning one layer up. Reviews had for
+many rounds found paths on which a tracing subscriber that panics, on a span
+entry or exit, on an event or in its destructor, left something of the
+body's ending undone, and each repair exposed the next: a subscriber that
+panics on two consecutive events aborts the process, because the body emits
+its event from a destructor, and `tracing-subscriber` leaves its registry's
+current span behind when a layer callback panics. Decision: a panicking
+tracing subscriber is outside the contract as well. The unwind guarantees
+cover the application's code for the body, namely the builder, the source's
+polls and questions, and the destructors of the source and of what it
+yielded. The orderings that serve those guarantees stay; the code and tests
+that existed only for a panicking subscriber were removed.
+
+The feature was unreleased, so no published contract changed. Executable
+evidence: `tests/streaming/sockets/undeclared.rs`,
+`tests/streaming/endings.rs` and `tests/streaming/subscribers.rs` in
+`batter-axum`.
