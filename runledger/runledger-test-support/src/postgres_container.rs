@@ -12,7 +12,7 @@ pub(crate) const POSTGRES_PASSWORD: &str = "runledger";
 pub(crate) const POSTGRES_DB: &str = "postgres";
 const TEST_ADMIN_DATABASE_URL_ENV: &str = "RUNLEDGER_TEST_ADMIN_DATABASE_URL";
 const TEST_PG_IMAGE_ENV: &str = "RUNLEDGER_TEST_PG_IMAGE";
-const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
+pub(crate) const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 const POSTGRES_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
 const POSTGRES_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const POSTGRES_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -50,7 +50,7 @@ async fn initialize_shared_postgres() -> SharedPostgres {
 /// fixture started on 127.0.0.1. Refuse before starting one, whatever the
 /// variable's value. An external admin URL keeps libpq semantics: SQLx is then
 /// the fixture's only client, so every connection follows the same setting.
-fn reject_ambient_host_address(present: bool) {
+pub(crate) fn reject_ambient_host_address(present: bool) {
     assert!(
         !present,
         "unset {AMBIENT_HOST_ADDRESS_ENV} for the Runledger-owned PostgreSQL container: SQLx \
@@ -93,8 +93,6 @@ async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
 }
 
 async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
-    // Refuse before starting a container that SQLx would then not reach.
-    reject_ambient_host_address(std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some());
     let (repository, tag) = parse_image_ref(image_ref);
 
     let image = PostgresImage::new(repository, tag);

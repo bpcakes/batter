@@ -11,7 +11,9 @@ use std::{fmt, path::PathBuf, str::FromStr};
 
 use postgres_test_harness::PostgresHarness;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
-use tokio_postgres::config::{ChannelBinding, Host, SslMode, SslNegotiation, TargetSessionAttrs};
+use tokio_postgres::config::{
+    ChannelBinding, Host, LoadBalanceHosts, SslMode, SslNegotiation, TargetSessionAttrs,
+};
 
 const DEFAULT_PORT: u16 = 5432;
 
@@ -101,7 +103,10 @@ impl HarnessEndpoint {
             ([host], [] | [_]) => {
                 let address = match host {
                     Host::Tcp(name) => Address::Tcp(name.clone()),
-                    Host::Unix(path) => Address::Unix(path.clone()),
+                    // SQLx formats the socket path as text, replacing bytes that
+                    // are not UTF-8, so it could open a different directory.
+                    Host::Unix(path) if path.to_str().is_some() => Address::Unix(path.clone()),
+                    Host::Unix(_) => return Err(refusal(NonUtf8SocketPath)),
                 };
                 (
                     address,
@@ -110,9 +115,12 @@ impl HarnessEndpoint {
             }
             _ => return Err(refusal(MultipleHosts)),
         };
+        // tokio-postgres can shuffle the addresses one host name resolves to;
+        // SQLx takes them in order, so the two could reach different servers.
         if config.get_target_session_attrs() != TargetSessionAttrs::Any
             || config.get_ssl_negotiation() != SslNegotiation::Postgres
             || config.get_channel_binding() == ChannelBinding::Require
+            || config.get_load_balance_hosts() != LoadBalanceHosts::Disable
         {
             return Err(refusal(UnsupportedSetting));
         }
@@ -202,9 +210,14 @@ impl HarnessEndpoint {
             ),
         };
         let mut url = format!("postgres://{}", strict_encode(&self.user));
-        if let Some(password) = &self.password {
-            url.push(':');
-            url.push_str(&strict_encode(password));
+        // SQLx reads an empty userinfo password as none and may then consult a
+        // passfile, so an explicit empty password travels as a parameter.
+        match self.password.as_deref() {
+            Some("") | None => {}
+            Some(password) => {
+                url.push(':');
+                url.push_str(&strict_encode(password));
+            }
         }
         url.push_str(&format!(
             "@{host}:{}/{}",
@@ -217,6 +230,9 @@ impl HarnessEndpoint {
         }
         if let Some((raw, _)) = &self.options {
             url.push_str(&format!("&options={}", strict_encode(raw)));
+        }
+        if self.password.as_deref() == Some("") {
+            url.push_str("&password=");
         }
         self.check_round_trip(&url, database)?;
         Ok(url)
@@ -405,13 +421,16 @@ pub enum HarnessEndpointReason {
     HostAddress,
     /// The admin URL selects a setting SQLx options cannot carry faithfully:
     /// `options` other than `-c key=value` pairs, a non-default
-    /// `target_session_attrs` or `sslnegotiation`, required channel binding,
-    /// or an unknown TLS mode.
+    /// `target_session_attrs`, `sslnegotiation` or `load_balance_hosts`,
+    /// required channel binding, or an unknown TLS mode.
     UnsupportedSetting,
     /// The admin URL names no user.
     MissingUser,
     /// The admin URL's password is not UTF-8.
     NonUtf8Password,
+    /// The admin URL's Unix socket directory is not UTF-8, which SQLx would
+    /// rewrite when it formats the socket path.
+    NonUtf8SocketPath,
     /// A rebuilt URL would not read back as the same endpoint in both parsers.
     RoundTrip,
 }
@@ -430,6 +449,9 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
             }
             HarnessEndpointReason::MissingUser => "the fixture admin URL names no user",
             HarnessEndpointReason::NonUtf8Password => "the fixture admin URL password is not UTF-8",
+            HarnessEndpointReason::NonUtf8SocketPath => {
+                "the fixture admin URL socket directory is not UTF-8"
+            }
             HarnessEndpointReason::RoundTrip => {
                 "a rebuilt fixture URL would not select the same endpoint"
             }

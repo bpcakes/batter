@@ -147,6 +147,10 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(rebuilt, 'postgres://us%40er:p%40ss%2Bw%20rd@[::1]:6543/my%20db'
                                   '?sslmode=require&application_name=a%20b')
         self.assertEqual(parse_database_url(rebuilt), parts)
+        colon = parse_database_url('postgres://u@%2Ftmp%2Fpg%3A18/db')
+        self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db')
+        empty = parse_database_url('postgres://u:@db.invalid:5432/db')
+        self.assertEqual(sqlx_database_url(empty), 'postgres://u@db.invalid:5432/db?password=')
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
@@ -167,7 +171,11 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db-a:5432', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/one/two', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/postgres?application_name=a#b', "must not contain '#'"),
-                ('postgresql://user:private-marker@ho\uff0fst/database', 'not a valid URL')):
+                ('postgresql://user:private-marker@ho\uff0fst/database', 'not a valid URL'),
+                ('postgresql://u:private-marker@db-a/%2E', 'exactly one host'),
+                ('postgresql://u:private-marker@db-a/..', 'exactly one host'),
+                ('postgresql://u:private-marker@db-a:0/postgres', 'port 0'),
+                ('postgresql://u:private-marker@db-a/%FF', 'UTF-8')):
             with self.subTest(url=url), \
                  patch.dict(os.environ, DATABASE_URL=url), \
                  patch('refresh_runledger_sqlx.run') as command, \
@@ -307,6 +315,10 @@ class RefreshTests(unittest.TestCase):
             port = run(['docker', 'port', container, '5432/tcp'], root).strip().rsplit(':', 1)[1]
             with tempfile.TemporaryDirectory() as directory, \
                  patch.dict(os.environ, DATABASE_URL=f'postgresql://postgres:fixture@127.0.0.1:{port}/postgres'):
+                # The setup commands below are SQLx CLI too; no PG* setting may
+                # send them elsewhere than the owned container.
+                for key in [key for key in os.environ if key.startswith('PG')]:
+                    del os.environ[key]
                 source = Path(directory)
                 migrations = source / 'runledger/migrations'
                 shutil.copytree(root / 'runledger/migrations', migrations)

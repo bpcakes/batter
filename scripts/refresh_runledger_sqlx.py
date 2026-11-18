@@ -61,8 +61,9 @@ def parse_database_url(database):
     try:
         parts = urlsplit(database)
         port = parts.port
-        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
-    except ValueError:
+        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query),
+                          errors="strict")
+    except (ValueError, UnicodeDecodeError):
         # The parser's message can quote the URL authority, credentials included.
         raise ValueError("DATABASE_URL is not a valid URL") from None
     if parts.scheme not in ("postgres", "postgresql") or not database.startswith(parts.scheme + "://"):
@@ -74,19 +75,30 @@ def parse_database_url(database):
         host = host[1:host.index("]")]
     elif port is not None:
         host = host.rpartition(":")[0]
-    host = unquote(host)
-    database_name = unquote(parts.path[1:])
+    try:
+        # Strict decoding: a replacement character would name another object.
+        host = unquote(host, errors="strict")
+        database_name = unquote(parts.path[1:], errors="strict")
+        user = unquote(parts.username, errors="strict") if parts.username is not None else None
+        password = unquote(parts.password, errors="strict") if parts.password is not None else None
+    except UnicodeDecodeError:
+        raise ValueError("DATABASE_URL must percent-encode UTF-8 text") from None
     keys = [key for key, _ in pairs]
-    if not host or "," in host or not database_name or "/" in database_name:
+    # SQLx's URL parser drops "." and ".." path segments, so those names would
+    # select no database there while psql checks one.
+    if (not host or "," in host or not database_name or "/" in database_name
+            or database_name in (".", "..")):
         raise ValueError("DATABASE_URL must name exactly one host and one database")
+    if port == 0:
+        raise ValueError("DATABASE_URL must not name port 0")
     if any(key not in CARRIED_PARAMETERS for key in keys) or len(set(keys)) != len(keys):
         raise ValueError("DATABASE_URL may declare only sslmode, application_name and options, each once")
     return {
         "host": host,
         "port": port or 5432,
         "database": database_name,
-        "user": unquote(parts.username) if parts.username is not None else None,
-        "password": unquote(parts.password) if parts.password is not None else None,
+        "user": user,
+        "password": password,
         "parameters": dict(pairs),
     }
 
@@ -110,15 +122,22 @@ def sqlx_database_url(parts):
     def encode(text):
         return quote(text, safe="")
     host = parts["host"]
-    host = f"[{host}]" if ":" in host else encode(host)
+    # A socket directory may contain ':'; only a non-path host is an IPv6 literal.
+    host = encode(host) if host.startswith("/") else f"[{host}]" if ":" in host else encode(host)
     userinfo = ""
-    if parts["user"] is not None or parts["password"] is not None:
+    password = parts["password"]
+    if parts["user"] is not None or password:
         userinfo = encode(parts["user"] or "")
-        if parts["password"] is not None:
-            userinfo += ":" + encode(parts["password"])
+        if password:
+            userinfo += ":" + encode(password)
         userinfo += "@"
     url = f"postgres://{userinfo}{host}:{parts['port']}/{encode(parts['database'])}"
-    query = "&".join(f"{key}={encode(value)}" for key, value in parts["parameters"].items())
+    pairs = list(parts["parameters"].items())
+    if password == "":
+        # SQLx reads an empty userinfo password as none and may then read a
+        # passfile; an explicit empty password travels as a parameter.
+        pairs.append(("password", ""))
+    query = "&".join(f"{key}={encode(value)}" for key, value in pairs)
     return url + ("?" + query if query else "")
 
 

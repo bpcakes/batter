@@ -94,6 +94,14 @@ fn unsupported_endpoints_are_refused_with_their_reason() {
             Some(UnsupportedSetting),
         ),
         ("postgres://127.0.0.1/postgres", Some(MissingUser)),
+        (
+            "postgres://u@localhost/postgres?load_balance_hosts=random",
+            Some(UnsupportedSetting),
+        ),
+        (
+            "postgres://u@%2Ftmp%2F%FF:5432/postgres",
+            Some(NonUtf8SocketPath),
+        ),
         ("postgres://u:%FF@127.0.0.1/postgres", Some(NonUtf8Password)),
         ("postgres://u@127.0.0.1:5432/postgres?sslmode=require", None),
     ] {
@@ -183,4 +191,14 @@ fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
         rebuilt,
         "postgres://u@127.0.0.1:5432/pgh_template_1?sslmode=disable"
     );
+}
+
+#[test]
+fn explicit_empty_passwords_survive_the_rebuilt_url() {
+    let endpoint = endpoint("postgres://owner@127.0.0.1:5432/postgres?password=");
+    assert_eq!(endpoint.password.as_deref(), Some(""));
+    let url = endpoint.url("pgh_template_1").unwrap();
+    assert!(url.ends_with("&password="), "{url}");
+    let again = HarnessEndpoint::from_admin_url_with(&url, None).unwrap();
+    assert_eq!(again.password.as_deref(), Some(""), "{url}");
 }
