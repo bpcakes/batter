@@ -30,7 +30,8 @@ contracts cite:
   [`executor.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/connection/executor.rs)).
   This is an automatic upstream replay, not only a re-send of a rejected
   bind. It also applies to the simple-query path of `sqlx::raw_sql` and other
-  unprepared execution, and the check reads only the error code. A statement
+  unprepared execution. It matches `26000` by code alone and `0A000` only
+  when the server reports the routine `RevalidateCachedQuery`. A statement
   that has already caused a non-transactional effect, such as `nextval` or a
   session advisory lock, before one of those errors repeats that effect:
   an external review's PostgreSQL 18 comparison (not a checked-in test)

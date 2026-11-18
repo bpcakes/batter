@@ -175,7 +175,9 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db-a/%2E', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/..', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a:0/postgres', 'port 0'),
-                ('postgresql://u:private-marker@db-a/%FF', 'UTF-8')):
+                ('postgresql://u:private-marker@db-a/%FF', 'UTF-8'),
+                ('postgresql://u:private-marker@db+blue.example/postgres', 'TCP host'),
+                ('postgresql://u:private-marker@db%2Bblue.example/postgres', 'TCP host')):
             with self.subTest(url=url), \
                  patch.dict(os.environ, DATABASE_URL=url), \
                  patch('refresh_runledger_sqlx.run') as command, \
@@ -193,12 +195,12 @@ class RefreshTests(unittest.TestCase):
             (root / 'runledger/runledger-postgres').mkdir(parents=True)
             (root / 'target/x').mkdir(parents=True)
             (root / 'target/x/sqlx.toml').write_text('ignored build output')
-            (root / 'runledger/runledger-postgres/sqlx.toml').write_text(
+            (root / 'runledger/runledger-postgres/SQLX.toml').write_text(
                 '[common]\ndatabase-url-var = "OTHER_DATABASE_URL"\n')
             with patch.dict(os.environ, DATABASE_URL='postgresql://u@db.invalid/database'), \
                  patch('refresh_runledger_sqlx.run') as command, \
                  patch('refresh_runledger_sqlx.subprocess.run') as psql:
-                with self.assertRaisesRegex(ValueError, 'remove sqlx.toml .runledger/runledger-postgres/sqlx.toml'):
+                with self.assertRaisesRegex(ValueError, 'remove sqlx.toml .runledger/runledger-postgres/SQLX.toml'):
                     refresh(root)
                 command.assert_not_called()
                 psql.assert_not_called()
@@ -241,6 +243,12 @@ class RefreshTests(unittest.TestCase):
                 (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
+                self.assertEqual(cargo_compiler_endpoint(root, url), (False, False))
+                # Forcing a would-be expected-value variable too changes nothing:
+                # the expected URL comes from stdin.
+                (home / 'config.toml').write_text(
+                    '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
+                    'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
                 self.assertEqual(cargo_compiler_endpoint(root, url), (False, False))
 
     def test_migration_states_reject_incomplete_or_different_schema(self):

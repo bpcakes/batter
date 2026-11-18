@@ -102,6 +102,11 @@ fn unsupported_endpoints_are_refused_with_their_reason() {
             "postgres://u@%2Ftmp%2F%FF:5432/postgres",
             Some(NonUtf8SocketPath),
         ),
+        (
+            "postgres://u@%5Bdb.example:5432/postgres",
+            Some(UnsupportedHostName),
+        ),
+        ("postgres://u@[::1]:5432/postgres", None),
         ("postgres://u:%FF@127.0.0.1/postgres", Some(NonUtf8Password)),
         ("postgres://u@127.0.0.1:5432/postgres?sslmode=require", None),
     ] {

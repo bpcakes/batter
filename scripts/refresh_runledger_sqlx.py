@@ -91,6 +91,10 @@ def parse_database_url(database):
         raise ValueError("DATABASE_URL must name exactly one host and one database")
     if port == 0:
         raise ValueError("DATABASE_URL must not name port 0")
+    # SQLx resolves a TCP authority host as written, without percent-decoding,
+    # so only names that need no encoding reach both clients identically.
+    if not host.startswith("/") and ":" not in host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+        raise ValueError("DATABASE_URL's TCP host must use only letters, digits, '.', '_' and '-'")
     if any(key not in CARRIED_PARAMETERS for key in keys) or len(set(keys)) != len(keys):
         raise ValueError("DATABASE_URL may declare only sslmode, application_name and options, each once")
     return {
@@ -123,7 +127,7 @@ def sqlx_database_url(parts):
         return quote(text, safe="")
     host = parts["host"]
     # A socket directory may contain ':'; only a non-path host is an IPv6 literal.
-    host = encode(host) if host.startswith("/") else f"[{host}]" if ":" in host else encode(host)
+    host = encode(host) if host.startswith("/") else f"[{host}]" if ":" in host else host
     userinfo = ""
     password = parts["password"]
     if parts["user"] is not None or password:
@@ -171,18 +175,20 @@ def cargo_compiler_endpoint(directory, database):
         (probe / "src").mkdir()
         (probe / "Cargo.toml").write_text(
             '[package]\nname = "cargo-env-probe"\nversion = "0.0.0"\nedition = "2021"\n\n[workspace]\n')
+        # The expected URL arrives on stdin, which Cargo [env] cannot replace.
         (probe / "src/main.rs").write_text(
+            'use std::io::Read;\n'
             'fn main() {\n'
-            '    let expected = std::env::var("BATTER_PROBE_EXPECTED_DATABASE_URL").ok();\n'
+            '    let mut expected = String::new();\n'
+            '    std::io::stdin().read_to_string(&mut expected).expect("expected URL on stdin");\n'
             '    print!("{} {}", option_env!("PGHOSTADDR").is_some(),\n'
-            '           option_env!("DATABASE_URL") == expected.as_deref());\n'
+            '           option_env!("DATABASE_URL") == Some(expected.as_str()));\n'
             '}\n')
         try:
             result = subprocess.run(
                 ["cargo", "run", "--quiet", "--offline", "--manifest-path", str(probe / "Cargo.toml"),
                  "--target-dir", str(probe / "target")],
-                cwd=directory, capture_output=True, text=True, timeout=300,
-                env={**os.environ, "BATTER_PROBE_EXPECTED_DATABASE_URL": database})
+                cwd=directory, capture_output=True, text=True, timeout=300, input=database)
         except (OSError, subprocess.TimeoutExpired):
             raise ValueError("could not ask Cargo which [env] settings apply") from None
     answer = result.stdout.split()
@@ -199,8 +205,10 @@ def refuse_sqlx_config(directory):
     for current, folders, files in os.walk(directory):
         # Build output and history are not source configuration.
         folders[:] = [name for name in folders if name not in ("target", ".git")]
-        if "sqlx.toml" in files:
-            relative = (Path(current) / "sqlx.toml").relative_to(directory)
+        # Case-insensitive volumes (macOS by default) open SQLX.toml as sqlx.toml.
+        found = [name for name in files if name.lower() == "sqlx.toml"]
+        if found:
+            relative = (Path(current) / found[0]).relative_to(directory)
             raise ValueError("remove sqlx.toml (" + relative.as_posix()
                              + "): SQLx CLI could read another database URL variable than psql checked")
 

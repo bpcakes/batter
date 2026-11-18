@@ -250,11 +250,24 @@ fn build_database_name(prefix: &str) -> String {
     format!("{}_{}_{}", compact_prefix, std::process::id(), index)
 }
 
+/// Replace the admin URL's database, keeping its query (an owned container's
+/// pinned `hostaddr`, or an external URL's TLS and session settings) so the
+/// database is reached the way the admin URL is. A `dbname` parameter would
+/// override the new path, so it is dropped.
 fn with_database_name(admin_url: &str, database_name: &str) -> String {
-    let (base, _) = admin_url
+    let (location, query) = admin_url.split_once('?').unwrap_or((admin_url, ""));
+    let (base, _) = location
         .rsplit_once('/')
         .expect("DATABASE_URL must include database name");
-    format!("{base}/{database_name}")
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| !pair.is_empty() && pair.split('=').next() != Some("dbname"))
+        .collect();
+    if kept.is_empty() {
+        format!("{base}/{database_name}")
+    } else {
+        format!("{base}/{database_name}?{}", kept.join("&"))
+    }
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -299,6 +312,21 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn derived_database_urls_keep_the_admin_query_without_dbname() {
+        assert_eq!(
+            with_database_name("postgres://u:p@127.0.0.1:5432/postgres", "lease_1"),
+            "postgres://u:p@127.0.0.1:5432/lease_1"
+        );
+        assert_eq!(
+            with_database_name(
+                "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1&dbname=postgres",
+                "lease_1"
+            ),
+            "postgres://u:p@127.0.0.1:5432/lease_1?hostaddr=127.0.0.1"
+        );
+    }
+
     const CLEANUP_ATTEMPTS: usize = 100;
     const CLEANUP_POLL_INTERVAL: Duration = Duration::from_millis(50);
     static LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -342,7 +370,11 @@ mod tests {
         );
         assert_eq!(database.name(), name);
         assert_eq!(database.url(), url);
-        assert!(url.ends_with(&format!("/{name}")));
+        assert!(
+            url.split('?')
+                .next()
+                .is_some_and(|location| location.ends_with(&format!("/{name}")))
+        );
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT current_database()")
                 .fetch_one(&pool)

@@ -102,6 +102,11 @@ impl HarnessEndpoint {
         let (address, port) = match (config.get_hosts(), config.get_ports()) {
             ([host], [] | [_]) => {
                 let address = match host {
+                    // SQLx trims brackets from a host name, even unmatched ones;
+                    // tokio-postgres already removed an IPv6 literal's.
+                    Host::Tcp(name) if name.contains(['[', ']']) => {
+                        return Err(refusal(UnsupportedHostName));
+                    }
                     Host::Tcp(name) => Address::Tcp(name.clone()),
                     // SQLx formats the socket path as text, replacing bytes that
                     // are not UTF-8, so it could open a different directory.
@@ -426,6 +431,9 @@ pub enum HarnessEndpointReason {
     UnsupportedSetting,
     /// The admin URL names no user.
     MissingUser,
+    /// The admin URL's TCP host name contains a bracket, which SQLx trims
+    /// before resolving, so it would look up a different name.
+    UnsupportedHostName,
     /// The admin URL's password is not UTF-8.
     NonUtf8Password,
     /// The admin URL's Unix socket directory is not UTF-8, which SQLx would
@@ -448,6 +456,9 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
                 "the fixture admin URL selects a setting fixture pools cannot carry"
             }
             HarnessEndpointReason::MissingUser => "the fixture admin URL names no user",
+            HarnessEndpointReason::UnsupportedHostName => {
+                "the fixture admin URL host name contains a bracket"
+            }
             HarnessEndpointReason::NonUtf8Password => "the fixture admin URL password is not UTF-8",
             HarnessEndpointReason::NonUtf8SocketPath => {
                 "the fixture admin URL socket directory is not UTF-8"

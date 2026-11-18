@@ -158,8 +158,14 @@ pub(crate) fn parse_image_ref(image_ref: &str) -> (String, String) {
     (repository, tag)
 }
 
+/// The owned container's URL pins `hostaddr` to the loopback host it names: a
+/// URL `hostaddr` overrides an ambient `PGHOSTADDR` in SQLx and libpq, so the
+/// URL keeps reaching the container even if the environment changes after
+/// startup. Derived database URLs keep this query.
 fn postgres_admin_url(port: u16) -> String {
-    format!("postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}")
+    format!(
+        "postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}?hostaddr=127.0.0.1"
+    )
 }
 
 async fn connect_postgres(admin_url: &str, timeout: Duration) -> Result<sqlx::PgPool, sqlx::Error> {

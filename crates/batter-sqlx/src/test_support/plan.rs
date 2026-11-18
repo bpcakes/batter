@@ -24,8 +24,10 @@ static NEXT_PLAN: AtomicU64 = AtomicU64::new(1);
 /// Multiple harnesses do not share a server-wide budget. Pool clones share
 /// capacity; every separately constructed pool needs its own declaration.
 ///
-/// Each acquired lease resolves every declared pool's native options from the
-/// lease URL, then constructs and registers every pool in declaration order
+/// Each acquired lease resolves every declared pool's native options from one
+/// tokio-postgres parse of the harness admin URL and the database name the
+/// harness recorded (the lease URL is only checked to name that database),
+/// then constructs and registers every pool in declaration order
 /// before the first connectivity check. A registered pool is not a connected
 /// one: pools without eager `min_connections` open nothing until used.
 #[derive(Clone)]
@@ -38,7 +40,7 @@ pub struct ConnectionPlan {
 impl ConnectionPlan {
     /// Sum pool maxima and standalone capacity using checked arithmetic.
     ///
-    /// Every pool authenticates with the lease URL's own login, so positional
+    /// Every pool authenticates with the harness admin login, so positional
     /// `pools()` access is unambiguous. Use [`Self::declare`] for pools that
     /// authenticate as a separately provisioned login.
     pub fn new(pools: Vec<PgPoolOptions>, reserved: u32) -> Result<Self, FixtureError> {
@@ -201,10 +203,12 @@ pub(super) fn lookup(pools: &[PgPool], plan: u64, key: PoolKey) -> Option<&PgPoo
 
 /// One declared native pool and the login it authenticates as.
 ///
-/// Both logins keep everything else from the acquired lease URL: server
-/// address, socket, database, TLS mode and certificates (including values SQLx
-/// reads from `PG*` environment variables), `application_name`, startup options
-/// and statement cache. Pool capacity, timeouts and the native session hooks
+/// Both logins keep everything else from the harness endpoint: server address
+/// or socket, port, TLS mode, `application_name` and `-c key=value` startup
+/// options from the admin URL, and the lease's recorded database. SQLx's own
+/// defaults apply to settings the admin URL cannot carry, such as certificates
+/// and the statement cache, and SQLx still reads unset session settings such
+/// as `PGOPTIONS` from the environment. Pool capacity, timeouts and the native session hooks
 /// (`after_connect`, `before_acquire`, `after_release`) come from `options`.
 /// Neither constructor can select another server or database.
 ///
@@ -239,8 +243,8 @@ impl Login {
 }
 
 impl PlannedPool {
-    /// Authenticate with the lease URL's own credentials: the harness admin
-    /// login that owns the disposable database. `ConnectionPlan::new` uses this.
+    /// Authenticate with the harness admin URL's credentials: the login that
+    /// owns the disposable database. `ConnectionPlan::new` uses this.
     pub fn lease_login(options: PgPoolOptions) -> Self {
         Self {
             options,
@@ -250,9 +254,9 @@ impl PlannedPool {
 
     /// Authenticate as a separately provisioned PostgreSQL login.
     ///
-    /// Only the username and password differ from the lease. The lease owner's
-    /// password, whether from the URL, `PGPASSWORD` or a passfile, is always
-    /// replaced, and no passfile is consulted for this login. The password is a
+    /// Only the username and password differ from the lease login. The admin
+    /// password is always replaced, and no passfile is consulted for this
+    /// login. The password is a
     /// [`SecretString`] so it cannot be swapped with the username, which
     /// PostgreSQL echoes into authentication errors and server logs.
     /// Client-certificate logins are not supported. An empty or unknown username
