@@ -33,12 +33,18 @@ contracts, capability facts and validation history.
   constructors in every workspace crate, and
   `crates/batter/tests/postgres_endpoint_boundary.rs` scans for `from_str` and
   `parse` forms, including path-qualified turbofish targets and declarations
-  whose `parse` follows on a later line. Build options with `connect_options(url)?` and pass them to
-  `connect_with`/`connect_lazy_with`; unset `PGHOSTADDR` and remove `hostaddr`
-  from URLs to run fixtures, live tests and the SQLx examples.
+  whose `parse` follows on a later line. Build options with
+  `connect_options(url)?` and pass them to `connect_with`/`connect_lazy_with`;
+  unset `PGHOSTADDR` and remove `hostaddr` from URLs to run fixtures, live
+  tests and the SQLx examples.
 - Qualify the `PgLease`, `PgLease::migrate`, `migrate_and_apply` and
   `PgQueryHandle` rustdoc: Batter adds no replay, but SQLx 0.9.1 can re-send a
   statement outside a transaction, including `no_tx` migrations.
+- Stop two non-yielding fixture tests from counting child startup against their
+  five-second bounds (`batter-hiuu`). Parent-unwind cleanup is now timed from
+  startup evidence, with a separate spawn-to-cleanup bound below the ten-second
+  child emergency exit; the parent-pipe-closure exit window starts at closure,
+  and its exact exit code still separates it from the emergency exit.
 
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.

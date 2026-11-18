@@ -90,18 +90,26 @@ fn parent_unwind_kills_reaps_and_joins_capture_reader() {
     let pid = child.child.id();
     let started = child.started;
     child.wait_for_event("fixture-entered");
+    // Child startup is bounded by wait_for_event and is not unwind cleanup.
+    let unwind_started = Instant::now();
     let failure = std::thread::spawn(move || {
         let _child = child;
         panic!("deliberate parent assertion failure");
     })
     .join();
     assert!(failure.is_err());
-    // Include startup in the five-second bound: waiting for the ten-second
-    // child emergency exit must fail even if unwinding starts late.
-    let elapsed = started.elapsed();
+    let unwind = unwind_started.elapsed();
     assert!(
-        elapsed < EXIT_LIMIT,
-        "unwind cleanup took {elapsed:?}; expected completion before {EXIT_LIMIT:?}"
+        unwind < EXIT_LIMIT,
+        "unwind cleanup took {unwind:?}; expected completion before {EXIT_LIMIT:?}"
+    );
+    // The child arms its emergency exit only after spawn, so completing within
+    // EMERGENCY_LIMIT of spawn proves cleanup did not wait for that exit, however
+    // much of the interval startup consumed.
+    let total = started.elapsed();
+    assert!(
+        total < launch::EMERGENCY_LIMIT,
+        "spawn to cleanup took {total:?}; the child emergency exit may have ended it"
     );
     // Linux /proc retains zombies: absence proves both termination and reap.
     #[cfg(target_os = "linux")]
@@ -115,8 +123,12 @@ fn parent_pipe_closure_ends_blocked_runtime_without_cleanup() {
     let mut child = FixtureChild::spawn("non-yielding").unwrap();
     child.wait_for_event("runtime-drop-started");
     drop(child.parent_pipe.take());
+    // Time the exit from closure, not spawn: startup and drain are bounded by
+    // wait_for_event. The exit code, not this window, separates PARENT_GONE
+    // from a later EMERGENCY_DEADLINE exit.
+    let limit = child.started.elapsed() + EXIT_LIMIT;
     child
-        .wait(EXIT_LIMIT)
+        .wait(limit)
         .unwrap()
         .validate(
             ExpectedExit::Code(launch::PARENT_GONE),
