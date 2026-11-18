@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
-from refresh_runledger_sqlx import cargo_env_defines, migrations_current, query, refresh
+from refresh_runledger_sqlx import canonical_database_url, cargo_compiler_endpoint, migrations_current, query, refresh
 from runledger_source import copy_source, run, validate_consumer
 
 
@@ -111,7 +111,7 @@ class RefreshTests(unittest.TestCase):
         self.addCleanup(environment.stop)
         os.environ.pop('PGHOSTADDR', None)
         # The real Cargo probe compiles a crate; its own test exercises it.
-        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_env_defines', return_value=False)
+        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=(False, True))
         self.cargo_probe.start()
         self.addCleanup(patch.stopall)
 
@@ -135,7 +135,7 @@ class RefreshTests(unittest.TestCase):
                  patch.dict(os.environ, DATABASE_URL=secret), \
                  patch('refresh_runledger_sqlx.run') as command, \
                  patch('refresh_runledger_sqlx.subprocess.run') as psql:
-                with self.assertRaisesRegex(ValueError, 'remove hostaddr') as error:
+                with self.assertRaisesRegex(ValueError, 'names its server only in the authority') as error:
                     refresh(Path.cwd())
                 self.assertNotIn('private-marker', str(error.exception))
                 command.assert_not_called()
@@ -159,36 +159,68 @@ class RefreshTests(unittest.TestCase):
                 command.assert_not_called()
                 psql.assert_not_called()
 
-    def test_cargo_env_host_address_is_refused_before_any_command(self):
-        with patch.dict(os.environ, DATABASE_URL='postgresql://u@db.invalid/database'), \
-             patch('refresh_runledger_sqlx.cargo_env_defines', return_value=True) as probe, \
+    def test_only_canonical_database_urls_reach_any_command(self):
+        for url in ('host=db-a hostaddr=192.0.2.1 dbname=postgres',
+                    'postgresql://u@db-a/postgres?host=db-b',
+                    'postgresql://u@db.invalid:5432/postgres?port=5432',
+                    'postgresql://u@db.invalid/postgres?service=other',
+                    'postgresql://u@db-a,db-b/postgres',
+                    'postgresql:///postgres',
+                    'postgresql://u@db.invalid/postgres?sslmode=disable&sslmode=require'):
+            with self.subTest(url=url):
+                self.assertFalse(canonical_database_url(url))
+        for url in ('postgresql://u:p@db.invalid:5432/postgres?sslmode=disable',
+                    'postgresql:///postgres?host=/tmp&user=u',
+                    'postgres://u@[::1]:5432/postgres?application_name=a%23b'):
+            with self.subTest(url=url):
+                self.assertTrue(canonical_database_url(url))
+        with patch.dict(os.environ, DATABASE_URL='host=db-a hostaddr=192.0.2.1 password=private-marker'), \
              patch('refresh_runledger_sqlx.run') as command, \
              patch('refresh_runledger_sqlx.subprocess.run') as psql:
-            with self.assertRaisesRegex(ValueError, r'Cargo \[env\]'):
+            with self.assertRaisesRegex(ValueError, 'postgres:// URI') as error:
                 refresh(Path.cwd())
-            probe.assert_called_once_with(Path.cwd().resolve(), 'PGHOSTADDR')
+            self.assertNotIn('private-marker', str(error.exception))
             command.assert_not_called()
             psql.assert_not_called()
 
+    def test_cargo_env_endpoint_is_refused_before_any_command(self):
+        url = 'postgresql://u@db.invalid/database'
+        for answer, message in (((True, True), 'remove PGHOSTADDR'), ((False, False), 'remove DATABASE_URL')):
+            with self.subTest(answer=answer), \
+                 patch.dict(os.environ, DATABASE_URL=url), \
+                 patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=answer) as probe, \
+                 patch('refresh_runledger_sqlx.run') as command, \
+                 patch('refresh_runledger_sqlx.subprocess.run') as psql:
+                with self.assertRaisesRegex(ValueError, message):
+                    refresh(Path.cwd())
+                probe.assert_called_once_with(Path.cwd().resolve(), url)
+                command.assert_not_called()
+                psql.assert_not_called()
+
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
-    def test_cargo_probe_sees_included_and_home_env_settings(self):
-        # Cargo, not this script, resolves config discovery and includes.
+    def test_cargo_probe_sees_included_home_and_forced_env_settings(self):
+        # Cargo, not this script, resolves config discovery, includes and force.
         self.cargo_probe.stop()
+        repository = Path(__file__).resolve().parent.parent
+        url = 'postgresql://u:private-marker@db.invalid/database'
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'workspace'
             (root / '.cargo').mkdir(parents=True)
+            # Use the repository's pinned toolchain, not rustup's default.
+            shutil.copy(repository / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
             home = Path(directory) / 'cargo-home'
             home.mkdir()
-            environment = {'CARGO_HOME': str(home), 'RUSTUP_HOME': os.environ.get(
+            environment = {'CARGO_HOME': str(home), 'DATABASE_URL': url, 'RUSTUP_HOME': os.environ.get(
                 'RUSTUP_HOME', str(Path.home() / '.rustup'))}
             with patch.dict(os.environ, environment):
-                self.assertFalse(cargo_env_defines(root, 'PGHOSTADDR'))
+                self.assertEqual(cargo_compiler_endpoint(root, url), (False, True))
                 (root / '.cargo/extra.toml').write_text('[env]\nPGHOSTADDR = "192.0.2.1"\n')
                 (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-                self.assertTrue(cargo_env_defines(root, 'PGHOSTADDR'))
+                self.assertEqual(cargo_compiler_endpoint(root, url), (True, True))
                 (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
-                (home / 'config.toml').write_text('[env]\nPGHOSTADDR = { value = "192.0.2.1", force = true }\n')
-                self.assertTrue(cargo_env_defines(root, 'PGHOSTADDR'))
+                (home / 'config.toml').write_text(
+                    '[env]\nDATABASE_URL = { value = "postgresql://other.invalid/db", force = true }\n')
+                self.assertEqual(cargo_compiler_endpoint(root, url), (False, False))
 
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'

@@ -187,6 +187,48 @@ fn multiline_typed_parse(lines: &[&str], index: usize) -> bool {
         .any(|line| line.contains(".parse()"))
 }
 
+/// Source lines as scanned: ordinary lines as written, and Rust code inside
+/// a doc comment's code fence (rustdoc compiles and agents copy it) with its
+/// `///` or `//!` prefix removed. Other doc-comment prose stays a comment.
+fn code_lines(text: &str) -> Vec<&str> {
+    let mut fenced = false;
+    text.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let Some(doc) = trimmed
+                .strip_prefix("///")
+                .or_else(|| trimmed.strip_prefix("//!"))
+            else {
+                fenced = false;
+                return line;
+            };
+            let body = doc.strip_prefix(' ').unwrap_or(doc);
+            if let Some(info) = body.trim_start().strip_prefix("```") {
+                fenced = !fenced
+                    && (info.is_empty()
+                        || info.split(',').any(|tag| tag.trim() == "rust")
+                        || info.split(',').all(|tag| {
+                            matches!(
+                                tag.trim(),
+                                "no_run"
+                                    | "ignore"
+                                    | "should_panic"
+                                    | "compile_fail"
+                                    | "edition2021"
+                                    | "edition2024"
+                            )
+                        }));
+                return line;
+            }
+            if fenced {
+                body.strip_prefix("# ").unwrap_or(body)
+            } else {
+                line
+            }
+        })
+        .collect()
+}
+
 /// URL-taking SQLx forms on one source line; comments are skipped.
 fn violations(line: &str) -> Vec<&'static str> {
     let code = line.trim_start();
@@ -326,6 +368,29 @@ fn multiline_typed_parses_are_recognized_within_one_statement() {
 }
 
 #[test]
+fn doc_comment_code_fences_are_scanned_as_code() {
+    let text = "//! Prose: PgConnection::connect(&url) is wrong.\n\
+                //! ```rust,no_run\n\
+                //! let options = \"postgres://login@localhost/db\".parse()?;\n\
+                //! # let hidden = PgConnection::connect(&url).await?;\n\
+                //! ```\n\
+                /// ```text\n\
+                /// PgConnection::connect(&url)\n\
+                /// ```\n";
+    let flagged: Vec<usize> = code_lines(text)
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !violations(line).is_empty())
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        flagged,
+        [2, 3],
+        "rust fences are code; prose and text fences are not"
+    );
+}
+
+#[test]
 fn postgres_urls_reach_sqlx_only_through_an_endpoint_boundary() {
     let root = workspace_root();
     let exempt: Vec<&str> = EXEMPT.iter().map(|(path, _)| *path).collect();
@@ -339,7 +404,7 @@ fn postgres_urls_reach_sqlx_only_through_an_endpoint_boundary() {
             .replace('\\', "/");
         let text = fs::read_to_string(&path).unwrap();
         let tcp_only = TCP_ONLY.contains(&relative.as_str());
-        let lines: Vec<&str> = text.lines().collect();
+        let lines = code_lines(&text);
         for (number, line) in lines.iter().enumerate() {
             let mut found = violations(line);
             if multiline_typed_parse(&lines, number) {

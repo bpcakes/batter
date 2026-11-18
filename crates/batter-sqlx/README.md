@@ -1025,12 +1025,15 @@ options in one call, never from `new_without_pgpass` directly. Both refuse
 with `AmbientHostAddress` inside
 `sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
 value; other PG* variables stay native defaults that explicit URL parts and
-setters override. SQLx 0.9.1 also checks a Unix socket before an explicit
-`hostaddr` (a `host=/dir` parameter, or `PGHOST` or local socket discovery for
-a URL with no host), so servers are selected only by host or socket:
-`connect_options` refuses with `DeclaredHostAddress` whenever the URL's query
-declares `hostaddr`, in any spelling, and setter-built options must not call
-the native `hostaddr` setter. Socket-only and TCP-host URLs are accepted. The
+setters override. SQLx 0.9.1, tokio-postgres and libpq also read some URLs
+differently: SQLx checks a Unix socket before a declared `hostaddr`, a query
+`host` or `port` replaces the authority in SQLx but adds a candidate in
+tokio-postgres, and libpq accepts keyword/value strings, `service` files and
+query text after `#`. `connect_options` therefore admits only the subset all
+three read alike, refusing anything else with `NoncanonicalUrl`, whose
+`NoncanonicalReason` names the rule: a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice. `sslmode`,
+`application_name`, `options`, `user`, `password` and `dbname` parameters are
+kept. Setter-built options must not call the native `hostaddr` setter. The
 process must not change its environment between the check and connection.
 
 ```rust,no_run

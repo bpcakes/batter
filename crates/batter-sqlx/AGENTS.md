@@ -25,10 +25,11 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
   savepoint recovery and terminal completion evidence.
 - `src/profiled_pool.rs`: shared immutable profile and all three native pool hooks.
 - `src/endpoint.rs`: `connect_options`, `setter_connect_options`,
-  `AmbientHostAddress` and `DeclaredHostAddress`, the only sanctioned
-  URL-to-options path. Servers are selected by host or socket only: SQLx 0.9.1
-  would connect to an ambient `PGHOSTADDR`, and prefers a socket to a declared
-  `hostaddr`. Fixture resolution and template initializers validate through it;
+  `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`, the only
+  sanctioned URL-to-options path. It admits only the canonical URL subset that
+  SQLx, tokio-postgres and libpq read alike (see the README), so the authority
+  alone selects the server; do not widen it without checking all three
+  parsers. Fixture resolution and template initializers validate through it;
   Clippy `disallowed-methods` and the facade endpoint scan enforce it.
 - `src/atomic_context.rs`: unprofiled/profile-owned runners retain native completion before
   operation-budget resolution; callers do not own acknowledgement publication.

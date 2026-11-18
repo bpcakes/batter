@@ -17,5 +17,5 @@ pub use db_lifecycle::{
     setup_ephemeral_pool_with_untracked_migrations, setup_unmigrated_ephemeral_pool,
     teardown_ephemeral_pool,
 };
-pub use endpoint::{AmbientHostAddress, DeclaredHostAddress, connect_options};
+pub use endpoint::{AmbientHostAddress, NoncanonicalUrl, connect_options};
 pub use env::ScopedEnv;

@@ -18,11 +18,12 @@ cleanup, migration-copy equality and PostgreSQL 18 prerequisites. Missing Docker
 is a test failure. This package must not become a production dependency of the
 Batter foundation or facade.
 Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
-URL. SQLx 0.9.1 connects to an ambient `PGHOSTADDR` instead of the URL host
-and can replace a declared `hostaddr` with a Unix socket: shared startup
+URL. SQLx 0.9.1 connects to an ambient `PGHOSTADDR` instead of the URL host,
+and SQLx, tokio-postgres and libpq read some URLs differently: shared startup
 refuses `PGHOSTADDR` before any container starts, and every fixture
 connection builds options through `src/endpoint.rs` (`connect_options`), which
-refuses both, so teardown cannot be redirected either. Derived database URLs
+refuses it and any URL outside the canonical subset, so teardown cannot be
+redirected either. Derived database URLs
 keep the admin URL's query, drop `dbname` and any fragment, and re-encode
 retained pairs strictly (`%20`, `%2B`) so every PostgreSQL client reads them
 as SQLx did. Never pass fixture URLs to

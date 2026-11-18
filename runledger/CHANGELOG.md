@@ -379,12 +379,12 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
   runs outside a block and only warns. No schema or persisted data changes.
 - Add `runledger_test_support::{connect_options, AmbientHostAddress,
-  DeclaredHostAddress}` and `EphemeralDatabase::connect_options`
-  (`batter-c5ci.1`). SQLx 0.9.1 would connect to an ambient `PGHOSTADDR`
-  instead of a fixture URL's host, and can replace a declared `hostaddr` with a
-  Unix socket, so shared startup refuses `PGHOSTADDR` before any container
-  starts and every fixture connection, including teardown, refuses either form
-  inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
+  NoncanonicalUrl}` and `EphemeralDatabase::connect_options` (`batter-c5ci.1`).
+  SQLx 0.9.1 would connect to an ambient `PGHOSTADDR` instead of a fixture
+  URL's host, and SQLx, tokio-postgres and libpq read some URLs differently, so
+  shared startup refuses `PGHOSTADDR` before any container starts and every
+  fixture connection, including teardown, refuses it and any URL outside the
+  canonical subset (a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice) inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
   the admin URL's query and drop only `dbname`. Native tests build fixture
   options through these; unset `PGHOSTADDR` for native test runs. The
   commit-acknowledgement, intent-reconciliation and online-transport fault
@@ -402,9 +402,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   (spaces as `%20`, literal plus signs as `%2B`), so libpq and tokio-postgres
   clients of `EphemeralDatabase::url()` read the same settings SQLx used.
 - `runledger_postgres` re-exports the SQLx foundation's `connect_options`,
-  `AmbientHostAddress` and `DeclaredHostAddress`. `runledger-tui` and the native
-  examples now build options through it, so they refuse an ambient or declared
-  `hostaddr` instead of connecting where SQLx 0.9.1 would.
+  `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`.
+  `runledger-tui`, the native examples and the crate's startup rustdoc recipe
+  now build options through it. The metadata refresh applies the same URL
+  rules and refuses a Cargo `[env]` `DATABASE_URL` that would differ for the
+  query macros.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

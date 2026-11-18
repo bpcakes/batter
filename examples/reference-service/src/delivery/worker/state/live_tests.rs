@@ -153,6 +153,9 @@ async fn provider_state_lock_and_retry_boundaries() -> Result<(), Failure> {
 
 async fn run_boundaries() -> Result<(), BoxError> {
     let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
+    // Refuse before the harness parses the URL: it provisions with
+    // tokio-postgres, so only a canonical URL reaches the same server as SQLx.
+    batter::sqlx::connect_options(&url)?;
     let config = postgres_test_harness::HarnessConfig::new("batter_state")?
         .with_admin_database_url(&url)
         .with_cleanup_on_start(false)

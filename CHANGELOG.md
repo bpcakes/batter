@@ -20,15 +20,15 @@ contracts, capability facts and validation history.
   custom type fails; and ambient `PGHOSTADDR` now overrides every URL host.
   See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
 - Add the PostgreSQL endpoint boundary `batter_sqlx::connect_options`, with
-  `setter_connect_options`, `AmbientHostAddress` and `DeclaredHostAddress`, all
-  also under `batter::sqlx` (`batter-c5ci`, `batter-c5ci.1`).
-  `runledger_postgres` re-exports `connect_options`, `AmbientHostAddress` and
-  `DeclaredHostAddress`. `setter_connect_options` returns fresh
-  `new_without_pgpass` options only after the same environment check, so
-  setter-built options cannot keep an address captured earlier. Servers are selected only by URL host or socket: it
-  refuses inside `sqlx::Error::Configuration`, before parsing, whenever
-  `PGHOSTADDR` is set or the URL declares `hostaddr`, because SQLx 0.9.1
-  connects to the former and can replace the latter with a Unix socket.
+  `setter_connect_options`, `AmbientHostAddress`, `NoncanonicalUrl` and
+  `NoncanonicalReason`, all also under `batter::sqlx` (`batter-c5ci`,
+  `batter-c5ci.1`). `runledger_postgres` re-exports `connect_options`,
+  `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`.
+  `setter_connect_options` returns fresh `new_without_pgpass` options only
+  after the same environment check, so setter-built options cannot keep an
+  address captured earlier. Inside `sqlx::Error::Configuration` and before
+  parsing, `connect_options` refuses whenever `PGHOSTADDR` is set, and admits
+  only URLs SQLx, tokio-postgres and libpq read alike: a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice.
   `ConnectionPlan` resolution and both template initializer paths validate the
   same way before any pool or caller code exists, and every fixture template
   and lease operation first refuses a harness admin URL that contains `#` or

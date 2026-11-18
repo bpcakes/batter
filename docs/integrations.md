@@ -451,9 +451,9 @@ from them and pass `&pool` to `PgListener::connect_with`); start setter-built
 options from `setter_connect_options()?`.
 SQLx 0.9.1 otherwise connects to an ambient `PGHOSTADDR` instead of the
 selected host. Both refuse with `AmbientHostAddress` while it is set, and
-`connect_options` refuses with `DeclaredHostAddress` when a URL declares
-`hostaddr`, which SQLx 0.9.1 can replace with a Unix socket. Select servers by
-URL host or socket only; see the
+`connect_options` refuses with `NoncanonicalUrl` any URL outside the subset
+SQLx, tokio-postgres and libpq read alike: put the endpoint in the URL
+authority, never in `hostaddr`, `port`, `service` or `host` parameters; see the
 [endpoint boundary](../crates/batter-sqlx/README.md#postgresql-endpoint-boundary).
 
 `PgLease::acquire`, `PgQueryHandle` helpers and every `run_atomic*` runner

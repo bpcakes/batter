@@ -1934,8 +1934,11 @@ custom type. See the
 `connect_options` and `setter_connect_options` refuse, before parsing or
 connecting, whenever `PGHOSTADDR` is set, so options they admit connect to the
 URL or setter host rather than an ambient address. `connect_options` also
-refuses any URL that declares `hostaddr`, so admitted URLs select their server
-by host or socket alone. This holds only if the process environment does not
+refuses any URL outside the canonical subset (no `hostaddr`, `port`, `service`
+or authority-overriding `host` parameter, no `#`, one host, no repeated
+parameter, a `postgres://` URI), so an admitted URL's authority selects the
+same server for SQLx, tokio-postgres and libpq. Equal parsing by other
+PostgreSQL clients is not verified. This holds only if the process environment does not
 change before connection, and only for options built through them. Clippy
 `disallowed-methods` and a source scan, not the type system, keep checked-in
 code on that path. Other PG* defaults and native credential

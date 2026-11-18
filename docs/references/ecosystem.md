@@ -74,14 +74,19 @@ contracts cite:
   directory (`/var/run/postgresql`, `/private/tmp`, `/tmp`) for a URL with no
   host, so `postgres:///db?hostaddr=127.0.0.1` uses that socket; in 0.9.0 the
   `hostaddr` parameter replaced the host. An external review observed the
-  socket selection with a local listener probe. After four review rounds kept
-  finding further `hostaddr` divergences (templates, native roots, the
-  metadata refresh, derived database URLs), the boundaries select servers by
-  host or socket only and also refuse a declared URL `hostaddr` with
-  `DeclaredHostAddress`; `runledger-tui` and the native examples use the same
-  boundary through `runledger_postgres::connect_options`, and the metadata
-  refresh refuses both forms. Derived Runledger fixture URLs now keep the
-  admin URL's query and drop only `dbname`. Clippy `disallowed-methods`
+  socket selection with a local listener probe. Review rounds kept finding
+  further divergences, first in `hostaddr` handling and then between parsers:
+  a query `host` or `port` replaces the authority in SQLx but adds a candidate
+  in tokio-postgres (the fixture harness), whose query parser also reads past
+  `#`, and libpq (`psql`) accepts keyword/value strings and `service` files.
+  The boundaries therefore admit only a canonical subset all three read alike
+  (`NoncanonicalUrl`, with `NoncanonicalReason`): a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice.
+  `runledger-tui` and the native examples use the same boundary through
+  `runledger_postgres::connect_options`, the harness admin URL is checked
+  before every fixture operation, and the metadata refresh applies the same
+  rules and confirms through a Cargo probe that the query macros see the same
+  `DATABASE_URL` and no `PGHOSTADDR`. Derived Runledger fixture URLs keep the
+  admin URL's query, drop `dbname` and any fragment, and re-encode strictly. Clippy `disallowed-methods`
   resolves the URL-taking constructors, including the `DbPool` alias and
   `PgListener::connect`, and a text scan covers `parse`. Application pools that
   bypass the boundary remain exposed.

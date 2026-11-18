@@ -44,7 +44,7 @@
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 //! use runledger_postgres::PgSessionProfile;
 //! use std::time::Duration;
-//! let options = "postgres://login@localhost/runledger".parse()?;
+//! let options = runledger_postgres::connect_options("postgres://login@localhost/runledger")?;
 //! let profile = PgSessionProfile::new("login", "serving", vec!["application".into()],
 //!     Duration::from_secs(30), Duration::from_secs(5))?;
 //! let database = runledger_postgres::low_level::connect_database(options, profile, 8).await?;
@@ -474,10 +474,10 @@ pub mod prelude {
 pub type DbPool = sqlx::PgPool;
 mod database;
 /// The SQLx foundation's PostgreSQL URL boundary, for native roots that turn a
-/// URL into connection options. It refuses an ambient `PGHOSTADDR` and a URL
-/// that declares `hostaddr`, which SQLx 0.9.1 would otherwise connect to (or
-/// replace with a Unix socket) instead of the URL host.
-pub use batter_sqlx::{AmbientHostAddress, DeclaredHostAddress, connect_options};
+/// URL into connection options. It refuses an ambient `PGHOSTADDR` and any URL
+/// outside the canonical subset SQLx, tokio-postgres and libpq read alike, so
+/// the URL's authority alone selects the server.
+pub use batter_sqlx::{AmbientHostAddress, NoncanonicalReason, NoncanonicalUrl, connect_options};
 pub use database::{PgProfileError, PgSessionProfile, RunledgerDatabase};
 pub type DbTx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 pub type Result<T> = std::result::Result<T, Error>;

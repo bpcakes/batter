@@ -134,8 +134,8 @@ fn endpoint_refusal(error: &sqlx::Error) -> &'static str {
         sqlx::Error::Configuration(source) if source.is::<batter::sqlx::AmbientHostAddress>() => {
             "unset PGHOSTADDR: SQLx would connect to it instead of DATABASE_URL's host"
         }
-        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::DeclaredHostAddress>() => {
-            "remove hostaddr from DATABASE_URL and select the server with its host"
+        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::NoncanonicalUrl>() => {
+            "DATABASE_URL must be a postgres:// URI that selects its server in the authority"
         }
         _ => "DATABASE_URL is not a valid PostgreSQL connection string",
     }

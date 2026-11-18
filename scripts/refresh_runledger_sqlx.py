@@ -41,14 +41,46 @@ def sync_files(source, destination, suffix):
             path.unlink()
 
 
-def cargo_env_defines(directory, name):
-    """Whether Cargo, run from `directory`, gives `name` to the compiler.
+def canonical_database_url(database):
+    """Whether psql, SQLx and tokio-postgres all read one server from the URL.
 
-    `cargo sqlx prepare` runs `cargo check`, which passes `[env]` settings,
-    including those from included or home configuration files, to the query
-    macros even when the parent shell has none. Ask Cargo itself by compiling a
-    throwaway probe from the same directory rather than re-reading its
-    configuration rules here.
+    Mirrors `batter_sqlx::connect_options`: a postgres:// or postgresql:// URI
+    without '#' (already refused with its own message), one host in the
+    authority or an empty one with a host=/socket parameter, and no hostaddr,
+    port or service parameter, host parameter beside an authority host or
+    repeated parameter. Keyword/value connection strings are not URIs.
+    """
+    try:
+        parts = urlsplit(database)
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+    except ValueError:
+        # The parser's message can quote the URL authority, credentials included.
+        raise ValueError("DATABASE_URL is not a valid URL") from None
+    if parts.scheme not in ("postgres", "postgresql") or not database.startswith(parts.scheme + "://"):
+        return False
+    host = parts.netloc.rpartition("@")[2]
+    host = host[1:host.index("]")] if host.startswith("[") and "]" in host else host.partition(":")[0]
+    if "," in host:
+        return False
+    seen = set()
+    for key, value in pairs:
+        if key in ("hostaddr", "port", "service") or (key == "host" and (host or not value.startswith("/"))):
+            return False
+        if key in seen:
+            return False
+        seen.add(key)
+    return bool(host) or "host" in seen
+
+
+def cargo_compiler_endpoint(directory, database):
+    """What Cargo, run from `directory`, gives the query macros' compiler.
+
+    Returns whether `PGHOSTADDR` is set for the compiler and whether its
+    `DATABASE_URL` equals `database`. `cargo sqlx prepare` runs `cargo check`,
+    which applies `[env]` settings, including included, home and forced ones,
+    even when the parent shell differs. Ask Cargo itself by compiling a
+    throwaway probe from the same directory; it prints only two booleans, never
+    either URL.
     """
     with tempfile.TemporaryDirectory(prefix="batter-cargo-env-probe-") as scratch:
         probe = Path(scratch)
@@ -56,22 +88,31 @@ def cargo_env_defines(directory, name):
         (probe / "Cargo.toml").write_text(
             '[package]\nname = "cargo-env-probe"\nversion = "0.0.0"\nedition = "2021"\n\n[workspace]\n')
         (probe / "src/main.rs").write_text(
-            'fn main() { print!("{}", option_env!("' + name + '").is_some()); }\n')
+            'fn main() {\n'
+            '    let expected = std::env::var("BATTER_PROBE_EXPECTED_DATABASE_URL").ok();\n'
+            '    print!("{} {}", option_env!("PGHOSTADDR").is_some(),\n'
+            '           option_env!("DATABASE_URL") == expected.as_deref());\n'
+            '}\n')
         try:
             result = subprocess.run(
                 ["cargo", "run", "--quiet", "--offline", "--manifest-path", str(probe / "Cargo.toml"),
                  "--target-dir", str(probe / "target")],
-                cwd=directory, capture_output=True, text=True, timeout=300)
+                cwd=directory, capture_output=True, text=True, timeout=300,
+                env={**os.environ, "BATTER_PROBE_EXPECTED_DATABASE_URL": database})
         except (OSError, subprocess.TimeoutExpired):
             raise ValueError("could not ask Cargo which [env] settings apply") from None
-    if result.returncode or result.stdout not in ("true", "false"):
+    answer = result.stdout.split()
+    if result.returncode or len(answer) != 2 or any(item not in ("true", "false") for item in answer):
         raise ValueError("could not ask Cargo which [env] settings apply")
-    return result.stdout == "true"
+    return answer[0] == "true", answer[1] == "true"
 
 
-def refuse_cargo_host_address(directory):
-    if cargo_env_defines(directory, "PGHOSTADDR"):
+def refuse_cargo_endpoint(directory, database):
+    host_address, same_url = cargo_compiler_endpoint(directory, database)
+    if host_address:
         raise ValueError("remove PGHOSTADDR from Cargo [env]: SQLx would connect to it instead of DATABASE_URL's host")
+    if not same_url:
+        raise ValueError("remove DATABASE_URL from Cargo [env]: the query macros would use another database than psql checked")
 
 
 def query(root, database, sql, purpose):
@@ -102,16 +143,11 @@ def refresh(root):
         # Python and SQLx end the query at '#', libpq does not, so a parameter
         # after it would reach psql alone. Encode a literal '#' as %23.
         raise ValueError("encode '#' in DATABASE_URL as %23: psql and SQLx CLI read it differently")
-    try:
-        url_query = urlsplit(database).query
-    except ValueError:
-        # The parser's message can quote the URL authority, credentials included.
-        raise ValueError("DATABASE_URL is not a valid URL") from None
-    if any(key == "hostaddr" for key, _ in parse_qsl(url_query, keep_blank_values=True)):
-        # psql honours it, but SQLx CLI 0.9.1 can use a Unix socket instead,
-        # so the two tools could inspect and migrate different servers.
-        raise ValueError("remove hostaddr from DATABASE_URL: psql and SQLx CLI could connect to different servers")
-    refuse_cargo_host_address(root)
+    if not canonical_database_url(database):
+        # psql, SQLx CLI and the query macros could otherwise read different
+        # servers from the same text (hostaddr, query host/port, service files).
+        raise ValueError("DATABASE_URL must be a postgres:// URI that names its server only in the authority")
+    refuse_cargo_endpoint(root, database)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
         raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")
@@ -138,7 +174,7 @@ def refresh(root):
         native = candidate / "runledger"
         for package in MIGRATION_PACKAGES:
             sync_files(native / "migrations", native / package / "migrations", ".sql")
-        refuse_cargo_host_address(candidate)
+        refuse_cargo_endpoint(candidate, database)
         run(["env", "CARGO_TARGET_DIR=" + str(target), "cargo", "sqlx", "prepare",
              "--workspace", "--no-dotenv", "--", "-p", "runledger-postgres", "-p", "runledger-runtime",
              "--all-targets", "--all-features", "--locked"], candidate)

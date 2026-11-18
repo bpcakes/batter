@@ -193,9 +193,9 @@ cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route
 group's browser policy accepts them, without owning credential meaning,
 authorization, CORS or application error envelopes.
-`crates/batter-sqlx/src/endpoint.rs` owns the URL-to-options boundary: servers are selected
-by URL host or socket only, refusing an ambient `PGHOSTADDR` and a declared `hostaddr`
-(SQLx 0.9.1 would connect to the former and can replace the latter with a socket). Clippy
+`crates/batter-sqlx/src/endpoint.rs` owns the URL-to-options boundary: it refuses an ambient
+`PGHOSTADDR` and admits only the canonical URL subset SQLx, tokio-postgres and libpq read alike,
+so the authority alone selects the server. Clippy
 `disallowed-methods` in the `clippy.toml` files and `crates/batter/tests/postgres_endpoint_boundary.rs`
 reject URL-taking SQLx forms elsewhere.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,

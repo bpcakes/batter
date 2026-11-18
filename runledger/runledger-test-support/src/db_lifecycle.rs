@@ -340,17 +340,17 @@ mod tests {
         );
         assert_eq!(
             with_database_name(
-                "postgres://u:p@db.invalid/postgres?host=other.invalid&dbname=postgres&sslmode=disable",
+                "postgres://u:p@db.invalid/postgres?dbname=postgres&sslmode=disable",
                 "lease_1"
             ),
-            "postgres://u:p@db.invalid/lease_1?host=other.invalid&sslmode=disable"
+            "postgres://u:p@db.invalid/lease_1?sslmode=disable"
         );
         assert_eq!(
             with_database_name(
-                "postgres://u:p@db.invalid/postgres?host=%2Ftmp%2Fpg%20socket&db%6Eame=x&password=a+b%2Bc",
+                "postgres:///postgres?host=%2Ftmp%2Fpg%20socket&db%6Eame=x&user=u&password=a+b%2Bc",
                 "lease_1"
             ),
-            "postgres://u:p@db.invalid/lease_1?host=%2Ftmp%2Fpg%20socket&password=a%20b%2Bc"
+            "postgres:///lease_1?host=%2Ftmp%2Fpg%20socket&user=u&password=a%20b%2Bc"
         );
         assert_eq!(
             with_database_name("postgres://u:p@db.invalid/postgres#tag", "lease_1"),

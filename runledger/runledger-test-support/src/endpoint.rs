@@ -1,20 +1,26 @@
-//! Fixture URLs select their server by host or socket, never by `hostaddr`.
+//! Fixture URLs select their server through a canonical authority that SQLx,
+//! tokio-postgres and libpq read alike.
 
-use std::{ffi::OsString, fmt};
+use std::{collections::BTreeSet, ffi::OsString, fmt};
 
 use sqlx::postgres::PgConnectOptions;
 
 pub(crate) const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 
-/// Parse a fixture URL into options that connect to the URL's host or socket.
+/// Parse a canonical fixture URL into options that connect to the server its
+/// authority names.
 ///
 /// SQLx 0.9.1 reads an ambient `PGHOSTADDR` into every URL parse and connects
-/// there instead of the URL host, and checks a Unix socket before a URL's
-/// `hostaddr`. A fixture URL names the server this crate owns or was given, so
-/// this refuses inside `sqlx::Error::Configuration`, before parsing, with
-/// [`AmbientHostAddress`] whenever `PGHOSTADDR` is present and with
-/// [`DeclaredHostAddress`] whenever the URL declares `hostaddr`, whatever the
-/// value. Every fixture connection in this crate uses it; use it, or
+/// there instead of the URL host, checks a Unix socket before a declared
+/// `hostaddr`, and treats a query `host` or `port` as a replacement where
+/// tokio-postgres treats it as another candidate. A fixture URL names the
+/// server this crate owns or was given, so this refuses inside
+/// `sqlx::Error::Configuration`, before parsing, with [`AmbientHostAddress`]
+/// whenever `PGHOSTADDR` is present and with [`NoncanonicalUrl`] unless the URL
+/// is a `postgres://` or `postgresql://` URI without `#`, names one host (or an
+/// empty host with a `host=/socket/dir` parameter), and declares no
+/// `hostaddr`, `port` or `service`, no `host` beside an authority host and no
+/// parameter twice. Every fixture connection in this crate uses it; use it, or
 /// [`EphemeralDatabase::connect_options`](crate::EphemeralDatabase::connect_options),
 /// instead of passing fixture URLs to SQLx's URL-taking `connect` forms. The
 /// process must not change its environment between this check and connection.
@@ -38,15 +44,36 @@ pub(crate) fn connect_options_with(
     if environment(AMBIENT_HOST_ADDRESS_ENV).is_some() {
         return Err(sqlx::Error::Configuration(Box::new(AmbientHostAddress)));
     }
-    if declares_host_address(url) {
-        return Err(sqlx::Error::Configuration(Box::new(DeclaredHostAddress)));
+    if !canonical(url) {
+        return Err(sqlx::Error::Configuration(Box::new(NoncanonicalUrl)));
     }
     url.parse()
 }
 
-/// Whether the URL's own query names `hostaddr`, decoded as SQLx decodes it.
-pub(crate) fn declares_host_address(url: &str) -> bool {
-    url::Url::parse(url).is_ok_and(|url| url.query_pairs().any(|(key, _)| key == "hostaddr"))
+/// The URL subset SQLx, tokio-postgres and libpq read alike.
+fn canonical(url: &str) -> bool {
+    if url.contains('#') {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or_default();
+    if !matches!(parsed.scheme(), "postgres" | "postgresql") || host.contains(',') {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    for (key, value) in parsed.query_pairs() {
+        let endpoint = match &*key {
+            "hostaddr" | "port" | "service" => true,
+            "host" => !host.is_empty() || !value.starts_with('/'),
+            _ => false,
+        };
+        if endpoint || !seen.insert(key.into_owned()) {
+            return false;
+        }
+    }
+    !host.is_empty() || seen.contains("host")
 }
 
 /// The process environment sets `PGHOSTADDR`, which would redirect a fixture
@@ -67,20 +94,25 @@ impl fmt::Display for AmbientHostAddress {
 
 impl std::error::Error for AmbientHostAddress {}
 
-/// A fixture URL declares `hostaddr`, which SQLx 0.9.1 can silently replace
-/// with a Unix socket or carry differently from the URL host. Remove it and
-/// select the server with the URL host. Formatting names no address.
+/// A fixture URL outside the subset SQLx, tokio-postgres and libpq read alike;
+/// see [`connect_options`]. Put the endpoint in the URL authority. Formatting
+/// names no URL part.
+///
+/// Migration: replaces `DeclaredHostAddress`, which an earlier revision of
+/// this unreleased boundary returned only for a declared `hostaddr`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct DeclaredHostAddress;
+pub struct NoncanonicalUrl;
 
-impl fmt::Display for DeclaredHostAddress {
+impl fmt::Display for NoncanonicalUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the fixture URL declares hostaddr; select the server with its host instead")
+        f.write_str(
+            "the fixture URL must be a postgres:// URI that selects its server in the authority",
+        )
     }
 }
 
-impl std::error::Error for DeclaredHostAddress {}
+impl std::error::Error for NoncanonicalUrl {}
 
 #[cfg(test)]
 mod tests {
@@ -115,21 +147,33 @@ mod tests {
     }
 
     #[test]
-    fn declared_host_address_is_refused_in_every_spelling() {
+    fn noncanonical_fixture_urls_are_refused() {
         for url in [
+            "host=db-a hostaddr=192.0.2.1 dbname=postgres",
+            "postgres://u@127.0.0.1/db#tag",
+            "postgres://u@db-a,db-b/db",
+            "postgres:///db",
             "postgres://u@127.0.0.1/db?hostaddr=192.0.2.1",
-            "postgres://u@localhost/db?host=/tmp&hostaddr=127.0.0.1",
-            "postgres:///db?host%61ddr=127.0.0.1",
+            "postgres://u@localhost/db?host=/tmp",
+            "postgres://u@127.0.0.1:5432/postgres?port=5432",
+            "postgres:///db?host%61ddr=127.0.0.1&host=/tmp",
+            "postgres://u@127.0.0.1/db?sslmode=disable&sslmode=require",
         ] {
-            let error = connect_options_with(url, |_| None).expect_err("hostaddr declared");
-            assert!(is::<DeclaredHostAddress>(&error), "{url}");
+            let error = connect_options_with(url, |_| None).expect_err(url);
+            assert!(is::<NoncanonicalUrl>(&error), "{url}");
         }
     }
 
     #[test]
-    fn host_and_socket_fixture_urls_parse() {
+    fn canonical_host_and_socket_fixture_urls_parse() {
         let options = connect_options_with(URL, |_| None).expect("valid URL");
         assert_eq!(options.get_host(), "127.0.0.1", "URL host is kept");
-        connect_options_with("postgres://u@localhost/db?host=/tmp", |_| None).expect("socket only");
+        for url in [
+            "postgres:///db?host=/tmp&user=u",
+            "postgres://u@%2Ftmp/db",
+            "postgres://u@127.0.0.1/db?sslmode=disable&dbname=db",
+        ] {
+            connect_options_with(url, |_| None).expect(url);
+        }
     }
 }
