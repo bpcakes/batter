@@ -9,16 +9,17 @@
 //! `batter::sqlx::connect_options`), native Runledger's
 //! `runledger_test_support::connect_options` or Runlimit's private live-test
 //! helper. The scan rejects the URL-taking SQLx forms everywhere else:
-//! `PgConnection::connect`, pool `connect`/`connect_lazy` with a non-literal
-//! URL, `PgConnectOptions::from_str`/`from_url` and typed `parse`.
+//! `PgConnection::connect`, `PgPool::connect`/`connect_lazy`, pool
+//! `connect`/`connect_lazy` with a non-literal URL,
+//! `PgConnectOptions::from_str`/`from_url`, typed `parse`, and an inferred-type
+//! `parse` whose line mentions a URL unless it names another target type.
 //!
 //! Literal placeholder URLs passed to `connect_lazy` never connect and are
 //! allowed. Options built with `new_without_pgpass` and setters are not
 //! scanned; their connecting call sites call
-//! `batter_sqlx::refuse_ambient_host_address` first. The boundaries parse with
-//! an untyped `parse` the scan does not match. Named exemptions below are
-//! native operator roots that keep libpq semantics and files whose `connect`
-//! calls are TLS or TCP, not SQLx. Comments are not
+//! `batter_sqlx::refuse_ambient_host_address` first. Named exemptions below are
+//! the boundaries themselves, native operator roots that keep libpq semantics
+//! and files whose `connect` calls are TLS or TCP, not SQLx. Comments are not
 //! scanned. This is a source check, not a proof that no dependency or
 //! generated program parses a URL.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
@@ -30,10 +31,22 @@ use std::{
 };
 
 /// Files allowed to contain URL-taking SQLx forms, with the reason.
-const EXEMPT: [(&str, &str); 7] = [
+const EXEMPT: [(&str, &str); 10] = [
     (
         "crates/batter/tests/postgres_endpoint_boundary.rs",
         "this scan's own pattern and fixture strings",
+    ),
+    (
+        "crates/batter-sqlx/src/endpoint.rs",
+        "the Batter boundary itself",
+    ),
+    (
+        "runledger/runledger-test-support/src/endpoint.rs",
+        "the native Runledger fixture boundary itself",
+    ),
+    (
+        "runlimit/runlimit-postgres/tests/support/endpoint.rs",
+        "the native Runlimit live-test boundary itself",
     ),
     (
         "runledger/runledger-tui/src/database.rs",
@@ -118,6 +131,33 @@ fn allowed_lazy_argument(argument: &str) -> bool {
     argument.starts_with('"') || argument.starts_with("UNUSED_LAZY_POOL_URL")
 }
 
+/// An inferred-type `.parse()` whose receiver names a URL: the target type is
+/// invisible to a text scan, so every such parse is treated as SQLx's unless
+/// the line names another target type.
+fn untyped_url_parse(code: &str) -> bool {
+    const OTHER_TARGETS: [&str; 3] = [": tokio_postgres::Config", ": url::Url", ": Url "];
+    code.contains(".parse()")
+        && code.to_ascii_lowercase().contains("url")
+        && !OTHER_TARGETS.iter().any(|target| code.contains(target))
+}
+
+/// Whether `needle` occurs where its first character starts an identifier or
+/// path segment, so `PgProfiledPool::connect(` does not match `Pool::connect(`.
+fn contains_identifier(code: &str, needle: &str) -> bool {
+    code.match_indices(needle).any(|(index, _)| {
+        needle.starts_with('>')
+            || !code[..index]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            || code[..index].ends_with("Pg")
+                && !code[..index - 2]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
 /// URL-taking SQLx forms on one source line; comments are skipped.
 fn violations(line: &str) -> Vec<&'static str> {
     let code = line.trim_start();
@@ -139,6 +179,18 @@ fn violations(line: &str) -> Vec<&'static str> {
         || (code.contains("PgConnectOptions =") && code.contains(".parse()"))
     {
         found.push("typed PgConnectOptions parse");
+    } else if untyped_url_parse(code) {
+        found.push("untyped URL parse");
+    }
+    for (constructor, name) in [
+        ("Pool::connect(", "Pool::connect(url)"),
+        ("Pool::connect_lazy(", "Pool::connect_lazy(url)"),
+        (">::connect(", "Pool::connect(url)"),
+        (">::connect_lazy(", "Pool::connect_lazy(url)"),
+    ] {
+        if contains_identifier(code, constructor) {
+            found.push(name);
+        }
     }
     for (method, name) in [
         (".connect(", "pool connect(url)"),
@@ -171,6 +223,11 @@ fn detector_recognizes_every_url_taking_form_and_its_allowances() {
         "        .connect(&database_url)",
         "        .connect(harness.admin_database_url())",
         "        .connect_lazy(&url)?;",
+        "    let options = std::env::var(\"BATTER_SQLX_ADMIN_URL\")?.parse()?;",
+        "    url.parse()",
+        "    let pool = PgPool::connect(&url).await?;",
+        "    let pool = sqlx::PgPool::connect_lazy(&url)?;",
+        "    let pool = Pool::<Postgres>::connect(&url).await?;",
     ] {
         assert!(!violations(line).is_empty(), "{line}");
     }
@@ -182,6 +239,10 @@ fn detector_recognizes_every_url_taking_form_and_its_allowances() {
         "    // PgConnection::connect(&url) in a comment",
         "    /// let o: PgConnectOptions = url.parse()?;",
         "let options = batter_sqlx::connect_options(url)?;",
+        "    PgProfiledPool::connect(options, profile, max_connections).await",
+        "    let database = PgProfiledPool::connect_lazy(connect_options, profile, pool_options)?;",
+        "        let admin: tokio_postgres::Config = normalized.as_str().parse().unwrap();",
+        "    let port: u16 = value.parse()?;",
     ] {
         assert!(violations(line).is_empty(), "{line}");
     }

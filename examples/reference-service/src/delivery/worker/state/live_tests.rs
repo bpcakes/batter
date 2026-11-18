@@ -159,10 +159,16 @@ async fn run_boundaries() -> Result<(), BoxError> {
     let harness = postgres_test_harness::PostgresHarness::start(config).await?;
     let body = async {
         let lease = harness.empty_database().await?;
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect_with(batter::sqlx::connect_options(lease.database_url())?)
-            .await;
+        // A refused or invalid URL still reaches the awaited lease cleanup below.
+        let pool = match batter::sqlx::connect_options(lease.database_url()) {
+            Ok(options) => {
+                PgPoolOptions::new()
+                    .max_connections(4)
+                    .connect_with(options)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
         let body = match pool {
             Ok(pool) => {
                 let probe_pool = pool.clone();

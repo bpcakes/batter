@@ -1930,7 +1930,8 @@ custom type. See the
 [SQLx 0.9.1 record](references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
 `connect_options` and `refuse_ambient_host_address` refuse, before parsing or
 connecting, whenever `PGHOSTADDR` is set, so options they admit connect to the
-URL or setter host rather than an ambient address. This holds only if the
+URL or setter host rather than an ambient address. `connect_options` also
+refuses a URL whose declared `hostaddr` a Unix socket would replace. This holds only if the
 process environment does not change before connection, and only for options
 built through them; a repository source scan, not the type system, keeps
 checked-in code on that path. Other PG* defaults and native credential

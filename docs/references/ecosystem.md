@@ -71,6 +71,15 @@ contracts cite:
   live tests use it or its native counterpart, and a source scan rejects the
   URL-taking SQLx forms elsewhere. `runledger-tui` and the native examples keep
   libpq semantics. Application pools that bypass the boundary remain exposed.
+  Relatedly, `make_socket_path` in
+  [`options/mod.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/mod.rs)
+  is checked before `hostaddr`, and `default_host` returns a discovered socket
+  directory (`/var/run/postgresql`, `/private/tmp`, `/tmp`) for a URL with no
+  host, so `postgres:///db?hostaddr=127.0.0.1` uses that socket; in 0.9.0 the
+  `hostaddr` parameter replaced the host. The boundaries refuse that
+  combination with `HostAddressShadowedBySocket`. An external review observed
+  the socket selection with a local listener probe; the checked-in tests cover
+  the explicit `host=/dir` form only, since discovery depends on the machine.
 - A `.sql` file in a migration directory that does not match
   `<VERSION>_<DESCRIPTION>.sql` is now a resolve error
   ([#4367](https://github.com/transact-rs/sqlx/pull/4367)). Every checked-in

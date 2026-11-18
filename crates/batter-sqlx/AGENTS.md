@@ -24,9 +24,10 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
 - `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
   savepoint recovery and terminal completion evidence.
 - `src/profiled_pool.rs`: shared immutable profile and all three native pool hooks.
-- `src/endpoint.rs`: `connect_options`, `refuse_ambient_host_address` and
-  `AmbientHostAddress`, the only sanctioned URL-to-options path; SQLx 0.9.1
-  would otherwise connect to an ambient `PGHOSTADDR`. Fixture resolution and
+- `src/endpoint.rs`: `connect_options`, `refuse_ambient_host_address`,
+  `AmbientHostAddress` and `HostAddressShadowedBySocket`, the only sanctioned
+  URL-to-options path; SQLx 0.9.1 would otherwise connect to an ambient
+  `PGHOSTADDR`, or through a Unix socket instead of a declared `hostaddr`. Fixture resolution and
   template initializers refuse through it; the facade endpoint scan enforces it.
 - `src/atomic_context.rs`: unprofiled/profile-owned runners retain native completion before
   operation-budget resolution; callers do not own acknowledgement publication.

@@ -449,7 +449,9 @@ Build native options from a URL with `batter::sqlx::connect_options(url)?` and
 pass them to `connect_with` or `connect_lazy_with`; call
 `refuse_ambient_host_address()?` before connecting with setter-built options.
 SQLx 0.9.1 otherwise connects to an ambient `PGHOSTADDR` instead of the
-selected host. Both refuse with `AmbientHostAddress` while it is set; see the
+selected host. Both refuse with `AmbientHostAddress` while it is set, and
+`connect_options` refuses with `HostAddressShadowedBySocket` when a Unix
+socket would replace a URL's `hostaddr`; see the
 [endpoint boundary](../crates/batter-sqlx/README.md#postgresql-endpoint-boundary).
 
 `PgLease::acquire`, `PgQueryHandle` helpers and every `run_atomic*` runner

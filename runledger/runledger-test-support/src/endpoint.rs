@@ -13,8 +13,11 @@ pub(crate) const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 /// has no `hostaddr` parameter. A fixture URL names the server this crate owns
 /// or was given, so this refuses with [`AmbientHostAddress`] inside
 /// `sqlx::Error::Configuration` whenever the variable is present, whatever its
-/// value, before parsing. Every fixture connection in this crate uses it; use it,
-/// or [`EphemeralDatabase::connect_options`](crate::EphemeralDatabase::connect_options),
+/// value, before parsing. SQLx 0.9.1 also prefers a Unix socket over an
+/// explicit `hostaddr`, so after parsing it refuses with
+/// [`HostAddressShadowedBySocket`] when the URL declares `hostaddr` and a socket
+/// would be used. Every fixture connection in this crate uses it; use it, or
+/// [`EphemeralDatabase::connect_options`](crate::EphemeralDatabase::connect_options),
 /// instead of passing fixture URLs to SQLx's URL-taking `connect` forms. The
 /// process must not change its environment between this check and connection.
 ///
@@ -37,7 +40,16 @@ pub(crate) fn connect_options_with(
     if environment(AMBIENT_HOST_ADDRESS_ENV).is_some() {
         return Err(sqlx::Error::Configuration(Box::new(AmbientHostAddress)));
     }
-    url.parse()
+    let options: PgConnectOptions = url.parse()?;
+    let socket = options.get_socket().is_some() || options.get_host().starts_with('/');
+    let declares_host_address =
+        url::Url::parse(url).is_ok_and(|url| url.query_pairs().any(|(key, _)| key == "hostaddr"));
+    if socket && declares_host_address {
+        return Err(sqlx::Error::Configuration(Box::new(
+            HostAddressShadowedBySocket,
+        )));
+    }
+    Ok(options)
 }
 
 /// The process environment sets `PGHOSTADDR`, which would redirect a fixture
@@ -57,6 +69,21 @@ impl fmt::Display for AmbientHostAddress {
 }
 
 impl std::error::Error for AmbientHostAddress {}
+
+/// A fixture URL declares `hostaddr`, but SQLx 0.9.1 would connect through a
+/// Unix socket (a `host=/dir` parameter, or `PGHOST`/socket discovery for a URL
+/// with no host) instead. Give the URL a TCP host. Formatting names no address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HostAddressShadowedBySocket;
+
+impl fmt::Display for HostAddressShadowedBySocket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a Unix socket would replace the fixture URL's hostaddr; use a TCP host")
+    }
+}
+
+impl std::error::Error for HostAddressShadowedBySocket {}
 
 #[cfg(test)]
 mod tests {
@@ -85,6 +112,23 @@ mod tests {
         let error = connect_options_with("not a url", |_| Some("192.0.2.1".into()))
             .expect_err("PGHOSTADDR present");
         assert!(refused(&error), "refusal precedes parsing");
+    }
+
+    #[test]
+    fn declared_host_address_is_refused_when_a_socket_would_replace_it() {
+        let error = connect_options_with(
+            "postgres://u@localhost/db?host=/tmp&hostaddr=127.0.0.1",
+            |_| None,
+        )
+        .expect_err("socket parameter with hostaddr");
+        assert!(
+            matches!(&error, sqlx::Error::Configuration(source)
+                if source.is::<HostAddressShadowedBySocket>()),
+            "refusal is HostAddressShadowedBySocket"
+        );
+        connect_options_with("postgres://u@127.0.0.1/db?hostaddr=127.0.0.1", |_| None)
+            .expect("TCP host with hostaddr");
+        connect_options_with("postgres://u@localhost/db?host=/tmp", |_| None).expect("socket only");
     }
 
     #[test]

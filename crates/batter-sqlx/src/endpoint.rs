@@ -17,6 +17,14 @@ const AMBIENT_HOST_ADDRESS: &str = "PGHOSTADDR";
 /// `sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
 /// value, before parsing; any other parse failure is SQLx's own error.
 ///
+/// SQLx 0.9.1 also checks a Unix socket before an explicit `hostaddr`: a URL
+/// with no host takes its socket directory from `PGHOST` or local socket
+/// discovery, and a `host=/dir` parameter selects a socket outright, so
+/// `postgres:///db?hostaddr=127.0.0.1` would silently connect through that
+/// socket. After parsing, this refuses with [`HostAddressShadowedBySocket`]
+/// whenever the URL declares `hostaddr` and the options would use a socket.
+/// Socket-only URLs, and TCP hosts with or without `hostaddr`, are accepted.
+///
 /// Use it instead of `str::parse`, `PgConnectOptions::from_str`, or the URL
 /// forms `PgPool::connect`, `PgPoolOptions::connect`, `connect_lazy` and
 /// `PgConnection::connect`; pass the result to their `_with` variants. Other
@@ -65,7 +73,21 @@ pub(crate) fn connect_options_with(
     environment: impl FnOnce(&str) -> Option<OsString>,
 ) -> Result<PgConnectOptions, sqlx::Error> {
     refuse_ambient_host_address_with(environment)?;
-    url.parse()
+    let options: PgConnectOptions = url.parse()?;
+    let socket = options.get_socket().is_some() || options.get_host().starts_with('/');
+    if socket && declares_host_address(url) {
+        return Err(sqlx::Error::Configuration(Box::new(
+            HostAddressShadowedBySocket,
+        )));
+    }
+    Ok(options)
+}
+
+/// Whether the URL's own query names `hostaddr`, decoded as SQLx decodes it.
+/// SQLx has already parsed the same text, so a parse failure here selects no
+/// address.
+fn declares_host_address(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| url.query_pairs().any(|(key, _)| key == "hostaddr"))
 }
 
 fn refuse_ambient_host_address_with(
@@ -104,6 +126,33 @@ impl fmt::Display for AmbientHostAddress {
 
 impl std::error::Error for AmbientHostAddress {}
 
+/// A URL declares `hostaddr`, but SQLx 0.9.1 would connect through a Unix socket
+/// instead.
+///
+/// Returned inside `sqlx::Error::Configuration` by [`connect_options`] after
+/// parsing, before any pool or connection exists. The socket comes from a
+/// `host=/dir` parameter, or, for a URL with no host, from `PGHOST` or SQLx's
+/// local socket discovery. Give the URL a TCP host to use `hostaddr`, or drop
+/// `hostaddr` to use the socket. Formatting names neither address nor socket.
+///
+/// ```
+/// # fn example(error: &sqlx::Error) -> bool {
+/// use batter_sqlx::HostAddressShadowedBySocket;
+/// matches!(error, sqlx::Error::Configuration(source) if source.is::<HostAddressShadowedBySocket>())
+/// # }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HostAddressShadowedBySocket;
+
+impl fmt::Display for HostAddressShadowedBySocket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a Unix socket would replace the URL's hostaddr; give the URL a TCP host")
+    }
+}
+
+impl std::error::Error for HostAddressShadowedBySocket {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +186,44 @@ mod tests {
         }
         let error = connect_options_with("not a url", |_| Some("192.0.2.1".into())).unwrap_err();
         assert!(refused(&error), "refusal precedes parsing");
+    }
+
+    #[test]
+    fn declared_host_address_is_refused_when_a_socket_would_replace_it() {
+        let shadowed = |error: &sqlx::Error| {
+            matches!(error, sqlx::Error::Configuration(source)
+                if source.is::<HostAddressShadowedBySocket>())
+        };
+        for url in [
+            "postgres://user@localhost/db?host=/tmp&hostaddr=127.0.0.1",
+            "postgres://user@localhost/db?host=%2Ftmp&host%61ddr=127.0.0.1",
+        ] {
+            let error = connect_options_with(url, |_| None).unwrap_err();
+            assert!(
+                shadowed(&error),
+                "socket parameter with hostaddr is refused"
+            );
+            assert!(
+                !error.to_string().contains("127.0.0.1"),
+                "refusal names no address"
+            );
+        }
+        // With no URL host, SQLx takes the socket from PGHOST or discovery.
+        let hostless = "postgres:///db?hostaddr=127.0.0.1";
+        match connect_options_with(hostless, |_| None) {
+            Ok(options) => assert!(
+                !options.get_host().starts_with('/') && options.get_socket().is_none(),
+                "accepted only when no socket would be used"
+            ),
+            Err(error) => assert!(shadowed(&error), "refused only as shadowed"),
+        }
+        for url in [
+            "postgres://user@localhost/db?host=/tmp",
+            "postgres://user@127.0.0.1/db?hostaddr=127.0.0.1",
+            "postgres://user@db.invalid/db?hostaddr=192.0.2.1",
+        ] {
+            assert!(connect_options_with(url, |_| None).is_ok(), "{url}");
+        }
     }
 
     #[test]

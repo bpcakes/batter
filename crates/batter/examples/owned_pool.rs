@@ -65,9 +65,12 @@ async fn main() -> Result<ExitCode, BoxError> {
         eprintln!("DATABASE_URL must be valid Unicode");
         return Ok(ExitCode::FAILURE);
     };
-    let Ok(connect_options) = batter::sqlx::connect_options(database_url) else {
-        eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
-        return Ok(ExitCode::FAILURE);
+    let connect_options = match batter::sqlx::connect_options(database_url) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{}", endpoint_refusal(&error));
+            return Ok(ExitCode::FAILURE);
+        }
     };
 
     let login = connect_options.get_username();
@@ -123,4 +126,19 @@ async fn main() -> Result<ExitCode, BoxError> {
             ExitCode::FAILURE
         }
     })
+}
+
+/// Operator guidance for a refused `DATABASE_URL`, without its contents.
+fn endpoint_refusal(error: &sqlx::Error) -> &'static str {
+    match error {
+        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::AmbientHostAddress>() => {
+            "unset PGHOSTADDR: SQLx would connect to it instead of DATABASE_URL's host"
+        }
+        sqlx::Error::Configuration(source)
+            if source.is::<batter::sqlx::HostAddressShadowedBySocket>() =>
+        {
+            "give DATABASE_URL a TCP host: a Unix socket would replace its hostaddr"
+        }
+        _ => "DATABASE_URL is not a valid PostgreSQL connection string",
+    }
 }

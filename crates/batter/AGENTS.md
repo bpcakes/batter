@@ -20,10 +20,13 @@ Windows support and non-Unix fallbacks are out of scope.
 - `tests/native_transport_consumer.rs` executes the native Runlimit transport
   packages through facade paths and asserts their identity.
 - `tests/postgres_endpoint_boundary.rs` scans every workspace member and the
-  standalone consumers for URL-taking SQLx forms (`PgConnection::connect`, pool
-  `connect`/`connect_lazy` with a non-literal URL, `from_str`, typed `parse`)
-  outside `batter_sqlx::connect_options` and the native Runledger/Runlimit
-  boundaries; its named exemptions are native operator roots and TLS/TCP files.
+  standalone consumers for URL-taking SQLx forms (`PgConnection::connect`,
+  `PgPool::connect`/`connect_lazy`, pool `connect`/`connect_lazy` with a
+  non-literal URL, `from_str`, typed `parse`, and inferred `parse` on a line
+  naming a URL) outside `batter_sqlx::connect_options` and the native
+  Runledger/Runlimit boundaries; its named exemptions are those boundaries,
+  native operator roots and TLS/TCP files. It is a text heuristic: add a
+  detector fixture whenever a review finds a form it missed.
 - `tests/panic_hook_ownership.rs` scans every workspace library's production
   sources for panic-hook installers, exempting only files that a `#[cfg(test)]`
   module loads and no production module does (derived in

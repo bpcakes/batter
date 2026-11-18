@@ -20,10 +20,12 @@ contracts, capability facts and validation history.
   custom type fails; and ambient `PGHOSTADDR` now overrides every URL host.
   See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
 - Add the PostgreSQL endpoint boundary `batter_sqlx::connect_options`, with
-  `refuse_ambient_host_address` and `AmbientHostAddress` (also under
+  `refuse_ambient_host_address`, `AmbientHostAddress` and
+  `HostAddressShadowedBySocket` (also under
   `batter::sqlx`; `batter-c5ci`, `batter-c5ci.1`). It refuses inside
   `sqlx::Error::Configuration`, before parsing, whenever `PGHOSTADDR` is set,
-  so a URL or explicit setters select the server. `ConnectionPlan` resolution
+  so a URL or explicit setters select the server, and refuses a URL whose
+  declared `hostaddr` a Unix socket would replace. `ConnectionPlan` resolution
   and both template initializer paths refuse the same way before any pool or
   caller code exists. Every checked-in test, example and consumer now builds
   URL options through it or a native boundary, and

@@ -38,8 +38,8 @@ async fn main() -> ExitCode {
     };
     let options = match batter::sqlx::connect_options(url) {
         Ok(options) => options,
-        Err(_) => {
-            eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
+        Err(error) => {
+            eprintln!("{}", endpoint_refusal(&error));
             return ExitCode::FAILURE;
         }
     };
@@ -326,4 +326,19 @@ pub(crate) enum SuperuserAllowance {
 pub(crate) enum AuthorityCase {
     Violation,
     Valid,
+}
+
+/// Operator guidance for a refused `DATABASE_URL`, without its contents.
+fn endpoint_refusal(error: &sqlx::Error) -> &'static str {
+    match error {
+        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::AmbientHostAddress>() => {
+            "unset PGHOSTADDR: SQLx would connect to it instead of DATABASE_URL's host"
+        }
+        sqlx::Error::Configuration(source)
+            if source.is::<batter::sqlx::HostAddressShadowedBySocket>() =>
+        {
+            "give DATABASE_URL a TCP host: a Unix socket would replace its hostaddr"
+        }
+        _ => "DATABASE_URL is not a valid PostgreSQL connection string",
+    }
 }

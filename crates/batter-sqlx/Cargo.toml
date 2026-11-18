@@ -29,6 +29,7 @@ batter-test-support = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"], optional = true }
 batter-core.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate"] }
+url.workspace = true
 
 [dev-dependencies]
 tracing.workspace = true

@@ -378,11 +378,13 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   unchanged. Online index repair keeps its explicit `ROLLBACK` after a failed
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
   runs outside a block and only warns. No schema or persisted data changes.
-- Add `runledger_test_support::{connect_options, AmbientHostAddress}` and
+- Add `runledger_test_support::{connect_options, AmbientHostAddress,
+  HostAddressShadowedBySocket}` and
   `EphemeralDatabase::connect_options` (`batter-c5ci.1`). SQLx 0.9.1 would
   connect to an ambient `PGHOSTADDR` instead of a fixture URL's host, so shared
   startup refuses before any container starts and every fixture connection,
-  including teardown, refuses inside `sqlx::Error::Configuration`. Native tests
+  including teardown, refuses inside `sqlx::Error::Configuration`, as does a
+  URL whose declared `hostaddr` a Unix socket would replace. Native tests
   now build fixture options through these. Unset `PGHOSTADDR` for native test
   runs. `runledger-tui` and the native examples keep libpq semantics and honour
   `PGHOSTADDR` like `psql`.

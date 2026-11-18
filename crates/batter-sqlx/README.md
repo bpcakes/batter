@@ -1022,7 +1022,11 @@ options from a URL with `connect_options(url)?` and pass them to
 setters. Both refuse with `AmbientHostAddress` inside
 `sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
 value; other PG* variables stay native defaults that explicit URL parts and
-setters override. The process must not change its environment between the
+setters override. SQLx 0.9.1 also checks a Unix socket before an explicit
+`hostaddr`: a `host=/dir` parameter, or `PGHOST` or local socket discovery for
+a URL with no host, silently replaces it. `connect_options` therefore refuses
+with `HostAddressShadowedBySocket` when the URL declares `hostaddr` and the
+options would use a socket; socket-only URLs and TCP hosts are accepted. The process must not change its environment between the
 check and connection.
 
 ```rust,no_run
