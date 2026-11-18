@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Stop two non-yielding fixture tests from counting child startup against their
+  five-second bounds (`batter-hiuu`). Parent-unwind cleanup is now timed from
+  startup evidence, with a separate spawn-to-cleanup bound below the ten-second
+  child emergency exit; the parent-pipe-closure exit window starts at closure,
+  and its exact exit code still separates it from the emergency exit.
+
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
 
