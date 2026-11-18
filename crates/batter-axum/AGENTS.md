@@ -342,8 +342,9 @@ subscriber panics in `tracing-subscriber`.
 The boundary: the tracing subscriber and task wakers are infrastructure
 assumed not to unwind. `tracing-subscriber` does not restore its registry
 after a layer callback panics, Tokio stops notifying the remaining waiters
-after a waker panics (and tokio-util 0.7.19 poisons a parent cancellation
-token), and an event the body emits from its destructor during such an
+after a waker panics (tokio-util 0.7.20, the workspace minimum, no longer
+poisons a parent cancellation token then, but still leaves the later
+waiters unwoken), and an event the body emits from its destructor during such an
 unwind aborts the process. Make no claim, add no machinery and write no
 test for a panicking subscriber or waker: fifteen review rounds showed that
 each defence widened the claim and failed at the next edge (ADR-008, third

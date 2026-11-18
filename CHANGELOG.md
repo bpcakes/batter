@@ -178,6 +178,12 @@ contracts, capability facts and validation history.
   cancel allowance measures from that instant rather than from a late
   observation. Additive; no existing caller changes (`batter-9wig.1`).
 
+- Require `tokio-util` 0.7.20 (from 0.7.19) across the workspace. Its
+  `CancellationToken` notifies descendants after releasing its locks, so a
+  task waker that panics when woken no longer poisons the parent token. The
+  waiters after such a waker are still not woken, and a waker that panics
+  stays outside `batter-axum`'s owned-body contract. tokio-util 0.7.20
+  needs Rust 1.85, below the workspace minimum.
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
 

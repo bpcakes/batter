@@ -482,7 +482,7 @@ sources in the locked registry.
   2026-11-13.
 - Hyper has no write timeout. A peer that stops reading leaves the connection
   future pending in `poll_flush` for as long as TCP keeps the connection.
-- The completion tokens are those of a Tokio `tokio-util` 0.7.19
+- The completion tokens are those of a Tokio `tokio-util` 0.7.20
   `TaskTracker` (`task/task_tracker.rs`): `token` counts a holder until it is
   dropped, and `wait` resolves once the tracker is closed and no token or task
   remains, so the server closes it after Axum's graceful return and waits.

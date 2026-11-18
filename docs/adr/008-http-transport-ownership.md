@@ -241,6 +241,14 @@ are runtime infrastructure assumed not to unwind when woken, cloned or
 destroyed; the library makes no claim for a waker that does, and the code
 and tests that had tried to were removed.
 
+Amended the same day: the workspace now requires tokio-util 0.7.20, whose
+cancellation notifies descendants after releasing its locks, so a waker
+that panics no longer poisons the parent token. A hand probe against both
+versions confirmed that, and that the rest is unchanged in 0.7.20: the
+cancellation unwinds, every token ends up cancelled, and the waiters after
+the panicking one are not woken. The decision stands on that remaining
+limit.
+
 A fifth assessment applied the same reasoning one layer up. Reviews had for
 many rounds found paths on which a tracing subscriber that panics, on a span
 entry or exit, on an event or in its destructor, left something of the
