@@ -34,6 +34,10 @@ impl CommitAcknowledgementDropProxy {
         let target_options = runledger_test_support::connect_options(database_url)
             .expect("parse ephemeral PostgreSQL connection options")
             .ssl_mode(PgSslMode::Disable);
+        assert!(
+            target_options.get_socket().is_none() && !target_options.get_host().starts_with('/'),
+            "the commit acknowledgement proxy requires a TCP fixture; SQLx keeps a Unix socket that the proxy's host setter cannot clear"
+        );
         let target = (
             target_options.get_host().to_owned(),
             target_options.get_port(),

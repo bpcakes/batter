@@ -386,7 +386,13 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   starts and every fixture connection, including teardown, refuses either form
   inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
   the admin URL's query and drop only `dbname`. Native tests build fixture
-  options through these; unset `PGHOSTADDR` for native test runs.
+  options through these; unset `PGHOSTADDR` for native test runs. The
+  commit-acknowledgement, intent-reconciliation and online-transport fault
+  proxies now refuse a Unix-socket fixture before setup, because SQLx's host
+  setter cannot clear a socket kept in the URL; they require a TCP fixture.
+  `scripts/refresh_runledger_sqlx.py` also refuses a literal `#` in
+  `DATABASE_URL` (libpq does not treat it as a fragment; encode it as `%23`)
+  and reports an unparseable URL without echoing it.
 - `runledger_postgres` re-exports the SQLx foundation's `connect_options`,
   `AmbientHostAddress` and `DeclaredHostAddress`. `runledger-tui` and the native
   examples now build options through it, so they refuse an ambient or declared

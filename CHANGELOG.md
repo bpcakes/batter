@@ -32,7 +32,8 @@ contracts, capability facts and validation history.
   boundary. Clippy `disallowed-methods` rejects the URL-taking SQLx
   constructors in every workspace crate, and
   `crates/batter/tests/postgres_endpoint_boundary.rs` scans for `from_str` and
-  `parse` forms. Build options with `connect_options(url)?` and pass them to
+  `parse` forms, including path-qualified turbofish targets and declarations
+  whose `parse` follows on a later line. Build options with `connect_options(url)?` and pass them to
   `connect_with`/`connect_lazy_with`; unset `PGHOSTADDR` and remove `hostaddr`
   from URLs to run fixtures, live tests and the SQLx examples.
 - Qualify the `PgLease`, `PgLease::migrate`, `migrate_and_apply` and

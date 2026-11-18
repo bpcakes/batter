@@ -58,7 +58,7 @@ impl Relay {
             .await
             .expect("relay listener");
         let address = listener.local_addr().expect("relay address");
-        let upstream = (options.get_host().to_owned(), options.get_port());
+        let upstream = tcp_upstream(options);
         let reached = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
         let delivered = Arc::new(Notify::new());
@@ -243,6 +243,16 @@ impl Drop for Relay {
 
 /// An extended-protocol request continues through Sync. Withhold all of it: a
 /// later frame read while waiting for release would end the relay instead.
+/// The relay forwards over TCP; SQLx keeps a Unix socket in the fixture URL that
+/// the client's host setter cannot clear, so a socket fixture is refused.
+fn tcp_upstream(options: &PgConnectOptions) -> (String, u16) {
+    assert!(
+        options.get_socket().is_none() && !options.get_host().starts_with('/'),
+        "the online transport relay requires a TCP fixture, not a Unix socket"
+    );
+    (options.get_host().to_owned(), options.get_port())
+}
+
 async fn rest_of_request(
     input: &mut (impl AsyncRead + Unpin),
     tag: u8,

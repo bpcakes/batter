@@ -137,6 +137,24 @@ class RefreshTests(unittest.TestCase):
                 command.assert_not_called()
                 psql.assert_not_called()
 
+    def test_unparseable_or_fragmented_url_is_refused_without_its_contents(self):
+        for secret, message in (
+                ('postgresql://user:private-marker@ho\uff0fst/database', 'not a valid URL'),
+                ('postgresql://user:private-marker@db.invalid/database?application_name=a#b&hostaddr=192.0.2.1',
+                 r"encode '#'")):
+            with self.subTest(message=message), \
+                 patch.dict(os.environ, DATABASE_URL=secret), \
+                 patch('refresh_runledger_sqlx.run') as command, \
+                 patch('refresh_runledger_sqlx.subprocess.run') as psql:
+                with self.assertRaisesRegex(ValueError, message) as error:
+                    refresh(Path.cwd())
+                self.assertNotIn('private-marker', str(error.exception))
+                # A printed traceback must not chain the parser's message.
+                self.assertIsNone(error.exception.__cause__)
+                self.assertTrue(error.exception.__suppress_context__ or error.exception.__context__ is None)
+                command.assert_not_called()
+                psql.assert_not_called()
+
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'
         with patch.dict(os.environ, DATABASE_URL=secret), \
