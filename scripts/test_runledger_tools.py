@@ -187,6 +187,22 @@ class RefreshTests(unittest.TestCase):
                 command.assert_not_called()
                 psql.assert_not_called()
 
+    def test_sqlx_config_is_refused_before_any_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'runledger/runledger-postgres').mkdir(parents=True)
+            (root / 'target/x').mkdir(parents=True)
+            (root / 'target/x/sqlx.toml').write_text('ignored build output')
+            (root / 'runledger/runledger-postgres/sqlx.toml').write_text(
+                '[common]\ndatabase-url-var = "OTHER_DATABASE_URL"\n')
+            with patch.dict(os.environ, DATABASE_URL='postgresql://u@db.invalid/database'), \
+                 patch('refresh_runledger_sqlx.run') as command, \
+                 patch('refresh_runledger_sqlx.subprocess.run') as psql:
+                with self.assertRaisesRegex(ValueError, 'remove sqlx.toml .runledger/runledger-postgres/sqlx.toml'):
+                    refresh(root)
+                command.assert_not_called()
+                psql.assert_not_called()
+
     def test_cargo_env_endpoint_is_refused_before_any_command(self):
         url = 'postgresql://u@db.invalid/database'
         for answer, message in (((True, True), 'remove PGHOSTADDR'), ((False, False), 'remove DATABASE_URL')):

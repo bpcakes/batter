@@ -91,6 +91,15 @@ contracts cite:
   query macros. Runledger's Docker fixture refuses `PGHOSTADDR` only when it
   owns the container. The reference root already rejects every PG* variable.
 
+  The invariant holds under three stated preconditions, which are not
+  enforced: a host name resolves to the same server for the duration of a run
+  (two lookups of one name can differ for any pair of clients, libpq
+  included); a URL handed to another process, such as a template initializer's
+  child or a consumer of `EphemeralDatabase::url()`, is read under that
+  process's own environment; and configuration files other than Cargo's, which
+  the refresh probe covers, and `sqlx.toml`, which the refresh refuses, are out
+  of scope.
+
   An earlier revision of this unreleased branch instead added an app-wide URL
   boundary that tried to make SQLx, tokio-postgres and libpq read arbitrary URL
   text identically; ten external review rounds kept finding further

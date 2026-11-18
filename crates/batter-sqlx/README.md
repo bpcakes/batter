@@ -1086,7 +1086,13 @@ tokio-postgres and SQLx; if no such URL exists, the initializer is not called
 and the harness aborts the template. Test code that opens its own pool beside
 a fixture uses `harness_connect_options(&harness, name)` or
 `harness_admin_connect_options(&harness)` instead of handing
-`admin_database_url()` or a lease URL to SQLx. Select pools with `FixtureDatabase::pool(key)` (or
+`admin_database_url()` or a lease URL to SQLx.
+
+These rules make the fixture's SQLx pools reach the server and database the
+harness provisioned under three preconditions that are not enforced: a host
+name resolves to the same server for the duration of a run; a URL handed to
+another process, such as an initializer's child, is read under that process's
+own environment; and SQLx and Cargo configuration files are out of scope. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
 checks; on a `declare` plan an index does not record which login a pool uses.

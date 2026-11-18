@@ -385,8 +385,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   `scripts/refresh_runledger_sqlx.py` now parses `DATABASE_URL` once, gives
   `psql` the parts as its own PG* variables (no credentials in its arguments)
   in an environment without any other PG* setting, gives SQLx CLI a URL
-  rebuilt from the same parts, and refuses a Cargo `[env]` `PGHOSTADDR` or
-  `DATABASE_URL` that would change what the query macros connect to. It
+  rebuilt from the same parts, refuses any `sqlx.toml` (whose
+  `database-url-var` SQLx CLI 0.9.1 reads by default), and refuses a Cargo
+  `[env]` `PGHOSTADDR` or `DATABASE_URL` that would change what the query
+  macros connect to. It assumes the host name resolves to one server for the
+  whole refresh. It
   accepts only one host, one database and the `sslmode`, `application_name` and
   `options` parameters. No public item, schema or persisted data changes.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`

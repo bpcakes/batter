@@ -191,6 +191,20 @@ def cargo_compiler_endpoint(directory, database):
     return answer[0] == "true", answer[1] == "true"
 
 
+def refuse_sqlx_config(directory):
+    """Refuse any sqlx.toml: SQLx CLI 0.9.1 enables it by default, and its
+    `[common] database-url-var` would make `migrate info` and `prepare` read
+    another variable than the DATABASE_URL psql checked."""
+    directory = Path(directory)
+    for current, folders, files in os.walk(directory):
+        # Build output and history are not source configuration.
+        folders[:] = [name for name in folders if name not in ("target", ".git")]
+        if "sqlx.toml" in files:
+            relative = (Path(current) / "sqlx.toml").relative_to(directory)
+            raise ValueError("remove sqlx.toml (" + relative.as_posix()
+                             + "): SQLx CLI could read another database URL variable than psql checked")
+
+
 def refuse_cargo_endpoint(directory, database):
     host_address, same_url = cargo_compiler_endpoint(directory, database)
     if host_address:
@@ -226,6 +240,7 @@ def refresh(root):
 
 def refresh_with(root, parts):
     rebuilt = os.environ["DATABASE_URL"]
+    refuse_sqlx_config(root)
     refuse_cargo_endpoint(root, rebuilt)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
@@ -253,6 +268,7 @@ def refresh_with(root, parts):
         native = candidate / "runledger"
         for package in MIGRATION_PACKAGES:
             sync_files(native / "migrations", native / package / "migrations", ".sql")
+        refuse_sqlx_config(candidate)
         refuse_cargo_endpoint(candidate, rebuilt)
         run(["env", "CARGO_TARGET_DIR=" + str(target), "cargo", "sqlx", "prepare",
              "--workspace", "--no-dotenv", "--", "-p", "runledger-postgres", "-p", "runledger-runtime",
