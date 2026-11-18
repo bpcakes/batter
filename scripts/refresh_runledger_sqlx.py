@@ -41,35 +41,48 @@ def sync_files(source, destination, suffix):
             path.unlink()
 
 
+# Query parameters psql, SQLx and tokio-postgres all honour alike.
+URL_PARAMETERS = frozenset(("sslmode", "sslrootcert", "sslcert", "sslkey", "application_name",
+                            "options", "user", "password", "dbname"))
+
+
 def canonical_database_url(database):
     """Whether psql, SQLx and tokio-postgres all read one server from the URL.
 
     Mirrors `batter_sqlx::connect_options`: a postgres:// or postgresql:// URI
-    without '#' (already refused with its own message), one host in the
-    authority or an empty one with a host=/socket parameter, and no hostaddr,
-    port or service parameter, host parameter beside an authority host or
-    repeated parameter. Keyword/value connection strings are not URIs.
+    without '#' (already refused with its own message), a raw query '+' or a raw
+    '@' outside the userinfo; exactly one host and an explicit port in the
+    authority; a database in the path or dbname; and only allowlisted
+    parameters, each once. Every endpoint part is then explicit, so ambient or
+    Cargo-supplied PGHOST, PGPORT and PGDATABASE cannot select it. Keyword/value
+    connection strings are not URIs.
     """
+    for scheme in ("postgres://", "postgresql://"):
+        if database.startswith(scheme):
+            rest = database[len(scheme):]
+            break
+    else:
+        return False
+    cut = min([index for index in (rest.find("/"), rest.find("?")) if index >= 0], default=len(rest))
+    authority, tail = rest[:cut], rest[cut:]
+    hosts = authority.rpartition("@")[2]
+    query = tail.partition("?")[2]
+    if ("+" in query or "@" in tail or authority.count("@") > 1
+            or "," in hosts or "%2c" in hosts.lower()):
+        return False
     try:
         parts = urlsplit(database)
+        port = parts.port
         pairs = parse_qsl(parts.query, keep_blank_values=True)
     except ValueError:
         # The parser's message can quote the URL authority, credentials included.
         raise ValueError("DATABASE_URL is not a valid URL") from None
-    if parts.scheme not in ("postgres", "postgresql") or not database.startswith(parts.scheme + "://"):
+    keys = [key for key, _ in pairs]
+    if not parts.hostname or port is None or len(set(keys)) != len(keys):
         return False
-    host = parts.netloc.rpartition("@")[2]
-    host = host[1:host.index("]")] if host.startswith("[") and "]" in host else host.partition(":")[0]
-    if "," in host:
+    if any(key not in URL_PARAMETERS for key in keys):
         return False
-    seen = set()
-    for key, value in pairs:
-        if key in ("hostaddr", "port", "service") or (key == "host" and (host or not value.startswith("/"))):
-            return False
-        if key in seen:
-            return False
-        seen.add(key)
-    return bool(host) or "host" in seen
+    return bool(parts.path.strip("/")) or "dbname" in keys
 
 
 def cargo_compiler_endpoint(directory, database):
@@ -139,6 +152,9 @@ def refresh(root):
     if "PGHOSTADDR" in os.environ:
         # psql and SQLx CLI 0.9.1 connect to it instead of DATABASE_URL's host.
         raise ValueError("unset PGHOSTADDR: psql and SQLx CLI would connect to it instead of DATABASE_URL's host")
+    if "PGSERVICE" in os.environ:
+        # A libpq service file can supply hostaddr to psql alone; SQLx ignores it.
+        raise ValueError("unset PGSERVICE: psql would read a service file that SQLx ignores")
     if "#" in database:
         # Python and SQLx end the query at '#', libpq does not, so a parameter
         # after it would reach psql alone. Encode a literal '#' as %23.
@@ -146,7 +162,8 @@ def refresh(root):
     if not canonical_database_url(database):
         # psql, SQLx CLI and the query macros could otherwise read different
         # servers from the same text (hostaddr, query host/port, service files).
-        raise ValueError("DATABASE_URL must be a postgres:// URI that names its server only in the authority")
+        raise ValueError("DATABASE_URL must be a postgres:// URI that names its server only in the authority, "
+                         "with an explicit host, port and database")
     refuse_cargo_endpoint(root, database)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":

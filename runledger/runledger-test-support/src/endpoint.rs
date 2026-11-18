@@ -17,10 +17,11 @@ pub(crate) const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 /// server this crate owns or was given, so this refuses inside
 /// `sqlx::Error::Configuration`, before parsing, with [`AmbientHostAddress`]
 /// whenever `PGHOSTADDR` is present and with [`NoncanonicalUrl`] unless the URL
-/// is a `postgres://` or `postgresql://` URI without `#`, names one host (or an
-/// empty host with a `host=/socket/dir` parameter), and declares no
-/// `hostaddr`, `port` or `service`, no `host` beside an authority host and no
-/// parameter twice. Every fixture connection in this crate uses it; use it, or
+/// is a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a
+/// raw `@` outside the userinfo, names exactly one host and an explicit port in its
+/// authority (a socket directory percent-encoded there), names its database,
+/// and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`,
+/// `application_name`, `options`, `user`, `password` and `dbname`, each once. Every fixture connection in this crate uses it; use it, or
 /// [`EphemeralDatabase::connect_options`](crate::EphemeralDatabase::connect_options),
 /// instead of passing fixture URLs to SQLx's URL-taking `connect` forms. The
 /// process must not change its environment between this check and connection.
@@ -50,30 +51,59 @@ pub(crate) fn connect_options_with(
     url.parse()
 }
 
-/// The URL subset SQLx, tokio-postgres and libpq read alike.
+/// Query parameters SQLx, tokio-postgres and libpq all honour alike.
+const PARAMETERS: [&str; 9] = [
+    "sslmode",
+    "sslrootcert",
+    "sslcert",
+    "sslkey",
+    "application_name",
+    "options",
+    "user",
+    "password",
+    "dbname",
+];
+
+/// The URL subset SQLx, tokio-postgres and libpq read alike: a `postgres://`
+/// URI without `#`, a raw query `+` or a raw `@` outside the userinfo; exactly one
+/// host and an explicit port in the authority; a database in the path or
+/// `dbname`; and only allowlisted parameters, each once.
 fn canonical(url: &str) -> bool {
     if url.contains('#') {
+        return false;
+    }
+    let Some(rest) = url
+        .strip_prefix("postgres://")
+        .or_else(|| url.strip_prefix("postgresql://"))
+    else {
+        return false;
+    };
+    let (authority, tail) = rest.split_at(rest.find(['/', '?']).unwrap_or(rest.len()));
+    let hosts = authority.rsplit('@').next().unwrap_or_default();
+    // Only the query form-decodes `+` (as a space, in SQLx alone).
+    if tail
+        .split_once('?')
+        .is_some_and(|(_, query)| query.contains('+'))
+        || tail.contains('@')
+        || authority.matches('@').count() > 1
+        || hosts.contains(',')
+        || hosts.to_ascii_lowercase().contains("%2c")
+    {
         return false;
     }
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
-    let host = parsed.host_str().unwrap_or_default();
-    if !matches!(parsed.scheme(), "postgres" | "postgresql") || host.contains(',') {
+    if parsed.host_str().unwrap_or_default().is_empty() || parsed.port().is_none() {
         return false;
     }
     let mut seen = BTreeSet::new();
-    for (key, value) in parsed.query_pairs() {
-        let endpoint = match &*key {
-            "hostaddr" | "port" | "service" => true,
-            "host" => !host.is_empty() || !value.starts_with('/'),
-            _ => false,
-        };
-        if endpoint || !seen.insert(key.into_owned()) {
+    for (key, _) in parsed.query_pairs() {
+        if !PARAMETERS.contains(&&*key) || !seen.insert(key.into_owned()) {
             return false;
         }
     }
-    !host.is_empty() || seen.contains("host")
+    !parsed.path().trim_start_matches('/').is_empty() || seen.contains("dbname")
 }
 
 /// The process environment sets `PGHOSTADDR`, which would redirect a fixture
@@ -150,14 +180,18 @@ mod tests {
     fn noncanonical_fixture_urls_are_refused() {
         for url in [
             "host=db-a hostaddr=192.0.2.1 dbname=postgres",
-            "postgres://u@127.0.0.1/db#tag",
-            "postgres://u@db-a,db-b/db",
-            "postgres:///db",
-            "postgres://u@127.0.0.1/db?hostaddr=192.0.2.1",
-            "postgres://u@localhost/db?host=/tmp",
-            "postgres://u@127.0.0.1:5432/postgres?port=5432",
-            "postgres:///db?host%61ddr=127.0.0.1&host=/tmp",
-            "postgres://u@127.0.0.1/db?sslmode=disable&sslmode=require",
+            "postgres://u@127.0.0.1:5432/db#tag",
+            "postgres://db-a:5432/jobs?application_name=worker@db-b",
+            "postgres://u@db:5432/db?options=a+b",
+            "postgres://u@db-a,db-b:5432/db",
+            "postgres://u@db-a%2Cdb-b:5432/db",
+            "postgres:///db?host=/tmp",
+            "postgres://u@db/jobs",
+            "postgres://u@db:5432",
+            "postgres://u@127.0.0.1:5432/db?hostaddr=192.0.2.1",
+            "postgres://u@127.0.0.1:5432/db?ssl=true",
+            "postgres://u@127.0.0.1:5432/db?port=5432",
+            "postgres://u@127.0.0.1:5432/db?sslmode=disable&sslmode=require",
         ] {
             let error = connect_options_with(url, |_| None).expect_err(url);
             assert!(is::<NoncanonicalUrl>(&error), "{url}");
@@ -169,9 +203,9 @@ mod tests {
         let options = connect_options_with(URL, |_| None).expect("valid URL");
         assert_eq!(options.get_host(), "127.0.0.1", "URL host is kept");
         for url in [
-            "postgres:///db?host=/tmp&user=u",
-            "postgres://u@%2Ftmp/db",
-            "postgres://u@127.0.0.1/db?sslmode=disable&dbname=db",
+            "postgres://u@%2Ftmp:5432/db",
+            "postgres://u@127.0.0.1:5432/db?sslmode=disable&dbname=db",
+            "postgres://u:p%40ss%2C1@db.invalid:5432/db",
         ] {
             connect_options_with(url, |_| None).expect(url);
         }

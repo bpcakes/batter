@@ -44,7 +44,7 @@
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 //! use runledger_postgres::PgSessionProfile;
 //! use std::time::Duration;
-//! let options = runledger_postgres::connect_options("postgres://login@localhost/runledger")?;
+//! let options = runledger_postgres::connect_options("postgres://login@localhost:5432/runledger")?;
 //! let profile = PgSessionProfile::new("login", "serving", vec!["application".into()],
 //!     Duration::from_secs(30), Duration::from_secs(5))?;
 //! let database = runledger_postgres::low_level::connect_database(options, profile, 8).await?;

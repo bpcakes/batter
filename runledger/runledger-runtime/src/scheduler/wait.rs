@@ -142,7 +142,7 @@ mod tests {
         // Exercise the real hint failure boundary, including sub-floor and
         // non-round intervals, independently of loop scheduling tolerance.
         let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-            runledger_test_support::connect_options("postgres://localhost/hint_interval_test")
+            runledger_test_support::connect_options("postgres://localhost:1/hint_interval_test")
                 .expect("valid lazy pool"),
         );
         pool.close().await;

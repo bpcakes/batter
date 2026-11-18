@@ -452,8 +452,10 @@ options from `setter_connect_options()?`.
 SQLx 0.9.1 otherwise connects to an ambient `PGHOSTADDR` instead of the
 selected host. Both refuse with `AmbientHostAddress` while it is set, and
 `connect_options` refuses with `NoncanonicalUrl` any URL outside the subset
-SQLx, tokio-postgres and libpq read alike: put the endpoint in the URL
-authority, never in `hostaddr`, `port`, `service` or `host` parameters; see the
+SQLx, tokio-postgres and libpq read alike: give an explicit host, port and
+database in the URL itself (a socket directory percent-encoded in the
+authority), and use only `sslmode`, the SSL file parameters,
+`application_name`, `options`, `user`, `password` and `dbname`; see the
 [endpoint boundary](../crates/batter-sqlx/README.md#postgresql-endpoint-boundary).
 
 `PgLease::acquire`, `PgQueryHandle` helpers and every `run_atomic*` runner

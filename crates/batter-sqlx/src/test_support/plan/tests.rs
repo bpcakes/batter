@@ -117,11 +117,9 @@ fn password_login_replaces_only_credentials() {
 
 #[test]
 fn socket_hosts_survive_a_password_login() {
-    for url in [
-        // A canonical socket URL has no authority host, so its login is in the query.
-        "postgres:///pgh_probe_2?host=/var/run/postgresql&user=owner&password=ownersecret",
-        "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2",
-    ] {
+    // A canonical socket URL names its directory, encoded, and port in the authority.
+    {
+        let url = "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql:5432/pgh_probe_2";
         let expected = crate::connect_options(url).unwrap();
         assert!(expected.get_socket().is_some());
         let resolved = plan(vec![PlannedPool::password_login(

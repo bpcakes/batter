@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn fragments_and_declared_addresses_are_refused_before_harness_work() {
         let fragment = refusal(
-            "postgres://u:secret-marker@db.invalid/postgres?application_name=a#b&hostaddr=192.0.2.1",
+            "postgres://u:secret-marker@db.invalid:5432/postgres?application_name=a#b&hostaddr=192.0.2.1",
         );
         assert!(
             fragment.as_deref().is_some_and(|text| text.contains("%23")),
@@ -69,10 +69,10 @@ mod tests {
             !fragment.unwrap().contains("secret-marker"),
             "refusal names no URL part"
         );
-        let declared = refusal("postgres://u@db.invalid/postgres?hostaddr=192.0.2.1");
+        let declared = refusal("postgres://u@db.invalid:5432/postgres?hostaddr=192.0.2.1");
         assert!(declared.is_some(), "declared hostaddr refused");
         assert_eq!(
-            refusal("postgres://u@127.0.0.1/postgres?application_name=a%23b"),
+            refusal("postgres://u@127.0.0.1:5432/postgres?application_name=a%23b"),
             None,
             "%23 is data"
         );

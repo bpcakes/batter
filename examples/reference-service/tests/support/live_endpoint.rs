@@ -49,6 +49,11 @@ pub fn from_url_in_process(url: &str) -> Result<(SecretString, PgConnectOptions)
         .map_err(|error| {
             SettingsError::new("POSTGRES_TEST_ADMIN_URL", "invalid TCP host").with_cause(error)
         })?;
+    // The endpoint boundary requires an explicit port so no client falls back
+    // to its own default; PG* settings are already refused.
+    handoff
+        .set_port(Some(options.get_port()))
+        .map_err(|()| SettingsError::new("POSTGRES_TEST_ADMIN_URL", "invalid TCP port"))?;
     let database = options.get_database().ok_or_else(|| {
         SettingsError::new("POSTGRES_TEST_ADMIN_URL", "explicit database required")
     })?;

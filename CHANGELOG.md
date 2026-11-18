@@ -28,7 +28,7 @@ contracts, capability facts and validation history.
   after the same environment check, so setter-built options cannot keep an
   address captured earlier. Inside `sqlx::Error::Configuration` and before
   parsing, `connect_options` refuses whenever `PGHOSTADDR` is set, and admits
-  only URLs SQLx, tokio-postgres and libpq read alike: a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice.
+  only URLs SQLx, tokio-postgres and libpq read alike: a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once.
   `ConnectionPlan` resolution and both template initializer paths validate the
   same way before any pool or caller code exists, and every fixture template
   and lease operation first refuses a harness admin URL that contains `#` or
@@ -42,9 +42,12 @@ contracts, capability facts and validation history.
   `parse` forms, including path-qualified turbofish targets, declarations
   whose `parse` follows on a later line, PostgreSQL URL literals and parses
   passed straight to `connect_with`. Build options with
-  `connect_options(url)?` and pass them to `connect_with`/`connect_lazy_with`;
-  unset `PGHOSTADDR` and remove `hostaddr` from URLs to run fixtures, live
-  tests and the SQLx examples.
+  `connect_options(url)?` and pass them to `connect_with`/`connect_lazy_with`.
+  URLs need an explicit host, port and database, and parameters such as
+  `port`, `host`, `hostaddr`, `service`, `ssl` or SQLx's
+  `statement-cache-capacity` are refused; set the latter through native
+  setters. Unset `PGHOSTADDR` to run fixtures, live tests and the SQLx
+  examples.
 - Qualify the `PgLease`, `PgLease::migrate`, `migrate_and_apply` and
   `PgQueryHandle` rustdoc: Batter adds no replay, but SQLx 0.9.1 can re-send a
   statement outside a transaction, including `no_tx` migrations.

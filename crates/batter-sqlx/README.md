@@ -1031,7 +1031,7 @@ differently: SQLx checks a Unix socket before a declared `hostaddr`, a query
 tokio-postgres, and libpq accepts keyword/value strings, `service` files and
 query text after `#`. `connect_options` therefore admits only the subset all
 three read alike, refusing anything else with `NoncanonicalUrl`, whose
-`NoncanonicalReason` names the rule: a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice. `sslmode`,
+`NoncanonicalReason` names the rule: a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once. `sslmode`,
 `application_name`, `options`, `user`, `password` and `dbname` parameters are
 kept. Setter-built options must not call the native `hostaddr` setter. The
 process must not change its environment between the check and connection.

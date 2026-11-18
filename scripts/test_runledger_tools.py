@@ -110,13 +110,14 @@ class RefreshTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
         os.environ.pop('PGHOSTADDR', None)
+        os.environ.pop('PGSERVICE', None)
         # The real Cargo probe compiles a crate; its own test exercises it.
         self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=(False, True))
         self.cargo_probe.start()
         self.addCleanup(patch.stopall)
 
     def test_ambient_host_address_is_refused_before_any_command(self):
-        secret = 'postgresql://user:private-marker@127.0.0.1/database'
+        secret = 'postgresql://user:private-marker@127.0.0.1:5432/database'
         for value in ('192.0.2.1', ''):
             with self.subTest(value=value), \
                  patch.dict(os.environ, DATABASE_URL=secret, PGHOSTADDR=value), \
@@ -161,16 +162,24 @@ class RefreshTests(unittest.TestCase):
 
     def test_only_canonical_database_urls_reach_any_command(self):
         for url in ('host=db-a hostaddr=192.0.2.1 dbname=postgres',
-                    'postgresql://u@db-a/postgres?host=db-b',
+                    'postgresql://u@db-a:5432/postgres?host=db-b',
                     'postgresql://u@db.invalid:5432/postgres?port=5432',
-                    'postgresql://u@db.invalid/postgres?service=other',
-                    'postgresql://u@db-a,db-b/postgres',
-                    'postgresql:///postgres',
-                    'postgresql://u@db.invalid/postgres?sslmode=disable&sslmode=require'):
+                    'postgresql://u@db.invalid:5432/postgres?service=other',
+                    'postgresql://u@db.invalid:5432/postgres?ssl=true',
+                    'postgresql://u@db-a,db-b:5432/postgres',
+                    'postgresql://u@db-a:5432,db-b:5433/postgres',
+                    'postgresql://u@db-a%2Cdb-b:5432/postgres',
+                    'postgresql://db-a:5432/jobs?application_name=worker@db-b',
+                    'postgresql://u@db.invalid:5432/jobs?options=a+b',
+                    'postgresql:///postgres?host=/tmp&user=u',
+                    'postgresql://u@db.invalid/postgres',
+                    'postgresql://u@db.invalid:5432',
+                    'postgresql://u@db.invalid:5432/postgres?sslmode=disable&sslmode=require'):
             with self.subTest(url=url):
                 self.assertFalse(canonical_database_url(url))
         for url in ('postgresql://u:p@db.invalid:5432/postgres?sslmode=disable',
-                    'postgresql:///postgres?host=/tmp&user=u',
+                    'postgresql://u@%2Ftmp:5432/postgres',
+                    'postgresql://u:p%40ss%2C1@db.invalid:5432/postgres',
                     'postgres://u@[::1]:5432/postgres?application_name=a%23b'):
             with self.subTest(url=url):
                 self.assertTrue(canonical_database_url(url))
@@ -183,8 +192,17 @@ class RefreshTests(unittest.TestCase):
             command.assert_not_called()
             psql.assert_not_called()
 
+    def test_ambient_service_is_refused_before_any_command(self):
+        with patch.dict(os.environ, DATABASE_URL='postgresql://u@db.invalid:5432/database', PGSERVICE='other'), \
+             patch('refresh_runledger_sqlx.run') as command, \
+             patch('refresh_runledger_sqlx.subprocess.run') as psql:
+            with self.assertRaisesRegex(ValueError, 'unset PGSERVICE'):
+                refresh(Path.cwd())
+            command.assert_not_called()
+            psql.assert_not_called()
+
     def test_cargo_env_endpoint_is_refused_before_any_command(self):
-        url = 'postgresql://u@db.invalid/database'
+        url = 'postgresql://u@db.invalid:5432/database'
         for answer, message in (((True, True), 'remove PGHOSTADDR'), ((False, False), 'remove DATABASE_URL')):
             with self.subTest(answer=answer), \
                  patch.dict(os.environ, DATABASE_URL=url), \
@@ -202,7 +220,7 @@ class RefreshTests(unittest.TestCase):
         # Cargo, not this script, resolves config discovery, includes and force.
         self.cargo_probe.stop()
         repository = Path(__file__).resolve().parent.parent
-        url = 'postgresql://u:private-marker@db.invalid/database'
+        url = 'postgresql://u:private-marker@db.invalid:5432/database'
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'workspace'
             (root / '.cargo').mkdir(parents=True)
@@ -223,7 +241,7 @@ class RefreshTests(unittest.TestCase):
                 self.assertEqual(cargo_compiler_endpoint(root, url), (False, False))
 
     def test_connection_failure_does_not_expose_url_or_prepare(self):
-        secret = 'postgresql://user:private-marker@localhost/database'
+        secret = 'postgresql://user:private-marker@localhost:5432/database'
         with patch.dict(os.environ, DATABASE_URL=secret), \
              patch('refresh_runledger_sqlx.run', return_value='sqlx-cli 0.9.1') as command, \
              patch('refresh_runledger_sqlx.subprocess.run',
@@ -271,7 +289,7 @@ class RefreshTests(unittest.TestCase):
                         (cache / 'query-new.json').write_text('{}')
                     return ''
 
-                with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
+                with patch.dict(os.environ, DATABASE_URL='postgresql://fixture:5432/fixture'), \
                      patch('refresh_runledger_sqlx.run', side_effect=command), \
                      patch('refresh_runledger_sqlx.query', side_effect=['180006', '1:true']):
                     with self.assertRaisesRegex(RuntimeError, 'deliberate'):
@@ -287,7 +305,7 @@ class RefreshTests(unittest.TestCase):
                 calls.append(args)
                 return 'sqlx-cli 0.9.1' if '--version' in args else info
 
-            with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
+            with patch.dict(os.environ, DATABASE_URL='postgresql://fixture:5432/fixture'), \
                  patch('refresh_runledger_sqlx.run', side_effect=command), \
                  patch('refresh_runledger_sqlx.subprocess.run', return_value=subprocess.CompletedProcess([], 0, version)):
                 with self.assertRaises(ValueError):
@@ -299,7 +317,7 @@ class RefreshTests(unittest.TestCase):
             with self.subTest(inventory=inventory), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self.fixture(root)
-                with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
+                with patch.dict(os.environ, DATABASE_URL='postgresql://fixture:5432/fixture'), \
                      patch('refresh_runledger_sqlx.run', side_effect=['sqlx-cli 0.9.1', '1/installed initial']) as command, \
                      patch('refresh_runledger_sqlx.query', side_effect=['180006', inventory]):
                     with self.assertRaisesRegex(ValueError, 'inventory must exactly match'):

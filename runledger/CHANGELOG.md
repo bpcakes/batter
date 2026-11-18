@@ -384,7 +384,7 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   URL's host, and SQLx, tokio-postgres and libpq read some URLs differently, so
   shared startup refuses `PGHOSTADDR` before any container starts and every
   fixture connection, including teardown, refuses it and any URL outside the
-  canonical subset (a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice) inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
+  canonical subset (a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once) inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
   the admin URL's query and drop only `dbname`. Native tests build fixture
   options through these; unset `PGHOSTADDR` for native test runs. The
   commit-acknowledgement, intent-reconciliation and online-transport fault
@@ -404,9 +404,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
 - `runledger_postgres` re-exports the SQLx foundation's `connect_options`,
   `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`.
   `runledger-tui`, the native examples and the crate's startup rustdoc recipe
-  now build options through it. The metadata refresh applies the same URL
-  rules and refuses a Cargo `[env]` `DATABASE_URL` that would differ for the
-  query macros.
+  now build options through it, so their `DATABASE_URL` needs an explicit
+  host, port and database (for example `postgres://user@localhost:5432/runledger`).
+  The metadata refresh applies the same URL rules, refuses `PGSERVICE` (a
+  service file could steer `psql` alone), and refuses a Cargo `[env]`
+  `DATABASE_URL` that would differ for the query macros.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

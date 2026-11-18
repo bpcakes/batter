@@ -21,14 +21,17 @@ const AMBIENT_HOST_ADDRESS: &str = "PGHOSTADDR";
 /// [`AmbientHostAddress`] whenever `PGHOSTADDR` is present, whatever its value,
 /// and with [`NoncanonicalUrl`] unless the URL:
 ///
-/// - is a `postgres://` or `postgresql://` URI without a fragment or `#`;
-/// - names one host, or an empty host with a `host=/socket/dir` parameter;
-/// - declares no `hostaddr`, `port` or `service` parameter, no `host`
-///   parameter beside an authority host, and no parameter twice.
+/// - is a `postgres://` or `postgresql://` URI without `#`, a raw `+` in the
+///   query, or a raw `@` outside the userinfo delimiter;
+/// - names exactly one host and an explicit port in its authority, with a Unix
+///   socket directory percent-encoded there (`postgres://u@%2Ftmp:5432/db`);
+/// - names its database in the path or a `dbname` parameter;
+/// - declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`,
+///   `application_name`, `options`, `user`, `password` and `dbname`, each once.
 ///
-/// Other parameters such as `sslmode`, `application_name`, `options`, `user`,
-/// `password` and `dbname` are kept. Any remaining parse failure is SQLx's own
-/// error.
+/// Every endpoint part is then explicit, so ambient `PGHOST`, `PGPORT` and
+/// `PGDATABASE` cannot select it either. Any remaining parse failure is SQLx's
+/// own error.
 ///
 /// Use it instead of `str::parse`, `PgConnectOptions::from_str` or the
 /// URL-taking `PgPool::connect`, `PgPoolOptions::connect`, `connect_lazy`,
@@ -95,34 +98,62 @@ pub(crate) fn connect_options_with(
     url.parse()
 }
 
+/// Query parameters SQLx, tokio-postgres and libpq all honour with the same
+/// meaning; any other key is refused rather than silently ignored by one.
+const PARAMETERS: [&str; 9] = [
+    "sslmode",
+    "sslrootcert",
+    "sslcert",
+    "sslkey",
+    "application_name",
+    "options",
+    "user",
+    "password",
+    "dbname",
+];
+
 /// Check the URL subset SQLx, tokio-postgres and libpq read alike.
 fn canonical(url: &str) -> Result<(), NoncanonicalReason> {
+    use NoncanonicalReason::*;
     if url.contains('#') {
-        return Err(NoncanonicalReason::Fragment);
+        return Err(Fragment);
     }
-    let parsed = url::Url::parse(url).map_err(|_| NoncanonicalReason::NotUri)?;
-    if !matches!(parsed.scheme(), "postgres" | "postgresql") {
-        return Err(NoncanonicalReason::NotUri);
+    let rest = url
+        .strip_prefix("postgres://")
+        .or_else(|| url.strip_prefix("postgresql://"))
+        .ok_or(NotUri)?;
+    let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    // tokio-postgres takes the last `@` anywhere as the userinfo delimiter and
+    // SQLx form-decodes a query `+` as a space where the others keep it, so
+    // both must be percent-encoded there.
+    let query = tail.split_once('?').map_or("", |(_, query)| query);
+    if query.contains('+') || tail.contains('@') || authority.matches('@').count() > 1 {
+        return Err(Encoding);
     }
-    let host = parsed.host_str().unwrap_or_default();
-    if host.contains(',') {
-        return Err(NoncanonicalReason::MultipleHosts);
+    // libpq and tokio-postgres split the decoded host list at commas.
+    let hosts = authority.rsplit('@').next().unwrap_or_default();
+    if hosts.contains(',') || hosts.to_ascii_lowercase().contains("%2c") {
+        return Err(MultipleHosts);
+    }
+    let parsed = url::Url::parse(url).map_err(|_| NotUri)?;
+    if parsed.host_str().unwrap_or_default().is_empty() {
+        return Err(MissingHost);
+    }
+    if parsed.port().is_none() {
+        return Err(MissingPort);
     }
     let mut seen = BTreeSet::new();
-    for (key, value) in parsed.query_pairs() {
-        match &*key {
-            "hostaddr" | "port" | "service" => return Err(NoncanonicalReason::EndpointParameter),
-            "host" if !host.is_empty() || !value.starts_with('/') => {
-                return Err(NoncanonicalReason::EndpointParameter);
-            }
-            _ => {}
+    for (key, _) in parsed.query_pairs() {
+        if !PARAMETERS.contains(&&*key) {
+            return Err(UnsupportedParameter);
         }
         if !seen.insert(key.into_owned()) {
-            return Err(NoncanonicalReason::DuplicateParameter);
+            return Err(DuplicateParameter);
         }
     }
-    if host.is_empty() && !seen.contains("host") {
-        return Err(NoncanonicalReason::MissingHost);
+    if parsed.path().trim_start_matches('/').is_empty() && !seen.contains("dbname") {
+        return Err(MissingDatabase);
     }
     Ok(())
 }
@@ -170,14 +201,14 @@ impl std::error::Error for AmbientHostAddress {}
 ///
 /// Migration: replaces `DeclaredHostAddress`, which an earlier revision of
 /// this unreleased boundary returned for a declared `hostaddr`; that case is
-/// now [`NoncanonicalReason::EndpointParameter`].
+/// now [`NoncanonicalReason::UnsupportedParameter`].
 ///
 /// ```
 /// # fn example(error: &sqlx::Error) -> bool {
 /// use batter_sqlx::{NoncanonicalReason, NoncanonicalUrl};
 /// matches!(error, sqlx::Error::Configuration(source)
 ///     if source.downcast_ref::<NoncanonicalUrl>().map(NoncanonicalUrl::reason)
-///         == Some(NoncanonicalReason::EndpointParameter))
+///         == Some(NoncanonicalReason::UnsupportedParameter))
 /// # }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,13 +233,26 @@ pub enum NoncanonicalReason {
     /// Contains `#`, which libpq reads as query text and the others do not.
     /// Encode a literal `#` as `%23`.
     Fragment,
+    /// Contains a raw `+` in the query, or a raw `@` outside the userinfo
+    /// delimiter, which the clients decode differently. Encode them as `%2B`
+    /// and `%40`.
+    Encoding,
     /// The authority names several comma-separated hosts.
     MultipleHosts,
-    /// The authority names no host and no `host=/socket/dir` parameter.
+    /// The authority names no host. A Unix socket directory goes in the
+    /// authority percent-encoded, such as `postgres://user@%2Ftmp:5432/db`.
     MissingHost,
-    /// Declares `hostaddr`, `port`, `service`, or `host` beside an authority
-    /// host. Put the endpoint in the authority instead.
-    EndpointParameter,
+    /// The authority names no port, so an ambient `PGPORT` would select it
+    /// for SQLx and libpq but not for tokio-postgres.
+    MissingPort,
+    /// Neither the path nor a `dbname` parameter names a database, so an
+    /// ambient `PGDATABASE` or the login name would select it.
+    MissingDatabase,
+    /// Declares a parameter outside `sslmode`, `sslrootcert`, `sslcert`,
+    /// `sslkey`, `application_name`, `options`, `user`, `password` and
+    /// `dbname`, such as `hostaddr`, `host`, `port`, `service` or `ssl`, which
+    /// at least one client ignores or reads differently.
+    UnsupportedParameter,
     /// Declares one parameter twice, which the clients resolve differently.
     DuplicateParameter,
 }
@@ -218,12 +262,15 @@ impl fmt::Display for NoncanonicalUrl {
         f.write_str(match self.reason {
             NoncanonicalReason::NotUri => "the PostgreSQL URL is not a postgres:// URI",
             NoncanonicalReason::Fragment => "the PostgreSQL URL contains '#'; encode it as %23",
-            NoncanonicalReason::MultipleHosts => "the PostgreSQL URL names several hosts",
-            NoncanonicalReason::MissingHost => {
-                "the PostgreSQL URL names no host and no socket directory"
+            NoncanonicalReason::Encoding => {
+                "the PostgreSQL URL contains a raw '+' in its query or a misplaced '@'; percent-encode them"
             }
-            NoncanonicalReason::EndpointParameter => {
-                "the PostgreSQL URL selects its endpoint with a query parameter; use the authority"
+            NoncanonicalReason::MultipleHosts => "the PostgreSQL URL names several hosts",
+            NoncanonicalReason::MissingHost => "the PostgreSQL URL names no host in its authority",
+            NoncanonicalReason::MissingPort => "the PostgreSQL URL names no port in its authority",
+            NoncanonicalReason::MissingDatabase => "the PostgreSQL URL names no database",
+            NoncanonicalReason::UnsupportedParameter => {
+                "the PostgreSQL URL declares a parameter not every client reads alike"
             }
             NoncanonicalReason::DuplicateParameter => {
                 "the PostgreSQL URL declares a parameter twice"
@@ -287,42 +334,61 @@ mod tests {
         use NoncanonicalReason::*;
         for (url, expected) in [
             ("host=db-a hostaddr=192.0.2.1 dbname=postgres", NotUri),
-            ("mysql://user@127.0.0.1/db", NotUri),
+            ("mysql://user@127.0.0.1:5432/db", NotUri),
             (
-                "postgres://user@127.0.0.1/db?application_name=a#b&hostaddr=192.0.2.1",
+                "postgres://u@127.0.0.1:5432/db?application_name=a#b&hostaddr=192.0.2.1",
                 Fragment,
             ),
-            ("postgres://user@127.0.0.1/db#tag", Fragment),
-            ("postgres://user@db-a,db-b/db", MultipleHosts),
-            ("postgres:///db", MissingHost),
-            ("postgres:///db?host=db-b", EndpointParameter),
+            ("postgres://u@127.0.0.1:5432/db#tag", Fragment),
             (
-                "postgres://user:secret-marker@127.0.0.1/db?hostaddr=192.0.2.1",
-                EndpointParameter,
+                "postgres://db-a:5432/jobs?application_name=worker@db-b",
+                Encoding,
+            ),
+            ("postgres://u@db-a:5432/jobs?options=a+b", Encoding),
+            ("postgres://u@db-a,db-b:5432/db", MultipleHosts),
+            ("postgres://u@db-a:5432,db-b:5433/db", MultipleHosts),
+            ("postgres://u@db-a%2Cdb-b:5432/db", MultipleHosts),
+            ("postgres:///db?host=/tmp", MissingHost),
+            ("postgres://u@db/jobs", MissingPort),
+            ("postgres://u@db:5432", MissingDatabase),
+            ("postgres://u@db:5432/", MissingDatabase),
+            (
+                "postgres://u:secret-marker@127.0.0.1:5432/db?hostaddr=192.0.2.1",
+                UnsupportedParameter,
             ),
             (
-                "postgres://user@localhost/db?host%61ddr=127.0.0.1",
-                EndpointParameter,
-            ),
-            ("postgres://user@db-a/postgres?host=db-b", EndpointParameter),
-            ("postgres://user@localhost/db?host=/tmp", EndpointParameter),
-            (
-                "postgres://user@127.0.0.1:5432/postgres?port=5432",
-                EndpointParameter,
+                "postgres://u@localhost:5432/db?host%61ddr=127.0.0.1",
+                UnsupportedParameter,
             ),
             (
-                "postgres://user@127.0.0.1/db?service=other",
-                EndpointParameter,
+                "postgres://u@db-a:5432/postgres?host=db-b",
+                UnsupportedParameter,
             ),
             (
-                "postgres://user@127.0.0.1/db?sslmode=disable&sslmode=require",
+                "postgres://u@127.0.0.1:5432/postgres?port=5432",
+                UnsupportedParameter,
+            ),
+            (
+                "postgres://u@127.0.0.1:5432/db?service=other",
+                UnsupportedParameter,
+            ),
+            (
+                "postgres://u@127.0.0.1:5432/db?ssl=true",
+                UnsupportedParameter,
+            ),
+            (
+                "postgres://u@127.0.0.1:5432/db?statement-cache-capacity=0",
+                UnsupportedParameter,
+            ),
+            (
+                "postgres://u@127.0.0.1:5432/db?sslmode=disable&sslmode=require",
                 DuplicateParameter,
             ),
         ] {
             assert_eq!(reason(url), Some(expected), "{url}");
         }
         let error = connect_options_with(
-            "postgres://user:secret-marker@127.0.0.1/db?hostaddr=192.0.2.1",
+            "postgres://user:secret-marker@127.0.0.1:5432/db?hostaddr=192.0.2.1",
             |_| None,
         )
         .unwrap_err();
@@ -337,18 +403,26 @@ mod tests {
     fn canonical_host_and_socket_urls_parse() {
         let options = connect_options_with(URL, |_| None).unwrap();
         assert_eq!(options.get_host(), "127.0.0.1", "URL host is kept");
+        assert_eq!(options.get_port(), 5432, "URL port is kept");
         assert_eq!(
             options.get_database(),
             Some("database"),
             "URL database is kept"
         );
         for url in [
+            "postgresql://user@localhost:5432/db?sslmode=verify-full&sslrootcert=%2Fetc%2Fca.pem",
             "postgres://user@[::1]:5432/db?application_name=a%23b&options=-c%20x%3Dy",
-            "postgres://user@%2Ftmp/db",
-            "postgres://user@127.0.0.1/db?dbname=other&user=u&password=p",
-            "postgres:///db?host=%2Fvar%2Frun%2Fpostgresql",
+            "postgres://user%40example:p%40ss+word%2C1@db.invalid:5432/db",
+            "postgres://user@%2Ftmp%2Fpg+socket:5432/jobs",
+            "postgres://user@%2Ftmp:5432/db",
+            "postgres://user@127.0.0.1:5432/?dbname=other&user=u&password=p",
         ] {
             assert_eq!(reason(url), None, "{url}");
         }
+        let socket = connect_options_with("postgres://user@%2Ftmp:5432/db", |_| None).unwrap();
+        assert!(
+            socket.get_socket().is_some(),
+            "an encoded authority socket stays a socket"
+        );
     }
 }

@@ -16,7 +16,7 @@ async fn native_transaction_factory_is_inert() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .min_connections(0)
         .connect_lazy_with(
-            batter::sqlx::connect_options("postgres://localhost/unused_compile_probe")
+            batter::sqlx::connect_options("postgres://localhost:1/unused_compile_probe")
                 .expect("static URL"),
         );
     let future = transaction_boundary(&pool);

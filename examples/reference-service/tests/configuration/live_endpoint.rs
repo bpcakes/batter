@@ -55,19 +55,19 @@ fn live_preflight_and_fixture_share_the_native_endpoint_policy() {
 pub(crate) fn check_policy() {
     // Child environment is empty, including PG* and HOME; no connection is made.
     assert!(policy::from_process().is_err());
-    for url in [
-        "postgres://user:fake@127.0.0.1/db?sslmode=disable",
-        "postgres://user@localhost/db?sslmode=disable",
+    for (url, expected) in [
+        (
+            "postgres://user:fake@127.0.0.1/db?sslmode=disable",
+            "postgres://user:fake@127.0.0.1:5432/db?sslmode=disable",
+        ),
+        (
+            "postgres://user@localhost/db?sslmode=disable",
+            "postgres://user@localhost:5432/db?sslmode=disable&password=",
+        ),
     ] {
         let (retained, options) = policy::from_url_in_process(url).unwrap();
-        assert_eq!(
-            retained.expose_secret(),
-            if url.contains("user@") {
-                format!("{url}&password=")
-            } else {
-                url.to_owned()
-            }
-        );
+        // The handoff makes the port explicit for the endpoint boundary.
+        assert_eq!(retained.expose_secret(), expected);
         assert!(options.get_socket().is_none());
     }
     check_ipv6_rejection();

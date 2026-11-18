@@ -80,7 +80,7 @@ contracts cite:
   in tokio-postgres (the fixture harness), whose query parser also reads past
   `#`, and libpq (`psql`) accepts keyword/value strings and `service` files.
   The boundaries therefore admit only a canonical subset all three read alike
-  (`NoncanonicalUrl`, with `NoncanonicalReason`): a `postgres://` or `postgresql://` URI without `#` that names one host in its authority (or an empty host with a `host=/socket/dir` parameter) and declares no `hostaddr`, `port` or `service`, no `host` beside an authority host and no parameter twice.
+  (`NoncanonicalUrl`, with `NoncanonicalReason`): a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once.
   `runledger-tui` and the native examples use the same boundary through
   `runledger_postgres::connect_options`, the harness admin URL is checked
   before every fixture operation, and the metadata refresh applies the same

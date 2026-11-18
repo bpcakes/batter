@@ -1472,7 +1472,7 @@ organization filter is not the same as filtering stored rows to
 runtime, to scope to one organization.
 
 ```bash
-export DATABASE_URL=postgres://user:pass@localhost/runledger
+export DATABASE_URL=postgres://user:pass@localhost:5432/runledger
 cargo run -p runledger-tui
 
 # optional org scope

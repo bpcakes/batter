@@ -34,7 +34,7 @@ fn assert_isolation_error(error: Error, expected_code: &str) {
 async fn owned_transaction_wrappers_validate_before_classifying_begin_failures() {
     let pool = PgPoolOptions::new().connect_lazy_with(
         runledger_test_support::connect_options(
-            "postgres://runledger:runledger@127.0.0.1/runledger",
+            "postgres://runledger:runledger@127.0.0.1:1/runledger",
         )
         .expect("create lazy test pool"),
     );
