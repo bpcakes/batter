@@ -193,11 +193,6 @@ cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route
 group's browser policy accepts them, without owning credential meaning,
 authorization, CORS or application error envelopes.
-`crates/batter-sqlx/src/endpoint.rs` owns the URL-to-options boundary: it refuses an ambient
-`PGHOSTADDR` and admits only the canonical URL subset SQLx, tokio-postgres and libpq read alike,
-so the authority alone selects the server. Clippy
-`disallowed-methods` in the `clippy.toml` files and `crates/batter/tests/postgres_endpoint_boundary.rs`
-reject URL-taking SQLx forms elsewhere.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and protected profiled-pool construction; `pool_in` registers
 closure before returning `PgProfiledPool`, and native Runledger can share that

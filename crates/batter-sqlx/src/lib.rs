@@ -47,7 +47,6 @@ mod atomic;
 mod atomic_context;
 mod atomic_policy;
 mod atomic_runner;
-mod endpoint;
 mod failure;
 mod native_query;
 mod pooled_query;
@@ -76,10 +75,6 @@ pub use atomic_runner::{
 /// Caller-owned transactions and pools. These entry points require explicit
 /// completion/cleanup and are not equivalent to the protected runners or [`pool_in`].
 pub mod low_level;
-pub use endpoint::{
-    AmbientHostAddress, NoncanonicalReason, NoncanonicalUrl, connect_options,
-    setter_connect_options,
-};
 pub use failure::{FailureClass, SqlxFailure};
 pub use native_query::PgNativeQuery;
 pub use pooled_query::PgQueryHandle;

@@ -1931,19 +1931,6 @@ transaction, where SQLx returns the error. With the statement cache disabled,
 SQLx 0.9.1 also fails a transaction's first query that returns an uncached
 custom type. See the
 [SQLx 0.9.1 record](references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
-`connect_options` and `setter_connect_options` refuse, before parsing or
-connecting, whenever `PGHOSTADDR` is set, so options they admit connect to the
-URL or setter host rather than an ambient address. `connect_options` also
-refuses any URL outside the canonical subset (a `postgres://` URI with one
-host, an explicit port and a database, only allowlisted parameters each once,
-no `#`, no raw query `+` and no raw `@` outside the userinfo), so an admitted
-URL selects the same server, port and database for SQLx, tokio-postgres and
-libpq regardless of ambient `PGHOST`, `PGPORT` or `PGDATABASE`. Equal parsing by other
-PostgreSQL clients is not verified. This holds only if the process environment does not
-change before connection, and only for options built through them. Clippy
-`disallowed-methods` and a source scan, not the type system, keep checked-in
-code on that path. Other PG* defaults and native credential
-exposure are unchanged.
 The low-level session has no typed transaction lifecycle, and raw transaction-control
 SQL carries no typed atomic-result guarantee. If the return-time cleanup reports
 failure, `with_connection` preserves the application `Ok` but retires its

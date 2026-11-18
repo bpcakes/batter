@@ -13,7 +13,7 @@ use support::{Result, bounded, combine, require};
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn profiles_use_effective_role_function_permissions() -> Result {
-    let options = batter_sqlx::connect_options(&std::env::var("BATTER_SQLX_ADMIN_URL")?)?;
+    let options = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
     let mut admin = bounded(PgConnection::connect_with(&options)).await??;
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let login = format!("profile_login_{suffix}");
@@ -87,7 +87,7 @@ async fn restore_then_cleanup(admin: &mut PgConnection, restore: &str, cleanup: 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn function_acl_restore_survives_fixture_drop_failure() -> Result {
-    let options = batter_sqlx::connect_options(&std::env::var("BATTER_SQLX_ADMIN_URL")?)?;
+    let options = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
     let mut admin = bounded(PgConnection::connect_with(&options)).await??;
     let schema = format!("profile_cleanup_{}", uuid::Uuid::new_v4().simple());
     // Use a test-owned function for fault injection, leaving the built-in ACL alone.

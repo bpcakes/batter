@@ -40,10 +40,9 @@ fn diagnostics_hide_contents_and_keep_the_native_cause() {
 }
 
 fn lazy_pool() -> sqlx::PgPool {
-    PgPoolOptions::new().connect_lazy_with(
-        batter_sqlx::connect_options("postgres://unused:secret-url-marker@127.0.0.1:1/unused")
-            .unwrap(),
-    )
+    PgPoolOptions::new()
+        .connect_lazy("postgres://unused:secret-url-marker@127.0.0.1:1/unused")
+        .unwrap()
 }
 
 #[tokio::test]

@@ -24,7 +24,7 @@ Windows is unsupported and not planned. Shutdown uses native SIGINT/SIGTERM list
 Run from the workspace root with a local test database:
 
 ```sh
-DATABASE_URL='postgres://user:password@localhost:5432/database' \
+DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
 

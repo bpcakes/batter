@@ -216,9 +216,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn query_budget_is_clamped_and_never_restarted_at_call_time() {
         for (parent_seconds, maximum_seconds) in [(1, 10), (10, 1)] {
-            let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-                crate::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
-            );
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+                .unwrap();
             let parent_owner = OperationOwner::new(Duration::from_secs(parent_seconds)).unwrap();
             let parent = parent_owner.context().clone();
             let mapped = AtomicUsize::new(0);
@@ -257,9 +257,9 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_parent_and_invalid_budget_never_acquire() {
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-            crate::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
-        );
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+            .unwrap();
         let parent_owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
         let parent = parent_owner.context().clone();
         assert!(

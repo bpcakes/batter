@@ -13,44 +13,31 @@ contracts, capability facts and validation history.
   now relied on: a cancelled or failed `begin_with` queues its own `ROLLBACK`,
   and IPv6 URL hosts keep correct brackets, so the reference native-options test
   now round-trips `[::1]`. The private live fixture still rejects IPv6
-  literals. Newly disclosed upstream regressions: outside a server transaction
-  SQLx re-sends a statement whose first response is SQLSTATE `26000` or a stale
-  cached-plan `0A000`, which can repeat a non-transactional effect; with the
-  statement cache disabled, a transaction's first query returning an uncached
-  custom type fails; and ambient `PGHOSTADDR` now overrides every URL host.
-  See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
-- Add the PostgreSQL endpoint boundary `batter_sqlx::connect_options`, with
-  `setter_connect_options`, `AmbientHostAddress`, `NoncanonicalUrl` and
-  `NoncanonicalReason`, all also under `batter::sqlx` (`batter-c5ci`,
-  `batter-c5ci.1`). `runledger_postgres` re-exports `connect_options`,
-  `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`.
-  `setter_connect_options` returns fresh `new_without_pgpass` options only
-  after the same environment check, so setter-built options cannot keep an
-  address captured earlier. Inside `sqlx::Error::Configuration` and before
-  parsing, `connect_options` refuses whenever `PGHOSTADDR` is set, and admits
-  only URLs SQLx, tokio-postgres and libpq read alike: a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once.
-  `ConnectionPlan` resolution and both template initializer paths validate the
-  same way before any pool or caller code exists, and every fixture template
-  and lease operation first refuses a harness admin URL that contains `#` or
-  fails that boundary, with `FixtureError::Connect` and no cleanup: the
-  harness's own parser reads past `#`, which SQLx and the derived URLs do not. Every checked-in test,
-  example, consumer and native root builds URL options through it or a native
-  boundary. Clippy `disallowed-methods` rejects every URL-taking public SQLx
-  API, including the `MigrateDatabase` maintenance methods, and the native
-  `hostaddr` setter in every workspace crate, and
-  `crates/batter/tests/postgres_endpoint_boundary.rs` scans for `from_str` and
-  `parse` forms, including path-qualified turbofish targets, declarations
-  whose `parse` follows on a later line, PostgreSQL URL literals and parses
-  passed straight to `connect_with`. Build options with
-  `connect_options(url)?` and pass them to `connect_with`/`connect_lazy_with`.
-  URLs need an explicit host, port and database, and parameters such as
-  `port`, `host`, `hostaddr`, `service`, `ssl` or SQLx's
-  `statement-cache-capacity` are refused; set the latter through native
-  setters. Unset `PGHOSTADDR` to run fixtures, live tests and the SQLx
-  examples.
-- Qualify the `PgLease`, `PgLease::migrate`, `migrate_and_apply` and
-  `PgQueryHandle` rustdoc: Batter adds no replay, but SQLx 0.9.1 can re-send a
-  statement outside a transaction, including `no_tx` migrations.
+  literals. See [the upgrade record](docs/references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
+- Behavior change inherited from SQLx 0.9.1: URL parsing now fills an unset
+  `hostaddr` from an ambient `PGHOSTADDR`, as libpq does, so applications whose
+  only PostgreSQL client is SQLx follow libpq's environment semantics. SQLx
+  still differs from libpq in one case: a Unix socket takes precedence over a
+  declared `hostaddr`.
+- Fixture pools now read their endpoint once with the fixture harness's own
+  parser (`batter-c5ci`). `ConnectionPlan` resolution, both template paths and
+  the new `batter_sqlx::test_support::{harness_connect_options,
+  harness_admin_connect_options}` read the harness admin URL with
+  tokio-postgres, set every SQLx field from that parse and take the database
+  from the harness's recorded name, so SQLx pools reach the server and
+  database the harness provisioned whatever the URL text says. They refuse
+  with the new `UnsupportedHarnessEndpoint` (see `HarnessEndpointReason`)
+  while `PGHOSTADDR` is set or when the admin URL declares `hostaddr`, several
+  hosts or a setting SQLx cannot carry. Template initializers receive a URL
+  rebuilt from that parse and checked with both parsers. Reference-service
+  fixture tests use the new helpers instead of reparsing harness URLs.
+- Disclosed upstream regressions: outside a server transaction SQLx re-sends a
+  statement whose first response is SQLSTATE `26000` or a stale cached-plan
+  `0A000`, which can repeat a non-transactional effect; with the statement
+  cache disabled, a transaction's first query returning an uncached custom
+  type fails. The `PgLease`, `PgLease::migrate`, `migrate_and_apply` and
+  `PgQueryHandle` rustdoc now say Batter adds no replay but SQLx can re-send.
+
 - Stop two non-yielding fixture tests from counting child startup against their
   five-second bounds (`batter-hiuu`). Parent-unwind cleanup is now timed from
   startup evidence, with a separate spawn-to-cleanup bound below the ten-second

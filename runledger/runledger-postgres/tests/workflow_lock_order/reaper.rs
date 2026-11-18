@@ -158,12 +158,12 @@ async fn run_mixed_race(pool: &DbPool, url: &str, run_id: Uuid, retry: Uuid) {
     let (gate, gate_pid) = hold_retry_gate(pool, retry).await;
     let reaper_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(runledger_test_support::connect_options(url).expect("fixture URL"))
+        .connect(url)
         .await
         .expect("reaper pool");
     let external_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(runledger_test_support::connect_options(url).expect("fixture URL"))
+        .connect(url)
         .await
         .expect("external pool");
     let reaper_pid = backend(&reaper_pool).await;

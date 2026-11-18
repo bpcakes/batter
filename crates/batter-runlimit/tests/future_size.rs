@@ -42,9 +42,9 @@ fn bounded(name: &str, future: impl Future + Send) {
 }
 
 fn lazy_pool() -> sqlx::PgPool {
-    sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-        batter_sqlx::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
-    )
+    sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+        .unwrap()
 }
 
 /// Register expiry cleanup on a supervisor that is never started.
@@ -166,7 +166,7 @@ async fn attempt_runner_future_erases_native_admission_and_completion() {
     )
     .unwrap();
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
-        batter_sqlx::connect_options("postgres://login@127.0.0.1:1/unused").unwrap(),
+        "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
         profile,
         sqlx::postgres::PgPoolOptions::new().min_connections(0),
     )

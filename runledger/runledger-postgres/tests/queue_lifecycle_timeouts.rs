@@ -84,7 +84,7 @@ async fn unstarted_claim_release_row_lock_wait_preserves_stricter_database_timeo
         .expect("one unstarted job should be claimable");
     let release_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("connect unstarted release pool");
     sqlx::query("SET SESSION lock_timeout = '100ms'")
@@ -141,7 +141,7 @@ async fn completion_row_lock_wait_uses_default_five_second_cap() {
     let claimed = enqueue_and_claim(&pool, "worker-default-completion-timeout").await;
     let completion_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("connect default completion pool");
     assert_eq!(
@@ -211,7 +211,7 @@ async fn completion_row_lock_waits_preserve_stricter_database_timeout() {
 
     let completion_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("connect completion pool");
     sqlx::query("SET SESSION lock_timeout = '100ms'")
@@ -360,7 +360,7 @@ async fn completion_restores_caller_timeouts_after_job_row_acquisition() {
         enqueue_and_claim(&pool, "worker-completion-timeout-scope-continuation").await;
     let completion_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("connect timeout-scope completion pool");
     sqlx::query(

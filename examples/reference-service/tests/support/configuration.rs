@@ -56,7 +56,10 @@ pub async fn failed_startup_closes_pool_before_lease() -> ProbeResult {
     // Native lease remains owned until awaited startup/pool closure is inspected.
     let cleanup = lease.cleanup().await;
     let drain = harness.drain_deferred_cleanup().await;
-    let observer = super::pool(harness.admin_database_url()).await;
+    let observer = super::pool(batter::sqlx::test_support::harness_admin_connect_options(
+        &harness,
+    ))
+    .await;
     let absence = match observer {
         Ok(observer) => {
             let result = fixture_run::absent(&observer, &name).await;

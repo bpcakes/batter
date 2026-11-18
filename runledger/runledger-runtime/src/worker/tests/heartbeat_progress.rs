@@ -222,7 +222,7 @@ async fn transient_heartbeat_lock_timeouts_retry_within_one_maintenance_budget()
     .await;
     let worker_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("connect heartbeat-retry worker pool");
     sqlx::query("SET SESSION lock_timeout = '100ms'")
@@ -291,7 +291,7 @@ async fn heartbeat_budget_aborts_handler_before_short_lease_expires() {
 
     let worker_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("connect heartbeat-budget worker pool");
     assert_eq!(

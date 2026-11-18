@@ -259,7 +259,7 @@ fn context(seconds: u64) -> Outcome<OperationContext> {
 
 /// Connect through the facade's profiled native database owner.
 fn database(slot: batter::cleanup::CleanupSlot<'_>, url: &str) -> Outcome<RunledgerDatabase> {
-    let options = batter::sqlx::connect_options(&url)?;
+    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
     let login = options.get_username();
     let profile = PgSessionProfile::new(
         login,

@@ -61,7 +61,7 @@ pub(super) async fn enqueue_and_claim_job_with_lease_ttl(
 pub(super) async fn connect_closed_pool(database_url: &str) -> PgPool {
     let worker_pool = PgPoolOptions::new()
         .max_connections(2)
-        .connect_with(runledger_test_support::connect_options(database_url).expect("fixture URL"))
+        .connect(database_url)
         .await
         .expect("connect worker pool");
     worker_pool.close().await;

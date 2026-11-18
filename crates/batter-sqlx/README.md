@@ -1009,53 +1009,6 @@ next apply. Lexical validation does not
 prove a body correct. The runnable consumer is
 [`examples/postgres-lifecycle`](../../examples/postgres-lifecycle/src/schema.rs).
 
-## PostgreSQL endpoint boundary
-
-SQLx 0.9.1, like libpq, starts every URL parse and `new_without_pgpass`
-construction from the process environment and connects to an ambient
-`PGHOSTADDR` instead of the URL host or a `host` setter whenever no explicit
-`hostaddr` is given; the options expose no way to read or clear it. Build
-options from a URL with `connect_options(url)?` and pass them to
-`connect_with` or `connect_lazy_with`, never to the URL-taking `connect`,
-`connect_lazy`, `PgConnection::connect`, `MigrateDatabase` methods, `from_str`
-or `parse`. For a listener, pass `&pool` built from those options to
-`PgListener::connect_with`. Start setter-built connecting options from
-`setter_connect_options()?`, which checks the environment and constructs the
-options in one call, never from `new_without_pgpass` directly. Both refuse
-with `AmbientHostAddress` inside
-`sqlx::Error::Configuration` whenever `PGHOSTADDR` is present, whatever its
-value; other PG* variables stay native defaults that explicit URL parts and
-setters override. SQLx 0.9.1, tokio-postgres and libpq also read some URLs
-differently: SQLx checks a Unix socket before a declared `hostaddr`, a query
-`host` or `port` replaces the authority in SQLx but adds a candidate in
-tokio-postgres, and libpq accepts keyword/value strings, `service` files and
-query text after `#`. `connect_options` therefore admits only the subset all
-three read alike, refusing anything else with `NoncanonicalUrl`, whose
-`NoncanonicalReason` names the rule: a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once. `sslmode`,
-`application_name`, `options`, `user`, `password` and `dbname` parameters are
-kept. Setter-built options must not call the native `hostaddr` setter. The
-process must not change its environment between the check and connection.
-
-```rust,no_run
-# async fn example(database_url: &str) -> Result<(), sqlx::Error> {
-let options = batter_sqlx::connect_options(database_url)?;
-let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(options);
-# pool.close().await;
-# Ok(())
-# }
-```
-
-Every checked-in test, example and standalone consumer follows this rule.
-Clippy's `disallowed-methods` in the repository's `clippy.toml` files rejects
-every URL-taking public SQLx 0.9.1 API (`Pool`/`PoolOptions`
-`connect`/`connect_lazy`, `Connection::connect`, `ConnectOptions::from_url`,
-`PgListener::connect` and the four `MigrateDatabase` methods) and the native
-`hostaddr` setter in every workspace crate, resolving aliases such as `DbPool`; downstream
-applications can copy that configuration. `crates/batter/tests/postgres_endpoint_boundary.rs`
-adds a text scan for `from_str` and `parse`, which Clippy cannot restrict by
-target type, and for the standalone consumers. Both are checks over this
-repository, not guarantees about application code or dependencies.
-
 ## Optional fixture support
 
 The `test-support` feature exposes `test_support::FixtureSuite`, declared native
@@ -1105,26 +1058,35 @@ method takes a `PlannedPool` and returns an opaque `PoolKey`; `finish` applies
 the same capacity rules. `PlannedPool::password_login(options, username,
 password)` declares a real restricted PostgreSQL login, with the password typed
 as `SecretString` so it cannot be swapped with the username. Only the username and
-password change: server address, socket, database, TLS settings, startup options
-and statement cache come from the acquired lease, so no declaration can select
-another server or database. The lease owner's password (URL, `PGPASSWORD` or
-passfile) is always replaced. Each lease parses its URL once and refuses a URL
-whose database is not the lease's own, as a `dbname` query parameter would
-cause, with `LeaseDatabaseMismatch` inside `sqlx::Error::Configuration` before
-any pool exists. The `fixture_lease_database_mismatch_retained` live probe proves
-that refusal and its retention on both the owned and low-level paths. SQLx 0.9.1
-connects to an ambient `PGHOSTADDR` instead of the URL host, so resolution
-refuses through [`connect_options`](#postgresql-endpoint-boundary) before
-parsing whenever that variable is present, with `AmbientHostAddress` carried
-the same way. Both template paths refuse before the initializer receives the
-URL, so its upstream template aborts through the harness's failure path.
-Before any harness work, every template, `empty` and `from_template` call also
-refuses a harness admin URL that contains `#` or fails `connect_options`,
-returning `FixtureError::Connect` with no cleanup: the harness parses the admin
-URL with tokio-postgres, which reads past `#`, and strips the fragment from the
-URLs it derives. Offline unit tests cover the resolution and admin-URL
-refusals; that no initializer runs after a refusal has no executed test. Unset `PGHOSTADDR` for fixture runs and do not change the
-environment while fixtures resolve. Select pools with `FixtureDatabase::pool(key)` (or
+password change: server address, socket, database, TLS settings and startup
+options come from the harness, so no declaration can select another server or
+database. The lease owner's password is always replaced.
+
+Fixture pools never reparse a lease URL with SQLx. The harness provisions
+through tokio-postgres, which reads no environment, while SQLx 0.9.1, like
+libpq, fills an unset `hostaddr` from an ambient `PGHOSTADDR` and reads some
+URL text differently. Each resolution therefore reads the harness admin URL
+once with tokio-postgres, sets every SQLx field from that typed parse (host or
+Unix socket, port with 5432 as default, user, password, TLS mode,
+`application_name` and `-c key=value` `options`), and takes the database from
+the name the harness recorded. It refuses with `UnsupportedHarnessEndpoint`,
+whose `HarnessEndpointReason` names the cause, when `PGHOSTADDR` is set (no
+setter clears it), when the admin URL declares `hostaddr` or several hosts, or
+when it selects a setting SQLx options cannot carry. A lease URL whose database
+differs from the recorded name as tokio-postgres reads it, as a `dbname` query
+parameter would cause, is refused with `LeaseDatabaseMismatch`. Both errors
+travel inside `sqlx::Error::Configuration` before any pool exists. The
+`fixture_lease_database_mismatch_retained` live probe proves that refusal and
+its retention on both the owned and low-level paths; offline unit tests cover
+the endpoint mapping and refusals.
+
+Template initializers receive a URL rebuilt from the same parse for the
+template's recorded name and checked by reading it back with both
+tokio-postgres and SQLx; if no such URL exists, the initializer is not called
+and the harness aborts the template. Test code that opens its own pool beside
+a fixture uses `harness_connect_options(&harness, name)` or
+`harness_admin_connect_options(&harness)` instead of handing
+`admin_database_url()` or a lease URL to SQLx. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
 checks; on a `declare` plan an index does not record which login a pool uses.

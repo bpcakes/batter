@@ -57,39 +57,45 @@ contracts cite:
   [native live URL compatibility](fixtures.md#native-live-url-compatibility-2026-09-10).
 - `hostaddr` and `PGHOSTADDR` no longer replace `host`
   ([#4514](https://github.com/transact-rs/sqlx/pull/4514)). URL parsing starts
-  from `new_without_pgpass`, which now reads ambient `PGHOSTADDR` into a
+  from `new_without_pgpass`, which now reads an ambient `PGHOSTADDR` into a
   separate address that the connection prefers over the URL host; SQLx
   exposes no getter or reset for it. In 0.9.0 the URL host overrode the
-  variable. Any URL-built connection can therefore be redirected by the
-  environment. The reference root rejects every PG* variable and accepts only
-  `password`, `sslmode` and `application_name` URL query keys. Point guards
-  missed further sites, so `batter-c5ci.1` adds one endpoint boundary:
-  `batter_sqlx::connect_options` and `setter_connect_options` refuse with
-  `AmbientHostAddress` whenever `PGHOSTADDR` is present. Fixture resolution,
-  template initializers, every Batter test, example and consumer, native
-  Runledger fixtures (`runledger_test_support::connect_options`) and Runlimit's
-  live tests use it or its native counterpart. Relatedly, `make_socket_path` in
+  variable. This matches libpq: the PostgreSQL 18
+  [environment variables](https://www.postgresql.org/docs/18/libpq-envars.html)
+  page says `PGHOSTADDR` "behaves the same as the `hostaddr` connection
+  parameter", and [connection setup](https://www.postgresql.org/docs/18/libpq-connect.html)
+  fills unset parameters from their environment variables, so `psql` also
+  connects to `PGHOSTADDR` beside a URL host. Where SQLx is an application's
+  only PostgreSQL client, Batter therefore keeps libpq's semantics. SQLx still
+  differs from libpq in one case: `make_socket_path` in
   [`options/mod.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/mod.rs)
-  is checked before `hostaddr`, and `default_host` returns a discovered socket
-  directory (`/var/run/postgresql`, `/private/tmp`, `/tmp`) for a URL with no
-  host, so `postgres:///db?hostaddr=127.0.0.1` uses that socket; in 0.9.0 the
-  `hostaddr` parameter replaced the host. An external review observed the
-  socket selection with a local listener probe. Review rounds kept finding
-  further divergences, first in `hostaddr` handling and then between parsers:
-  a query `host` or `port` replaces the authority in SQLx but adds a candidate
-  in tokio-postgres (the fixture harness), whose query parser also reads past
-  `#`, and libpq (`psql`) accepts keyword/value strings and `service` files.
-  The boundaries therefore admit only a canonical subset all three read alike
-  (`NoncanonicalUrl`, with `NoncanonicalReason`): a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once.
-  `runledger-tui` and the native examples use the same boundary through
-  `runledger_postgres::connect_options`, the harness admin URL is checked
-  before every fixture operation, and the metadata refresh applies the same
-  rules and confirms through a Cargo probe that the query macros see the same
-  `DATABASE_URL` and no `PGHOSTADDR`. Derived Runledger fixture URLs keep the
-  admin URL's query, drop `dbname` and any fragment, and re-encode strictly. Clippy `disallowed-methods`
-  resolves the URL-taking constructors, including the `DbPool` alias and
-  `PgListener::connect`, and a text scan covers `parse`. Application pools that
-  bypass the boundary remain exposed.
+  checks a Unix socket before `hostaddr`, while libpq says TCP "is always used
+  when a nonempty string is specified" for `hostaddr`; that divergence is
+  tracked for an upstream report.
+
+  The invariant Batter does keep is narrower: where two parsers act on one
+  endpoint, both reach the same server. Fixtures provision through the
+  `postgres-test-harness` client (tokio-postgres 0.7.18, which reads no
+  environment) and connect pools with SQLx. Fixture resolution, template
+  preparation and the public `harness_connect_options` and
+  `harness_admin_connect_options` therefore read the harness admin URL once
+  with tokio-postgres, map its typed `Config` field by field into SQLx options,
+  and take the database from the name the harness recorded, refusing an
+  ambient `PGHOSTADDR` (no setter clears it), `hostaddr`, several hosts and
+  settings SQLx cannot carry. Template initializers receive a URL rebuilt
+  from that parse and checked by reading it back with both parsers. The
+  metadata refresh script parses `DATABASE_URL` once, gives `psql` the parts as
+  its own PG* variables in an environment without any other PG* setting,
+  gives SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a
+  probe crate whether `[env]` changes `PGHOSTADDR` or `DATABASE_URL` for the
+  query macros. Runledger's Docker fixture refuses `PGHOSTADDR` only when it
+  owns the container. The reference root already rejects every PG* variable.
+
+  An earlier revision of this unreleased branch instead added an app-wide URL
+  boundary that tried to make SQLx, tokio-postgres and libpq read arbitrary URL
+  text identically; ten external review rounds kept finding further
+  divergences in that open-ended invariant, so it was replaced by the
+  parse-once design above.
 - A `.sql` file in a migration directory that does not match
   `<VERSION>_<DESCRIPTION>.sql` is now a resolve error
   ([#4367](https://github.com/transact-rs/sqlx/pull/4367)). Every checked-in

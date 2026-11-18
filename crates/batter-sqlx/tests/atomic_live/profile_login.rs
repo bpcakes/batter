@@ -12,7 +12,7 @@ use std::{
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn profiles_reject_declared_login_mismatch_before_application_work() -> Result {
-    let options = batter_sqlx::connect_options(&std::env::var("BATTER_SQLX_ADMIN_URL")?)?;
+    let options = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
     let mut admin = bounded(PgConnection::connect_with(&options)).await??;
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let login = format!("profile_login_{suffix}");

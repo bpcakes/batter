@@ -71,7 +71,7 @@ async fn run() -> Result<(), BoxError> {
                 let result: Result<(), BoxError> = async {
                     scope.stage("postgres.acquire")?;
                     // Parse the application-owned endpoint before native construction.
-                    let connection = batter::sqlx::connect_options(&database_url)?;
+                    let connection: PgConnectOptions = database_url.parse()?;
                     let pool = database_pool(scope, connection)?;
                     scope.stage("postgres.probe")?;
                     // The pool is lazy: this bounded probe establishes connectivity.

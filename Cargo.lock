@@ -509,6 +509,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2894,7 +2895,6 @@ dependencies = [
  "futures-util",
  "sqlx",
  "tokio",
- "url",
 ]
 
 [[package]]
@@ -2967,7 +2967,6 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
- "url",
 ]
 
 [[package]]

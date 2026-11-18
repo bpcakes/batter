@@ -630,8 +630,9 @@ async fn terminal_observer_shutdown_delivers_after_multiple_hanging_observer_cal
 async fn run_worker_loop_exits_when_shutdown_sender_is_dropped() {
     // The lazy pool deliberately points at an invalid port. This test asserts
     // the loop observes a closed shutdown channel before attempting any claim.
-    let options = runledger_test_support::connect_options("postgres://postgres@127.0.0.1:1/x");
-    let pool = PgPoolOptions::new().connect_lazy_with(options.expect("construct lazy pool"));
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://postgres:postgres@127.0.0.1:1/runledger")
+        .expect("construct lazy pool");
     let registry = JobRegistry::new();
     let config = JobsConfig {
         worker_id: "dropped-shutdown-worker".to_string(),

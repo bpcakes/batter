@@ -445,19 +445,6 @@ downstream code receives only `PgScopedSql::executor()`. `PgReadOnlySnapshot`
 owns generic coherent read-only inspections. See the
 [transaction contract](../crates/batter-sqlx/README.md#owned-transactions-and-snapshots).
 
-Build native options from a URL with `batter::sqlx::connect_options(url)?` and
-pass them to `connect_with` or `connect_lazy_with` (for a listener, build a pool
-from them and pass `&pool` to `PgListener::connect_with`); start setter-built
-options from `setter_connect_options()?`.
-SQLx 0.9.1 otherwise connects to an ambient `PGHOSTADDR` instead of the
-selected host. Both refuse with `AmbientHostAddress` while it is set, and
-`connect_options` refuses with `NoncanonicalUrl` any URL outside the subset
-SQLx, tokio-postgres and libpq read alike: give an explicit host, port and
-database in the URL itself (a socket directory percent-encoded in the
-authority), and use only `sslmode`, the SSL file parameters,
-`application_name`, `options`, `user`, `password` and `dbname`; see the
-[endpoint boundary](../crates/batter-sqlx/README.md#postgresql-endpoint-boundary).
-
 `PgLease::acquire`, `PgQueryHandle` helpers and every `run_atomic*` runner
 allocate their whole operation once on first poll, so their futures hold only
 arguments and a pointer. Handlers, finite tasks and tests compose them at rustc's
@@ -1152,9 +1139,13 @@ exists. Only the owned `FixtureScope` path keeps every pool registered when its
 acquisition waiter is cancelled; cancelling low-level `empty`/`from_template`
 still drops the half-built fixture and can invoke destructive lease Drop. A lease URL selecting another database (for example through a `dbname`
 query parameter) is refused with `LeaseDatabaseMismatch` inside
-`sqlx::Error::Configuration` before any pool exists. A process environment
-that sets `PGHOSTADDR` is refused the same way with `AmbientHostAddress`:
-SQLx 0.9.1 would connect to that address instead of the lease host.
+`sqlx::Error::Configuration` before any pool exists. Fixture pools take their
+endpoint from one tokio-postgres parse of the harness admin URL, the parser
+the harness provisions with, and their database from the harness's recorded
+name; they refuse with `UnsupportedHarnessEndpoint` when that parse cannot be
+carried into SQLx options, including while `PGHOSTADDR` is set. Use
+`harness_connect_options` or `harness_admin_connect_options` for other pools
+beside a fixture.
 
 `ConnectionPlan::declare` collects `PlannedPool::lease_login` and
 `PlannedPool::password_login` declarations, each returning a `PoolKey` that

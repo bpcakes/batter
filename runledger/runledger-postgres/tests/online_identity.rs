@@ -248,12 +248,12 @@ async fn progress_in_a_cloned_database_does_not_prevent_local_invalid_index_repa
     admin.close().await.expect("close administrator");
     local.pool = PgPoolOptions::new()
         .max_connections(4)
-        .connect_with(local.database.connect_options().expect("fixture URL"))
+        .connect(local.database.url())
         .await
         .expect("reopen local fixture");
     other.pool = PgPoolOptions::new()
         .max_connections(4)
-        .connect_with(other.database.connect_options().expect("fixture URL"))
+        .connect(other.database.url())
         .await
         .expect("open cloned fixture");
     assert_eq!(oid(&other.pool, CREATED_INDEX).await, identity);

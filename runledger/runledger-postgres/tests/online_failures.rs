@@ -272,10 +272,9 @@ async fn verification_uses_the_migration_lock_for_invalid_indexes_without_build_
         .await
         .expect("no build progress in this database")
     );
-    let mut holder =
-        sqlx::PgConnection::connect_with(&harness.database.connect_options().expect("fixture URL"))
-            .await
-            .expect("migration lock connection");
+    let mut holder = sqlx::PgConnection::connect(harness.database.url())
+        .await
+        .expect("migration lock connection");
     holder.lock().await.expect("SQLx migration lock");
     let error = verify_profiled(&harness.pool)
         .await
@@ -476,11 +475,9 @@ async fn a_lock_released_after_the_deadline_cannot_be_admitted_on_delayed_resump
             .build()
             .expect("holder runtime")
             .block_on(async {
-                let mut conn = sqlx::PgConnection::connect_with(
-                    &runledger_test_support::connect_options(&url).expect("fixture URL"),
-                )
-                .await
-                .expect("holder connection");
+                let mut conn = sqlx::PgConnection::connect(&url)
+                    .await
+                    .expect("holder connection");
                 conn.lock().await.expect("hold SQLx lock");
                 ready_tx.send(()).expect("holder ready");
                 release_rx

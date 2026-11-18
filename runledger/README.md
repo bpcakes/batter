@@ -188,13 +188,12 @@ Database policy (`src/support/database.rs`):
 <!-- quick-start-source: runledger-runtime/examples/support/database.rs -->
 ```rust
 use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+use sqlx::postgres::PgConnectOptions;
 use std::time::Duration;
 
 /// Example policy: direct authentication unless an explicit serving role is set.
 pub async fn connect(url: &str) -> Result<RunledgerDatabase, Box<dyn std::error::Error>> {
-    // SQLx 0.9.1 would connect to an ambient or declared `hostaddr` (or a Unix
-    // socket in its place) instead of the URL host; refuse both.
-    let options = runledger_postgres::connect_options(url)?;
+    let options: PgConnectOptions = url.parse()?;
     let login = options.get_username().to_owned();
     let role = std::env::var("RUNLEDGER_DB_ROLE").unwrap_or_else(|_| login.clone());
     let schema = std::env::var("RUNLEDGER_DB_SCHEMA").unwrap_or_else(|_| "public".into());
@@ -1472,7 +1471,7 @@ organization filter is not the same as filtering stored rows to
 runtime, to scope to one organization.
 
 ```bash
-export DATABASE_URL=postgres://user:pass@localhost:5432/runledger
+export DATABASE_URL=postgres://user:pass@localhost/runledger
 cargo run -p runledger-tui
 
 # optional org scope

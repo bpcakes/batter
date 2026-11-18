@@ -24,11 +24,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Changed
 
 - `runlimit-postgres` requires SQLx 0.9.1 (`batter-c5ci`), a semver-compatible
-  upgrade from 0.9.0. No public item, migration or schema changes. Its live
-  tests refuse to run while `PGHOSTADDR` is set, or when
-  `RUNLIMIT_POSTGRES_TEST_DATABASE_URL` is outside the canonical URL subset
-  every PostgreSQL client reads alike (endpoint only in the authority), because
-  SQLx 0.9.1 would otherwise connect elsewhere.
+  upgrade from 0.9.0. No public item, migration or schema changes.
 - PostgreSQL GCRA retry and replenishment delays now subtract database-measured
   elapsed time through the final statement of the decision path, saturating at
   zero, matching fixed-window delay semantics. The evaluation instant, persisted

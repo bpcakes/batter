@@ -1,12 +1,16 @@
 use super::support::{self, Result, bounded};
 use futures_util::FutureExt;
-use sqlx::{Connection, Executor, PgConnection, PgPool, Postgres, postgres::PgPoolOptions};
+use sqlx::{
+    Connection, Executor, PgConnection, PgPool, Postgres,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 use std::{
     fmt::Write as _,
     fs::File,
     future::Future,
     io::Read,
     pin::Pin,
+    str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -89,10 +93,7 @@ impl AuthorityFixture {
         let url = std::env::var("BATTER_SQLX_ADMIN_URL").map_err(|_| {
             std::io::Error::other("live verification requires BATTER_SQLX_ADMIN_URL")
         })?;
-        let mut admin = bounded(PgConnection::connect_with(&batter_sqlx::connect_options(
-            &url,
-        )?))
-        .await??;
+        let mut admin = bounded(PgConnection::connect(&url)).await??;
         let superuser: bool = bounded(
             sqlx::query_scalar(
                 "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = session_user",
@@ -140,7 +141,7 @@ impl AuthorityFixture {
         K: std::fmt::Display,
         V: std::fmt::Display,
     {
-        let options = batter_sqlx::connect_options(&self.url)?
+        let options = PgConnectOptions::from_str(&self.url)?
             .username(role)
             .password(&self.password)
             .options(options);

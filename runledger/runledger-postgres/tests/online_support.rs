@@ -209,10 +209,9 @@ pub async fn assert_lock_wait_expires<F, Fut>(
     F: FnOnce(PgPool) -> Fut,
     Fut: Future<Output = Result<(), SchemaCompatibilityError>> + Send + 'static,
 {
-    let mut holder =
-        sqlx::PgConnection::connect_with(&harness.database.connect_options().expect("fixture URL"))
-            .await
-            .expect("holder connection");
+    let mut holder = sqlx::PgConnection::connect(harness.database.url())
+        .await
+        .expect("holder connection");
     holder.lock().await.expect("SQLx migration lock");
 
     let started = tokio::time::Instant::now();

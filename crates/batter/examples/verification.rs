@@ -11,8 +11,8 @@ use batter::sqlx::verification::{
     QualifiedName, RelationGrantGroup, RolePolicy, SchemaGrantSpec, SqlxLedgerMode,
     SqlxMigrationManifest, VerificationPlan, VerificationStatus, verify,
 };
-use sqlx::postgres::PgPoolOptions;
-use std::{process::ExitCode, time::Duration};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use std::{process::ExitCode, str::FromStr, time::Duration};
 
 #[tokio::main(flavor = "current_thread")]
 #[expect(
@@ -36,10 +36,10 @@ async fn main() -> ExitCode {
         eprintln!("DATABASE_URL must be valid Unicode");
         return ExitCode::FAILURE;
     };
-    let options = match batter::sqlx::connect_options(url) {
+    let options = match PgConnectOptions::from_str(url) {
         Ok(options) => options,
-        Err(error) => {
-            eprintln!("{}", endpoint_refusal(&error));
+        Err(_) => {
+            eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
             return ExitCode::FAILURE;
         }
     };
@@ -326,17 +326,4 @@ pub(crate) enum SuperuserAllowance {
 pub(crate) enum AuthorityCase {
     Violation,
     Valid,
-}
-
-/// Operator guidance for a refused `DATABASE_URL`, without its contents.
-fn endpoint_refusal(error: &sqlx::Error) -> &'static str {
-    match error {
-        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::AmbientHostAddress>() => {
-            "unset PGHOSTADDR: SQLx would connect to it instead of DATABASE_URL's host"
-        }
-        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::NoncanonicalUrl>() => {
-            "DATABASE_URL must be a postgres:// URI that selects its server in the authority"
-        }
-        _ => "DATABASE_URL is not a valid PostgreSQL connection string",
-    }
 }

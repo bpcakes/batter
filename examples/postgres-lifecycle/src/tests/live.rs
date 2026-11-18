@@ -11,8 +11,8 @@ fn connection() -> PgConnectOptions {
     let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         panic!("live checks require DATABASE_URL for an externally provisioned test database")
     });
-    batter::sqlx::connect_options(&url)
-        .unwrap_or_else(|_| panic!("live checks require a valid DATABASE_URL and no PGHOSTADDR"))
+    url.parse()
+        .unwrap_or_else(|_| panic!("live checks require a valid DATABASE_URL"))
 }
 
 async fn owned_pool(receiver: oneshot::Receiver<PgPool>) -> PgPool {

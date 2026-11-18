@@ -52,9 +52,8 @@ fn finish<T>(body: Result<T, BoxError>, cleanup: Result<(), BoxError>) -> Result
 
 #[tokio::test]
 async fn returned_storage_failure_retains_known_provider_delay() -> Result<(), BoxError> {
-    let pool = PgPoolOptions::new().connect_lazy_with(batter::sqlx::connect_options(
-        "postgres://fixture:fixture@127.0.0.1:9/fixture",
-    )?);
+    let pool =
+        PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
     let worker = worker(&pool)?;
     pool.close().await;
     let payload = inert_payload();
@@ -100,9 +99,8 @@ fn inert_payload() -> DeliveryJobPayload {
 
 #[tokio::test]
 async fn terminal_writers_reject_terminal_sources_before_sql_acquisition() -> Result<(), BoxError> {
-    let pool = PgPoolOptions::new().connect_lazy_with(batter::sqlx::connect_options(
-        "postgres://fixture:fixture@127.0.0.1:9/fixture",
-    )?);
+    let pool =
+        PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@127.0.0.1:9/fixture")?;
     let worker = worker(&pool)?;
     pool.close().await;
     let payload = inert_payload();
@@ -153,9 +151,6 @@ async fn provider_state_lock_and_retry_boundaries() -> Result<(), Failure> {
 
 async fn run_boundaries() -> Result<(), BoxError> {
     let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
-    // Refuse before the harness parses the URL: it provisions with
-    // tokio-postgres, so only a canonical URL reaches the same server as SQLx.
-    batter::sqlx::connect_options(&url)?;
     let config = postgres_test_harness::HarnessConfig::new("batter_state")?
         .with_admin_database_url(&url)
         .with_cleanup_on_start(false)
@@ -164,8 +159,12 @@ async fn run_boundaries() -> Result<(), BoxError> {
     let harness = postgres_test_harness::PostgresHarness::start(config).await?;
     let body = async {
         let lease = harness.empty_database().await?;
-        // A refused or invalid URL still reaches the awaited lease cleanup below.
-        let pool = match batter::sqlx::connect_options(lease.database_url()) {
+        // Options come from the harness's own endpoint parse; a refusal still
+        // reaches the awaited lease cleanup below.
+        let pool = match batter::sqlx::test_support::harness_connect_options(
+            &harness,
+            lease.database_name(),
+        ) {
             Ok(options) => {
                 PgPoolOptions::new()
                     .max_connections(4)

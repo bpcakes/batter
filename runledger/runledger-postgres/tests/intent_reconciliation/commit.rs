@@ -27,16 +27,7 @@ async fn unconfirmed_commit_recovers_the_same_intent_without_duplicate_submissio
         .local_addr()
         .expect("proxy listener address")
         .port();
-    assert!(
-        source.get_socket().is_none() && !source.get_host().starts_with('/'),
-        "the commit proxy requires a TCP fixture; SQLx keeps a Unix socket that the proxy's host setter cannot clear"
-    );
-    // SQLx 0.9.1 keeps URL brackets on an IPv6 host; Tokio's lookup needs it bare.
-    let host = source
-        .get_host()
-        .trim_start_matches('[')
-        .trim_end_matches(']');
-    let upstream = (host.to_owned(), source.get_port());
+    let upstream = (source.get_host().to_owned(), source.get_port());
     let armed = Arc::new(AtomicBool::new(false));
     let guard = Arc::clone(&armed);
     // One lazy pool connection; no preflight connection or detached proxy tasks.

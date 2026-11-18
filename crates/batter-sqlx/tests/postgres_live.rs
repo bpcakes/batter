@@ -308,7 +308,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         .map_err(|_| std::io::Error::other("live checks require DATABASE_URL"))?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter_sqlx::connect_options(&url)?)
+        .connect(&url)
         .await?;
     let schema = format!(
         "batter_ledger_{}_{}",

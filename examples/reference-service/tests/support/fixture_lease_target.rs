@@ -90,7 +90,7 @@ pub async fn mismatch_retained() -> ProbeResult {
     cleanup_stale_databases(&admin, PROJECT, Duration::ZERO).await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(&admin)?)
+        .connect(&admin)
         .await?;
     let owned_connections = Arc::new(AtomicUsize::new(0));
     let owned = owned_refusal(harness.clone(), &owned_connections).await;

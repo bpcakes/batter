@@ -267,12 +267,12 @@ async fn whole_run_step_lockers_do_not_deadlock_with_a_dependent_declared_first(
         .expect("gate backend");
     let job_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("job completion pool");
     let external_owner = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("external completion pool");
     let job_pid = reaper::backend(&job_pool).await;

@@ -46,19 +46,13 @@ impl Fixture {
     pub async fn new() -> Result<Self> {
         let url = std::env::var("DATABASE_URL")
             .map_err(|_| std::io::Error::other("live checks require DATABASE_URL"))?;
-        let mut blocker = bounded(PgConnection::connect_with(&batter_sqlx::connect_options(
-            &url,
-        )?))
-        .await??;
-        let observer = bounded(PgConnection::connect_with(&batter_sqlx::connect_options(
-            &url,
-        )?))
-        .await??;
+        let mut blocker = bounded(PgConnection::connect(&url)).await??;
+        let observer = bounded(PgConnection::connect(&url)).await??;
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .min_connections(0)
             .acquire_timeout(LOCAL)
-            .connect_lazy_with(batter_sqlx::connect_options(&url)?);
+            .connect_lazy(&url)?;
         let pid: i32 =
             bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut blocker))
                 .await??;

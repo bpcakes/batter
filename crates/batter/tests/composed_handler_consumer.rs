@@ -99,10 +99,8 @@ async fn quota_query_and_atomic_workflow_compose_in_one_registered_handler() {
     let records = Arc::new(Records {
         pool: sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(Duration::from_millis(100))
-            .connect_lazy_with(
-                batter::sqlx::connect_options("postgres://consumer@127.0.0.1:1/unused")
-                    .expect("lazy pool"),
-            ),
+            .connect_lazy("postgres://consumer@127.0.0.1:1/unused")
+            .expect("lazy pool"),
         quota: Quota::new(MemoryStore::new(MemoryStoreConfig::new(16).unwrap())),
         policy: FixedWindowPolicy::new(
             PolicyId::new("records.write").unwrap(),

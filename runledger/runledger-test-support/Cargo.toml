@@ -38,4 +38,3 @@ bollard = { version = "0.21.1", features = ["ssl"] }
 docker_credential = "1.4.0"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
-url = { version = "2.5.8", default-features = false, features = ["std"] }

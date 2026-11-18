@@ -181,7 +181,7 @@ mod tests {
         )
         .unwrap();
         let database = crate::low_level::connect_profiled_pool_lazy(
-            crate::connect_options("postgres://login@127.0.0.1:1/unused").unwrap(),
+            "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
             profile,
             sqlx::postgres::PgPoolOptions::new().min_connections(0),
         )
@@ -249,9 +249,9 @@ mod tests {
 
     #[tokio::test]
     async fn budget_preflight_and_unpolled_work_do_not_acquire() {
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-            crate::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
-        );
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+            .unwrap();
         let owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
         let context = owner.context().clone();
         drop(run_atomic_with_in(

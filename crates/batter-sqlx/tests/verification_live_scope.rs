@@ -162,8 +162,8 @@ async fn verification_required_and_excess_authority_share_captured_snapshot() ->
         let catalog: i64 = sqlx::query_scalar("SELECT 'pg_catalog.pg_parameter_acl'::regclass::oid::bigint").fetch_one(&mut fixture.admin).await?;
         // Opening a connection can itself read pg_parameter_acl during startup.
         // Acquire every connection before the catalog barrier, with a bound.
-        let mut blocker = bounded(sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)).await??;
-        let mut observer = bounded(sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)).await??;
+        let mut blocker = bounded(sqlx::PgConnection::connect(&fixture.url)).await??;
+        let mut observer = bounded(sqlx::PgConnection::connect(&fixture.url)).await??;
         let mut barrier = blocker.begin().await?;
         sqlx::query("LOCK TABLE pg_catalog.pg_parameter_acl IN ACCESS EXCLUSIVE MODE").execute(&mut *barrier).await?;
         sqlx::query("BEGIN ISOLATION LEVEL REPEATABLE READ").execute(&mut observer).await?;

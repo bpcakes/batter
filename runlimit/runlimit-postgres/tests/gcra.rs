@@ -17,16 +17,11 @@ use runlimit_postgres::{
     BatchCheckError, CREATE_RUNLIMIT_GCRA_SQL, CheckError, GCRA_MIGRATOR,
     INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL, MIGRATOR, PostgresConfig, PostgresGcraLimiter,
 };
-use sqlx::{
-    AssertSqlSafe, PgPool,
-    postgres::{PgConnectOptions, PgPoolOptions},
-};
+use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
 use tokio::sync::Barrier;
 
 #[path = "gcra/clock.rs"]
 mod clock;
-#[path = "support/endpoint.rs"]
-mod endpoint;
 
 static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(0);
 
@@ -48,7 +43,7 @@ impl Database {
             .expect("disposable PostgreSQL URL required");
         let admin = PgPoolOptions::new()
             .max_connections(2)
-            .connect_with(endpoint::test_connect_options(&url))
+            .connect(&url)
             .await
             .unwrap();
         let schema = format!(
@@ -76,7 +71,7 @@ impl Database {
                     Ok(())
                 })
             })
-            .connect_with(endpoint::test_connect_options(&url))
+            .connect(&url)
             .await
             .unwrap();
         Self {
@@ -188,11 +183,9 @@ fn migration_streams_are_independent_and_trait_remains_generic() {
 
 #[tokio::test]
 async fn invalid_batches_and_unpolled_futures_do_not_access_the_database() {
-    let pool = PgPoolOptions::new().connect_lazy_with(
-        PgConnectOptions::new_without_pgpass()
-            .host("127.0.0.1")
-            .port(1),
-    );
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgresql://invalid:invalid@127.0.0.1:1/invalid")
+        .unwrap();
     let recorder = Arc::new(Recorder::default());
     let limiter = PostgresGcraLimiter::new(pool).with_observer(recorder.clone());
     let policy = policy(1, 1000, 1);

@@ -89,11 +89,11 @@ impl Fixture {
         )
         .unwrap();
         Self {
-            pool: sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-                batter_sqlx::connect_options("postgres://unused@127.0.0.1:1/unused").unwrap(),
-            ),
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+                .unwrap(),
             database: batter_sqlx::low_level::connect_profiled_pool_lazy(
-                batter_sqlx::connect_options("postgres://login@127.0.0.1:1/unused").unwrap(),
+                "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
                 profile,
                 sqlx::postgres::PgPoolOptions::new().min_connections(0),
             )

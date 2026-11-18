@@ -7,7 +7,7 @@ fn live_handoff_preserves_credentials_across_native_parsers() {
 }
 
 pub(crate) fn check_credentials() {
-    use sqlx::ConnectOptions;
+    use sqlx::{ConnectOptions, postgres::PgConnectOptions};
 
     // Only fake credentials cross the native formatters; process state is cleared.
     for (userinfo, query, expected) in [
@@ -34,7 +34,7 @@ pub(crate) fn check_credentials() {
         let harness: tokio_postgres::Config = normalized.as_str().parse().unwrap();
         assert_eq!(harness.get_password(), Some(expected.as_bytes()));
         assert_eq!(harness.get_application_name(), Some("local probe+tag"));
-        let fixture = batter::sqlx::connect_options(handoff.expose_secret()).unwrap();
+        let fixture: PgConnectOptions = handoff.expose_secret().parse().unwrap();
         for options in [preflight, fixture] {
             let native_url = options.to_url_lossy();
             let password =
@@ -55,19 +55,19 @@ fn live_preflight_and_fixture_share_the_native_endpoint_policy() {
 pub(crate) fn check_policy() {
     // Child environment is empty, including PG* and HOME; no connection is made.
     assert!(policy::from_process().is_err());
-    for (url, expected) in [
-        (
-            "postgres://user:fake@127.0.0.1/db?sslmode=disable",
-            "postgres://user:fake@127.0.0.1:5432/db?sslmode=disable",
-        ),
-        (
-            "postgres://user@localhost/db?sslmode=disable",
-            "postgres://user@localhost:5432/db?sslmode=disable&password=",
-        ),
+    for url in [
+        "postgres://user:fake@127.0.0.1/db?sslmode=disable",
+        "postgres://user@localhost/db?sslmode=disable",
     ] {
         let (retained, options) = policy::from_url_in_process(url).unwrap();
-        // The handoff makes the port explicit for the endpoint boundary.
-        assert_eq!(retained.expose_secret(), expected);
+        assert_eq!(
+            retained.expose_secret(),
+            if url.contains("user@") {
+                format!("{url}&password=")
+            } else {
+                url.to_owned()
+            }
+        );
         assert!(options.get_socket().is_none());
     }
     check_ipv6_rejection();
@@ -92,7 +92,7 @@ pub(crate) fn check_policy() {
         assert_eq!(admin.get_user(), Some("user"));
         assert_eq!(admin.get_dbname(), Some("db"));
         normalized.set_path("/fixture-db");
-        let fixture = batter::sqlx::connect_options(normalized.as_str()).unwrap();
+        let fixture: sqlx::postgres::PgConnectOptions = normalized.as_str().parse().unwrap();
         assert_eq!(fixture.get_host(), expected_host);
         assert_eq!(fixture.get_port(), 6543);
         assert_eq!(fixture.get_username(), "user");
@@ -141,7 +141,7 @@ fn check_native_scalars() {
             admin.get_ssl_mode(),
             tokio_postgres::config::SslMode::Disable
         );
-        let native = batter::sqlx::connect_options(normalized.as_str()).unwrap();
+        let native: sqlx::postgres::PgConnectOptions = normalized.as_str().parse().unwrap();
         assert_eq!(native.get_database(), Some(expected_database));
         assert!(matches!(
             native.get_ssl_mode(),
@@ -153,6 +153,6 @@ fn check_native_scalars() {
 pub(crate) fn check_no_passfile(url: &str) {
     use sqlx::ConnectOptions;
     let (handoff, _) = policy::from_url_in_process(url).unwrap();
-    let options = batter::sqlx::connect_options(handoff.expose_secret()).unwrap();
+    let options: sqlx::postgres::PgConnectOptions = handoff.expose_secret().parse().unwrap();
     assert!(options.to_url_lossy().password().is_none_or(str::is_empty));
 }

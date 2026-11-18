@@ -54,7 +54,7 @@ pub async fn setup_unmigrated_ephemeral_pool(
         .expect("create ephemeral database");
     let pool = PgPoolOptions::new()
         .max_connections(max_connections)
-        .connect_with(database.connect_options().expect("ephemeral database URL"))
+        .connect(database.url())
         .await
         .expect("connect postgres");
     (pool, database)
@@ -118,13 +118,6 @@ impl EphemeralDatabase {
     #[must_use]
     pub fn url(&self) -> &str {
         &self.identity.url
-    }
-
-    /// Native options for this database, refusing an ambient `PGHOSTADDR`
-    /// that would redirect them; see [`crate::connect_options`]. Prefer this to
-    /// passing [`Self::url`] to SQLx's URL-taking `connect` forms.
-    pub fn connect_options(&self) -> Result<sqlx::postgres::PgConnectOptions, sqlx::Error> {
-        crate::connect_options(self.url())
     }
 
     pub async fn teardown(mut self) -> Result<(), sqlx::Error> {
@@ -242,7 +235,7 @@ pub async fn drop_database(database_name: &str) -> Result<(), sqlx::Error> {
 async fn connect_admin_pool(admin_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(crate::connect_options(admin_url)?)
+        .connect(admin_url)
         .await
 }
 
@@ -257,37 +250,11 @@ fn build_database_name(prefix: &str) -> String {
     format!("{}_{}_{}", compact_prefix, std::process::id(), index)
 }
 
-/// Replace the admin URL's database while keeping its endpoint and other
-/// query settings, so the lease connects where the database was created. A
-/// `dbname` parameter would override the path, so it is dropped.
 fn with_database_name(admin_url: &str, database_name: &str) -> String {
-    let mut url = url::Url::parse(admin_url).expect("admin database URL must be a valid URL");
-    url.set_path(&format!("/{database_name}"));
-    // libpq and tokio-postgres read neither `#` as a fragment nor `+` as a space,
-    // unlike SQLx. Drop the fragment and re-encode every retained pair from its
-    // SQLx-decoded value, so each client reads the settings SQLx provisioned with.
-    url.set_fragment(None);
-    let query = url
-        .query_pairs()
-        .filter(|(key, _)| key != "dbname")
-        .map(|(key, value)| format!("{}={}", strict_encode(&key), strict_encode(&value)))
-        .collect::<Vec<_>>()
-        .join("&");
-    url.set_query((!query.is_empty()).then_some(query.as_str()));
-    url.into()
-}
-
-/// Percent-encode everything but RFC 3986 unreserved bytes, so a space is
-/// `%20` and a literal `+` is `%2B` for every PostgreSQL client.
-fn strict_encode(text: &str) -> String {
-    text.bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                char::from(byte).to_string()
-            }
-            _ => format!("%{byte:02X}"),
-        })
-        .collect()
+    let (base, _) = admin_url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must include database name");
+    format!("{base}/{database_name}")
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -332,32 +299,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn derived_database_url_keeps_endpoint_settings_and_drops_dbname() {
-        assert_eq!(
-            with_database_name("postgres://u:p@127.0.0.1:5432/postgres", "lease_1"),
-            "postgres://u:p@127.0.0.1:5432/lease_1"
-        );
-        assert_eq!(
-            with_database_name(
-                "postgres://u:p@db.invalid/postgres?dbname=postgres&sslmode=disable",
-                "lease_1"
-            ),
-            "postgres://u:p@db.invalid/lease_1?sslmode=disable"
-        );
-        assert_eq!(
-            with_database_name(
-                "postgres:///postgres?host=%2Ftmp%2Fpg%20socket&db%6Eame=x&user=u&password=a+b%2Bc",
-                "lease_1"
-            ),
-            "postgres:///lease_1?host=%2Ftmp%2Fpg%20socket&user=u&password=a%20b%2Bc"
-        );
-        assert_eq!(
-            with_database_name("postgres://u:p@db.invalid/postgres#tag", "lease_1"),
-            "postgres://u:p@db.invalid/lease_1"
-        );
-    }
-
     const CLEANUP_ATTEMPTS: usize = 100;
     const CLEANUP_POLL_INTERVAL: Duration = Duration::from_millis(50);
     static LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -401,9 +342,7 @@ mod tests {
         );
         assert_eq!(database.name(), name);
         assert_eq!(database.url(), url);
-        // The admin URL's query is kept, so compare the parsed path, not a suffix.
-        let parsed = url::Url::parse(&url).expect("ephemeral database URL");
-        assert_eq!(parsed.path(), format!("/{name}"));
+        assert!(url.ends_with(&format!("/{name}")));
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT current_database()")
                 .fetch_one(&pool)

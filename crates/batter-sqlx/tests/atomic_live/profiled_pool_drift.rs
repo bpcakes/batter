@@ -4,7 +4,10 @@ use super::{
     support::{Result, bounded, combine, require},
 };
 use batter_sqlx::{PgProfiledPool, PgSessionProfile};
-use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
+use sqlx::{
+    Connection, PgConnection,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 use std::time::Duration;
 use tracing_subscriber::prelude::*;
 
@@ -38,7 +41,7 @@ async fn idle_revocation(revocation: Revocation) -> Result {
     let login = format!("profile_login_{}", fixture.key);
     let role = format!("profile_role_{}", fixture.key);
     let schema = format!("profile_schema_{}", fixture.key);
-    let options = batter_sqlx::connect_options(&std::env::var("BATTER_SQLX_ADMIN_URL")?)?;
+    let options: PgConnectOptions = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
     let mut admin = bounded(PgConnection::connect_with(&options)).await??;
     // Only the parameter case owns this cluster-wide ACL entry. The other
     // concurrent cases must not update the same pg_parameter_acl row.

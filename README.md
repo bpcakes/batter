@@ -137,11 +137,11 @@ cargo run -p batter --example worker
 cargo run -p batter --example process_owned
 cargo run -p batter --example operation_budget
 cargo run -p batter --example finite_command
-DATABASE_URL='postgres://user:password@localhost:5432/database' \
+DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter --features sqlx --example owned_pool
 cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service
 cargo run -p batter --features outbound-http --example outbound_exchange
-DATABASE_URL='postgres://user:password@localhost:5432/database' \
+DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
 

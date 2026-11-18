@@ -568,12 +568,6 @@ mod tests {
         Capacity::new(value).unwrap()
     }
 
-    fn inert_options() -> sqlx::postgres::PgConnectOptions {
-        sqlx::postgres::PgConnectOptions::new_without_pgpass()
-            .host("127.0.0.1")
-            .port(1) // never acquired
-    }
-
     fn policy(id: &str, scope: &str) -> FixedWindowPolicy {
         FixedWindowPolicy::new(
             PolicyId::new(id).expect("valid policy identifier"),
@@ -731,7 +725,9 @@ mod tests {
 
     #[tokio::test]
     async fn observer_reports_connection_free_operations_and_isolates_panics() {
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(inert_options());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
         let observer = Arc::new(RecordingObserver::default());
         let limiter = PostgresLimiter::new(pool.clone()).with_observer(observer.clone());
 
@@ -759,7 +755,9 @@ mod tests {
 
     #[tokio::test]
     async fn failed_postgres_batches_preserve_one_item_policy_metadata() {
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(inert_options());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
         let observer = Arc::new(AdmissionMetadataObserver::default());
         let limiter = PostgresLimiter::new(pool).with_observer(observer.clone());
         let first_policy = policy("observed.failure.first", "client");
@@ -807,7 +805,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_observations_map_every_backend_effect_class() {
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(inert_options());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
         let observer = Arc::new(RecordingObserver::default());
         let limiter = PostgresLimiter::new(pool).with_observer(observer.clone());
         let elapsed = Duration::from_millis(5);
@@ -1086,7 +1086,9 @@ mod tests {
             Check::new(key(8).bind(&alpha)),
             Check::new(key(8).bind(&alpha)),
         ];
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(inert_options());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
         let limiter = PostgresLimiter::new(pool);
 
         let error = limiter
@@ -1111,7 +1113,9 @@ mod tests {
             Check::new(key(1).bind(&first_policy)),
             Check::new(key(2).bind(&second_policy)),
         ];
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(inert_options());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
         let config = PostgresConfig::new()
             .with_max_batch_size(1)
             .expect("one is a valid batch limit");
@@ -1139,7 +1143,9 @@ mod tests {
             Check::new(key(1).bind(&enforced)),
             Check::new(key(2).bind(&shadow)),
         ];
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(inert_options());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
         let limiter = PostgresLimiter::new(pool);
 
         let error = limiter

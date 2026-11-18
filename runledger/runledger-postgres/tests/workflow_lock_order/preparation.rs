@@ -176,7 +176,7 @@ async fn first_row_rollback_keeps_the_prepared_run_lock_for_later_rows() {
         .expect("hold gate");
     let worker = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("worker");
     let worker_pid = reaper::backend(&worker).await;
@@ -241,12 +241,12 @@ async fn competing_reapers_prepare_runs_independently_of_expiry_order() {
         .expect("run gate");
     let one = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("one");
     let two = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("two");
     let first_pid = reaper::backend(&one).await;

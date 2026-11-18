@@ -43,11 +43,15 @@ async fn detached_case(native: SessionKind) -> ProbeResult {
     let harness = super::harness().await?;
     let admin = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let session_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let control = SessionObserver::new(session_pool.clone(), Duration::from_secs(2))?;
     let (send, receive) = oneshot::channel();
@@ -134,11 +138,15 @@ pub async fn observer_failure() -> ProbeResult {
     let harness = super::harness().await?;
     let admin = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let broken = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     broken.close().await;
     let control = SessionObserver::new(broken.clone(), BOUND)?;

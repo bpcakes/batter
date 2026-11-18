@@ -18,16 +18,9 @@ cleanup, migration-copy equality and PostgreSQL 18 prerequisites. Missing Docker
 is a test failure. This package must not become a production dependency of the
 Batter foundation or facade.
 Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
-URL. SQLx 0.9.1 connects to an ambient `PGHOSTADDR` instead of the URL host,
-and SQLx, tokio-postgres and libpq read some URLs differently: shared startup
-refuses `PGHOSTADDR` before any container starts, and every fixture
-connection builds options through `src/endpoint.rs` (`connect_options`), which
-refuses it and any URL outside the canonical subset, so teardown cannot be
-redirected either. Derived database URLs
-keep the admin URL's query, drop `dbname` and any fragment, and re-encode
-retained pairs strictly (`%20`, `%2B`) so every PostgreSQL client reads them
-as SQLx did. Never pass fixture URLs to
-SQLx's URL-taking `connect` forms; Clippy and the root endpoint scan reject them. Failed startup cleanup verifies the
+URL. When this fixture owns the container it refuses an ambient `PGHOSTADDR`
+before starting it, because SQLx 0.9.1, like libpq, would connect there
+instead. An external admin URL keeps libpq semantics; SQLx is its only client. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.
 Keep Testcontainers and `astral-tokio-tar` absent from the dependency graph.

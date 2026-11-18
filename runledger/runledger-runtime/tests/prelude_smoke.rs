@@ -77,9 +77,9 @@ async fn all_preludes_can_be_glob_imported_together() {
         .try_build()
         .expect("workflow should build");
 
-    let pool: DbPool = PgPoolOptions::new().connect_lazy_with(
-        runledger_test_support::connect_options(UNUSED_LAZY_POOL_URL).expect("construct lazy pool"),
-    );
+    let pool: DbPool = PgPoolOptions::new()
+        .connect_lazy(UNUSED_LAZY_POOL_URL)
+        .expect("construct lazy pool");
     let lease_identity = JobLeaseIdentity::new(Uuid::nil(), 1, 1, "prelude-smoke");
     heartbeat_job_for_lease(&pool, lease_identity, 0)
         .await

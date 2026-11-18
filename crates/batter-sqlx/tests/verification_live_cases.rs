@@ -29,7 +29,7 @@ async fn verification_uses_the_initial_authenticated_role() -> Result {
             Box::pin(async move {
                 let masked = PgPoolOptions::new()
                     .max_connections(1)
-                    .connect_with(batter_sqlx::connect_options(&fixture.url)?)
+                    .connect(&fixture.url)
                     .await?;
                 let (authenticated, superuser): (String, bool) = sqlx::query_as(
                     "SELECT session_user::text, rolsuper

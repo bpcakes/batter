@@ -42,10 +42,9 @@ fn capacity_config(max_global_concurrency: usize, poll_interval: Duration) -> Jo
 }
 
 fn lazy_pool() -> PgPool {
-    PgPoolOptions::new().connect_lazy_with(
-        runledger_test_support::connect_options(UNUSED_LAZY_POOL_URL)
-            .expect("construct lazy capacity-test pool"),
-    )
+    PgPoolOptions::new()
+        .connect_lazy(UNUSED_LAZY_POOL_URL)
+        .expect("construct lazy capacity-test pool")
 }
 
 fn worker_with_capacity(max_global_concurrency: usize) -> WorkerLoop {

@@ -377,38 +377,18 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   before refreshing offline query metadata. The checked-in `.sqlx` metadata is
   unchanged. Online index repair keeps its explicit `ROLLBACK` after a failed
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
-  runs outside a block and only warns. No schema or persisted data changes.
-- Add `runledger_test_support::{connect_options, AmbientHostAddress,
-  NoncanonicalUrl}` and `EphemeralDatabase::connect_options` (`batter-c5ci.1`).
-  SQLx 0.9.1 would connect to an ambient `PGHOSTADDR` instead of a fixture
-  URL's host, and SQLx, tokio-postgres and libpq read some URLs differently, so
-  shared startup refuses `PGHOSTADDR` before any container starts and every
-  fixture connection, including teardown, refuses it and any URL outside the
-  canonical subset (a `postgres://` or `postgresql://` URI without `#`, a raw query `+` or a raw `@` outside the userinfo, that names exactly one host and an explicit port in its authority (a Unix socket directory percent-encoded there), names its database, and declares only `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `application_name`, `options`, `user`, `password` and `dbname`, each once) inside `sqlx::Error::Configuration`. Derived per-test database URLs now keep
-  the admin URL's query and drop only `dbname`. Native tests build fixture
-  options through these; unset `PGHOSTADDR` for native test runs. The
-  commit-acknowledgement, intent-reconciliation and online-transport fault
-  proxies now refuse a Unix-socket fixture before setup, because SQLx's host
-  setter cannot clear a socket kept in the URL; they require a TCP fixture.
-  `scripts/refresh_runledger_sqlx.py` also refuses a literal `#` in
-  `DATABASE_URL` (libpq does not treat it as a fragment; encode it as `%23`),
-  reports an unparseable URL without echoing it, and refuses `PGHOSTADDR` that
-  Cargo would give the compiler from any applicable `[env]` setting, including
-  included and home configuration files, which `cargo sqlx prepare` would pass
-  to the query macros; a throwaway probe crate asks Cargo directly, so the
-  script needs no TOML parser and still runs on Python 3.9. The fault proxies
-  strip IPv6 URL brackets before dialing. Derived fixture URLs drop any
-  fragment and re-encode retained query pairs from their SQLx-decoded values
-  (spaces as `%20`, literal plus signs as `%2B`), so libpq and tokio-postgres
-  clients of `EphemeralDatabase::url()` read the same settings SQLx used.
-- `runledger_postgres` re-exports the SQLx foundation's `connect_options`,
-  `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`.
-  `runledger-tui`, the native examples and the crate's startup rustdoc recipe
-  now build options through it, so their `DATABASE_URL` needs an explicit
-  host, port and database (for example `postgres://user@localhost:5432/runledger`).
-  The metadata refresh applies the same URL rules, refuses `PGSERVICE` (a
-  service file could steer `psql` alone), and refuses a Cargo `[env]`
-  `DATABASE_URL` that would differ for the query macros.
+  runs outside a block and only warns. `runledger-test-support` now refuses to
+  start a Runledger-owned PostgreSQL container, before starting it, when
+  `PGHOSTADDR` is set: SQLx 0.9.1, like libpq, would connect to that address
+  instead of the container. An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`
+  keeps libpq semantics, since SQLx is then the fixture's only client.
+  `scripts/refresh_runledger_sqlx.py` now parses `DATABASE_URL` once, gives
+  `psql` the parts as its own PG* variables (no credentials in its arguments)
+  in an environment without any other PG* setting, gives SQLx CLI a URL
+  rebuilt from the same parts, and refuses a Cargo `[env]` `PGHOSTADDR` or
+  `DATABASE_URL` that would change what the query macros connect to. It
+  accepts only one host, one database and the `sslmode`, `application_name` and
+  `options` parameters. No public item, schema or persisted data changes.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

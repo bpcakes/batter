@@ -83,8 +83,8 @@ impl FixtureScope {
     /// Initializers must explicitly close any pools they create before returning.
     /// Preparation is an owned producer, so its initializer must be Send and static.
     /// Cancelling this waiter does not cancel preparation or discard its failure.
-    /// Validates the URL with [`crate::connect_options`] before the initializer
-    /// receives it, as [`super::FixtureSuite::template`] does.
+    /// The initializer receives the same rebuilt URL as
+    /// [`super::FixtureSuite::template`] describes.
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
@@ -94,19 +94,18 @@ impl FixtureScope {
         F: FnOnce(String) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
     {
-        super::admin::admin_endpoint(self.harness.admin_database_url())?;
         let harness = self.harness.clone();
         let resources = self.resources.clone();
+        let admin_url = harness.admin_database_url().to_owned();
         produce(&self.resources, async move {
             let template = harness
                 .template(spec, move |url| async move {
+                    // Caller code receives a URL rebuilt from the harness's own
+                    // endpoint parse and recorded name, never the harness text.
+                    let url = super::endpoint::initializer_url(&admin_url, &url)?;
                     // Native template Drop can retain an initializing database. Turn
                     // initializer panic into its returned-error path so upstream
                     // awaits abort and preserves any independent abort failure.
-                    // Validate before caller code receives the URL, so neither an
-                    // ambient nor a declared `hostaddr` can send initializer logins
-                    // to a server other than the one the harness provisioned on.
-                    crate::connect_options(&url)?;
                     tokio::spawn(with_current_dispatch(async move { initializer(url).await }))
                         .await
                         .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
@@ -130,7 +129,6 @@ impl FixtureScope {
     /// all its pools registered. SQLx owns background minimum-connection
     /// maintenance; an eager `min_connections` pool may connect as soon as it exists.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<FixtureDatabase, FixtureError> {
-        super::admin::admin_endpoint(self.harness.admin_database_url())?;
         let harness = self.harness.clone();
         self.acquire(plan, async move { harness.empty_database().await })
             .await
@@ -143,7 +141,6 @@ impl FixtureScope {
         plan: &ConnectionPlan,
     ) -> Result<FixtureDatabase, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
-        super::admin::admin_endpoint(self.harness.admin_database_url())?;
         let template = self
             .resources
             .lock()
@@ -206,6 +203,7 @@ impl FixtureScope {
         index: usize,
         plan: &ConnectionPlan,
     ) -> Result<FixtureDatabase, FixtureError> {
+        let admin_url = self.harness.admin_database_url().to_owned();
         let (name, url) = {
             let resources = self
                 .resources
@@ -220,7 +218,7 @@ impl FixtureScope {
         // Resolution runs no caller code. A refusal registers its cause with no
         // pool constructed; the lease is already registered for cleanup.
         let resolved = plan
-            .resolve(&url, &name)
+            .resolve(&admin_url, &url, &name)
             .map_err(|error| self.pool_failed(index, error))?;
         // No await separates delivery from this registration: a waiter cancelled
         // later leaves every declared pool registered. Unlike connect().await,

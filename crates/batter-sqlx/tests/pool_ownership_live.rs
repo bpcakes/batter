@@ -16,6 +16,7 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
 };
 use std::{
+    str::FromStr,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -48,14 +49,14 @@ fn options() -> PgPoolOptions {
 }
 
 fn connection() -> PgConnectOptions {
-    batter_sqlx::connect_options(
+    PgConnectOptions::from_str(
         &std::env::var("DATABASE_URL").expect("explicit live runner requires DATABASE_URL"),
     )
     .expect("runner supplied a native PostgreSQL URL")
 }
 
 fn authentication_connections() -> (PgConnectOptions, PgConnectOptions) {
-    let accepted = batter_sqlx::connect_options(
+    let accepted = PgConnectOptions::from_str(
         &std::env::var("BATTER_SQLX_AUTH_ACCEPT_URL")
             .expect("live runner requires a password-authenticated PostgreSQL URL"),
     )
@@ -363,9 +364,7 @@ async fn cancelled_acquisition_keeps_pool_cleanup() -> Result {
     let published = observed.clone();
     let command = Command::new(operation(), cleanup_budget(), move |scope| {
         Box::pin(async move {
-            // The `host` setter does not clear an ambient PGHOSTADDR.
-            let target = batter_sqlx::setter_connect_options()
-                .expect("unset PGHOSTADDR for local listener tests")
+            let target = PgConnectOptions::new_without_pgpass()
                 .host("127.0.0.1")
                 .port(port)
                 .username("unused")

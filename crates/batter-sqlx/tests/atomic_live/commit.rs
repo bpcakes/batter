@@ -12,10 +12,7 @@ async fn commit_in_flight_cancellation_and_disconnect_are_uncertain() -> Result 
         )))
         .execute(&mut fixture.observer)
         .await?;
-        let mut blocker = sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(
-            &std::env::var("DATABASE_URL")?,
-        )?)
-        .await?;
+        let mut blocker = sqlx::PgConnection::connect(&std::env::var("DATABASE_URL")?).await?;
         let mut blocking = blocker.begin().await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {table} VALUES (1)"

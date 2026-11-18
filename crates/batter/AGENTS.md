@@ -19,15 +19,6 @@ Windows support and non-Unix fallbacks are out of scope.
   including the optional Axum, SQLx, Runlimit and outbound HTTP demonstrations.
 - `tests/native_transport_consumer.rs` executes the native Runlimit transport
   packages through facade paths and asserts their identity.
-- Clippy `disallowed-methods` (root, `runledger/` and `runlimit/`
-  `clippy.toml`) rejects the URL-taking SQLx constructors in every workspace
-  crate, resolving aliases. `tests/postgres_endpoint_boundary.rs` adds a text
-  scan of every workspace member and the standalone consumers for what Clippy
-  cannot express (`from_str`, typed `parse`, inferred `parse` on a line naming a
-  URL) and for the consumers' call forms, outside `batter_sqlx::connect_options`
-  and the native Runledger/Runlimit boundaries; its named exemptions are those
-  boundaries and TLS/TCP files. Add a detector fixture whenever a review finds
-  a form it missed.
 - `tests/panic_hook_ownership.rs` scans every workspace library's production
   sources for panic-hook installers, exempting only files that a `#[cfg(test)]`
   module loads and no production module does (derived in

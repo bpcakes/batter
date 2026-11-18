@@ -66,11 +66,15 @@ async fn completion_case(
     let task_id = error.id();
     let diagnostic = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let session = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let checkouts = if held {
         Some((diagnostic.acquire().await?, session.acquire().await?))
@@ -115,11 +119,15 @@ async fn successful_driver_with_blocked_admin_close(
 ) -> ProbeResult {
     let diagnostic = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let session = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let held = session.acquire().await?;
     let observer = SessionObserver::new(session.clone(), BOUND)?;

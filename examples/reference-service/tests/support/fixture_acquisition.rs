@@ -107,7 +107,9 @@ async fn cancelled(mode: Creation) -> ProbeResult {
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
     let observer = PgPoolOptions::new()
         .max_connections(2)
-        .connect_with(batter::sqlx::connect_options(&url)?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let (suite, template) = prepare_suite(harness.clone(), mode).await?;
     let before = inventory(&observer).await?;
@@ -232,7 +234,9 @@ async fn failed_template(panic_choice: FixtureFailure) -> ProbeResult {
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(&url)?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let (ready_sender, ready_receiver) = oneshot::channel();
     let (release_sender, release_receiver) = oneshot::channel();
@@ -314,7 +318,9 @@ pub async fn shared_admission() -> ProbeResult {
     let held = suite.empty(&plan).await?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();

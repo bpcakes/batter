@@ -42,8 +42,8 @@ async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Re
             .fetch_one(&mut fixture.admin).await?;
         // Open and warm all connections before the catalog barrier. INHERIT
         // changes pg_inherits/pg_attribute/pg_class, not pg_namespace.
-        let mut mutator = bounded(sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)).await??;
-        let mut blocker = bounded(sqlx::PgConnection::connect_with(&batter_sqlx::connect_options(&fixture.url)?)).await??;
+        let mut mutator = bounded(sqlx::PgConnection::connect(&fixture.url)).await??;
+        let mut blocker = bounded(sqlx::PgConnection::connect(&fixture.url)).await??;
         exec(&mut mutator, "SET statement_timeout = '3s'".into()).await?;
         for combined in [false, true] {
             exec(&mut mutator, format!("INSERT INTO {child} VALUES (1, '\\x01', true)")).await?;

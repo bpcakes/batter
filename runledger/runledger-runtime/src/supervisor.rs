@@ -576,7 +576,8 @@ mod tests {
         PgPoolOptions::new()
             // The disable-only tests never acquire this pool; this URL is only
             // a valid PgPool value for supervisor wiring assertions.
-            .connect_lazy_with(runledger_test_support::connect_options(UNUSED_LAZY_POOL_URL).expect("construct lazy pool"))
+            .connect_lazy(UNUSED_LAZY_POOL_URL)
+            .expect("construct lazy pool")
     }
 
     pub(super) fn test_config() -> JobsConfig {

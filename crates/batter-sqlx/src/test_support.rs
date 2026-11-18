@@ -28,13 +28,17 @@
 //! ```
 
 mod acquisition;
-mod admin;
+mod endpoint;
 mod plan;
 mod report;
 mod runner;
 mod sessions;
 mod verification;
 
+pub use endpoint::{
+    HarnessEndpointReason, UnsupportedHarnessEndpoint, harness_admin_connect_options,
+    harness_connect_options,
+};
 pub use plan::{ConnectionPlan, LeaseDatabaseMismatch, PlanDeclaration, PlannedPool, PoolKey};
 pub use sessions::{CleanupPhase, DatabaseProgress, SessionObserver};
 
@@ -211,11 +215,12 @@ impl FixtureSuite {
     /// deferred drain. Use [`FixtureScope::template`] inside [`Self::start`] for
     /// owned preparation and panic-to-abort handling. Neither path joins detached
     /// initializer operations or promises cleanup of initializer-owned live pools.
-    /// Before any harness work, both refuse a harness admin URL containing `#`
-    /// or failing [`crate::connect_options`] with [`FixtureError::Connect`] and
-    /// no cleanup; both also validate the derived URL before the initializer
-    /// receives it. `empty` and `from_template` apply the same admin check.
-    /// Initializers should build pools with [`crate::connect_options`].
+    /// Both pass the initializer a URL rebuilt from the harness's own parse of
+    /// its admin URL and the template's recorded name; it reads back as the same
+    /// endpoint in tokio-postgres and SQLx. If no such URL exists, or the
+    /// harness URL would select another database, the initializer is not called
+    /// and the harness aborts the template; see [`UnsupportedHarnessEndpoint`]
+    /// and [`LeaseDatabaseMismatch`].
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
@@ -225,15 +230,13 @@ impl FixtureSuite {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     {
-        admin::admin_endpoint(self.harness.admin_database_url())?;
+        let admin_url = self.harness.admin_database_url().to_owned();
         let template = self
             .harness
-            .template(spec, |url| async move {
-                // Validate before caller code receives the URL, so neither an
-                // ambient nor a declared `hostaddr` can send initializer logins
-                // to a server other than the one the harness provisioned on.
-                crate::connect_options(&url)?;
-                initializer(url).await
+            .template(spec, move |url| async move {
+                // Hand caller code a URL rebuilt from the harness's own endpoint
+                // parse and recorded name, never the harness URL text itself.
+                initializer(endpoint::initializer_url(&admin_url, &url)?).await
             })
             .await
             .map_err(FixtureError::Harness)?;
@@ -253,13 +256,12 @@ impl FixtureSuite {
     /// SQLx maintains minimum connections in the background.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
-        admin::admin_endpoint(self.harness.admin_database_url())?;
         let lease = self
             .harness
             .empty_database()
             .await
             .map_err(FixtureError::Harness)?;
-        DatabaseFixture::connect(lease, plan).await
+        DatabaseFixture::connect(self.harness.admin_database_url(), lease, plan).await
     }
 
     /// Low-level clone acquisition, validating capacity and retained template identity.
@@ -270,14 +272,13 @@ impl FixtureSuite {
         plan: &ConnectionPlan,
     ) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
-        admin::admin_endpoint(self.harness.admin_database_url())?;
         let template = self
             .templates
             .iter()
             .find(|retained| retained.database_name() == template.database_name())
             .ok_or(FixtureError::UnknownTemplate)?;
         let lease = template.database().await.map_err(FixtureError::Harness)?;
-        DatabaseFixture::connect(lease, plan).await
+        DatabaseFixture::connect(self.harness.admin_database_url(), lease, plan).await
     }
 
     /// Drain submissions accepted before this call. Call after producers finish.
@@ -312,22 +313,34 @@ pub struct DatabaseFixture {
 }
 
 impl DatabaseFixture {
-    async fn connect(lease: DatabaseLease, plan: &ConnectionPlan) -> Result<Self, FixtureError> {
+    async fn connect(
+        admin_url: &str,
+        lease: DatabaseLease,
+        plan: &ConnectionPlan,
+    ) -> Result<Self, FixtureError> {
         let mut fixture = Self {
             pools: Vec::new(),
             lease,
             pool_failures: Vec::new(),
             plan: plan.id(),
         };
-        if let Err(source) = fixture.open_pools(plan).await {
+        if let Err(source) = fixture.open_pools(admin_url, plan).await {
             let cleanup = fixture.dispose().await.err();
             return Err(FixtureError::Connect { source, cleanup });
         }
         Ok(fixture)
     }
 
-    async fn open_pools(&mut self, plan: &ConnectionPlan) -> Result<(), sqlx::Error> {
-        let resolved = plan.resolve(self.lease.database_url(), self.lease.database_name())?;
+    async fn open_pools(
+        &mut self,
+        admin_url: &str,
+        plan: &ConnectionPlan,
+    ) -> Result<(), sqlx::Error> {
+        let resolved = plan.resolve(
+            admin_url,
+            self.lease.database_url(),
+            self.lease.database_name(),
+        )?;
         // Every pool is owned here before the first await; dispose closes them all.
         let pools = plan::construct(resolved, &mut self.pools);
         plan::check(&pools).await

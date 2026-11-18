@@ -145,10 +145,9 @@ async fn assert_scan(pool: &DbPool, scope: JobReadScope, expected: &[u128]) {
 
 #[tokio::test]
 async fn compact_read_bounds_are_validated_before_database_access() {
-    let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-        runledger_test_support::connect_options("postgres://unused:unused@localhost:1/unused")
-            .expect("lazy pool"),
-    );
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@localhost/unused")
+        .expect("lazy pool");
     for limit in [0, -1, 1001, i64::MAX] {
         let mut request = filter(JobReadScope::Admin);
         request.limit = limit;

@@ -9,7 +9,7 @@ async fn terminated_earliest_fire_read_retains_read_and_rollback_errors() {
     let (pool, database) = setup_ephemeral_pool("earliest_fire_dual_failure", 3).await;
     let reader = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(database.connect_options().expect("fixture URL"))
+        .connect(database.url())
         .await
         .expect("reader pool");
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")

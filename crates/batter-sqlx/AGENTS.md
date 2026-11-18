@@ -24,13 +24,6 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
 - `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
   savepoint recovery and terminal completion evidence.
 - `src/profiled_pool.rs`: shared immutable profile and all three native pool hooks.
-- `src/endpoint.rs`: `connect_options`, `setter_connect_options`,
-  `AmbientHostAddress`, `NoncanonicalUrl` and `NoncanonicalReason`, the only
-  sanctioned URL-to-options path. It admits only the canonical URL subset that
-  SQLx, tokio-postgres and libpq read alike (see the README), so the authority
-  alone selects the server; do not widen it without checking all three
-  parsers. Fixture resolution and template initializers validate through it;
-  Clippy `disallowed-methods` and the facade endpoint scan enforce it.
 - `src/atomic_context.rs`: unprofiled/profile-owned runners retain native completion before
   operation-budget resolution; callers do not own acknowledgement publication.
 - `src/snapshot.rs`: owned REPEATABLE READ READ ONLY inspection boundary.
@@ -184,7 +177,11 @@ changing `src/test_support.rs`, `src/test_support/` or fixture tests. Keep that
 contract in the README rather than duplicating it here. Declared capacity, the
 lease-bound pool logins and the resolve/construct/check order live in
 `src/test_support/plan.rs`; never let a declaration select another server or
-database, and keep every pool registered before the first check. Session observation and
+database, and keep every pool registered before the first check.
+`src/test_support/endpoint.rs` reads the harness admin URL once with
+tokio-postgres (the harness's own parser) and maps that typed parse into SQLx
+options; never hand harness URL text to SQLx, and keep the round-trip check on
+rebuilt initializer URLs. Session observation and
 retry ownership live in `src/test_support/sessions.rs`; retained outcomes and
 redacted summaries live in `src/test_support/report.rs`. Reference composition
 and live failure controls belong to `examples/reference-service`, not the generic

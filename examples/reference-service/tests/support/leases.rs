@@ -2,12 +2,13 @@ use postgres_test_harness::PostgresHarness;
 use sqlx::PgPool;
 
 use super::{ProbeResult, harness, pool};
+use batter::sqlx::test_support::{harness_admin_connect_options, harness_connect_options};
 
 pub async fn probe() -> ProbeResult {
     let harness = harness().await?;
     assert!(harness.is_external());
     assert_eq!(harness.connection_limits().connections_per_database(), 8);
-    let admin = pool(harness.admin_database_url()).await?;
+    let admin = pool(harness_admin_connect_options(&harness)).await?;
     let body: ProbeResult = async {
         for mode in 0..4 {
             one_lease(&harness, &admin, mode).await?;
@@ -28,7 +29,7 @@ pub async fn probe() -> ProbeResult {
 async fn one_lease(harness: &PostgresHarness, admin: &PgPool, mode: u8) -> ProbeResult {
     let lease = harness.empty_database().await?;
     let name = lease.database_name().to_owned();
-    let application = pool(lease.database_url()).await;
+    let application = pool(harness_connect_options(harness, &name)).await;
     let body = match application {
         Ok(application) => {
             let result = observe_application(&application, admin, &name).await;

@@ -11,7 +11,7 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-use super::FixtureError;
+use super::{FixtureError, endpoint::HarnessEndpoint};
 
 // Plan identities only distinguish declarations; they carry no authority.
 static NEXT_PLAN: AtomicU64 = AtomicU64::new(1);
@@ -112,28 +112,23 @@ impl ConnectionPlan {
 
     /// Resolve every declared pool's native options for one lease. Pure: no
     /// pool is constructed, no connection is attempted and no caller code runs.
+    ///
+    /// The endpoint comes from the harness's own parse of its admin URL and the
+    /// database from the name the harness recorded, so the lease URL text is
+    /// never reparsed by SQLx; see [`super::harness_connect_options`].
     pub(super) fn resolve(
         &self,
+        admin_url: &str,
         lease_url: &str,
         lease_name: &str,
     ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
-        self.resolve_with(lease_url, lease_name, |name| std::env::var_os(name))
-    }
-
-    fn resolve_with(
-        &self,
-        lease_url: &str,
-        lease_name: &str,
-        environment: impl FnOnce(&str) -> Option<std::ffi::OsString>,
-    ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
-        // The harness provisioned on the URL host; an ambient `PGHOSTADDR`
-        // would send these pools' logins to another server.
-        let lease = crate::endpoint::connect_options_with(lease_url, environment)?;
-        // SQLx lets a `dbname` query parameter override the URL path, and the
-        // harness keeps the admin URL's query when it builds the lease URL.
-        if lease.get_database() != Some(lease_name) {
+        let endpoint = HarnessEndpoint::from_admin_url(admin_url)?;
+        // The harness keeps the admin URL's query, including a `dbname` that
+        // would override the path, when it builds the lease URL.
+        if !HarnessEndpoint::names_database(lease_url, lease_name) {
             return Err(sqlx::Error::Configuration(Box::new(LeaseDatabaseMismatch)));
         }
+        let lease = endpoint.options(lease_name)?;
         Ok(self
             .pools
             .iter()

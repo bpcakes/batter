@@ -42,12 +42,12 @@ fn password(options: &PgConnectOptions) -> Option<String> {
 
 #[test]
 fn lease_login_resolves_to_the_parsed_lease_url() {
-    let expected = crate::connect_options(LEASE).unwrap();
+    let expected: PgConnectOptions = LEASE.parse().unwrap();
     let resolved = plan(vec![
         PlannedPool::lease_login(one()),
         PlannedPool::lease_login(one()),
     ])
-    .resolve(LEASE, "pgh_probe_1")
+    .resolve(LEASE, LEASE, "pgh_probe_1")
     .unwrap();
     assert_eq!(resolved.len(), 2);
     for (_, options) in &resolved {
@@ -58,44 +58,8 @@ fn lease_login_resolves_to_the_parsed_lease_url() {
 }
 
 #[test]
-fn ambient_host_address_refuses_resolution_whatever_its_value() {
-    let declared = plan(vec![
-        PlannedPool::lease_login(one()),
-        PlannedPool::password_login(one(), "restricted", secret("restrictedsecret")),
-    ]);
-    for value in ["192.0.2.1", "", "not-an-address"] {
-        let mut asked = Vec::new();
-        let error = declared
-            .resolve_with(LEASE, "pgh_probe_1", |name| {
-                asked.push(name.to_owned());
-                Some(value.into())
-            })
-            .unwrap_err();
-        assert_eq!(asked, ["PGHOSTADDR"]);
-        assert!(
-            matches!(&error, sqlx::Error::Configuration(source) if source.is::<crate::AmbientHostAddress>())
-        );
-        assert!(!error.to_string().contains(value) || value.is_empty());
-    }
-    // A mismatched lease is not even parsed while the address is present.
-    let error = declared
-        .resolve_with("not a url", "pgh_probe_1", |_| Some("192.0.2.1".into()))
-        .unwrap_err();
-    assert!(
-        matches!(&error, sqlx::Error::Configuration(source) if source.is::<crate::AmbientHostAddress>())
-    );
-    assert_eq!(
-        declared
-            .resolve_with(LEASE, "pgh_probe_1", |_| None)
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-#[test]
 fn password_login_replaces_only_credentials() {
-    let expected = crate::connect_options(LEASE).unwrap();
+    let expected: PgConnectOptions = LEASE.parse().unwrap();
     let resolved = plan(vec![
         PlannedPool::lease_login(one()),
         PlannedPool::password_login(
@@ -104,7 +68,7 @@ fn password_login_replaces_only_credentials() {
             secret("loginsecret"),
         ),
     ])
-    .resolve(LEASE, "pgh_probe_1")
+    .resolve(LEASE, LEASE, "pgh_probe_1")
     .unwrap();
     let (pool, restricted) = &resolved[1];
     assert_eq!(pool.get_max_connections(), 3);
@@ -117,20 +81,25 @@ fn password_login_replaces_only_credentials() {
 
 #[test]
 fn socket_hosts_survive_a_password_login() {
-    // A canonical socket URL names its directory, encoded, and port in the authority.
-    {
-        let url = "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql:5432/pgh_probe_2";
-        let expected = crate::connect_options(url).unwrap();
-        assert!(expected.get_socket().is_some());
-        let resolved = plan(vec![PlannedPool::password_login(
-            one(),
-            "restricted",
-            secret("x1"),
-        )])
-        .resolve(url, "pgh_probe_2")
-        .unwrap();
-        assert_eq!(identity(&resolved[0].1), identity(&expected));
-    }
+    // A `host` parameter beside an authority host is a second candidate to
+    // the harness's tokio-postgres client, so it is refused, not resolved.
+    let ambiguous = "postgres://owner:ownersecret@localhost/pgh_probe_2?host=/var/run/postgresql";
+    assert!(
+        plan(vec![PlannedPool::lease_login(one())])
+            .resolve(ambiguous, ambiguous, "pgh_probe_2")
+            .is_err()
+    );
+    let url = "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2";
+    let expected: PgConnectOptions = url.parse().unwrap();
+    assert!(expected.get_socket().is_some());
+    let resolved = plan(vec![PlannedPool::password_login(
+        one(),
+        "restricted",
+        secret("x1"),
+    )])
+    .resolve(url, url, "pgh_probe_2")
+    .unwrap();
+    assert_eq!(identity(&resolved[0].1), identity(&expected));
 }
 
 #[test]
@@ -141,7 +110,7 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
         PlannedPool::password_login(one(), "restricted", secret("loginsecret")),
     ] {
         let error = plan(vec![pool])
-            .resolve(url, "pgh_probe_3")
+            .resolve(url, url, "pgh_probe_3")
             .expect_err("query parameter retargets the database");
         let sqlx::Error::Configuration(source) = &error else {
             panic!("configuration error required");
@@ -157,7 +126,7 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
 #[test]
 fn an_unparseable_lease_url_keeps_its_native_parse_error() {
     let error = plan(vec![PlannedPool::lease_login(one())])
-        .resolve("not a lease url", "pgh_probe_4")
+        .resolve("not a lease url", "not a lease url", "pgh_probe_4")
         .expect_err("unparseable URL");
     assert!(
         matches!(error, sqlx::Error::Configuration(source) if !source.is::<LeaseDatabaseMismatch>())
@@ -180,7 +149,7 @@ async fn every_pool_registers_before_the_first_connectivity_check() {
         PlannedPool::lease_login(quick()),
         PlannedPool::password_login(quick(), "restricted", secret("loginsecret")),
     ])
-    .resolve(&url, "pgh_probe_5")
+    .resolve(&url, &url, "pgh_probe_5")
     .unwrap();
     let mut registry = Vec::new();
     let pools = construct(resolved, &mut registry);
@@ -211,7 +180,7 @@ async fn keys_select_their_own_pool_and_never_another_plans() {
     assert_ne!(first.id(), second.id());
     // A clone is the same declaration, so its keys stay valid.
     assert_eq!(first.clone().id(), first.id());
-    let options = crate::connect_options(LEASE).unwrap();
+    let options: PgConnectOptions = LEASE.parse().unwrap();
     let pools: Vec<PgPool> = (0..2)
         .map(|_| one().connect_lazy_with(options.clone()))
         .collect();

@@ -10,8 +10,8 @@ use batter::{
     command::{Command, CommandFailure},
     operation::{OperationError, OperationOwner},
 };
-use sqlx::postgres::PgPoolOptions;
-use std::{error::Error, fmt, process::ExitCode, time::Duration};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use std::{error::Error, fmt, process::ExitCode, str::FromStr, time::Duration};
 
 enum ExampleError {
     Registration(RegistrationError),
@@ -65,12 +65,9 @@ async fn main() -> Result<ExitCode, BoxError> {
         eprintln!("DATABASE_URL must be valid Unicode");
         return Ok(ExitCode::FAILURE);
     };
-    let connect_options = match batter::sqlx::connect_options(database_url) {
-        Ok(options) => options,
-        Err(error) => {
-            eprintln!("{}", endpoint_refusal(&error));
-            return Ok(ExitCode::FAILURE);
-        }
+    let Ok(connect_options) = PgConnectOptions::from_str(database_url) else {
+        eprintln!("DATABASE_URL is not a valid PostgreSQL connection string");
+        return Ok(ExitCode::FAILURE);
     };
 
     let login = connect_options.get_username();
@@ -126,17 +123,4 @@ async fn main() -> Result<ExitCode, BoxError> {
             ExitCode::FAILURE
         }
     })
-}
-
-/// Operator guidance for a refused `DATABASE_URL`, without its contents.
-fn endpoint_refusal(error: &sqlx::Error) -> &'static str {
-    match error {
-        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::AmbientHostAddress>() => {
-            "unset PGHOSTADDR: SQLx would connect to it instead of DATABASE_URL's host"
-        }
-        sqlx::Error::Configuration(source) if source.is::<batter::sqlx::NoncanonicalUrl>() => {
-            "DATABASE_URL must be a postgres:// URI that selects its server in the authority"
-        }
-        _ => "DATABASE_URL is not a valid PostgreSQL connection string",
-    }
 }

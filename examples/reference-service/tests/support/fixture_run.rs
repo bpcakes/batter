@@ -62,12 +62,16 @@ where
     // quiescence. Neither borrows capacity from a closing application pool.
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let body_observer = observer.clone();
     let session_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(batter::sqlx::connect_options(harness.admin_database_url())?)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            &harness,
+        )?)
         .await?;
     let session_observer =
         SessionObserver::new(session_pool.clone(), std::time::Duration::from_secs(10))?;

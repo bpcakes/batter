@@ -99,9 +99,9 @@ fn interrupted_admitted_work_keeps_its_admission_evidence() {
 async fn closed_pool_failure_survives_checked_shutdown_with_and_without_cleanup_failure() {
     for cleanup_fails in [false, true] {
         // Closing a lazy pool makes acquisition fail without a server or timing race.
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(
-            batter::sqlx::connect_options("postgres://unused:unused@127.0.0.1:1/unused").unwrap(),
-        );
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+            .unwrap();
         pool.close().await;
         let mut supervisor = Supervisor::new(crate::budget().unwrap());
         supervisor

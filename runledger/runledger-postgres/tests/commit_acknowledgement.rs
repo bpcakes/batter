@@ -1,4 +1,5 @@
 use std::io;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -9,7 +10,7 @@ use runledger_postgres::jobs::{
 use runledger_postgres::{CommitUnconfirmed, Error};
 use runledger_test_support::{setup_ephemeral_pool, teardown_ephemeral_pool};
 use serde_json::json;
-use sqlx::postgres::{PgPoolOptions, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::types::Uuid;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -31,19 +32,11 @@ struct CommitAcknowledgementDropProxy {
 
 impl CommitAcknowledgementDropProxy {
     async fn connect(database_url: &str) -> Self {
-        let target_options = runledger_test_support::connect_options(database_url)
+        let target_options = PgConnectOptions::from_str(database_url)
             .expect("parse ephemeral PostgreSQL connection options")
             .ssl_mode(PgSslMode::Disable);
-        assert!(
-            target_options.get_socket().is_none() && !target_options.get_host().starts_with('/'),
-            "the commit acknowledgement proxy requires a TCP fixture; SQLx keeps a Unix socket that the proxy's host setter cannot clear"
-        );
-        // SQLx 0.9.1 keeps URL brackets on an IPv6 host; Tokio's lookup needs it bare.
-        let host = target_options.get_host();
         let target = (
-            host.trim_start_matches('[')
-                .trim_end_matches(']')
-                .to_owned(),
+            target_options.get_host().to_owned(),
             target_options.get_port(),
         );
         let listener = TcpListener::bind("127.0.0.1:0")

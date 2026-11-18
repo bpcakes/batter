@@ -429,10 +429,9 @@ async fn runledger_lock_wait_excludes_sqlx_holders_without_queueing_a_blocking_l
     raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_CUTOVER).await;
 
     // Hold the migration lock exactly as SQLx's own migrator does.
-    let mut holder =
-        sqlx::PgConnection::connect_with(&harness.database.connect_options().expect("fixture URL"))
-            .await
-            .expect("holder connection");
+    let mut holder = sqlx::PgConnection::connect(harness.database.url())
+        .await
+        .expect("holder connection");
     holder.lock().await.expect("SQLx migration lock");
 
     let database = profiled_database(&harness.pool).await;
@@ -596,10 +595,9 @@ async fn verification_reports_a_missing_index_as_in_progress_under_a_held_migrat
         .execute(&harness.pool)
         .await
         .expect("drop a declared index");
-    let mut holder =
-        sqlx::PgConnection::connect_with(&harness.database.connect_options().expect("fixture URL"))
-            .await
-            .expect("holder connection");
+    let mut holder = sqlx::PgConnection::connect(harness.database.url())
+        .await
+        .expect("holder connection");
     holder.lock().await.expect("SQLx migration lock");
 
     let error = verify_profiled(&harness.pool)

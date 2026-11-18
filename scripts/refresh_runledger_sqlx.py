@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Refresh native SQLx caches using an already migrated PostgreSQL 18 database."""
 import argparse
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from runledger_source import copy_source, run
 
@@ -41,48 +42,99 @@ def sync_files(source, destination, suffix):
             path.unlink()
 
 
-# Query parameters psql, SQLx and tokio-postgres all honour alike.
-URL_PARAMETERS = frozenset(("sslmode", "sslrootcert", "sslcert", "sslkey", "application_name",
-                            "options", "user", "password", "dbname"))
+# Query parameters both psql and SQLx accept, with the psql variable for each.
+CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
 
 
-def canonical_database_url(database):
-    """Whether psql, SQLx and tokio-postgres all read one server from the URL.
+def parse_database_url(database):
+    """Parse DATABASE_URL once; psql and SQLx then receive only these parts.
 
-    Mirrors `batter_sqlx::connect_options`: a postgres:// or postgresql:// URI
-    without '#' (already refused with its own message), a raw query '+' or a raw
-    '@' outside the userinfo; exactly one host and an explicit port in the
-    authority; a database in the path or dbname; and only allowlisted
-    parameters, each once. Every endpoint part is then explicit, so ambient or
-    Cargo-supplied PGHOST, PGPORT and PGDATABASE cannot select it. Keyword/value
-    connection strings are not URIs.
+    psql (libpq), SQLx CLI and the query macros read some URL text differently,
+    and libpq and SQLx both read ambient PG* settings. Rather than check that
+    every parser agrees, this script parses the URL once, gives psql the parts
+    as its own PG* variables in an environment without any other PG* setting,
+    and gives SQLx a URL rebuilt from the same parts. Only what both can
+    receive alike is accepted: one host or socket directory, an optional port,
+    one database, optional credentials, and the sslmode, application_name and
+    options parameters, each once.
     """
-    for scheme in ("postgres://", "postgresql://"):
-        if database.startswith(scheme):
-            rest = database[len(scheme):]
-            break
-    else:
-        return False
-    cut = min([index for index in (rest.find("/"), rest.find("?")) if index >= 0], default=len(rest))
-    authority, tail = rest[:cut], rest[cut:]
-    hosts = authority.rpartition("@")[2]
-    query = tail.partition("?")[2]
-    if ("+" in query or "@" in tail or authority.count("@") > 1
-            or "," in hosts or "%2c" in hosts.lower()):
-        return False
     try:
         parts = urlsplit(database)
         port = parts.port
-        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
     except ValueError:
         # The parser's message can quote the URL authority, credentials included.
         raise ValueError("DATABASE_URL is not a valid URL") from None
+    if parts.scheme not in ("postgres", "postgresql") or not database.startswith(parts.scheme + "://"):
+        raise ValueError("DATABASE_URL must be a postgres:// URI")
+    if "#" in database:
+        raise ValueError("DATABASE_URL must not contain '#'; encode it as %23")
+    host = parts.netloc.rpartition("@")[2]
+    if host.startswith("[") and "]" in host:
+        host = host[1:host.index("]")]
+    elif port is not None:
+        host = host.rpartition(":")[0]
+    host = unquote(host)
+    database_name = unquote(parts.path[1:])
     keys = [key for key, _ in pairs]
-    if not parts.hostname or port is None or len(set(keys)) != len(keys):
-        return False
-    if any(key not in URL_PARAMETERS for key in keys):
-        return False
-    return bool(parts.path.strip("/")) or "dbname" in keys
+    if not host or "," in host or not database_name or "/" in database_name:
+        raise ValueError("DATABASE_URL must name exactly one host and one database")
+    if any(key not in CARRIED_PARAMETERS for key in keys) or len(set(keys)) != len(keys):
+        raise ValueError("DATABASE_URL may declare only sslmode, application_name and options, each once")
+    return {
+        "host": host,
+        "port": port or 5432,
+        "database": database_name,
+        "user": unquote(parts.username) if parts.username is not None else None,
+        "password": unquote(parts.password) if parts.password is not None else None,
+        "parameters": dict(pairs),
+    }
+
+
+def psql_environment(parts):
+    """The environment psql connects with: no inherited PG* setting, the parsed parts."""
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("PG")}
+    environment.update(PGHOST=parts["host"], PGPORT=str(parts["port"]),
+                       PGDATABASE=parts["database"], PGCONNECT_TIMEOUT="10")
+    if parts["user"] is not None:
+        environment["PGUSER"] = parts["user"]
+    if parts["password"] is not None:
+        environment["PGPASSWORD"] = parts["password"]
+    for key, value in parts["parameters"].items():
+        environment[CARRIED_PARAMETERS[key]] = value
+    return environment
+
+
+def sqlx_database_url(parts):
+    """The URL SQLx receives, rebuilt from the parsed parts and fully encoded."""
+    def encode(text):
+        return quote(text, safe="")
+    host = parts["host"]
+    host = f"[{host}]" if ":" in host else encode(host)
+    userinfo = ""
+    if parts["user"] is not None or parts["password"] is not None:
+        userinfo = encode(parts["user"] or "")
+        if parts["password"] is not None:
+            userinfo += ":" + encode(parts["password"])
+        userinfo += "@"
+    url = f"postgres://{userinfo}{host}:{parts['port']}/{encode(parts['database'])}"
+    query = "&".join(f"{key}={encode(value)}" for key, value in parts["parameters"].items())
+    return url + ("?" + query if query else "")
+
+
+@contextmanager
+def sqlx_environment(database_url):
+    """Run SQLx CLI and Cargo children without inherited PG* settings and with
+    the rebuilt DATABASE_URL, restoring this process's environment afterwards."""
+    previous = dict(os.environ)
+    try:
+        for key in [key for key in os.environ if key.startswith("PG")]:
+            del os.environ[key]
+        os.environ["DATABASE_URL"] = database_url
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
 
 
 def cargo_compiler_endpoint(directory, database):
@@ -128,14 +180,13 @@ def refuse_cargo_endpoint(directory, database):
         raise ValueError("remove DATABASE_URL from Cargo [env]: the query macros would use another database than psql checked")
 
 
-def query(root, database, sql, purpose):
-    # psql expands URI connection strings through --dbname, not PGDATABASE.
-    # Do not expose its credential-bearing arguments or connection diagnostics.
+def query(root, parts, sql, purpose):
+    # The connection comes only from the parsed parts, never from an argument:
+    # credentials stay out of the process list and connection diagnostics.
     try:
         result = subprocess.run(
-            ["psql", "--dbname", database, "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c",
-             sql],
-            env={**os.environ, "PGCONNECT_TIMEOUT": "10"},
+            ["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", sql],
+            env=psql_environment(parts),
             cwd=root, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         raise RuntimeError(f"PostgreSQL {purpose} query could not complete; check psql and DATABASE_URL") from None
@@ -149,26 +200,18 @@ def refresh(root):
     database = os.environ.get("DATABASE_URL")
     if not database:
         raise ValueError("DATABASE_URL must identify an already migrated PostgreSQL 18 database")
-    if "PGHOSTADDR" in os.environ:
-        # psql and SQLx CLI 0.9.1 connect to it instead of DATABASE_URL's host.
-        raise ValueError("unset PGHOSTADDR: psql and SQLx CLI would connect to it instead of DATABASE_URL's host")
-    if "PGSERVICE" in os.environ:
-        # A libpq service file can supply hostaddr to psql alone; SQLx ignores it.
-        raise ValueError("unset PGSERVICE: psql would read a service file that SQLx ignores")
-    if "#" in database:
-        # Python and SQLx end the query at '#', libpq does not, so a parameter
-        # after it would reach psql alone. Encode a literal '#' as %23.
-        raise ValueError("encode '#' in DATABASE_URL as %23: psql and SQLx CLI read it differently")
-    if not canonical_database_url(database):
-        # psql, SQLx CLI and the query macros could otherwise read different
-        # servers from the same text (hostaddr, query host/port, service files).
-        raise ValueError("DATABASE_URL must be a postgres:// URI that names its server only in the authority, "
-                         "with an explicit host, port and database")
-    refuse_cargo_endpoint(root, database)
+    parts = parse_database_url(database)
+    with sqlx_environment(sqlx_database_url(parts)):
+        refresh_with(root, parts)
+
+
+def refresh_with(root, parts):
+    rebuilt = os.environ["DATABASE_URL"]
+    refuse_cargo_endpoint(root, rebuilt)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
         raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")
-    version = query(root, database, "SELECT current_setting('server_version_num')", "version")
+    version = query(root, parts, "SELECT current_setting('server_version_num')", "version")
     if not re.fullmatch(r"18\d{4}", version):
         raise ValueError("SQLx metadata refresh requires PostgreSQL 18")
     print("SQLx refresh server_version_num=" + version)
@@ -180,7 +223,7 @@ def refresh(root):
     expected = {str(int(path.name.split('_', 1)[0])) + ':true'
                 for path in (root / 'runledger/migrations').glob('*.sql')
                 if not path.name.endswith('.down.sql')}
-    applied = query(root, database,
+    applied = query(root, parts,
                     "SELECT version::text || ':' || success::text FROM _sqlx_migrations ORDER BY version",
                     "migration inventory").splitlines()
     if not expected or set(applied) != expected:
@@ -191,7 +234,7 @@ def refresh(root):
         native = candidate / "runledger"
         for package in MIGRATION_PACKAGES:
             sync_files(native / "migrations", native / package / "migrations", ".sql")
-        refuse_cargo_endpoint(candidate, database)
+        refuse_cargo_endpoint(candidate, rebuilt)
         run(["env", "CARGO_TARGET_DIR=" + str(target), "cargo", "sqlx", "prepare",
              "--workspace", "--no-dotenv", "--", "-p", "runledger-postgres", "-p", "runledger-runtime",
              "--all-targets", "--all-features", "--locked"], candidate)
