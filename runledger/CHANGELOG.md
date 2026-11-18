@@ -382,6 +382,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   `PGHOSTADDR` is set: SQLx 0.9.1, like libpq, would connect to that address
   instead of the container. An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`
   keeps libpq semantics, since SQLx is then the fixture's only client.
+  Owned-container admin URLs, and every `EphemeralDatabase::url()` derived from
+  them, now carry `?hostaddr=127.0.0.1`, which overrides a `PGHOSTADDR` set
+  after startup in SQLx and libpq. Derived database URLs now keep the admin
+  URL's query (dropping only `dbname`), so an external URL's TLS and session
+  settings carry over where they used to be dropped.
   `scripts/refresh_runledger_sqlx.py` now parses `DATABASE_URL` once, gives
   `psql` the parts as its own PG* variables (no credentials in its arguments)
   in an environment without any other PG* setting, gives SQLx CLI a URL

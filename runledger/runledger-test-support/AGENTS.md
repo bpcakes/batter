@@ -20,7 +20,10 @@ Batter foundation or facade.
 Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
 URL. When this fixture owns the container it refuses an ambient `PGHOSTADDR`
 before starting it, because SQLx 0.9.1, like libpq, would connect there
-instead. An external admin URL keeps libpq semantics; SQLx is its only client. Failed startup cleanup verifies the
+instead, and its admin URL pins `hostaddr=127.0.0.1` so later environment
+changes cannot redirect it. Derived database URLs keep the admin query except
+`dbname`; keep the pin there. An external admin URL keeps libpq semantics;
+SQLx is its only client. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.
 Keep Testcontainers and `astral-tokio-tar` absent from the dependency graph.

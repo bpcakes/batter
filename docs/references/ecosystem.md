@@ -90,7 +90,9 @@ contracts cite:
   gives SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a
   probe crate whether `[env]` changes `PGHOSTADDR` or `DATABASE_URL` for the
   query macros. Runledger's Docker fixture refuses `PGHOSTADDR` only when it
-  owns the container. The reference root already rejects every PG* variable.
+  owns the container, and pins `hostaddr=127.0.0.1` in that container's admin
+  URL and the database URLs derived from it, since a URL `hostaddr` overrides
+  the environment for a TCP host in both SQLx and libpq. The reference root already rejects every PG* variable.
 
   The invariant holds under three stated preconditions, which are not
   enforced: a host name resolves to the same server for the duration of a run
