@@ -44,8 +44,11 @@ def sync_files(source, destination, suffix):
 
 
 # Query parameters both psql and SQLx accept, with the psql variable for each.
-CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT",
-                      "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
+CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
+# The preparation build checks runledger-postgres and runledger-runtime, whose
+# SQLx dependency enables no TLS backend, so the query macros cannot connect
+# over TLS. Only modes that do not require it are accepted.
+UNVERIFIED_SSL_MODES = ("disable", "allow", "prefer")
 # Every variable SQLx 0.9.1 reads, plus libpq's documented connection
 # variables: the names the Cargo probe checks the query macros' compiler for.
 # The process environment itself is refused on any PG* name.
@@ -91,8 +94,8 @@ def parse_database_url(database):
     gives psql the parts as its own PG* variables, and gives SQLx a URL rebuilt
     from the same parts. Only what both can receive alike is accepted: one host
     or socket directory, an optional port, one database, optional credentials,
-    and the sslmode, sslrootcert, application_name and options parameters, each
-    once.
+    and the sslmode (disable, allow or prefer), application_name and options
+    parameters, each once.
     """
     try:
         parts = urlsplit(database)
@@ -164,7 +167,11 @@ def parse_database_url(database):
         pairs = [(key, value) for key, value in pairs if key != "hostaddr"]
         keys = [key for key, _ in pairs]
     if any(key not in CARRIED_PARAMETERS for key in keys):
-        raise ValueError("DATABASE_URL may declare only sslmode, sslrootcert, application_name and options, each once")
+        raise ValueError("DATABASE_URL may declare only sslmode, application_name and options, each once")
+    if dict(pairs).get("sslmode", "prefer") not in UNVERIFIED_SSL_MODES:
+        raise ValueError("DATABASE_URL's sslmode must be disable, allow or prefer: the query macros "
+                         "the refresh compiles have no TLS backend, so a TLS-required refresh is "
+                         "unsupported")
     return {
         "host": host,
         "port": port or 5432,

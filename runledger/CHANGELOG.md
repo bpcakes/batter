@@ -399,9 +399,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   `DATABASE_URL` for the query macros, reading them at run time in a process
   Cargo launches so no credential is compiled into the probe's artifacts. It assumes the host name resolves to one server for the
   whole refresh. It
-  accepts only one host, one database and the `sslmode`, `sslrootcert`,
-  `application_name` and `options` parameters; TLS requirements such as
-  `sslmode=verify-full` belong in the URL. No public item, schema or persisted data changes.
+  accepts only one host, one database and the `sslmode`, `application_name`
+  and `options` parameters. A TLS-required refresh is unsupported: the query
+  macros it compiles (`runledger-postgres`, `runledger-runtime`) enable no
+  SQLx TLS backend, so `sslmode` is limited to `disable`, `allow` or `prefer`
+  and `sslrootcert` is refused. No public item, schema or persisted data changes.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

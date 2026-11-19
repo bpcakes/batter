@@ -153,13 +153,13 @@ class RefreshTests(unittest.TestCase):
 
     def test_database_url_is_parsed_once_for_both_clients(self):
         parts = parse_database_url(
-            'postgresql://us%40er:p%40ss+w%20rd@[::1]:6543/my%20db?sslmode=require&application_name=a+b')
+            'postgresql://us%40er:p%40ss+w%20rd@[::1]:6543/my%20db?sslmode=prefer&application_name=a+b')
         self.assertEqual(parts, {'host': '::1', 'port': 6543, 'database': 'my db', 'user': 'us@er',
                                  'password': 'p@ss+w rd',
-                                 'parameters': {'sslmode': 'require', 'application_name': 'a b'}})
+                                 'parameters': {'sslmode': 'prefer', 'application_name': 'a b'}})
         rebuilt = sqlx_database_url(parts)
         self.assertEqual(rebuilt, 'postgres://us%40er:p%40ss%2Bw%20rd@[::1]:6543/my%20db'
-                                  '?sslmode=require&application_name=a%20b')
+                                  '?sslmode=prefer&application_name=a%20b')
         self.assertEqual(parse_database_url(rebuilt), parts)
         colon = parse_database_url('postgres://u@%2Ftmp%2Fpg%3A18/db')
         self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db')
@@ -168,11 +168,6 @@ class RefreshTests(unittest.TestCase):
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
-        # A CA travels in the URL: psql gets its variable, SQLx the parameter.
-        ca = parse_database_url('postgres://u@db.invalid/db?sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem')
-        self.assertEqual(psql_environment(ca)['PGSSLROOTCERT'], '/ca/root.pem')
-        self.assertEqual(psql_environment(ca)['PGSSLMODE'], 'verify-full')
-        self.assertTrue(sqlx_database_url(ca).endswith('?sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem'))
         # An empty port means the default, for a TCP host and a socket directory.
         self.assertEqual(parse_database_url('postgres://u@localhost:/db')['host'], 'localhost')
         empty_socket_port = parse_database_url('postgres://u@%2Ftmp:/db')
@@ -184,7 +179,7 @@ class RefreshTests(unittest.TestCase):
         with patch.dict(os.environ, PGHOSTADDR='192.0.2.1', PGSSLMODE='disable', HOME='/home/x'):
             environment = psql_environment(parts)
         self.assertNotIn('PGHOSTADDR', environment)
-        self.assertEqual(environment['PGSSLMODE'], 'require')
+        self.assertEqual(environment['PGSSLMODE'], 'prefer')
         self.assertEqual(environment['HOME'], '/home/x')
 
     def test_urls_that_cannot_reach_both_clients_alike_never_run_a_command(self):
@@ -193,12 +188,18 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db-a/postgres?hostaddr=192.0.2.1', 'hostaddr only as its own'),
                 ('postgresql://u:private-marker@db-a/postgres?host=db-b', 'may declare only'),
                 ('postgresql://u:private-marker@db-a/postgres?service=other', 'may declare only'),
-                ('postgresql://u:private-marker@db-a/postgres?sslmode=disable&sslmode=require', 'parameter once'),
+                ('postgresql://u:private-marker@db-a/postgres?sslmode=disable&sslmode=prefer', 'parameter once'),
                 ('postgresql://u:private-marker@db-a,db-b/postgres', 'exactly one host'),
                 # Python 3.9's urlsplit accepts this; newer versions reject it first.
                 ('postgresql://u:private-marker@[::1],db2:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@[::1]other:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@[v1.db]:6543/postgres', 'IPv6 literal|not a valid URL'),
+                # The preparation build has no SQLx TLS backend.
+                ('postgresql://u:private-marker@db-a/postgres?sslmode=verify-full', 'TLS-required refresh'),
+                ('postgresql://u:private-marker@db-a/postgres?sslmode=require', 'TLS-required refresh'),
+                ('postgresql://u:private-marker@db-a/postgres?sslrootcert=system', 'may declare only'),
+                ('postgresql://u:private-marker@db-a/postgres?sslmode=verify-full&sslrootcert=certs/root.pem',
+                 'may declare only'),
                 ('postgresql://u:private-marker@db-a:5432', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/one/two', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/postgres?application_name=a#b', "must not contain '#'"),
