@@ -133,6 +133,8 @@ fn rebuilt_urls_read_back_as_the_same_endpoint_in_both_parsers() {
         "postgres://owner@%2Ftmp%2Fpg%20socket:5432/postgres",
         "postgres://own%40er@db.invalid/postgres?sslmode=require",
         "postgres://owner@127.0.0.1:5432/postgres?options=-c%20search_path%3Dpublic",
+        // `~` is unreserved: both parsers keep it literally in a host name.
+        "postgres://owner@db~blue.invalid:5432/postgres",
     ] {
         let endpoint = endpoint(admin);
         let url = endpoint.url("pgh_template_1").expect(admin);

@@ -318,7 +318,8 @@ impl HarnessEndpoint {
             Address::Tcp(name)
                 if name
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b)) =>
+                    // URI unreserved characters, which both parsers keep literally.
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b)) =>
             {
                 name.clone()
             }

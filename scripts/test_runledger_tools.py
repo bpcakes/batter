@@ -198,6 +198,9 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@[::1],db2:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@[::1]other:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@[v1.db]:6543/postgres', 'IPv6 literal|not a valid URL'),
+                ('postgresql://u:private-marker@db-a/tenant\nblue', 'control characters'),
+                ('postgresql://u:private-marker@db-a/tenant\tblue', 'control characters'),
+                ('postgresql://u:private-marker@d\rb-a/postgres', 'control characters'),
                 # The preparation build has no SQLx TLS backend.
                 ('postgresql://u:private-marker@db-a/postgres?sslmode=verify-full', 'TLS-required refresh'),
                 ('postgresql://u:private-marker@db-a/postgres?sslmode=require', 'TLS-required refresh'),

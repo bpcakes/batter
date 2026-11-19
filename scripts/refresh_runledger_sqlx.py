@@ -97,6 +97,11 @@ def parse_database_url(database):
     and the sslmode (disable, allow or prefer), application_name and options
     parameters, each once.
     """
+    # urlsplit silently deletes raw tabs and line breaks anywhere in the URL,
+    # so /tenant<newline>blue would name tenantblue; refuse every raw control
+    # character instead. Percent-encoded ones are kept as supplied.
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in database):
+        raise ValueError("DATABASE_URL must percent-encode control characters such as tabs and line breaks")
     try:
         parts = urlsplit(database)
         port = parts.port
