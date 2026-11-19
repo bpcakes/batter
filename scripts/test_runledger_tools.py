@@ -243,6 +243,7 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@[::1%251]/postgres', 'zone'),
                 ('postgresql://u:private-marker@127.0.0.1/postgres?hostaddr=192.0.2.1', 'hostaddr'),
                 ('postgresql://u:private-marker@[::1]/postgres?hostaddr=::2', 'hostaddr'),
+                ('postgresql://u:private-marker@127.000.000.010/postgres?hostaddr=127.0.0.10', 'hostaddr'),
                 ('postgresql://u:private-marker@[::1]/postgres?hostaddr=::1%25lo0', 'hostaddr'),
                 ('postgresql://u:private-marker@db.example/postgres?hostaddr=db.example', 'hostaddr'),
                 ('postgresql://u:private-marker@127.0.0.1/postgres?hostaddr=127.0.0.1&hostaddr=127.0.0.1', 'once')):

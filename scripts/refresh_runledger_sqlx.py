@@ -64,8 +64,15 @@ def refuse_ambient_postgres_environment(environment):
 
 
 def is_ip_literal(host):
-    """An IPv4 or IPv6 address without a zone index."""
+    """An IPv4 or IPv6 address without a zone index or an ambiguous octet.
+
+    Python 3.9.0-3.9.4 read a leading-zero IPv4 octet as decimal, while the C
+    resolver can read it as octal (127.000.000.010 is 127.0.0.8), so such a
+    spelling is never treated as an address.
+    """
     if "%" in host:
+        return False
+    if ":" not in host and any(len(octet) > 1 and octet.startswith("0") for octet in host.split(".")):
         return False
     try:
         ipaddress.ip_address(host)

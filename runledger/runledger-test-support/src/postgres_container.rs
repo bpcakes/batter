@@ -53,9 +53,13 @@ pub(crate) async fn admin_database_url_and_derived_query() -> (&'static str, &'s
 }
 
 async fn shared_postgres() -> &'static SharedPostgres {
-    SHARED_POSTGRES
+    let shared = SHARED_POSTGRES
         .get_or_init(initialize_shared_postgres)
-        .await
+        .await;
+    // Checked on every use, not only at initialization: each create or drop
+    // opens a fresh SQLx pool, which would follow a PG* variable set since.
+    reject_ambient_postgres_environment(&ambient_postgres_variables());
+    shared
 }
 
 async fn initialize_shared_postgres() -> SharedPostgres {
@@ -115,12 +119,28 @@ async fn initialize_postgres(source: PostgresSource) -> SharedPostgres {
 async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
     reject_ambient_postgres_environment(&ambient_postgres_variables());
     crate::external_admin::reject_dropped_endpoint_parameters(&admin_url);
+    // The native test proxies connect without TLS; pin every external
+    // connection to that transport so all clients meet the same pg_hba rule,
+    // instead of SQLx's default prefer negotiating TLS where they cannot.
+    let admin_url = with_external_transport(&admin_url);
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
-        derived_query: "",
+        derived_query: EXTERNAL_DERIVED_QUERY,
         _container: None,
     }
+}
+
+/// The transport every external fixture connection uses: the native test
+/// proxies' plaintext. External fixtures cannot use TLS yet (`batter-c5ci.16`).
+const EXTERNAL_TRANSPORT: &str = "sslmode=disable";
+const EXTERNAL_DERIVED_QUERY: &str = "?sslmode=disable";
+
+/// The external admin URL with [`EXTERNAL_TRANSPORT`] appended; its only
+/// other query can be a redundant `hostaddr` pin.
+fn with_external_transport(admin_url: &str) -> String {
+    let separator = if admin_url.contains('?') { '&' } else { '?' };
+    format!("{admin_url}{separator}{EXTERNAL_TRANSPORT}")
 }
 
 async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
@@ -444,7 +464,7 @@ mod tests {
         for caller in callers {
             assert_eq!(
                 caller.await.expect("concurrent initializer caller joins"),
-                admin_url
+                with_external_transport(&admin_url)
             );
         }
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
@@ -472,7 +492,7 @@ mod tests {
         let initialized = cell
             .get_or_init(|| initialize_external_postgres(admin_url.clone()))
             .await;
-        assert_eq!(initialized.admin_url, admin_url);
+        assert_eq!(initialized.admin_url, with_external_transport(&admin_url));
     }
 
     #[tokio::test]
@@ -507,7 +527,7 @@ mod tests {
         let initialized = cell
             .get_or_init(|| initialize_external_postgres(admin_url.clone()))
             .await;
-        assert_eq!(initialized.admin_url, admin_url);
+        assert_eq!(initialized.admin_url, with_external_transport(&admin_url));
     }
 
     #[tokio::test]
@@ -521,7 +541,7 @@ mod tests {
 
         let cell = OnceCell::<SharedPostgres>::new();
         let initialized = cell.get_or_init(|| initialize_postgres(source)).await;
-        assert_eq!(initialized.admin_url, admin_url);
+        assert_eq!(initialized.admin_url, with_external_transport(&admin_url));
         assert!(initialized._container.is_none());
     }
 }

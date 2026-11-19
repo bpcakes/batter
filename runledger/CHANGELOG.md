@@ -382,9 +382,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   SQLx 0.9.1 fills unset settings from them, but native test proxies dial and
   forward to the URL host themselves. Put every setting in the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
   derived from them, now end in `?hostaddr=127.0.0.1`; consumers that append
-  their own query to such a URL must use `&`. An external
-  `RUNLEDGER_TEST_ADMIN_DATABASE_URL`'s derived URLs still carry no query, so
-  such a URL is now refused before provisioning unless it is a `postgres://`
+  their own query to such a URL must use `&`. Every connection to an external
+  `RUNLEDGER_TEST_ADMIN_DATABASE_URL` now uses `sslmode=disable`, the native
+  test proxies' transport, so its admin URL and every derived URL end in that
+  query; derived URLs carry nothing else from the admin URL, so such a URL is
+  now refused before provisioning unless it is a `postgres://`
   or `postgresql://` URL naming a DNS or IPv4 host and exactly one database
   path segment that the lease derivation reads the same way (an empty path
   made the lease name the host), or when it has any query other than a `hostaddr` repeating

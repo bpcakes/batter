@@ -160,7 +160,8 @@ depends on the mode:
 - An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`: credentials only, a DNS or
   IPv4 host and exactly one database path segment. Any query is refused,
   except a `hostaddr` repeating its own IP literal host, because lease URLs
-  carry no query; such a fixture cannot require TLS yet.
+  carry none of it. Every external connection uses `sslmode=disable`, the
+  native test proxies' transport; such a fixture cannot use TLS yet.
 - The metadata refresh: credentials, `application_name` and `options`. A
   TLS-required refresh is unsupported, and both clients connect without TLS.
 

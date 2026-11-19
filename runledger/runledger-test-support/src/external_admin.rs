@@ -11,13 +11,18 @@ use url::Url;
 /// Derived database URLs keep the authority and drop the query, so any query
 /// parameter reaches the admin pool but not the leases: `host` or `port`
 /// would move them to another endpoint, and `sslmode`, `sslrootcert` and the
-/// other TLS settings would leave them on SQLx's default `prefer`. Every key
+/// other TLS settings would apply to the admin connection alone (every
+/// external connection is pinned to `sslmode=disable`). Every key
 /// is therefore refused, except a `hostaddr` that repeats the authority's own
 /// IP literal, where dropping it changes nothing. Ambient `PG*` variables are
 /// refused separately in every fixture mode, so an external fixture has no
 /// way to require TLS for its leases. Query keys are read decoded, as SQLx
 /// reads them. An unparseable URL is left to SQLx's own error.
 pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str> {
+    // A decoded NUL would end the database name inside SQLx's startup packet.
+    if admin_url.to_ascii_lowercase().contains("%00") {
+        return Some("RUNLEDGER_TEST_ADMIN_DATABASE_URL must not encode a NUL character (%00)");
+    }
     let url = Url::parse(admin_url).ok()?;
     if !matches!(url.scheme(), "postgres" | "postgresql") {
         return Some(
@@ -28,10 +33,19 @@ pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str
     // fragment. That must be exactly the one database segment this parser
     // reads, or the split would land inside "://", keep extra segments, or
     // read a different path (a backslash, say) than SQLx connects to.
+    // The whole raw path is compared, because the parser removes dot segments
+    // (/old/../postgres reads as /postgres) that the lease text would keep.
     let database = url.path().strip_prefix('/').unwrap_or("");
     let location = admin_url.split(['?', '#']).next().unwrap_or(admin_url);
+    let raw_path = location
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|start| &rest[start..]));
     let raw_database = location.rsplit_once('/').map(|(_, database)| database);
-    if database.is_empty() || database.contains('/') || raw_database != Some(database) {
+    if database.is_empty()
+        || database.contains('/')
+        || raw_database != Some(database)
+        || raw_path != Some(&*format!("/{database}"))
+    {
         return Some(
             "give RUNLEDGER_TEST_ADMIN_DATABASE_URL exactly one database path segment: lease URLs \
              replace it",
@@ -53,7 +67,7 @@ pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str
         } else {
             return Some(
                 "remove the query from RUNLEDGER_TEST_ADMIN_DATABASE_URL (host and port belong in \
-                 its authority): derived database URLs carry no query, so their TLS and endpoint \
+                 its authority): derived database URLs carry none of it, so their TLS and endpoint \
                  settings would differ from the admin connection's",
             );
         }
@@ -72,7 +86,7 @@ pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str
             .all(|pin| pin.parse::<IpAddr>().ok() == authority);
     (!repeats_authority).then_some(
         "remove hostaddr from RUNLEDGER_TEST_ADMIN_DATABASE_URL or put that address in its \
-         host: derived database URLs carry no query, so they would reach the URL host",
+         host: derived database URLs carry none of the query, so they would reach the URL host",
     )
 }
 
@@ -115,6 +129,8 @@ mod tests {
             // Another scheme, or a path the raw split reads differently.
             "http://u@db.example:5432/postgres",
             "postgres://u@db.example:5432\\postgres",
+            "postgres://u@db.example:5432/old/../postgres",
+            "postgres://u@db.example:5432/tenant%00blue",
             // Transports the native proxies cannot dial.
             "postgres://u:p@%2Ftmp/postgres",
             "postgres://u:p@[::1]:5432/postgres?hostaddr=::1",

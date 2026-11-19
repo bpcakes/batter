@@ -23,8 +23,9 @@ database URL end in `?hostaddr=127.0.0.1`, which overrides an ambient
 `PGHOSTADDR` in SQLx 0.9.1 and libpq; derivation re-appends only that pin,
 never the admin query. Every fixture mode refuses any ambient `PG*` variable
 before provisioning: SQLx fills unset settings from them, but native test
-proxies dial and forward to the URL host themselves. An external admin URL's derived URLs carry
-no query, so every query key is refused except a `hostaddr` that repeats its
+proxies dial and forward to the URL host themselves, without TLS. Every
+external connection is therefore pinned to `sslmode=disable`, and derived URLs
+carry only that from the admin URL, so every query key is refused except a `hostaddr` that repeats its
 own IP literal host, and the URL must name a DNS or IPv4 host the native
 proxies can dial and exactly one database path segment (`src/external_admin.rs`); otherwise provisioning and
 leases could reach different servers or leases could silently lose TLS
