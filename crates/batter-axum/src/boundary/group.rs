@@ -278,7 +278,7 @@ impl GroupPolicy {
                 gate::run,
             ));
         }
-        router = router.layer(middleware::from_fn_with_state(request, request_admission));
+        router = router.layer(middleware::from_fn_with_state(request, group_admission));
         match browser {
             Some(browser) => router.layer(browser.response),
             None => router,
@@ -290,6 +290,21 @@ impl From<RequestPolicy> for GroupPolicy {
     fn from(request: RequestPolicy) -> Self {
         Self::new(request)
     }
+}
+
+/// Admit the request into this group, first discarding the gate and browser
+/// credential records it arrived with. A request built from another request's
+/// cloned extensions carries that request's records; the group gate and the
+/// browser gate run inside admission and record this group's own, and a group
+/// without one must leave none for `GateView` or `BrowserCredentials` to accept.
+async fn group_admission(
+    policy: State<RequestPolicy>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    request.extensions_mut().remove::<gate::GateRecord>();
+    request.extensions_mut().remove::<CredentialAccess>();
+    request_admission(policy, request, next).await
 }
 
 // The boundary's outermost `operational_http` already scopes the dispatch for

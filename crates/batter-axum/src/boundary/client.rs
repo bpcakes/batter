@@ -133,9 +133,14 @@ impl InProcessClient {
     /// boundary's future the same way a dropped connection does.
     ///
     /// Every call reuses the router prepared at construction. Request
-    /// extensions the caller inserts are kept; the boundary's own private
-    /// state is still installed by its own layers.
-    pub async fn request(&self, request: Request<Body>) -> Response {
+    /// public extensions the caller inserts are kept. Private observation,
+    /// correlation, admission and policy records copied from an earlier request
+    /// are discarded before the boundary installs this request's own state.
+    /// This does not reset Axum's native path parameters or nested-routing
+    /// metadata: reusing an entire routed extension map can still contaminate
+    /// destination path extraction and route telemetry.
+    pub async fn request(&self, mut request: Request<Body>) -> Response {
+        crate::correlation::clear_request_records(request.extensions_mut());
         match self.prepared.clone().oneshot(request).await {
             Ok(response) => response,
             Err(never) => match never {},

@@ -62,6 +62,15 @@ write, a signal before COMMIT is sent, including during the continuity check
 just before it, rolls the write back; once COMMIT is sent the signal waits and
 the real outcome is reported.
 
+After the command settles and closes its pool, runtime shutdown does not wait
+for blocking work. A stalled hostname lookup therefore cannot delay delivery
+of that report or process exit. This does not prove the lookup stopped before
+exit. An unwinding command also releases the runtime before resuming its panic;
+it claims no settlement and produces no ordinary report. The ordinary unit
+suite exercises panic exit and deadline, SIGINT and SIGTERM settlement
+with a blocked task on the command's runtime, inside an external Unix watchdog;
+it does not stall the operating system's resolver itself.
+
 Exit codes: 0 ok, 1 failed with nothing written (a database rejection of
 COMMIT included), 2 usage, 3 precondition not met (a revision mismatch, every
 store refusal, a coordinated flip and an unmet invariant), 4 commit outcome unknown (re-run with

@@ -2206,6 +2206,20 @@ through the group's renderer. A missing or wrong-typed view yields a sanitized
 500, and its completion records `gate_outcome="unmatched_view"`, so the wiring
 error is told apart from a server fault; the pairing of a view with its group's
 gate is not checked at compile time. Renderer metadata strips the private type-erased gate record for every `V`.
+Every group clears inherited gate and browser credential records before
+admission, so copying an admitted request's extensions into an in-process
+request cannot supply those decisions to an ungated group. A destination with
+its own policy records a new decision; public extensions survive. This does
+not restrict application layers that replace extensions after group admission.
+The in-process client also clears inherited observation and operational
+ownership before dispatch, so each copied request receives its own correlation
+and completion event, including unmatched-view evidence. Nested middleware
+within one dispatch still shares the one observer.
+This resets Batter-owned records only. Whole-map reuse retains Axum's native
+path parameters and nested-routing metadata, which can corrupt destination
+path extraction and the completion route. This pre-existing limitation on
+master is tracked separately as `batter-oj37`; native routing isolation is not
+claimed by the flags repair.
 An already captured value remains the request's value during later engagement;
 application interior mutability is not an immutable-snapshot guarantee.
 
@@ -3619,6 +3633,15 @@ on such a login remains the application's to configure.
 
 [ADR-016](adr/016-typed-flags-control-plane.md) records the design; every
 contract below is experimental.
+
+The operator command releases its runtime without waiting for blocking work
+after settling the command and closing its pool. A resolver task outliving a
+cancelled connection attempt cannot hold back its report or process exit. This
+does not establish that the task stopped before exit. An unwind releases the
+runtime before resuming the original panic, without claiming command settlement
+or returning a report. Watchdog-bounded tests exercise panic exit, timeout,
+SIGINT and SIGTERM with an outstanding blocking task on that
+runtime; they do not inject a real operating-system DNS stall.
 
 ### Declared mode
 

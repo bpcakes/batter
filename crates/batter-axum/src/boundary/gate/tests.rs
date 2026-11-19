@@ -60,6 +60,38 @@ async fn a_new_gate_replaces_an_inbound_record_instead_of_reusing_it() {
 }
 
 #[tokio::test]
+async fn an_ungated_group_discards_inbound_gate_and_credential_records() {
+    use crate::browser::{BrowserCredentials, CredentialAccess, record_credential_access};
+    use axum::{Router, middleware};
+    use tower::ServiceExt;
+    let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    let policy = RequestPolicy::new(
+        control.operation_admission(),
+        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+    );
+    // Exercise group entry directly: client entry must not clear these first.
+    let app = GroupPolicy::new(policy)
+        .apply(
+            Router::new()
+                .route("/view", get(|_: GateView<u64>| async {}))
+                .route("/cookies", get(|_: BrowserCredentials| async {})),
+        )
+        .layer(middleware::from_fn(crate::low_level::operational_http));
+    // The records another group's request would carry in cloned extensions.
+    for path in ["/view", "/cookies"] {
+        let mut request = Request::builder().uri(path).body(Body::empty()).unwrap();
+        request.extensions_mut().insert(GateRecord(Arc::new(7_u64)));
+        record_credential_access(request.extensions_mut(), CredentialAccess::Accepted);
+        assert_eq!(
+            app.clone().oneshot(request).await.unwrap().status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn disabled_has_a_permanent_sanitized_problem_contract() {
     use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
     assert_eq!(

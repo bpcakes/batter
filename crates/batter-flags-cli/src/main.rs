@@ -102,8 +102,18 @@ fn run(cli: Cli) -> Report {
         Ok(runtime) => runtime,
         Err(_) => return Report::new(name, Exit::Failed, "failed", "the runtime could not start"),
     };
-    let timeout = Duration::from_secs(cli.timeout);
-    runtime.block_on(async move {
+    run_prepared(runtime, plan, endpoint, Duration::from_secs(cli.timeout))
+}
+
+/// Own command execution through runtime shutdown, before the report escapes.
+fn run_prepared(
+    runtime: tokio::runtime::Runtime,
+    plan: plan::Plan,
+    endpoint: Endpoint,
+    timeout: Duration,
+) -> Report {
+    let name = plan.name();
+    on_runtime(runtime, async move {
         let deadline = Instant::now() + timeout;
         let Ok(timing) = StoreTiming::new(timeout, timeout, timeout, timeout) else {
             return Report::new(name, Exit::Usage, "usage", "the timeout is out of range");
@@ -138,6 +148,22 @@ fn run(cli: Cli) -> Report {
     })
 }
 
+/// Own execution and give the runtime up without waiting for blocking threads,
+/// on either a returned report or an unwind. Resume the original panic after
+/// releasing the runtime; it never becomes an ordinary command failure.
+///
+/// The normal report is already decided and the pool closed. On unwind no
+/// settlement is claimed. In either case Runtime::drop must not wait for a
+/// resolver thread before the executable can exit.
+fn on_runtime(runtime: tokio::runtime::Runtime, work: impl Future<Output = Report>) -> Report {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.block_on(work)));
+    runtime.shutdown_background();
+    match outcome {
+        Ok(report) => report,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 impl Exit {
     fn from_code(code: u8) -> Self {
         match code {
@@ -148,4 +174,13 @@ impl Exit {
             _ => Self::Failed,
         }
     }
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+#[test]
+fn child_fixture() {
+    tests::fixture();
 }

@@ -7,6 +7,32 @@ These source checks support the flags packages of
 version and date actually inspected; it is not a new dependency audit.
 Re-check the resolved dependency before changing an integration.
 
+## Command shutdown and inherited HTTP records, 2026-11-12
+
+`batter-jkw6.58` rechecked the installed sources selected by `Cargo.lock`.
+SQLx 0.9.0 `sqlx-core/src/net/socket/mod.rs:192` passes the host and port to
+Tokio's TCP connector. Tokio 1.54.1 `src/net/addr.rs:219` resolves a non-numeric
+host through `spawn_blocking`; `src/runtime/runtime.rs:39-50` records that
+runtime Drop waits indefinitely for blocking work, while
+`shutdown_background` (`:494-495`) uses a zero shutdown timeout. The command
+therefore releases its runtime explicitly after settlement. This is a check of
+the pinned primary source, not an executed stalled-DNS experiment.
+
+`http` 1.5.0 `src/extensions.rs:34` derives `Clone` for `Extensions`, and
+`:296-320` clones the stored values through its private type-erased trait.
+Private record types consequently remain copyable through the whole map.
+Axum group entry must clear inherited records; making an extractor non-Clone
+alone cannot enforce request-local policy.
+
+Axum 0.8.9 `src/routing/url_params.rs:6-46` keeps private URL parameters and
+appends them during nested routing; `src/extract/matched_path.rs:91-143` keeps
+private nested-path state and concatenates an earlier matched path. Its public
+`RawPathParams` extractor (`src/extract/path/mod.rs:503-524`) observes but does
+not remove the private parameters. `http` 1.5.0 exposes typed extension removal
+and whole-map clearing, with no public dynamic filter. These pinned-source
+checks explain the separately tracked whole-map routing limit (`batter-oj37`),
+not a supported native reset mechanism.
+
 ## Flags control plane, 2026-11-08
 
 `batter-jkw6.26` records the external semantics the flags packages of

@@ -14,6 +14,17 @@ contracts, capability facts and validation history.
   healthy later address is tried.
   Add opt-in connection, resolver-queue and response-buffer measurements.
 
+- `batter-axum` route-group admission discards the gate and browser
+  credential records a request arrived with. A request built from another
+  request's cloned extensions and sent through an in-process client to a group
+  without a gate, or without a browser policy, no longer lets `GateView` or
+  `BrowserCredentials` accept the earlier request's record; both reject with
+  their sanitized 500. In-process dispatch also discards inherited observation
+  and operational ownership, preserving fresh correlation and completion events.
+  The `batter-flags` operator command releases its
+  runtime without waiting for blocking work, so a stalled host-name lookup
+  cannot delay process exit after command settlement or an unwinding panic.
+
 - `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
   extracted where no gate of the route's group captured its value still
   rejects with the sanitized 500, and the completion event now carries

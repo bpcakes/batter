@@ -652,6 +652,13 @@ of the group whose gate captures them. The value itself need not implement `Clon
 interior mutability is still application policy; pass an immutable snapshot to
 freeze decisions. Requests captured before an engagement finish with their old
 value. Renderer metadata never carries the private gate record.
+Group entry discards inherited gate and browser credential records before
+admission. Copying a request's entire extension map into an in-process request
+therefore cannot supply a decision to a group without the corresponding policy;
+a configured destination policy records its own decision. Public extension
+values remain available to the destination's handlers. In-process client entry
+also clears old observation and operational ownership, so copied requests get
+fresh correlation and completion events.
 
 `Disabled` is a permanent HTTP failure with default status 503 and code
 `disabled`. The standard infrastructure renderer says `The service is temporarily

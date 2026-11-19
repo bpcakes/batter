@@ -10,6 +10,7 @@ mod operational {
     mod correlation;
     mod group_gate;
     mod group_gate_order;
+    mod group_records;
     mod lifecycle_readiness;
     mod probe_policy;
     mod readiness;

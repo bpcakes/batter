@@ -443,6 +443,58 @@ its tests and live evidence.
   extract `State<AppState>` beside it. The misuse stays a sanitized 500, now
   named `gate_outcome="unmatched_view"` in the completion event.
 
+The `.58` follow-up keeps that runtime rejection enforceable when a caller
+copies a complete HTTP extension map: every group clears the inherited gate
+and browser credential records at entry, before its own policies run. The
+private record types alone could not prevent whole-map cloning. No public
+API changes or new lifecycle states are needed; policy replacement belongs to
+the existing group boundary. Application layers that replace extensions after
+admission remain application-controlled. The operator root separately owns
+non-waiting runtime shutdown after command settlement and on unwind, without
+changing store outcomes or claiming its blocking resolver has stopped. Its
+exhaustive returned-report/unwind outcome releases the runtime before returning
+the report or resuming the original panic. The panic path claims no settlement.
+
+The real extension-copy regression also exposed a coupled observation gap:
+clearing only group decisions left the previous request's observation and
+operational markers, suppressing a new request's completion event. This is an
+adapter boundary gap, not an application protocol: `InProcessClient::request`
+owns a new dispatch, while nested middleware within it owns no new request.
+That entry now applies the same private-record filter as renderer metadata,
+preserving public extensions and internal single-observer nesting. The test
+requires fresh correlation and unmatched-view completion evidence alongside
+the rejection. No public signature or ownership cut is required.
+
+Further independent review found an upstream-owned limit to that filter:
+Axum 0.8.9 also stores private `UrlParams` and `MatchedNestedPath` in the same
+extension map. A reproduced `/source/{source_id}` to `/view/{id}` whole-map
+copy makes the destination's `Path<u64>` reject with 500 because it sees two
+parameters. Axum also appends the old `MatchedPath` to the destination's route.
+This is native nested-router behavior reused across two distinct requests,
+not a flags-policy failure. The Batter record filter does not solve it.
+
+The owning boundary is `InProcessClient::request`. `http` 1.5.0 exposes typed
+removal but no dynamic extension filtering; the private Axum types cannot be
+named by this adapter. Clearing all extensions would violate preservation of
+application metadata. Routing a synthetic request to manufacture replacement
+private records would depend on undocumented implementation details and is not
+a supported reset mechanism. An upstream reset API could preserve whole-map
+replay, but none exists in the pinned version.
+
+The bounded local alternative is to reject previously routed extension maps
+before dispatch, recognizing native path state through Axum's public
+`RawPathParams` extractor and routing metadata. Fresh requests would still
+accept arbitrary application extensions. This changes the accepted-input
+contract and needs a scope decision; a typed request builder would be a larger
+public API change. Comparison with current remote master `4e57ab62` confirmed
+the client implementation and Axum 0.8.9 are unchanged on the committed flags
+branch; the native-routing defect predates this work. The fetched
+`fix/http-forced-close-9wig` at `af5f5f7a` changes connection shutdown and body
+ownership, not this client or the native routing behavior. Native routing
+isolation is therefore split to `batter-oj37`, with the reproduction and frozen
+reports retained in `batter-jkw6.58`. No accepted-input contract change is made
+here and no complete native-routing reset is claimed.
+
 Public-surface check of the whole working tree, `.39` to `.57` together,
 against branch commit `04627167`, with the same walker and nightly toolchain and
 every feature enabled: `batter-core` 1,343 -> 1,368 entries (0 removed, 25

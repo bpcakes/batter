@@ -130,6 +130,8 @@ pub(crate) struct GateRecord(Arc<dyn Any + Send + Sync>);
 /// and the request's completion event carries `gate_outcome="unmatched_view"`
 /// so the wiring error is told apart from a server fault. Repeated extractions
 /// of the same type share the exact same value.
+/// Group entry discards inherited gate records, including those copied through
+/// a whole HTTP extension map; only this group's gate records a current value.
 ///
 /// The pairing of a handler's `GateView<V>` with a group gated by a
 /// `GroupGate` capturing `V` is not checked at compile time: it would need the

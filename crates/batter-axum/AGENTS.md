@@ -163,8 +163,12 @@ adapter-owned `ResponseConstructionBudget` witness.
 
 ## Invariants
 
-The adapter depends on the foundation, never the reverse. Use
-`batter_core::telemetry::with_current_dispatch` inside the async request entrypoint to
+The adapter depends on the foundation, never the reverse. Group entry clears inherited gate and browser credential records before
+admission, then record this group's decisions in its own layers; preserve public
+extensions. Copying the whole extension map cannot establish admission policy.
+In-process client entry also clears inherited observer and operational ownership;
+nested middleware within that dispatch still shares its one observer.
+Use `batter_core::telemetry::with_current_dispatch` inside the async request entrypoint to
 retain first-poll capture and protect full future destruction. Keep observation
 guards and nested spans inside the wrapped future. Do not duplicate its private
 pin/drop implementation. Nested Batter observers intentionally emit once; keep
