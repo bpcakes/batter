@@ -102,6 +102,10 @@ def parse_database_url(database):
     # character instead. Percent-encoded ones are kept as supplied.
     if any(ord(character) < 0x20 or ord(character) == 0x7F for character in database):
         raise ValueError("DATABASE_URL must percent-encode control characters such as tabs and line breaks")
+    # unquote leaves a malformed escape such as %2 in place, which the rebuild
+    # would then encode as %252; psql rejects the original. %25 stays valid.
+    if re.search(r"%(?![0-9A-Fa-f]{2})", database):
+        raise ValueError("DATABASE_URL contains a malformed percent escape")
     try:
         parts = urlsplit(database)
         port = parts.port
@@ -146,7 +150,9 @@ def parse_database_url(database):
     keys = [key for key, _ in pairs]
     # SQLx's URL parser drops "." and ".." path segments, so those names would
     # select no database there while psql checks one.
-    if (not host or "," in host or not database_name or "/" in database_name
+    # A raw "/" is a second path segment; an encoded %2F is part of the one
+    # database name, which both clients decode (SQLx percent-decodes the path).
+    if (not host or "," in host or not database_name or "/" in parts.path[1:]
             or database_name in (".", "..")):
         raise ValueError("DATABASE_URL must name exactly one host and one database")
     if port == 0:

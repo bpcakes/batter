@@ -168,6 +168,12 @@ class RefreshTests(unittest.TestCase):
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
+        # One encoded segment may name a database containing "/" or "%".
+        slashed = parse_database_url('postgres://u@db.invalid/sales%2Farchive')
+        self.assertEqual(slashed['database'], 'sales/archive')
+        self.assertEqual(psql_environment(slashed)['PGDATABASE'], 'sales/archive')
+        self.assertTrue(sqlx_database_url(slashed).endswith('/sales%2Farchive'))
+        self.assertEqual(parse_database_url('postgres://u@db.invalid/tenant%252')['database'], 'tenant%2')
         # An empty port means the default, for a TCP host and a socket directory.
         self.assertEqual(parse_database_url('postgres://u@localhost:/db')['host'], 'localhost')
         empty_socket_port = parse_database_url('postgres://u@%2Ftmp:/db')
@@ -199,6 +205,8 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@[::1]other:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@[v1.db]:6543/postgres', 'IPv6 literal|not a valid URL'),
                 ('postgresql://u:private-marker@db-a/tenant\nblue', 'control characters'),
+                ('postgresql://u:private-marker@db-a/tenant%2', 'malformed percent escape'),
+                ('postgresql://u:private-marker@db-a/tenant%zz', 'malformed percent escape'),
                 ('postgresql://u:private-marker@db-a/tenant\tblue', 'control characters'),
                 ('postgresql://u:private-marker@d\rb-a/postgres', 'control characters'),
                 # The preparation build has no SQLx TLS backend.
