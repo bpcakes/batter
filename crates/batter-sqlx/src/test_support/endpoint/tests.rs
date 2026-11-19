@@ -304,6 +304,19 @@ fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
     // on the same server and login is indistinguishable and accepted.
     let sibling = "postgres://owner:p@127.0.0.1:5432/pgh_other_harness_1?sslmode=disable";
     assert!(lease_options(admin, sibling, "pgh_other_harness_1", Environment::CLEAN).is_ok());
+    // Such a lease may still not name this harness's admin database: a second
+    // harness whose admin database another harness leased.
+    let own_admin = "postgres://owner:p@127.0.0.1:5432/postgres?sslmode=disable";
+    let error = lease_options(admin, own_admin, "postgres", Environment::CLEAN).unwrap_err();
+    let sqlx::Error::Configuration(source) = &error else {
+        panic!("configuration error expected");
+    };
+    assert_eq!(
+        source
+            .downcast_ref::<UnsupportedHarnessEndpoint>()
+            .map(UnsupportedHarnessEndpoint::reason),
+        Some(HarnessEndpointReason::LeaseNamesAdminDatabase)
+    );
 }
 
 #[test]
