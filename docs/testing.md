@@ -165,6 +165,9 @@ depends on the mode:
   native test proxies' transport; such a fixture cannot use TLS yet.
 - The metadata refresh: credentials, `application_name` and `options`. A
   TLS-required refresh is unsupported, and both clients connect without TLS.
+  Run live preparation with native rustc and no Cargo compiler wrappers.
+  Each compilation checks its effective endpoint before starting rustc.
+  Refresh requires evidence that both query libraries compiled.
 
 For the reference suite, set `POSTGRES_TEST_ADMIN_URL` and
 `POSTGRES_TEST_OBSERVER_URL` to two dedicated disposable local PostgreSQL 18

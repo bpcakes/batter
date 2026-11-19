@@ -15,6 +15,7 @@ from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
 from refresh_runledger_sqlx import (environment_bytes, refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
+from runledger_compiler_endpoint import guard_preparation
 from runledger_source import copy_source, run, validate_consumer
 
 
@@ -116,7 +117,7 @@ class RefreshTests(unittest.TestCase):
         for key in [key for key in os.environ if key.startswith('PG')]:
             del os.environ[key]
         # The real Cargo probe compiles a crate; its own test exercises it.
-        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=([], True))
+        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=([], True, "/test/rustc"))
         self.cargo_probe.start()
         self.addCleanup(patch.stopall)
 
@@ -342,7 +343,7 @@ class RefreshTests(unittest.TestCase):
                                 (([], False), 'remove DATABASE_URL')):
             with self.subTest(answer=answer), \
                  patch.dict(os.environ, DATABASE_URL=url), \
-                 patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=answer) as probe, \
+                 patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=(*answer, "/test/rustc")) as probe, \
                  patch('refresh_runledger_sqlx.run') as command, \
                  patch('refresh_runledger_sqlx.subprocess.run') as psql:
                 with self.assertRaisesRegex(ValueError, message):
@@ -368,21 +369,21 @@ class RefreshTests(unittest.TestCase):
                 'RUSTUP_HOME', str(Path.home() / '.rustup'))}
             with patch.dict(os.environ, environment):
                 os.environ.pop('PGHOSTADDR', None)
-                self.assertEqual(cargo_compiler_endpoint(root, url), ([], True))
+                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
                 (root / '.cargo/extra.toml').write_text(
                     '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\nPGDATA = "/x"\n')
                 (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
+                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
                 (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), ([], False))
+                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
                 # Forcing a would-be expected-value variable too changes nothing:
                 # the comparison is bound to the URL in the parent process.
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
                     'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), ([], False))
+                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
 
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
     def test_probe_observes_rustc_even_with_an_unusable_target_runner(self):
@@ -396,17 +397,65 @@ class RefreshTests(unittest.TestCase):
             # A target program cannot run, but a target compilation can.
             (root / '.cargo/config.toml').write_text(
                 "[target.'cfg(unix)']\nrunner = 'false'\n")
-            wrapper = root / 'compiler-wrapper'
-            wrapper.write_text('#!/bin/sh\nexport PGAPPNAME=compiler_only\nexec "$@"\n')
-            wrapper.chmod(0o700)
             scratch = root / 'probe'
             scratch.mkdir()
-            with patch.dict(os.environ, DATABASE_URL=url, RUSTC_WRAPPER=str(wrapper)), \
+            with patch.dict(os.environ, DATABASE_URL=url), \
                  patch('runledger_compiler_endpoint.tempfile.TemporaryDirectory', return_value=nullcontext(scratch)):
-                self.assertEqual(cargo_compiler_endpoint(root, url), (['PGAPPNAME'], True))
+                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
             for artifact in (scratch / 'target').rglob('*'):
                 if artifact.is_file():
                     self.assertFalse(b'compiler-private-marker' in artifact.read_bytes(), artifact.name)
+
+    @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
+    def test_prepare_checks_the_actual_query_crate_compiler_environment(self):
+        packages = ('runledger-postgres', 'runledger-runtime')
+        url = 'postgres://u:compiler-private-marker@db.invalid/database'
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, DATABASE_URL=url):
+            root = Path(directory)
+            shutil.copy(Path(__file__).resolve().parents[1] / 'rust-toolchain.toml', root)
+            (root / 'Cargo.toml').write_text(
+                '[workspace]\nmembers = ["runledger-postgres", "runledger-runtime"]\nresolver = "2"\n')
+            for package in packages:
+                crate = root / package
+                (crate / 'src').mkdir(parents=True)
+                (crate / 'Cargo.toml').write_text(
+                    f'[package]\nname = "{package}"\nversion = "0.0.0"\nedition = "2021"\n')
+                (crate / 'src/lib.rs').touch()
+            # A wrapper may alter only the real query package or return an
+            # artifact without invoking rustc. Either Cargo wrapper is opaque.
+            wrapper = root / 'package-wrapper'
+            wrapper.write_text('#!/bin/sh\nif [ "$CARGO_PKG_NAME" = runledger-postgres ]; then\n'
+                               'export PGHOSTADDR=192.0.2.1\nfi\nexec "$@"\n')
+            wrapper.chmod(0o700)
+            (root / '.cargo').mkdir()
+            config = root / '.cargo/config.toml'
+            for key in ('rustc-wrapper', 'rustc-workspace-wrapper'):
+                config.write_text(f'[build]\n{key} = "{wrapper}"\n')
+                with self.assertRaisesRegex(ValueError, 'wrapper-free'):
+                    cargo_compiler_endpoint(root, url)
+            config.unlink()
+            names, matches, compiler = cargo_compiler_endpoint(root, url)
+            self.assertEqual((names, matches), ([], True))
+            def check():
+                with guard_preparation(compiler, url, packages) as (launcher, config):
+                    return subprocess.run(['cargo', 'check', '--config', str(config),
+                                           '--workspace', '--offline'], cwd=root,
+                                          env=dict(os.environ, RUSTC=str(launcher)), capture_output=True,
+                                          check=True, timeout=60)
+
+            check()
+            with self.assertRaisesRegex(ValueError, 'every query package'):
+                with guard_preparation(compiler, url, packages):
+                    pass
+            # Cargo injects a package build script's rustc-env *after* applying
+            # its own configuration. Only the real compilation sees the setting.
+            for assignment in ('PGHOSTADDR=192.0.2.1', 'DATABASE_URL=another-private-marker'):
+                (root / packages[0] / 'build.rs').write_text(
+                    f'fn main() {{ println!("cargo:rustc-env={assignment}"); }}\n')
+                with self.assertRaises(subprocess.CalledProcessError) as failure:
+                    check()
+                self.assertIn(b'refusing a compiler endpoint', failure.exception.stderr)
+                self.assertNotIn(b'compiler-private-marker', failure.exception.stderr)
 
     def test_migration_states_reject_incomplete_or_different_schema(self):
         self.assertTrue(migrations_current('001/installed initial\n002/installed next'))
@@ -446,6 +495,7 @@ class RefreshTests(unittest.TestCase):
                     return ''
 
                 with patch.dict(os.environ, DATABASE_URL='postgresql://fixture/fixture'), \
+                     patch('refresh_runledger_sqlx.guard_preparation', return_value=nullcontext(('rustc', 'config'))), \
                      patch('refresh_runledger_sqlx.run', side_effect=command), \
                      patch('refresh_runledger_sqlx.query', side_effect=['180006', '1:true']):
                     with self.assertRaisesRegex(RuntimeError, 'deliberate'):

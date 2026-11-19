@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from urllib.parse import quote, unquote, urlsplit
 
-from runledger_compiler_endpoint import cargo_compiler_endpoint
+from runledger_compiler_endpoint import cargo_compiler_endpoint, guard_preparation
 from runledger_source import copy_source, run
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -309,12 +309,13 @@ def refuse_sqlx_config(directory):
 
 
 def refuse_cargo_endpoint(directory, database):
-    names, same_url = cargo_compiler_endpoint(directory, database)
+    names, same_url, compiler = cargo_compiler_endpoint(directory, database)
     if names:
         raise ValueError("remove " + ", ".join(names) + " from Cargo [env]: the query macros would read "
                          "settings psql did not check")
     if not same_url:
         raise ValueError("remove DATABASE_URL from Cargo [env]: the query macros would use another database than psql checked")
+    return compiler
 
 
 def query(root, parts, sql, purpose):
@@ -381,10 +382,12 @@ def refresh_with(root, parts):
         for package in MIGRATION_PACKAGES:
             sync_files(native / "migrations", native / package / "migrations", ".sql")
         refuse_sqlx_config(candidate)
-        refuse_cargo_endpoint(candidate, rebuilt)
-        run(["env", "CARGO_TARGET_DIR=" + str(target), "cargo", "sqlx", "prepare",
-             "--workspace", "--no-dotenv", "--", "-p", "runledger-postgres", "-p", "runledger-runtime",
-             "--all-targets", "--all-features", "--locked"], candidate)
+        compiler = refuse_cargo_endpoint(candidate, rebuilt)
+        with guard_preparation(compiler, rebuilt, CACHE_PACKAGES) as (launcher, config):
+            run(["env", "CARGO_TARGET_DIR=" + str(target), "RUSTC=" + str(launcher),
+                 "cargo", "--config", str(config), "sqlx", "prepare", "--workspace", "--no-dotenv",
+                 "--", "--config", str(config), "-p", "runledger-postgres", "-p", "runledger-runtime",
+                 "--all-targets", "--all-features", "--locked"], candidate)
         generated = candidate / ".sqlx"
         for destination in (native / ".sqlx", *(native / p / ".sqlx" for p in CACHE_PACKAGES)):
             sync_files(generated, destination, ".json")

@@ -97,9 +97,11 @@ contracts cite:
   used with a passwordless provisioning URL. The
   metadata refresh script refuses any ambient `PG*` variable, parses
   the Unix bytes of `DATABASE_URL` as UTF-8, gives `psql` the parts as its own PG* variables, gives
-  SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a probe
-  macro expanded during `cargo check` whether `[env]` sets any `PG*` variable or changes
-  `DATABASE_URL` for the query macros. Runledger's fixtures refuse any `PG*`
+  SQLx CLI a URL rebuilt from the same parts, and asks a Cargo build script for
+  the merged environment and selected compiler. Live preparation requires native
+  rustc without compiler wrappers. Each actual compiler invocation checks its
+  inherited settings immediately before executing rustc, including any
+  package-specific `cargo::rustc-env` values. Runledger's fixtures refuse any `PG*`
   variable in every mode, since their native test proxies dial the URL host
   themselves, and pin
   `hostaddr=127.0.0.1` in the owned container's admin
