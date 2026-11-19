@@ -223,6 +223,15 @@ def parse_database_url(database):
     }
 
 
+def environment_bytes(environment):
+    """The child environment as bytes: PG* values (the parsed URL fields) as
+    UTF-8, as the URL meant them, and inherited values round-tripped through
+    the filesystem encoding they were read with. Passing str would encode the
+    URL fields with the locale's encoding, which can fail or change them."""
+    return {os.fsencode(key): value.encode("utf-8") if key.startswith("PG") else os.fsencode(value)
+            for key, value in environment.items()}
+
+
 def psql_environment(parts):
     """The environment psql connects with: no inherited PG* setting, the parsed parts."""
     environment = {key: value for key, value in os.environ.items() if not key.startswith("PG")}
@@ -361,7 +370,7 @@ def query(root, parts, sql, purpose):
     try:
         result = subprocess.run(
             ["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", sql],
-            env=psql_environment(parts),
+            env=environment_bytes(psql_environment(parts)),
             cwd=root, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         raise RuntimeError(f"PostgreSQL {purpose} query could not complete; check psql and DATABASE_URL") from None

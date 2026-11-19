@@ -480,7 +480,9 @@ mod tests {
         let admin_url = postgres_18_admin_url("failed initialization retry").await;
         let cell = Arc::new(OnceCell::<SharedPostgres>::new());
         let failed_cell = Arc::clone(&cell);
-        let failed_url = admin_url.clone();
+        // A direct connection uses the pinned form; the raw URL is only the
+        // external configuration input.
+        let failed_url = with_external_transport(&admin_url);
         let failure = tokio::spawn(async move {
             failed_cell
                 .get_or_init(|| async move {
@@ -505,7 +507,7 @@ mod tests {
         let admin_url = postgres_18_admin_url("cancelled initialization retry").await;
         let cell = Arc::new(OnceCell::<SharedPostgres>::new());
         let cancelled_cell = Arc::clone(&cell);
-        let cancelled_url = admin_url.clone();
+        let cancelled_url = with_external_transport(&admin_url);
         let (started_tx, started_rx) = oneshot::channel();
         let initializer = tokio::spawn(async move {
             cancelled_cell

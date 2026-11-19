@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
-from refresh_runledger_sqlx import (refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
+from refresh_runledger_sqlx import (environment_bytes, refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
 from runledger_source import copy_source, run, validate_consumer
 
@@ -132,9 +132,9 @@ class RefreshTests(unittest.TestCase):
             # and no inherited PG* setting.
             argv, environment = psql.call_args.args[0], psql.call_args.kwargs['env']
             self.assertFalse(any('private-marker' in item for item in argv))
-            self.assertEqual((environment['PGHOST'], environment['PGPORT'], environment['PGDATABASE'],
-                              environment['PGUSER'], environment['PGPASSWORD']),
-                             ('localhost', '5432', 'database', 'user', 'private-marker'))
+            self.assertEqual((environment[b'PGHOST'], environment[b'PGPORT'], environment[b'PGDATABASE'],
+                              environment[b'PGUSER'], environment[b'PGPASSWORD']),
+                             (b'localhost', b'5432', b'database', b'user', b'private-marker'))
             # The caller's environment is restored after the SQLx children ran.
             self.assertEqual(os.environ['DATABASE_URL'], secret)
 
@@ -168,6 +168,10 @@ class RefreshTests(unittest.TestCase):
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db?sslmode=disable')
+        # psql receives URL fields as the UTF-8 bytes the URL encodes,
+        # independent of the locale's filesystem encoding.
+        cafe = parse_database_url('postgres://u@db.invalid/caf%C3%A9')
+        self.assertEqual(environment_bytes(psql_environment(cafe))[b'PGDATABASE'], b'caf\xc3\xa9')
         # A raw "+" in a query value is literal, as in libpq, and reaches SQLx
         # encoded; %20 is the space.
         plus = parse_database_url('postgres://u@db.invalid/db?options=-c%20search_path%3Dtenant+blue')
