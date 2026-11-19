@@ -164,6 +164,14 @@ pub enum PinRejection {
     /// [`BaseBuilder::settings_absent`]: crate::low_level::BaseBuilder::settings_absent
     #[error("the pin's variant requires settings this process lacks")]
     RequiresSettingsAbsent,
+    /// The flag is restricted with `only_in` to an environment class this
+    /// process runs outside, as [`BaseBuilder::outside_class`] records, so it
+    /// evaluates the flag at its code default, and the pin selects another
+    /// variant.
+    ///
+    /// [`BaseBuilder::outside_class`]: crate::low_level::BaseBuilder::outside_class
+    #[error("the pin's variant is restricted to another environment class")]
+    OutsideClass,
 }
 
 impl PinRejection {
@@ -180,6 +188,7 @@ impl PinRejection {
             Self::UnknownVariant => ErrorCause::PinUnknownVariant,
             Self::TestProvenance => ErrorCause::PinTestProvenance,
             Self::RequiresSettingsAbsent => ErrorCause::PinRequiresSettingsAbsent,
+            Self::OutsideClass => ErrorCause::PinOutsideClass,
         }
     }
 

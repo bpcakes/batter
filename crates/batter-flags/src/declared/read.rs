@@ -48,7 +48,7 @@ pub(super) fn read(
             });
         }
         (None, _) => None,
-        (Some(_), Applicability::NotOwned) => {
+        (Some(_), Applicability::NotOwned | Applicability::Pinner(_)) => {
             return Err(DeclaredError::NotOwned {
                 key: declared.key().clone(),
                 name,

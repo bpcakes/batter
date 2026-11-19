@@ -44,8 +44,11 @@ snapshot. `loaded.candidate(&validation_scope)` passes all rows to the existing
 core validator. Higher/extra-field encodings remain present so core can hold them.
 A standby returns `ErrorClass::Standby` without a candidate. `history` returns
 a `HistoryPage` of at most `HISTORY_PAGE` (1000) rows strictly after a version,
-in counter order, with `next: Continuation` saying whether more follow; `keys`,
-`key`, `history` and the fleet reads refuse a standby and an unusable schema in
+in counter order, with `next: Continuation` saying whether more follow; a keyed
+read has its own statement over the keyed index. `recent_history(&key)` returns
+a key's newest page in one read, with `earlier: Earlier` saying whether older
+events are retained, so reconciling an uncertain write never needs the whole
+history. `keys`, `key`, `history`, `recent_history` and the fleet reads refuse a standby and an unusable schema in
 their own snapshot. A `ProcessPresence` heartbeats and stops only through the
 store that issued it. Only explicit fields expose actor, reason and row images. Default diagnostics do not print them.
 
@@ -73,8 +76,11 @@ waiting on a prune's lock publishes its catalog again once the delete commits.
 `fleet` and `fleet_declaring(&key)` read every process row (or every declarer of
 a key) with the head in one read-only snapshot, each as `ProcessState::{Live,
 Silent, Stopped}`. `Fleet::rollout(version)` answers whether every Live process
-applied a version: only a control-plane publication at or above it counts, never
-a persisted file or the declared base.
+applied a version: only a control-plane publication at or above it, and no
+higher than the head read with it, counts, never a persisted file or the
+declared base. A report above the head applied a store this one is not, such as
+the store before a restore; the writer ignores one beyond the jump window, and
+that process refuses the write as a regression, so it is listed as behind.
 
 ## Ordering and failure contract (T-12)
 
@@ -178,8 +184,10 @@ prepared decision into an acknowledged public outcome.
 The initial migration and its SQLx ledger live in **`flags`**, independent of the
 host's `_sqlx_migrations`. No existing migration is edited. `MIGRATOR` is the
 strict, low-level bundle; `PooledStore::migrate` tolerates newer flags migrations
-while validating known checksums. `CREATE_FLAGS_SQL` supports vendoring and
-`REQUIRED_SCHEMA_REVISION` is 1. Migration checksums use SQLx's SHA-384.
+while validating known checksums. `CREATE_FLAGS_SQL` and the second migration,
+`INDEX_AUDIT_BY_FLAG_SQL` (the `(flag_name, version)` audit index keyed history
+reads walk), support vendoring. The index changes no column, so
+`REQUIRED_SCHEMA_REVISION` is still 1. Migration checksums use SQLx's SHA-384.
 Queries always qualify the flags schema; changing `search_path` cannot redirect
 writes. Rows are unscoped; environment is a heartbeat label.
 

@@ -69,6 +69,24 @@ contracts, capability facts and validation history.
   `scripts/check_flags_workspace.py` reads dependency declarations from
   `cargo metadata` and no longer needs Python 3.11's `tomllib`.
 
+- Flags (unreleased packages, so no migration applies; `batter-jkw6.61`):
+  a kind listed in a flag's `pinned_by` records the enabling variants whose
+  settings it lacks too (`BaseBuilder::settings_absent` accepts it), so its
+  replay refuses such a pin as `RequiresSettingsAbsent` without requiring the
+  settings at startup. A process outside an `only_in` flag's class refuses a
+  pin of any variant but the code default as `PinRejection::OutsideClass`
+  (`ErrorCause::PinOutsideClass`, `error.type` `general`); declared
+  resolution records the restriction with the new
+  `BaseBuilder::outside_class`. `Fleet::rollout` counts a report above the
+  head as behind, never as reached. A write numbers itself from the same
+  statement that reads its declarers, and a key with no row takes its shape
+  from a running declarer before a retained catalog. A second forward
+  migration adds the `(flag_name, version)` audit index
+  (`INDEX_AUDIT_BY_FLAG_SQL`; the required schema revision stays 1), keyed
+  history uses its own statement, and `PooledStore::recent_history` reads a
+  key's newest page. `batter-flags history <key>` shows that page and warns
+  when older events are retained; `--after <version>` walks them forward.
+
 - `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
   extracted where no gate of the route's group captured its value still
   rejects with the sanitized 500, and the completion event now carries

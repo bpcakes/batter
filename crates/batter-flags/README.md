@@ -136,7 +136,10 @@ default; defer such work. For pinned flags, match all `PinnedResolution` arms. `
 `PinRefusal` bound to that view and flag. A pinned variant whose required
 settings the replaying process recorded as absent is `Incompatible`
 (`RequiresSettingsAbsent`), because its prerequisite is missing there, even
-though the process started on its declared base. Consume the refusal with
+though the process started on its declared base; a kind that only replays the
+flag through `pinned_by` records those settings too, without being required to
+present them. A process outside an `only_in` flag's class serves it at its code
+default, so a pin of any other variant is `Incompatible` (`OutsideClass`). Consume the refusal with
 `fall_back_to_live()` only if application policy permits live fallback;
 otherwise return the application's deferral. Jobs without admission-time pins
 use `evaluate_unpinned` with `ScheduledJob` or `PayloadPredatesPinning`.

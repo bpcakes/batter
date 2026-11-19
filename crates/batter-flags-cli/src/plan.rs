@@ -1,6 +1,6 @@
 //! Turning parsed arguments into a validated plan, before any connection.
 
-use batter_flags_core::{FlagKey, SwitchState};
+use batter_flags_core::{FlagKey, SwitchState, Version};
 use batter_flags_postgres::{Archive, Request, Variant, Write, WritePolicy};
 
 use crate::commands::{Command, Guard, KillState, ListFilter};
@@ -9,7 +9,7 @@ use crate::commands::{Command, Guard, KillState, ListFilter};
 pub(crate) enum Plan {
     List(ListFilter),
     Show(FlagKey),
-    History(FlagKey),
+    History(FlagKey, HistoryWindow),
     Fleet {
         version: Option<u64>,
         flag: Option<FlagKey>,
@@ -21,6 +21,15 @@ pub(crate) enum Plan {
         policy: WritePolicy,
         after: AfterWrite,
     },
+}
+
+/// Which audited events a history read shows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HistoryWindow {
+    /// The newest page.
+    Newest,
+    /// The page after a version.
+    After(Version),
 }
 
 /// What a write reports beyond its outcome.
@@ -37,7 +46,7 @@ impl Plan {
         match self {
             Self::List(_) => "list",
             Self::Show(_) => "show",
-            Self::History(_) => "history",
+            Self::History(..) => "history",
             Self::Fleet { .. } => "fleet",
             Self::Write { name, .. } => name,
         }
@@ -60,7 +69,12 @@ pub(crate) fn plan(command: Command) -> Result<Plan, String> {
     Ok(match command {
         Command::List { filter } => Plan::List(filter),
         Command::Show { key: text } => Plan::Show(key(&text)?),
-        Command::History { key: text } => Plan::History(key(&text)?),
+        Command::History { key: text, after } => Plan::History(
+            key(&text)?,
+            after.map_or(HistoryWindow::Newest, |after| {
+                HistoryWindow::After(Version::new(after))
+            }),
+        ),
         Command::Fleet { version, flag } => Plan::Fleet {
             version,
             flag: flag.as_deref().map(key).transpose()?,

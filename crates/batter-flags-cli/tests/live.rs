@@ -236,20 +236,43 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
     db.close().await;
 }
 
-/// The store returns history a page at a time; the command reads every page,
-/// so the newest event, the one an uncertain write points to, is shown.
+/// The command reads one bounded page: by default the newest, so the event an
+/// uncertain write points to is shown however long the history is, with a
+/// warning that older events are retained; `--after` walks them forward.
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
-async fn history_reads_every_page_so_the_newest_event_is_shown() {
+async fn history_shows_the_newest_page_and_walks_older_events_forward() {
     let db = Database::seeded().await;
-    let count = batter_flags_postgres::HISTORY_PAGE + 1;
-    db.audited_writes("fast_path", count).await;
-    let history = db.cli_args(&["history", "fast_path"]);
-    assert_eq!(history.code, 0, "{history:?}");
-    let history = history.json();
-    let entries = history["data"].as_array().unwrap();
-    assert_eq!(entries.len(), count);
-    assert_eq!(entries.last().unwrap()["version"], db.head().await);
+    let page = batter_flags_postgres::HISTORY_PAGE;
+    db.audited_writes("fast_path", page + 1).await;
+    let head = db.head().await;
+    let newest = db.cli_args(&["history", "fast_path"]);
+    assert_eq!(newest.code, 0, "{newest:?}");
+    let newest = newest.json();
+    let entries = newest["data"].as_array().unwrap();
+    assert_eq!(entries.len(), page);
+    assert_eq!(entries.last().unwrap()["version"], head);
+    assert_eq!(
+        newest["warnings"][0],
+        "older events are retained; read them from the start with --after 0"
+    );
+
+    let first = db
+        .cli_args(&["history", "fast_path", "--after", "0"])
+        .json();
+    let entries = first["data"].as_array().unwrap();
+    assert_eq!(entries.len(), page);
+    let last = entries.last().unwrap()["version"].as_u64().unwrap();
+    assert_eq!(
+        first["warnings"][0],
+        format!("more events follow; re-run with --after {last}")
+    );
+    let rest = db
+        .cli_args(&["history", "fast_path", "--after", &last.to_string()])
+        .json();
+    assert_eq!(rest["data"].as_array().unwrap().len(), 1);
+    assert_eq!(rest["data"][0]["version"], head);
+    assert!(rest.get("warnings").is_none(), "{rest}");
     db.close().await;
 }
 

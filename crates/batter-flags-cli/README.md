@@ -23,7 +23,7 @@ a SQLSTATE at most.
 | `set <key> <variant>` | sets a release or mode flag |
 | `kill <switch> engage\|release` | engages or releases a kill switch |
 | `archive <key>`, `restore <key>` | archives or restores a key |
-| `history <key>` | the key's whole audited history, read page by page, so the newest event is always shown; each event carries `recorded_at`, the database's time of the write |
+| `history <key> [--after V]` | the key's newest page of audited events in one bounded read, so the event an uncertain write points to is always shown, with a warning when older events are retained; `--after V` reads the page after version V instead (`0` starts from the first event) and warns with the next `--after` when more follow; each event carries `recorded_at`, the database's time of the write |
 | `fleet [--version N \| --flag KEY]` | the fleet, a rollout check, or a key's declarers |
 
 Writes require `--actor`, `--reason` and exactly one of `--if-revision N` or

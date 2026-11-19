@@ -126,5 +126,58 @@ async fn a_history_longer_than_a_page_says_where_to_continue() {
         .unwrap();
     assert_eq!(exact.entries.len(), HISTORY_PAGE);
     assert_eq!(exact.next, Continuation::Complete);
+
+    // The newest page in one read, in commit order, saying older events are
+    // retained; a key with one event has nothing earlier.
+    let recent = f.store.recent_history(&busy, deadline()).await.unwrap();
+    assert_eq!(recent.entries.len(), HISTORY_PAGE);
+    assert_eq!(recent.entries[0].version, Version::new(2));
+    assert_eq!(
+        recent.entries.last().unwrap().version,
+        Version::new(writes as u64)
+    );
+    assert_eq!(recent.earlier, Earlier::Retained);
+    f.seed("quiet_flag", "mode", "toggle", "stopped").await;
+    assert!(matches!(
+        f.store
+            .write(set("quiet_flag", "on", None), deadline())
+            .await
+            .unwrap(),
+        WriteOutcome::WrittenUndeclared { .. }
+    ));
+    let single = f
+        .store
+        .recent_history(&key("quiet_flag"), deadline())
+        .await
+        .unwrap();
+    assert_eq!(single.entries.len(), 1);
+    assert_eq!(single.earlier, Earlier::None);
+
+    // A rarely changed key's reads walk the keyed index, in both
+    // directions, instead of every other key's events.
+    let indexdef: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'flags' AND indexname = 'flag_audit_by_flag'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexdef,
+        "CREATE INDEX flag_audit_by_flag ON flags.flag_audit USING btree (flag_name, version)"
+    );
+    sqlx::query("ANALYZE flags.flag_audit")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for keyed in [
+        "EXPLAIN SELECT version FROM flags.flag_audit WHERE flag_name = 'quiet_flag' AND version > 0 ORDER BY version LIMIT 1001",
+        "EXPLAIN SELECT version FROM flags.flag_audit WHERE flag_name = 'quiet_flag' ORDER BY version DESC LIMIT 1001",
+    ] {
+        let plan: Vec<String> = sqlx::query_scalar(keyed).fetch_all(&f.pool).await.unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("flag_audit_by_flag")),
+            "{plan:?}"
+        );
+    }
     f.close().await;
 }

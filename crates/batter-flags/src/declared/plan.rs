@@ -98,12 +98,15 @@ impl Plan {
     }
 
     /// The settings an enabling variant needs, for each flag this process
-    /// evaluates: present and non-empty where the flag resolved to that
-    /// variant, and recorded as absent for the control plane where it did not.
-    /// A flag this process does not evaluate owes nothing.
+    /// evaluates or replays pins of: present and non-empty where the flag
+    /// resolved to that variant, and recorded as absent where it did not, so
+    /// neither a published row nor a replayed pin serves the variant here. A
+    /// `pinned_by` kind presents no value, so it is never refused, only
+    /// recorded. A flag this process neither evaluates nor replays owes
+    /// nothing.
     fn required_settings(&mut self, source: &SettingsSource) -> Result<(), DeclaredError> {
         for record in &mut self.records {
-            if !record.applicability.evaluates() {
+            if !record.applicability.replays_pins() {
                 continue;
             }
             for (variant, names) in &record.requires {
@@ -195,6 +198,11 @@ impl Plan {
                 None => Ok(()),
             };
             recorded.map_err(DeclaredError::Inconsistent)?;
+            if record.applicability.outside_class() {
+                builder
+                    .outside_class(&record.key)
+                    .map_err(DeclaredError::Inconsistent)?;
+            }
             for variant in record.settings_absent {
                 builder
                     .settings_absent(&record.key, variant)

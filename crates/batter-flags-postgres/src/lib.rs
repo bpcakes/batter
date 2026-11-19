@@ -52,10 +52,10 @@ mod validate;
 mod write;
 pub use errors::{ErrorClass, StoreError, ValidationError};
 pub use fleet::{Fleet, FleetProcess, ProcessState, Rollout};
-pub use history::{Continuation, HISTORY_PAGE, HistoryEntry, HistoryPage};
+pub use history::{Continuation, Earlier, HISTORY_PAGE, HistoryEntry, HistoryPage, RecentHistory};
 pub use listing::{Coordination, Declaration, Expiry, KeyListing, Reference, Stored};
 pub use load::Loaded;
-pub use migrate::{CREATE_FLAGS_SQL, MIGRATOR, REQUIRED_SCHEMA_REVISION};
+pub use migrate::{CREATE_FLAGS_SQL, INDEX_AUDIT_BY_FLAG_SQL, MIGRATOR, REQUIRED_SCHEMA_REVISION};
 pub use outcome::{
     BlockingBuild, CommitUncertainty, Presence, Refusal, StoredState, UndeclaredBasis, WriteOutcome,
 };

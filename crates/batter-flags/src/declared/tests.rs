@@ -11,6 +11,8 @@ use batter_flags_core::{
 
 use super::resolve;
 
+mod pins;
+
 /// Resolves a catalog whose `new_checkout` needs a payment URL when it is on,
 /// from `pairs`, and returns the keys a control-plane row selecting `on` would
 /// be held for.

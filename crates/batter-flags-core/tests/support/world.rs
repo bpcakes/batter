@@ -112,6 +112,8 @@ pub enum Literal<'a> {
     Switch(&'a str, SwitchState),
     /// An enabling variant whose required settings were absent.
     SettingsAbsent(&'a str, &'a str),
+    /// An `only_in` flag restricted to a class the process runs outside.
+    OutsideClass(&'a str),
 }
 
 /// Resolves `catalog` for `kind` with the given settings.
@@ -133,6 +135,10 @@ pub fn base(catalog: Catalog, kind: &ProcessKind, literals: &[Literal<'_>]) -> B
             Literal::SettingsAbsent(name, variant) => {
                 let key = key(&builder, name);
                 builder.settings_absent(&key, variant).unwrap();
+            }
+            Literal::OutsideClass(name) => {
+                let key = key(&builder, name);
+                builder.outside_class(&key).unwrap();
             }
         }
     }

@@ -64,6 +64,11 @@ impl SnapshotView {
         if matches!(body.origin, PinOrigin::Test { .. }) && !is_test_view {
             return Replay::Rejected(PinRejection::TestProvenance);
         }
+        // The process that took the pin may have run in the flag's class, and
+        // this one outside it evaluates the flag at its code default only.
+        if self.base.outside_class[handle.index()] && entry.default_variant != Some(declared) {
+            return Replay::Rejected(PinRejection::OutsideClass);
+        }
         // The process that took the pin may have had settings this one lacks:
         // a row selecting the variant would be held here, so the pin is too.
         if self.base.settings_absent[handle.index()].contains(&declared) {

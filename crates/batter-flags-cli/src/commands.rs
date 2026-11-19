@@ -2,9 +2,9 @@
 
 use batter_flags_core::{FlagKey, Version};
 use batter_flags_postgres::{
-    Actor, Change, ChangeReason, Continuation, Coordination, Declaration, Expiry, FlipPolicy,
-    InvariantPolicy, KeyListing, PooledStore, Precondition, ProcessState, Reference,
-    SnapshotReport, StoreError, Stored, WritePolicy,
+    Actor, Change, ChangeReason, Continuation, Coordination, Declaration, Earlier, Expiry,
+    FlipPolicy, HistoryEntry, InvariantPolicy, KeyListing, PooledStore, Precondition, ProcessState,
+    Reference, SnapshotReport, StoreError, Stored, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
@@ -12,7 +12,7 @@ use tokio::{sync::oneshot, time::Instant};
 use crate::{
     exit::Exit,
     output::Report,
-    plan::{AfterWrite, Plan},
+    plan::{AfterWrite, HistoryWindow, Plan},
 };
 
 /// A command.
@@ -51,8 +51,14 @@ pub(crate) enum Command {
         #[command(flatten)]
         guard: Guard,
     },
-    /// Shows a key's audited history.
-    History { key: String },
+    /// Shows a key's newest audited events, or one page after a version.
+    History {
+        key: String,
+        /// Read the page of events after this version instead of the newest
+        /// page; `0` starts from the first event.
+        #[arg(long)]
+        after: Option<u64>,
+    },
     /// Shows the fleet, or whether a version reached every Live process.
     Fleet {
         #[arg(long, conflicts_with = "flag")]
@@ -196,7 +202,9 @@ async fn execute(
             })
             .await
         }
-        Plan::History(key) => interruptible(&mut interrupt, history(store, deadline, &key)).await,
+        Plan::History(key, window) => {
+            interruptible(&mut interrupt, history(store, deadline, &key, window)).await
+        }
         Plan::Fleet { version, flag } => {
             let fleet = crate::fleet::report::<Failure>(store, deadline, version, flag.as_ref());
             interruptible(&mut interrupt, fleet).await
@@ -241,41 +249,63 @@ async fn list(
     )
 }
 
-async fn history(store: &PooledStore, deadline: Instant, key: &FlagKey) -> Result<Report, Failure> {
-    // Every page, so the newest event, the one an uncertain write points the
-    // operator to, is always shown.
-    let mut events = Vec::new();
-    let mut after = Version::new(0);
-    loop {
-        let page = store.history(Some(key), after, deadline).await?;
-        events.extend(page.entries);
-        match page.next {
-            Continuation::Complete => break,
-            Continuation::After(last) => after = last,
+/// One bounded read: the newest page by default, so the event an uncertain
+/// write points the operator to is shown however long the history is, or the
+/// page after a version, to walk older events forward.
+async fn history(
+    store: &PooledStore,
+    deadline: Instant,
+    key: &FlagKey,
+    window: HistoryWindow,
+) -> Result<Report, Failure> {
+    let (events, more) = match window {
+        HistoryWindow::Newest => {
+            let recent = store.recent_history(key, deadline).await?;
+            let more = match recent.earlier {
+                Earlier::None => None,
+                Earlier::Retained => Some(
+                    "older events are retained; read them from the start with --after 0".to_owned(),
+                ),
+            };
+            (recent.entries, more)
         }
-    }
-    let entries: Vec<Value> = events
-        .iter()
-        .map(|entry| {
-            json!({
-                "version": entry.version.get(),
-                "operation": entry.operation,
-                "actor": entry.actor,
-                "reason": entry.reason,
-                "guard": entry.guard,
-                "recorded_by": entry.recorded_by,
-                "recorded_at": entry.recorded_at.to_rfc3339(),
-                "after": entry.after.value(),
-            })
-        })
-        .collect();
-    Ok(Report::new(
+        HistoryWindow::After(after) => {
+            let page = store.history(Some(key), after, deadline).await?;
+            let more = match page.next {
+                Continuation::Complete => None,
+                Continuation::After(last) => Some(format!(
+                    "more events follow; re-run with --after {}",
+                    last.get()
+                )),
+            };
+            (page.entries, more)
+        }
+    };
+    let entries: Vec<Value> = events.iter().map(event).collect();
+    let report = Report::new(
         "history",
         Exit::Ok,
         "ok",
         format!("{} entries", entries.len()),
     )
-    .with_data(Value::Array(entries)))
+    .with_data(Value::Array(entries));
+    Ok(match more {
+        Some(warning) => report.warn(warning),
+        None => report,
+    })
+}
+
+fn event(entry: &HistoryEntry) -> Value {
+    json!({
+        "version": entry.version.get(),
+        "operation": entry.operation,
+        "actor": entry.actor,
+        "reason": entry.reason,
+        "guard": entry.guard,
+        "recorded_by": entry.recorded_by,
+        "recorded_at": entry.recorded_at.to_rfc3339(),
+        "after": entry.after.value(),
+    })
 }
 
 impl Guard {

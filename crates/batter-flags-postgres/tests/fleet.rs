@@ -270,16 +270,29 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
     let mut file = process(&f.store, Build::Base, "c-file", 60, 600);
     let mut silent = process(&f.store, Build::Base, "d-silent", 1, 600);
     let mut stopped = process(&f.store, Build::Base, "e-stopped", 60, 600);
+    for process in [&mut early, &mut late, &mut file, &mut silent, &mut stopped] {
+        beat(process, SnapshotReport::NotLoaded).await;
+    }
+    stopped.stop(deadline()).await.unwrap();
+    // Five writes give the store a head every report below stays within.
+    for variant in ["on", "off", "on", "off", "on"] {
+        let written = f
+            .store
+            .write(set("fast_path", variant, None), deadline())
+            .await
+            .unwrap();
+        assert!(
+            matches!(written, WriteOutcome::Written { .. }),
+            "{written:?}"
+        );
+    }
     beat(&mut early, SnapshotReport::ControlPlane(v(3))).await;
     beat(&mut late, SnapshotReport::ControlPlane(v(5))).await;
-    beat(&mut file, SnapshotReport::PersistedFile(v(9))).await;
-    beat(&mut silent, SnapshotReport::NotLoaded).await;
-    beat(&mut stopped, SnapshotReport::NotLoaded).await;
-    stopped.stop(deadline()).await.unwrap();
+    beat(&mut file, SnapshotReport::PersistedFile(v(5))).await;
     until_silent().await;
 
     let fleet = f.store.fleet(deadline()).await.unwrap();
-    assert_eq!(fleet.head(), v(0));
+    assert_eq!(fleet.head(), v(5));
     assert_eq!(fleet.processes().len(), 5);
     assert_eq!(
         fleet.rollout(v(3)),
@@ -328,5 +341,90 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
             ProcessState::Stopped
         ]
     );
+    f.close().await;
+}
+
+/// A process reporting a version above the head applied a store this one is
+/// not, such as the store before a restore: a report beyond the jump window
+/// moves no write, the process refuses the write as a regression, and the
+/// rollout lists it as behind instead of counting it as reached.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_report_above_the_head_never_counts_as_reached() {
+    let f = Fixture::migrated().await;
+    let mut wild = process(&f.store, Build::Base, "a-wild", 60, 600);
+    let mut applied = process(&f.store, Build::Base, "b-applied", 60, 600);
+    beat(
+        &mut wild,
+        SnapshotReport::ControlPlane(Version::new(i64::MAX as u64)),
+    )
+    .await;
+    let WriteOutcome::Written { version, .. } = f
+        .store
+        .write(set("fast_path", "on", None), deadline())
+        .await
+        .unwrap()
+    else {
+        panic!("the write lands");
+    };
+    assert_eq!(version, Version::new(1), "a wild report moves no write");
+    beat(&mut applied, SnapshotReport::ControlPlane(version)).await;
+    let fleet = f.store.fleet(deadline()).await.unwrap();
+    assert_eq!(fleet.head(), version);
+    assert_eq!(
+        fleet.rollout(version),
+        Rollout::Pending {
+            reached: 1,
+            behind: vec![wild.process()]
+        }
+    );
+    f.close().await;
+}
+
+/// A key with no row takes its shape from a running declarer, not from the
+/// most recently referenced catalog: after a rollback that catalog can be a
+/// stopped build's, and its shape would be refused by the running one.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_new_row_takes_the_running_declarers_shape_over_a_stopped_builds() {
+    let f = Fixture::migrated().await;
+    let mut running = process(&f.store, Build::Base, "running", 60, 600);
+    let mut rolled_back = process(&f.store, Build::Extended, "rolled-back", 60, 600);
+    beat(&mut running, SnapshotReport::NotLoaded).await;
+    beat(&mut rolled_back, SnapshotReport::NotLoaded).await;
+    rolled_back.stop(deadline()).await.unwrap();
+    // The stopped build declared `fast_path` as a mode enum, and its catalog
+    // is the most recently referenced one.
+    for statement in [
+        "UPDATE flags.flag_catalog_entries SET kind = 'mode', value_type = 'enum' \
+         WHERE key = 'fast_path' AND manifest_digest = \
+         (SELECT manifest_digest FROM flags.flag_processes WHERE build = 'rolled-back')",
+        "UPDATE flags.flag_catalogs SET last_referenced_at = \
+         CASE WHEN manifest_digest = (SELECT manifest_digest FROM flags.flag_processes \
+         WHERE build = 'rolled-back') THEN clock_timestamp() ELSE clock_timestamp() - interval '1 hour' END",
+    ] {
+        sqlx::query(statement).execute(&f.pool).await.unwrap();
+    }
+    let written = f
+        .store
+        .write(set("fast_path", "on", None), deadline())
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            written,
+            WriteOutcome::Written {
+                live_declaring: 1,
+                ..
+            }
+        ),
+        "{written:?}"
+    );
+    let (kind, value_type): (String, String) =
+        sqlx::query_as("SELECT kind, value_type FROM flags.flag_state WHERE name = 'fast_path'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!((kind.as_str(), value_type.as_str()), ("release", "toggle"));
     f.close().await;
 }

@@ -9,6 +9,8 @@
 
 use std::{fmt, sync::Arc};
 
+mod requirements;
+
 use thiserror::Error;
 
 use crate::{
@@ -40,6 +42,9 @@ pub(crate) struct BaseInner {
     /// Per declaration, the variants whose required settings were absent or
     /// empty when the process resolved.
     pub(crate) settings_absent: Box<[Vec<&'static str>]>,
+    /// Per declaration, whether it is restricted to an environment class this
+    /// process runs outside.
+    pub(crate) outside_class: Box<[bool]>,
     pub(crate) revision: Revision,
     pub(crate) shared_revision: Revision,
     pub(crate) tally: ErrorTally,
@@ -270,6 +275,9 @@ pub enum BaseError {
     /// The flag declares no required settings for that variant.
     #[error("the flag declares no required settings for that variant")]
     NoRequiredSettings,
+    /// The flag is not restricted to an environment class.
+    #[error("the flag is not restricted to an environment class")]
+    NotRestricted,
 }
 
 /// Builds a [`Base`] from the settings a process resolved.
@@ -277,13 +285,16 @@ pub enum BaseError {
 /// The builder takes the catalog by value, so a catalog is consumed exactly
 /// once. Report each setting that was present with [`flag`](Self::flag) or
 /// [`switch`](Self::switch), and each enabling variant whose required settings
-/// were absent or empty with [`settings_absent`](Self::settings_absent); a
-/// declaration with no report resolved to its default.
+/// were absent or empty with [`settings_absent`](Self::settings_absent), and
+/// each `only_in` flag restricted to a class the process runs outside with
+/// [`outside_class`](Self::outside_class); a declaration with no report
+/// resolved to its default.
 pub struct BaseBuilder {
     catalog: Catalog,
     kind: ProcessKind,
     states: Vec<BaseState>,
     settings_absent: Vec<Vec<&'static str>>,
+    outside_class: Vec<bool>,
 }
 
 impl BaseBuilder {
@@ -305,11 +316,13 @@ impl BaseBuilder {
             })
             .collect();
         let settings_absent = vec![Vec::new(); catalog.entries.len()];
+        let outside_class = vec![false; catalog.entries.len()];
         Ok(Self {
             catalog,
             kind,
             states,
             settings_absent,
+            outside_class,
         })
     }
 
@@ -382,44 +395,6 @@ impl BaseBuilder {
         Ok(())
     }
 
-    /// Records that the settings an enabling `variant` requires were absent or
-    /// empty. A published entry that selects the variant is then held instead
-    /// of served.
-    ///
-    /// # Errors
-    ///
-    /// [`BaseError::UnknownKey`], [`BaseError::WrongKind`] for a kill switch,
-    /// [`BaseError::NotOwned`], [`BaseError::UndeclaredVariant`] and
-    /// [`BaseError::NoRequiredSettings`].
-    pub fn settings_absent(&mut self, key: &FlagKey, variant: &str) -> Result<(), BaseError> {
-        let index = self.locate(key)?;
-        let entry = &self.catalog.entries[index];
-        if entry.kind == Kind::Switch {
-            return Err(BaseError::WrongKind);
-        }
-        if !entry.owners.contains(&self.kind) {
-            return Err(BaseError::NotOwned);
-        }
-        let declared = entry
-            .variants
-            .iter()
-            .copied()
-            .find(|declared| *declared == variant)
-            .ok_or(BaseError::UndeclaredVariant)?;
-        if !entry
-            .requires_settings
-            .iter()
-            .any(|required| required.variant == declared)
-        {
-            return Err(BaseError::NoRequiredSettings);
-        }
-        let absent = &mut self.settings_absent[index];
-        if !absent.contains(&declared) {
-            absent.push(declared);
-        }
-        Ok(())
-    }
-
     /// Finishes the base and computes its revisions.
     pub fn finish(self) -> Base {
         let (mut all, mut shared) = (Vec::new(), Vec::new());
@@ -442,6 +417,7 @@ impl BaseBuilder {
                 kind: self.kind,
                 states: self.states.into_boxed_slice(),
                 settings_absent: self.settings_absent.into_boxed_slice(),
+                outside_class: self.outside_class.into_boxed_slice(),
                 revision,
                 shared_revision,
                 tally: ErrorTally::default(),

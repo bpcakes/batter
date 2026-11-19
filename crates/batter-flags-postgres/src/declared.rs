@@ -4,9 +4,9 @@
 //! Heartbeats do not take the counter lock, so under READ COMMITTED each
 //! statement of a write sees its own snapshot: a build that publishes between
 //! two reads could be judged by one and missed by the other. One statement
-//! sees one snapshot and one `statement_timestamp()`, so the flip policy, the
-//! decoding and archive gates, the invariant judgement and the declarer count
-//! all judge the same fleet.
+//! sees one snapshot and one `statement_timestamp()`, so the version the write
+//! is numbered with, the flip policy, the decoding and archive gates, the
+//! invariant judgement and the declarer count all judge the same fleet.
 
 use crate::{BlockingBuild, ErrorClass, Presence, StoreError, state::Shape};
 use batter_sqlx::PgScopedSql;
@@ -37,6 +37,10 @@ pub(crate) struct Declarer {
     pub(crate) variants: Vec<String>,
 }
 impl Declarer {
+    pub(crate) fn shape(&self) -> Result<Shape, StoreError> {
+        Shape::from_tags(&self.kind, &self.value_type)
+    }
+
     pub(crate) fn blocking(&self) -> BlockingBuild {
         BlockingBuild {
             build: self.build.clone(),
@@ -52,6 +56,9 @@ pub(crate) enum Process {
 }
 
 pub(crate) struct Declared {
+    /// The highest version a Live control-plane process reports above the
+    /// head and inside the jump window, fleet-wide.
+    pub(crate) ahead: Option<i64>,
     /// One per catalog, the most recently referenced first.
     pub(crate) declarations: Vec<Declaration>,
     /// Every declaring process row, by build, then process.
@@ -68,12 +75,34 @@ impl Declared {
         })
     }
 
-    pub(crate) async fn read(sql: &mut PgScopedSql<'_>, key: &str) -> Result<Self, StoreError> {
-        // One row per catalog entry and declaring process, or one with no
-        // process; the manifest rides on the first row of a catalog only when
-        // a process that has not stopped runs it.
+    /// The running declarers' shape for the key, a Live one's first; `None`
+    /// when no process that has not stopped declares it.
+    pub(crate) fn running_shape(&self) -> Option<Result<Shape, StoreError>> {
+        self.active()
+            .min_by_key(|declarer| declarer.presence != Presence::Live)
+            .map(Declarer::shape)
+    }
+
+    /// Reads the key's declarations, with the fleet's highest report above
+    /// `head` inside the jump window.
+    pub(crate) async fn read(
+        sql: &mut PgScopedSql<'_>,
+        key: &str,
+        head: i64,
+    ) -> Result<Self, StoreError> {
+        // The fleet row always exists; beside it, one row per catalog entry
+        // and declaring process, or one with no process. The manifest rides on
+        // the first row of a catalog only when a process that has not stopped
+        // runs it.
         let rows = sqlx::query(
-            "SELECT e.manifest_digest, e.kind, e.value_type, e.only_in IS NOT NULL AS restricted, \
+            "WITH fleet AS ( \
+                SELECT max(snapshot_version) AS ahead FROM flags.flag_processes \
+                WHERE stopped_at IS NULL AND expires_at > statement_timestamp() \
+                    AND snapshot_source = 'control_plane' AND snapshot_version > $2 \
+                    AND snapshot_version - $2 < $3 \
+             ), declared AS ( \
+             SELECT e.manifest_digest, c.last_referenced_at, e.kind, e.value_type, \
+                e.only_in IS NOT NULL AS restricted, \
                 e.flip_discipline = 'coordinated' AS coordinated, e.variants, \
                 p.process_id IS NOT NULL AS declaring, p.build, p.row_encoding, \
                 row_number() OVER (ORDER BY p.build, p.process_id) AS process_order, \
@@ -87,17 +116,25 @@ impl Declared {
              LEFT JOIN flags.flag_processes p ON p.manifest_digest = e.manifest_digest \
              WHERE e.key = $1 \
              WINDOW catalog AS (PARTITION BY e.manifest_digest) \
-             ORDER BY c.last_referenced_at DESC, e.manifest_digest",
+             ) \
+             SELECT fleet.ahead, d.* FROM fleet LEFT JOIN declared d ON true \
+             ORDER BY d.last_referenced_at DESC, d.manifest_digest",
         )
         .bind(key)
+        .bind(head)
+        .bind(crate::MAX_VERSION_JUMP)
         .fetch_all(sql.executor())
         .await?;
         let mut declarations = Vec::new();
         let mut processes = Vec::new();
         let mut manifests = Vec::new();
         let mut catalog: Option<Vec<u8>> = None;
+        let mut ahead = None;
         for row in rows {
-            let digest: Vec<u8> = row.try_get("manifest_digest")?;
+            ahead = row.try_get("ahead")?;
+            let Some(digest) = row.try_get::<Option<Vec<u8>>, _>("manifest_digest")? else {
+                continue;
+            };
             if catalog.as_ref() != Some(&digest) {
                 declarations.push(Declaration {
                     kind: row.try_get("kind")?,
@@ -139,6 +176,7 @@ impl Declared {
         processes.sort_by_key(|(order, _)| *order);
         manifests.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(Self {
+            ahead,
             declarations,
             processes: processes.into_iter().map(|(_, p)| p).collect(),
             manifests: manifests.into_iter().map(|(_, m)| m).collect(),

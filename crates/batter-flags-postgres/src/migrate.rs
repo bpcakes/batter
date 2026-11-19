@@ -13,6 +13,11 @@ use tokio::time::Instant;
 
 /// First immutable flags migration, for application vendoring.
 pub const CREATE_FLAGS_SQL: &str = include_str!("../migrations/20261106000000_create_flags.sql");
+/// Second immutable flags migration, for application vendoring: the index
+/// keyed history reads use. It changes no column, so it needs no schema
+/// revision.
+pub const INDEX_AUDIT_BY_FLAG_SQL: &str =
+    include_str!("../migrations/20261119000000_index_audit_by_flag.sql");
 /// Schema revision needed by this store. Newer revisions remain readable.
 pub const REQUIRED_SCHEMA_REVISION: i32 = 1;
 /// Strict migrator using only `flags._sqlx_migrations`, independent of host ledgers.

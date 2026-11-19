@@ -40,7 +40,11 @@
 //! - Record every enabling variant whose required settings were absent or
 //!   empty, with [`BaseBuilder::settings_absent`]. An unrecorded absence
 //!   counts the settings as present, so a row selecting that variant is served
-//!   and not held.
+//!   and not held. A kind listed in a flag's `pinned_by` records them too, or
+//!   a pin selecting that variant is honoured where it cannot be served.
+//! - Record every `only_in` flag restricted to a class the process runs
+//!   outside, with [`BaseBuilder::outside_class`]. An unrecorded restriction
+//!   lets a pin replay a variant the process would never evaluate.
 //! - Assert the freshness of every standalone view truthfully. Its source
 //!   follows from the snapshot's [`Provenance`]: a view refuses a snapshot
 //!   read from the other source.

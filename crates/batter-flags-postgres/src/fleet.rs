@@ -130,9 +130,13 @@ pub struct Fleet {
 
 /// Whether a version reached every Live process.
 ///
-/// Only a control-plane publication at or above the version counts: a process
-/// serving a persisted file or its declared base has not applied it. Silent
-/// and Stopped processes are not counted either way.
+/// Only a control-plane publication at or above the version, and no higher
+/// than the head read with it, counts: a process serving a persisted file or
+/// its declared base has not applied it, and one reporting a version above the
+/// head applied a store this one is not, such as the store before a restore.
+/// The writer ignores a report beyond the jump window, and that process then
+/// refuses the write as a regression, so it is listed as behind. Silent and
+/// Stopped processes are not counted either way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Rollout {
     /// Every Live process applied the version.
@@ -144,7 +148,8 @@ pub enum Rollout {
     Pending {
         /// Live processes that applied it.
         reached: usize,
-        /// Live processes that did not, in build then process order.
+        /// Live processes that did not, or that report a version above the
+        /// head, in build then process order.
         behind: Vec<ProcessId>,
     },
     /// No process is Live, so nothing can be said to have applied it.
@@ -169,7 +174,8 @@ impl Fleet {
             .iter()
             .filter(|process| process.state == ProcessState::Live);
         let (reached, behind): (Vec<_>, Vec<_>) = live.partition(|process| {
-            matches!(process.snapshot, SnapshotReport::ControlPlane(applied) if applied >= version)
+            matches!(process.snapshot, SnapshotReport::ControlPlane(applied)
+                if applied >= version && applied <= self.head)
         });
         match (NonZeroUsize::new(reached.len()), behind.is_empty()) {
             (Some(live), true) => Rollout::Reached { live },

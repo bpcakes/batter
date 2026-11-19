@@ -277,29 +277,12 @@ impl PooledStore {
         }
         let head: i64 = row.try_get("version")?;
         crate::load::version(head)?;
-        // After a restore or a failover to an older head, a Live process can
-        // have applied a version above it and would refuse anything lower.
-        // Numbering this write above every such process lets the fleet
-        // converge on it; otherwise the next version is the head's successor.
-        // A report is the serving role's own claim, so one at or beyond the
-        // window above the head is ignored: it can neither refuse this write
-        // nor move the counter further than the guard trigger allows.
-        let applied: Option<i64> = sqlx::query_scalar("SELECT max(snapshot_version) FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > statement_timestamp() AND snapshot_source = 'control_plane' AND snapshot_version > $1 AND snapshot_version - $1 < $2")
-            .bind(head).bind(crate::MAX_VERSION_JUMP).fetch_one(sql.executor()).await?;
-        let next = applied
-            .unwrap_or(head)
-            .checked_add(1)
-            .ok_or_else(|| StoreError::classified(ErrorClass::InvalidData))?;
-        sqlx::query("UPDATE flags.flag_control SET version = $1 WHERE singleton")
-            .bind(next)
-            .execute(sql.executor())
-            .await?;
         #[cfg(test)]
         if let Some(pause) = &self.pause {
             pause.entered.notify_one();
             pause.release.notified().await;
         }
-        super::validate::apply(sql, mutation, policy, head, next).await
+        super::validate::apply(sql, mutation, policy, head).await
     }
 }
 // SQLSTATE ErrorResponse on COMMIT is a rejection, except connection/unknown

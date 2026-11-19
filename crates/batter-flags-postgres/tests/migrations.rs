@@ -30,6 +30,29 @@ fn first_migration_checksum_is_immutable() {
     );
     assert_eq!(REQUIRED_SCHEMA_REVISION, 1);
 }
+
+/// The keyed audit index is the second migration; it changes no column, so
+/// the required schema revision stays 1.
+#[test]
+fn second_migration_checksum_is_immutable() {
+    let checksum: String = Sha384::digest(INDEX_AUDIT_BY_FLAG_SQL.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(
+        checksum,
+        "9e0c73283eba1a7c2de9f878368500971682cef6c42bdf13aaba58cd125812587291164c6a1deea957e78249df157f33"
+    );
+    let migrations: Vec<_> = MIGRATOR.iter().collect();
+    assert_eq!(migrations.len(), MIGRATIONS as usize);
+    assert_eq!(
+        migrations[1].checksum.as_ref(),
+        Sha384::digest(INDEX_AUDIT_BY_FLAG_SQL.as_bytes()).as_slice()
+    );
+}
+
+/// The flags migrations this build ships.
+const MIGRATIONS: i64 = 2;
 fn host() -> Migrator {
     Migrator::with_migrations(vec![Migration::new(
         1,
@@ -149,7 +172,7 @@ async fn dedicated_ledger_coexists_in_both_orders_and_strict_host_stays_strict()
             .fetch_one(&f.pool)
             .await
             .unwrap();
-        assert_eq!(flags, 1);
+        assert_eq!(flags, MIGRATIONS);
         let mut foreign = Migrator::with_migrations(vec![Migration::new(
             2,
             "foreign".into(),
@@ -296,7 +319,7 @@ async fn migrate_refuses_a_session_whose_search_path_resolves_into_flags() {
         .migrate(deadline())
         .await
         .unwrap();
-    assert_eq!(applied(&f).await, 1);
+    assert_eq!(applied(&f).await, MIGRATIONS);
     pool.close().await;
 
     // With the schema in place, the path is refused before the next
@@ -308,7 +331,7 @@ async fn migrate_refuses_a_session_whose_search_path_resolves_into_flags() {
         .await
         .unwrap_err();
     assert_eq!(again.class(), ErrorClass::SearchPath);
-    assert_eq!(applied(&f).await, 1);
+    assert_eq!(applied(&f).await, MIGRATIONS);
     pool.close().await;
     database_search_path(&f, DEFAULT_PATH).await;
     f.close().await;

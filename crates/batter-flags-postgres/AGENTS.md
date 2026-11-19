@@ -12,8 +12,9 @@ presence, pruning, the fleet view and the operator listings.
 
 - `src/store.rs`: validated timing and pool-backed protected owner.
 - `src/write.rs`, `src/validate.rs`: transaction phases and ordered refusals.
-- `src/declared.rs`: a write's declarations, declaring processes and their
-  catalogs, read by one statement so every judgement sees one fleet.
+- `src/declared.rs`: a write's declarations, declaring processes, their
+  catalogs and the fleet's reports above the head, read by one statement so
+  every judgement and the write's version see one fleet.
 - `src/migrate.rs`, `migrations/`: flags-only SQLx ledger and immutable SQL.
 - `src/load.rs`, `src/history.rs`: bounded repeatable-read inspection.
 - `src/request.rs`, `src/outcome.rs`, `src/errors.rs`: validated inputs, exhaustive
@@ -40,7 +41,8 @@ No-op/refusal rolls back the counter. Refusals are judged inside the write's
 transaction, after the counter lock; a kill switch is never refused for the
 flags engaging it holds. Silent declarers still block incompatible
 writes/archive. Heartbeats do not take the counter lock, so everything a write
-judges about the fleet comes from one statement (`declared.rs`); a heartbeat
+judges about the fleet, the version it is numbered with included, comes from
+one statement (`declared.rs`); a heartbeat
 and a stop of one process serialize on a transaction advisory lock keyed by
 its id. Uncertain commit never becomes ordinary failure or automatic
 replay. The private mutation callback cannot accept arbitrary caller SQL.

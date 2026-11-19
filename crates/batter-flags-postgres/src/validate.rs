@@ -93,16 +93,16 @@ pub(crate) async fn apply(
     mutation: &Mutation,
     policy: WritePolicy,
     head: i64,
-    next: i64,
 ) -> Result<Prepared, StoreError> {
     let key = mutation.key().as_str();
     let stored = StoredRow::read(sqlx::query("SELECT kind, value_type, state, updated_version, archived_version FROM flags.flag_state WHERE name = $1")
         .bind(key).fetch_optional(sql.executor()).await?)?;
-    // The declarations, their processes and their catalogs come from one
-    // statement, so every judgement below sees the same fleet.
-    let declared = Declared::read(sql, key).await?;
+    // The declarations, their processes, their catalogs and the fleet's
+    // reports come from one statement, so every judgement below, and the
+    // version the write is numbered with, sees the same fleet.
+    let declared = Declared::read(sql, key, head).await?;
     let declarations = &declared.declarations;
-    let plan = match preflight(mutation, policy.flip, head, stored, declarations)? {
+    let plan = match preflight(mutation, policy.flip, head, stored, &declared)? {
         ControlFlow::Break(decision) => return Ok(Prepared::Rollback(decision)),
         ControlFlow::Continue(plan) => plan,
     };
@@ -153,6 +153,22 @@ pub(crate) async fn apply(
     {
         return Ok(Prepared::Rollback(RollbackDecision::Refused(refusal)));
     }
+    // After a restore or a failover to an older head, a Live process can
+    // have applied a version above it and would refuse anything lower.
+    // Numbering this write above every such process lets the fleet converge
+    // on it; otherwise the next version is the head's successor. A report is
+    // the serving role's own claim, so one at or beyond the window above the
+    // head was not read: it can neither refuse this write nor move the counter
+    // further than the guard trigger allows.
+    let next = declared
+        .ahead
+        .unwrap_or(head)
+        .checked_add(1)
+        .ok_or_else(|| StoreError::classified(ErrorClass::InvalidData))?;
+    sqlx::query("UPDATE flags.flag_control SET version = $1 WHERE singleton")
+        .bind(next)
+        .execute(sql.executor())
+        .await?;
     plan.apply(sql, key, next).await?;
     let declaration = match NonZeroUsize::new(
         active
@@ -191,13 +207,30 @@ fn invariant_refusal(deferral: &crate::Deferral) -> Option<Refusal> {
         .unjudged
         .map(|catalogs| Refusal::InvariantsUnjudged { catalogs })
 }
+/// The stored row's shape, or the one a new row takes: a running declarer's,
+/// because the most recently referenced catalog can be a stopped build's (a
+/// heartbeat refreshes a catalog's reference time at most daily), and a
+/// retained catalog's when nothing that has not stopped declares the key.
+fn shape(stored: &StoredRow, declared: &Declared) -> Result<Option<Shape>, StoreError> {
+    match (stored.existing(), declared.running_shape()) {
+        (Some(row), _) => Ok(Some(row.shape)),
+        (None, Some(shape)) => shape.map(Some),
+        (None, None) => declared
+            .declarations
+            .first()
+            .map(Declaration::shape)
+            .transpose(),
+    }
+}
+
 fn preflight(
     mutation: &Mutation,
     flip: FlipPolicy,
     head: i64,
     stored: StoredRow,
-    declarations: &[Declaration],
+    declared: &Declared,
 ) -> Result<ControlFlow<RollbackDecision, ChangePlan>, StoreError> {
+    let declarations = &declared.declarations;
     let refuse = |r| Ok(ControlFlow::Break(RollbackDecision::Refused(r)));
     let row_version = stored.version();
     if let Some(row) = stored.existing()
@@ -205,10 +238,7 @@ fn preflight(
     {
         return refuse(Refusal::UnknownRowEncoding);
     }
-    let shape = match stored.existing() {
-        Some(row) => Some(row.shape),
-        None => declarations.first().map(Declaration::shape).transpose()?,
-    };
+    let shape = shape(&stored, declared)?;
     if let Mutation::Write(w) = mutation
         && let Some(shape) = shape
         && !shape.accepts(&w.value)
