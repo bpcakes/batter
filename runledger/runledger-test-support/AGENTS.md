@@ -19,9 +19,11 @@ is a test failure. This package must not become a production dependency of the
 Batter foundation or facade.
 Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
 URL. When this fixture owns the container, its admin URL and every derived
-database URL end in `?hostaddr=127.0.0.1`, which overrides an ambient
-`PGHOSTADDR` in SQLx 0.9.1 and libpq; derivation re-appends only that pin,
-never the admin query. Every fixture mode refuses any ambient `PG*` variable
+database URL end in `?hostaddr=127.0.0.1&sslmode=disable`: the address pin
+overrides an ambient
+`PGHOSTADDR` in SQLx 0.9.1 and libpq, and `sslmode=disable` matches the
+native test proxies' plaintext; derivation re-appends only that query, never
+the admin query. Every fixture mode refuses any ambient `PG*` variable
 before provisioning: SQLx fills unset settings from them, but native test
 proxies dial and forward to the URL host themselves, without TLS. Every
 external connection is therefore pinned to `sslmode=disable`, and derived URLs

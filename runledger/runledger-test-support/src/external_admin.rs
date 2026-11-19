@@ -19,6 +19,11 @@ use url::Url;
 /// way to require TLS for its leases. Query keys are read decoded, as SQLx
 /// reads them. An unparseable URL is left to SQLx's own error.
 pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str> {
+    // A fragment would swallow the appended transport pin for the admin
+    // connection while lease URLs, which drop it, keep the pin.
+    if admin_url.contains('#') {
+        return Some("RUNLEDGER_TEST_ADMIN_DATABASE_URL must not contain a fragment ('#')");
+    }
     // A decoded NUL would end the database name inside SQLx's startup packet.
     if admin_url.to_ascii_lowercase().contains("%00") {
         return Some("RUNLEDGER_TEST_ADMIN_DATABASE_URL must not encode a NUL character (%00)");
@@ -54,7 +59,9 @@ pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str
     // Native test proxies dial (host, port) over TCP themselves: a Unix socket
     // directory or a bracketed IPv6 literal would not reach them.
     let host = url.host_str().unwrap_or("");
-    if host.is_empty() || host.starts_with('[') || host.contains('%') {
+    // One host only: `postgres` is not a special scheme, so the URL parser
+    // keeps a libpq host list such as db-a,db-b as one opaque name.
+    if host.is_empty() || host.starts_with('[') || host.contains(['%', ',']) {
         return Some(
             "give RUNLEDGER_TEST_ADMIN_DATABASE_URL a DNS name or IPv4 host: native test proxies \
              connect over TCP to that host",
@@ -131,6 +138,8 @@ mod tests {
             "postgres://u@db.example:5432\\postgres",
             "postgres://u@db.example:5432/old/../postgres",
             "postgres://u@db.example:5432/tenant%00blue",
+            "postgres://u@db.example:5432/postgres#note",
+            "postgres://u@db-a,db-b:5432/postgres",
             // Transports the native proxies cannot dial.
             "postgres://u:p@%2Ftmp/postgres",
             "postgres://u:p@[::1]:5432/postgres?hostaddr=::1",

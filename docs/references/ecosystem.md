@@ -95,8 +95,9 @@ contracts cite:
   `hostaddr=127.0.0.1` in the owned container's admin
   URL and the database URLs derived from it, since a URL `hostaddr` overrides
   the environment for a TCP host in both SQLx and libpq (checked against SQLx
-  0.9.1 and psql 18 with an ambient `PGHOSTADDR`). Derivation re-appends only
-  that pin; an external admin URL's query is not carried, so an external URL
+  0.9.1 and psql 18 with an ambient `PGHOSTADDR`), alongside `sslmode=disable`
+  so every connection uses the native proxies' plaintext. Derivation
+  re-appends only that query; an external admin URL's query is not carried, so an external URL
   with any query is refused before provisioning (a `hostaddr` repeating its IP
   literal host is accepted), since leases would lose its endpoint or TLS
   settings. SQLx 0.9.0 honoured these parameters too, so that split

@@ -335,8 +335,24 @@ mod tests {
                 "lease_1",
                 crate::postgres_container::OWNED_HOST_ADDRESS_QUERY
             ),
-            "postgres://runledger:runledger@127.0.0.1:5432/lease_1?hostaddr=127.0.0.1"
+            "postgres://runledger:runledger@127.0.0.1:5432/lease_1?hostaddr=127.0.0.1&sslmode=disable"
         );
+        // External fixture: the lease carries the plaintext pin and nothing
+        // else from the admin URL, and SQLx reads it as sslmode=disable.
+        let external = with_database_name(
+            "postgres://u:p@db.invalid:5432/postgres?sslmode=disable",
+            "lease_1",
+            crate::postgres_container::EXTERNAL_DERIVED_QUERY,
+        );
+        assert_eq!(
+            external,
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
+        );
+        let options: sqlx::postgres::PgConnectOptions = external.parse().expect("lease URL parses");
+        assert!(matches!(
+            options.get_ssl_mode(),
+            sqlx::postgres::PgSslMode::Disable
+        ));
     }
 
     const CLEANUP_ATTEMPTS: usize = 100;

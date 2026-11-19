@@ -26,11 +26,12 @@ struct SharedPostgres {
     _container: Option<ProcessContainer>,
 }
 
-/// Pins the owned container's TCP address. A URL `hostaddr` overrides an
-/// ambient `PGHOSTADDR` in SQLx and libpq, and for the IP literal host it
-/// repeats it names the same address, so every client still reaches the
-/// container. External admin URLs carry nothing extra.
-pub(crate) const OWNED_HOST_ADDRESS_QUERY: &str = "?hostaddr=127.0.0.1";
+/// Pins the owned container's TCP address and transport. A URL `hostaddr`
+/// overrides an ambient `PGHOSTADDR` in SQLx and libpq, and for the IP literal
+/// host it repeats it names the same address, so every client still reaches
+/// the container; `sslmode=disable` matches the native test proxies'
+/// plaintext even if the image and the SQLx build both support TLS.
+pub(crate) const OWNED_HOST_ADDRESS_QUERY: &str = "?hostaddr=127.0.0.1&sslmode=disable";
 
 #[derive(Debug, Eq, PartialEq)]
 enum PostgresSource {
@@ -134,7 +135,7 @@ async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
 /// The transport every external fixture connection uses: the native test
 /// proxies' plaintext. External fixtures cannot use TLS yet (`batter-c5ci.16`).
 const EXTERNAL_TRANSPORT: &str = "sslmode=disable";
-const EXTERNAL_DERIVED_QUERY: &str = "?sslmode=disable";
+pub(crate) const EXTERNAL_DERIVED_QUERY: &str = "?sslmode=disable";
 
 /// The external admin URL with [`EXTERNAL_TRANSPORT`] appended; its only
 /// other query can be a redundant `hostaddr` pin.
@@ -433,7 +434,11 @@ mod tests {
             server_version_num >= 180_000,
             "initializer test requires PostgreSQL 18+, got {server_version} ({server_version_num})"
         );
+        // The shared URL is already normalized (pinned query appended), which
+        // the external check refuses as caller input; pass its raw form.
         admin_url
+            .split_once('?')
+            .map_or(admin_url.clone(), |(raw, _)| raw.to_owned())
     }
 
     #[tokio::test]

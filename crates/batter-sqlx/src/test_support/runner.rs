@@ -100,19 +100,24 @@ impl FixtureScope {
         produce(&self.resources, async move {
             let template = harness
                 .template(spec, move |url| async move {
-                    // Caller code receives a URL rebuilt from the harness's own
-                    // endpoint parse and recorded name, never the harness text.
-                    let url = super::endpoint::initializer_url(
-                        &admin_url,
-                        &url,
-                        super::endpoint::Environment::process(),
-                    )?;
                     // Native template Drop can retain an initializing database. Turn
                     // initializer panic into its returned-error path so upstream
                     // awaits abort and preserves any independent abort failure.
-                    tokio::spawn(with_current_dispatch(async move { initializer(url).await }))
-                        .await
-                        .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
+                    // The URL check runs inside the same task: a refusal then drops
+                    // the initializer there too, so a panic in its destructor still
+                    // reaches the awaited abort instead of unwinding past it.
+                    tokio::spawn(with_current_dispatch(async move {
+                        // Caller code receives a URL rebuilt from the harness's own
+                        // endpoint parse and recorded name, never the harness text.
+                        let url = super::endpoint::initializer_url(
+                            &admin_url,
+                            &url,
+                            super::endpoint::Environment::process(),
+                        )?;
+                        initializer(url).await
+                    }))
+                    .await
+                    .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
                 })
                 .await?;
             let mut registered = resources.lock().unwrap_or_else(|error| error.into_inner());
