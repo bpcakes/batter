@@ -173,6 +173,10 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(psql_environment(ca)['PGSSLROOTCERT'], '/ca/root.pem')
         self.assertEqual(psql_environment(ca)['PGSSLMODE'], 'verify-full')
         self.assertTrue(sqlx_database_url(ca).endswith('?sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem'))
+        # An empty port means the default, for a TCP host and a socket directory.
+        self.assertEqual(parse_database_url('postgres://u@localhost:/db')['host'], 'localhost')
+        empty_socket_port = parse_database_url('postgres://u@%2Ftmp:/db')
+        self.assertEqual((empty_socket_port['host'], empty_socket_port['port']), ('/tmp', 5432))
         # The Runledger-owned container's redundant loopback pin is dropped.
         owned = parse_database_url('postgres://runledger:runledger@127.0.0.1:5432/db?hostaddr=127.0.0.1')
         self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db')
@@ -194,6 +198,7 @@ class RefreshTests(unittest.TestCase):
                 # Python 3.9's urlsplit accepts this; newer versions reject it first.
                 ('postgresql://u:private-marker@[::1],db2:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@[::1]other:6543/postgres', 'exactly one host|not a valid URL'),
+                ('postgresql://u:private-marker@[v1.db]:6543/postgres', 'IPv6 literal|not a valid URL'),
                 ('postgresql://u:private-marker@db-a:5432', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/one/two', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/postgres?application_name=a#b', "must not contain '#'"),

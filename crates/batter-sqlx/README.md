@@ -1088,8 +1088,9 @@ and the harness aborts the template. Test code that opens its own pool beside
 a fixture uses `harness_connect_options(&harness, &lease)` or
 `harness_admin_connect_options(&harness)` instead of handing
 `admin_database_url()` or a lease URL to SQLx. The first takes the lease, not
-a database name, so it cannot open the admin database or a database from
-another harness.
+a database name, so it cannot open the admin database, and refuses a lease
+that reaches another endpoint than the harness. It cannot tell two harnesses
+on the same server and login apart, since a lease carries no issuer identity.
 
 These rules make the fixture's SQLx pools reach the server and database the
 harness provisioned under three preconditions that are not enforced: a host

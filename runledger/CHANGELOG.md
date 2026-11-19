@@ -384,17 +384,20 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   derived from them, now end in `?hostaddr=127.0.0.1`; consumers that append
   their own query to such a URL must use `&`. An external
   `RUNLEDGER_TEST_ADMIN_DATABASE_URL`'s derived URLs still carry no query, so
-  such a URL is now refused before provisioning when its query declares `host`
-  or `port`, or a `hostaddr` that does not repeat its own IP literal host: the
-  admin pool would follow them while leases do not. That split already
-  existed under SQLx 0.9.0.
+  such a URL is now refused before provisioning when it has any query other
+  than a `hostaddr` repeating its own IP literal host: the admin pool would
+  follow `host`, `port` or TLS settings such as `sslmode=verify-full` while
+  the leases fell back to SQLx's defaults. An external fixture therefore
+  cannot require TLS for its leases yet. The endpoint split already existed
+  under SQLx 0.9.0.
   `scripts/refresh_runledger_sqlx.py` now refuses any ambient `PG*` variable,
   parses `DATABASE_URL` once, gives `psql` the parts as its own PG* variables
   (no credentials in its arguments), gives SQLx CLI a URL
   rebuilt from the same parts, refuses any `sqlx.toml` (whose
   `database-url-var` SQLx CLI 0.9.1 reads by default), and refuses a Cargo
   `[env]` that sets a libpq or SQLx connection variable or changes
-  `DATABASE_URL` for the query macros. It assumes the host name resolves to one server for the
+  `DATABASE_URL` for the query macros, reading them at run time in a process
+  Cargo launches so no credential is compiled into the probe's artifacts. It assumes the host name resolves to one server for the
   whole refresh. It
   accepts only one host, one database and the `sslmode`, `sslrootcert`,
   `application_name` and `options` parameters; TLS requirements such as

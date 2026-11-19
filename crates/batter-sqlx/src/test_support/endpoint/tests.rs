@@ -283,7 +283,7 @@ fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
     let error = lease_options(admin, lease, "postgres", Environment::CLEAN).unwrap_err();
     assert!(matches!(&error, sqlx::Error::Configuration(source)
         if source.is::<super::super::LeaseDatabaseMismatch>()));
-    // A lease another harness issued: different port, or different login.
+    // A lease reaching another endpoint: different port, or different login.
     for foreign in [
         "postgres://owner:p@127.0.0.1:6543/pgh_lease_1?sslmode=disable",
         "postgres://other:p@127.0.0.1:5432/pgh_lease_1?sslmode=disable",
@@ -296,10 +296,14 @@ fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
             source
                 .downcast_ref::<UnsupportedHarnessEndpoint>()
                 .map(UnsupportedHarnessEndpoint::reason),
-            Some(HarnessEndpointReason::ForeignLease),
+            Some(HarnessEndpointReason::LeaseEndpointMismatch),
             "{foreign}"
         );
     }
+    // The check is an endpoint match, not ownership: a second harness's lease
+    // on the same server and login is indistinguishable and accepted.
+    let sibling = "postgres://owner:p@127.0.0.1:5432/pgh_other_harness_1?sslmode=disable";
+    assert!(lease_options(admin, sibling, "pgh_other_harness_1", Environment::CLEAN).is_ok());
 }
 
 #[test]

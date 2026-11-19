@@ -97,9 +97,9 @@ contracts cite:
   the environment for a TCP host in both SQLx and libpq (checked against SQLx
   0.9.1 and psql 18 with an ambient `PGHOSTADDR`). Derivation re-appends only
   that pin; an external admin URL's query is not carried, so an external URL
-  whose query selects a `host`, `port` or `hostaddr` the derived URLs would
-  lose is refused before provisioning (a `hostaddr` repeating its IP literal
-  host is accepted). SQLx 0.9.0 honoured these parameters too, so that split
+  with any query is refused before provisioning (a `hostaddr` repeating its IP
+  literal host is accepted), since leases would lose its endpoint or TLS
+  settings. SQLx 0.9.0 honoured these parameters too, so that split
   predates this upgrade. Template initializer URLs carry `connect_timeout` and
   `channel_binding=disable`, and refuse other connection tuning they cannot
   carry. Refusing every `PG*` variable replaced earlier attempts to carry or

@@ -24,10 +24,10 @@ database URL end in `?hostaddr=127.0.0.1`, which overrides an ambient
 never the admin query. Every fixture mode refuses any ambient `PG*` variable
 before provisioning: SQLx fills unset settings from them, but native test
 proxies dial and forward to the URL host themselves. An external admin URL's derived URLs carry
-no query, so its `host` and `port` query keys are refused, and a `hostaddr`
-is accepted only when it repeats its own IP literal host
-(`src/external_admin.rs`); otherwise provisioning and leases could reach
-different servers. Failed startup cleanup verifies the
+no query, so every query key is refused except a `hostaddr` that repeats its
+own IP literal host (`src/external_admin.rs`); otherwise provisioning and
+leases could reach different servers or leases could silently lose TLS
+settings. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.
 Keep Testcontainers and `astral-tokio-tar` absent from the dependency graph.

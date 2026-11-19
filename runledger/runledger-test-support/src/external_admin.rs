@@ -8,27 +8,27 @@ use url::Url;
 /// Why derived database URLs would reach a different endpoint than the
 /// external admin URL, if they would.
 ///
-/// Derived database URLs keep the authority and drop the query, so a query
-/// parameter that selects the transport, port or address reaches the admin
-/// pool but not the leases. SQLx 0.9.0 honoured these too, so the split
-/// predates SQLx 0.9.1. `host` (a socket directory or another host) and `port`
-/// are refused; a `hostaddr` is accepted only when it repeats the authority's
-/// own IP literal, where dropping it changes nothing. An ambient `PGHOSTADDR`
-/// is refused separately in every fixture mode. Query keys are read decoded,
-/// as SQLx reads them. An unparseable URL is left to SQLx's own error.
+/// Derived database URLs keep the authority and drop the query, so any query
+/// parameter reaches the admin pool but not the leases: `host` or `port`
+/// would move them to another endpoint, and `sslmode`, `sslrootcert` and the
+/// other TLS settings would leave them on SQLx's default `prefer`. Every key
+/// is therefore refused, except a `hostaddr` that repeats the authority's own
+/// IP literal, where dropping it changes nothing. Ambient `PG*` variables are
+/// refused separately in every fixture mode, so an external fixture has no
+/// way to require TLS for its leases. Query keys are read decoded, as SQLx
+/// reads them. An unparseable URL is left to SQLx's own error.
 pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str> {
     let url = Url::parse(admin_url).ok()?;
     let mut pins = Vec::new();
     for (key, value) in url.query_pairs() {
-        match &*key {
-            "host" | "port" => {
-                return Some(
-                    "move host and port from the RUNLEDGER_TEST_ADMIN_DATABASE_URL query into its \
-                     authority: derived database URLs carry no query",
-                );
-            }
-            "hostaddr" => pins.push(value.into_owned()),
-            _ => {}
+        if key == "hostaddr" {
+            pins.push(value.into_owned());
+        } else {
+            return Some(
+                "remove the query from RUNLEDGER_TEST_ADMIN_DATABASE_URL (host and port belong in \
+                 its authority): derived database URLs carry no query, so their TLS and endpoint \
+                 settings would differ from the admin connection's",
+            );
         }
     }
     if pins.is_empty() {
@@ -65,7 +65,6 @@ mod tests {
     fn endpoint_parameters_derived_urls_would_drop_are_refused() {
         for url in [
             "postgres://u:p@db.invalid:5432/postgres",
-            "postgres://u:p@db.invalid:5432/postgres?sslmode=disable",
             "postgres://u:p@%2Ftmp/postgres",
             "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1",
             "postgres://u:p@[::1]:5432/postgres?hostaddr=::1",
@@ -79,6 +78,10 @@ mod tests {
             "postgres://u:p@localhost/postgres?host=/tmp",
             "postgres://u:p@localhost/postgres?host=192.0.2.1",
             "postgres://u:p@localhost/postgres?port=6543",
+            // TLS settings the leases would lose.
+            "postgres://u:p@db.invalid/postgres?sslmode=verify-full&sslrootcert=/ca/root.pem",
+            "postgres://u:p@db.invalid/postgres?sslmode=disable",
+            "postgres://u:p@db.invalid/postgres?ss%6Cmode=require",
             // A pin naming another address than the authority host.
             "postgres://u:p@db.invalid:5432/postgres?hostaddr=192.0.2.1",
             "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=192.0.2.1",

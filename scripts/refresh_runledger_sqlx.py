@@ -118,7 +118,14 @@ def parse_database_url(database):
         if close == -1 or not re.fullmatch(r"(:[0-9]*)?", host[close + 1:]):
             raise ValueError("DATABASE_URL must name exactly one host and one database")
         host = host[1:close]
-    elif port is not None:
+        # Brackets hold only an IPv6 literal: an IPvFuture such as [v1.db]
+        # would otherwise reach the resolver as a DNS name.
+        if ":" not in host or not is_ip_literal(host):
+            raise ValueError("DATABASE_URL's bracketed host must be an IPv6 literal without a zone")
+    elif port is not None or host.endswith(":"):
+        # An empty port (`host:`) means the default; urlsplit reports None for
+        # it, so the delimiter must still come off, or a socket directory
+        # such as %2Ftmp: would name /tmp: instead of /tmp.
         host = host.rpartition(":")[0]
     try:
         # Strict decoding: a replacement character would name another object.
@@ -224,7 +231,8 @@ def cargo_compiler_endpoint(directory, database):
     """What Cargo, run from `directory`, gives the query macros' compiler.
 
     Returns the POSTGRES_VARIABLES Cargo sets for the compiler and whether its
-    `DATABASE_URL` equals `database`. `cargo sqlx prepare` runs `cargo check`,
+    `DATABASE_URL` equals `database`, read at run time in a process Cargo
+    launches with the same `[env]` it gives rustc. `cargo sqlx prepare` runs `cargo check`,
     which applies `[env]` settings, including included, home and forced ones,
     even when the parent shell differs. Ask Cargo itself by compiling a
     throwaway probe from the same directory; it prints variable names and one
@@ -235,17 +243,20 @@ def cargo_compiler_endpoint(directory, database):
         (probe / "src").mkdir()
         (probe / "Cargo.toml").write_text(
             '[package]\nname = "cargo-env-probe"\nversion = "0.0.0"\nedition = "2021"\n\n[workspace]\n')
-        # The expected URL arrives on stdin, which Cargo [env] cannot replace.
+        # Cargo gives a process it runs the same [env] as rustc, so the probe
+        # reads the values at run time: nothing, credentials included, is
+        # compiled into its artifacts. The expected URL arrives on stdin,
+        # which Cargo [env] cannot replace.
+        names = ", ".join(f'"{name}"' for name in POSTGRES_VARIABLES)
         (probe / "src/main.rs").write_text(
             'use std::io::Read;\n'
             'fn main() {\n'
             '    let mut expected = String::new();\n'
             '    std::io::stdin().read_to_string(&mut expected).expect("expected URL on stdin");\n'
-            '    let set: Vec<&str> = [' + ", ".join(
-                f'("{name}", option_env!("{name}").is_some())' for name in POSTGRES_VARIABLES) + ']\n'
-            '        .iter().filter(|(_, set)| *set).map(|(name, _)| *name).collect();\n'
+            '    let set: Vec<&str> = [' + names + ']\n'
+            '        .into_iter().filter(|name| std::env::var_os(name).is_some()).collect();\n'
             '    print!("{} {}", if set.is_empty() { "-".to_owned() } else { set.join(",") },\n'
-            '           option_env!("DATABASE_URL") == Some(expected.as_str()));\n'
+            '           std::env::var("DATABASE_URL").ok().as_deref() == Some(expected.as_str()));\n'
             '}\n')
         try:
             result = subprocess.run(

@@ -27,9 +27,14 @@ const DEFAULT_PORT: u16 = 5432;
 /// field: host or Unix socket, port (5432 when the URL names none), user,
 /// password and TLS mode, plus the lease's recorded database. The lease, not a
 /// free-form name, selects the database, so these options cannot open the
-/// admin database or a database no lease owns; a lease whose URL does not name
-/// its database is refused with [`super::LeaseDatabaseMismatch`], and one whose
-/// endpoint is not this harness's with [`HarnessEndpointReason::ForeignLease`].
+/// admin database or a database no lease names; a lease whose URL does not
+/// name its database is refused with [`super::LeaseDatabaseMismatch`], and
+/// one that reaches another server, login or session settings than this
+/// harness's admin URL with [`HarnessEndpointReason::LeaseEndpointMismatch`].
+/// That is an endpoint match, not proof of ownership: the harness gives a
+/// lease no issuer identity, so a lease from a second harness on the same
+/// server and login is accepted, and the caller remains responsible for
+/// passing a lease it holds.
 /// Test code that connects to a leased database directly, such as a
 /// diagnostic pool beside a fixture, uses this
 /// instead of handing `admin_database_url()` or a lease URL to SQLx, whose
@@ -78,12 +83,12 @@ fn lease_options(
         )));
     }
     // The harness builds a lease URL from its admin URL, replacing only the
-    // database; any other difference means another harness issued the lease.
+    // database; any other difference means the lease reaches another endpoint.
     // The environment was checked above; this reads the lease URL alone.
     let issuer = HarnessEndpoint::from_admin_url(lease_url, Environment::CLEAN)
-        .map_err(|_| refusal(HarnessEndpointReason::ForeignLease))?;
+        .map_err(|_| refusal(HarnessEndpointReason::LeaseEndpointMismatch))?;
     if !endpoint.same_server_and_login(&issuer) {
-        return Err(refusal(HarnessEndpointReason::ForeignLease));
+        return Err(refusal(HarnessEndpointReason::LeaseEndpointMismatch));
     }
     endpoint.options(name)
 }
@@ -565,9 +570,10 @@ pub enum HarnessEndpointReason {
     /// and trailing brackets before resolving, so it would look up a different
     /// name, and its URL rendering panics on such a host.
     UnsupportedHostName,
-    /// The lease's URL reaches another server or login than this harness's
-    /// admin URL, so another harness issued it.
-    ForeignLease,
+    /// The lease's URL reaches another server, login or session settings than
+    /// this harness's admin URL. A matching endpoint does not prove the lease
+    /// came from this harness.
+    LeaseEndpointMismatch,
     /// The admin URL's password is not UTF-8.
     NonUtf8Password,
     /// The admin URL's Unix socket directory is not UTF-8, which SQLx would
@@ -593,8 +599,8 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
             HarnessEndpointReason::UnsupportedHostName => {
                 "the fixture admin URL host name contains a bracket"
             }
-            HarnessEndpointReason::ForeignLease => {
-                "the lease was not issued by this fixture harness"
+            HarnessEndpointReason::LeaseEndpointMismatch => {
+                "the lease reaches another endpoint than this fixture harness"
             }
             HarnessEndpointReason::NonUtf8Password => "the fixture admin URL password is not UTF-8",
             HarnessEndpointReason::NonUtf8SocketPath => {
