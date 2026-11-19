@@ -94,8 +94,9 @@ def connection_query_pairs(query):
     """
     pairs = []
     for field in query.split("&") if query else ():
+        # libpq refuses a second raw "=" in a field; %3D stays valid in a value.
         key, separator, value = field.partition("=")
-        if not separator or not key:
+        if not separator or not key or "=" in value:
             raise ValueError("malformed query field")
         pairs.append((unquote(key, errors="strict"), unquote(value, errors="strict")))
     return pairs
@@ -133,6 +134,14 @@ def parse_database_url(database):
         raise ValueError("DATABASE_URL must be a postgres:// URI")
     if "#" in database:
         raise ValueError("DATABASE_URL must not contain '#'; encode it as %23")
+    # libpq trims raw edge spaces (/sales<space> selects sales) where this
+    # parser would keep them; %20 stays valid for an intentional space.
+    if " " in database:
+        raise ValueError("DATABASE_URL must percent-encode spaces as %20")
+    # libpq ends the userinfo at the first raw "@", rpartition at the last, so
+    # a second one would split the authority differently; %40 is a literal @.
+    if parts.netloc.count("@") > 1:
+        raise ValueError("DATABASE_URL must percent-encode @ in credentials as %40")
     host = parts.netloc.rpartition("@")[2]
     # Check the whole authority before slicing an IPv6 literal out of it: the
     # slice would drop a second host, and urlsplit takes its port.
