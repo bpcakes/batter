@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from urllib.parse import parse_qsl, quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from runledger_source import copy_source, run
 
@@ -85,6 +85,22 @@ def is_ip_literal(host):
     return True
 
 
+def connection_query_pairs(query):
+    """Decode a connection URI query as PostgreSQL does: percent escapes only.
+
+    parse_qsl applies HTML form decoding, turning a raw "+" into a space, but
+    libpq keeps it literal, so ?options=-c%20search_path%3Dtenant+blue names
+    tenant+blue. Every field must be key=value with a non-empty key.
+    """
+    pairs = []
+    for field in query.split("&") if query else ():
+        key, separator, value = field.partition("=")
+        if not separator or not key:
+            raise ValueError("malformed query field")
+        pairs.append((unquote(key, errors="strict"), unquote(value, errors="strict")))
+    return pairs
+
+
 def parse_database_url(database):
     """Parse DATABASE_URL once; psql and SQLx then receive only these parts.
 
@@ -109,8 +125,7 @@ def parse_database_url(database):
     try:
         parts = urlsplit(database)
         port = parts.port
-        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query),
-                          errors="strict")
+        pairs = connection_query_pairs(parts.query)
     except (ValueError, UnicodeDecodeError):
         # The parser's message can quote the URL authority, credentials included.
         raise ValueError("DATABASE_URL is not a valid URL") from None
@@ -147,6 +162,11 @@ def parse_database_url(database):
         password = unquote(parts.password, errors="strict") if parts.password is not None else None
     except UnicodeDecodeError:
         raise ValueError("DATABASE_URL must percent-encode UTF-8 text") from None
+    # A decoded NUL (%00) cannot travel in a Unix environment variable or a C
+    # string, so psql could never receive it; refuse before any command runs.
+    decoded = [host, database_name, user or "", password or ""] + [text for pair in pairs for text in pair]
+    if any("\x00" in text for text in decoded):
+        raise ValueError("DATABASE_URL must not encode a NUL character (%00)")
     keys = [key for key, _ in pairs]
     # SQLx's URL parser drops "." and ".." path segments, so those names would
     # select no database there while psql checks one.

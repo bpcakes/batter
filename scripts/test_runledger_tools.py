@@ -156,10 +156,10 @@ class RefreshTests(unittest.TestCase):
             'postgresql://us%40er:p%40ss+w%20rd@[::1]:6543/my%20db?sslmode=prefer&application_name=a+b')
         self.assertEqual(parts, {'host': '::1', 'port': 6543, 'database': 'my db', 'user': 'us@er',
                                  'password': 'p@ss+w rd',
-                                 'parameters': {'sslmode': 'prefer', 'application_name': 'a b'}})
+                                 'parameters': {'sslmode': 'prefer', 'application_name': 'a+b'}})
         rebuilt = sqlx_database_url(parts)
         self.assertEqual(rebuilt, 'postgres://us%40er:p%40ss%2Bw%20rd@[::1]:6543/my%20db'
-                                  '?sslmode=prefer&application_name=a%20b')
+                                  '?sslmode=prefer&application_name=a%2Bb')
         self.assertEqual(parse_database_url(rebuilt), parts)
         colon = parse_database_url('postgres://u@%2Ftmp%2Fpg%3A18/db')
         self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db')
@@ -168,6 +168,12 @@ class RefreshTests(unittest.TestCase):
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
+        # A raw "+" in a query value is literal, as in libpq, and reaches SQLx
+        # encoded; %20 is the space.
+        plus = parse_database_url('postgres://u@db.invalid/db?options=-c%20search_path%3Dtenant+blue')
+        self.assertEqual(plus['parameters']['options'], '-c search_path=tenant+blue')
+        self.assertEqual(psql_environment(plus)['PGOPTIONS'], '-c search_path=tenant+blue')
+        self.assertTrue(sqlx_database_url(plus).endswith('?options=-c%20search_path%3Dtenant%2Bblue'))
         # One encoded segment may name a database containing "/" or "%".
         slashed = parse_database_url('postgres://u@db.invalid/sales%2Farchive')
         self.assertEqual(slashed['database'], 'sales/archive')
@@ -206,6 +212,10 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@[v1.db]:6543/postgres', 'IPv6 literal|not a valid URL'),
                 ('postgresql://u:private-marker@db-a/tenant\nblue', 'control characters'),
                 ('postgresql://u:private-marker@db-a/tenant%2', 'malformed percent escape'),
+                ('postgresql://u:private-marker@db-a/tenant%00blue', 'NUL'),
+                ('postgresql://u:pass%00word@db-a/postgres', 'NUL'),
+                ('postgresql://u:private-marker@db-a/postgres?application_name=a%00b', 'NUL'),
+                ('postgresql://u:private-marker@db-a/postgres?sslmode', 'not a valid URL'),
                 ('postgresql://u:private-marker@db-a/tenant%zz', 'malformed percent escape'),
                 ('postgresql://u:private-marker@db-a/tenant\tblue', 'control characters'),
                 ('postgresql://u:private-marker@d\rb-a/postgres', 'control characters'),
