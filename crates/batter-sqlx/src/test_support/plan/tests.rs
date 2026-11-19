@@ -9,6 +9,7 @@ const LEASE: &str = "postgres://owner:ownersecret@127.0.0.1:5439/pgh_probe_1\
     ?sslmode=disable&application_name=fixture&options=-c%20search_path%3Dpublic";
 
 fn plan(pools: Vec<PlannedPool>) -> ConnectionPlan {
+    super::super::endpoint::require_clean_environment();
     let mut declaration = ConnectionPlan::declare(0);
     for pool in pools {
         declaration.pool(pool);
@@ -47,7 +48,7 @@ fn lease_login_resolves_to_the_parsed_lease_url() {
         PlannedPool::lease_login(one()),
         PlannedPool::lease_login(one()),
     ])
-    .resolve(LEASE, LEASE, "pgh_probe_1")
+    .resolve(LEASE, LEASE, "pgh_probe_1", Environment::CLEAN)
     .unwrap();
     assert_eq!(resolved.len(), 2);
     for (_, options) in &resolved {
@@ -68,7 +69,7 @@ fn password_login_replaces_only_credentials() {
             secret("loginsecret"),
         ),
     ])
-    .resolve(LEASE, LEASE, "pgh_probe_1")
+    .resolve(LEASE, LEASE, "pgh_probe_1", Environment::CLEAN)
     .unwrap();
     let (pool, restricted) = &resolved[1];
     assert_eq!(pool.get_max_connections(), 3);
@@ -86,7 +87,7 @@ fn socket_hosts_survive_a_password_login() {
     let ambiguous = "postgres://owner:ownersecret@localhost/pgh_probe_2?host=/var/run/postgresql";
     assert!(
         plan(vec![PlannedPool::lease_login(one())])
-            .resolve(ambiguous, ambiguous, "pgh_probe_2")
+            .resolve(ambiguous, ambiguous, "pgh_probe_2", Environment::CLEAN)
             .is_err()
     );
     let url = "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2";
@@ -97,7 +98,7 @@ fn socket_hosts_survive_a_password_login() {
         "restricted",
         secret("x1"),
     )])
-    .resolve(url, url, "pgh_probe_2")
+    .resolve(url, url, "pgh_probe_2", Environment::CLEAN)
     .unwrap();
     assert_eq!(identity(&resolved[0].1), identity(&expected));
 }
@@ -110,7 +111,7 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
         PlannedPool::password_login(one(), "restricted", secret("loginsecret")),
     ] {
         let error = plan(vec![pool])
-            .resolve(url, url, "pgh_probe_3")
+            .resolve(url, url, "pgh_probe_3", Environment::CLEAN)
             .expect_err("query parameter retargets the database");
         let sqlx::Error::Configuration(source) = &error else {
             panic!("configuration error required");
@@ -126,7 +127,12 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
 #[test]
 fn an_unparseable_lease_url_keeps_its_native_parse_error() {
     let error = plan(vec![PlannedPool::lease_login(one())])
-        .resolve("not a lease url", "not a lease url", "pgh_probe_4")
+        .resolve(
+            "not a lease url",
+            "not a lease url",
+            "pgh_probe_4",
+            Environment::CLEAN,
+        )
         .expect_err("unparseable URL");
     assert!(
         matches!(error, sqlx::Error::Configuration(source) if !source.is::<LeaseDatabaseMismatch>())
@@ -149,7 +155,7 @@ async fn every_pool_registers_before_the_first_connectivity_check() {
         PlannedPool::lease_login(quick()),
         PlannedPool::password_login(quick(), "restricted", secret("loginsecret")),
     ])
-    .resolve(&url, &url, "pgh_probe_5")
+    .resolve(&url, &url, "pgh_probe_5", Environment::CLEAN)
     .unwrap();
     let mut registry = Vec::new();
     let pools = construct(resolved, &mut registry);

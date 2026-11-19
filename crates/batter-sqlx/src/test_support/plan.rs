@@ -11,7 +11,10 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-use super::{FixtureError, endpoint::HarnessEndpoint};
+use super::{
+    FixtureError,
+    endpoint::{Environment, HarnessEndpoint},
+};
 
 // Plan identities only distinguish declarations; they carry no authority.
 static NEXT_PLAN: AtomicU64 = AtomicU64::new(1);
@@ -123,8 +126,9 @@ impl ConnectionPlan {
         admin_url: &str,
         lease_url: &str,
         lease_name: &str,
+        environment: Environment,
     ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
-        let endpoint = HarnessEndpoint::from_admin_url(admin_url)?;
+        let endpoint = HarnessEndpoint::from_admin_url(admin_url, environment)?;
         // The harness keeps the admin URL's query, including a `dbname` that
         // would override the path, when it builds the lease URL.
         if !HarnessEndpoint::names_database(lease_url, lease_name) {

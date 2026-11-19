@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
-from refresh_runledger_sqlx import (carry_inherited_tls, refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
+from refresh_runledger_sqlx import (refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
 from runledger_source import copy_source, run, validate_consumer
 
@@ -109,14 +109,18 @@ class RefreshTests(unittest.TestCase):
         environment = patch.dict(os.environ)
         environment.start()
         self.addCleanup(environment.stop)
+        # The refresh refuses any PG* variable; tests start from a shell
+        # without them, inside the patch so the caller's environment returns.
+        for key in [key for key in os.environ if key.startswith('PG')]:
+            del os.environ[key]
         # The real Cargo probe compiles a crate; its own test exercises it.
-        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=(False, True))
+        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=([], True))
         self.cargo_probe.start()
         self.addCleanup(patch.stopall)
 
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'
-        with patch.dict(os.environ, DATABASE_URL=secret, PGHOSTADDR='192.0.2.1', PGSERVICE='other'), \
+        with patch.dict(os.environ, DATABASE_URL=secret), \
              patch('refresh_runledger_sqlx.run', return_value='sqlx-cli 0.9.1') as command, \
              patch('refresh_runledger_sqlx.subprocess.run',
                    return_value=subprocess.CompletedProcess([], 2, '', secret)) as psql:
@@ -131,11 +135,21 @@ class RefreshTests(unittest.TestCase):
             self.assertEqual((environment['PGHOST'], environment['PGPORT'], environment['PGDATABASE'],
                               environment['PGUSER'], environment['PGPASSWORD']),
                              ('localhost', '5432', 'database', 'user', 'private-marker'))
-            self.assertNotIn('PGHOSTADDR', environment)
-            self.assertNotIn('PGSERVICE', environment)
             # The caller's environment is restored after the SQLx children ran.
-            self.assertEqual(os.environ['PGHOSTADDR'], '192.0.2.1')
             self.assertEqual(os.environ['DATABASE_URL'], secret)
+
+    def test_ambient_postgres_variables_are_refused_before_any_command(self):
+        secret = 'postgresql://user:private-marker@localhost/database'
+        with patch.dict(os.environ, DATABASE_URL=secret, PGSSLMODE='verify-full',
+                        PGHOSTADDR='192.0.2.1'), \
+             patch('refresh_runledger_sqlx.run') as command, \
+             patch('refresh_runledger_sqlx.subprocess.run') as psql:
+            with self.assertRaisesRegex(ValueError, 'unset PGHOSTADDR, PGSSLMODE: ') as error:
+                refresh(Path.cwd())
+            self.assertNotIn('192.0.2.1', str(error.exception))
+            self.assertNotIn('private-marker', str(error.exception))
+            command.assert_not_called()
+            psql.assert_not_called()
 
     def test_database_url_is_parsed_once_for_both_clients(self):
         parts = parse_database_url(
@@ -154,6 +168,11 @@ class RefreshTests(unittest.TestCase):
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
+        # A CA travels in the URL: psql gets its variable, SQLx the parameter.
+        ca = parse_database_url('postgres://u@db.invalid/db?sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem')
+        self.assertEqual(psql_environment(ca)['PGSSLROOTCERT'], '/ca/root.pem')
+        self.assertEqual(psql_environment(ca)['PGSSLMODE'], 'verify-full')
+        self.assertTrue(sqlx_database_url(ca).endswith('?sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem'))
         # The Runledger-owned container's redundant loopback pin is dropped.
         owned = parse_database_url('postgres://runledger:runledger@127.0.0.1:5432/db?hostaddr=127.0.0.1')
         self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db')
@@ -217,24 +236,6 @@ class RefreshTests(unittest.TestCase):
                 command.assert_not_called()
                 psql.assert_not_called()
 
-    def test_inherited_tls_requirements_are_carried_or_refused(self):
-        def parts():
-            return parse_database_url('postgres://u@db.invalid/db')
-        carried = carry_inherited_tls(parts(), {'PGSSLMODE': 'verify-full', 'PGSSLROOTCERT': '/ca/root.pem'})
-        self.assertEqual(carried['parameters'], {'sslmode': 'verify-full', 'sslrootcert': '/ca/root.pem'})
-        self.assertIn('sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem', sqlx_database_url(carried))
-        self.assertEqual(psql_environment(carried)['PGSSLMODE'], 'verify-full')
-        self.assertEqual(psql_environment(carried)['PGSSLROOTCERT'], '/ca/root.pem')
-        # The URL's own sslmode wins, as it does for libpq.
-        explicit = carry_inherited_tls(parse_database_url('postgres://u@db.invalid/db?sslmode=require'),
-                                       {'PGSSLMODE': 'disable'})
-        self.assertEqual(explicit['parameters'], {'sslmode': 'require'})
-        for environment, message in (({'PGSSLCERT': '/c.pem'}, 'unset PGSSLCERT'),
-                                     ({'PGREQUIRESSL': '1'}, 'unset PGREQUIRESSL'),
-                                     ({'PGSSLMODE': 'verify-everything'}, 'unknown sslmode')):
-            with self.assertRaisesRegex(ValueError, message):
-                carry_inherited_tls(parts(), environment)
-
     def test_sqlx_config_lookup_follows_the_filesystem(self):
         # A long-s (U+017F) spelling is the file SQLx opens exactly when the
         # volume folds it to sqlx.toml (macOS by default), and never on Linux.
@@ -249,7 +250,9 @@ class RefreshTests(unittest.TestCase):
 
     def test_cargo_env_endpoint_is_refused_before_any_command(self):
         url = 'postgresql://u@db.invalid/database'
-        for answer, message in (((True, True), 'remove PGHOSTADDR'), ((False, False), 'remove DATABASE_URL')):
+        for answer, message in (((['PGHOSTADDR'], True), 'remove PGHOSTADDR'),
+                                ((['PGOPTIONS', 'PGSSLMODE'], True), 'remove PGOPTIONS, PGSSLMODE'),
+                                (([], False), 'remove DATABASE_URL')):
             with self.subTest(answer=answer), \
                  patch.dict(os.environ, DATABASE_URL=url), \
                  patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=answer) as probe, \
@@ -278,20 +281,21 @@ class RefreshTests(unittest.TestCase):
                 'RUSTUP_HOME', str(Path.home() / '.rustup'))}
             with patch.dict(os.environ, environment):
                 os.environ.pop('PGHOSTADDR', None)
-                self.assertEqual(cargo_compiler_endpoint(root, url), (False, True))
-                (root / '.cargo/extra.toml').write_text('[env]\nPGHOSTADDR = "192.0.2.1"\n')
+                self.assertEqual(cargo_compiler_endpoint(root, url), ([], True))
+                (root / '.cargo/extra.toml').write_text(
+                    '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\n')
                 (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), (True, True))
+                self.assertEqual(cargo_compiler_endpoint(root, url), (['PGHOSTADDR', 'PGOPTIONS'], True))
                 (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), (False, False))
+                self.assertEqual(cargo_compiler_endpoint(root, url), ([], False))
                 # Forcing a would-be expected-value variable too changes nothing:
                 # the expected URL comes from stdin.
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
                     'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), (False, False))
+                self.assertEqual(cargo_compiler_endpoint(root, url), ([], False))
 
     def test_migration_states_reject_incomplete_or_different_schema(self):
         self.assertTrue(migrations_current('001/installed initial\n002/installed next'))

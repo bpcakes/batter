@@ -12,7 +12,6 @@ pub(crate) const POSTGRES_PASSWORD: &str = "runledger";
 pub(crate) const POSTGRES_DB: &str = "postgres";
 const TEST_ADMIN_DATABASE_URL_ENV: &str = "RUNLEDGER_TEST_ADMIN_DATABASE_URL";
 const TEST_PG_IMAGE_ENV: &str = "RUNLEDGER_TEST_PG_IMAGE";
-pub(crate) const AMBIENT_HOST_ADDRESS_ENV: &str = "PGHOSTADDR";
 const POSTGRES_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
 const POSTGRES_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const POSTGRES_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -63,17 +62,27 @@ async fn initialize_shared_postgres() -> SharedPostgres {
     initialize_postgres(configured_postgres_source()).await
 }
 
-/// SQLx 0.9.1, like libpq, fills an unset `hostaddr` from an ambient
-/// `PGHOSTADDR`, but the fixture's clients are not all SQLx: native test
-/// proxies dial and forward to the URL host themselves. Every fixture mode
-/// therefore refuses the variable before provisioning, so no connection
-/// follows an address the URL does not state. The owned container's URLs
-/// also pin `hostaddr`.
-pub(crate) fn reject_ambient_host_address(present: bool) {
+/// The names of every `PG*` variable in the process environment.
+pub(crate) fn ambient_postgres_variables() -> Vec<String> {
+    let mut names: Vec<String> = std::env::vars_os()
+        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .filter(|key| key.starts_with("PG"))
+        .collect();
+    names.sort();
+    names
+}
+
+/// SQLx 0.9.1, like libpq, fills unset settings from `PG*` variables
+/// (`PGHOSTADDR`, `PGPASSWORD`, `PGOPTIONS` and others), but the fixture's
+/// clients are not all SQLx: native test proxies dial and forward to the URL
+/// host themselves. Every fixture mode therefore refuses any `PG*` variable
+/// before provisioning, so every client reads only the URL. The message names
+/// the variables, never their values.
+pub(crate) fn reject_ambient_postgres_environment(names: &[String]) {
     assert!(
-        !present,
-        "unset {AMBIENT_HOST_ADDRESS_ENV} for Runledger PostgreSQL fixtures: native test \
-         clients reach the URL host, not that address"
+        names.is_empty(),
+        "unset {} for Runledger PostgreSQL fixtures: put every connection setting in the URL",
+        names.join(", ")
     );
 }
 
@@ -104,7 +113,7 @@ async fn initialize_postgres(source: PostgresSource) -> SharedPostgres {
 }
 
 async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
-    reject_ambient_host_address(std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some());
+    reject_ambient_postgres_environment(&ambient_postgres_variables());
     crate::external_admin::reject_dropped_endpoint_parameters(&admin_url);
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
@@ -255,14 +264,14 @@ mod tests {
     const CONCURRENT_CALLERS: usize = 8;
 
     #[test]
-    fn absent_ambient_host_address_permits_fixture_startup() {
-        reject_ambient_host_address(false);
+    fn absent_postgres_environment_permits_fixture_startup() {
+        reject_ambient_postgres_environment(&[]);
     }
 
     #[test]
-    #[should_panic(expected = "unset PGHOSTADDR for Runledger PostgreSQL fixtures")]
-    fn ambient_host_address_refuses_fixture_startup() {
-        reject_ambient_host_address(true);
+    #[should_panic(expected = "unset PGDATA, PGHOSTADDR for Runledger PostgreSQL fixtures")]
+    fn any_postgres_variable_refuses_fixture_startup() {
+        reject_ambient_postgres_environment(&["PGDATA".to_owned(), "PGHOSTADDR".to_owned()]);
     }
 
     #[tokio::test]

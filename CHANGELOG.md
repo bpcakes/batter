@@ -28,14 +28,16 @@ contracts, capability facts and validation history.
   from the harness's recorded name, so SQLx pools reach the server and
   database the harness provisioned whatever the URL text says. They refuse
   with the new `UnsupportedHarnessEndpoint` (see `HarnessEndpointReason`)
-  while `PGHOSTADDR` is set or when the admin URL declares `hostaddr`, several
-  hosts or a setting SQLx cannot carry. Template initializers receive a URL
+  while any `PG*` environment variable is set (SQLx fills unset settings from
+  several, the harness from none; put every setting in the admin URL) or when
+  the admin URL declares `hostaddr`, several hosts or a setting SQLx cannot
+  carry. Template initializers receive a URL
   rebuilt from that parse and checked with both parsers; it carries
   `connect_timeout` and `channel_binding=disable`, and other connection tuning it cannot carry
-  (`tcp_user_timeout`, `keepalives*`) is refused. Session settings
-  the admin URL omits, such as `application_name` and startup `options`, still
-  come from SQLx's own `PGAPPNAME` and `PGOPTIONS` reading on both paths; the
-  harness does not send them and they select no server. Reference-service
+  (`tcp_user_timeout`, `keepalives*`) is refused. Offline fixture endpoint
+  tests require a shell without `PG*` variables and say so in one assertion,
+  since SQLx reads them in-process and tests may not change the environment.
+  Reference-service
   fixture tests use the new helpers instead of reparsing harness URLs.
 - Disclosed upstream regressions: outside a server transaction SQLx re-sends a
   statement whose first response is SQLSTATE `26000` or a stale cached-plan

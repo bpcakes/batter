@@ -236,7 +236,12 @@ impl FixtureSuite {
             .template(spec, move |url| async move {
                 // Hand caller code a URL rebuilt from the harness's own endpoint
                 // parse and recorded name, never the harness URL text itself.
-                initializer(endpoint::initializer_url(&admin_url, &url)?).await
+                initializer(endpoint::initializer_url(
+                    &admin_url,
+                    &url,
+                    endpoint::Environment::process(),
+                )?)
+                .await
             })
             .await
             .map_err(FixtureError::Harness)?;
@@ -340,6 +345,7 @@ impl DatabaseFixture {
             admin_url,
             self.lease.database_url(),
             self.lease.database_name(),
+            endpoint::Environment::process(),
         )?;
         // Every pool is owned here before the first await; dispose closes them all.
         let pools = plan::construct(resolved, &mut self.pools);

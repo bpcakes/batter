@@ -378,9 +378,9 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   unchanged. Online index repair keeps its explicit `ROLLBACK` after a failed
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
   runs outside a block and only warns. `runledger-test-support` now refuses
-  `PGHOSTADDR` in every fixture mode, before provisioning: SQLx 0.9.1 would
-  follow it, but native test proxies dial and forward to the URL host
-  themselves. Owned-container admin URLs, and every `EphemeralDatabase::url()`
+  any `PG*` environment variable in every fixture mode, before provisioning:
+  SQLx 0.9.1 fills unset settings from them, but native test proxies dial and
+  forward to the URL host themselves. Put every setting in the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
   derived from them, now end in `?hostaddr=127.0.0.1`; consumers that append
   their own query to such a URL must use `&`. An external
   `RUNLEDGER_TEST_ADMIN_DATABASE_URL`'s derived URLs still carry no query, so
@@ -388,20 +388,17 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   or `port`, or a `hostaddr` that does not repeat its own IP literal host: the
   admin pool would follow them while leases do not. That split already
   existed under SQLx 0.9.0.
-  `scripts/refresh_runledger_sqlx.py` now parses `DATABASE_URL` once, gives
-  `psql` the parts as its own PG* variables (no credentials in its arguments)
-  in an environment without any other PG* setting, gives SQLx CLI a URL
+  `scripts/refresh_runledger_sqlx.py` now refuses any ambient `PG*` variable,
+  parses `DATABASE_URL` once, gives `psql` the parts as its own PG* variables
+  (no credentials in its arguments), gives SQLx CLI a URL
   rebuilt from the same parts, refuses any `sqlx.toml` (whose
   `database-url-var` SQLx CLI 0.9.1 reads by default), and refuses a Cargo
-  `[env]` `PGHOSTADDR` or `DATABASE_URL` that would change what the query
-  macros connect to. It assumes the host name resolves to one server for the
+  `[env]` that sets a libpq or SQLx connection variable or changes
+  `DATABASE_URL` for the query macros. It assumes the host name resolves to one server for the
   whole refresh. It
   accepts only one host, one database and the `sslmode`, `sslrootcert`,
-  `application_name` and `options` parameters. An inherited `PGSSLMODE` or
-  `PGSSLROOTCERT` the URL does not override is carried to both clients
-  explicitly, so `verify-full` is not weakened by the clean environment; any
-  other inherited TLS or authentication requirement (`PGSSLCERT`,
-  `PGREQUIRESSL`, `PGCHANNELBINDING` and similar) is refused. No public item, schema or persisted data changes.
+  `application_name` and `options` parameters; TLS requirements such as
+  `sslmode=verify-full` belong in the URL. No public item, schema or persisted data changes.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

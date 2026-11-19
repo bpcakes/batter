@@ -1,7 +1,8 @@
 use super::*;
 
 fn reason(admin_url: &str) -> Option<HarnessEndpointReason> {
-    match HarnessEndpoint::from_admin_url_with(admin_url, None) {
+    require_clean_environment();
+    match HarnessEndpoint::from_admin_url(admin_url, Environment::CLEAN) {
         Ok(_) => None,
         Err(sqlx::Error::Configuration(source)) => Some(
             source
@@ -14,14 +15,14 @@ fn reason(admin_url: &str) -> Option<HarnessEndpointReason> {
 }
 
 fn endpoint(admin_url: &str) -> HarnessEndpoint {
-    HarnessEndpoint::from_admin_url_with(admin_url, None).expect("supported endpoint")
+    require_clean_environment();
+    HarnessEndpoint::from_admin_url(admin_url, Environment::CLEAN).expect("supported endpoint")
 }
 
 #[test]
-fn ambient_host_address_is_refused_before_parsing() {
-    let error =
-        HarnessEndpoint::from_admin_url_with("not a url", Some(std::ffi::OsStr::new("192.0.2.1")))
-            .unwrap_err();
+fn any_pg_variable_is_refused_before_parsing() {
+    let error = HarnessEndpoint::from_admin_url("not a url", Environment { pg_variables: true })
+        .unwrap_err();
     let sqlx::Error::Configuration(source) = &error else {
         panic!("configuration error expected");
     };
@@ -29,7 +30,7 @@ fn ambient_host_address_is_refused_before_parsing() {
         source
             .downcast_ref::<UnsupportedHarnessEndpoint>()
             .map(UnsupportedHarnessEndpoint::reason),
-        Some(HarnessEndpointReason::AmbientHostAddress)
+        Some(HarnessEndpointReason::AmbientEnvironment)
     );
 }
 
@@ -112,9 +113,9 @@ fn unsupported_endpoints_are_refused_with_their_reason() {
     ] {
         assert_eq!(reason(url), expected, "{url}");
     }
-    let error = HarnessEndpoint::from_admin_url_with(
+    let error = HarnessEndpoint::from_admin_url(
         "postgres://u:secret-marker@127.0.0.1:5432/postgres?hostaddr=192.0.2.1",
-        None,
+        Environment::CLEAN,
     )
     .unwrap_err();
     let text = error.to_string();
@@ -147,6 +148,7 @@ fn rebuilt_urls_read_back_as_the_same_endpoint_in_both_parsers() {
 
 #[test]
 fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
+    require_clean_environment();
     let harness_url = "postgres://u@127.0.0.1:5432/pgh_template_1?sslmode=disable";
     assert_eq!(
         HarnessEndpoint::recorded_database(harness_url).as_deref(),
@@ -165,6 +167,7 @@ fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
     let error = initializer_url(
         "postgres://u@127.0.0.1:5432/postgres?dbname=postgres",
         overridden,
+        Environment::CLEAN,
     )
     .unwrap_err();
     assert!(matches!(&error, sqlx::Error::Configuration(source)
@@ -185,11 +188,15 @@ fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
                 .is_none_or(|name| !HarnessEndpoint::names_database(url, name)),
             "{url}"
         );
-        assert!(initializer_url(admin, url).is_err(), "{url}");
+        assert!(
+            initializer_url(admin, url, Environment::CLEAN).is_err(),
+            "{url}"
+        );
     }
     let rebuilt = initializer_url(
         "postgres://u@127.0.0.1:5432/postgres?sslmode=disable",
         harness_url,
+        Environment::CLEAN,
     )
     .unwrap();
     assert_eq!(
@@ -225,18 +232,8 @@ fn explicit_empty_passwords_survive_the_rebuilt_url() {
     assert_eq!(endpoint.password.as_deref(), Some(""));
     let url = endpoint.url("pgh_template_1").unwrap();
     assert!(url.ends_with("&password="), "{url}");
-    let again = HarnessEndpoint::from_admin_url_with(&url, None).unwrap();
+    let again = HarnessEndpoint::from_admin_url(&url, Environment::CLEAN).unwrap();
     assert_eq!(again.password.as_deref(), Some(""), "{url}");
-}
-
-#[test]
-fn option_rebuild_check_allows_options_sqlx_took_from_the_environment() {
-    let pairs = vec![("search_path".to_owned(), "public".to_owned())];
-    let raw = "-c search_path=public";
-    // A base that already carries options, as an ambient PGOPTIONS leaves it.
-    let ambient = PgConnectOptions::new_without_pgpass().options([("statement_timeout", "5s")]);
-    assert!(setter_rebuilds(ambient.clone(), raw, &pairs));
-    assert!(!setter_rebuilds(ambient, "-c search_path=other", &pairs));
 }
 
 #[test]
@@ -277,12 +274,13 @@ fn initializer_urls_keep_the_connect_timeout_and_refuse_other_tuning() {
 
 #[test]
 fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
+    require_clean_environment();
     let admin = "postgres://owner:p@127.0.0.1:5432/postgres?sslmode=disable";
     let lease = "postgres://owner:p@127.0.0.1:5432/pgh_lease_1?sslmode=disable";
-    let options = lease_options(admin, lease, "pgh_lease_1").unwrap();
+    let options = lease_options(admin, lease, "pgh_lease_1", Environment::CLEAN).unwrap();
     assert_eq!(options.get_database(), Some("pgh_lease_1"));
     // A name the lease URL does not select.
-    let error = lease_options(admin, lease, "postgres").unwrap_err();
+    let error = lease_options(admin, lease, "postgres", Environment::CLEAN).unwrap_err();
     assert!(matches!(&error, sqlx::Error::Configuration(source)
         if source.is::<super::super::LeaseDatabaseMismatch>()));
     // A lease another harness issued: different port, or different login.
@@ -290,7 +288,7 @@ fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
         "postgres://owner:p@127.0.0.1:6543/pgh_lease_1?sslmode=disable",
         "postgres://other:p@127.0.0.1:5432/pgh_lease_1?sslmode=disable",
     ] {
-        let error = lease_options(admin, foreign, "pgh_lease_1").unwrap_err();
+        let error = lease_options(admin, foreign, "pgh_lease_1", Environment::CLEAN).unwrap_err();
         let sqlx::Error::Configuration(source) = &error else {
             panic!("configuration error expected");
         };

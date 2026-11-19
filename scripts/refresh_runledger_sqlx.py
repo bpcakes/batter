@@ -46,34 +46,29 @@ def sync_files(source, destination, suffix):
 # Query parameters both psql and SQLx accept, with the psql variable for each.
 CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT",
                       "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
-SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
-# TLS and authentication requirements both children would lose with the
-# inherited PG* environment, and that neither URL nor psql variables carry.
-UNCARRIED_REQUIREMENTS = ("PGSSLCERT", "PGSSLKEY", "PGSSLPASSWORD", "PGSSLCRL", "PGSSLCRLDIR",
-                          "PGSSLCERTMODE", "PGSSLNEGOTIATION", "PGSSLSNI", "PGREQUIRESSL",
-                          "PGSSLMINPROTOCOLVERSION", "PGSSLMAXPROTOCOLVERSION",
-                          "PGCHANNELBINDING", "PGGSSENCMODE", "PGREQUIREAUTH")
+# Every variable SQLx 0.9.1 reads, plus libpq's documented connection
+# variables: the names the Cargo probe checks the query macros' compiler for.
+# The process environment itself is refused on any PG* name.
+POSTGRES_VARIABLES = (
+    "PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD", "PGPASSFILE",
+    "PGREQUIREAUTH", "PGCHANNELBINDING", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS", "PGAPPNAME",
+    "PGSSLMODE", "PGREQUIRESSL", "PGSSLNEGOTIATION", "PGSSLCOMPRESSION", "PGSSLCERT", "PGSSLKEY",
+    "PGSSLCERTMODE", "PGSSLROOTCERT", "PGSSLCRL", "PGSSLCRLDIR", "PGSSLSNI", "PGREQUIREPEER",
+    "PGSSLMINPROTOCOLVERSION", "PGSSLMAXPROTOCOLVERSION", "PGGSSENCMODE", "PGKRBSRVNAME",
+    "PGGSSLIB", "PGGSSDELEGATION", "PGCONNECT_TIMEOUT", "PGCLIENTENCODING",
+    "PGTARGETSESSIONATTRS", "PGLOADBALANCEHOSTS", "PGMINPROTOCOLVERSION", "PGMAXPROTOCOLVERSION",
+    "PGDATESTYLE", "PGTZ", "PGGEQO", "PGSYSCONFDIR", "PGLOCALEDIR",
+)
 
 
-def carry_inherited_tls(parts, environment):
-    """Carry inherited TLS requirements to both clients explicitly.
-
-    Both children start from an environment without PG* settings, so a
-    PGSSLMODE or PGSSLROOTCERT the URL does not override would silently be
-    lost, weakening verify-full to prefer. Those two become URL parameters;
-    any other inherited TLS or authentication requirement is refused.
-    """
-    present = sorted(key for key in UNCARRIED_REQUIREMENTS if environment.get(key))
-    if present:
-        raise ValueError("unset " + ", ".join(present) + " or connect without the refresh: it cannot "
-                         "give psql and SQLx that requirement")
-    for key in ("sslmode", "sslrootcert"):
-        value = environment.get(CARRIED_PARAMETERS[key])
-        if value and key not in parts["parameters"]:
-            parts["parameters"][key] = value
-    if parts["parameters"].get("sslmode", "prefer") not in SSL_MODES:
-        raise ValueError("DATABASE_URL or PGSSLMODE names an unknown sslmode")
-    return parts
+def refuse_ambient_postgres_environment(environment):
+    """Refuse any PG* variable: psql and SQLx both fill unset settings from
+    them, so the refresh takes every connection setting from DATABASE_URL
+    rather than carry or translate inherited ones. Names only, never values."""
+    names = sorted(key for key in environment if key.startswith("PG"))
+    if names:
+        raise ValueError("unset " + ", ".join(names) + ": the refresh takes every connection "
+                         "setting from DATABASE_URL")
 
 
 def is_ip_literal(host):
@@ -91,13 +86,13 @@ def parse_database_url(database):
     """Parse DATABASE_URL once; psql and SQLx then receive only these parts.
 
     psql (libpq), SQLx CLI and the query macros read some URL text differently,
-    and libpq and SQLx both read ambient PG* settings. Rather than check that
-    every parser agrees, this script parses the URL once, gives psql the parts
-    as its own PG* variables in an environment without any other PG* setting,
-    and gives SQLx a URL rebuilt from the same parts. Only what both can
-    receive alike is accepted: one host or socket directory, an optional port,
-    one database, optional credentials, and the sslmode, application_name and
-    options parameters, each once.
+    and libpq and SQLx both read ambient PG* settings, which `refresh` refuses.
+    Rather than check that every parser agrees, this script parses the URL once,
+    gives psql the parts as its own PG* variables, and gives SQLx a URL rebuilt
+    from the same parts. Only what both can receive alike is accepted: one host
+    or socket directory, an optional port, one database, optional credentials,
+    and the sslmode, sslrootcert, application_name and options parameters, each
+    once.
     """
     try:
         parts = urlsplit(database)
@@ -213,12 +208,11 @@ def sqlx_database_url(parts):
 
 @contextmanager
 def sqlx_environment(database_url):
-    """Run SQLx CLI and Cargo children without inherited PG* settings and with
-    the rebuilt DATABASE_URL, restoring this process's environment afterwards."""
+    """Run SQLx CLI and Cargo children with the rebuilt DATABASE_URL, restoring
+    this process's environment afterwards. `refresh` already refused every
+    PG* variable, so the children inherit none."""
     previous = dict(os.environ)
     try:
-        for key in [key for key in os.environ if key.startswith("PG")]:
-            del os.environ[key]
         os.environ["DATABASE_URL"] = database_url
         yield
     finally:
@@ -229,12 +223,12 @@ def sqlx_environment(database_url):
 def cargo_compiler_endpoint(directory, database):
     """What Cargo, run from `directory`, gives the query macros' compiler.
 
-    Returns whether `PGHOSTADDR` is set for the compiler and whether its
+    Returns the POSTGRES_VARIABLES Cargo sets for the compiler and whether its
     `DATABASE_URL` equals `database`. `cargo sqlx prepare` runs `cargo check`,
     which applies `[env]` settings, including included, home and forced ones,
     even when the parent shell differs. Ask Cargo itself by compiling a
-    throwaway probe from the same directory; it prints only two booleans, never
-    either URL.
+    throwaway probe from the same directory; it prints variable names and one
+    boolean, never a value or either URL.
     """
     with tempfile.TemporaryDirectory(prefix="batter-cargo-env-probe-") as scratch:
         probe = Path(scratch)
@@ -247,7 +241,10 @@ def cargo_compiler_endpoint(directory, database):
             'fn main() {\n'
             '    let mut expected = String::new();\n'
             '    std::io::stdin().read_to_string(&mut expected).expect("expected URL on stdin");\n'
-            '    print!("{} {}", option_env!("PGHOSTADDR").is_some(),\n'
+            '    let set: Vec<&str> = [' + ", ".join(
+                f'("{name}", option_env!("{name}").is_some())' for name in POSTGRES_VARIABLES) + ']\n'
+            '        .iter().filter(|(_, set)| *set).map(|(name, _)| *name).collect();\n'
+            '    print!("{} {}", if set.is_empty() { "-".to_owned() } else { set.join(",") },\n'
             '           option_env!("DATABASE_URL") == Some(expected.as_str()));\n'
             '}\n')
         try:
@@ -258,9 +255,11 @@ def cargo_compiler_endpoint(directory, database):
         except (OSError, subprocess.TimeoutExpired):
             raise ValueError("could not ask Cargo which [env] settings apply") from None
     answer = result.stdout.split()
-    if result.returncode or len(answer) != 2 or any(item not in ("true", "false") for item in answer):
+    names = [] if len(answer) != 2 or answer[0] == "-" else answer[0].split(",")
+    if (result.returncode or len(answer) != 2 or answer[1] not in ("true", "false")
+            or any(name not in POSTGRES_VARIABLES for name in names)):
         raise ValueError("could not ask Cargo which [env] settings apply")
-    return answer[0] == "true", answer[1] == "true"
+    return names, answer[1] == "true"
 
 
 def refuse_sqlx_config(directory):
@@ -282,9 +281,10 @@ def refuse_sqlx_config(directory):
 
 
 def refuse_cargo_endpoint(directory, database):
-    host_address, same_url = cargo_compiler_endpoint(directory, database)
-    if host_address:
-        raise ValueError("remove PGHOSTADDR from Cargo [env]: SQLx would connect to it instead of DATABASE_URL's host")
+    names, same_url = cargo_compiler_endpoint(directory, database)
+    if names:
+        raise ValueError("remove " + ", ".join(names) + " from Cargo [env]: the query macros would read "
+                         "settings psql did not check")
     if not same_url:
         raise ValueError("remove DATABASE_URL from Cargo [env]: the query macros would use another database than psql checked")
 
@@ -306,10 +306,11 @@ def query(root, parts, sql, purpose):
 
 def refresh(root):
     root = Path(root).resolve()
+    refuse_ambient_postgres_environment(os.environ)
     database = os.environ.get("DATABASE_URL")
     if not database:
         raise ValueError("DATABASE_URL must identify an already migrated PostgreSQL 18 database")
-    parts = carry_inherited_tls(parse_database_url(database), os.environ)
+    parts = parse_database_url(database)
     with sqlx_environment(sqlx_database_url(parts)):
         refresh_with(root, parts)
 

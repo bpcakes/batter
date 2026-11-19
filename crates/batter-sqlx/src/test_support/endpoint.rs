@@ -1,8 +1,10 @@
 //! One parse of the harness endpoint, shared by every fixture client.
 //!
 //! The harness provisions with tokio-postgres, which reads its admin URL
-//! without consulting the process environment, while SQLx 0.9.1 reads an
-//! ambient `PGHOSTADDR` (as libpq does) and parses some URL text differently.
+//! without consulting the process environment, while SQLx 0.9.1 fills unset
+//! settings from `PG*` variables (as libpq does) and parses some URL text
+//! differently. Fixture endpoints therefore refuse every `PG*` variable and
+//! take all settings from the admin URL.
 //! Rather than check that two parsers agree on arbitrary text, fixture pools
 //! take their endpoint from the harness's own parse of its admin URL, set every
 //! field explicitly, and take the database from the name the harness recorded.
@@ -31,12 +33,13 @@ const DEFAULT_PORT: u16 = 5432;
 /// Test code that connects to a leased database directly, such as a
 /// diagnostic pool beside a fixture, uses this
 /// instead of handing `admin_database_url()` or a lease URL to SQLx, whose
-/// parse can differ (for example through an ambient `PGHOSTADDR`, a `dbname`
+/// parse can differ (for example through an ambient `PG*` variable, a `dbname`
 /// parameter or path normalization).
 ///
 /// Refuses with [`UnsupportedHarnessEndpoint`] inside
-/// `sqlx::Error::Configuration` when `PGHOSTADDR` is set (SQLx would apply it
-/// and no setter clears it) or when the admin URL selects something these
+/// `sqlx::Error::Configuration` when any `PG*` environment variable is set
+/// (SQLx would read some, and no setter clears them) or when the admin URL
+/// selects something these
 /// options cannot carry faithfully; see [`HarnessEndpointReason`].
 ///
 /// ```no_run
@@ -58,6 +61,7 @@ pub fn harness_connect_options(
         harness.admin_database_url(),
         lease.database_url(),
         lease.database_name(),
+        Environment::process(),
     )
 }
 
@@ -65,8 +69,9 @@ fn lease_options(
     admin_url: &str,
     lease_url: &str,
     name: &str,
+    environment: Environment,
 ) -> Result<PgConnectOptions, sqlx::Error> {
-    let endpoint = HarnessEndpoint::from_admin_url(admin_url)?;
+    let endpoint = HarnessEndpoint::from_admin_url(admin_url, environment)?;
     if !HarnessEndpoint::names_database(lease_url, name) {
         return Err(sqlx::Error::Configuration(Box::new(
             super::LeaseDatabaseMismatch,
@@ -74,7 +79,8 @@ fn lease_options(
     }
     // The harness builds a lease URL from its admin URL, replacing only the
     // database; any other difference means another harness issued the lease.
-    let issuer = HarnessEndpoint::from_admin_url(lease_url)
+    // The environment was checked above; this reads the lease URL alone.
+    let issuer = HarnessEndpoint::from_admin_url(lease_url, Environment::CLEAN)
         .map_err(|_| refusal(HarnessEndpointReason::ForeignLease))?;
     if !endpoint.same_server_and_login(&issuer) {
         return Err(refusal(HarnessEndpointReason::ForeignLease));
@@ -89,7 +95,8 @@ fn lease_options(
 pub fn harness_admin_connect_options(
     harness: &PostgresHarness,
 ) -> Result<PgConnectOptions, sqlx::Error> {
-    let endpoint = HarnessEndpoint::from_admin_url(harness.admin_database_url())?;
+    let endpoint =
+        HarnessEndpoint::from_admin_url(harness.admin_database_url(), Environment::process())?;
     let database = endpoint.admin_database.clone();
     endpoint.options(&database)
 }
@@ -133,29 +140,52 @@ impl std::fmt::Debug for HarnessEndpoint {
     }
 }
 
-/// Whether SQLx's `options` setter, applied to `base`, writes exactly
-/// `prefix raw`: the setter appends to options SQLx already took from an
-/// ambient `PGOPTIONS`, joining them with a space, and escapes each value.
-fn setter_rebuilds(base: PgConnectOptions, raw: &str, pairs: &[(String, String)]) -> bool {
-    let expected = match base.get_options() {
-        Some(ambient) if !ambient.is_empty() => format!("{ambient} {raw}"),
-        _ => raw.to_owned(),
+/// Whether the process environment holds a `PG*` variable. SQLx fills unset
+/// settings from several (`PGHOSTADDR`, `PGOPTIONS`, `PGAPPNAME`,
+/// `PGPASSWORD` and others) while the harness reads none, so fixture
+/// endpoints refuse every one rather than translate between the two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Environment {
+    pg_variables: bool,
+}
+
+/// SQLx's constructors and URL parser read `PG*` variables in-process, and
+/// tests may not change the process environment, so offline endpoint tests
+/// require a shell without them. One clear failure replaces many confusing
+/// assertion failures.
+#[cfg(test)]
+pub(super) fn require_clean_environment() {
+    assert_eq!(
+        Environment::process(),
+        Environment::CLEAN,
+        "unset every PG* environment variable to run the fixture endpoint tests: SQLx reads them"
+    );
+}
+
+impl Environment {
+    /// An environment without `PG*` variables: tests, and URLs read after the
+    /// process environment was already checked.
+    pub(super) const CLEAN: Self = Self {
+        pg_variables: false,
     };
-    base.options(pairs.iter().cloned()).get_options() == Some(expected.as_str())
+
+    /// The current process environment.
+    pub(super) fn process() -> Self {
+        Self {
+            pg_variables: std::env::vars_os()
+                .any(|(key, _)| key.as_encoded_bytes().starts_with(b"PG")),
+        }
+    }
 }
 
 impl HarnessEndpoint {
-    pub(super) fn from_admin_url(admin_url: &str) -> Result<Self, sqlx::Error> {
-        Self::from_admin_url_with(admin_url, std::env::var_os("PGHOSTADDR").as_deref())
-    }
-
-    fn from_admin_url_with(
+    pub(super) fn from_admin_url(
         admin_url: &str,
-        ambient_host_address: Option<&std::ffi::OsStr>,
+        environment: Environment,
     ) -> Result<Self, sqlx::Error> {
         use HarnessEndpointReason::*;
-        if ambient_host_address.is_some() {
-            return Err(refusal(AmbientHostAddress));
+        if environment.pg_variables {
+            return Err(refusal(AmbientEnvironment));
         }
         let config =
             tokio_postgres::Config::from_str(admin_url).map_err(|_| refusal(Unparseable))?;
@@ -203,7 +233,8 @@ impl HarnessEndpoint {
             None => None,
             Some(raw) => {
                 let pairs = option_pairs(raw).ok_or_else(|| refusal(UnsupportedSetting))?;
-                if !setter_rebuilds(PgConnectOptions::new_without_pgpass(), raw, &pairs) {
+                let rebuilt = PgConnectOptions::new_without_pgpass().options(pairs.iter().cloned());
+                if rebuilt.get_options() != Some(raw) {
                     return Err(refusal(UnsupportedSetting));
                 }
                 Some((raw.to_owned(), pairs))
@@ -242,8 +273,8 @@ impl HarnessEndpoint {
 
     /// SQLx options for `database`, every endpoint field set explicitly.
     pub(super) fn options(&self, database: &str) -> Result<PgConnectOptions, sqlx::Error> {
-        // `from_admin_url` already refused an ambient `PGHOSTADDR`, the one
-        // environment value no setter below overrides.
+        // `from_admin_url` already refused every `PG*` variable, so SQLx's
+        // defaults below read nothing from the environment.
         let options = PgConnectOptions::new_without_pgpass();
         let options = match &self.address {
             Address::Tcp(name) => options.host(name),
@@ -338,7 +369,7 @@ impl HarnessEndpoint {
     fn check_round_trip(&self, url: &str, database: &str) -> Result<(), sqlx::Error> {
         let mismatch = || refusal(HarnessEndpointReason::RoundTrip);
         // tokio-postgres's parse, as the harness and many initializers read it.
-        let again = Self::from_admin_url_with(url, None).map_err(|_| mismatch())?;
+        let again = Self::from_admin_url(url, Environment::CLEAN).map_err(|_| mismatch())?;
         if again.address != self.address
             || again.port != self.port
             || again.user != self.user
@@ -352,12 +383,8 @@ impl HarnessEndpoint {
         {
             return Err(mismatch());
         }
-        // SQLx's own parse; an ambient `PGHOSTADDR` was refused already.
+        // SQLx's own parse; every `PG*` variable was refused already.
         let native: PgConnectOptions = url.parse().map_err(|_| mismatch())?;
-        // Session settings the URL omits come from SQLx's environment in both
-        // the URL parse and the setter-built options, so compare those two:
-        // the harness does not send them, and they select no server.
-        let built = self.options(database)?;
         let same_address = match &self.address {
             // SQLx keeps the URL brackets around an IPv6 host.
             Address::Tcp(name) => {
@@ -375,8 +402,8 @@ impl HarnessEndpoint {
             || native.get_username() != self.user
             || native.get_database() != Some(database)
             || mode_name(native.get_ssl_mode()) != mode_name(self.ssl_mode)
-            || native.get_application_name() != built.get_application_name()
-            || native.get_options() != built.get_options()
+            || native.get_application_name() != self.application_name.as_deref()
+            || native.get_options() != self.options.as_ref().map(|(raw, _)| raw.as_str())
         {
             return Err(mismatch());
         }
@@ -453,8 +480,12 @@ fn mode_name(mode: PgSslMode) -> &'static str {
 /// The URL a template initializer receives in place of `harness_url`: rebuilt
 /// from the harness's parse of `admin_url` for the database the harness
 /// recorded in `harness_url`'s path.
-pub(super) fn initializer_url(admin_url: &str, harness_url: &str) -> Result<String, sqlx::Error> {
-    let endpoint = HarnessEndpoint::from_admin_url(admin_url)?;
+pub(super) fn initializer_url(
+    admin_url: &str,
+    harness_url: &str,
+    environment: Environment,
+) -> Result<String, sqlx::Error> {
+    let endpoint = HarnessEndpoint::from_admin_url(admin_url, environment)?;
     let database = HarnessEndpoint::recorded_database(harness_url)
         .ok_or_else(|| refusal(HarnessEndpointReason::RoundTrip))?;
     if !HarnessEndpoint::names_database(harness_url, &database) {
@@ -493,7 +524,7 @@ fn refusal(reason: HarnessEndpointReason) -> sqlx::Error {
 /// use batter_sqlx::test_support::{HarnessEndpointReason, UnsupportedHarnessEndpoint};
 /// matches!(error, sqlx::Error::Configuration(source)
 ///     if source.downcast_ref::<UnsupportedHarnessEndpoint>().map(|e| e.reason())
-///         == Some(HarnessEndpointReason::AmbientHostAddress))
+///         == Some(HarnessEndpointReason::AmbientEnvironment))
 /// # }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -512,9 +543,10 @@ impl UnsupportedHarnessEndpoint {
 /// Why a harness endpoint was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HarnessEndpointReason {
-    /// `PGHOSTADDR` is set. SQLx would connect to it, as libpq does, while the
-    /// harness's tokio-postgres client ignores it; no SQLx setter clears it.
-    AmbientHostAddress,
+    /// A `PG*` environment variable is set. SQLx fills unset settings from
+    /// several, as libpq does, while the harness's tokio-postgres client reads
+    /// none; put every setting in the harness admin URL instead.
+    AmbientEnvironment,
     /// tokio-postgres could not parse the admin URL.
     Unparseable,
     /// The admin URL names several hosts.
@@ -548,8 +580,8 @@ pub enum HarnessEndpointReason {
 impl fmt::Display for UnsupportedHarnessEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self.reason {
-            HarnessEndpointReason::AmbientHostAddress => {
-                "PGHOSTADDR is set; SQLx would connect to it while the fixture harness does not"
+            HarnessEndpointReason::AmbientEnvironment => {
+                "a PG* environment variable is set; put every fixture setting in the admin URL"
             }
             HarnessEndpointReason::Unparseable => "the fixture admin URL could not be parsed",
             HarnessEndpointReason::MultipleHosts => "the fixture admin URL names several hosts",

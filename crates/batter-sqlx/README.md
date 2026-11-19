@@ -1064,14 +1064,15 @@ database. The lease owner's password is always replaced.
 
 Fixture pools never reparse a lease URL with SQLx. The harness provisions
 through tokio-postgres, which reads no environment, while SQLx 0.9.1, like
-libpq, fills an unset `hostaddr` from an ambient `PGHOSTADDR` and reads some
-URL text differently. Each resolution therefore reads the harness admin URL
+libpq, fills unset settings from `PG*` variables and reads some URL text
+differently. Each resolution therefore reads the harness admin URL
 once with tokio-postgres, sets every SQLx field from that typed parse (host or
 Unix socket, port with 5432 as default, user, password, TLS mode,
 `application_name` and `-c key=value` `options`), and takes the database from
 the name the harness recorded. It refuses with `UnsupportedHarnessEndpoint`,
-whose `HarnessEndpointReason` names the cause, when `PGHOSTADDR` is set (no
-setter clears it), when the admin URL declares `hostaddr` or several hosts, or
+whose `HarnessEndpointReason` names the cause, when any `PG*` environment
+variable is set (put every setting in the admin URL instead), when the admin
+URL declares `hostaddr` or several hosts, or
 when it selects a setting SQLx options cannot carry. A lease URL whose database
 differs from the recorded name as tokio-postgres reads it, as a `dbname` query
 parameter would cause, is refused with `LeaseDatabaseMismatch`. Both errors

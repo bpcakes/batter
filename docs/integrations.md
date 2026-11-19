@@ -1143,7 +1143,8 @@ query parameter) is refused with `LeaseDatabaseMismatch` inside
 endpoint from one tokio-postgres parse of the harness admin URL, the parser
 the harness provisions with, and their database from the harness's recorded
 name; they refuse with `UnsupportedHarnessEndpoint` when that parse cannot be
-carried into SQLx options, including while `PGHOSTADDR` is set. Use
+carried into SQLx options, including while any `PG*` environment variable is
+set. Use
 `harness_connect_options` or `harness_admin_connect_options` for other pools
 beside a fixture.
 

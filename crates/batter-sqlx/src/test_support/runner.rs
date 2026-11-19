@@ -102,7 +102,11 @@ impl FixtureScope {
                 .template(spec, move |url| async move {
                     // Caller code receives a URL rebuilt from the harness's own
                     // endpoint parse and recorded name, never the harness text.
-                    let url = super::endpoint::initializer_url(&admin_url, &url)?;
+                    let url = super::endpoint::initializer_url(
+                        &admin_url,
+                        &url,
+                        super::endpoint::Environment::process(),
+                    )?;
                     // Native template Drop can retain an initializing database. Turn
                     // initializer panic into its returned-error path so upstream
                     // awaits abort and preserves any independent abort failure.
@@ -218,7 +222,12 @@ impl FixtureScope {
         // Resolution runs no caller code. A refusal registers its cause with no
         // pool constructed; the lease is already registered for cleanup.
         let resolved = plan
-            .resolve(&admin_url, &url, &name)
+            .resolve(
+                &admin_url,
+                &url,
+                &name,
+                super::endpoint::Environment::process(),
+            )
             .map_err(|error| self.pool_failed(index, error))?;
         // No await separates delivery from this registration: a waiter cancelled
         // later leaves every declared pool registered. Unlike connect().await,

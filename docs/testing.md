@@ -148,6 +148,13 @@ Native Runledger's PostgreSQL 18 Docker tests are different: they run in ordinar
 workspace verification through its own test-support package. Do not infer an
 external Batter live-suite result from those native tests or from a runner-control test.
 
+Run fixture-backed tests from a shell without `PG*` environment variables.
+SQLx fixture endpoints, Runledger's test support and the metadata refresh
+refuse any of them, so every client reads only the URL; offline fixture
+endpoint tests say so in one assertion, because SQLx reads those variables
+in-process and tests may not change the environment. Put TLS, credentials and
+session settings in the URL instead.
+
 For the reference suite, set `POSTGRES_TEST_ADMIN_URL` and
 `POSTGRES_TEST_OBSERVER_URL` to two dedicated disposable local PostgreSQL 18
 clusters. The primary requires superuser authority, SCRAM host authentication,

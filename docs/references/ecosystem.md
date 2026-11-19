@@ -81,16 +81,17 @@ contracts cite:
   preparation and the public `harness_connect_options` and
   `harness_admin_connect_options` therefore read the harness admin URL once
   with tokio-postgres, map its typed `Config` field by field into SQLx options,
-  and take the database from the name the harness recorded, refusing an
-  ambient `PGHOSTADDR` (no setter clears it), `hostaddr`, several hosts and
-  settings SQLx cannot carry. Template initializers receive a URL rebuilt
+  and take the database from the name the harness recorded, refusing any
+  ambient `PG*` variable, `hostaddr`, several hosts and settings SQLx cannot
+  carry. Template initializers receive a URL rebuilt
   from that parse and checked by reading it back with both parsers. The
-  metadata refresh script parses `DATABASE_URL` once, gives `psql` the parts as
-  its own PG* variables in an environment without any other PG* setting,
-  gives SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a
-  probe crate whether `[env]` changes `PGHOSTADDR` or `DATABASE_URL` for the
-  query macros. Runledger's fixtures refuse `PGHOSTADDR` in every mode, since
-  their native test proxies dial the URL host themselves, and pin
+  metadata refresh script refuses any ambient `PG*` variable, parses
+  `DATABASE_URL` once, gives `psql` the parts as its own PG* variables, gives
+  SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a probe
+  crate whether `[env]` sets any libpq or SQLx connection variable or changes
+  `DATABASE_URL` for the query macros. Runledger's fixtures refuse any `PG*`
+  variable in every mode, since their native test proxies dial the URL host
+  themselves, and pin
   `hostaddr=127.0.0.1` in the owned container's admin
   URL and the database URLs derived from it, since a URL `hostaddr` overrides
   the environment for a TCP host in both SQLx and libpq (checked against SQLx
@@ -101,9 +102,9 @@ contracts cite:
   host is accepted). SQLx 0.9.0 honoured these parameters too, so that split
   predates this upgrade. Template initializer URLs carry `connect_timeout` and
   `channel_binding=disable`, and refuse other connection tuning they cannot
-  carry. The refresh carries an inherited `PGSSLMODE` and `PGSSLROOTCERT` to
-  both clients and refuses other inherited TLS requirements, since its clean
-  child environments would otherwise weaken them. The metadata refresh
+  carry. Refusing every `PG*` variable replaced earlier attempts to carry or
+  translate inherited settings, each of which missed a variable that changed
+  one client's connection. The metadata refresh
   drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.
 
   The invariant holds under three stated preconditions, which are not
