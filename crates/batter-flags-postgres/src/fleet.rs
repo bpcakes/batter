@@ -12,8 +12,10 @@ use std::num::NonZeroUsize;
 use tokio::time::Instant;
 
 /// A process row's state on the server clock when the fleet was read. Every
-/// row of one [`Fleet`] is classified at the same server instant, the read's
-/// statement timestamp, so no fleet combines states that never held together.
+/// row of one [`Fleet`] is classified at the same server instant, the start of
+/// the read's transaction, which precedes the snapshot the rows come from: a
+/// row the snapshot shows expired had expired before the snapshot was taken,
+/// so a heartbeat renewed after it cannot make a Live process read Silent.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProcessState {
     /// Not stopped, and its heartbeat has not expired.
@@ -206,9 +208,12 @@ impl PooledStore {
             // rollout read as reached. The guard refuses it, and a schema
             // this build cannot read.
             self.read_guard(sql, deadline).await?;
+            // The guard's first statement took the snapshot; the cutoff below
+            // is the transaction's start, before it, so every row is judged
+            // at an instant no later than the state it shows.
             let head = version(sqlx::query_scalar("SELECT version FROM flags.flag_control WHERE singleton").fetch_one(sql.executor()).await?)?;
             let processes = sqlx::query("SELECT p.process_id, p.application, p.environment, p.build, \
-                CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > statement_timestamp() THEN 'live' ELSE 'silent' END AS state, \
+                CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > transaction_timestamp() THEN 'live' ELSE 'silent' END AS state, \
                 p.snapshot_source, p.snapshot_version, p.declared_revision, p.held_keys, p.held_overflow, p.floor_engaged_keys, p.floor_overflow, p.last_seen_at, p.expires_at \
                 FROM flags.flag_processes p \
                 WHERE $1::text IS NULL OR EXISTS (SELECT FROM flags.flag_catalog_entries e WHERE e.manifest_digest = p.manifest_digest AND e.key = $1) \

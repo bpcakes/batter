@@ -212,7 +212,9 @@ async fn execute(
                 crate::writes::write(name, store, deadline, interrupt, policy, &key, request)
                     .await?;
             Ok(match (after, report.outcome) {
-                (AfterWrite::FloorWarning, "written" | "written_undeclared") => {
+                // An unchanged release says nothing about the floors: a switch
+                // already released in the store can still be held engaged.
+                (AfterWrite::FloorWarning, "written" | "written_undeclared" | "unchanged") => {
                     crate::fleet::floor_warning(store, deadline, &key, report).await
                 }
                 _ => report,

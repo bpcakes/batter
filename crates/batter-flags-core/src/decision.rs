@@ -289,11 +289,13 @@ pub enum ErrorCause {
     PinUnknownVariant,
     /// A test pin met a view that is not a test view.
     PinTestProvenance,
+    /// A pin's variant requires settings the replaying process lacks.
+    PinRequiresSettingsAbsent,
 }
 
 impl ErrorCause {
     /// Every cause, in declaration order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::ForeignCatalog,
         Self::NotOwned,
         Self::ProviderNotReady,
@@ -304,6 +306,7 @@ impl ErrorCause {
         Self::PinValueTypeChanged,
         Self::PinUnknownVariant,
         Self::PinTestProvenance,
+        Self::PinRequiresSettingsAbsent,
     ];
 
     /// The semantic-convention `error.type` of an evaluation with this cause.
@@ -317,7 +320,7 @@ impl ErrorCause {
             Self::PinUnsupportedVersion | Self::PinMalformed | Self::PinUnknownVariant => {
                 "parse_error"
             }
-            Self::PinTestProvenance => "general",
+            Self::PinTestProvenance | Self::PinRequiresSettingsAbsent => "general",
         }
     }
 

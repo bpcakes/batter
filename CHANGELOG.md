@@ -48,6 +48,27 @@ contracts, capability facts and validation history.
   packages load by path from outside their directories, and runs every job,
   reusing no earlier verification, when either job's inputs are unknown.
 
+- Flags (unreleased packages, so no migration applies; `batter-jkw6.60`):
+  replaying a pin whose variant requires settings the replaying process
+  recorded as absent is refused as `PinRejection::RequiresSettingsAbsent`
+  (`ErrorCause::PinRequiresSettingsAbsent`, `error.type` `general`), so
+  `JobFlags::resolve_pinned` never honours a variant the process cannot serve.
+  A write reads its key's declarations, declaring processes and their catalogs
+  in one statement, so a build publishing mid-write is judged by the flip
+  policy, the decoding and archive gates, the invariant judgement and the
+  declarer count alike. A fleet read classifies liveness at its transaction's
+  start, before its snapshot, so a heartbeat renewed after the snapshot cannot
+  make a Live process read Silent. A stop waits for a heartbeat of the same
+  process that is still committing, through a transaction advisory lock on the
+  process id, instead of reporting `NotRegistered` beside a row that commits
+  Live. `CatalogBuilder::retired` refuses a migration note containing NUL
+  (`BuildError::MigrationNoteContainsNul`), and manifest decoding refuses one,
+  because the store's `jsonb` cannot hold it. `batter-flags kill ... release`
+  warns about settings floors when the switch was already released. A refresh
+  keeps the store's read whole instead of copying every row each poll.
+  `scripts/check_flags_workspace.py` reads dependency declarations from
+  `cargo metadata` and no longer needs Python 3.11's `tomllib`.
+
 - `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
   extracted where no gate of the route's group captured its value still
   rejects with the sanitized 500, and the completion event now carries

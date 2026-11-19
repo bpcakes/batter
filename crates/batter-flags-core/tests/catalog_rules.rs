@@ -89,6 +89,18 @@ fn required_settings_are_validated_names_outside_the_prefix() {
     assert_eq!(names, ["FLAGSHIP_URL", "PAYMENT_URL"]);
 }
 
+/// The store's jsonb cannot hold NUL: a catalog with one could never be
+/// published, so it is refused here rather than at every heartbeat.
+#[test]
+fn a_migration_note_holding_nul_is_refused() {
+    let mut builder = vocabulary_builder();
+    assert!(matches!(
+        builder.retired("ENABLE_X", "use\0FLAG_X"),
+        Err(BuildError::MigrationNoteContainsNul { .. })
+    ));
+    builder.retired("ENABLE_X", "use FLAG_X").unwrap();
+}
+
 #[test]
 fn retired_names_are_validated_and_never_in_use() {
     let mut builder = vocabulary_builder();

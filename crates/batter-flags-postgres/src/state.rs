@@ -1,7 +1,5 @@
-//! Decode database wire columns once into explicit row and process lifecycles.
-use crate::{
-    BlockingBuild, ErrorClass, ExplicitValue, Presence, StoreError, request::RequestedValue,
-};
+//! Decode database wire columns once into explicit row lifecycles.
+use crate::{ErrorClass, ExplicitValue, StoreError, request::RequestedValue};
 use sqlx::{Row, postgres::PgRow};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -14,10 +12,13 @@ pub(crate) enum Shape {
 }
 impl Shape {
     pub(crate) fn read(row: &PgRow) -> Result<Self, StoreError> {
-        match (
+        Self::from_tags(
             row.try_get::<&str, _>("kind")?,
             row.try_get::<&str, _>("value_type")?,
-        ) {
+        )
+    }
+    pub(crate) fn from_tags(kind: &str, value_type: &str) -> Result<Self, StoreError> {
+        match (kind, value_type) {
             ("release", "toggle") => Ok(Self::ReleaseToggle),
             ("release", "enum") => Ok(Self::ReleaseEnum),
             ("mode", "toggle") => Ok(Self::ModeToggle),
@@ -127,33 +128,5 @@ impl StoredRow {
             Self::Absent => 0, // Wire CAS contract; runtime absence is the enum arm.
             Self::Active(row) | Self::Archived(row) => row.version,
         }
-    }
-}
-pub(crate) enum Process {
-    Live(PgRow),
-    Silent(PgRow),
-    Stopped,
-}
-impl Process {
-    pub(crate) fn read(row: PgRow) -> Result<Self, StoreError> {
-        match row.try_get::<&str, _>("presence")? {
-            "live" => Ok(Self::Live(row)),
-            "silent" => Ok(Self::Silent(row)),
-            "stopped" => Ok(Self::Stopped),
-            _ => Err(StoreError::classified(ErrorClass::InvalidData)),
-        }
-    }
-    pub(crate) fn active(&self) -> Option<(&PgRow, Presence)> {
-        match self {
-            Self::Live(row) => Some((row, Presence::Live)),
-            Self::Silent(row) => Some((row, Presence::Silent)),
-            Self::Stopped => None,
-        }
-    }
-}
-pub(crate) fn blocking(row: &PgRow, presence: Presence) -> BlockingBuild {
-    BlockingBuild {
-        build: row.get("build"),
-        presence,
     }
 }

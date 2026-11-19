@@ -49,7 +49,9 @@ pub enum StopOutcome {
     /// The process's row was already stopped, by something other than this
     /// presence, which is consumed by the stop it records.
     AlreadyStopped,
-    /// No row exists: the process never sent a heartbeat, or prune removed it.
+    /// No row exists: no heartbeat of the process committed, or prune removed
+    /// its row. A heartbeat still committing when the stop began has settled
+    /// without committing.
     NotRegistered,
 }
 
@@ -58,13 +60,20 @@ impl ProcessPresence {
     /// stopped, consuming the presence. Its expiry is left as it was, so a
     /// stopped row is pruned on the same schedule as a silent one. The row is
     /// locked and read in the statement that marks it, so the outcome
-    /// describes the row it changed.
+    /// describes the row it changed. A heartbeat of this process that is
+    /// still committing, such as one whose future timed out or was dropped
+    /// after sending COMMIT, settles first: its row is then stopped, not left
+    /// Live behind a [`StopOutcome::NotRegistered`].
     pub async fn stop(self, deadline: Instant) -> Result<StopOutcome, StopFailure> {
         let presence = self;
         let process = presence.process.as_uuid();
         let store = presence.store.clone();
         let marked = store
             .atomically(deadline, async |sql| {
+                // A heartbeat whose COMMIT was in flight when its future ended
+                // holds this lock until it settles; the read below then sees
+                // its row, so the stop never reports an absence it raced.
+                super::identity_lock(sql, presence.process).await?;
                 let stopped: Option<bool> = sqlx::query_scalar("WITH target AS (SELECT process_id, stopped_at IS NOT NULL AS stopped FROM flags.flag_processes WHERE process_id = $1 FOR UPDATE), \
                     marked AS (UPDATE flags.flag_processes p SET stopped_at = clock_timestamp() FROM target WHERE p.process_id = target.process_id AND NOT target.stopped RETURNING p.process_id) \
                     SELECT stopped FROM target")

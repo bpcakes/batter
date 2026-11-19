@@ -271,6 +271,57 @@ async fn a_heartbeat_outlasts_a_prune_that_deletes_its_catalog() {
     f.close().await;
 }
 
+/// A first heartbeat whose COMMIT is in flight when its future is dropped
+/// settles before a stop reads the row, so the stop marks the row that
+/// commits instead of reporting it never registered.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_stop_waits_for_a_first_heartbeat_still_committing() {
+    let f = Fixture::migrated().await;
+    // A deferred trigger holds the heartbeat's COMMIT on a row the test locks.
+    sqlx::raw_sql(
+        "CREATE SCHEMA gate; CREATE TABLE gate.commit_gate(id int PRIMARY KEY); \
+         INSERT INTO gate.commit_gate VALUES (1); \
+         CREATE FUNCTION gate.wait() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER \
+           SET search_path = pg_catalog AS $$ BEGIN PERFORM 1 FROM gate.commit_gate FOR SHARE; RETURN NULL; END $$; \
+         CREATE CONSTRAINT TRIGGER wait_at_commit AFTER INSERT ON flags.flag_processes \
+           DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION gate.wait();",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let mut holder = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM gate.commit_gate FOR UPDATE")
+        .fetch_one(&mut *holder)
+        .await
+        .unwrap();
+
+    let mut first = process(&f.store, Build::Base, "first", 60, 600);
+    let beat = report(SnapshotReport::NotLoaded);
+    tokio::select! {
+        result = first.heartbeat(&beat, deadline()) => {
+            panic!("the heartbeat passed its gate: {result:?}");
+        }
+        () = blocked_by(&f, &mut holder) => {}
+    }
+    // The heartbeat's future is gone; its COMMIT is still waiting.
+    let stop = tokio::spawn(first.stop(deadline()));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!stop.is_finished(), "the stop waits for the heartbeat");
+    holder.commit().await.unwrap();
+    assert_eq!(stop.await.unwrap().unwrap(), StopOutcome::Stopped);
+    assert_eq!(
+        count(
+            &f,
+            "SELECT count(*) FROM flags.flag_processes WHERE stopped_at IS NOT NULL"
+        )
+        .await,
+        1,
+        "the row the heartbeat committed is stopped"
+    );
+    f.close().await;
+}
+
 #[test]
 fn presence_inputs_are_validated_at_construction() {
     assert!(ProcessLabel::new("build-1.2+rc_3").is_ok());

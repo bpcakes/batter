@@ -129,6 +129,12 @@ fn check_retired(manifest: &Manifest) -> Result<(), Invalid> {
         if retired.migration_note.trim().is_empty() {
             refuse!("retired name {} has no migration note", retired.name);
         }
+        if retired.migration_note.contains('\0') {
+            refuse!(
+                "retired name {}'s migration note contains NUL",
+                retired.name
+            );
+        }
     }
     Ok(())
 }

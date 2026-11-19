@@ -1,15 +1,15 @@
 use crate::{
     ErrorClass, FlipPolicy, InvariantPolicy, Precondition, Presence, Refusal, StoreError,
     StoredState, UndeclaredBasis,
+    declared::{Declaration, Declared},
     prepared::{DeclarationEvidence, PendingWrite, Prepared, RollbackDecision},
     relations::Written,
     request::RequestedValue,
-    state::{ExistingRow, Process, Shape, StoredRow, blocking},
+    state::{ExistingRow, Shape, StoredRow},
     write::{Mutation, WritePolicy},
 };
 use batter_flags_core::Version;
 use batter_sqlx::PgScopedSql;
-use sqlx::{Row, postgres::PgRow};
 use std::{num::NonZeroUsize, ops::ControlFlow};
 
 enum ChangePlan {
@@ -98,40 +98,36 @@ pub(crate) async fn apply(
     let key = mutation.key().as_str();
     let stored = StoredRow::read(sqlx::query("SELECT kind, value_type, state, updated_version, archived_version FROM flags.flag_state WHERE name = $1")
         .bind(key).fetch_optional(sql.executor()).await?)?;
-    let declarations = sqlx::query("SELECT e.kind, e.value_type, e.only_in, e.flip_discipline, e.manifest_digest FROM flags.flag_catalog_entries e JOIN flags.flag_catalogs c USING(manifest_digest) WHERE e.key = $1 ORDER BY c.last_referenced_at DESC, e.manifest_digest")
-        .bind(key).fetch_all(sql.executor()).await?;
-    let plan = match preflight(mutation, policy.flip, head, stored, &declarations)? {
+    // The declarations, their processes and their catalogs come from one
+    // statement, so every judgement below sees the same fleet.
+    let declared = Declared::read(sql, key).await?;
+    let declarations = &declared.declarations;
+    let plan = match preflight(mutation, policy.flip, head, stored, declarations)? {
         ControlFlow::Break(decision) => return Ok(Prepared::Rollback(decision)),
         ControlFlow::Continue(plan) => plan,
     };
-    let processes = sqlx::query("SELECT p.build, CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > statement_timestamp() THEN 'live' ELSE 'silent' END AS presence, p.row_encoding, e.kind, e.value_type, e.variants FROM flags.flag_processes p JOIN flags.flag_catalog_entries e USING(manifest_digest) WHERE e.key = $1 ORDER BY p.build, p.process_id")
-        .bind(key).fetch_all(sql.executor()).await?.into_iter().map(Process::read).collect::<Result<Vec<_>, _>>()?;
-    let active: Vec<_> = processes.iter().filter_map(Process::active).collect();
+    let active: Vec<_> = declared.active().collect();
     if matches!(plan, ChangePlan::Archive(_)) && !active.is_empty() {
         return Ok(Prepared::Rollback(RollbackDecision::Refused(
             Refusal::StillDeclared {
-                builds: active.iter().map(|(r, p)| blocking(r, *p)).collect(),
+                builds: active.iter().map(|d| d.blocking()).collect(),
             },
         )));
     }
     let (kind, value_type) = plan.shape().tags();
     let blocking: Vec<_> = active
         .iter()
-        .filter(|(r, _)| {
-            r.get::<i16, _>("row_encoding") < 1
-                || r.get::<String, _>("kind") != kind
-                || r.get::<String, _>("value_type") != value_type
+        .filter(|d| {
+            d.row_encoding < 1
+                || d.kind != kind
+                || d.value_type != value_type
                 || plan
                     .state()
                     .get("variant")
                     .and_then(serde_json::Value::as_str)
-                    .is_some_and(|v| {
-                        !r.get::<Vec<String>, _>("variants")
-                            .iter()
-                            .any(|known| known == v)
-                    })
+                    .is_some_and(|v| !d.variants.iter().any(|known| known == v))
         })
-        .map(|(r, p)| blocking(r, *p))
+        .map(|d| d.blocking())
         .collect();
     if !blocking.is_empty() {
         return Ok(Prepared::Rollback(RollbackDecision::Refused(
@@ -141,16 +137,13 @@ pub(crate) async fn apply(
     let written = plan.written();
     let mut deferral = match written {
         Some(written) if !active.is_empty() => {
-            crate::relations::judge(sql, mutation.key(), written).await?
+            crate::relations::judge(sql, mutation.key(), written, &declared.manifests).await?
         }
         Some(_) | None => crate::Deferral::default(),
     };
     // A policy that refuses a coordinated flip refused it above; one that
     // accepts it says so in the outcome.
-    if declarations
-        .iter()
-        .any(|r| r.get::<String, _>("flip_discipline") == "coordinated")
-    {
+    if declarations.iter().any(|d| d.coordinated) {
         deferral.flip = crate::Coordination::Coordinated;
     }
     // A kill switch is never refused for what it holds: engaging one is the
@@ -164,7 +157,7 @@ pub(crate) async fn apply(
     let declaration = match NonZeroUsize::new(
         active
             .iter()
-            .filter(|(_, presence)| *presence == Presence::Live)
+            .filter(|d| d.presence == Presence::Live)
             .count(),
     ) {
         Some(count) => DeclarationEvidence::Live {
@@ -173,7 +166,7 @@ pub(crate) async fn apply(
         },
         None => DeclarationEvidence::Undeclared(if declarations.is_empty() {
             UndeclaredBasis::NeverDeclared
-        } else if processes.is_empty() {
+        } else if declared.processes.is_empty() {
             UndeclaredBasis::Orphaned
         } else {
             UndeclaredBasis::NoLiveDeclarer
@@ -203,7 +196,7 @@ fn preflight(
     flip: FlipPolicy,
     head: i64,
     stored: StoredRow,
-    declarations: &[PgRow],
+    declarations: &[Declaration],
 ) -> Result<ControlFlow<RollbackDecision, ChangePlan>, StoreError> {
     let refuse = |r| Ok(ControlFlow::Break(RollbackDecision::Refused(r)));
     let row_version = stored.version();
@@ -214,7 +207,7 @@ fn preflight(
     }
     let shape = match stored.existing() {
         Some(row) => Some(row.shape),
-        None => declarations.first().map(Shape::read).transpose()?,
+        None => declarations.first().map(Declaration::shape).transpose()?,
     };
     if let Mutation::Write(w) = mutation
         && let Some(shape) = shape
@@ -312,12 +305,9 @@ fn preflight(
 fn declaration_refusal(
     mutation: &Mutation,
     flip: FlipPolicy,
-    declarations: &[PgRow],
+    declarations: &[Declaration],
 ) -> Option<Refusal> {
-    if declarations
-        .iter()
-        .any(|r| r.get::<Option<String>, _>("only_in").is_some())
-    {
+    if declarations.iter().any(|d| d.restricted) {
         return Some(Refusal::EnvironmentRestricted);
     }
     if declarations.is_empty()
@@ -327,9 +317,7 @@ fn declaration_refusal(
     }
     if let (Mutation::Write(_) | Mutation::Restore(_), FlipPolicy::RefuseCoordinated) =
         (mutation, flip)
-        && declarations
-            .iter()
-            .any(|r| r.get::<String, _>("flip_discipline") == "coordinated")
+        && declarations.iter().any(|d| d.coordinated)
     {
         return Some(Refusal::CoordinatedFlip);
     }

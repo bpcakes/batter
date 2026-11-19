@@ -24,12 +24,15 @@ release-train record. The rules, each with a negative control in
    `sqlx` entry selects a rustls TLS feature, because feature unification
    elsewhere would hide its absence.
 8. Every flags crate root forbids unsafe code.
+
+Dependency declarations are read from `cargo metadata`, and the lint table
+by a reader that accepts one canonical spelling, so the check runs on every
+Python `scripts/verify.sh` accepts, 3.9 included, which has no `tomllib`.
 """
 import json
 from pathlib import Path
 import re
 import subprocess
-import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 LIBRARIES = ('batter-flags-core', 'batter-flags-postgres', 'batter-flags')
@@ -157,28 +160,59 @@ def validate_core_bare(closure_names):
         raise ValueError('bare batter-flags-core holds ' + ', '.join(held))
 
 
-def _dependency(manifest, name):
-    """`name`'s entry in the manifest's `[dependencies]` table, as a table."""
-    entry = tomllib.loads(manifest).get('dependencies', {}).get(name)
-    if entry is None:
-        return None
-    return entry if isinstance(entry, dict) else {'version': entry}
+def _dependency(package, name):
+    """`name`'s normal, unconditional entry among a cargo-metadata package's
+    declared dependencies: what its own manifest says, before unification."""
+    for entry in package.get('dependencies', []):
+        if (entry['name'] == name and entry.get('kind') is None
+                and entry.get('target') is None):
+            return entry
+    return None
 
 
-def validate_core_manifest(manifest):
-    """Rule 3, the manifest."""
+def validate_core_manifest(package):
+    """Rule 3, the manifest, over `batter-flags-core`'s metadata package."""
     for name in CORE_OPTIONAL:
-        entry = _dependency(manifest, name)
+        entry = _dependency(package, name)
         if entry is None or entry.get('optional') is not True:
             raise ValueError('batter-flags-core must declare ' + name + ' optional')
 
 
-def validate_manifests(manifests):
-    """Rule 7, over each package's manifest text."""
+def _significant(line):
+    """A manifest line without its comment and surrounding space. Lint tables
+    hold no strings, so a `#` there always starts a comment."""
+    return re.sub(r'\s+', ' ', line.split('#', 1)[0]).strip()
+
+
+def inherits_workspace_lints(manifest):
+    """Whether the manifest's only lint declaration is a `[lints]` table
+    holding exactly `workspace = true`. Any other spelling fails closed."""
+    table, tables, entries = None, 0, []
+    for line in map(_significant, manifest.splitlines()):
+        if not line:
+            continue
+        if line.startswith('['):
+            table = line.replace(' ', '')
+            if table == '[lints]':
+                tables += 1
+            elif table.startswith(('[lints.', '[[lints')):
+                return False
+            continue
+        key = line.split('=', 1)[0].strip().strip('"\'')
+        if table is None and (key == 'lints' or key.startswith('lints.')):
+            return False
+        if table == '[lints]':
+            entries.append(line)
+    return tables == 1 and entries == ['workspace = true']
+
+
+def validate_manifests(manifests, packages):
+    """Rule 7, over each package's manifest text and metadata package."""
     for name, manifest in manifests.items():
-        if tomllib.loads(manifest).get('lints') != {'workspace': True}:
-            raise ValueError(name + ' must inherit the workspace lints')
-    sqlx = _dependency(manifests[COMMAND], 'sqlx') or {}
+        if not inherits_workspace_lints(manifest):
+            raise ValueError(name + ' must inherit the workspace lints with a [lints] table '
+                             'holding only workspace = true')
+    sqlx = _dependency(packages[COMMAND], 'sqlx') or {}
     if not any(feature.startswith('tls-rustls') for feature in sqlx.get('features', [])):
         raise ValueError(COMMAND + "'s own sqlx entry must select a rustls TLS feature")
 
@@ -199,9 +233,11 @@ def main():
         ['cargo', 'tree', '-p', 'batter-flags-core', '--no-default-features', '-e', 'normal',
          '--prefix', 'none', '--format', '{p}', '--locked'], cwd=ROOT, text=True)
     validate_core_bare(line.split()[0] for line in tree.splitlines() if line.strip())
+    packages = {p['name']: p for p in metadata['packages']
+                if p['id'] in metadata['workspace_members'] and p['name'] in PACKAGES}
+    validate_core_manifest(packages['batter-flags-core'])
     manifests = {name: (ROOT / 'crates' / name / 'Cargo.toml').read_text() for name in PACKAGES}
-    validate_core_manifest(manifests['batter-flags-core'])
-    validate_manifests(manifests)
+    validate_manifests(manifests, packages)
     validate_roots({name: (ROOT / 'crates' / name / path).read_text()
                     for name, path in ROOTS.items()})
     print('Flags: four local identities, one-way dependency direction, a bare core and '

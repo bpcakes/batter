@@ -1,6 +1,8 @@
 """Negative controls for the flags packages' identities, dependency direction and roots."""
 import copy
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 from check_flags_workspace import (
@@ -133,28 +135,53 @@ class SourceTests(unittest.TestCase):
             with self.subTest(held=held), self.assertRaises(ValueError):
                 validate_core_bare(['batter-flags-core', held])
 
+    @staticmethod
+    def dependency(name, **fields):
+        return dict(dict(name=name, kind=None, target=None, optional=False, features=[]),
+                    **fields)
+
     def test_rule_3_a_required_serialization_dependency_fails(self):
-        optional = self.MANIFEST + ('serde = { version = "1", optional = true }\n'
-                                    'serde_json = { version = "1", optional = true }\n')
-        validate_core_manifest('[features]\nserde = ["dep:serde"]\n\n' + optional)
-        with self.assertRaisesRegex(ValueError, 'serde_json optional'):
-            validate_core_manifest(optional.replace(
-                'serde_json = { version = "1", optional = true }', 'serde_json = "1"'))
+        optional = [self.dependency('serde', optional=True, features=['derive']),
+                    self.dependency('serde_json', optional=True)]
+        validate_core_manifest(dict(dependencies=optional))
+        for replacement in (self.dependency('serde_json'),
+                            self.dependency('serde_json', optional=True, kind='dev'),
+                            self.dependency('serde_json', optional=True, target='cfg(unix)')):
+            with self.subTest(entry=replacement), \
+                    self.assertRaisesRegex(ValueError, 'serde_json optional'):
+                validate_core_manifest(dict(dependencies=optional[:1] + [replacement]))
 
     def test_rule_7_lints_and_the_command_tls_feature_are_required(self):
-        command = self.MANIFEST + 'sqlx = { workspace = true, features = ["tls-rustls-ring"] }\n'
-        manifests = {name: self.MANIFEST for name in LIBRARIES}
-        validate_manifests(dict(manifests, **{COMMAND: command}))
-        # A wrapped feature array is the same declaration.
-        wrapped = self.MANIFEST + 'sqlx = { workspace = true, features = [\n  "postgres",\n  "tls-rustls-ring",\n] }\n'
-        validate_manifests(dict(manifests, **{COMMAND: wrapped}))
-        for without in (command.replace('tls-rustls-ring', 'json'),
-                        self.MANIFEST + 'sqlx = { workspace = true, features = ["postgres"] } # "tls-rustls-ring"\n'):
-            with self.subTest(manifest=without), self.assertRaisesRegex(ValueError, 'rustls TLS feature'):
-                validate_manifests(dict(manifests, **{COMMAND: without}))
-        with self.assertRaisesRegex(ValueError, 'inherit the workspace lints'):
-            validate_manifests(dict(manifests, **{COMMAND: command.replace('workspace = true\n\n[dep',
-                                                                            'unused = true\n\n[dep')}))
+        manifests = {name: self.MANIFEST for name in PACKAGES}
+        tls = self.dependency('sqlx', features=['postgres', 'tls-rustls-ring'])
+        packages = {COMMAND: dict(dependencies=[tls])}
+        validate_manifests(manifests, packages)
+        for without in (dict(tls, features=['postgres']), dict(tls, kind='dev'),
+                        dict(tls, target='cfg(unix)')):
+            with self.subTest(entry=without), \
+                    self.assertRaisesRegex(ValueError, 'rustls TLS feature'):
+                validate_manifests(manifests, {COMMAND: dict(dependencies=[without])})
+        # A comment or extra space is the same declaration.
+        spaced = self.MANIFEST.replace('workspace = true', 'workspace  =  true  # inherit')
+        validate_manifests(dict(manifests, **{COMMAND: spaced}), packages)
+        for broken in (self.MANIFEST.replace('workspace = true', 'unused = true'),
+                       self.MANIFEST.replace('workspace = true', 'workspace = false'),
+                       self.MANIFEST.replace('workspace = true\n', 'workspace = true\nrust.unsafe_code = "allow"\n'),
+                       self.MANIFEST + '\n[lints.rust]\nunsafe_code = "allow"\n',
+                       self.MANIFEST.replace('[lints]\nworkspace = true\n', ''),
+                       self.MANIFEST + '\n[lints]\nworkspace = true\n',
+                       'lints.workspace = true\n' + self.MANIFEST.replace('[lints]\nworkspace = true\n', '')):
+            with self.subTest(manifest=broken), \
+                    self.assertRaisesRegex(ValueError, 'inherit the workspace lints'):
+                validate_manifests(dict(manifests, **{COMMAND: broken}), packages)
+
+    def test_the_checker_runs_without_tomllib(self):
+        """Python 3.9 and 3.10 have no tomllib; the checker must not need it."""
+        probe = ('import sys; sys.modules["tomllib"] = None; sys.path.insert(0, sys.argv[1]); '
+                 'import check_flags_workspace as c; '
+                 'assert c.inherits_workspace_lints("[lints]\\nworkspace = true\\n")')
+        subprocess.run([sys.executable, '-I', '-c', probe, str(Path(__file__).resolve().parent)],
+                       check=True)
 
     def test_rule_8_a_root_without_forbidden_unsafe_code_fails(self):
         roots = {name: '//! Docs.\n#![forbid(unsafe_code)]\n' for name in PACKAGES}

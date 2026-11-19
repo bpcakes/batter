@@ -48,9 +48,10 @@ engaging one holds. A write reports each accepted hold, each engaged kill
 switch governing the written flag and each unjudged catalog under
 `data.deferral` and as a warning. `data.deferral.flip` is `rolling` or
 `coordinated`; a coordinated flip written with `--accept-rolling-flip` also
-warns that processes apply the write poll by poll, not together. Releasing a kill switch warns with the
-number of Live declarers whose settings floor keeps it engaged, and separately
-with the number whose floor sample overflowed without listing it, which may.
+warns that processes apply the write poll by poll, not together. Releasing a kill switch, even one
+already released (`unchanged`), warns with the number of Live declarers whose
+settings floor keeps it engaged, and separately with the number whose floor
+sample overflowed without listing it, which may.
 `invariants_unjudged` names each cause apart (`data.undecodable`,
 `data.held_governors`) and suggests an upgrade only for the first. `fleet
 --version V` groups Live processes by build, `snapshot_source`,

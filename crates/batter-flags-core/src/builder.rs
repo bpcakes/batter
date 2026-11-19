@@ -195,6 +195,8 @@ impl CatalogBuilder {
     ///
     /// [`BuildError::InvalidRetiredName`] for a name outside the setting-name
     /// grammar, [`BuildError::EmptyMigrationNote`] for a blank note,
+    /// [`BuildError::MigrationNoteContainsNul`] for a note holding NUL, which
+    /// the store could not publish,
     /// [`BuildError::DuplicateRetiredName`] for a name retired twice and
     /// [`BuildError::RetiredNameInUse`] for a declared flag's setting name or
     /// a setting a variant requires.
@@ -205,6 +207,9 @@ impl CatalogBuilder {
         })?;
         if migration_note.trim().is_empty() {
             return Err(BuildError::EmptyMigrationNote { name });
+        }
+        if migration_note.contains('\0') {
+            return Err(BuildError::MigrationNoteContainsNul { name });
         }
         if self.retired.contains_key(&name) {
             return Err(BuildError::DuplicateRetiredName { name });

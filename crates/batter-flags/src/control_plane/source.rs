@@ -8,7 +8,7 @@ use batter_flags_core::{
     Version,
     low_level::{Candidate, CandidateRow, ValidationScope},
 };
-use batter_flags_postgres::{ErrorClass, PooledStore, StoreError};
+use batter_flags_postgres::{ErrorClass, Loaded, PooledStore, StoreError};
 use tokio::time::Instant;
 
 use super::LoadCause;
@@ -22,19 +22,48 @@ pub(crate) enum LoadSource {
     Fake(std::sync::Arc<fake::Fake>),
 }
 
-/// One read: the store's version and its rows, before validation.
-pub(crate) struct Fetched {
-    pub(crate) version: Version,
-    rows: Vec<CandidateRow>,
+/// One read: the store's version and its rows, before validation. The
+/// store's read is kept whole and consumed by candidate conversion, so a poll
+/// copies its rows only when persistence asks for them.
+pub(crate) struct Fetched(Read);
+
+enum Read {
+    Store(Loaded),
+    #[cfg(test)]
+    Scripted {
+        version: Version,
+        rows: Vec<CandidateRow>,
+    },
 }
 
 impl Fetched {
+    pub(crate) fn version(&self) -> Version {
+        match &self.0 {
+            Read::Store(loaded) => loaded.version(),
+            #[cfg(test)]
+            Read::Scripted { version, .. } => *version,
+        }
+    }
+
     pub(crate) fn rows(&self) -> &[CandidateRow] {
-        &self.rows
+        match &self.0 {
+            Read::Store(loaded) => loaded.rows(),
+            #[cfg(test)]
+            Read::Scripted { rows, .. } => rows,
+        }
     }
 
     pub(crate) fn candidate(self, scope: &ValidationScope) -> Candidate {
-        Candidate::new(scope, self.version).rows(self.rows)
+        match self.0 {
+            Read::Store(loaded) => loaded.candidate(scope),
+            #[cfg(test)]
+            Read::Scripted { version, rows } => Candidate::new(scope, version).rows(rows),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scripted(version: Version, rows: Vec<CandidateRow>) -> Self {
+        Self(Read::Scripted { version, rows })
     }
 }
 
@@ -52,10 +81,7 @@ impl LoadSource {
     pub(crate) async fn fetch(&self, deadline: Instant) -> Result<Fetched, FetchFailure> {
         match self {
             Self::Store(store) => match store.load(deadline).await {
-                Ok(loaded) => Ok(Fetched {
-                    version: loaded.version(),
-                    rows: loaded.rows().to_vec(),
-                }),
+                Ok(loaded) => Ok(Fetched(Read::Store(loaded))),
                 Err(error) => Err(classify(&error)),
             },
             #[cfg(test)]
@@ -150,7 +176,7 @@ pub(crate) mod fake {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
             match script {
-                Script::Serve { version, rows } => Ok(Fetched { version, rows }),
+                Script::Serve { version, rows } => Ok(Fetched::scripted(version, rows)),
                 Script::Fail(failure) => Err(failure),
                 Script::Hang => {
                     tokio::time::sleep_until(deadline).await;

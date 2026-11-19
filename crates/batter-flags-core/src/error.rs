@@ -246,6 +246,13 @@ pub enum BuildError {
         /// The retired name.
         name: SettingName,
     },
+    /// A retired name's migration note contains NUL, which the store's
+    /// `jsonb` cannot hold, so no heartbeat could publish the catalog.
+    #[error("retired name {name}'s migration note contains NUL")]
+    MigrationNoteContainsNul {
+        /// The retired name.
+        name: SettingName,
+    },
     /// A retired name is also a declared flag's setting name or a setting
     /// some variant requires, so its presence would both fail and serve.
     #[error("setting name {name} is retired and also in use by the catalog")]

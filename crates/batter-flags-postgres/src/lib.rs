@@ -33,6 +33,7 @@
 #![warn(missing_docs)]
 mod atomic;
 mod catalogs;
+mod declared;
 mod errors;
 mod fleet;
 mod history;

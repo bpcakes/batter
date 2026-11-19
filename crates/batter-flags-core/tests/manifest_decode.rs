@@ -144,7 +144,7 @@ fn decoding_refuses_manifests_no_builder_could_produce() {
 
 #[test]
 fn decoding_refuses_malformed_vocabularies_retired_names_and_ownership() {
-    let cases: [(&str, Tamper); 11] = [
+    let cases: [(&str, Tamper); 12] = [
         ("process kind \"serving\" is listed twice", |v| {
             v["process_kinds"] = json!(["serving", "serving", "worker"]);
         }),
@@ -162,6 +162,14 @@ fn decoding_refuses_malformed_vocabularies_retired_names_and_ownership() {
             "retired name ENABLE_NEW_CHECKOUT has no migration note",
             |v| {
                 v["retired"][0]["migration_note"] = json!("   ");
+            },
+        ),
+        // PostgreSQL's jsonb cannot store \u0000, so no heartbeat could
+        // publish a catalog carrying one.
+        (
+            "retired name ENABLE_NEW_CHECKOUT's migration note contains NUL",
+            |v| {
+                v["retired"][0]["migration_note"] = json!("use\u{0}FLAG_NEW_CHECKOUT");
             },
         ),
         ("owners must be a non-empty list of distinct kinds", |v| {

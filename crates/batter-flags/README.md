@@ -133,7 +133,10 @@ view captured before the first publication under `unready_until_loaded`
 (`ErrorCause::ProviderNotReady`), so an error is never pinned as its code
 default; defer such work. For pinned flags, match all `PinnedResolution` arms. `Honoured` replays the pin,
 `Overridden` applies its governing switch, and `Incompatible` carries a
-`PinRefusal` bound to that view and flag. Consume the refusal with
+`PinRefusal` bound to that view and flag. A pinned variant whose required
+settings the replaying process recorded as absent is `Incompatible`
+(`RequiresSettingsAbsent`), because its prerequisite is missing there, even
+though the process started on its declared base. Consume the refusal with
 `fall_back_to_live()` only if application policy permits live fallback;
 otherwise return the application's deferral. Jobs without admission-time pins
 use `evaluate_unpinned` with `ScheduledJob` or `PayloadPredatesPinning`.

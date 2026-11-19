@@ -282,7 +282,8 @@ impl ProcessPresence {
     /// most once a day, and upserts the process row. Its expiry is stamped
     /// from the server clock when the row is written, after any wait for the
     /// row's lock, so a slow heartbeat never commits an already expired row.
-    /// A heartbeat never clears a recorded stop. It is not audited and not
+    /// A heartbeat never clears a recorded stop, and a stop that starts while
+    /// one is still committing waits for it. It is not audited and not
     /// retried; the next heartbeat restates presence, so
     /// [`ErrorClass::CommitUnknown`] needs no repair.
     pub async fn heartbeat(
@@ -296,6 +297,7 @@ impl ProcessPresence {
         let store = self.store.clone();
         let presence = self;
         store.atomically(deadline, async |sql| {
+            identity_lock(sql, presence.process).await?;
             let digest = &presence.catalog.manifest_digest()[..];
             // A concurrent prune may delete the catalog between an insert that
             // found it and the read that locks it; publishing again settles it.
@@ -333,6 +335,28 @@ impl ProcessPresence {
         })
         .await
     }
+}
+
+/// The advisory-lock class of process identities: `bflp` in ASCII.
+const IDENTITY_CLASS: i32 = 0x6266_6c70;
+
+/// Serializes a heartbeat with a stop of the same process, on an identity
+/// that exists before the first heartbeat inserts its row: a stop that finds
+/// a heartbeat's COMMIT in flight waits for it, then reads the row it left.
+/// The lock is the transaction's and ends with it. Two processes whose ids
+/// fold to the same key only wait for each other.
+pub(crate) async fn identity_lock(
+    sql: &mut PgScopedSql<'_>,
+    process: ProcessId,
+) -> Result<(), StoreError> {
+    let id = process.0.as_u128();
+    let folded = (id ^ (id >> 32) ^ (id >> 64) ^ (id >> 96)) as u32;
+    sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+        .bind(IDENTITY_CLASS)
+        .bind(i32::from_ne_bytes(folded.to_ne_bytes()))
+        .execute(sql.executor())
+        .await?;
+    Ok(())
 }
 
 /// Takes a key-share lock on the stored catalog. It conflicts neither with

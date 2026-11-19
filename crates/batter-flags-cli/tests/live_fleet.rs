@@ -137,3 +137,41 @@ async fn an_overflowing_floor_sample_is_reported_as_unknown_not_engaged() {
     );
     db.close().await;
 }
+
+/// A release the store already holds is unchanged, yet a Live process's
+/// settings floor can still keep the switch engaged: the operator sees the
+/// same warning that explains why it is still tripped.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn releasing_an_already_released_switch_still_warns_about_floors() {
+    let db = Database::seeded().await;
+    let release = || {
+        db.cli_args(&[
+            "kill",
+            "halt",
+            "release",
+            "--actor",
+            "ops",
+            "--reason",
+            "recovered",
+            "--yes",
+        ])
+    };
+    let first = release();
+    assert_eq!(first.code, 0, "{first:?}");
+    assert_eq!(first.json()["outcome"], "written");
+    let again = release();
+    assert_eq!(again.code, 0, "{again:?}");
+    let again = again.json();
+    assert_eq!(again["outcome"], "unchanged", "{again}");
+    let warnings = again["warnings"].as_array().expect("a floor warning");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0]
+            .as_str()
+            .unwrap()
+            .starts_with("1 Live processes keep halt engaged"),
+        "{warnings:?}"
+    );
+    db.close().await;
+}

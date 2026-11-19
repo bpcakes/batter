@@ -420,6 +420,11 @@ fn every_arm_maps_to_its_cause_and_semantic_convention_error_type() {
             ErrorCause::PinTestProvenance,
             "general",
         ),
+        (
+            PinRejection::RequiresSettingsAbsent,
+            ErrorCause::PinRequiresSettingsAbsent,
+            "general",
+        ),
     ];
     for (arm, cause, error_type) in arms {
         assert_eq!(arm.cause(), cause, "{arm:?}");
@@ -439,7 +444,8 @@ fn every_arm_maps_to_its_cause_and_semantic_convention_error_type() {
             | PinRejection::KindChanged
             | PinRejection::ValueTypeChanged
             | PinRejection::UnknownVariant
-            | PinRejection::TestProvenance => {}
+            | PinRejection::TestProvenance
+            | PinRejection::RequiresSettingsAbsent => {}
         }
     }
 }
@@ -462,6 +468,7 @@ fn the_closed_error_vocabulary_has_one_type_per_cause() {
             "type_mismatch",
             "type_mismatch",
             "parse_error",
+            "general",
             "general",
         ]
     );

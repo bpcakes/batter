@@ -132,28 +132,22 @@ pub(crate) enum Written<'a> {
 /// judgement enumerates; a catalog with more counts as unjudged.
 const MAX_HELD_GOVERNORS: usize = 4;
 
-/// Judges `written`, the state a write leaves `key` in, against the
-/// catalogs of Live and Silent processes that declare `key`.
+/// Judges `written`, the state a write leaves `key` in, against
+/// `manifests`: the catalogs of Live and Silent processes that declare `key`,
+/// read in the same statement as the declarations and declarers the write
+/// judges ([`crate::declared`]).
 pub(crate) async fn judge(
     sql: &mut PgScopedSql<'_>,
     key: &FlagKey,
     written: Written<'_>,
+    manifests: &[serde_json::Value],
 ) -> Result<Deferral, StoreError> {
-    let manifests: Vec<serde_json::Value> = sqlx::query_scalar(
-        "SELECT c.manifest FROM flags.flag_catalogs c \
-         WHERE EXISTS (SELECT FROM flags.flag_catalog_entries e WHERE e.manifest_digest = c.manifest_digest AND e.key = $1) \
-           AND EXISTS (SELECT FROM flags.flag_processes p WHERE p.manifest_digest = c.manifest_digest AND p.stopped_at IS NULL) \
-         ORDER BY c.manifest_digest",
-    )
-    .bind(key.as_str())
-    .fetch_all(sql.executor())
-    .await?;
     let mut deferral = Deferral::default();
     let (mut undecodable, mut held_governors) = (0, 0);
     let manifests: Vec<Manifest> = manifests
-        .into_iter()
+        .iter()
         .filter_map(|manifest| {
-            let decoded = serde_json::from_value(manifest).ok();
+            let decoded = serde::Deserialize::deserialize(manifest).ok();
             if decoded.is_none() {
                 undecodable += 1;
             }

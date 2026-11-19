@@ -157,6 +157,13 @@ pub enum PinRejection {
     /// A pin taken from test flags met a view that is not a test view.
     #[error("a test pin met a view that is not a test view")]
     TestProvenance,
+    /// The pin's variant requires settings that this process recorded as
+    /// absent or empty, as [`BaseBuilder::settings_absent`] does, so a row
+    /// selecting it would be held here.
+    ///
+    /// [`BaseBuilder::settings_absent`]: crate::low_level::BaseBuilder::settings_absent
+    #[error("the pin's variant requires settings this process lacks")]
+    RequiresSettingsAbsent,
 }
 
 impl PinRejection {
@@ -172,6 +179,7 @@ impl PinRejection {
             Self::ValueTypeChanged => ErrorCause::PinValueTypeChanged,
             Self::UnknownVariant => ErrorCause::PinUnknownVariant,
             Self::TestProvenance => ErrorCause::PinTestProvenance,
+            Self::RequiresSettingsAbsent => ErrorCause::PinRequiresSettingsAbsent,
         }
     }
 

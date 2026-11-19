@@ -25,16 +25,16 @@
 
 mod decide;
 mod gate;
+mod replay;
 
 use std::{fmt, sync::Arc};
 
 pub use self::gate::{GateReading, gate_switch};
+use self::replay::Replay;
 use crate::{
     base::{Base, BaseInner},
-    check::{HandleRefusal, Reach},
     decision::{
-        Decision, ErrorCause, Freshness, KillSwitchKey, Layer, PrePublication, Reason, Source,
-        SwitchState,
+        Decision, ErrorCause, Freshness, Layer, PrePublication, Reason, Source, SwitchState,
     },
     events::{self, Evaluation, EventContext, Surface},
     handle::{Flag, Handle, KillSwitch},
@@ -59,16 +59,6 @@ pub enum ViewError {
         /// Where the snapshot was read from.
         found: Provenance,
     },
-}
-
-/// What replaying a pin found, before an incompatibility becomes a refusal.
-enum Replay<T> {
-    Rejected(PinRejection),
-    Overridden {
-        decision: Decision<T>,
-        by: KillSwitchKey,
-    },
-    Honoured(Decision<T>),
 }
 
 /// Which loaded source a view reports.
@@ -259,8 +249,9 @@ impl SnapshotView {
     /// Replays a stored pin and emits one evaluation event.
     ///
     /// The handle is checked first, then the pin against the running
-    /// declaration, then the governing kill switch, so a mismatched pin is
-    /// never reported as [`PinnedResolution::Overridden`]. A kind may replay
+    /// declaration and this process's absent required settings, then the
+    /// governing kill switch, so a mismatched pin is never reported as
+    /// [`PinnedResolution::Overridden`]. A kind may replay
     /// pins of a flag it owns or whose `pinned_by` lists it. An incompatible
     /// pin's event carries no variant, and its [`PinRefusal`] is the only way
     /// to read the flag live in its place.
@@ -289,67 +280,6 @@ impl SnapshotView {
                 PinnedResolution::Honoured(decision)
             }
         }
-    }
-
-    fn replay<F: Pinnable>(&self, flag: &F, pin: &Pinned<F::Value>) -> Replay<F::Value> {
-        let handle = flag.handle();
-        if let Some(refusal) = self.refusal(handle, Reach::OwnerOrPinner) {
-            return Replay::Rejected(match refusal {
-                HandleRefusal::ForeignCatalog => PinRejection::ForeignHandle,
-                HandleRefusal::NotOwned => PinRejection::NotOwned,
-            });
-        }
-        let body = match pin.body() {
-            Ok(body) => body,
-            Err(rejection) => return Replay::Rejected(rejection),
-        };
-        let entry = self.catalog_entry(handle);
-        let rejection = if *body.key != *flag.key().as_str() {
-            Some(PinRejection::KeyMismatch)
-        } else if *body.kind != *handle.kind().as_str() {
-            Some(PinRejection::KindChanged)
-        } else if *body.value_type != *handle.value_type().as_str() {
-            Some(PinRejection::ValueTypeChanged)
-        } else {
-            None
-        };
-        if let Some(rejection) = rejection {
-            return Replay::Rejected(rejection);
-        }
-        let Some(pinned) = entry
-            .variants
-            .iter()
-            .find(|declared| ***declared == *body.variant)
-            .and_then(|declared| F::Value::from_variant(declared))
-        else {
-            return Replay::Rejected(PinRejection::UnknownVariant);
-        };
-        let is_test_view = matches!(
-            self.mode,
-            Mode::Control(Control::Loaded {
-                kind: Loaded::Test,
-                ..
-            })
-        );
-        if matches!(body.origin, PinOrigin::Test { .. }) && !is_test_view {
-            return Replay::Rejected(PinRejection::TestProvenance);
-        }
-        if let Some(governing) = &entry.governed_by
-            && self.switch_outcome(governing.index).state.is_engaged()
-        {
-            return Replay::Overridden {
-                decision: self.overridden(flag.code_default(), &governing.key),
-                by: KillSwitchKey::new(governing.key.clone()),
-            };
-        }
-        Replay::Honoured(Decision::served(
-            (pinned, pinned.variant()),
-            Reason::Cached,
-            Source::Pinned {
-                origin: body.origin,
-            },
-            Layer::Entry,
-        ))
     }
 
     fn report<T>(&self, handle: &Handle, decision: &Decision<T>, surface: Surface) {

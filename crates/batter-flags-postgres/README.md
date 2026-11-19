@@ -87,9 +87,13 @@ above-head requests are refused. Equality is tested before CAS, so an already
 satisfied request is unchanged even with an old CAS revision.
 
 Live means not stopped and not expired by the server clock. Silent means expired
-but not stopped/pruned. One statement classifies every row it reads at the
-same server instant, its `statement_timestamp()`, so a fleet read or a write's
-declarer check never mixes states from different instants. Both block incompatible writes and archive; only Live
+but not stopped/pruned. Every row is classified at one server instant that
+precedes the snapshot it is read from: a fleet read uses its transaction's
+start, before its first statement takes the REPEATABLE READ snapshot, and a
+write reads its key's declarations, declarers and their catalogs in one
+statement at that statement's `statement_timestamp()`. A heartbeat renewed
+after the snapshot therefore never makes a continuously Live process read
+Silent, and a build published mid-write is judged by every check or none. Both block incompatible writes and archive; only Live
 counts for `Written`. Stopped declarers yield `NoLiveDeclarer`, unreferenced
 retained catalogs yield `Orphaned`, and explicit writes without any retained
 catalog yield `NeverDeclared`.

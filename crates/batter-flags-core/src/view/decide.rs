@@ -1,8 +1,8 @@
 //! How a view decides: the layers of a flag, the one kill-switch function, the
 //! governing override and who may evaluate a handle.
 //!
-//! Everything here reads only the state a view captured. The public surface,
-//! the events and pin replay are in the parent module.
+//! Everything here reads only the state a view captured. The public surface
+//! and the events are in the parent module, pin replay in `replay`.
 
 use super::{Control, Loaded, Mode, SnapshotView};
 use crate::{
