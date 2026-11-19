@@ -254,7 +254,9 @@ fn build_database_name(prefix: &str) -> String {
 /// append `derived_query`: the owned container's loopback pin, or nothing for
 /// an external admin URL, whose query is not carried over.
 fn with_database_name(admin_url: &str, database_name: &str, derived_query: &str) -> String {
-    let (base, _) = admin_url
+    // Cut the query and fragment first: either may contain a '/'.
+    let location = admin_url.split(['?', '#']).next().unwrap_or(admin_url);
+    let (base, _) = location
         .rsplit_once('/')
         .expect("DATABASE_URL must include database name");
     format!("{base}/{database_name}{derived_query}")
@@ -312,6 +314,15 @@ mod tests {
         assert_eq!(
             with_database_name(
                 "postgres://u:p@db.invalid:5432/postgres?%64bname=other&statement-cache-capacity=0",
+                "lease_1",
+                ""
+            ),
+            "postgres://u:p@db.invalid:5432/lease_1"
+        );
+        // A '/' inside the query must not be taken for the database path.
+        assert_eq!(
+            with_database_name(
+                "postgres://u:p@db.invalid:5432/postgres?sslrootcert=/etc/ssl/ca.pem#a/b",
                 "lease_1",
                 ""
             ),

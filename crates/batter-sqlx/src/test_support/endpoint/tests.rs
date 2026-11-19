@@ -228,3 +228,23 @@ fn explicit_empty_passwords_survive_the_rebuilt_url() {
     let again = HarnessEndpoint::from_admin_url_with(&url, None).unwrap();
     assert_eq!(again.password.as_deref(), Some(""), "{url}");
 }
+
+#[test]
+fn option_rebuild_check_allows_options_sqlx_took_from_the_environment() {
+    let pairs = vec![("search_path".to_owned(), "public".to_owned())];
+    let raw = "-c search_path=public";
+    // A base that already carries options, as an ambient PGOPTIONS leaves it.
+    let ambient = PgConnectOptions::new_without_pgpass().options([("statement_timeout", "5s")]);
+    assert!(setter_rebuilds(ambient.clone(), raw, &pairs));
+    assert!(!setter_rebuilds(ambient, "-c search_path=other", &pairs));
+}
+
+#[test]
+fn debug_output_omits_the_password() {
+    let endpoint = endpoint("postgres://owner:secret-marker@127.0.0.1:5432/postgres");
+    let text = format!("{endpoint:?}");
+    assert!(
+        !text.contains("secret-marker") && text.contains("owner"),
+        "{text}"
+    );
+}

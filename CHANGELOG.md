@@ -29,7 +29,10 @@ contracts, capability facts and validation history.
   with the new `UnsupportedHarnessEndpoint` (see `HarnessEndpointReason`)
   while `PGHOSTADDR` is set or when the admin URL declares `hostaddr`, several
   hosts or a setting SQLx cannot carry. Template initializers receive a URL
-  rebuilt from that parse and checked with both parsers. Reference-service
+  rebuilt from that parse and checked with both parsers. Session settings
+  the admin URL omits, such as `application_name` and startup `options`, still
+  come from SQLx's own `PGAPPNAME` and `PGOPTIONS` reading on both paths; the
+  harness does not send them and they select no server. Reference-service
   fixture tests use the new helpers instead of reparsing harness URLs.
 - Disclosed upstream regressions: outside a server transaction SQLx re-sends a
   statement whose first response is SQLSTATE `26000` or a stale cached-plan

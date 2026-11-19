@@ -66,8 +66,9 @@ enum Address {
     Unix(PathBuf),
 }
 
-/// The harness's endpoint as tokio-postgres read it.
-#[derive(Debug, Clone)]
+/// The harness's endpoint as tokio-postgres read it. `Debug` omits the
+/// password.
+#[derive(Clone)]
 pub(super) struct HarnessEndpoint {
     address: Address,
     port: u16,
@@ -79,6 +80,28 @@ pub(super) struct HarnessEndpoint {
     /// that SQLx's setter rebuilds byte for byte.
     options: Option<(String, Vec<(String, String)>)>,
     admin_database: String,
+}
+
+impl std::fmt::Debug for HarnessEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HarnessEndpoint")
+            .field("address", &self.address)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("admin_database", &self.admin_database)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Whether SQLx's `options` setter, applied to `base`, writes exactly
+/// `prefix raw`: the setter appends to options SQLx already took from an
+/// ambient `PGOPTIONS`, joining them with a space, and escapes each value.
+fn setter_rebuilds(base: PgConnectOptions, raw: &str, pairs: &[(String, String)]) -> bool {
+    let expected = match base.get_options() {
+        Some(ambient) if !ambient.is_empty() => format!("{ambient} {raw}"),
+        _ => raw.to_owned(),
+    };
+    base.options(pairs.iter().cloned()).get_options() == Some(expected.as_str())
 }
 
 impl HarnessEndpoint {
@@ -134,8 +157,7 @@ impl HarnessEndpoint {
             None => None,
             Some(raw) => {
                 let pairs = option_pairs(raw).ok_or_else(|| refusal(UnsupportedSetting))?;
-                let rebuilt = PgConnectOptions::new_without_pgpass().options(pairs.iter().cloned());
-                if rebuilt.get_options() != Some(raw) {
+                if !setter_rebuilds(PgConnectOptions::new_without_pgpass(), raw, &pairs) {
                     return Err(refusal(UnsupportedSetting));
                 }
                 Some((raw.to_owned(), pairs))
@@ -261,6 +283,10 @@ impl HarnessEndpoint {
         }
         // SQLx's own parse; an ambient `PGHOSTADDR` was refused already.
         let native: PgConnectOptions = url.parse().map_err(|_| mismatch())?;
+        // Session settings the URL omits come from SQLx's environment in both
+        // the URL parse and the setter-built options, so compare those two:
+        // the harness does not send them, and they select no server.
+        let built = self.options(database)?;
         let same_address = match &self.address {
             // SQLx keeps the URL brackets around an IPv6 host.
             Address::Tcp(name) => {
@@ -278,8 +304,8 @@ impl HarnessEndpoint {
             || native.get_username() != self.user
             || native.get_database() != Some(database)
             || mode_name(native.get_ssl_mode()) != mode_name(self.ssl_mode)
-            || native.get_application_name() != self.application_name.as_deref()
-            || native.get_options() != self.options.as_ref().map(|(raw, _)| raw.as_str())
+            || native.get_application_name() != built.get_application_name()
+            || native.get_options() != built.get_options()
         {
             return Err(mismatch());
         }
