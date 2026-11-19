@@ -105,6 +105,10 @@ async fn initialize_postgres(source: PostgresSource) -> SharedPostgres {
 }
 
 async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
+    crate::external_admin::reject_dropped_host_address_pin(
+        &admin_url,
+        std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some(),
+    );
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,

@@ -385,7 +385,11 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   ambient `PGHOSTADDR` in SQLx 0.9.1 and libpq; consumers that append their own
   query to such a URL must use `&`. An external
   `RUNLEDGER_TEST_ADMIN_DATABASE_URL` keeps libpq semantics, since SQLx is then
-  the fixture's only client, and its derived URLs still carry no query.
+  the fixture's only client, and its derived URLs still carry no query. Such a
+  URL that declares `hostaddr` is now refused before provisioning unless the
+  pin repeats its own IP literal host and `PGHOSTADDR` is unset: the admin pool
+  follows the pin while derived URLs do not. That split already existed under
+  SQLx 0.9.0 for a pin naming another address; 0.9.1 adds the ambient case.
   `scripts/refresh_runledger_sqlx.py` now parses `DATABASE_URL` once, gives
   `psql` the parts as its own PG* variables (no credentials in its arguments)
   in an environment without any other PG* setting, gives SQLx CLI a URL

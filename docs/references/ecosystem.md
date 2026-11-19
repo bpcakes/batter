@@ -94,7 +94,11 @@ contracts cite:
   URL and the database URLs derived from it, since a URL `hostaddr` overrides
   the environment for a TCP host in both SQLx and libpq (checked against SQLx
   0.9.1 and psql 18 with an ambient `PGHOSTADDR`). Derivation re-appends only
-  that pin; an external admin URL's query is not carried. The metadata refresh
+  that pin; an external admin URL's query is not carried, so an external URL
+  whose `hostaddr` the derived URLs would lose (any pin while `PGHOSTADDR` is
+  set, or one not repeating its IP literal host) is refused before
+  provisioning. SQLx 0.9.0 also honoured a URL `hostaddr` (as the host), so
+  the second case predates this upgrade. The metadata refresh
   drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.
 
   The invariant holds under three stated preconditions, which are not
