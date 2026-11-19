@@ -83,6 +83,10 @@ def parse_database_url(database):
     if "#" in database:
         raise ValueError("DATABASE_URL must not contain '#'; encode it as %23")
     host = parts.netloc.rpartition("@")[2]
+    # Check the whole authority before slicing an IPv6 literal out of it: the
+    # slice would drop a second host, and urlsplit takes its port.
+    if "," in host:
+        raise ValueError("DATABASE_URL must name exactly one host and one database")
     if host.startswith("[") and "]" in host:
         host = host[1:host.index("]")]
     elif port is not None:

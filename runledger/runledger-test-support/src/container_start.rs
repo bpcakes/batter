@@ -16,8 +16,8 @@ const ATTEMPT_LABEL: &str = "org.runledger.test-start";
 static ATTEMPT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) async fn start_postgres(image: PostgresImage) -> DockerContainer {
-    // Every owned container is reached through SQLx, which would connect to an
-    // ambient PGHOSTADDR instead; refuse before starting one.
+    // An ambient PGHOSTADDR would redirect SQLx but not the native test
+    // proxies; refuse before starting a container.
     crate::postgres_container::reject_ambient_host_address(
         std::env::var_os(crate::postgres_container::AMBIENT_HOST_ADDRESS_ENV).is_some(),
     );

@@ -5,33 +5,34 @@ use std::net::IpAddr;
 
 use url::Url;
 
-/// Why an external admin URL's `hostaddr` would split provisioning from the
-/// database URLs derived from it, if it would.
+/// Why derived database URLs would reach a different endpoint than the
+/// external admin URL, if they would.
 ///
-/// SQLx connects the admin pool to a URL `hostaddr`, but derived database URLs
-/// carry no query, so they reach the authority host instead (or, in SQLx
-/// 0.9.1, an ambient `PGHOSTADDR`). A pin is harmless only when it repeats
-/// the authority's own IP literal and no ambient address overrides the derived
-/// URLs. Query keys are read decoded, as SQLx reads them. An unparseable URL
-/// is left to SQLx's own connection error.
-pub(crate) fn dropped_host_address_pin(
-    admin_url: &str,
-    ambient_present: bool,
-) -> Option<&'static str> {
+/// Derived database URLs keep the authority and drop the query, so a query
+/// parameter that selects the transport, port or address reaches the admin
+/// pool but not the leases. SQLx 0.9.0 honoured these too, so the split
+/// predates SQLx 0.9.1. `host` (a socket directory or another host) and `port`
+/// are refused; a `hostaddr` is accepted only when it repeats the authority's
+/// own IP literal, where dropping it changes nothing. An ambient `PGHOSTADDR`
+/// is refused separately in every fixture mode. Query keys are read decoded,
+/// as SQLx reads them. An unparseable URL is left to SQLx's own error.
+pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str> {
     let url = Url::parse(admin_url).ok()?;
-    let pins: Vec<String> = url
-        .query_pairs()
-        .filter(|(key, _)| key == "hostaddr")
-        .map(|(_, value)| value.into_owned())
-        .collect();
+    let mut pins = Vec::new();
+    for (key, value) in url.query_pairs() {
+        match &*key {
+            "host" | "port" => {
+                return Some(
+                    "move host and port from the RUNLEDGER_TEST_ADMIN_DATABASE_URL query into its \
+                     authority: derived database URLs carry no query",
+                );
+            }
+            "hostaddr" => pins.push(value.into_owned()),
+            _ => {}
+        }
+    }
     if pins.is_empty() {
         return None;
-    }
-    if ambient_present {
-        return Some(
-            "unset PGHOSTADDR or remove hostaddr from RUNLEDGER_TEST_ADMIN_DATABASE_URL: derived \
-             database URLs would follow PGHOSTADDR while provisioning follows the pin",
-        );
     }
     // `postgres` is not a special URL scheme, so an IPv4 host arrives as text.
     let authority = url
@@ -48,68 +49,49 @@ pub(crate) fn dropped_host_address_pin(
     )
 }
 
-/// Panic before provisioning when [`dropped_host_address_pin`] finds a split.
-/// The message never quotes the URL, which can carry credentials.
-pub(crate) fn reject_dropped_host_address_pin(admin_url: &str, ambient_present: bool) {
-    if let Some(reason) = dropped_host_address_pin(admin_url, ambient_present) {
+/// Panic before provisioning when [`dropped_endpoint_parameter`] finds a
+/// split. The message never quotes the URL, which can carry credentials.
+pub(crate) fn reject_dropped_endpoint_parameters(admin_url: &str) {
+    if let Some(reason) = dropped_endpoint_parameter(admin_url) {
         panic!("{reason}");
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::dropped_host_address_pin;
+    use super::dropped_endpoint_parameter;
 
     #[test]
-    fn pins_derived_urls_would_drop_are_refused() {
-        let accepted = [
-            ("postgres://u:p@db.invalid:5432/postgres", false),
-            ("postgres://u:p@db.invalid:5432/postgres", true),
-            (
-                "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1",
-                false,
-            ),
-            ("postgres://u:p@[::1]:5432/postgres?hostaddr=::1", false),
-            ("not a url", true),
-        ];
-        for (url, ambient) in accepted {
-            assert_eq!(
-                dropped_host_address_pin(url, ambient),
-                None,
-                "{url} {ambient}"
-            );
+    fn endpoint_parameters_derived_urls_would_drop_are_refused() {
+        for url in [
+            "postgres://u:p@db.invalid:5432/postgres",
+            "postgres://u:p@db.invalid:5432/postgres?sslmode=disable",
+            "postgres://u:p@%2Ftmp/postgres",
+            "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1",
+            "postgres://u:p@[::1]:5432/postgres?hostaddr=::1",
+            "not a url",
+        ] {
+            assert_eq!(dropped_endpoint_parameter(url), None, "{url}");
         }
-        let refused = [
-            // The 0.9.1 split: an ambient address overrides only derived URLs.
-            (
-                "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1",
-                true,
-            ),
-            // Already split under 0.9.0: derived URLs reach the host name.
-            (
-                "postgres://u:p@db.invalid:5432/postgres?hostaddr=192.0.2.1",
-                false,
-            ),
-            (
-                "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=192.0.2.1",
-                false,
-            ),
+        for url in [
+            // A socket directory in the query: provisioning uses the socket,
+            // derived URLs TCP to the authority host.
+            "postgres://u:p@localhost/postgres?host=/tmp",
+            "postgres://u:p@localhost/postgres?host=192.0.2.1",
+            "postgres://u:p@localhost/postgres?port=6543",
+            // A pin naming another address than the authority host.
+            "postgres://u:p@db.invalid:5432/postgres?hostaddr=192.0.2.1",
+            "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=192.0.2.1",
             // Keys are decoded as SQLx decodes them.
-            (
-                "postgres://u:p@db.invalid:5432/postgres?host%61ddr=192.0.2.1",
-                false,
-            ),
-            (
-                "postgres://u:p@127.0.0.1/postgres?hostaddr=127.0.0.1&hostaddr=192.0.2.1",
-                false,
-            ),
-        ];
-        for (url, ambient) in refused {
-            let reason = dropped_host_address_pin(url, ambient);
+            "postgres://u:p@db.invalid:5432/postgres?host%61ddr=192.0.2.1",
+            "postgres://u:p@localhost/postgres?%68ost=/tmp",
+            "postgres://u:p@127.0.0.1/postgres?hostaddr=127.0.0.1&hostaddr=192.0.2.1",
+        ] {
             // Refused, without quoting the URL's address.
             assert!(
-                reason.is_some_and(|reason| !reason.contains("192.0.2.1")),
-                "{url} {ambient}"
+                dropped_endpoint_parameter(url)
+                    .is_some_and(|reason| !reason.contains("192.0.2.1") && !reason.contains("/tmp")),
+                "{url}"
             );
         }
     }

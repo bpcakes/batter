@@ -89,16 +89,18 @@ contracts cite:
   its own PG* variables in an environment without any other PG* setting,
   gives SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a
   probe crate whether `[env]` changes `PGHOSTADDR` or `DATABASE_URL` for the
-  query macros. Runledger's Docker fixture refuses `PGHOSTADDR` only when it
-  owns the container, and pins `hostaddr=127.0.0.1` in that container's admin
+  query macros. Runledger's fixtures refuse `PGHOSTADDR` in every mode, since
+  their native test proxies dial the URL host themselves, and pin
+  `hostaddr=127.0.0.1` in the owned container's admin
   URL and the database URLs derived from it, since a URL `hostaddr` overrides
   the environment for a TCP host in both SQLx and libpq (checked against SQLx
   0.9.1 and psql 18 with an ambient `PGHOSTADDR`). Derivation re-appends only
   that pin; an external admin URL's query is not carried, so an external URL
-  whose `hostaddr` the derived URLs would lose (any pin while `PGHOSTADDR` is
-  set, or one not repeating its IP literal host) is refused before
-  provisioning. SQLx 0.9.0 also honoured a URL `hostaddr` (as the host), so
-  the second case predates this upgrade. The metadata refresh
+  whose query selects a `host`, `port` or `hostaddr` the derived URLs would
+  lose is refused before provisioning (a `hostaddr` repeating its IP literal
+  host is accepted). SQLx 0.9.0 honoured these parameters too, so that split
+  predates this upgrade. Template initializer URLs carry `connect_timeout` and
+  refuse other connection tuning they cannot carry. The metadata refresh
   drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.
 
   The invariant holds under three stated preconditions, which are not

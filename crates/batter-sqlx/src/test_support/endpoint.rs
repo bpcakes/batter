@@ -79,6 +79,9 @@ pub(super) struct HarnessEndpoint {
     /// tokio-postgres's raw `options`, carried only as `-c key=value` pairs
     /// that SQLx's setter rebuilds byte for byte.
     options: Option<(String, Vec<(String, String)>)>,
+    /// Carried to template initializers, which may use tokio-postgres; SQLx
+    /// ignores the parameter, as it always has for these pools.
+    connect_timeout: Option<std::time::Duration>,
     admin_database: String,
 }
 
@@ -150,6 +153,12 @@ impl HarnessEndpoint {
             || config.get_ssl_negotiation() != SslNegotiation::Postgres
             || config.get_channel_binding() == ChannelBinding::Require
             || config.get_load_balance_hosts() != LoadBalanceHosts::Disable
+            // Connection tuning the rebuilt initializer URL does not carry.
+            || config.get_tcp_user_timeout().is_some()
+            || !config.get_keepalives()
+            || config.get_keepalives_idle() != tokio_postgres::Config::new().get_keepalives_idle()
+            || config.get_keepalives_interval().is_some()
+            || config.get_keepalives_retries().is_some()
         {
             return Err(refusal(UnsupportedSetting));
         }
@@ -188,6 +197,7 @@ impl HarnessEndpoint {
             ssl_mode,
             application_name: config.get_application_name().map(str::to_owned),
             options,
+            connect_timeout: config.get_connect_timeout().copied(),
             admin_database,
         })
     }
@@ -259,6 +269,10 @@ impl HarnessEndpoint {
         if let Some((raw, _)) = &self.options {
             url.push_str(&format!("&options={}", strict_encode(raw)));
         }
+        if let Some(timeout) = self.connect_timeout {
+            // tokio-postgres parsed whole seconds, so this is exact.
+            url.push_str(&format!("&connect_timeout={}", timeout.as_secs()));
+        }
         if self.password.as_deref() == Some("") {
             url.push_str("&password=");
         }
@@ -277,6 +291,7 @@ impl HarnessEndpoint {
             || mode_name(again.ssl_mode) != mode_name(self.ssl_mode)
             || again.application_name != self.application_name
             || again.options != self.options
+            || again.connect_timeout != self.connect_timeout
             || again.admin_database != database
         {
             return Err(mismatch());

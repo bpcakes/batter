@@ -64,17 +64,16 @@ async fn initialize_shared_postgres() -> SharedPostgres {
 }
 
 /// SQLx 0.9.1, like libpq, fills an unset `hostaddr` from an ambient
-/// `PGHOSTADDR`. The owned container's URLs pin `hostaddr`, which overrides
-/// the variable, so connections still reach the container; an ambient value
-/// therefore means the environment names a different server, and the fixture
-/// refuses it before starting a container rather than silently ignoring it.
-/// An external admin URL keeps libpq semantics: SQLx is then the fixture's
-/// only client, so every connection follows the same setting.
+/// `PGHOSTADDR`, but the fixture's clients are not all SQLx: native test
+/// proxies dial and forward to the URL host themselves. Every fixture mode
+/// therefore refuses the variable before provisioning, so no connection
+/// follows an address the URL does not state. The owned container's URLs
+/// also pin `hostaddr`.
 pub(crate) fn reject_ambient_host_address(present: bool) {
     assert!(
         !present,
-        "unset {AMBIENT_HOST_ADDRESS_ENV} for the Runledger-owned PostgreSQL container: it names \
-         a different server than the container"
+        "unset {AMBIENT_HOST_ADDRESS_ENV} for Runledger PostgreSQL fixtures: native test \
+         clients reach the URL host, not that address"
     );
 }
 
@@ -105,10 +104,8 @@ async fn initialize_postgres(source: PostgresSource) -> SharedPostgres {
 }
 
 async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
-    crate::external_admin::reject_dropped_host_address_pin(
-        &admin_url,
-        std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some(),
-    );
+    reject_ambient_host_address(std::env::var_os(AMBIENT_HOST_ADDRESS_ENV).is_some());
+    crate::external_admin::reject_dropped_endpoint_parameters(&admin_url);
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
@@ -263,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unset PGHOSTADDR for the Runledger-owned PostgreSQL container")]
+    #[should_panic(expected = "unset PGHOSTADDR for Runledger PostgreSQL fixtures")]
     fn ambient_host_address_refuses_fixture_startup() {
         reject_ambient_host_address(true);
     }

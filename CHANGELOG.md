@@ -29,7 +29,9 @@ contracts, capability facts and validation history.
   with the new `UnsupportedHarnessEndpoint` (see `HarnessEndpointReason`)
   while `PGHOSTADDR` is set or when the admin URL declares `hostaddr`, several
   hosts or a setting SQLx cannot carry. Template initializers receive a URL
-  rebuilt from that parse and checked with both parsers. Session settings
+  rebuilt from that parse and checked with both parsers; it carries
+  `connect_timeout`, and other connection tuning it cannot carry
+  (`tcp_user_timeout`, `keepalives*`) is refused. Session settings
   the admin URL omits, such as `application_name` and startup `options`, still
   come from SQLx's own `PGAPPNAME` and `PGOPTIONS` reading on both paths; the
   harness does not send them and they select no server. Reference-service

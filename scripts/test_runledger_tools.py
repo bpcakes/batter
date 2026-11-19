@@ -172,6 +172,8 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db-a/postgres?service=other', 'may declare only'),
                 ('postgresql://u:private-marker@db-a/postgres?sslmode=disable&sslmode=require', 'parameter once'),
                 ('postgresql://u:private-marker@db-a,db-b/postgres', 'exactly one host'),
+                # Python 3.9's urlsplit accepts this; newer versions reject it first.
+                ('postgresql://u:private-marker@[::1],db2:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@db-a:5432', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/one/two', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/postgres?application_name=a#b', "must not contain '#'"),

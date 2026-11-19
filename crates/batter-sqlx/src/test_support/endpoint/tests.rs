@@ -248,3 +248,29 @@ fn debug_output_omits_the_password() {
         "{text}"
     );
 }
+
+#[test]
+fn initializer_urls_keep_the_connect_timeout_and_refuse_other_tuning() {
+    let endpoint = endpoint("postgres://owner@127.0.0.1:5432/postgres?connect_timeout=2");
+    let url = endpoint.url("pgh_template_1").unwrap();
+    assert!(url.ends_with("&connect_timeout=2"), "{url}");
+    let config = tokio_postgres::Config::from_str(&url).unwrap();
+    assert_eq!(
+        config.get_connect_timeout(),
+        Some(&std::time::Duration::from_secs(2))
+    );
+    for setting in [
+        "tcp_user_timeout=5",
+        "keepalives=0",
+        "keepalives_idle=30",
+        "keepalives_interval=5",
+        "keepalives_retries=3",
+    ] {
+        let url = format!("postgres://owner@127.0.0.1:5432/postgres?{setting}");
+        assert_eq!(
+            reason(&url),
+            Some(HarnessEndpointReason::UnsupportedSetting),
+            "{url}"
+        );
+    }
+}

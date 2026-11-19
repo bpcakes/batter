@@ -21,13 +21,13 @@ Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
 URL. When this fixture owns the container, its admin URL and every derived
 database URL end in `?hostaddr=127.0.0.1`, which overrides an ambient
 `PGHOSTADDR` in SQLx 0.9.1 and libpq; derivation re-appends only that pin,
-never the admin query. It also refuses a `PGHOSTADDR` set before startup,
-because the variable then names a different server than the container. An
-external admin URL keeps libpq semantics and its derived URLs carry no query;
-SQLx is its only client. Because derived URLs drop the query, an external URL
-declaring `hostaddr` is refused before provisioning unless the pin repeats its
-own IP literal host and `PGHOSTADDR` is unset (`src/external_admin.rs`);
-otherwise provisioning and leases could reach different servers. Failed startup cleanup verifies the
+never the admin query. Every fixture mode refuses an ambient `PGHOSTADDR`
+before provisioning: SQLx would follow it, but native test proxies dial and
+forward to the URL host themselves. An external admin URL's derived URLs carry
+no query, so its `host` and `port` query keys are refused, and a `hostaddr`
+is accepted only when it repeats its own IP literal host
+(`src/external_admin.rs`); otherwise provisioning and leases could reach
+different servers. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.
 Keep Testcontainers and `astral-tokio-tar` absent from the dependency graph.
