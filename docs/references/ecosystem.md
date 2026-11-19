@@ -88,7 +88,7 @@ contracts cite:
   metadata refresh script refuses any ambient `PG*` variable, parses
   `DATABASE_URL` once, gives `psql` the parts as its own PG* variables, gives
   SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a probe
-  crate whether `[env]` sets any libpq or SQLx connection variable or changes
+  crate whether `[env]` sets any `PG*` variable or changes
   `DATABASE_URL` for the query macros. Runledger's fixtures refuse any `PG*`
   variable in every mode, since their native test proxies dial the URL host
   themselves, and pin

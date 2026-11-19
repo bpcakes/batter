@@ -25,7 +25,8 @@ never the admin query. Every fixture mode refuses any ambient `PG*` variable
 before provisioning: SQLx fills unset settings from them, but native test
 proxies dial and forward to the URL host themselves. An external admin URL's derived URLs carry
 no query, so every query key is refused except a `hostaddr` that repeats its
-own IP literal host (`src/external_admin.rs`); otherwise provisioning and
+own IP literal host, and the URL must name a DNS or IPv4 host the native
+proxies can dial and exactly one database path segment (`src/external_admin.rs`); otherwise provisioning and
 leases could reach different servers or leases could silently lose TLS
 settings. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;

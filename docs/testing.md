@@ -152,8 +152,17 @@ Run fixture-backed tests from a shell without `PG*` environment variables.
 SQLx fixture endpoints, Runledger's test support and the metadata refresh
 refuse any of them, so every client reads only the URL; offline fixture
 endpoint tests say so in one assertion, because SQLx reads those variables
-in-process and tests may not change the environment. Put TLS, credentials and
-session settings in the URL instead.
+in-process and tests may not change the environment. Where the settings go
+depends on the mode:
+
+- SQLx fixtures: the harness admin URL carries credentials, TLS mode,
+  `application_name` and `-c key=value` options.
+- An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`: credentials only, a DNS or
+  IPv4 host and exactly one database path segment. Any query is refused,
+  except a `hostaddr` repeating its own IP literal host, because lease URLs
+  carry no query; such a fixture cannot require TLS yet.
+- The metadata refresh: credentials, `application_name` and `options`. A
+  TLS-required refresh is unsupported, and both clients connect without TLS.
 
 For the reference suite, set `POSTGRES_TEST_ADMIN_URL` and
 `POSTGRES_TEST_OBSERVER_URL` to two dedicated disposable local PostgreSQL 18

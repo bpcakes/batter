@@ -156,29 +156,29 @@ class RefreshTests(unittest.TestCase):
             'postgresql://us%40er:p%40ss+w%20rd@[::1]:6543/my%20db?sslmode=prefer&application_name=a+b')
         self.assertEqual(parts, {'host': '::1', 'port': 6543, 'database': 'my db', 'user': 'us@er',
                                  'password': 'p@ss+w rd',
-                                 'parameters': {'sslmode': 'prefer', 'application_name': 'a+b'}})
+                                 'parameters': {'application_name': 'a+b', 'sslmode': 'disable'}})
         rebuilt = sqlx_database_url(parts)
         self.assertEqual(rebuilt, 'postgres://us%40er:p%40ss%2Bw%20rd@[::1]:6543/my%20db'
-                                  '?sslmode=prefer&application_name=a%2Bb')
+                                  '?application_name=a%2Bb&sslmode=disable')
         self.assertEqual(parse_database_url(rebuilt), parts)
         colon = parse_database_url('postgres://u@%2Ftmp%2Fpg%3A18/db')
-        self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db')
+        self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db?sslmode=disable')
         empty = parse_database_url('postgres://u:@db.invalid:5432/db')
-        self.assertEqual(sqlx_database_url(empty), 'postgres://u@db.invalid:5432/db?password=')
+        self.assertEqual(sqlx_database_url(empty), 'postgres://u@db.invalid:5432/db?sslmode=disable&password=')
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
-        self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
+        self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db?sslmode=disable')
         # A raw "+" in a query value is literal, as in libpq, and reaches SQLx
         # encoded; %20 is the space.
         plus = parse_database_url('postgres://u@db.invalid/db?options=-c%20search_path%3Dtenant+blue')
         self.assertEqual(plus['parameters']['options'], '-c search_path=tenant+blue')
         self.assertEqual(psql_environment(plus)['PGOPTIONS'], '-c search_path=tenant+blue')
-        self.assertTrue(sqlx_database_url(plus).endswith('?options=-c%20search_path%3Dtenant%2Bblue'))
+        self.assertTrue(sqlx_database_url(plus).endswith('?options=-c%20search_path%3Dtenant%2Bblue&sslmode=disable'))
         # One encoded segment may name a database containing "/" or "%".
         slashed = parse_database_url('postgres://u@db.invalid/sales%2Farchive')
         self.assertEqual(slashed['database'], 'sales/archive')
         self.assertEqual(psql_environment(slashed)['PGDATABASE'], 'sales/archive')
-        self.assertTrue(sqlx_database_url(slashed).endswith('/sales%2Farchive'))
+        self.assertTrue(sqlx_database_url(slashed).endswith('/sales%2Farchive?sslmode=disable'))
         self.assertEqual(parse_database_url('postgres://u@db.invalid/tenant%252')['database'], 'tenant%2')
         # An empty port means the default, for a TCP host and a socket directory.
         self.assertEqual(parse_database_url('postgres://u@localhost:/db')['host'], 'localhost')
@@ -186,7 +186,7 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual((empty_socket_port['host'], empty_socket_port['port']), ('/tmp', 5432))
         # The Runledger-owned container's redundant loopback pin is dropped.
         owned = parse_database_url('postgres://runledger:runledger@127.0.0.1:5432/db?hostaddr=127.0.0.1')
-        self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db')
+        self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db?sslmode=disable')
         # The same address in another spelling is the same pin.
         expanded = parse_database_url('postgres://u@[0:0:0:0:0:0:0:1]/db?hostaddr=::1')
         self.assertEqual(expanded['host'], '0:0:0:0:0:0:0:1')
@@ -195,7 +195,8 @@ class RefreshTests(unittest.TestCase):
         with patch.dict(os.environ, PGHOSTADDR='192.0.2.1', PGSSLMODE='disable', HOME='/home/x'):
             environment = psql_environment(parts)
         self.assertNotIn('PGHOSTADDR', environment)
-        self.assertEqual(environment['PGSSLMODE'], 'prefer')
+        # Both clients use the macros' only transport, whatever the URL accepted.
+        self.assertEqual(environment['PGSSLMODE'], 'disable')
         self.assertEqual(environment['HOME'], '/home/x')
 
     def test_urls_that_cannot_reach_both_clients_alike_never_run_a_command(self):
@@ -296,7 +297,7 @@ class RefreshTests(unittest.TestCase):
                  patch('refresh_runledger_sqlx.subprocess.run') as psql:
                 with self.assertRaisesRegex(ValueError, message):
                     refresh(Path.cwd())
-                probe.assert_called_once_with(Path.cwd().resolve(), 'postgres://u@db.invalid:5432/database')
+                probe.assert_called_once_with(Path.cwd().resolve(), 'postgres://u@db.invalid:5432/database?sslmode=disable')
                 command.assert_not_called()
                 psql.assert_not_called()
 
@@ -319,9 +320,9 @@ class RefreshTests(unittest.TestCase):
                 os.environ.pop('PGHOSTADDR', None)
                 self.assertEqual(cargo_compiler_endpoint(root, url), ([], True))
                 (root / '.cargo/extra.toml').write_text(
-                    '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\n')
+                    '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\nPGDATA = "/x"\n')
                 (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url), (['PGHOSTADDR', 'PGOPTIONS'], True))
+                self.assertEqual(cargo_compiler_endpoint(root, url), (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
                 (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')

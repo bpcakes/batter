@@ -47,21 +47,10 @@ def sync_files(source, destination, suffix):
 CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
 # The preparation build checks runledger-postgres and runledger-runtime, whose
 # SQLx dependency enables no TLS backend, so the query macros cannot connect
-# over TLS. Only modes that do not require it are accepted.
+# over TLS. Only modes that do not require it are accepted, and both clients
+# then connect without TLS, so psql's checks use the macros' transport (and
+# the same pg_hba.conf rule) rather than negotiating TLS the macros cannot.
 UNVERIFIED_SSL_MODES = ("disable", "allow", "prefer")
-# Every variable SQLx 0.9.1 reads, plus libpq's documented connection
-# variables: the names the Cargo probe checks the query macros' compiler for.
-# The process environment itself is refused on any PG* name.
-POSTGRES_VARIABLES = (
-    "PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD", "PGPASSFILE",
-    "PGREQUIREAUTH", "PGCHANNELBINDING", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS", "PGAPPNAME",
-    "PGSSLMODE", "PGREQUIRESSL", "PGSSLNEGOTIATION", "PGSSLCOMPRESSION", "PGSSLCERT", "PGSSLKEY",
-    "PGSSLCERTMODE", "PGSSLROOTCERT", "PGSSLCRL", "PGSSLCRLDIR", "PGSSLSNI", "PGREQUIREPEER",
-    "PGSSLMINPROTOCOLVERSION", "PGSSLMAXPROTOCOLVERSION", "PGGSSENCMODE", "PGKRBSRVNAME",
-    "PGGSSLIB", "PGGSSDELEGATION", "PGCONNECT_TIMEOUT", "PGCLIENTENCODING",
-    "PGTARGETSESSIONATTRS", "PGLOADBALANCEHOSTS", "PGMINPROTOCOLVERSION", "PGMAXPROTOCOLVERSION",
-    "PGDATESTYLE", "PGTZ", "PGGEQO", "PGSYSCONFDIR", "PGLOCALEDIR",
-)
 
 
 def refuse_ambient_postgres_environment(environment):
@@ -216,6 +205,7 @@ def parse_database_url(database):
         raise ValueError("DATABASE_URL's sslmode must be disable, allow or prefer: the query macros "
                          "the refresh compiles have no TLS backend, so a TLS-required refresh is "
                          "unsupported")
+    pairs = [(key, value) for key, value in pairs if key != "sslmode"] + [("sslmode", "disable")]
     return {
         "host": host,
         "port": port or 5432,
@@ -281,7 +271,7 @@ def sqlx_environment(database_url):
 def cargo_compiler_endpoint(directory, database):
     """What Cargo, run from `directory`, gives the query macros' compiler.
 
-    Returns the POSTGRES_VARIABLES Cargo sets for the compiler and whether its
+    Returns the PG* variable names Cargo sets for the compiler and whether its
     `DATABASE_URL` equals `database`, read at run time in a process Cargo
     launches with the same `[env]` it gives rustc. `cargo sqlx prepare` runs `cargo check`,
     which applies `[env]` settings, including included, home and forced ones,
@@ -298,14 +288,16 @@ def cargo_compiler_endpoint(directory, database):
         # reads the values at run time: nothing, credentials included, is
         # compiled into its artifacts. The expected URL arrives on stdin,
         # which Cargo [env] cannot replace.
-        names = ", ".join(f'"{name}"' for name in POSTGRES_VARIABLES)
+        # Names are matched by the same PG prefix the shell check uses.
         (probe / "src/main.rs").write_text(
             'use std::io::Read;\n'
             'fn main() {\n'
             '    let mut expected = String::new();\n'
             '    std::io::stdin().read_to_string(&mut expected).expect("expected URL on stdin");\n'
-            '    let set: Vec<&str> = [' + names + ']\n'
-            '        .into_iter().filter(|name| std::env::var_os(name).is_some()).collect();\n'
+            '    let mut set: Vec<String> = std::env::vars_os()\n'
+            '        .map(|(name, _)| name.to_string_lossy().into_owned())\n'
+            '        .filter(|name| name.starts_with("PG")).collect();\n'
+            '    set.sort();\n'
             '    print!("{} {}", if set.is_empty() { "-".to_owned() } else { set.join(",") },\n'
             '           std::env::var("DATABASE_URL").ok().as_deref() == Some(expected.as_str()));\n'
             '}\n')
@@ -319,7 +311,7 @@ def cargo_compiler_endpoint(directory, database):
     answer = result.stdout.split()
     names = [] if len(answer) != 2 or answer[0] == "-" else answer[0].split(",")
     if (result.returncode or len(answer) != 2 or answer[1] not in ("true", "false")
-            or any(name not in POSTGRES_VARIABLES for name in names)):
+            or any(not re.fullmatch(r"PG[A-Za-z0-9_]*", name) for name in names)):
         raise ValueError("could not ask Cargo which [env] settings apply")
     return names, answer[1] == "true"
 
