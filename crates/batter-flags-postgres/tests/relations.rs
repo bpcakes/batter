@@ -256,12 +256,27 @@ async fn a_counterpart_row_readers_cannot_decode_is_judged_at_its_code_default()
     let mut tx = f.pool.begin().await.unwrap();
     sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','newer encoding',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
         .execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) VALUES ('ledger_audit','mode','toggle','{\"encoding\":2,\"variant\":\"on\"}',1,1)")
+    // Valid JSONB with a future field deeper than the process JSON decoder accepts.
+    sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) VALUES ('ledger_audit','mode','toggle',jsonb_build_object('encoding',2,'payload',(repeat('[',150) || '0' || repeat(']',150))::jsonb),1,1)")
         .execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     // Readers hold the newer row at its base, so `ledger_v2` would lack it.
     let refused = strict(&f, "ledger_v2", "on").await;
     assert_eq!(refused_for(&refused), [ledger(Basis::CodeDefault)]);
+    assert!(matches!(
+        strict(&f, "ledger_audit", "on").await,
+        WriteOutcome::Refused(Refusal::UnknownRowEncoding)
+    ));
+    let emergency = submit(
+        &f,
+        Write::kill(key("checkout_halt"), SwitchState::Engaged, change(None)),
+        InvariantPolicy::RefuseUnmet,
+    )
+    .await;
+    assert!(
+        matches!(emergency, WriteOutcome::Written { .. }),
+        "{emergency:?}"
+    );
     f.close().await;
 }
 

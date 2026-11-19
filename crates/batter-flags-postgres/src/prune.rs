@@ -1,6 +1,6 @@
 //! Prune: deleting process rows past their own retention, then catalogs that
 //! nothing references any more.
-use crate::{PooledStore, StoreError, ValidationError};
+use crate::{ServingStore, StoreError, ValidationError};
 use tokio::time::Instant;
 
 /// The most rows one prune deletes from each table, 1 to 10 000.
@@ -27,7 +27,7 @@ pub struct Pruned {
     pub catalogs: u64,
 }
 
-impl PooledStore {
+impl ServingStore {
     /// Deletes up to `limit` expired process rows and then up to `limit`
     /// unreferenced catalogs, in one transaction. Every statement skips the
     /// rows another transaction holds, so a prune never waits on a heartbeat

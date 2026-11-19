@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Flags schema revision 2 identifies each audit event across restores. Migrate
+  and apply the updated serving and fleet-read grants before upgrading. The
+  fleet reader keeps older version-only heartbeats pending. Registered flags
+  operations use the pool’s effective role after reset, and unreadable rows
+  are isolated during write-side invariant checks.
+
 - Outbound HTTP: give each DNS candidate a one-second minimum within the shared
   setup deadline, avoiding tiny attempt windows caused by long answer lists.
   Earlier stalled candidates can still exhaust the shared budget before a

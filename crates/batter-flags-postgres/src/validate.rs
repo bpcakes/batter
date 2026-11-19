@@ -95,8 +95,11 @@ pub(crate) async fn apply(
     head: i64,
 ) -> Result<Prepared, StoreError> {
     let key = mutation.key().as_str();
-    let stored = StoredRow::read(sqlx::query("SELECT kind, value_type, state, updated_version, archived_version FROM flags.flag_state WHERE name = $1")
-        .bind(key).fetch_optional(sql.executor()).await?)?;
+    let stored = match StoredRow::read(sqlx::query("SELECT kind, value_type, state::text, updated_version, archived_version FROM flags.flag_state WHERE name = $1")
+        .bind(key).fetch_optional(sql.executor()).await?)? {
+        ControlFlow::Continue(row) => row,
+        ControlFlow::Break(refusal) => return Ok(Prepared::Rollback(RollbackDecision::Refused(refusal))),
+    };
     // The declarations, their processes, their catalogs and the fleet's
     // reports come from one statement, so every judgement below, and the
     // version the write is numbered with, sees the same fleet.
@@ -233,11 +236,6 @@ fn preflight(
     let declarations = &declared.declarations;
     let refuse = |r| Ok(ControlFlow::Break(RollbackDecision::Refused(r)));
     let row_version = stored.version();
-    if let Some(row) = stored.existing()
-        && !row.shape.known_encoding(&row.state)
-    {
-        return refuse(Refusal::UnknownRowEncoding);
-    }
     let shape = shape(&stored, declared)?;
     if let Mutation::Write(w) = mutation
         && let Some(shape) = shape

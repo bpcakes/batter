@@ -514,3 +514,26 @@ signature changes (`CatalogBuilder::new` and `build`, `Candidate::new`,
 `Flags::flagged`, `PooledStore::history`, `KeyListing::kind` and `value_type`,
 `Deferral::flip`, `PeriodicSummary::skipped`) and the `test-support` gate on
 `batter_flags::test` were checked against the changelog by hand.
+
+
+## Serving authority and rollout confirmation (batter-jkw6.62)
+
+A registered pool carries both its cleanup owner and its session profile.
+`ServingStore` accepts the profiled pool as one value and derives each
+operation’s capped policy from it. The registered process can load, prune
+and own a presence. Migration remains a separate finite command.
+
+A numeric version can recur after a restore. `Loaded` pairs a version with
+its immutable audit event inside the primary read transaction. The loader
+records this evidence only on acceptance and captures it under the same lock
+as the served record for its heartbeat. Fleet reads join the report to their
+own audit history. A version-only heartbeat can still inform version allocation.
+Low-level presence publishers own the assertion that they accepted a read.
+The store cannot verify another process’s memory or infer whether a held flag
+changed its effective value.
+
+Both rollout serving modes use the protected service readiness handoff. Its
+failure owns the full completion after shutdown, including any cleanup error.
+The migration command reserves pool cleanup before acquisition and uses the
+command’s absolute deadline. This reuses the existing service and command
+owners for the two executable lifecycles.

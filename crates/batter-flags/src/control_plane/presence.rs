@@ -17,8 +17,8 @@ use batter_flags_core::{
     low_level::{Base, Provenance, Record, ResolutionSource},
 };
 use batter_flags_postgres::{
-    Cadence, KeySample, PooledStore, PresenceReport, ProcessId, ProcessLabel, ProcessLabels,
-    ProcessPresence, PruneLimit, SnapshotReport, StopFailure, StoreError,
+    Cadence, HeartbeatSnapshot, KeySample, ProcessId, ProcessLabel, ProcessLabels, ProcessPresence,
+    PruneLimit, ServingStore, SnapshotReport, StopFailure, StoreError,
 };
 use tokio::{sync::Mutex, time::Instant};
 
@@ -147,7 +147,7 @@ enum Slot {
 
 /// Presence, validated and ready to register.
 pub(crate) struct Prepared {
-    store: PooledStore,
+    store: ServingStore,
     slot: Arc<Mutex<Slot>>,
     process: ProcessId,
     floor: KeySample,
@@ -206,11 +206,12 @@ impl<'a> Reserved<'a> {
                         );
                         return Ok(PeriodicOutcome::Skipped);
                     }
-                    let report = report(&shared, floor);
+                    let (snapshot, held) = report(&shared);
+                    let deadline = work_deadline(context.deadline());
                     let mut slot = slot.lock().await;
                     match &mut *slot {
                         Slot::Active(presence) => presence
-                            .heartbeat(&report, work_deadline(context.deadline()))
+                            .heartbeat_observed(snapshot, &held, &floor, deadline)
                             .await
                             .map(|()| PeriodicOutcome::Ran)
                             .map_err(|error| PeriodicFailure::recoverable(PresenceFailure(error))),
@@ -236,7 +237,7 @@ impl<'a> Reserved<'a> {
 
 /// Validates presence for the process whose declared base is `base`.
 pub(crate) fn prepare(
-    store: &PooledStore,
+    store: &ServingStore,
     presence: Presence,
     base: &Base,
     environment: &str,
@@ -263,7 +264,7 @@ pub(crate) fn prepare(
         environment,
         build: presence.build.0,
     };
-    let process_presence = ProcessPresence::new(store, labels, base, cadence);
+    let process_presence = store.presence(labels, base, cadence);
     Ok(Prepared {
         store: store.clone(),
         process: process_presence.process(),
@@ -321,34 +322,31 @@ async fn stop(slot: &Mutex<Slot>, budget: Duration) -> Result<(), BoxError> {
 
 /// What this heartbeat reports, all from one published record: what it
 /// stands on and the keys it holds.
-fn report(shared: &Shared, floor_engaged: KeySample) -> PresenceReport {
-    let record = shared.live().current();
-    let (snapshot, held) = match &*record {
-        Record::Unpublished(_) => (SnapshotReport::NotLoaded, KeySample::default()),
+fn report(shared: &Shared) -> (HeartbeatSnapshot, KeySample) {
+    let (record, publication) = shared.heartbeat_record();
+    let snapshot = match &*record {
+        Record::Unpublished(_) => HeartbeatSnapshot::Reported(SnapshotReport::NotLoaded),
         Record::Published(published) => {
-            let version = published.snapshot().version();
-            let snapshot = match published.snapshot().provenance() {
-                Provenance::LastGoodFile => SnapshotReport::PersistedFile(version),
-                Provenance::ControlPlane => SnapshotReport::ControlPlane(version),
-            };
-            // The holds a view of this same record captured now has, so a
-            // stale view's extra holds are reported while it is stale and the
-            // version is never paired with another publication's holds.
-            let held = KeySample::of(
-                shared
-                    .live()
-                    .held_in(&record, Instant::now())
-                    .into_iter()
-                    .map(|(key, _)| key),
-            );
-            (snapshot, held)
+            let snapshot = published.snapshot();
+            match (snapshot.provenance(), publication) {
+                (Provenance::LastGoodFile, _) => {
+                    HeartbeatSnapshot::Reported(SnapshotReport::PersistedFile(snapshot.version()))
+                }
+                (Provenance::ControlPlane, Some(read)) => HeartbeatSnapshot::Published(read),
+                (Provenance::ControlPlane, None) => {
+                    HeartbeatSnapshot::Reported(SnapshotReport::ControlPlane(snapshot.version()))
+                }
+            }
         }
     };
-    PresenceReport {
-        snapshot,
-        held,
-        floor_engaged,
-    }
+    let held = KeySample::of(
+        shared
+            .live()
+            .held_in(&record, Instant::now())
+            .into_iter()
+            .map(|(key, _)| key),
+    );
+    (snapshot, held)
 }
 
 /// The kill switches this process's settings hold engaged.

@@ -24,6 +24,7 @@ presence, pruning, the fleet view and the operator listings.
 - `src/catalogs.rs`, `src/presence.rs`, `presence/stop.rs`, `src/prune.rs`,
   `src/fleet.rs`, `src/listing.rs`: catalog publication, heartbeats and the
   stop marker, bounded pruning, the fleet view and the operator listings.
+- `src/serving.rs`: profiled serving sessions and timeout caps for process operations.
 - `src/atomic.rs`: the native transaction owners presence and pruning run in.
 
 ## Edit here for X

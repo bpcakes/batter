@@ -50,11 +50,12 @@ fn a_publication_becomes_visible_only_together_with_its_own_verdict() {
         Reader::publishing(base, PrePublication::Unready, MAXIMUM_AGE, publisher);
     let shared = Arc::new(Shared::new(Arc::new(reader), live));
 
-    let candidate = |version: u64| Candidate::new(&scope, Version::new(version));
-    let applied = shared.publish(&mut writer, candidate(2), deadline(), Version::new(2));
+    let candidate =
+        |version: u64| super::super::source::Fetched::scripted(Version::new(version), vec![]);
+    let applied = shared.publish(&mut writer, candidate(2), &scope, deadline());
     assert_eq!(applied.1, Ok(()));
     // A regressing read is refused and leaves version 2 served.
-    let refused = shared.publish(&mut writer, candidate(1), deadline(), Version::new(1));
+    let refused = shared.publish(&mut writer, candidate(1), &scope, deadline());
     assert_eq!(refused.1, Err(LoadCause::Regressed));
     let before = shared.status(Instant::now());
     assert_eq!(served(&shared), Some(Version::new(2)));
@@ -73,7 +74,7 @@ fn a_publication_becomes_visible_only_together_with_its_own_verdict() {
         let next = candidate(3);
         move || {
             started.send(()).unwrap();
-            shared.publish(&mut writer, next, deadline(), Version::new(3))
+            shared.publish(&mut writer, next, &scope, deadline())
         }
     });
     reached.recv().unwrap();

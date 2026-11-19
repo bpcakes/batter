@@ -9,7 +9,7 @@ use std::{
 use batter_core::readiness::ReadinessCondition;
 use batter_flags_core::{
     Freshness, Version,
-    low_level::{Candidate, Disposition, Provenance, Record, Refusal},
+    low_level::{Disposition, Provenance, Record, Refusal, ValidationScope},
 };
 use tokio::time::Instant;
 
@@ -189,8 +189,30 @@ pub(crate) enum LastRun {
     Failed(LoadCause),
 }
 
+#[derive(Clone, Copy)]
+enum Judgement {
+    NoRead,
+    Accepted(super::source::Observed),
+    SchemaBehind(i32),
+    Refused { refusal: Refusal, observed: Version },
+}
+
+impl Judgement {
+    fn status(self) -> LatestRead {
+        match self {
+            Self::NoRead => LatestRead::NoRead,
+            Self::Accepted(_) => LatestRead::Loaded,
+            Self::SchemaBehind(found) => LatestRead::SchemaBehind {
+                found,
+                required: batter_flags_postgres::REQUIRED_SCHEMA_REVISION,
+            },
+            Self::Refused { refusal, observed } => LatestRead::Refused { refusal, observed },
+        }
+    }
+}
+
 struct State {
-    latest_read: LatestRead,
+    latest_read: Judgement,
     last_run: LastRun,
     last_rejection: Option<Refusal>,
 }
@@ -211,7 +233,7 @@ impl Shared {
             reader,
             live,
             state: Mutex::new(State {
-                latest_read: LatestRead::NoRead,
+                latest_read: Judgement::NoRead,
                 last_run: LastRun::None,
                 last_rejection: None,
             }),
@@ -228,18 +250,24 @@ impl Shared {
     pub(crate) fn publish(
         &self,
         writer: &mut Writer,
-        candidate: Candidate,
+        fetched: super::source::Fetched,
+        scope: &ValidationScope,
         deadline: Instant,
-        observed: Version,
     ) -> (LastRun, Result<(), LoadCause>) {
         let mut state = self.state();
-        let (latest_read, result) = match writer.read(candidate, deadline) {
+        let observed = fetched.observed();
+        let (latest_read, result) = match writer.read(fetched.candidate(scope), deadline) {
             Err(Late) => (state.latest_read, Err(LoadCause::Deadline)),
-            Ok(Disposition::Applied | Disposition::Confirmed) => (LatestRead::Loaded, Ok(())),
+            Ok(Disposition::Applied | Disposition::Confirmed) => {
+                (Judgement::Accepted(observed), Ok(()))
+            }
             Ok(Disposition::Refused(refusal)) => {
                 state.last_rejection = Some(refusal);
                 (
-                    LatestRead::Refused { refusal, observed },
+                    Judgement::Refused {
+                        refusal,
+                        observed: observed.version(),
+                    },
                     Err(cause(refusal)),
                 )
             }
@@ -255,10 +283,7 @@ impl Shared {
     /// Records a read that found the schema behind.
     pub(crate) fn schema_behind(&self, found: i32) -> LastRun {
         let mut state = self.state();
-        state.latest_read = LatestRead::SchemaBehind {
-            required: batter_flags_postgres::REQUIRED_SCHEMA_REVISION,
-            found,
-        };
+        state.latest_read = Judgement::SchemaBehind(found);
         std::mem::replace(
             &mut state.last_run,
             LastRun::Failed(LoadCause::SchemaBehind),
@@ -271,11 +296,26 @@ impl Shared {
     }
 
     pub(crate) fn schema_is_behind(&self) -> bool {
-        matches!(self.state().latest_read, LatestRead::SchemaBehind { .. })
+        matches!(self.state().latest_read, Judgement::SchemaBehind(_))
     }
 
     pub(crate) fn last_rejection(&self) -> Option<Refusal> {
         self.state().last_rejection
+    }
+
+    /// Capture the served record and the accepted read's evidence under the publication lock.
+    pub(crate) fn heartbeat_record(
+        &self,
+    ) -> (
+        Arc<Record<Instant>>,
+        Option<batter_flags_postgres::Publication>,
+    ) {
+        let state = self.state();
+        let publication = match state.latest_read {
+            Judgement::Accepted(super::source::Observed::Store(publication)) => Some(publication),
+            _ => None,
+        };
+        (self.live.current(), publication)
     }
 
     pub(crate) fn reader(&self) -> &Reader {
@@ -315,7 +355,7 @@ impl Shared {
         SnapshotStatus {
             loader,
             served,
-            latest_read: state.latest_read,
+            latest_read: state.latest_read.status(),
         }
     }
 

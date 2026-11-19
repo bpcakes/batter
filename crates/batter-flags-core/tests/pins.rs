@@ -219,6 +219,14 @@ fn an_error_decision_is_never_pinned() {
     // Before the first publication under a policy that withholds readiness.
     let unready = base.not_loaded_view(PrePublication::Unready, Freshness::Fresh);
     assert_eq!(
+        unready.pin(&other.fast_path).unwrap_err().cause(),
+        ErrorCause::ForeignCatalog
+    );
+    assert_eq!(
+        unready.pin(&h.worker_mode).unwrap_err().cause(),
+        ErrorCause::NotOwned
+    );
+    assert_eq!(
         unready.pin(&h.fast_path).unwrap_err().cause(),
         ErrorCause::ProviderNotReady
     );

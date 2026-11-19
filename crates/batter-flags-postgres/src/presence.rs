@@ -57,9 +57,8 @@ impl ProcessLabel {
 
 /// What a process has published, as its heartbeat reports it.
 ///
-/// Only [`ControlPlane`](Self::ControlPlane) counts as having applied a
-/// version: a persisted file or the declared base never blocks a write and
-/// never counts toward a rollout.
+/// The source and counter describe what the process serves. Rollout confirmation
+/// additionally requires the identity from an accepted primary read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotReport {
     /// Nothing is published yet; the process serves its declared base.
@@ -206,7 +205,7 @@ impl Cadence {
 /// # }
 /// ```
 pub struct ProcessPresence {
-    store: PooledStore,
+    store: crate::ServingStore,
     process: ProcessId,
     application: ProcessLabel,
     environment: ProcessLabel,
@@ -246,8 +245,17 @@ impl ProcessPresence {
     /// is `base`: its catalog's manifest and both of its revisions are taken
     /// from it.
     pub fn new(store: &PooledStore, labels: ProcessLabels, base: &Base, cadence: Cadence) -> Self {
+        store.serving().presence(labels, base, cadence)
+    }
+
+    pub(crate) fn for_serving(
+        store: crate::ServingStore,
+        labels: ProcessLabels,
+        base: &Base,
+        cadence: Cadence,
+    ) -> Self {
         Self {
-            store: store.clone(),
+            store,
             process: ProcessId(Uuid::now_v7()),
             application: labels.application,
             environment: labels.environment,
@@ -276,6 +284,16 @@ pub struct PresenceReport {
     pub floor_engaged: KeySample,
 }
 
+/// Snapshot evidence supplied by a heartbeat. Only an accepted read carries
+/// the immutable event identity the fleet can check against its audit history.
+#[derive(Clone, Copy, Debug)]
+pub enum HeartbeatSnapshot {
+    /// A report of the source and counter, without an audit identity.
+    Reported(SnapshotReport),
+    /// The publication identity returned by the primary read the process accepted.
+    Published(crate::Publication),
+}
+
 impl ProcessPresence {
     /// Sends one heartbeat to the store that issued this presence: publishes
     /// the catalog if the store does not keep it, refreshes its reference at
@@ -291,9 +309,40 @@ impl ProcessPresence {
         report: &PresenceReport,
         deadline: Instant,
     ) -> Result<(), StoreError> {
-        let (source, version) = report.snapshot.columns()?;
-        let (held, held_overflow) = report.held.columns()?;
-        let (floor, floor_overflow) = report.floor_engaged.columns()?;
+        self.heartbeat_observed(
+            HeartbeatSnapshot::Reported(report.snapshot),
+            &report.held,
+            &report.floor_engaged,
+            deadline,
+        )
+        .await
+    }
+
+    /// Send this snapshot evidence and the held keys of that same publication.
+    ///
+    /// ```no_run
+    /// # use batter_flags_postgres::{HeartbeatSnapshot, KeySample, ProcessPresence, Publication};
+    /// # async fn example(presence: &mut ProcessPresence, accepted: Publication, held: &KeySample, floor: &KeySample, deadline: tokio::time::Instant) -> Result<(), batter_flags_postgres::StoreError> {
+    /// presence.heartbeat_observed(HeartbeatSnapshot::Published(accepted), held, floor, deadline).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn heartbeat_observed(
+        &mut self,
+        snapshot: HeartbeatSnapshot,
+        held: &KeySample,
+        floor_engaged: &KeySample,
+        deadline: Instant,
+    ) -> Result<(), StoreError> {
+        let (report, publication_id) = match snapshot {
+            HeartbeatSnapshot::Reported(report) => (report, None),
+            HeartbeatSnapshot::Published(publication) => (
+                SnapshotReport::ControlPlane(publication.version()),
+                Some(publication.id()),
+            ),
+        };
+        let (source, version) = report.columns()?;
+        let (held, held_overflow) = held.columns()?;
+        let (floor, floor_overflow) = floor_engaged.columns()?;
         let store = self.store.clone();
         let presence = self;
         store.atomically(deadline, async |sql| {
@@ -311,9 +360,9 @@ impl ProcessPresence {
             }
             sqlx::query("UPDATE flags.flag_catalogs SET last_referenced_at = clock_timestamp() WHERE manifest_digest = $1 AND last_referenced_at < clock_timestamp() - interval '1 day'")
                 .bind(digest).execute(sql.executor()).await?;
-            sqlx::query("INSERT INTO flags.flag_processes(process_id, application, environment, build, manifest_digest, snapshot_source, snapshot_version, declared_revision, declared_shared_revision, row_encoding, held_keys, held_overflow, floor_engaged_keys, floor_overflow, liveness_seconds, retention_seconds, expires_at, last_seen_at) \
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, clock_timestamp() + $15 * interval '1 second', clock_timestamp()) \
-                ON CONFLICT (process_id) DO UPDATE SET snapshot_source = EXCLUDED.snapshot_source, snapshot_version = EXCLUDED.snapshot_version, row_encoding = EXCLUDED.row_encoding, held_keys = EXCLUDED.held_keys, held_overflow = EXCLUDED.held_overflow, floor_engaged_keys = EXCLUDED.floor_engaged_keys, floor_overflow = EXCLUDED.floor_overflow, liveness_seconds = EXCLUDED.liveness_seconds, retention_seconds = EXCLUDED.retention_seconds, expires_at = clock_timestamp() + EXCLUDED.liveness_seconds * interval '1 second', last_seen_at = clock_timestamp()")
+            sqlx::query("INSERT INTO flags.flag_processes(process_id, application, environment, build, manifest_digest, snapshot_source, snapshot_version, declared_revision, declared_shared_revision, row_encoding, held_keys, held_overflow, floor_engaged_keys, floor_overflow, liveness_seconds, retention_seconds, expires_at, last_seen_at, publication_id) \
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, clock_timestamp() + $15 * interval '1 second', clock_timestamp(), $17) \
+                ON CONFLICT (process_id) DO UPDATE SET publication_id = EXCLUDED.publication_id, snapshot_source = EXCLUDED.snapshot_source, snapshot_version = EXCLUDED.snapshot_version, row_encoding = EXCLUDED.row_encoding, held_keys = EXCLUDED.held_keys, held_overflow = EXCLUDED.held_overflow, floor_engaged_keys = EXCLUDED.floor_engaged_keys, floor_overflow = EXCLUDED.floor_overflow, liveness_seconds = EXCLUDED.liveness_seconds, retention_seconds = EXCLUDED.retention_seconds, expires_at = clock_timestamp() + EXCLUDED.liveness_seconds * interval '1 second', last_seen_at = clock_timestamp()")
                 .bind(presence.process.0)
                 .bind(presence.application.as_str())
                 .bind(presence.environment.as_str())
@@ -330,6 +379,7 @@ impl ProcessPresence {
                 .bind(floor_overflow)
                 .bind(presence.cadence.liveness)
                 .bind(presence.cadence.retention)
+                .bind(publication_id)
                 .execute(sql.executor()).await?;
             Ok(())
         })

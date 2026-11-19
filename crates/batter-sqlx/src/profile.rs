@@ -37,7 +37,8 @@ pub struct PgSessionProfile {
     search_path: String,
     statement_timeout_ms: u32,
     lock_timeout_ms: u32,
-    transaction_timeouts_ms: Option<(u32, u32)>,
+    idle_timeout_ms: Option<u32>,
+    transaction_timeout_ms: Option<u32>,
     settings: BTreeMap<String, String>,
 }
 
@@ -92,10 +93,8 @@ impl PgSessionProfile {
             statement_timeout,
             lock_timeout,
         )?;
-        profile.transaction_timeouts_ms = Some((
-            timeout_ms(idle_in_transaction_session_timeout)?,
-            timeout_ms(transaction_timeout)?,
-        ));
+        profile.idle_timeout_ms = Some(timeout_ms(idle_in_transaction_session_timeout)?);
+        profile.transaction_timeout_ms = Some(timeout_ms(transaction_timeout)?);
         Ok(profile)
     }
 
@@ -146,7 +145,8 @@ impl PgSessionProfile {
             search_path,
             statement_timeout_ms: timeout_ms(statement_timeout)?,
             lock_timeout_ms: timeout_ms(lock_timeout)?,
-            transaction_timeouts_ms: None,
+            idle_timeout_ms: None,
+            transaction_timeout_ms: None,
             settings: BTreeMap::new(),
         })
     }
@@ -177,6 +177,39 @@ impl PgSessionProfile {
             return Err(PgProfileError("duplicate PostgreSQL profile setting"));
         }
         Ok(self)
+    }
+
+    /// Derive an operation profile with bounded statement, lock and idle waits.
+    /// Each cap is a positive whole number of milliseconds. A shorter declared
+    /// limit wins and the total transaction timeout retains its original policy.
+    ///
+    /// ```
+    /// # use batter_sqlx::PgSessionProfile;
+    /// # use std::time::Duration;
+    /// # fn example(profile: &PgSessionProfile) -> Result<(), batter_sqlx::PgProfileError> {
+    /// let cap = Duration::from_secs(1);
+    /// let scoped = profile.with_timeout_caps(cap, cap, cap)?;
+    /// assert_eq!(scoped.trusted_schemas(), profile.trusted_schemas());
+    /// # Ok(()) }
+    /// ```
+    pub fn with_timeout_caps(
+        &self,
+        statement: Duration,
+        lock: Duration,
+        idle: Duration,
+    ) -> Result<Self, PgProfileError> {
+        fn capped(current: u32, cap: Duration) -> Result<u32, PgProfileError> {
+            let cap = timeout_ms(cap)?;
+            if cap == 0 {
+                return Err(PgProfileError("timeout cap must be positive"));
+            }
+            Ok(if current == 0 { cap } else { current.min(cap) })
+        }
+        let mut profile = self.clone();
+        profile.statement_timeout_ms = capped(self.statement_timeout_ms, statement)?;
+        profile.lock_timeout_ms = capped(self.lock_timeout_ms, lock)?;
+        profile.idle_timeout_ms = Some(capped(self.idle_timeout_ms.unwrap_or(0), idle)?);
+        Ok(profile)
     }
 
     /// First trusted schema, used for unqualified DDL placement.
@@ -279,14 +312,12 @@ impl PgSessionProfile {
         ]
         .into_iter()
         .chain(
-            self.transaction_timeouts_ms
-                .into_iter()
-                .flat_map(|(idle, total)| {
-                    [
-                        ("idle_in_transaction_session_timeout", idle),
-                        ("transaction_timeout", total),
-                    ]
-                }),
+            self.idle_timeout_ms
+                .map(|ms| ("idle_in_transaction_session_timeout", ms)),
+        )
+        .chain(
+            self.transaction_timeout_ms
+                .map(|ms| ("transaction_timeout", ms)),
         )
     }
 }

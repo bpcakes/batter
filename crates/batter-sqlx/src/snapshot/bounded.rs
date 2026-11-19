@@ -1,9 +1,5 @@
-use super::{PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError, validate};
-use crate::{
-    PgDeadlineError, PgLease,
-    atomic::scope::{ScopeSavepoint, command, normalize},
-    deadline::until,
-};
+use super::{End, Inspection, PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError};
+use crate::{PgDeadlineError, deadline::until};
 use sqlx::PgPool;
 use tokio::time::Instant;
 
@@ -28,54 +24,51 @@ impl PgReadOnlySnapshot {
         deadline: Instant,
         inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
     ) -> Result<T, PgDeadlineError<PgSnapshotError<E>, E>> {
-        let (mut lease, guard) = until(deadline, async {
-            let mut lease = PgLease {
-                connection: Some(crate::acquire(pool).await?),
-            };
-            normalize(lease.connection_mut()).await?;
-            command(
-                lease.connection_mut(),
-                "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
-            )
-            .await?;
-            command(
-                lease.connection_mut(),
-                "SET LOCAL search_path = pg_catalog, pg_temp",
-            )
-            .await?;
-            let guard = ScopeSavepoint::begin(lease.connection_mut()).await?;
-            Ok::<_, crate::PgTransactionError>((lease, guard))
-        })
-        .await
-        .map_err(|_| PgDeadlineError::Elapsed)?
-        .map_err(|e| PgDeadlineError::Failed(PgSnapshotError::Transaction(e)))?;
-        let result = until(
-            deadline,
-            inspect(&mut PgReadOnlySql {
-                connection: lease.connection_mut(),
-            }),
-        )
-        .await
-        .map_err(|_| PgDeadlineError::Elapsed)?;
+        Self::inspect_bounded(pool, None, deadline, inspect).await
+    }
+
+    /// Inspect under the supplied session policy and one absolute deadline.
+    /// The policy is established before BEGIN and verified before completion.
+    ///
+    /// ```no_run
+    /// # async fn example(pool: &batter_sqlx::PgProfiledPool, deadline: tokio::time::Instant) -> Result<(), Box<dyn std::error::Error>> {
+    /// batter_sqlx::PgReadOnlySnapshot::inspect_profiled_until(pool.pool(), pool.profile(), deadline, async |sql| {
+    ///     sqlx::query("SELECT 1").execute(sql.executor()).await
+    /// }).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn inspect_profiled_until<T, E>(
+        pool: &PgPool,
+        profile: &crate::PgSessionProfile,
+        deadline: Instant,
+        inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
+    ) -> Result<T, PgDeadlineError<PgSnapshotError<E>, E>> {
+        Self::inspect_bounded(pool, Some(profile), deadline, inspect).await
+    }
+
+    async fn inspect_bounded<T, E>(
+        pool: &PgPool,
+        profile: Option<&crate::PgSessionProfile>,
+        deadline: Instant,
+        inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
+    ) -> Result<T, PgDeadlineError<PgSnapshotError<E>, E>> {
+        let mut session = until(deadline, Inspection::begin(pool, profile))
+            .await
+            .map_err(|_| PgDeadlineError::Elapsed)?
+            .map_err(|e| PgDeadlineError::Failed(PgSnapshotError::Transaction(e)))?;
+        let result = until(deadline, inspect(&mut session.sql()))
+            .await
+            .map_err(|_| PgDeadlineError::Elapsed)?;
         match result {
             Ok(value) => {
-                until(deadline, async {
-                    guard.release(lease.connection_mut()).await?;
-                    validate(lease.connection_mut()).await?;
-                    command(lease.connection_mut(), "ROLLBACK").await
-                })
-                .await
-                .map_err(|_| PgDeadlineError::Elapsed)?
-                .map_err(|e| PgDeadlineError::Failed(PgSnapshotError::Transaction(e)))?;
+                until(deadline, session.finish(End::Accepted))
+                    .await
+                    .map_err(|_| PgDeadlineError::Elapsed)?
+                    .map_err(|e| PgDeadlineError::Failed(PgSnapshotError::Transaction(e)))?;
                 Ok(value)
             }
             Err(inspection) => {
-                let cleanup = until(deadline, async {
-                    guard.rollback(lease.connection_mut()).await?;
-                    validate(lease.connection_mut()).await?;
-                    command(lease.connection_mut(), "ROLLBACK").await
-                })
-                .await;
+                let cleanup = until(deadline, session.finish(End::Rejected)).await;
                 match cleanup {
                     Ok(Ok(())) => Err(PgDeadlineError::Failed(PgSnapshotError::Inspection(
                         inspection,

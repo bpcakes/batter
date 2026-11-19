@@ -11,7 +11,7 @@ use batter_flags_core::{
     CatalogBuilder, CivilDate, Expiry, KillSwitch, ReleaseFlag, SafeState, SettingsPrefix,
     StaleRule, SwitchState, Toggle, Version, low_level::CandidateRow,
 };
-use batter_flags_postgres::{PooledStore, StoreTiming};
+use batter_flags_postgres::{ServingStore, StoreTiming};
 
 use super::super::{
     ApplicationName, BuildId, Gate, HeartbeatCadence, LatestRead, LoadPolicy, LoaderState,
@@ -104,12 +104,21 @@ pub(super) fn resolved(settings: &[(&str, &str)]) -> (Resolved, Handles) {
 }
 
 /// A store no heartbeat or prune can reach.
-pub(super) fn unreachable_store() -> PooledStore {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(2)
-        .connect_lazy("postgres://flags@127.0.0.1:1/flags")
-        .unwrap();
-    PooledStore::new(pool, store_timing())
+pub(super) fn unreachable_store() -> ServingStore {
+    let pool = batter_sqlx::low_level::connect_profiled_pool_lazy(
+        "postgres://flags@127.0.0.1:1/flags".parse().unwrap(),
+        batter_sqlx::PgSessionProfile::new(
+            "flags",
+            "flags",
+            vec!["public".into()],
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .unwrap(),
+        sqlx::postgres::PgPoolOptions::new().max_connections(2),
+    )
+    .unwrap();
+    ServingStore::new(&pool, store_timing())
 }
 
 pub(super) fn store_timing() -> StoreTiming {

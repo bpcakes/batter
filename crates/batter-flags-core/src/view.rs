@@ -21,7 +21,7 @@
 //!
 //! Declared mode has no control plane: the literal if present, else the safe
 //! state. A release flag whose governing switch is engaged serves its code
-//! default with [`Layer::Override`], live or pinned.
+//! default with [`crate::Layer::Override`], live or pinned.
 
 mod decide;
 mod gate;
@@ -33,9 +33,7 @@ pub use self::gate::{GateReading, gate_switch};
 use self::replay::Replay;
 use crate::{
     base::{Base, BaseInner},
-    decision::{
-        Decision, ErrorCause, Freshness, Layer, PrePublication, Reason, Source, SwitchState,
-    },
+    decision::{Decision, Freshness, PrePublication, Reason, Source, SwitchState},
     events::{self, Evaluation, EventContext, Surface},
     handle::{Flag, Handle, KillSwitch},
     pin::{PinOrigin, PinRefusal, PinRejection, Pinnable, Pinned, PinnedResolution, Unpinnable},
@@ -187,7 +185,7 @@ impl SnapshotView {
 
     /// Evaluates the flag a handle names and emits one evaluation event.
     pub(crate) fn evaluate_handle<T: FlagValue>(&self, handle: &Handle, default: T) -> Decision<T> {
-        let decision = self.flag_decision(handle, default);
+        let decision = self.flag_decision(handle, default, decide::Use::Evaluate);
         self.report(handle, &decision, Surface::Ordinary);
         decision
     }
@@ -217,20 +215,7 @@ impl SnapshotView {
     pub fn pin<F: Pinnable>(&self, flag: &F) -> Result<Pinned<F::Value>, Unpinnable> {
         let handle = flag.handle();
         let default = flag.code_default();
-        let decision = match &self.mode {
-            // Nothing is published and readiness is withheld: a governed
-            // decision is not one to replay as cached once the switch is
-            // released, so the view's not-ready error is what is reported.
-            Mode::Control(Control::NotLoaded(PrePublication::Unready)) => Decision::failed(
-                (default, default.variant()),
-                ErrorCause::ProviderNotReady,
-                self.source(),
-                Layer::Base,
-            ),
-            Mode::Declared
-            | Mode::Control(Control::NotLoaded(PrePublication::ServeDefaults))
-            | Mode::Control(Control::Loaded { .. }) => self.flag_decision(handle, default),
-        };
+        let decision = self.flag_decision(handle, default, decide::Use::Pin);
         self.report(handle, &decision, Surface::Ordinary);
         if let Some(cause) = decision.error() {
             return Err(Unpinnable::new(cause));

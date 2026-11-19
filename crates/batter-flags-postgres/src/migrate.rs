@@ -18,8 +18,11 @@ pub const CREATE_FLAGS_SQL: &str = include_str!("../migrations/20261106000000_cr
 /// revision.
 pub const INDEX_AUDIT_BY_FLAG_SQL: &str =
     include_str!("../migrations/20261119000000_index_audit_by_flag.sql");
+/// Third migration, adding immutable audit and heartbeat publication identity.
+pub const PUBLICATION_IDENTITY_SQL: &str =
+    include_str!("../migrations/20261119000001_publication_identity.sql");
 /// Schema revision needed by this store. Newer revisions remain readable.
-pub const REQUIRED_SCHEMA_REVISION: i32 = 1;
+pub const REQUIRED_SCHEMA_REVISION: i32 = 2;
 /// Strict migrator using only `flags._sqlx_migrations`, independent of host ledgers.
 /// Low-level consumers own disposition; prefer [`PooledStore::migrate`].
 pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {

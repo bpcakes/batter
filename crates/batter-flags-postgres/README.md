@@ -76,11 +76,13 @@ waiting on a prune's lock publishes its catalog again once the delete commits.
 `fleet` and `fleet_declaring(&key)` read every process row (or every declarer of
 a key) with the head in one read-only snapshot, each as `ProcessState::{Live,
 Silent, Stopped}`. `Fleet::rollout(version)` answers whether every Live process
-applied a version: only a control-plane publication at or above it, and no
-higher than the head read with it, counts, never a persisted file or the
-declared base. A report above the head applied a store this one is not, such as
-the store before a restore; the writer ignores one beyond the jump window, and
-that process refuses the write as a regression, so it is listed as behind.
+applied a version. Its control-plane counter must fall between the requested
+version and the current head, and its publication identity must match the
+immutable event at that counter in this database. A version reused after a
+restore can describe a different write. Version-only reports, including those
+from older processes, remain pending. `heartbeat_observed` accepts the
+`Publication` from an accepted primary read through `HeartbeatSnapshot::Published`.
+The registered loader handles that handoff.
 
 ## Ordering and failure contract (T-12)
 
@@ -184,10 +186,11 @@ prepared decision into an acknowledged public outcome.
 The initial migration and its SQLx ledger live in **`flags`**, independent of the
 host's `_sqlx_migrations`. No existing migration is edited. `MIGRATOR` is the
 strict, low-level bundle; `PooledStore::migrate` tolerates newer flags migrations
-while validating known checksums. `CREATE_FLAGS_SQL` and the second migration,
-`INDEX_AUDIT_BY_FLAG_SQL` (the `(flag_name, version)` audit index keyed history
-reads walk), support vendoring. The index changes no column, so
-`REQUIRED_SCHEMA_REVISION` is still 1. Migration checksums use SQLx's SHA-384.
+while validating known checksums. The migration SQL for vendoring is
+`CREATE_FLAGS_SQL`, `INDEX_AUDIT_BY_FLAG_SQL` and `PUBLICATION_IDENTITY_SQL`,
+in order. The third migration raises `REQUIRED_SCHEMA_REVISION` to 2 and adds
+the audit and presence identity columns. Reapply the affected grants after
+migration. Migration checksums use SQLx’s SHA-384.
 Queries always qualify the flags schema; changing `search_path` cannot redirect
 writes. Rows are unscoped; environment is a heartbeat label.
 

@@ -247,6 +247,12 @@ nothing and skips its heartbeat until the migration runs, each skip counted in
 `RegisteredFlags::presence().skipped`, not `succeeded`; under
 `Gate::Published` it never becomes ready.
 
+Schema revision 2 assigns an immutable identity to each audit event. Apply the
+migration first, then apply the updated serving and fleet-read grants before
+upgrading processes or the CLI. During a rolling upgrade, the new fleet reader
+lists a Live process with a version-only heartbeat under `behind` until it
+reports an accepted primary read with its event identity.
+
 ### Engage a kill switch
 
 ```sh

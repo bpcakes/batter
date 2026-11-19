@@ -26,6 +26,12 @@ pub enum ProcessState {
     Stopped,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Applied {
+    Unconfirmed(SnapshotReport),
+    Confirmed(Version),
+}
+
 /// One process row.
 #[derive(Clone, Debug)]
 pub struct FleetProcess {
@@ -34,7 +40,7 @@ pub struct FleetProcess {
     environment: String,
     build: String,
     state: ProcessState,
-    snapshot: SnapshotReport,
+    snapshot: Applied,
     declared_revision: [u8; 32],
     held: KeySample,
     floor_engaged: KeySample,
@@ -65,7 +71,10 @@ impl FleetProcess {
     }
     /// What the process last reported publishing.
     pub fn snapshot(&self) -> SnapshotReport {
-        self.snapshot
+        match self.snapshot {
+            Applied::Unconfirmed(report) => report,
+            Applied::Confirmed(version) => SnapshotReport::ControlPlane(version),
+        }
     }
     /// The revision the process resolved its declared base to.
     pub fn declared_revision(&self) -> &[u8; 32] {
@@ -96,16 +105,23 @@ impl FleetProcess {
             "stopped" => ProcessState::Stopped,
             _ => return Err(invalid()),
         };
+        let report = SnapshotReport::stored(
+            row.try_get("snapshot_source")?,
+            row.try_get("snapshot_version")?,
+        )?;
+        let snapshot = match report {
+            SnapshotReport::ControlPlane(version) if row.try_get("confirmed")? => {
+                Applied::Confirmed(version)
+            }
+            report => Applied::Unconfirmed(report),
+        };
         Ok(Self {
             process: ProcessId::stored(row.try_get("process_id")?),
             application: row.try_get("application")?,
             environment: row.try_get("environment")?,
             build: row.try_get("build")?,
             state,
-            snapshot: SnapshotReport::stored(
-                row.try_get("snapshot_source")?,
-                row.try_get("snapshot_version")?,
-            )?,
+            snapshot,
             declared_revision: row
                 .try_get::<Vec<u8>, _>("declared_revision")?
                 .try_into()
@@ -134,6 +150,8 @@ pub struct Fleet {
 /// than the head read with it, counts: a process serving a persisted file or
 /// its declared base has not applied it, and one reporting a version above the
 /// head applied a store this one is not, such as the store before a restore.
+/// For an in-range report, the publication identity must also match the
+/// immutable event in this history. Legacy version-only reports remain pending.
 /// The writer ignores a report beyond the jump window, and that process then
 /// refuses the write as a regression, so it is listed as behind. Silent and
 /// Stopped processes are not counted either way.
@@ -144,12 +162,11 @@ pub enum Rollout {
         /// How many Live processes there are.
         live: NonZeroUsize,
     },
-    /// At least one Live process has not applied it.
+    /// At least one Live process lacks confirmation for this version.
     Pending {
         /// Live processes that applied it.
         reached: usize,
-        /// Live processes that did not, or that report a version above the
-        /// head, in build then process order.
+        /// Live processes without confirmation in this history, in build then process order.
         behind: Vec<ProcessId>,
     },
     /// No process is Live, so nothing can be said to have applied it.
@@ -174,7 +191,7 @@ impl Fleet {
             .iter()
             .filter(|process| process.state == ProcessState::Live);
         let (reached, behind): (Vec<_>, Vec<_>) = live.partition(|process| {
-            matches!(process.snapshot, SnapshotReport::ControlPlane(applied)
+            matches!(process.snapshot, Applied::Confirmed(applied)
                 if applied >= version && applied <= self.head)
         });
         match (NonZeroUsize::new(reached.len()), behind.is_empty()) {
@@ -220,7 +237,10 @@ impl PooledStore {
             let head = version(sqlx::query_scalar("SELECT version FROM flags.flag_control WHERE singleton").fetch_one(sql.executor()).await?)?;
             let processes = sqlx::query("SELECT p.process_id, p.application, p.environment, p.build, \
                 CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > transaction_timestamp() THEN 'live' ELSE 'silent' END AS state, \
-                p.snapshot_source, p.snapshot_version, p.declared_revision, p.held_keys, p.held_overflow, p.floor_engaged_keys, p.floor_overflow, p.last_seen_at, p.expires_at \
+                p.snapshot_source, p.snapshot_version, \
+                CASE WHEN p.snapshot_version = 0 THEN p.publication_id IS NOT DISTINCT FROM '00000000-0000-0000-0000-000000000000'::uuid \
+                     ELSE EXISTS (SELECT FROM flags.flag_audit a WHERE a.version = p.snapshot_version AND a.publication_id = p.publication_id) END AS confirmed, \
+                p.declared_revision, p.held_keys, p.held_overflow, p.floor_engaged_keys, p.floor_overflow, p.last_seen_at, p.expires_at \
                 FROM flags.flag_processes p \
                 WHERE $1::text IS NULL OR EXISTS (SELECT FROM flags.flag_catalog_entries e WHERE e.manifest_digest = p.manifest_digest AND e.key = $1) \
                 ORDER BY p.build, p.process_id")

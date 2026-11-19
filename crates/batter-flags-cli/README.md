@@ -26,6 +26,10 @@ a SQLSTATE at most.
 | `history <key> [--after V]` | the key's newest page of audited events in one bounded read, so the event an uncertain write points to is always shown, with a warning when older events are retained; `--after V` reads the page after version V instead (`0` starts from the first event) and warns with the next `--after` when more follow; each event carries `recorded_at`, the database's time of the write |
 | `fleet [--version N \| --flag KEY]` | the fleet, a rollout check, or a key's declarers |
 
+`--if-revision N` is a store-version watermark. A change requires the key’s
+last revision to be at most N and N to be at most the store head. The revision
+from `show` is a suitable watermark. An already satisfied write is unchanged.
+
 Writes require `--actor`, `--reason` and exactly one of `--if-revision N` or
 `--yes`; every argument is validated before the command connects. `set` and
 `kill` write only keys a retained catalog declares. `archive` and `restore`

@@ -55,6 +55,13 @@ pub(super) const fn requirements(operation: FlagsOperation) -> &'static [Require
 
 const SNAPSHOT_READ: &[Requirement] = &[
     Requirement {
+        relation: AUDIT,
+        relation_privileges: &[],
+        select: &["publication_id", "version"],
+        insert: &[],
+        update: &[],
+    },
+    Requirement {
         relation: CONTROL,
         relation_privileges: &[],
         select: &["schema_revision", "singleton", "version"],
@@ -116,6 +123,7 @@ const PRESENCE: &[Requirement] = &[
             "held_overflow",
             "liveness_seconds",
             "process_id",
+            "publication_id",
             "retention_seconds",
             "row_encoding",
             "snapshot_source",
@@ -137,6 +145,7 @@ const PRESENCE: &[Requirement] = &[
             "liveness_seconds",
             "manifest_digest",
             "process_id",
+            "publication_id",
             "retention_seconds",
             "row_encoding",
             "snapshot_source",
@@ -150,6 +159,7 @@ const PRESENCE: &[Requirement] = &[
             "held_overflow",
             "last_seen_at",
             "liveness_seconds",
+            "publication_id",
             "retention_seconds",
             "row_encoding",
             "snapshot_source",
@@ -311,6 +321,13 @@ const HISTORY_READ: &[Requirement] = &[
 ];
 
 const FLEET_READ: &[Requirement] = &[
+    Requirement {
+        relation: AUDIT,
+        relation_privileges: &[],
+        select: &["publication_id", "version"],
+        insert: &[],
+        update: &[],
+    },
     Requirement {
         relation: PROCESSES,
         relation_privileges: &[ObjectPrivilege::Select],

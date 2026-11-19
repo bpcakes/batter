@@ -7,10 +7,10 @@ use crate::{
     store::{bounded, remaining},
     write::{RollbackFailure, known_commit_rejection},
 };
-use batter_sqlx::{PgDeadlineError, PgScopeFailure, PgScopedSql, low_level::PgAtomicTransaction};
+use batter_sqlx::{PgDeadlineError, PgScopeFailure, PgScopedSql};
 use tokio::time::Instant;
 
-impl PooledStore {
+impl crate::ServingStore {
     /// Runs `work` in one transaction with the store's timeouts set locally,
     /// commits it, and rolls it back on any error. A commit whose outcome is
     /// unknown is [`ErrorClass::CommitUnknown`]; nothing here is replayed.
@@ -20,15 +20,10 @@ impl PooledStore {
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         let acquire_deadline = deadline.min(Instant::now() + self.timing.acquire);
-        let tx = bounded(acquire_deadline, async {
-            PgAtomicTransaction::begin(&self.pool)
-                .await
-                .map_err(StoreError::from)
-        })
-        .await?;
+        let tx = bounded(acquire_deadline, self.begin(deadline)).await?;
         let (tx, result) = tx
             .operation_until(deadline, async |sql| {
-                self.limit(sql, deadline).await?;
+                self.limit_raw(sql, deadline).await?;
                 work(sql).await
             })
             .await
@@ -56,7 +51,8 @@ impl PooledStore {
             Err(_) => Err(StoreError::classified(ErrorClass::CommitUnknown)),
         }
     }
-
+}
+impl PooledStore {
     /// Sets the statement, lock and idle timeouts for this transaction only,
     /// each capped by what is left of the deadline.
     pub(crate) async fn limit(

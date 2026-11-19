@@ -37,6 +37,11 @@ impl SwitchOutcome {
     }
 }
 
+pub(super) enum Use {
+    Evaluate,
+    Pin,
+}
+
 impl SnapshotView {
     pub(super) fn catalog_entry(&self, handle: &Handle) -> &Entry {
         &self.base.catalog.entries[handle.index()]
@@ -47,11 +52,32 @@ impl SnapshotView {
         self.base.refusal(handle, reach)
     }
 
-    pub(super) fn flag_decision<T: FlagValue>(&self, handle: &Handle, default: T) -> Decision<T> {
+    pub(super) fn flag_decision<T: FlagValue>(
+        &self,
+        handle: &Handle,
+        default: T,
+        purpose: Use,
+    ) -> Decision<T> {
         if let Some(refusal) = self.refusal(handle, Reach::Owner) {
             return Decision::failed(
                 (default, default.variant()),
                 refusal.cause(),
+                self.source(),
+                Layer::Base,
+            );
+        }
+        // Before readiness a governing switch can answer a live evaluation,
+        // but its override must never become a replayable pin.
+        if matches!(
+            (purpose, &self.mode),
+            (
+                Use::Pin,
+                Mode::Control(Control::NotLoaded(PrePublication::Unready))
+            )
+        ) {
+            return Decision::failed(
+                (default, default.variant()),
+                ErrorCause::ProviderNotReady,
                 self.source(),
                 Layer::Base,
             );

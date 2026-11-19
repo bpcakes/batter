@@ -140,14 +140,14 @@ pub(crate) async fn judge(
     sql: &mut PgScopedSql<'_>,
     key: &FlagKey,
     written: Written<'_>,
-    manifests: &[serde_json::Value],
+    manifests: &[String],
 ) -> Result<Deferral, StoreError> {
     let mut deferral = Deferral::default();
     let (mut undecodable, mut held_governors) = (0, 0);
     let manifests: Vec<Manifest> = manifests
         .iter()
         .filter_map(|manifest| {
-            let decoded = serde::Deserialize::deserialize(manifest).ok();
+            let decoded = serde_json::from_str(manifest).ok();
             if decoded.is_none() {
                 undecodable += 1;
             }
@@ -242,7 +242,7 @@ struct Rows(BTreeMap<String, StoredValue>);
 struct StoredValue {
     kind: String,
     value_type: String,
-    state: serde_json::Value,
+    state: Option<serde_json::Value>,
 }
 
 impl Rows {
@@ -260,7 +260,7 @@ impl Rows {
         if row.kind != entry.kind().as_str() || row.value_type != entry.value_type().as_str() {
             return None;
         }
-        let fields = row.state.as_object()?;
+        let fields = row.state.as_ref()?.as_object()?;
         if fields.len() != 2 || fields.get("encoding")?.as_u64() != Some(1) {
             return None;
         }
@@ -398,7 +398,7 @@ async fn stored(
         return Ok(BTreeMap::new());
     }
     let rows = sqlx::query(
-        "SELECT name, kind, value_type, state FROM flags.flag_state \
+        "SELECT name, kind, value_type, state::text FROM flags.flag_state \
          WHERE name = ANY($1) AND archived_version IS NULL",
     )
     .bind(names)
@@ -411,7 +411,7 @@ async fn stored(
             StoredValue {
                 kind: row.try_get("kind")?,
                 value_type: row.try_get("value_type")?,
-                state: row.try_get("state")?,
+                state: serde_json::from_str(row.try_get("state")?).ok(),
             },
         );
     }

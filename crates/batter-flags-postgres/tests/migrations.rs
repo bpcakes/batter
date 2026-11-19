@@ -28,11 +28,11 @@ fn first_migration_checksum_is_immutable() {
         MIGRATOR.iter().next().unwrap().checksum.as_ref(),
         Sha384::digest(CREATE_FLAGS_SQL.as_bytes()).as_slice()
     );
-    assert_eq!(REQUIRED_SCHEMA_REVISION, 1);
+    assert_eq!(REQUIRED_SCHEMA_REVISION, 2);
 }
 
 /// The keyed audit index is the second migration; it changes no column, so
-/// the required schema revision stays 1.
+/// that migration left the required schema revision at 1.
 #[test]
 fn second_migration_checksum_is_immutable() {
     let checksum: String = Sha384::digest(INDEX_AUDIT_BY_FLAG_SQL.as_bytes())
@@ -51,8 +51,23 @@ fn second_migration_checksum_is_immutable() {
     );
 }
 
+#[test]
+fn publication_identity_migration_checksum_is_immutable() {
+    assert_eq!(
+        Sha384::digest(PUBLICATION_IDENTITY_SQL.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+        "a2e3ea5fc56cf36fbe978bb35584345bfdd3ccc931e802a9cfbe9584f95b1398a23d64132229a449d660624f1997175b"
+    );
+    assert_eq!(
+        MIGRATOR.iter().nth(2).unwrap().checksum.as_ref(),
+        Sha384::digest(PUBLICATION_IDENTITY_SQL.as_bytes()).as_slice()
+    );
+}
+
 /// The flags migrations this build ships.
-const MIGRATIONS: i64 = 2;
+const MIGRATIONS: i64 = 3;
 fn host() -> Migrator {
     Migrator::with_migrations(vec![Migration::new(
         1,

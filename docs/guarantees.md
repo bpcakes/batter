@@ -3592,6 +3592,17 @@ columns, including canonical submitted requests for intent submission.
 
 ## Flags store contract (T-12)
 
+Registered serving operations re-establish the pool’s declared session profile
+after reset, before reading or changing flags data. Store budgets cap the
+statement, lock and idle waits. Bounded SQLx phases check the absolute clock
+before polling SQL work, including each time a pending phase resumes.
+
+A heartbeat from a registered process reports the audit event identity of its
+accepted primary read. Fleet confirmation checks this identity at the reported
+version in the same snapshot as the head and presence rows. A version reused
+after a restore, a version-only heartbeat, and a refused divergent read leave
+the process unconfirmed until it reports a matching publication.
+
 Observed application rejections survive bounded native cleanup: the store's
 `RollbackFailure` retains both the operation cause and a cleanup deadline. This
 does not promise result retention after external cancellation of the entire

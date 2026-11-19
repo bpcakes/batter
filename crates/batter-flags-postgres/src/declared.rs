@@ -65,7 +65,7 @@ pub(crate) struct Declared {
     pub(crate) processes: Vec<Process>,
     /// The manifest of each declaring catalog a Live or Silent process runs,
     /// by digest.
-    pub(crate) manifests: Vec<serde_json::Value>,
+    pub(crate) manifests: Vec<String>,
 }
 impl Declared {
     pub(crate) fn active(&self) -> impl Iterator<Item = &Declarer> {
@@ -110,7 +110,7 @@ impl Declared {
                     WHEN p.expires_at > statement_timestamp() THEN 'live' ELSE 'silent' END AS presence, \
                 CASE WHEN row_number() OVER catalog = 1 \
                     AND bool_or(p.process_id IS NOT NULL AND p.stopped_at IS NULL) OVER catalog \
-                    THEN c.manifest END AS manifest \
+                    THEN c.manifest::text END AS manifest \
              FROM flags.flag_catalog_entries e \
              JOIN flags.flag_catalogs c ON c.manifest_digest = e.manifest_digest \
              LEFT JOIN flags.flag_processes p ON p.manifest_digest = e.manifest_digest \
@@ -144,7 +144,7 @@ impl Declared {
                 });
                 catalog = Some(digest.clone());
             }
-            if let Some(manifest) = row.try_get::<Option<serde_json::Value>, _>("manifest")? {
+            if let Some(manifest) = row.try_get::<Option<String>, _>("manifest")? {
                 manifests.push((digest, manifest));
             }
             if !row.try_get::<bool, _>("declaring")? {

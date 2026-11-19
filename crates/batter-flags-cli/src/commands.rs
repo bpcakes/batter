@@ -96,8 +96,10 @@ pub(crate) struct Guard {
     actor: String,
     #[arg(long)]
     reason: String,
-    /// Write only if the key's revision is still this one.
+    /// Store-version watermark. Change the key only if its revision is at or
+    /// below N and N is at or below the store head.
     #[arg(long)]
+    #[arg(value_name = "N")]
     if_revision: Option<u64>,
     /// Write whatever the key's revision is.
     #[arg(long)]

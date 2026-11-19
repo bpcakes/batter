@@ -19,7 +19,7 @@ use batter::flags::{
     control_plane::LatestRead,
     core::{Source, SwitchState, Version},
     low_level::capture_now,
-    postgres::{PooledStore, Write, WriteOutcome},
+    postgres::{PooledStore, Rollout, Write, WriteOutcome},
 };
 use sqlx::postgres::PgPoolOptions;
 use support::*;
@@ -177,7 +177,16 @@ async fn fail_over_under_the_running_process(
     .await;
     let pool = database.pool().await;
     heartbeat_reports(&pool, flags.process().as_uuid(), ("control_plane", 100)).await;
-    let written = PooledStore::new(pool.clone(), timing())
+    let store = PooledStore::new(pool.clone(), timing());
+    assert!(matches!(
+        store
+            .fleet(deadline())
+            .await
+            .unwrap()
+            .rollout(Version::new(90)),
+        Rollout::Pending { reached: 0, .. }
+    ));
+    let written = store
         .write(
             Write::kill(halt(), SwitchState::Engaged, change()),
             deadline(),
@@ -189,5 +198,9 @@ async fn fail_over_under_the_running_process(
         "{written:?}"
     );
     until(|| matches!(capture_now(flags).source(), Source::ControlPlane { version, .. } if version == Version::new(101))).await;
+    heartbeat_reports(&pool, flags.process().as_uuid(), ("control_plane", 101)).await;
+    assert!(
+        matches!(store.fleet(deadline()).await.unwrap().rollout(Version::new(101)), Rollout::Reached { live } if live.get() == 1)
+    );
     pool.close().await;
 }

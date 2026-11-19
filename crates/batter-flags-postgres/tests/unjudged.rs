@@ -53,6 +53,8 @@ async fn a_catalog_this_writer_cannot_decode_refuses_a_strict_write() {
     let f = Fixture::migrated().await;
     // A Live declarer whose manifest no version of this writer decodes.
     f.seed("ledger_v2", "mode", "toggle", "live").await;
+    sqlx::query("UPDATE flags.flag_catalogs SET manifest = jsonb_build_object('future',(repeat('[',150) || '0' || repeat(']',150))::jsonb)")
+        .execute(&f.pool).await.unwrap();
     let refused = strict(&f, "ledger_v2", "on").await;
     assert!(
         matches!(refused, WriteOutcome::Refused(Refusal::InvariantsUnjudged { catalogs }) if (catalogs.undecodable(), catalogs.held_governors()) == (1, 0)),

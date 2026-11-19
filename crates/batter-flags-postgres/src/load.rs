@@ -1,23 +1,49 @@
-use crate::{ErrorClass, PooledStore, REQUIRED_SCHEMA_REVISION, StoreError, errors::ErrorKind};
+use crate::{ErrorClass, REQUIRED_SCHEMA_REVISION, ServingStore, StoreError, errors::ErrorKind};
 use batter_flags_core::{
     Version,
     low_level::{Candidate, CandidateRow, ValidationScope},
 };
-use batter_sqlx::PgReadOnlySnapshot;
 use sqlx::Row;
 use tokio::time::Instant;
+
+/// The immutable audit event at a loaded snapshot's head. Only a coherent
+/// primary read can produce this value. The initial empty store has no event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Publication(Event);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Event {
+    Initial,
+    Write { version: Version, id: uuid::Uuid },
+}
+
+impl Publication {
+    /// The counter read with this event.
+    pub fn version(self) -> Version {
+        match self.0 {
+            Event::Initial => Version::new(0),
+            Event::Write { version, .. } => version,
+        }
+    }
+    pub(crate) fn id(self) -> uuid::Uuid {
+        match self.0 {
+            Event::Initial => uuid::Uuid::nil(),
+            Event::Write { id, .. } => id,
+        }
+    }
+}
 
 /// Coherent primary snapshot, before catalog validation. Archived keys are absent.
 /// Its version cannot be relabelled before validation:
 /// ```compile_fail,E0616
 /// fn relabel(mut loaded: batter_flags_postgres::Loaded) {
-///     loaded.version = batter_flags_core::Version::new(100);
+///     loaded.publication = todo!();
 /// }
 /// ```
 #[derive(Debug)]
 pub struct Loaded {
     /// Counter read in the same repeatable-read transaction as the rows.
-    pub(crate) version: Version,
+    publication: Publication,
     /// Installed schema revision.
     pub(crate) schema_revision: i32,
     rows: Vec<CandidateRow>,
@@ -25,7 +51,11 @@ pub struct Loaded {
 impl Loaded {
     /// Counter read with these rows; cannot be reassigned before candidate conversion.
     pub fn version(&self) -> Version {
-        self.version
+        self.publication.version()
+    }
+    /// The event this read observed. Report it only after accepting this read.
+    pub fn publication(&self) -> Publication {
+        self.publication
     }
     /// Installed schema revision.
     pub fn schema_revision(&self) -> i32 {
@@ -34,38 +64,51 @@ impl Loaded {
 
     /// Attach this database read to the consumer's validation scope.
     pub fn candidate(self, scope: &ValidationScope) -> Candidate {
-        Candidate::new(scope, self.version).rows(self.rows)
+        Candidate::new(scope, self.version()).rows(self.rows)
     }
     /// Raw candidate rows for persistence or inspection; formatting is redacted.
     pub fn rows(&self) -> &[CandidateRow] {
         &self.rows
     }
 }
-impl PooledStore {
+impl ServingStore {
     /// Load one REPEATABLE READ READ ONLY primary snapshot. A standby returns
     /// `ErrorClass::Standby` and no candidate, so it cannot renew freshness.
     /// The whole inspection is additionally capped by the acquisition budget,
     /// because the native snapshot owner does not expose a separate acquire phase.
     pub async fn load(&self, deadline: Instant) -> Result<Loaded, StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
-        PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
-                let [statement, lock, idle] = self.timing.settings(deadline)?;
-                sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true), set_config('idle_in_transaction_session_timeout',$3,true)")
-                    .bind(statement).bind(lock).bind(idle).execute(sql.executor()).await?;
-                self.refuse_standby(sql).await?;
-                // No control relation means no flags migration has run yet.
-                let row = sqlx::query("SELECT version, schema_revision FROM flags.flag_control WHERE singleton")
-                    .fetch_one(sql.executor()).await.map_err(crate::errors::missing_schema)?;
-                let version = version(row.try_get("version")?)?;
-                let schema_revision: i32 = row.try_get("schema_revision")?;
-                if schema_revision < REQUIRED_SCHEMA_REVISION { return Err(StoreError::schema_behind(schema_revision)); }
-                let rows = sqlx::query("SELECT name, kind, value_type, updated_version, state::text FROM flags.flag_state WHERE archived_version IS NULL ORDER BY name")
-                    .fetch_all(sql.executor()).await?.into_iter().map(|r| {
-                        Ok(CandidateRow::new(r.try_get("name")?, r.try_get("kind")?, r.try_get("value_type")?,
-                            crate::load::version(r.try_get("updated_version")?)?, r.try_get("state")?))
-                    }).collect::<Result<Vec<_>, StoreError>>()?;
-                Ok(Loaded { version, schema_revision, rows })
-            }).await.map_err(snapshot_error)
+        self.inspect(deadline, async |sql| {
+            let (head, schema_revision): (i64, i32) = sqlx::query_as(
+                "SELECT version, schema_revision FROM flags.flag_control WHERE singleton",
+            )
+            .fetch_one(sql.executor())
+            .await
+            .map_err(crate::errors::missing_schema)?;
+            if schema_revision < REQUIRED_SCHEMA_REVISION {
+                return Err(StoreError::schema_behind(schema_revision));
+            }
+            let publication = Publication(if head == 0 {
+                Event::Initial
+            } else {
+                let id = sqlx::query_scalar("SELECT publication_id FROM flags.flag_audit WHERE version = $1")
+                    .bind(head)
+                    .fetch_one(sql.executor()).await?;
+                Event::Write { version: version(head)?, id }
+            });
+            let rows = sqlx::query("SELECT name, kind, value_type, updated_version, state::text FROM flags.flag_state WHERE archived_version IS NULL ORDER BY name")
+                .fetch_all(sql.executor()).await?
+                .into_iter().map(|row| {
+                    Ok(CandidateRow::new(
+                        row.try_get("name")?,
+                        row.try_get("kind")?,
+                        row.try_get("value_type")?,
+                        version(row.try_get("updated_version")?)?,
+                        row.try_get("state")?,
+                    ))
+                }).collect::<Result<Vec<_>, StoreError>>()?;
+            Ok(Loaded { publication, schema_revision, rows })
+        }).await
     }
 }
 pub(crate) fn snapshot_error(

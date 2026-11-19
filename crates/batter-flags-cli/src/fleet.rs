@@ -100,7 +100,7 @@ pub(crate) async fn report<F: From<batter_flags_postgres::StoreError>>(
         ),
         Rollout::Pending { reached, behind } => (
             format!(
-                "version {version} reached {reached} Live processes; {} have not applied it",
+                "version {version} reached {reached} Live processes, {} remain unconfirmed",
                 behind.len()
             ),
             json!({"reached": false, "applied": reached, "behind": behind.iter().map(|p| p.as_uuid().to_string()).collect::<Vec<_>>()}),

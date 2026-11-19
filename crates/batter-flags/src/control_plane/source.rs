@@ -8,7 +8,7 @@ use batter_flags_core::{
     Version,
     low_level::{Candidate, CandidateRow, ValidationScope},
 };
-use batter_flags_postgres::{ErrorClass, Loaded, PooledStore, StoreError};
+use batter_flags_postgres::{ErrorClass, Loaded, ServingStore, StoreError};
 use tokio::time::Instant;
 
 use super::LoadCause;
@@ -16,7 +16,7 @@ use super::LoadCause;
 /// Where a refresh reads from.
 pub(crate) enum LoadSource {
     /// The audited store.
-    Store(PooledStore),
+    Store(ServingStore),
     /// A scripted source for paused-time tests.
     #[cfg(test)]
     Fake(std::sync::Arc<fake::Fake>),
@@ -36,12 +36,29 @@ enum Read {
     },
 }
 
-impl Fetched {
-    pub(crate) fn version(&self) -> Version {
-        match &self.0 {
-            Read::Store(loaded) => loaded.version(),
+#[derive(Clone, Copy)]
+pub(crate) enum Observed {
+    Store(batter_flags_postgres::Publication),
+    #[cfg(test)]
+    Scripted(Version),
+}
+
+impl Observed {
+    pub(crate) fn version(self) -> Version {
+        match self {
+            Self::Store(publication) => publication.version(),
             #[cfg(test)]
-            Read::Scripted { version, .. } => *version,
+            Self::Scripted(version) => version,
+        }
+    }
+}
+
+impl Fetched {
+    pub(crate) fn observed(&self) -> Observed {
+        match &self.0 {
+            Read::Store(loaded) => Observed::Store(loaded.publication()),
+            #[cfg(test)]
+            Read::Scripted { version, .. } => Observed::Scripted(*version),
         }
     }
 

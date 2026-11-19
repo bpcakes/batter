@@ -162,7 +162,7 @@ impl Refresh {
                 let rows = match &self.persistence {
                     Persistence::Off => None,
                     Persistence::File(persister) => persister
-                        .wants(fetched.version().get())
+                        .wants(fetched.observed().version().get())
                         .then(|| fetched.rows().to_vec()),
                 };
                 let judged = self.publish(fetched, deadline);
@@ -209,14 +209,9 @@ impl Refresh {
     /// decides. Nothing is published once the run's deadline has passed,
     /// however long judging took.
     fn publish(&self, fetched: Fetched, deadline: Instant) -> (LastRun, Result<(), LoadCause>) {
-        let observed = fetched.version();
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        self.shared.publish(
-            &mut writer,
-            fetched.candidate(&self.scope),
-            deadline,
-            observed,
-        )
+        self.shared
+            .publish(&mut writer, fetched, &self.scope, deadline)
     }
 }
 

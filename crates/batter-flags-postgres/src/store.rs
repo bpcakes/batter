@@ -49,9 +49,12 @@ impl StoreTiming {
         self.idle
     }
     pub(crate) fn settings(self, deadline: Instant) -> Result<[String; 3], StoreError> {
+        Ok(self.caps(deadline)?.map(|d| format!("{}ms", d.as_millis())))
+    }
+    pub(crate) fn caps(self, deadline: Instant) -> Result<[Duration; 3], StoreError> {
         let remaining = remaining(deadline)?;
         Ok([self.statement, self.lock, self.idle]
-            .map(|d| format!("{}ms", d.min(remaining).as_millis().max(1))))
+            .map(|d| Duration::from_millis(d.min(remaining).as_millis().max(1) as u64)))
     }
 }
 /// Protected pool-backed flags store. Every method owns acquisition, transaction
@@ -81,7 +84,8 @@ impl PooledStore {
         self.timing
     }
     /// Bind an application-owned pool to validated timing. The application owns
-    /// pool shutdown; individual operations own all checked-out connections.
+    /// pool shutdown. Transactions reset session state and use the login defaults.
+    /// A registered serving process uses [`crate::ServingStore`] to reapply its profile.
     pub fn new(pool: PgPool, timing: StoreTiming) -> Self {
         Self {
             pool,
@@ -100,13 +104,20 @@ impl PooledStore {
         &self,
         sql: &mut batter_sqlx::PgReadOnlySql<'_>,
     ) -> Result<(), StoreError> {
-        let recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
-            .fetch_one(sql.executor())
-            .await?;
         #[cfg(test)]
-        let recovery = recovery || self.standby;
-        crate::errors::check_primary(recovery)
+        if self.standby {
+            return crate::errors::check_primary(true);
+        }
+        require_primary(sql).await
     }
+}
+pub(crate) async fn require_primary(
+    sql: &mut batter_sqlx::PgReadOnlySql<'_>,
+) -> Result<(), StoreError> {
+    let recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
+        .fetch_one(sql.executor())
+        .await?;
+    crate::errors::check_primary(recovery)
 }
 pub(crate) fn remaining(deadline: Instant) -> Result<Duration, StoreError> {
     deadline

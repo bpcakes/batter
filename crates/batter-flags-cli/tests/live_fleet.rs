@@ -44,7 +44,7 @@ async fn a_restored_file_version_is_grouped_apart_from_an_applied_one() {
     .await
     .unwrap();
     sqlx::query(
-        "UPDATE flags.flag_processes SET snapshot_version = 1 WHERE stopped_at IS NULL AND snapshot_source = 'control_plane'",
+        "UPDATE flags.flag_processes SET snapshot_version = 1, publication_id = (SELECT publication_id FROM flags.flag_audit WHERE version = 1) WHERE stopped_at IS NULL AND snapshot_source = 'control_plane'",
     )
     .execute(&db.pool)
     .await

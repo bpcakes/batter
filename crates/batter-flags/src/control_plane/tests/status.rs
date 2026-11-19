@@ -183,7 +183,7 @@ async fn a_store_behind_the_schema_reports_it_before_and_after_a_publication() {
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
     let behind = LatestRead::SchemaBehind {
-        required: 1,
+        required: batter_flags_postgres::REQUIRED_SCHEMA_REVISION,
         found: 0,
     };
     let status = flags.status();

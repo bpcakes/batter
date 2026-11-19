@@ -22,6 +22,18 @@ async fn beat(process: &mut ProcessPresence, snapshot: SnapshotReport) {
         .unwrap();
 }
 
+async fn published(process: &mut ProcessPresence, publication: Publication) {
+    process
+        .heartbeat_observed(
+            HeartbeatSnapshot::Published(publication),
+            &KeySample::default(),
+            &KeySample::default(),
+            deadline(),
+        )
+        .await
+        .unwrap();
+}
+
 fn archive(name: &str) -> Archive {
     Archive::new(key(name), change(None))
 }
@@ -275,6 +287,7 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
     }
     stopped.stop(deadline()).await.unwrap();
     // Five writes give the store a head every report below stays within.
+    let mut publications = Vec::new();
     for variant in ["on", "off", "on", "off", "on"] {
         let written = f
             .store
@@ -285,9 +298,10 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
             matches!(written, WriteOutcome::Written { .. }),
             "{written:?}"
         );
+        publications.push(f.store.load(deadline()).await.unwrap().publication());
     }
-    beat(&mut early, SnapshotReport::ControlPlane(v(3))).await;
-    beat(&mut late, SnapshotReport::ControlPlane(v(5))).await;
+    published(&mut early, publications[2]).await;
+    published(&mut late, publications[4]).await;
     beat(&mut file, SnapshotReport::PersistedFile(v(5))).await;
     until_silent().await;
 
@@ -309,8 +323,8 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
             behind: vec![early.process(), file.process()]
         }
     );
-    beat(&mut early, SnapshotReport::ControlPlane(v(5))).await;
-    beat(&mut file, SnapshotReport::ControlPlane(v(5))).await;
+    published(&mut early, publications[4]).await;
+    published(&mut file, publications[4]).await;
     let fleet = f.store.fleet(deadline()).await.unwrap();
     assert_eq!(
         fleet.rollout(v(5)),
@@ -368,7 +382,11 @@ async fn a_report_above_the_head_never_counts_as_reached() {
         panic!("the write lands");
     };
     assert_eq!(version, Version::new(1), "a wild report moves no write");
-    beat(&mut applied, SnapshotReport::ControlPlane(version)).await;
+    published(
+        &mut applied,
+        f.store.load(deadline()).await.unwrap().publication(),
+    )
+    .await;
     let fleet = f.store.fleet(deadline()).await.unwrap();
     assert_eq!(fleet.head(), version);
     assert_eq!(
@@ -378,6 +396,38 @@ async fn a_report_above_the_head_never_counts_as_reached() {
             behind: vec![wild.process()]
         }
     );
+    // Another store's first write reused this version. A heartbeat can arrive
+    // even before a refresh has had the opportunity to refuse digest drift.
+    let previous = Fixture::migrated().await;
+    let written = previous
+        .store
+        .write(
+            Write::explicit(
+                key("other"),
+                ExplicitValue::Switch(batter_flags_core::SwitchState::Engaged),
+                change(None),
+            ),
+            deadline(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(written, WriteOutcome::WrittenUndeclared { .. }),
+        "{written:?}"
+    );
+    let other = previous.store.load(deadline()).await.unwrap().publication();
+    assert_eq!(other.version(), version);
+    published(&mut wild, other).await;
+    let fleet = f.store.fleet(deadline()).await.unwrap();
+    assert_eq!(fleet.head(), version);
+    assert_eq!(
+        fleet.rollout(version),
+        Rollout::Pending {
+            reached: 1,
+            behind: vec![wild.process()]
+        }
+    );
+    previous.close().await;
     f.close().await;
 }
 

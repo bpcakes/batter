@@ -85,7 +85,7 @@ use batter_core::{
     registration::RegistrationTarget,
 };
 use batter_flags_core::low_level::{Base, Publisher, Refusal, Restored, ValidationScope};
-use batter_flags_postgres::{PooledStore, ProcessId, StoreTiming};
+use batter_flags_postgres::{ProcessId, ServingStore, StoreTiming};
 use batter_sqlx::PgProfiledPool;
 use tokio::time::Instant;
 
@@ -140,7 +140,7 @@ enum LastGoodReader {
 /// other owners and extracted cleanup stacks are refused.
 #[derive(Clone, Debug)]
 pub struct ControlPlaneStore {
-    store: PooledStore,
+    store: ServingStore,
     pool: PgProfiledPool,
 }
 
@@ -148,7 +148,7 @@ impl ControlPlaneStore {
     /// The store over `pool`, under `timing`.
     pub fn new(pool: &PgProfiledPool, timing: StoreTiming) -> Self {
         Self {
-            store: PooledStore::new(pool.pool().clone(), timing),
+            store: ServingStore::new(pool, timing),
             pool: pool.clone(),
         }
     }
@@ -325,7 +325,7 @@ pub fn register_in<T: RegistrationTarget + ?Sized>(
 fn register_with<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     source: LoadSource,
-    store: &PooledStore,
+    store: &ServingStore,
     resolved: Resolved,
     policy: LoadPolicy,
     presence: Presence,

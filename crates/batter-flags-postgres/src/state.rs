@@ -101,21 +101,31 @@ pub(crate) enum StoredRow {
     Archived(ExistingRow),
 }
 impl StoredRow {
-    pub(crate) fn read(row: Option<PgRow>) -> Result<Self, StoreError> {
-        match row {
-            None => Ok(Self::Absent),
-            Some(row) => {
-                let existing = ExistingRow {
-                    shape: Shape::read(&row)?,
-                    state: row.try_get("state")?,
-                    version: row.try_get("updated_version")?,
-                };
-                match row.try_get::<Option<i64>, _>("archived_version")? {
-                    None => Ok(Self::Active(existing)),
-                    Some(_) => Ok(Self::Archived(existing)),
-                }
-            }
-        }
+    pub(crate) fn read(
+        row: Option<PgRow>,
+    ) -> Result<std::ops::ControlFlow<crate::Refusal, Self>, StoreError> {
+        use std::ops::ControlFlow::{Break, Continue};
+        let Some(row) = row else {
+            return Ok(Continue(Self::Absent));
+        };
+        let shape = Shape::read(&row)?;
+        let Some(state) = serde_json::from_str(row.try_get("state")?)
+            .ok()
+            .filter(|state| shape.known_encoding(state))
+        else {
+            return Ok(Break(crate::Refusal::UnknownRowEncoding));
+        };
+        let existing = ExistingRow {
+            shape,
+            state,
+            version: row.try_get("updated_version")?,
+        };
+        Ok(Continue(
+            match row.try_get::<Option<i64>, _>("archived_version")? {
+                None => Self::Active(existing),
+                Some(_) => Self::Archived(existing),
+            },
+        ))
     }
     pub(crate) fn existing(&self) -> Option<&ExistingRow> {
         match self {

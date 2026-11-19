@@ -44,7 +44,9 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
     .unwrap();
     let lease = harness.empty_database().await.unwrap();
     let options: PgConnectOptions = lease.database_url().parse().unwrap();
-    let login = options.get_username().to_owned();
+    let suffix = uuid::Uuid::new_v4().simple();
+    let login = format!("flags_login_{suffix}");
+    let serving = format!("flags_serving_{suffix}");
     let timing = StoreTiming::new(SECOND, SECOND, SECOND, SECOND).unwrap();
 
     // A finite migration step, as a root runs it before serving.
@@ -57,11 +59,12 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
         .await
         .unwrap();
 
+    install_serving_role(&migrator, &login, &serving).await;
     let resolved = resolved();
     let mut supervisor = supervisor();
     let profile = PgSessionProfile::new(
-        &login,
-        &login,
+        login.clone(),
+        serving.clone(),
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
@@ -70,7 +73,7 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
     let pool = pool_in(
         supervisor.reserve_cleanup("database").unwrap(),
         PgPoolOptions::new().max_connections(4),
-        options,
+        options.username(&login),
         profile,
     )
     .unwrap();
@@ -105,6 +108,8 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
 
     assert_heartbeat_row(&migrator, flags.process().as_uuid()).await;
 
+    assert!(flags.prune().succeeded > 0, "pruning as the serving role");
+
     // The stop marker runs before the pool registered first closes.
     running.shutdown_checked().await.unwrap();
     assert!(pool.pool().is_closed());
@@ -117,9 +122,45 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
     .unwrap();
     assert!(stopped, "the stop marker ran before the pool closed");
     assert_eq!(flags.status().loader, LoaderState::Stopped);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP OWNED BY {serving}; DROP ROLE {login}, {serving}"
+    )))
+    .execute(&migrator)
+    .await
+    .unwrap();
     migrator.close().await;
     lease.cleanup().await.unwrap();
     harness.shutdown().await.unwrap();
+}
+
+async fn install_serving_role(migrator: &sqlx::PgPool, login: &str, serving: &str) {
+    // The login can assume the serving role but inherits none of its grants.
+    // Every snapshot, presence operation and cleanup must reapply that role.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {login} LOGIN NOINHERIT; CREATE ROLE {serving}; GRANT {serving} TO {login} WITH INHERIT FALSE, SET TRUE")))
+        .execute(migrator).await.unwrap();
+    use batter_flags::grants::{FlagsRole, grant_fragment};
+    use batter_sqlx::verification::{
+        DiscoveryScope, ExactRoleManifest, FragmentObjectPolicy, Identifier,
+    };
+    let schema = Identifier::new("flags").unwrap();
+    let fragment = grant_fragment(
+        &FragmentObjectPolicy::new(schema.clone()),
+        &FlagsRole::ServingProcess.into(),
+    )
+    .unwrap();
+    let grants = ExactRoleManifest::new(schema, DiscoveryScope::Declared)
+        .unwrap()
+        .with_fragment(fragment)
+        .unwrap()
+        .compile()
+        .unwrap()
+        .grant_plan()
+        .render(&Identifier::new(serving).unwrap(), None)
+        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(grants))
+        .execute(migrator)
+        .await
+        .unwrap();
 }
 
 fn resolved() -> declared::Resolved {

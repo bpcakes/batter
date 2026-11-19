@@ -26,6 +26,7 @@ use std::{
 use batter::{
     BoxError,
     cleanup::CleanupBudget,
+    command::{Command, CommandCause, CommandFailure},
     flags::{
         Flags,
         control_plane::{
@@ -41,8 +42,12 @@ use batter::{
         postgres::{PooledStore, StoreTiming},
     },
     lifecycle::{ShutdownBudget, Supervisor},
+    operation::OperationOwner,
     periodic::PeriodicFailure,
+    registration::RegistrationTarget,
+    service::{self, NoDiagnostics, ServiceCompletion, ServiceOutcome},
     settings::SettingsSource,
+    startup::{Initializer, Startup},
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
@@ -85,40 +90,81 @@ pub(crate) fn resolve(
 
 /// Today's civil date in UTC, from the system clock.
 pub(crate) fn today() -> Result<CivilDate, BoxError> {
-    let days = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 86_400)?;
-    // Howard Hinnant's days-to-civil conversion.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    Ok(CivilDate::new(
-        u16::try_from(year)?,
-        u8::try_from(month)?,
-        u8::try_from(day)?,
+    Ok(CivilDate::from_unix_time(
+        SystemTime::now().duration_since(UNIX_EPOCH)?,
     )?)
 }
 
-fn supervisor() -> Result<Supervisor, BoxError> {
-    let second = Duration::from_secs(1);
-    let cleanup = CleanupBudget::new(second * 5, second * 5, second * 5)?;
-    Ok(Supervisor::new(ShutdownBudget::new(
-        second * 5,
-        second * 5,
-        second * 5,
+const SECOND: Duration = Duration::from_secs(1);
+
+fn cleanup() -> Result<CleanupBudget, batter::ConfigurationError> {
+    CleanupBudget::new(SECOND * 5, SECOND * 5, SECOND * 5)
+}
+
+struct ServiceFailure(ServiceCompletion<BoxError, ()>);
+
+impl std::fmt::Display for ServiceFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Err(readiness) = self.0.readiness() {
+            write!(f, "{readiness}. ")?;
+        }
+        match self.0.service() {
+            ServiceOutcome::StartupFailed(error) => write!(f, "{error}"),
+            ServiceOutcome::Shutdown(Err(error)) => write!(f, "{error}"),
+            ServiceOutcome::Coordinator(_) => f.write_str("service coordinator failed"),
+            ServiceOutcome::Shutdown(Ok(_)) => f.write_str("service stopped"),
+        }
+    }
+}
+
+impl std::fmt::Debug for ServiceFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+impl std::error::Error for ServiceFailure {}
+
+/// Both modes transfer their initialized readers only after readiness. A failed
+/// handoff retains the service's full completion, including cleanup failures.
+async fn serve_for<T>(
+    initialize: impl AsyncFnOnce(&mut batter::startup::ProtectedStartupScope) -> Result<T, BoxError>
+    + Initializer<BoxError, Output = T>,
+    window: Duration,
+    observe: impl FnOnce(&T),
+) -> Result<T, BoxError> {
+    let cleanup = cleanup()?;
+    let supervisor = Supervisor::new(ShutdownBudget::new(
+        SECOND * 5,
+        SECOND * 5,
+        SECOND * 5,
         cleanup,
-    )?))
+    )?);
+    let startup = Startup::protected(
+        supervisor,
+        OperationOwner::new(SECOND * 30)?.into_context(),
+        cleanup,
+        initialize,
+    );
+    let (owner, output) = service::start_with_readiness(startup, NoDiagnostics, None)
+        .into_ready()
+        .await
+        .map_err(|failure| ServiceFailure(failure.completion().clone()))?;
+    tokio::time::sleep(window).await;
+    observe(&output);
+    owner.request_shutdown();
+    let completion = owner.wait().await;
+    if matches!(completion.service(), ServiceOutcome::Shutdown(Ok(_))) {
+        Ok(output)
+    } else {
+        Err(Box::new(ServiceFailure(completion)))
+    }
 }
 
 /// Registers the maintenance run the kill switch gates. Core counts runs
 /// that did their work as successes and the runs the switch kept out as skips.
 pub(crate) fn gate_maintenance(
     flags: &Flags,
-    supervisor: &mut Supervisor,
+    supervisor: &mut impl RegistrationTarget,
     handles: &Handles,
 ) -> Result<GatedPeriodicReader, BoxError> {
     let new_checkout = handles.new_checkout.clone();
@@ -147,35 +193,60 @@ pub(crate) async fn run_declared(settings: &SettingsSource) -> Result<u64, BoxEr
     let (resolved, handles) = resolve(settings, today()?)?;
     println!("{}", resolved.report());
     let flags = resolved.into_flags();
-    let mut supervisor = supervisor()?;
-    let maintenance = gate_maintenance(&flags, &mut supervisor, &handles)?;
-    let running = supervisor.start();
-    running
-        .status()
-        .wait_ready()
-        .await
-        .map_err(|readiness| format!("not ready: {readiness:?}"))?;
-    tokio::time::sleep(Duration::from_millis(2_500)).await;
-    running.shutdown_checked().await?;
-    // Skipped runs did no work, so they are not successes.
+    let maintenance = serve_for(
+        async move |scope: &mut batter::startup::ProtectedStartupScope| {
+            gate_maintenance(&flags, scope, &handles)
+        },
+        Duration::from_millis(2_500),
+        |_| {},
+    )
+    .await?;
     Ok(maintenance.snapshot().succeeded)
 }
 
-/// The finite migration command, under a login that owns the flags schema.
-async fn migrate(url: &str) -> Result<(), BoxError> {
+#[derive(Debug, thiserror::Error)]
+enum MigrationError {
+    #[error("migration pool registration failed")]
+    Registration(#[from] batter::RegistrationError),
+    #[error("flags migration failed")]
+    Store(#[from] batter::flags::postgres::StoreError),
+}
+
+/// Prepare a finite command. The root selects the Unix signal policy.
+fn migration(
+    url: &str,
+) -> Result<
+    Command<
+        impl for<'a> FnOnce(
+            &'a mut batter::command::CommandScope,
+        ) -> batter::command::CommandFuture<'a, (), MigrationError>
+        + Send
+        + 'static,
+    >,
+    BoxError,
+> {
     let options: PgConnectOptions = url.parse()?;
-    let second = Duration::from_secs(1);
-    let timing = StoreTiming::new(second * 2, second * 2, second, second * 2)?;
-    let migrator = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy_with(options);
-    let migrated = PooledStore::new(migrator.clone(), timing)
-        .migrate(tokio::time::Instant::now() + second * 30)
-        .await;
-    migrator.close().await;
-    migrated?;
-    println!("flags schema migrated");
-    Ok(())
+    let timing = StoreTiming::new(SECOND * 2, SECOND * 2, SECOND, SECOND * 2)?;
+    Ok(Command::new(
+        OperationOwner::new(SECOND * 30)?.into_context(),
+        cleanup()?,
+        move |scope| {
+            Box::pin(async move {
+                scope.stage("flags.migrate")?;
+                let slot = scope.reserve_cleanup("migration.pool")?;
+                let pool = PgPoolOptions::new()
+                    .max_connections(1)
+                    .connect_lazy_with(options);
+                let store = PooledStore::new(pool.clone(), timing);
+                slot.register(move || async move {
+                    pool.close().await;
+                    Ok(())
+                });
+                store.migrate(scope.context().deadline()).await?;
+                Ok(())
+            })
+        },
+    ))
 }
 
 /// Control-plane mode: an audited store decides, refreshed every poll. It
@@ -186,59 +257,51 @@ async fn run_control_plane(settings: &SettingsSource, url: &str) -> Result<(), B
     let second = Duration::from_secs(1);
     let timing = StoreTiming::new(second * 2, second * 2, second, second * 2)?;
     let (resolved, handles) = resolve(settings, today()?)?;
-    let mut supervisor = supervisor()?;
-    let login = options.get_username().to_owned();
-    let profile = batter::sqlx::PgSessionProfile::new(
-        &login,
-        &login,
-        vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-    )?;
-    // Registered first, so the pool closes after the flags stop marker.
-    let pool = batter::sqlx::pool_in(
-        supervisor.reserve_cleanup("database")?,
-        PgPoolOptions::new().max_connections(4),
-        options,
-        profile,
-    )?;
-    // Required: the file restores kill-switch states at startup, so it lives
-    // in a directory this process owns, never a shared temporary one.
     let directory = PathBuf::from(settings.required("FLAGS_LAST_GOOD_DIR")?);
-    let last_good = SnapshotDirectory::open(SnapshotFilePath::new(directory, "rollout.bfsn")?)?;
-    let policy = LoadPolicy::start_on_defaults(RefreshTiming::new(second * 5, second * 60)?)
-        .with_last_good(last_good);
-    let presence = Presence::new(
-        ApplicationName::new("rollout")?,
-        BuildId::new(env!("CARGO_PKG_VERSION"))?,
-        HeartbeatCadence::new(second * 5, second * 600)?,
-    );
-    let flags = register_in(
-        &mut supervisor,
-        ControlPlaneStore::new(&pool, timing),
-        resolved,
-        policy,
-        presence,
-    )?;
-    println!("startup file: {:?}", flags.startup_file());
-    gate_maintenance(&flags, &mut supervisor, &handles)?;
-    let running = supervisor.start();
-    // The serving work; whatever it returns, the shutdown that runs the stop
-    // marker and closes the pool is awaited before it is reported.
-    let served = async {
-        running
-            .status()
-            .wait_ready()
-            .await
-            .map_err(|readiness| format!("not ready: {readiness:?}"))?;
-        tokio::time::sleep(second * 3).await;
-        println!("flags status: {:?}", flags.status());
-        Ok::<(), BoxError>(())
-    }
-    .await;
-    let stopped = running.shutdown_checked().await;
-    served?;
-    stopped?;
+    serve_for(
+        async move |scope: &mut batter::startup::ProtectedStartupScope| {
+            let login = options.get_username().to_owned();
+            let profile = batter::sqlx::PgSessionProfile::new(
+                &login,
+                &login,
+                vec!["public".into()],
+                Duration::ZERO,
+                Duration::ZERO,
+            )?;
+            // Registered first, so the pool closes after the flags stop marker.
+            let pool = batter::sqlx::pool_in(
+                scope.reserve_cleanup("database")?,
+                PgPoolOptions::new().max_connections(4),
+                options,
+                profile,
+            )?;
+            // Required: the file restores kill-switch states at startup, so it lives
+            // in a directory this process owns, never a shared temporary one.
+            let last_good =
+                SnapshotDirectory::open(SnapshotFilePath::new(directory, "rollout.bfsn")?)?;
+            let policy =
+                LoadPolicy::start_on_defaults(RefreshTiming::new(second * 5, second * 60)?)
+                    .with_last_good(last_good);
+            let presence = Presence::new(
+                ApplicationName::new("rollout")?,
+                BuildId::new(env!("CARGO_PKG_VERSION"))?,
+                HeartbeatCadence::new(second * 5, second * 600)?,
+            );
+            let flags = register_in(
+                scope,
+                ControlPlaneStore::new(&pool, timing),
+                resolved,
+                policy,
+                presence,
+            )?;
+            println!("startup file: {:?}", flags.startup_file());
+            gate_maintenance(&flags, scope, &handles)?;
+            Ok(flags)
+        },
+        second * 3,
+        |flags| println!("flags status: {:?}", flags.status()),
+    )
+    .await?;
     Ok(())
 }
 
@@ -256,7 +319,15 @@ fn main() -> ExitCode {
         let settings = SettingsSource::from_pairs(environment)?;
         let command = std::env::args().nth(1);
         match (command.as_deref(), settings.text("DATABASE_URL")?) {
-            (Some("migrate"), Some(url)) => migrate(url).await,
+            (Some("migrate"), Some(url)) => {
+                migration(url)?
+                    .start_with_unix_signals()?
+                    .finish()
+                    .await?
+                    .into_value();
+                println!("flags schema migrated");
+                Ok(())
+            }
             (Some("migrate"), None) => Err("rollout migrate needs DATABASE_URL".into()),
             (Some(_), _) => Err("usage: rollout [migrate]".into()),
             (None, Some(url)) => run_control_plane(&settings, url).await,
@@ -268,7 +339,15 @@ fn main() -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("rollout: {error}");
+            if let Some(CommandFailure::Report(report)) =
+                error.downcast_ref::<CommandFailure<(), MigrationError>>()
+                && (matches!(report.work, Err(CommandCause::Interrupted(_)))
+                    || report.interruption_after_work.is_some())
+            {
+                eprintln!("rollout: migration interrupted. {error}");
+            } else {
+                eprintln!("rollout: {error}");
+            }
             ExitCode::FAILURE
         }
     }

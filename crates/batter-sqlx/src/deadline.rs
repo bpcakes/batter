@@ -43,17 +43,55 @@ pub(crate) async fn until<T>(
     deadline: Instant,
     work: impl Future<Output = T>,
 ) -> Result<T, Elapsed> {
-    // The timer wins when both are ready: expired work never acquires SQL authority.
-    tokio::select! {
-        biased;
-        _ = tokio::time::sleep_until(deadline) => Err(Elapsed),
-        result = work => Ok(result),
-    }
+    let mut work = std::pin::pin!(work);
+    let mut timer = std::pin::pin!(tokio::time::sleep_until(deadline));
+    std::future::poll_fn(|cx| {
+        if timer.as_mut().poll(cx).is_ready() || Instant::now() >= deadline {
+            return std::task::Poll::Ready(Err(Elapsed));
+        }
+        work.as_mut().poll(cx).map(Ok)
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn elapsed_clock_prevents_first_poll_and_reentry() {
+        use std::{future::poll_fn, task::Poll, time::Duration};
+        let deadline = Instant::now();
+        assert!(
+            until(deadline, async { panic!("polled after deadline") })
+                .await
+                .is_err(),
+            "work must receive no poll at its deadline"
+        );
+        let deadline = Instant::now() + Duration::from_micros(100);
+        let mut polls = 0;
+        let mut bounded = std::pin::pin!(until(
+            deadline,
+            poll_fn(|_| {
+                polls += 1;
+                if polls == 1 {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            })
+        ));
+        poll_fn(|cx| {
+            assert!(bounded.as_mut().poll(cx).is_pending(), "initial work waits");
+            Poll::Ready(())
+        })
+        .await;
+        tokio::time::advance(Duration::from_micros(100)).await;
+        assert!(
+            bounded.await.is_err(),
+            "an external wake cannot poll work at expiry"
+        );
+    }
 
     #[test]
     fn bounded_failures_retain_causes_without_formatting_them() {
