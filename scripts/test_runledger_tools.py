@@ -1,8 +1,10 @@
 """Independent failure controls for exported consumers and native SQLx refresh."""
+from contextlib import nullcontext
 import copy
 import os
 from pathlib import Path
 import subprocess
+import sys
 import shutil
 import tempfile
 import time
@@ -137,6 +139,40 @@ class RefreshTests(unittest.TestCase):
                              (b'localhost', b'5432', b'database', b'user', b'private-marker'))
             # The caller's environment is restored after the SQLx children ran.
             self.assertEqual(os.environ['DATABASE_URL'], secret)
+
+    def test_utf8_database_url_survives_a_non_utf8_locale(self):
+        # A child under LC_ALL=C sees a raw UTF-8 URL as surrogates in
+        # os.environ; the refresh must still read it as UTF-8.
+        script = (
+            'import os, sys\n'
+            'sys.path.insert(0, sys.argv[1])\n'
+            'from unittest.mock import patch\n'
+            'import refresh_runledger_sqlx as r\n'
+            'if sys.platform.startswith("linux"):\n'
+            '    assert sys.getfilesystemencoding() == "ascii", sys.getfilesystemencoding()\n'
+            'seen = {}\n'
+            'def stop(root, parts):\n'
+            '    seen["url"] = os.environ["DATABASE_URL"]\n'
+            '    seen["psql"] = r.environment_bytes(r.psql_environment(parts))[b"PGDATABASE"]\n'
+            'with patch.object(r, "refresh_with", stop):\n'
+            '    r.refresh(".")\n'
+            'print(seen["url"], seen["psql"])\n')
+        environment = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+        environment.update(LC_ALL='C')
+        environment = {os.fsencode(k): os.fsencode(v) for k, v in environment.items()}
+        environment[b'DATABASE_URL'] = 'postgres://u@db.invalid/café'.encode('utf-8')
+        child = [sys.executable, '-I', '-X', 'utf8=0', '-c', script, str(Path(__file__).resolve().parent)]
+        result = subprocess.run(child, env=environment, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(),
+                         "postgres://u@db.invalid:5432/caf%C3%A9?sslmode=disable b'caf\\xc3\\xa9'")
+
+        environment[b'DATABASE_URL'] = b'postgres://user:private-marker@db.invalid/invalid\xff'
+        invalid = subprocess.run(child, env=environment, capture_output=True, timeout=60)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn(b'DATABASE_URL must be UTF-8', invalid.stderr)
+        self.assertNotIn(b'private-marker', invalid.stderr)
+        self.assertNotIn(b'UnicodeDecodeError', invalid.stderr)
 
     def test_ambient_postgres_variables_are_refused_before_any_command(self):
         secret = 'postgresql://user:private-marker@localhost/database'
@@ -342,11 +378,35 @@ class RefreshTests(unittest.TestCase):
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
                 self.assertEqual(cargo_compiler_endpoint(root, url), ([], False))
                 # Forcing a would-be expected-value variable too changes nothing:
-                # the expected URL comes from stdin.
+                # the comparison is bound to the URL in the parent process.
                 (home / 'config.toml').write_text(
                     '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
                     'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
                 self.assertEqual(cargo_compiler_endpoint(root, url), ([], False))
+
+    @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
+    def test_probe_observes_rustc_even_with_an_unusable_target_runner(self):
+        self.cargo_probe.stop()
+        repository = Path(__file__).resolve().parent.parent
+        url = 'postgres://u:compiler-private-marker@db.invalid/database'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '.cargo').mkdir()
+            shutil.copy(repository / 'rust-toolchain.toml', root)
+            # A target program cannot run, but a target compilation can.
+            (root / '.cargo/config.toml').write_text(
+                "[target.'cfg(unix)']\nrunner = 'false'\n")
+            wrapper = root / 'compiler-wrapper'
+            wrapper.write_text('#!/bin/sh\nexport PGAPPNAME=compiler_only\nexec "$@"\n')
+            wrapper.chmod(0o700)
+            scratch = root / 'probe'
+            scratch.mkdir()
+            with patch.dict(os.environ, DATABASE_URL=url, RUSTC_WRAPPER=str(wrapper)), \
+                 patch('runledger_compiler_endpoint.tempfile.TemporaryDirectory', return_value=nullcontext(scratch)):
+                self.assertEqual(cargo_compiler_endpoint(root, url), (['PGAPPNAME'], True))
+            for artifact in (scratch / 'target').rglob('*'):
+                if artifact.is_file():
+                    self.assertFalse(b'compiler-private-marker' in artifact.read_bytes(), artifact.name)
 
     def test_migration_states_reject_incomplete_or_different_schema(self):
         self.assertTrue(migrations_current('001/installed initial\n002/installed next'))

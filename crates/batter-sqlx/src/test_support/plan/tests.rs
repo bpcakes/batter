@@ -90,8 +90,12 @@ fn socket_hosts_survive_a_password_login() {
             .resolve(ambiguous, ambiguous, "pgh_probe_2", Environment::CLEAN)
             .is_err()
     );
-    let url = "postgres://owner:ownersecret@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2";
-    let expected: PgConnectOptions = url.parse().unwrap();
+    // Provisioning needs no password, while this pool supplies its own.
+    let url = "postgres://owner@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2";
+    let expected: PgConnectOptions =
+        "postgres://restricted:x1@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2?sslmode=disable"
+            .parse()
+            .unwrap();
     assert!(expected.get_socket().is_some());
     let resolved = plan(vec![PlannedPool::password_login(
         one(),
@@ -101,6 +105,8 @@ fn socket_hosts_survive_a_password_login() {
     .resolve(url, url, "pgh_probe_2", Environment::CLEAN)
     .unwrap();
     assert_eq!(identity(&resolved[0].1), identity(&expected));
+    assert_eq!(resolved[0].1.get_username(), "restricted");
+    assert_eq!(password(&resolved[0].1).as_deref(), Some("x1"));
 }
 
 #[test]

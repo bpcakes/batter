@@ -403,8 +403,10 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   rebuilt from the same parts, refuses any `sqlx.toml` (whose
   `database-url-var` SQLx CLI 0.9.1 reads by default), and refuses a Cargo
   `[env]` that sets any `PG*` variable or changes
-  `DATABASE_URL` for the query macros, reading them at run time in a process
-  Cargo launches so no credential is compiled into the probe's artifacts. It assumes the host name resolves to one server for the
+  `DATABASE_URL` for the query macros. The refresh decodes the Unix environment
+  bytes as UTF-8 and checks Cargo's settings during procedural macro expansion
+  under `cargo check`. No target runner is invoked or credential embedded in
+  probe artifacts. It assumes the host name resolves to one server for the
   whole refresh. It
   accepts only one host, one database and the `sslmode`, `application_name`
   and `options` parameters. A TLS-required refresh is unsupported: the query

@@ -12,7 +12,10 @@
 use std::{fmt, path::PathBuf, str::FromStr};
 
 use postgres_test_harness::{DatabaseLease, PostgresHarness};
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
+use sqlx::{
+    ConnectOptions,
+    postgres::{PgConnectOptions, PgSslMode},
+};
 use tokio_postgres::config::{
     ChannelBinding, Host, LoadBalanceHosts, SslMode, SslNegotiation, TargetSessionAttrs,
 };
@@ -25,7 +28,7 @@ const DEFAULT_PORT: u16 = 5432;
 /// Reads the harness admin URL once with tokio-postgres, the parser the harness
 /// itself connects with, and builds SQLx options from that parse field by
 /// field: host or Unix socket, port (5432 when the URL names none), user,
-/// password and TLS mode, plus the lease's recorded database. The lease, not a
+/// explicit password and the harness connector’s plaintext transport, plus the lease's recorded database. The lease, not a
 /// free-form name, selects the database, so these options cannot open the
 /// admin database or a database no lease names; a lease whose URL does not
 /// name its database is refused with [`super::LeaseDatabaseMismatch`], and
@@ -36,7 +39,9 @@ const DEFAULT_PORT: u16 = 5432;
 /// That is an endpoint match, not proof of ownership: the harness gives a
 /// lease no issuer identity, so a lease from a second harness on the same
 /// server and login is accepted, and the caller remains responsible for
-/// passing a lease it holds.
+/// passing a lease it holds. The guarantees describe the options as returned:
+/// `PgConnectOptions` keeps its native setters, and a caller that changes the
+/// database or host afterwards must preserve them itself.
 /// Test code that connects to a leased database directly, such as a
 /// diagnostic pool beside a fixture, uses this
 /// instead of handing `admin_database_url()` or a lease URL to SQLx, whose
@@ -127,7 +132,6 @@ pub(super) struct HarnessEndpoint {
     port: u16,
     user: String,
     password: Option<String>,
-    ssl_mode: PgSslMode,
     application_name: Option<String>,
     /// tokio-postgres's raw `options`, carried only as `-c key=value` pairs
     /// that SQLx's setter rebuilds byte for byte.
@@ -252,12 +256,11 @@ impl HarnessEndpoint {
                 Some((raw.to_owned(), pairs))
             }
         };
-        let ssl_mode = match config.get_ssl_mode() {
-            SslMode::Disable => PgSslMode::Disable,
-            SslMode::Prefer => PgSslMode::Prefer,
-            SslMode::Require => PgSslMode::Require,
-            _ => return Err(refusal(UnsupportedSetting)),
-        };
+        // postgres-test-harness connects with NoTls. Disable and Prefer both
+        // use plaintext; a TLS requirement cannot be honored by provisioning.
+        if !matches!(config.get_ssl_mode(), SslMode::Disable | SslMode::Prefer) {
+            return Err(refusal(UnsupportedSetting));
+        }
         let user = config
             .get_user()
             .ok_or_else(|| refusal(MissingUser))?
@@ -274,7 +277,6 @@ impl HarnessEndpoint {
             port,
             user,
             password,
-            ssl_mode,
             application_name: config.get_application_name().map(str::to_owned),
             options,
             connect_timeout: config.get_connect_timeout().copied(),
@@ -283,8 +285,25 @@ impl HarnessEndpoint {
         })
     }
 
+    fn owner_password(&self) -> Result<&str, sqlx::Error> {
+        // On a challenge tokio-postgres refuses an omitted password. SQLx
+        // would send an empty one, or load one from a passfile for a URL.
+        self.password
+            .as_deref()
+            .ok_or_else(|| refusal(HarnessEndpointReason::UnsupportedSetting))
+    }
+
     /// SQLx options for `database`, every endpoint field set explicitly.
     pub(super) fn options(&self, database: &str) -> Result<PgConnectOptions, sqlx::Error> {
+        Ok(self.options_for_login(database, &self.user, self.owner_password()?))
+    }
+
+    pub(super) fn options_for_login(
+        &self,
+        database: &str,
+        user: &str,
+        password: &str,
+    ) -> PgConnectOptions {
         // `from_admin_url` already refused every `PG*` variable, so SQLx's
         // defaults below read nothing from the environment.
         let options = PgConnectOptions::new_without_pgpass();
@@ -294,19 +313,17 @@ impl HarnessEndpoint {
         };
         let mut options = options
             .port(self.port)
-            .username(&self.user)
+            .username(user)
+            .password(password)
             .database(database)
-            .ssl_mode(self.ssl_mode);
-        if let Some(password) = &self.password {
-            options = options.password(password);
-        }
+            .ssl_mode(PgSslMode::Disable);
         if let Some(name) = &self.application_name {
             options = options.application_name(name);
         }
         if let Some((_, pairs)) = &self.options {
             options = options.options(pairs.iter().cloned());
         }
-        Ok(options)
+        options
     }
 
     /// A minimal URL for `database` that tokio-postgres and SQLx both read back
@@ -332,19 +349,17 @@ impl HarnessEndpoint {
         let mut url = format!("postgres://{}", strict_encode(&self.user));
         // SQLx reads an empty userinfo password as none and may then consult a
         // passfile, so an explicit empty password travels as a parameter.
-        match self.password.as_deref() {
-            Some("") | None => {}
-            Some(password) => {
-                url.push(':');
-                url.push_str(&strict_encode(password));
-            }
+        let password = self.owner_password()?;
+        if !password.is_empty() {
+            url.push(':');
+            url.push_str(&strict_encode(password));
         }
         url.push_str(&format!(
             "@{host}:{}/{}",
             self.port,
             strict_encode(database)
         ));
-        url.push_str(&format!("?sslmode={}", mode_name(self.ssl_mode)));
+        url.push_str("?sslmode=disable");
         if let Some(name) = &self.application_name {
             url.push_str(&format!("&application_name={}", strict_encode(name)));
         }
@@ -358,10 +373,10 @@ impl HarnessEndpoint {
             // tokio-postgres parsed whole seconds, so this is exact.
             url.push_str(&format!("&connect_timeout={}", timeout.as_secs()));
         }
-        if self.password.as_deref() == Some("") {
+        if password.is_empty() {
             url.push_str("&password=");
         }
-        self.check_round_trip(&url, database)?;
+        self.check_round_trip(&url, database, password)?;
         Ok(url)
     }
 
@@ -372,32 +387,42 @@ impl HarnessEndpoint {
             && self.port == other.port
             && self.user == other.user
             && self.password == other.password
-            && mode_name(self.ssl_mode) == mode_name(other.ssl_mode)
             && self.application_name == other.application_name
             && self.options == other.options
             && self.connect_timeout == other.connect_timeout
             && self.channel_binding_disabled == other.channel_binding_disabled
     }
 
-    fn check_round_trip(&self, url: &str, database: &str) -> Result<(), sqlx::Error> {
+    fn check_round_trip(
+        &self,
+        url: &str,
+        database: &str,
+        password: &str,
+    ) -> Result<(), sqlx::Error> {
         let mismatch = || refusal(HarnessEndpointReason::RoundTrip);
         // tokio-postgres's parse, as the harness and many initializers read it.
         let again = Self::from_admin_url(url, Environment::CLEAN).map_err(|_| mismatch())?;
-        if again.address != self.address
-            || again.port != self.port
-            || again.user != self.user
-            || again.password != self.password
-            || mode_name(again.ssl_mode) != mode_name(self.ssl_mode)
-            || again.application_name != self.application_name
-            || again.options != self.options
-            || again.connect_timeout != self.connect_timeout
-            || again.channel_binding_disabled != self.channel_binding_disabled
-            || again.admin_database != database
-        {
+        if again.admin_database != database || !self.same_server_and_login(&again) {
             return Err(mismatch());
         }
-        // SQLx's own parse; every `PG*` variable was refused already.
-        let native: PgConnectOptions = url.parse().map_err(|_| mismatch())?;
+        // SQLx has no password getter. Check the credential in the Url that
+        // its parser consumes *before* calling from_url, which opens .pgpass
+        // if neither userinfo nor a password query parameter supplies one.
+        let parsed = url::Url::parse(url).map_err(|_| mismatch())?;
+        let query_password = parsed
+            .query_pairs()
+            .filter(|(key, _)| key == "password")
+            .last();
+        let supplied = match query_password {
+            Some((_, value)) => password.is_empty() && value.is_empty(),
+            None => parsed
+                .password()
+                .is_some_and(|value| value == strict_encode(password)),
+        };
+        if !supplied {
+            return Err(mismatch());
+        }
+        let native = PgConnectOptions::from_url(&parsed).map_err(|_| mismatch())?;
         let same_address = match &self.address {
             // SQLx keeps the URL brackets around an IPv6 host.
             Address::Tcp(name) => {
@@ -414,7 +439,7 @@ impl HarnessEndpoint {
             || native.get_port() != self.port
             || native.get_username() != self.user
             || native.get_database() != Some(database)
-            || mode_name(native.get_ssl_mode()) != mode_name(self.ssl_mode)
+            || !matches!(native.get_ssl_mode(), PgSslMode::Disable)
             || native.get_application_name() != self.application_name.as_deref()
             || native.get_options() != self.options.as_ref().map(|(raw, _)| raw.as_str())
         {
@@ -476,18 +501,6 @@ fn option_pairs(raw: &str) -> Option<Vec<(String, String)>> {
             _ => None,
         })
         .collect()
-}
-
-/// The URL spelling of the TLS modes a harness endpoint can carry.
-fn mode_name(mode: PgSslMode) -> &'static str {
-    match mode {
-        PgSslMode::Disable => "disable",
-        PgSslMode::Require => "require",
-        PgSslMode::Prefer => "prefer",
-        PgSslMode::Allow => "allow",
-        PgSslMode::VerifyCa => "verify-ca",
-        PgSslMode::VerifyFull => "verify-full",
-    }
 }
 
 /// The URL a template initializer receives in place of `harness_url`: rebuilt
@@ -570,7 +583,8 @@ pub enum HarnessEndpointReason {
     /// The admin URL selects a setting SQLx options cannot carry faithfully:
     /// `options` other than `-c key=value` pairs, a non-default
     /// `target_session_attrs`, `sslnegotiation` or `load_balance_hosts`,
-    /// required channel binding, or an unknown TLS mode.
+    /// required channel binding or TLS, or an omitted password when a fixture
+    /// client must use the harness login.
     UnsupportedSetting,
     /// The admin URL names no user.
     MissingUser,

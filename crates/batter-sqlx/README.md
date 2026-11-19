@@ -1067,7 +1067,7 @@ through tokio-postgres, which reads no environment, while SQLx 0.9.1, like
 libpq, fills unset settings from `PG*` variables and reads some URL text
 differently. Each resolution therefore reads the harness admin URL
 once with tokio-postgres, sets every SQLx field from that typed parse (host or
-Unix socket, port with 5432 as default, user, password, TLS mode,
+Unix socket, port with 5432 as default, login, plaintext transport,
 `application_name` and `-c key=value` `options`), and takes the database from
 the name the harness recorded. It refuses with `UnsupportedHarnessEndpoint`,
 whose `HarnessEndpointReason` names the cause, when any `PG*` environment
@@ -1080,6 +1080,16 @@ travel inside `sqlx::Error::Configuration` before any pool exists. The
 `fixture_lease_database_mismatch_retained` live probe proves that refusal and
 its retention on both the owned and low-level paths; offline unit tests cover
 the endpoint mapping and refusals.
+
+The pinned harness opens connections with `NoTls`. An omitted TLS mode,
+`sslmode=prefer` and `sslmode=disable` all yield plaintext for the harness,
+fixture pools and initializer URLs. A TLS requirement is refused. Clients
+using the harness login require its password to be explicit. For a trust or
+peer login, `?password=` explicitly selects an empty password. Omitting it
+would let SQLx consult a passfile when parsing a URL or send an empty password
+when challenged on a typed connection, where tokio-postgres would stop.
+A pool declared with `PlannedPool::password_login` supplies its own credentials
+and can use a passwordless provisioning URL.
 
 Template initializers receive a URL rebuilt from the same parse for the
 template's recorded name and checked by reading it back with both

@@ -134,12 +134,18 @@ impl ConnectionPlan {
         if !HarnessEndpoint::names_database(lease_url, lease_name) {
             return Err(sqlx::Error::Configuration(Box::new(LeaseDatabaseMismatch)));
         }
-        let lease = endpoint.options(lease_name)?;
-        Ok(self
-            .pools
+        self.pools
             .iter()
-            .map(|pool| (pool.options.clone(), pool.login.apply(lease.clone())))
-            .collect())
+            .map(|pool| {
+                let options = match &pool.login {
+                    Login::Lease => endpoint.options(lease_name)?,
+                    Login::Password { username, password } => {
+                        endpoint.options_for_login(lease_name, username, password.expose_secret())
+                    }
+                };
+                Ok((pool.options.clone(), options))
+            })
+            .collect()
     }
 }
 
@@ -208,8 +214,10 @@ pub(super) fn lookup(pools: &[PgPool], plan: u64, key: PoolKey) -> Option<&PgPoo
 /// One declared native pool and the login it authenticates as.
 ///
 /// Both logins keep everything else from the harness endpoint: server address
-/// or socket, port, TLS mode, `application_name` and `-c key=value` startup
-/// options from the admin URL, and the lease's recorded database. SQLx's own
+/// or socket, port, plaintext transport, `application_name` and `-c key=value` startup
+/// options from the admin URL, and the lease's recorded database. A pool that
+/// inherits the harness login requires an explicit password, including
+/// `password=` for an intentional empty password. SQLx's own
 /// defaults apply to settings the admin URL cannot carry, such as certificates
 /// and the statement cache. Put startup options and every other setting in the
 /// harness admin URL: an ambient `PG*` variable such as `PGOPTIONS` makes
@@ -235,17 +243,6 @@ enum Login {
         username: String,
         password: SecretString,
     },
-}
-
-impl Login {
-    fn apply(&self, lease: PgConnectOptions) -> PgConnectOptions {
-        match self {
-            Self::Lease => lease,
-            Self::Password { username, password } => {
-                lease.username(username).password(password.expose_secret())
-            }
-        }
-    }
 }
 
 impl PlannedPool {

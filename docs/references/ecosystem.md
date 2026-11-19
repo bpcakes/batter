@@ -84,11 +84,21 @@ contracts cite:
   and take the database from the name the harness recorded, refusing any
   ambient `PG*` variable, `hostaddr`, several hosts and settings SQLx cannot
   carry. Template initializers receive a URL rebuilt
-  from that parse and checked by reading it back with both parsers. The
+  from that parse and checked by reading it back with both parsers.
+  The pinned [harness connector](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
+  uses `NoTls`, so fixture clients use plaintext. Inheriting the harness login
+  requires an explicit password, including an intentional empty one.
+  [tokio-postgres authentication](https://docs.rs/crate/tokio-postgres/0.7.18/source/src/connect_raw.rs)
+  refuses a password challenge when the password is absent.
+  [SQLx authentication](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/connection/establish.rs)
+  uses an empty response credential for that case, and its
+  [URL parser](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/parse.rs)
+  first tries a passfile. Explicitly declared pool credentials can still be
+  used with a passwordless provisioning URL. The
   metadata refresh script refuses any ambient `PG*` variable, parses
-  `DATABASE_URL` once, gives `psql` the parts as its own PG* variables, gives
+  the Unix bytes of `DATABASE_URL` as UTF-8, gives `psql` the parts as its own PG* variables, gives
   SQLx CLI a URL rebuilt from the same parts, and asks Cargo through a probe
-  crate whether `[env]` sets any `PG*` variable or changes
+  macro expanded during `cargo check` whether `[env]` sets any `PG*` variable or changes
   `DATABASE_URL` for the query macros. Runledger's fixtures refuse any `PG*`
   variable in every mode, since their native test proxies dial the URL host
   themselves, and pin

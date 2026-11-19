@@ -251,8 +251,9 @@ fn build_database_name(prefix: &str) -> String {
 }
 
 /// Replace the admin URL's database, dropping whatever followed it, and
-/// append `derived_query`: the owned container's loopback pin, or nothing for
-/// an external admin URL, whose query is not carried over.
+/// append `derived_query`: the owned container's address and transport pin, or
+/// the external fixture's plaintext pin. The admin URL's query is never
+/// carried over.
 fn with_database_name(admin_url: &str, database_name: &str, derived_query: &str) -> String {
     // Cut the query and fragment first: either may contain a '/'.
     let location = admin_url.split(['?', '#']).next().unwrap_or(admin_url);
@@ -305,28 +306,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derived_database_urls_carry_only_the_owned_pin() {
-        // External admin URLs: the query is dropped, as before the pin.
+    fn derived_database_urls_carry_only_their_fixture_pin() {
+        // External admin URLs: the query is dropped and the plaintext pin added.
         assert_eq!(
-            with_database_name("postgres://u:p@db.invalid:5432/postgres", "lease_1", ""),
-            "postgres://u:p@db.invalid:5432/lease_1"
+            with_database_name(
+                "postgres://u:p@db.invalid:5432/postgres",
+                "lease_1",
+                crate::postgres_container::EXTERNAL_DERIVED_QUERY
+            ),
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
         );
         assert_eq!(
             with_database_name(
                 "postgres://u:p@db.invalid:5432/postgres?%64bname=other&statement-cache-capacity=0",
                 "lease_1",
-                ""
+                crate::postgres_container::EXTERNAL_DERIVED_QUERY
             ),
-            "postgres://u:p@db.invalid:5432/lease_1"
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
         );
         // A '/' inside the query must not be taken for the database path.
         assert_eq!(
             with_database_name(
                 "postgres://u:p@db.invalid:5432/postgres?sslrootcert=/etc/ssl/ca.pem#a/b",
                 "lease_1",
-                ""
+                crate::postgres_container::EXTERNAL_DERIVED_QUERY
             ),
-            "postgres://u:p@db.invalid:5432/lease_1"
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
         );
         // Owned container: its pin is re-appended, never the admin query.
         assert_eq!(

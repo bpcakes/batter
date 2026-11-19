@@ -155,8 +155,9 @@ endpoint tests say so in one assertion, because SQLx reads those variables
 in-process and tests may not change the environment. Where the settings go
 depends on the mode:
 
-- SQLx fixtures: the harness admin URL carries credentials, TLS mode,
-  `application_name` and `-c key=value` options.
+- SQLx fixtures use the harness connector's plaintext transport and carry
+  `application_name` and `-c key=value` options. Clients inheriting the harness
+  login require an explicit password, which may be empty.
 - An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`: credentials only, a DNS or
   IPv4 host and exactly one database path segment. Any query is refused,
   except a `hostaddr` repeating its own IP literal host, because lease URLs

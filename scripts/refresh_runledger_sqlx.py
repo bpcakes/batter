@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from urllib.parse import quote, unquote, urlsplit
 
+from runledger_compiler_endpoint import cargo_compiler_endpoint
 from runledger_source import copy_source, run
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -287,54 +288,6 @@ def sqlx_environment(database_url):
         os.environ.update(previous)
 
 
-def cargo_compiler_endpoint(directory, database):
-    """What Cargo, run from `directory`, gives the query macros' compiler.
-
-    Returns the PG* variable names Cargo sets for the compiler and whether its
-    `DATABASE_URL` equals `database`, read at run time in a process Cargo
-    launches with the same `[env]` it gives rustc. `cargo sqlx prepare` runs `cargo check`,
-    which applies `[env]` settings, including included, home and forced ones,
-    even when the parent shell differs. Ask Cargo itself by compiling a
-    throwaway probe from the same directory; it prints variable names and one
-    boolean, never a value or either URL.
-    """
-    with tempfile.TemporaryDirectory(prefix="batter-cargo-env-probe-") as scratch:
-        probe = Path(scratch)
-        (probe / "src").mkdir()
-        (probe / "Cargo.toml").write_text(
-            '[package]\nname = "cargo-env-probe"\nversion = "0.0.0"\nedition = "2021"\n\n[workspace]\n')
-        # Cargo gives a process it runs the same [env] as rustc, so the probe
-        # reads the values at run time: nothing, credentials included, is
-        # compiled into its artifacts. The expected URL arrives on stdin,
-        # which Cargo [env] cannot replace.
-        # Names are matched by the same PG prefix the shell check uses.
-        (probe / "src/main.rs").write_text(
-            'use std::io::Read;\n'
-            'fn main() {\n'
-            '    let mut expected = String::new();\n'
-            '    std::io::stdin().read_to_string(&mut expected).expect("expected URL on stdin");\n'
-            '    let mut set: Vec<String> = std::env::vars_os()\n'
-            '        .map(|(name, _)| name.to_string_lossy().into_owned())\n'
-            '        .filter(|name| name.starts_with("PG")).collect();\n'
-            '    set.sort();\n'
-            '    print!("{} {}", if set.is_empty() { "-".to_owned() } else { set.join(",") },\n'
-            '           std::env::var("DATABASE_URL").ok().as_deref() == Some(expected.as_str()));\n'
-            '}\n')
-        try:
-            result = subprocess.run(
-                ["cargo", "run", "--quiet", "--offline", "--manifest-path", str(probe / "Cargo.toml"),
-                 "--target-dir", str(probe / "target")],
-                cwd=directory, capture_output=True, text=True, timeout=300, input=database)
-        except (OSError, subprocess.TimeoutExpired):
-            raise ValueError("could not ask Cargo which [env] settings apply") from None
-    answer = result.stdout.split()
-    names = [] if len(answer) != 2 or answer[0] == "-" else answer[0].split(",")
-    if (result.returncode or len(answer) != 2 or answer[1] not in ("true", "false")
-            or any(not re.fullmatch(r"PG[A-Za-z0-9_]*", name) for name in names)):
-        raise ValueError("could not ask Cargo which [env] settings apply")
-    return names, answer[1] == "true"
-
-
 def refuse_sqlx_config(directory):
     """Refuse any sqlx.toml: SQLx CLI 0.9.1 enables it by default, and its
     `[common] database-url-var` would make `migrate info` and `prepare` read
@@ -371,7 +324,10 @@ def query(root, parts, sql, purpose):
         result = subprocess.run(
             ["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", sql],
             env=environment_bytes(psql_environment(parts)),
-            cwd=root, capture_output=True, text=True, timeout=20)
+            # Both queries return ASCII identifiers. Discard libpq diagnostics,
+            # which may contain endpoint text in the client locale.
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            encoding="ascii", errors="replace", timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         raise RuntimeError(f"PostgreSQL {purpose} query could not complete; check psql and DATABASE_URL") from None
     if result.returncode:
@@ -382,9 +338,13 @@ def query(root, parts, sql, purpose):
 def refresh(root):
     root = Path(root).resolve()
     refuse_ambient_postgres_environment(os.environ)
-    database = os.environ.get("DATABASE_URL")
-    if not database:
+    raw_url = os.environb.get(b"DATABASE_URL")
+    if not raw_url:
         raise ValueError("DATABASE_URL must identify an already migrated PostgreSQL 18 database")
+    try:
+        database = raw_url.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("DATABASE_URL must be UTF-8") from None
     parts = parse_database_url(database)
     with sqlx_environment(sqlx_database_url(parts)):
         refresh_with(root, parts)

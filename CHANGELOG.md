@@ -31,7 +31,10 @@ contracts, capability facts and validation history.
   while any `PG*` environment variable is set (SQLx fills unset settings from
   several, the harness from none; put every setting in the admin URL) or when
   the admin URL declares `hostaddr`, several hosts or a setting SQLx cannot
-  carry. Template initializers receive a URL
+  carry. Fixture clients use the harness connector's plaintext transport.
+  Clients inheriting its login require an explicit password, which may be
+  empty (`?password=`). A pool with its own declared credentials can still
+  use a passwordless provisioning URL. Template initializers receive a URL
   rebuilt from that parse and checked with both parsers; it carries
   `connect_timeout` and `channel_binding=disable`, and other connection tuning it cannot carry
   (`tcp_user_timeout`, `keepalives*`) is refused. Offline fixture endpoint
