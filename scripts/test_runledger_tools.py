@@ -175,6 +175,10 @@ class RefreshTests(unittest.TestCase):
         # The Runledger-owned container's redundant loopback pin is dropped.
         owned = parse_database_url('postgres://runledger:runledger@127.0.0.1:5432/db?hostaddr=127.0.0.1')
         self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db')
+        # The same address in another spelling is the same pin.
+        expanded = parse_database_url('postgres://u@[0:0:0:0:0:0:0:1]/db?hostaddr=::1')
+        self.assertEqual(expanded['host'], '0:0:0:0:0:0:0:1')
+        self.assertNotIn('hostaddr', expanded['parameters'])
         self.assertEqual(parse_database_url('postgres://u@db~blue.example/db')['host'], 'db~blue.example')
         with patch.dict(os.environ, PGHOSTADDR='192.0.2.1', PGSSLMODE='disable', HOME='/home/x'):
             environment = psql_environment(parts)
@@ -212,6 +216,8 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db%2Bblue.example/postgres', 'TCP host'),
                 ('postgresql://u:private-marker@[::1%251]/postgres', 'zone'),
                 ('postgresql://u:private-marker@127.0.0.1/postgres?hostaddr=192.0.2.1', 'hostaddr'),
+                ('postgresql://u:private-marker@[::1]/postgres?hostaddr=::2', 'hostaddr'),
+                ('postgresql://u:private-marker@[::1]/postgres?hostaddr=::1%25lo0', 'hostaddr'),
                 ('postgresql://u:private-marker@db.example/postgres?hostaddr=db.example', 'hostaddr'),
                 ('postgresql://u:private-marker@127.0.0.1/postgres?hostaddr=127.0.0.1&hostaddr=127.0.0.1', 'once')):
             with self.subTest(url=url), \

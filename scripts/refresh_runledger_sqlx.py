@@ -162,7 +162,11 @@ def parse_database_url(database):
     # does (the Runledger-owned container's pin), so it is redundant for both
     # clients and dropped; any other hostaddr is refused.
     if "hostaddr" in keys:
-        if dict(pairs)["hostaddr"] != host or not is_ip_literal(host):
+        # Compare addresses, not spellings: [0:0:0:0:0:0:0:1] and ::1 are one
+        # address, as Runledger's external fixture also reads them.
+        pin = dict(pairs)["hostaddr"]
+        if (not is_ip_literal(host) or not is_ip_literal(pin)
+                or ipaddress.ip_address(pin) != ipaddress.ip_address(host)):
             raise ValueError("DATABASE_URL may declare hostaddr only as its own IP literal host")
         pairs = [(key, value) for key, value in pairs if key != "hostaddr"]
         keys = [key for key, _ in pairs]

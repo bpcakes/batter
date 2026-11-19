@@ -211,8 +211,10 @@ pub(super) fn lookup(pools: &[PgPool], plan: u64, key: PoolKey) -> Option<&PgPoo
 /// or socket, port, TLS mode, `application_name` and `-c key=value` startup
 /// options from the admin URL, and the lease's recorded database. SQLx's own
 /// defaults apply to settings the admin URL cannot carry, such as certificates
-/// and the statement cache, and SQLx still reads unset session settings such
-/// as `PGOPTIONS` from the environment. Pool capacity, timeouts and the native session hooks
+/// and the statement cache. Put startup options and every other setting in the
+/// harness admin URL: an ambient `PG*` variable such as `PGOPTIONS` makes
+/// resolution refuse with `HarnessEndpointReason::AmbientEnvironment` before
+/// any pool exists. Pool capacity, timeouts and the native session hooks
 /// (`after_connect`, `before_acquire`, `after_release`) come from `options`.
 /// Neither constructor can select another server or database.
 ///
