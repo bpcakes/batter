@@ -44,7 +44,36 @@ def sync_files(source, destination, suffix):
 
 
 # Query parameters both psql and SQLx accept, with the psql variable for each.
-CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
+CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT",
+                      "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
+SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
+# TLS and authentication requirements both children would lose with the
+# inherited PG* environment, and that neither URL nor psql variables carry.
+UNCARRIED_REQUIREMENTS = ("PGSSLCERT", "PGSSLKEY", "PGSSLPASSWORD", "PGSSLCRL", "PGSSLCRLDIR",
+                          "PGSSLCERTMODE", "PGSSLNEGOTIATION", "PGSSLSNI", "PGREQUIRESSL",
+                          "PGSSLMINPROTOCOLVERSION", "PGSSLMAXPROTOCOLVERSION",
+                          "PGCHANNELBINDING", "PGGSSENCMODE", "PGREQUIREAUTH")
+
+
+def carry_inherited_tls(parts, environment):
+    """Carry inherited TLS requirements to both clients explicitly.
+
+    Both children start from an environment without PG* settings, so a
+    PGSSLMODE or PGSSLROOTCERT the URL does not override would silently be
+    lost, weakening verify-full to prefer. Those two become URL parameters;
+    any other inherited TLS or authentication requirement is refused.
+    """
+    present = sorted(key for key in UNCARRIED_REQUIREMENTS if environment.get(key))
+    if present:
+        raise ValueError("unset " + ", ".join(present) + " or connect without the refresh: it cannot "
+                         "give psql and SQLx that requirement")
+    for key in ("sslmode", "sslrootcert"):
+        value = environment.get(CARRIED_PARAMETERS[key])
+        if value and key not in parts["parameters"]:
+            parts["parameters"][key] = value
+    if parts["parameters"].get("sslmode", "prefer") not in SSL_MODES:
+        raise ValueError("DATABASE_URL or PGSSLMODE names an unknown sslmode")
+    return parts
 
 
 def is_ip_literal(host):
@@ -87,8 +116,13 @@ def parse_database_url(database):
     # slice would drop a second host, and urlsplit takes its port.
     if "," in host:
         raise ValueError("DATABASE_URL must name exactly one host and one database")
-    if host.startswith("[") and "]" in host:
-        host = host[1:host.index("]")]
+    if host.startswith("["):
+        # Only a bracketed literal followed by an optional port: slicing at the
+        # first "]" would otherwise drop the rest of a malformed authority.
+        close = host.find("]")
+        if close == -1 or not re.fullmatch(r"(:[0-9]*)?", host[close + 1:]):
+            raise ValueError("DATABASE_URL must name exactly one host and one database")
+        host = host[1:close]
     elif port is not None:
         host = host.rpartition(":")[0]
     try:
@@ -128,7 +162,7 @@ def parse_database_url(database):
         pairs = [(key, value) for key, value in pairs if key != "hostaddr"]
         keys = [key for key, _ in pairs]
     if any(key not in CARRIED_PARAMETERS for key in keys):
-        raise ValueError("DATABASE_URL may declare only sslmode, application_name and options, each once")
+        raise ValueError("DATABASE_URL may declare only sslmode, sslrootcert, application_name and options, each once")
     return {
         "host": host,
         "port": port or 5432,
@@ -275,7 +309,7 @@ def refresh(root):
     database = os.environ.get("DATABASE_URL")
     if not database:
         raise ValueError("DATABASE_URL must identify an already migrated PostgreSQL 18 database")
-    parts = parse_database_url(database)
+    parts = carry_inherited_tls(parse_database_url(database), os.environ)
     with sqlx_environment(sqlx_database_url(parts)):
         refresh_with(root, parts)
 

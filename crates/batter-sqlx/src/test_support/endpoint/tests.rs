@@ -274,3 +274,48 @@ fn initializer_urls_keep_the_connect_timeout_and_refuse_other_tuning() {
         );
     }
 }
+
+#[test]
+fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
+    let admin = "postgres://owner:p@127.0.0.1:5432/postgres?sslmode=disable";
+    let lease = "postgres://owner:p@127.0.0.1:5432/pgh_lease_1?sslmode=disable";
+    let options = lease_options(admin, lease, "pgh_lease_1").unwrap();
+    assert_eq!(options.get_database(), Some("pgh_lease_1"));
+    // A name the lease URL does not select.
+    let error = lease_options(admin, lease, "postgres").unwrap_err();
+    assert!(matches!(&error, sqlx::Error::Configuration(source)
+        if source.is::<super::super::LeaseDatabaseMismatch>()));
+    // A lease another harness issued: different port, or different login.
+    for foreign in [
+        "postgres://owner:p@127.0.0.1:6543/pgh_lease_1?sslmode=disable",
+        "postgres://other:p@127.0.0.1:5432/pgh_lease_1?sslmode=disable",
+    ] {
+        let error = lease_options(admin, foreign, "pgh_lease_1").unwrap_err();
+        let sqlx::Error::Configuration(source) = &error else {
+            panic!("configuration error expected");
+        };
+        assert_eq!(
+            source
+                .downcast_ref::<UnsupportedHarnessEndpoint>()
+                .map(UnsupportedHarnessEndpoint::reason),
+            Some(HarnessEndpointReason::ForeignLease),
+            "{foreign}"
+        );
+    }
+}
+
+#[test]
+fn initializer_urls_keep_disabled_channel_binding() {
+    let disabled = endpoint("postgres://owner@127.0.0.1:5432/postgres?channel_binding=disable");
+    let url = disabled.url("pgh_template_1").unwrap();
+    let config = tokio_postgres::Config::from_str(&url).unwrap();
+    assert_eq!(
+        config.get_channel_binding(),
+        ChannelBinding::Disable,
+        "{url}"
+    );
+    let preferred = endpoint("postgres://owner@127.0.0.1:5432/postgres")
+        .url("pgh_template_1")
+        .unwrap();
+    assert!(!preferred.contains("channel_binding"), "{preferred}");
+}

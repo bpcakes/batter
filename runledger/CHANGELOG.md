@@ -396,8 +396,12 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   `[env]` `PGHOSTADDR` or `DATABASE_URL` that would change what the query
   macros connect to. It assumes the host name resolves to one server for the
   whole refresh. It
-  accepts only one host, one database and the `sslmode`, `application_name` and
-  `options` parameters. No public item, schema or persisted data changes.
+  accepts only one host, one database and the `sslmode`, `sslrootcert`,
+  `application_name` and `options` parameters. An inherited `PGSSLMODE` or
+  `PGSSLROOTCERT` the URL does not override is carried to both clients
+  explicitly, so `verify-full` is not weakened by the clean environment; any
+  other inherited TLS or authentication requirement (`PGSSLCERT`,
+  `PGREQUIRESSL`, `PGCHANNELBINDING` and similar) is refused. No public item, schema or persisted data changes.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

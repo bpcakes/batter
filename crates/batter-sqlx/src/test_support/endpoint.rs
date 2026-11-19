@@ -9,7 +9,7 @@
 
 use std::{fmt, path::PathBuf, str::FromStr};
 
-use postgres_test_harness::PostgresHarness;
+use postgres_test_harness::{DatabaseLease, PostgresHarness};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use tokio_postgres::config::{
     ChannelBinding, Host, LoadBalanceHosts, SslMode, SslNegotiation, TargetSessionAttrs,
@@ -17,13 +17,19 @@ use tokio_postgres::config::{
 
 const DEFAULT_PORT: u16 = 5432;
 
-/// Native options for `database` on the server the harness provisions on.
+/// Native options for `lease`'s database on the server the harness
+/// provisioned it on.
 ///
 /// Reads the harness admin URL once with tokio-postgres, the parser the harness
 /// itself connects with, and builds SQLx options from that parse field by
 /// field: host or Unix socket, port (5432 when the URL names none), user,
-/// password and TLS mode, plus `database`. Test code that connects to a harness
-/// database directly, such as a diagnostic pool beside a fixture, uses this
+/// password and TLS mode, plus the lease's recorded database. The lease, not a
+/// free-form name, selects the database, so these options cannot open the
+/// admin database or a database no lease owns; a lease whose URL does not name
+/// its database is refused with [`super::LeaseDatabaseMismatch`], and one whose
+/// endpoint is not this harness's with [`HarnessEndpointReason::ForeignLease`].
+/// Test code that connects to a leased database directly, such as a
+/// diagnostic pool beside a fixture, uses this
 /// instead of handing `admin_database_url()` or a lease URL to SQLx, whose
 /// parse can differ (for example through an ambient `PGHOSTADDR`, a `dbname`
 /// parameter or path normalization).
@@ -34,8 +40,11 @@ const DEFAULT_PORT: u16 = 5432;
 /// options cannot carry faithfully; see [`HarnessEndpointReason`].
 ///
 /// ```no_run
-/// # fn example(harness: &postgres_test_harness::PostgresHarness) -> Result<(), sqlx::Error> {
-/// let options = batter_sqlx::test_support::harness_connect_options(harness, "fixture_db")?;
+/// # fn example(
+/// #     harness: &postgres_test_harness::PostgresHarness,
+/// #     lease: &postgres_test_harness::DatabaseLease,
+/// # ) -> Result<(), sqlx::Error> {
+/// let options = batter_sqlx::test_support::harness_connect_options(harness, lease)?;
 /// let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(options);
 /// # drop(pool);
 /// # Ok(())
@@ -43,9 +52,34 @@ const DEFAULT_PORT: u16 = 5432;
 /// ```
 pub fn harness_connect_options(
     harness: &PostgresHarness,
-    database: &str,
+    lease: &DatabaseLease,
 ) -> Result<PgConnectOptions, sqlx::Error> {
-    HarnessEndpoint::from_admin_url(harness.admin_database_url())?.options(database)
+    lease_options(
+        harness.admin_database_url(),
+        lease.database_url(),
+        lease.database_name(),
+    )
+}
+
+fn lease_options(
+    admin_url: &str,
+    lease_url: &str,
+    name: &str,
+) -> Result<PgConnectOptions, sqlx::Error> {
+    let endpoint = HarnessEndpoint::from_admin_url(admin_url)?;
+    if !HarnessEndpoint::names_database(lease_url, name) {
+        return Err(sqlx::Error::Configuration(Box::new(
+            super::LeaseDatabaseMismatch,
+        )));
+    }
+    // The harness builds a lease URL from its admin URL, replacing only the
+    // database; any other difference means another harness issued the lease.
+    let issuer = HarnessEndpoint::from_admin_url(lease_url)
+        .map_err(|_| refusal(HarnessEndpointReason::ForeignLease))?;
+    if !endpoint.same_server_and_login(&issuer) {
+        return Err(refusal(HarnessEndpointReason::ForeignLease));
+    }
+    endpoint.options(name)
 }
 
 /// Native options for the harness's own administrative database.
@@ -82,6 +116,9 @@ pub(super) struct HarnessEndpoint {
     /// Carried to template initializers, which may use tokio-postgres; SQLx
     /// ignores the parameter, as it always has for these pools.
     connect_timeout: Option<std::time::Duration>,
+    /// `channel_binding=disable`, carried to initializers (tokio-postgres
+    /// would otherwise prefer it); SQLx does not implement channel binding.
+    channel_binding_disabled: bool,
     admin_database: String,
 }
 
@@ -198,6 +235,7 @@ impl HarnessEndpoint {
             application_name: config.get_application_name().map(str::to_owned),
             options,
             connect_timeout: config.get_connect_timeout().copied(),
+            channel_binding_disabled: config.get_channel_binding() == ChannelBinding::Disable,
             admin_database,
         })
     }
@@ -269,6 +307,9 @@ impl HarnessEndpoint {
         if let Some((raw, _)) = &self.options {
             url.push_str(&format!("&options={}", strict_encode(raw)));
         }
+        if self.channel_binding_disabled {
+            url.push_str("&channel_binding=disable");
+        }
         if let Some(timeout) = self.connect_timeout {
             // tokio-postgres parsed whole seconds, so this is exact.
             url.push_str(&format!("&connect_timeout={}", timeout.as_secs()));
@@ -278,6 +319,20 @@ impl HarnessEndpoint {
         }
         self.check_round_trip(&url, database)?;
         Ok(url)
+    }
+
+    /// Whether `other` reaches the same server with the same login and session
+    /// settings, whatever database it names.
+    fn same_server_and_login(&self, other: &Self) -> bool {
+        self.address == other.address
+            && self.port == other.port
+            && self.user == other.user
+            && self.password == other.password
+            && mode_name(self.ssl_mode) == mode_name(other.ssl_mode)
+            && self.application_name == other.application_name
+            && self.options == other.options
+            && self.connect_timeout == other.connect_timeout
+            && self.channel_binding_disabled == other.channel_binding_disabled
     }
 
     fn check_round_trip(&self, url: &str, database: &str) -> Result<(), sqlx::Error> {
@@ -292,6 +347,7 @@ impl HarnessEndpoint {
             || again.application_name != self.application_name
             || again.options != self.options
             || again.connect_timeout != self.connect_timeout
+            || again.channel_binding_disabled != self.channel_binding_disabled
             || again.admin_database != database
         {
             return Err(mismatch());
@@ -477,6 +533,9 @@ pub enum HarnessEndpointReason {
     /// and trailing brackets before resolving, so it would look up a different
     /// name, and its URL rendering panics on such a host.
     UnsupportedHostName,
+    /// The lease's URL reaches another server or login than this harness's
+    /// admin URL, so another harness issued it.
+    ForeignLease,
     /// The admin URL's password is not UTF-8.
     NonUtf8Password,
     /// The admin URL's Unix socket directory is not UTF-8, which SQLx would
@@ -501,6 +560,9 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
             HarnessEndpointReason::MissingUser => "the fixture admin URL names no user",
             HarnessEndpointReason::UnsupportedHostName => {
                 "the fixture admin URL host name contains a bracket"
+            }
+            HarnessEndpointReason::ForeignLease => {
+                "the lease was not issued by this fixture harness"
             }
             HarnessEndpointReason::NonUtf8Password => "the fixture admin URL password is not UTF-8",
             HarnessEndpointReason::NonUtf8SocketPath => {

@@ -29,7 +29,7 @@ pub async fn probe() -> ProbeResult {
 async fn one_lease(harness: &PostgresHarness, admin: &PgPool, mode: u8) -> ProbeResult {
     let lease = harness.empty_database().await?;
     let name = lease.database_name().to_owned();
-    let application = pool(harness_connect_options(harness, &name)).await;
+    let application = pool(harness_connect_options(harness, &lease)).await;
     let body = match application {
         Ok(application) => {
             let result = observe_application(&application, admin, &name).await;

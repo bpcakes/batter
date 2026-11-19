@@ -100,7 +100,10 @@ contracts cite:
   lose is refused before provisioning (a `hostaddr` repeating its IP literal
   host is accepted). SQLx 0.9.0 honoured these parameters too, so that split
   predates this upgrade. Template initializer URLs carry `connect_timeout` and
-  refuse other connection tuning they cannot carry. The metadata refresh
+  `channel_binding=disable`, and refuse other connection tuning they cannot
+  carry. The refresh carries an inherited `PGSSLMODE` and `PGSSLROOTCERT` to
+  both clients and refuses other inherited TLS requirements, since its clean
+  child environments would otherwise weaken them. The metadata refresh
   drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.
 
   The invariant holds under three stated preconditions, which are not

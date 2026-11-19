@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
-from refresh_runledger_sqlx import (refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
+from refresh_runledger_sqlx import (carry_inherited_tls, refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
 from runledger_source import copy_source, run, validate_consumer
 
@@ -174,6 +174,7 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db-a,db-b/postgres', 'exactly one host'),
                 # Python 3.9's urlsplit accepts this; newer versions reject it first.
                 ('postgresql://u:private-marker@[::1],db2:6543/postgres', 'exactly one host|not a valid URL'),
+                ('postgresql://u:private-marker@[::1]other:6543/postgres', 'exactly one host|not a valid URL'),
                 ('postgresql://u:private-marker@db-a:5432', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/one/two', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/postgres?application_name=a#b', "must not contain '#'"),
@@ -215,6 +216,24 @@ class RefreshTests(unittest.TestCase):
                     refresh(root)
                 command.assert_not_called()
                 psql.assert_not_called()
+
+    def test_inherited_tls_requirements_are_carried_or_refused(self):
+        def parts():
+            return parse_database_url('postgres://u@db.invalid/db')
+        carried = carry_inherited_tls(parts(), {'PGSSLMODE': 'verify-full', 'PGSSLROOTCERT': '/ca/root.pem'})
+        self.assertEqual(carried['parameters'], {'sslmode': 'verify-full', 'sslrootcert': '/ca/root.pem'})
+        self.assertIn('sslmode=verify-full&sslrootcert=%2Fca%2Froot.pem', sqlx_database_url(carried))
+        self.assertEqual(psql_environment(carried)['PGSSLMODE'], 'verify-full')
+        self.assertEqual(psql_environment(carried)['PGSSLROOTCERT'], '/ca/root.pem')
+        # The URL's own sslmode wins, as it does for libpq.
+        explicit = carry_inherited_tls(parse_database_url('postgres://u@db.invalid/db?sslmode=require'),
+                                       {'PGSSLMODE': 'disable'})
+        self.assertEqual(explicit['parameters'], {'sslmode': 'require'})
+        for environment, message in (({'PGSSLCERT': '/c.pem'}, 'unset PGSSLCERT'),
+                                     ({'PGREQUIRESSL': '1'}, 'unset PGREQUIRESSL'),
+                                     ({'PGSSLMODE': 'verify-everything'}, 'unknown sslmode')):
+            with self.assertRaisesRegex(ValueError, message):
+                carry_inherited_tls(parts(), environment)
 
     def test_sqlx_config_lookup_follows_the_filesystem(self):
         # A long-s (U+017F) spelling is the file SQLx opens exactly when the

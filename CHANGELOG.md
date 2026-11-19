@@ -22,7 +22,8 @@ contracts, capability facts and validation history.
 - Fixture pools now read their endpoint once with the fixture harness's own
   parser (`batter-c5ci`). `ConnectionPlan` resolution, both template paths and
   the new `batter_sqlx::test_support::{harness_connect_options,
-  harness_admin_connect_options}` read the harness admin URL with
+  harness_admin_connect_options}` (the first takes the lease, not a database
+  name) read the harness admin URL with
   tokio-postgres, set every SQLx field from that parse and take the database
   from the harness's recorded name, so SQLx pools reach the server and
   database the harness provisioned whatever the URL text says. They refuse
@@ -30,7 +31,7 @@ contracts, capability facts and validation history.
   while `PGHOSTADDR` is set or when the admin URL declares `hostaddr`, several
   hosts or a setting SQLx cannot carry. Template initializers receive a URL
   rebuilt from that parse and checked with both parsers; it carries
-  `connect_timeout`, and other connection tuning it cannot carry
+  `connect_timeout` and `channel_binding=disable`, and other connection tuning it cannot carry
   (`tcp_user_timeout`, `keepalives*`) is refused. Session settings
   the admin URL omits, such as `application_name` and startup `options`, still
   come from SQLx's own `PGAPPNAME` and `PGOPTIONS` reading on both paths; the
