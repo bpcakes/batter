@@ -379,14 +379,13 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
   runs outside a block and only warns. `runledger-test-support` now refuses to
   start a Runledger-owned PostgreSQL container, before starting it, when
-  `PGHOSTADDR` is set: SQLx 0.9.1, like libpq, would connect to that address
-  instead of the container. An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`
-  keeps libpq semantics, since SQLx is then the fixture's only client.
-  Owned-container admin URLs, and every `EphemeralDatabase::url()` derived from
-  them, now carry `?hostaddr=127.0.0.1`, which overrides a `PGHOSTADDR` set
-  after startup in SQLx and libpq. Derived database URLs now keep the admin
-  URL's query (dropping only `dbname`), so an external URL's TLS and session
-  settings carry over where they used to be dropped.
+  `PGHOSTADDR` is set, since the variable then names a different server than
+  the container. Owned-container admin URLs, and every `EphemeralDatabase::url()`
+  derived from them, now end in `?hostaddr=127.0.0.1`, which overrides an
+  ambient `PGHOSTADDR` in SQLx 0.9.1 and libpq; consumers that append their own
+  query to such a URL must use `&`. An external
+  `RUNLEDGER_TEST_ADMIN_DATABASE_URL` keeps libpq semantics, since SQLx is then
+  the fixture's only client, and its derived URLs still carry no query.
   `scripts/refresh_runledger_sqlx.py` now parses `DATABASE_URL` once, gives
   `psql` the parts as its own PG* variables (no credentials in its arguments)
   in an environment without any other PG* setting, gives SQLx CLI a URL

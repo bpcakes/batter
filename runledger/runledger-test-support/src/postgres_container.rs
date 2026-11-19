@@ -21,8 +21,17 @@ static SHARED_POSTGRES: tokio::sync::OnceCell<SharedPostgres> = tokio::sync::Onc
 
 struct SharedPostgres {
     admin_url: String,
+    /// Appended to every database URL derived from `admin_url`: the owned
+    /// container's loopback pin, or nothing for an external admin URL.
+    derived_query: &'static str,
     _container: Option<ProcessContainer>,
 }
+
+/// Pins the owned container's TCP address. A URL `hostaddr` overrides an
+/// ambient `PGHOSTADDR` in SQLx and libpq, and for the IP literal host it
+/// repeats it names the same address, so every client still reaches the
+/// container. External admin URLs carry nothing extra.
+pub(crate) const OWNED_HOST_ADDRESS_QUERY: &str = "?hostaddr=127.0.0.1";
 
 #[derive(Debug, Eq, PartialEq)]
 enum PostgresSource {
@@ -35,10 +44,19 @@ pub async fn admin_database_url() -> &'static str {
 }
 
 async fn shared_admin_database_url() -> &'static str {
-    &SHARED_POSTGRES
+    &shared_postgres().await.admin_url
+}
+
+/// The admin URL together with the query every derived database URL carries.
+pub(crate) async fn admin_database_url_and_derived_query() -> (&'static str, &'static str) {
+    let shared = shared_postgres().await;
+    (&shared.admin_url, shared.derived_query)
+}
+
+async fn shared_postgres() -> &'static SharedPostgres {
+    SHARED_POSTGRES
         .get_or_init(initialize_shared_postgres)
         .await
-        .admin_url
 }
 
 async fn initialize_shared_postgres() -> SharedPostgres {
@@ -46,15 +64,17 @@ async fn initialize_shared_postgres() -> SharedPostgres {
 }
 
 /// SQLx 0.9.1, like libpq, fills an unset `hostaddr` from an ambient
-/// `PGHOSTADDR`, so it would connect there instead of the container this
-/// fixture started on 127.0.0.1. Refuse before starting one, whatever the
-/// variable's value. An external admin URL keeps libpq semantics: SQLx is then
-/// the fixture's only client, so every connection follows the same setting.
+/// `PGHOSTADDR`. The owned container's URLs pin `hostaddr`, which overrides
+/// the variable, so connections still reach the container; an ambient value
+/// therefore means the environment names a different server, and the fixture
+/// refuses it before starting a container rather than silently ignoring it.
+/// An external admin URL keeps libpq semantics: SQLx is then the fixture's
+/// only client, so every connection follows the same setting.
 pub(crate) fn reject_ambient_host_address(present: bool) {
     assert!(
         !present,
-        "unset {AMBIENT_HOST_ADDRESS_ENV} for the Runledger-owned PostgreSQL container: SQLx \
-         would connect to it instead of the container"
+        "unset {AMBIENT_HOST_ADDRESS_ENV} for the Runledger-owned PostgreSQL container: it names \
+         a different server than the container"
     );
 }
 
@@ -88,6 +108,7 @@ async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
+        derived_query: "",
         _container: None,
     }
 }
@@ -105,6 +126,7 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
+        derived_query: OWNED_HOST_ADDRESS_QUERY,
         _container: Some(process_container),
     }
 }
@@ -158,13 +180,9 @@ pub(crate) fn parse_image_ref(image_ref: &str) -> (String, String) {
     (repository, tag)
 }
 
-/// The owned container's URL pins `hostaddr` to the loopback host it names: a
-/// URL `hostaddr` overrides an ambient `PGHOSTADDR` in SQLx and libpq, so the
-/// URL keeps reaching the container even if the environment changes after
-/// startup. Derived database URLs keep this query.
-fn postgres_admin_url(port: u16) -> String {
+pub(crate) fn postgres_admin_url(port: u16) -> String {
     format!(
-        "postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}?hostaddr=127.0.0.1"
+        "postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}{OWNED_HOST_ADDRESS_QUERY}"
     )
 }
 

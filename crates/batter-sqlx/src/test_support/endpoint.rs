@@ -102,7 +102,8 @@ impl HarnessEndpoint {
         let (address, port) = match (config.get_hosts(), config.get_ports()) {
             ([host], [] | [_]) => {
                 let address = match host {
-                    // SQLx trims brackets from a host name, even unmatched ones;
+                    // SQLx trims edge brackets before resolving, even unmatched
+                    // ones, and its URL rendering panics on an interior one;
                     // tokio-postgres already removed an IPv6 literal's.
                     Host::Tcp(name) if name.contains(['[', ']']) => {
                         return Err(refusal(UnsupportedHostName));
@@ -431,8 +432,9 @@ pub enum HarnessEndpointReason {
     UnsupportedSetting,
     /// The admin URL names no user.
     MissingUser,
-    /// The admin URL's TCP host name contains a bracket, which SQLx trims
-    /// before resolving, so it would look up a different name.
+    /// The admin URL's TCP host name contains a bracket. SQLx trims leading
+    /// and trailing brackets before resolving, so it would look up a different
+    /// name, and its URL rendering panics on such a host.
     UnsupportedHostName,
     /// The admin URL's password is not UTF-8.
     NonUtf8Password,

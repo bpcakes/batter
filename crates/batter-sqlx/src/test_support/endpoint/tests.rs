@@ -199,6 +199,27 @@ fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
 }
 
 #[test]
+fn rebuilt_urls_refuse_tcp_names_sqlx_would_not_decode() {
+    // tokio-postgres decodes the authority host; SQLx resolves it as written,
+    // so a re-encoded `+` would name another host and must be refused.
+    let endpoint = endpoint("postgres://owner@db%2Bblue.example/postgres");
+    assert_eq!(
+        endpoint.options("db").unwrap().get_host(),
+        "db+blue.example"
+    );
+    let error = endpoint.url("pgh_template_1").unwrap_err();
+    let sqlx::Error::Configuration(source) = &error else {
+        panic!("configuration error expected");
+    };
+    assert_eq!(
+        source
+            .downcast_ref::<UnsupportedHarnessEndpoint>()
+            .map(UnsupportedHarnessEndpoint::reason),
+        Some(HarnessEndpointReason::RoundTrip)
+    );
+}
+
+#[test]
 fn explicit_empty_passwords_survive_the_rebuilt_url() {
     let endpoint = endpoint("postgres://owner@127.0.0.1:5432/postgres?password=");
     assert_eq!(endpoint.password.as_deref(), Some(""));

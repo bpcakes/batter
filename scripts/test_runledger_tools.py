@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
-from refresh_runledger_sqlx import (cargo_compiler_endpoint, migrations_current, parse_database_url,
+from refresh_runledger_sqlx import (refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
 from runledger_source import copy_source, run, validate_consumer
 
@@ -154,6 +154,10 @@ class RefreshTests(unittest.TestCase):
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db')
+        # The Runledger-owned container's redundant loopback pin is dropped.
+        owned = parse_database_url('postgres://runledger:runledger@127.0.0.1:5432/db?hostaddr=127.0.0.1')
+        self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db')
+        self.assertEqual(parse_database_url('postgres://u@db~blue.example/db')['host'], 'db~blue.example')
         with patch.dict(os.environ, PGHOSTADDR='192.0.2.1', PGSSLMODE='disable', HOME='/home/x'):
             environment = psql_environment(parts)
         self.assertNotIn('PGHOSTADDR', environment)
@@ -163,10 +167,10 @@ class RefreshTests(unittest.TestCase):
     def test_urls_that_cannot_reach_both_clients_alike_never_run_a_command(self):
         for url, message in (
                 ('host=db-a hostaddr=192.0.2.1 password=private-marker', 'postgres:// URI'),
-                ('postgresql://u:private-marker@db-a/postgres?hostaddr=192.0.2.1', 'may declare only'),
+                ('postgresql://u:private-marker@db-a/postgres?hostaddr=192.0.2.1', 'hostaddr only as its own'),
                 ('postgresql://u:private-marker@db-a/postgres?host=db-b', 'may declare only'),
                 ('postgresql://u:private-marker@db-a/postgres?service=other', 'may declare only'),
-                ('postgresql://u:private-marker@db-a/postgres?sslmode=disable&sslmode=require', 'each once'),
+                ('postgresql://u:private-marker@db-a/postgres?sslmode=disable&sslmode=require', 'parameter once'),
                 ('postgresql://u:private-marker@db-a,db-b/postgres', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a:5432', 'exactly one host'),
                 ('postgresql://u:private-marker@db-a/one/two', 'exactly one host'),
@@ -177,7 +181,11 @@ class RefreshTests(unittest.TestCase):
                 ('postgresql://u:private-marker@db-a:0/postgres', 'port 0'),
                 ('postgresql://u:private-marker@db-a/%FF', 'UTF-8'),
                 ('postgresql://u:private-marker@db+blue.example/postgres', 'TCP host'),
-                ('postgresql://u:private-marker@db%2Bblue.example/postgres', 'TCP host')):
+                ('postgresql://u:private-marker@db%2Bblue.example/postgres', 'TCP host'),
+                ('postgresql://u:private-marker@[::1%251]/postgres', 'zone'),
+                ('postgresql://u:private-marker@127.0.0.1/postgres?hostaddr=192.0.2.1', 'hostaddr'),
+                ('postgresql://u:private-marker@db.example/postgres?hostaddr=db.example', 'hostaddr'),
+                ('postgresql://u:private-marker@127.0.0.1/postgres?hostaddr=127.0.0.1&hostaddr=127.0.0.1', 'once')):
             with self.subTest(url=url), \
                  patch.dict(os.environ, DATABASE_URL=url), \
                  patch('refresh_runledger_sqlx.run') as command, \
@@ -195,15 +203,28 @@ class RefreshTests(unittest.TestCase):
             (root / 'runledger/runledger-postgres').mkdir(parents=True)
             (root / 'target/x').mkdir(parents=True)
             (root / 'target/x/sqlx.toml').write_text('ignored build output')
-            (root / 'runledger/runledger-postgres/SQLX.toml').write_text(
+            # Long s (U+017F) folds to "s" on case-insensitive volumes only.
+            (root / 'runledger/runledger-postgres/sqlx.toml').write_text(
                 '[common]\ndatabase-url-var = "OTHER_DATABASE_URL"\n')
             with patch.dict(os.environ, DATABASE_URL='postgresql://u@db.invalid/database'), \
                  patch('refresh_runledger_sqlx.run') as command, \
                  patch('refresh_runledger_sqlx.subprocess.run') as psql:
-                with self.assertRaisesRegex(ValueError, 'remove sqlx.toml .runledger/runledger-postgres/SQLX.toml'):
+                with self.assertRaisesRegex(ValueError, 'remove sqlx.toml .runledger/runledger-postgres/sqlx.toml'):
                     refresh(root)
                 command.assert_not_called()
                 psql.assert_not_called()
+
+    def test_sqlx_config_lookup_follows_the_filesystem(self):
+        # A long-s (U+017F) spelling is the file SQLx opens exactly when the
+        # volume folds it to sqlx.toml (macOS by default), and never on Linux.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '\u017fqlx.toml').write_text('[common]\ndatabase-url-var = "OTHER"\n')
+            if (root / 'sqlx.toml').is_file():
+                with self.assertRaisesRegex(ValueError, 'remove sqlx.toml'):
+                    refuse_sqlx_config(root)
+            else:
+                refuse_sqlx_config(root)
 
     def test_cargo_env_endpoint_is_refused_before_any_command(self):
         url = 'postgresql://u@db.invalid/database'

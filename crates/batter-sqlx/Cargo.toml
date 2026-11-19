@@ -36,7 +36,9 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate"] }
 [dev-dependencies]
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["registry"] }
-futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+# `async-await-macro` provides `poll!` for the atomic live tests; a lone
+# `-p batter-sqlx` build must not rely on another package enabling it.
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "async-await-macro"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "test-util"] }
 sqlx = { workspace = true, features = ["tls-rustls-ring", "macros"] }
 batter-test-support.workspace = true

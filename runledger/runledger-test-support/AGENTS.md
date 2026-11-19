@@ -18,11 +18,12 @@ cleanup, migration-copy equality and PostgreSQL 18 prerequisites. Missing Docker
 is a test failure. This package must not become a production dependency of the
 Batter foundation or facade.
 Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
-URL. When this fixture owns the container it refuses an ambient `PGHOSTADDR`
-before starting it, because SQLx 0.9.1, like libpq, would connect there
-instead, and its admin URL pins `hostaddr=127.0.0.1` so later environment
-changes cannot redirect it. Derived database URLs keep the admin query except
-`dbname`; keep the pin there. An external admin URL keeps libpq semantics;
+URL. When this fixture owns the container, its admin URL and every derived
+database URL end in `?hostaddr=127.0.0.1`, which overrides an ambient
+`PGHOSTADDR` in SQLx 0.9.1 and libpq; derivation re-appends only that pin,
+never the admin query. It also refuses a `PGHOSTADDR` set before startup,
+because the variable then names a different server than the container. An
+external admin URL keeps libpq semantics and its derived URLs carry no query;
 SQLx is its only client. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.

@@ -92,7 +92,10 @@ contracts cite:
   query macros. Runledger's Docker fixture refuses `PGHOSTADDR` only when it
   owns the container, and pins `hostaddr=127.0.0.1` in that container's admin
   URL and the database URLs derived from it, since a URL `hostaddr` overrides
-  the environment for a TCP host in both SQLx and libpq. The reference root already rejects every PG* variable.
+  the environment for a TCP host in both SQLx and libpq (checked against SQLx
+  0.9.1 and psql 18 with an ambient `PGHOSTADDR`). Derivation re-appends only
+  that pin; an external admin URL's query is not carried. The metadata refresh
+  drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.
 
   The invariant holds under three stated preconditions, which are not
   enforced: a host name resolves to the same server for the duration of a run

@@ -2,6 +2,7 @@
 """Refresh native SQLx caches using an already migrated PostgreSQL 18 database."""
 import argparse
 from contextlib import contextmanager
+import ipaddress
 import os
 from pathlib import Path
 import re
@@ -44,6 +45,17 @@ def sync_files(source, destination, suffix):
 
 # Query parameters both psql and SQLx accept, with the psql variable for each.
 CARRIED_PARAMETERS = {"sslmode": "PGSSLMODE", "application_name": "PGAPPNAME", "options": "PGOPTIONS"}
+
+
+def is_ip_literal(host):
+    """An IPv4 or IPv6 address without a zone index."""
+    if "%" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
 
 
 def parse_database_url(database):
@@ -92,10 +104,26 @@ def parse_database_url(database):
     if port == 0:
         raise ValueError("DATABASE_URL must not name port 0")
     # SQLx resolves a TCP authority host as written, without percent-decoding,
-    # so only names that need no encoding reach both clients identically.
-    if not host.startswith("/") and ":" not in host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
-        raise ValueError("DATABASE_URL's TCP host must use only letters, digits, '.', '_' and '-'")
-    if any(key not in CARRIED_PARAMETERS for key in keys) or len(set(keys)) != len(keys):
+    # so only names that need no encoding reach both clients identically. An
+    # IPv6 literal must be one SQLx parses: a zone index (%) is refused.
+    if host.startswith("/"):
+        pass
+    elif ":" in host:
+        if "%" in host or not is_ip_literal(host):
+            raise ValueError("DATABASE_URL's IPv6 host must be a literal address without a zone")
+    elif not re.fullmatch(r"[A-Za-z0-9._~-]+", host):
+        raise ValueError("DATABASE_URL's TCP host must use only letters, digits, '.', '_', '~' and '-'")
+    if len(set(keys)) != len(keys):
+        raise ValueError("DATABASE_URL may declare each parameter once")
+    # A hostaddr equal to an IP literal host names the address the host already
+    # does (the Runledger-owned container's pin), so it is redundant for both
+    # clients and dropped; any other hostaddr is refused.
+    if "hostaddr" in keys:
+        if dict(pairs)["hostaddr"] != host or not is_ip_literal(host):
+            raise ValueError("DATABASE_URL may declare hostaddr only as its own IP literal host")
+        pairs = [(key, value) for key, value in pairs if key != "hostaddr"]
+        keys = [key for key, _ in pairs]
+    if any(key not in CARRIED_PARAMETERS for key in keys):
         raise ValueError("DATABASE_URL may declare only sslmode, application_name and options, each once")
     return {
         "host": host,
@@ -205,10 +233,12 @@ def refuse_sqlx_config(directory):
     for current, folders, files in os.walk(directory):
         # Build output and history are not source configuration.
         folders[:] = [name for name in folders if name not in ("target", ".git")]
-        # Case-insensitive volumes (macOS by default) open SQLX.toml as sqlx.toml.
-        found = [name for name in files if name.lower() == "sqlx.toml"]
-        if found:
-            relative = (Path(current) / found[0]).relative_to(directory)
+        # Ask the filesystem for the exact path SQLx opens: case-insensitive
+        # volumes (macOS by default) fold names beyond ASCII, so matching the
+        # listing's spelling would miss a file SQLx finds.
+        candidate = Path(current) / "sqlx.toml"
+        if candidate.is_file():
+            relative = candidate.relative_to(directory)
             raise ValueError("remove sqlx.toml (" + relative.as_posix()
                              + "): SQLx CLI could read another database URL variable than psql checked")
 

@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::postgres_container::admin_database_url;
+use crate::postgres_container::{admin_database_url, admin_database_url_and_derived_query};
 
 const TEST_DB_CONNECTION_BUDGET_ENV: &str = "RUNLEDGER_TEST_DB_CONNECTION_BUDGET";
 const DEFAULT_TEST_DB_CONNECTION_BUDGET: usize = 64;
@@ -151,7 +151,7 @@ async fn create_ephemeral_database_with_permit(
     prefix: &str,
     permit: OwnedSemaphorePermit,
 ) -> Result<EphemeralDatabase, sqlx::Error> {
-    let admin_url = admin_database_url().await;
+    let (admin_url, derived_query) = admin_database_url_and_derived_query().await;
     let name = build_database_name(prefix);
     let admin_pool = connect_admin_pool(admin_url).await?;
 
@@ -164,7 +164,7 @@ async fn create_ephemeral_database_with_permit(
 
     Ok(EphemeralDatabase {
         identity: EphemeralDatabaseIdentity {
-            url: with_database_name(admin_url, &name),
+            url: with_database_name(admin_url, &name, derived_query),
             name,
         },
         permit: Some(permit),
@@ -250,24 +250,14 @@ fn build_database_name(prefix: &str) -> String {
     format!("{}_{}_{}", compact_prefix, std::process::id(), index)
 }
 
-/// Replace the admin URL's database, keeping its query (an owned container's
-/// pinned `hostaddr`, or an external URL's TLS and session settings) so the
-/// database is reached the way the admin URL is. A `dbname` parameter would
-/// override the new path, so it is dropped.
-fn with_database_name(admin_url: &str, database_name: &str) -> String {
-    let (location, query) = admin_url.split_once('?').unwrap_or((admin_url, ""));
-    let (base, _) = location
+/// Replace the admin URL's database, dropping whatever followed it, and
+/// append `derived_query`: the owned container's loopback pin, or nothing for
+/// an external admin URL, whose query is not carried over.
+fn with_database_name(admin_url: &str, database_name: &str, derived_query: &str) -> String {
+    let (base, _) = admin_url
         .rsplit_once('/')
         .expect("DATABASE_URL must include database name");
-    let kept: Vec<&str> = query
-        .split('&')
-        .filter(|pair| !pair.is_empty() && pair.split('=').next() != Some("dbname"))
-        .collect();
-    if kept.is_empty() {
-        format!("{base}/{database_name}")
-    } else {
-        format!("{base}/{database_name}?{}", kept.join("&"))
-    }
+    format!("{base}/{database_name}{derived_query}")
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -313,17 +303,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derived_database_urls_keep_the_admin_query_without_dbname() {
+    fn derived_database_urls_carry_only_the_owned_pin() {
+        // External admin URLs: the query is dropped, as before the pin.
         assert_eq!(
-            with_database_name("postgres://u:p@127.0.0.1:5432/postgres", "lease_1"),
-            "postgres://u:p@127.0.0.1:5432/lease_1"
+            with_database_name("postgres://u:p@db.invalid:5432/postgres", "lease_1", ""),
+            "postgres://u:p@db.invalid:5432/lease_1"
         );
         assert_eq!(
             with_database_name(
-                "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1&dbname=postgres",
-                "lease_1"
+                "postgres://u:p@db.invalid:5432/postgres?%64bname=other&statement-cache-capacity=0",
+                "lease_1",
+                ""
             ),
-            "postgres://u:p@127.0.0.1:5432/lease_1?hostaddr=127.0.0.1"
+            "postgres://u:p@db.invalid:5432/lease_1"
+        );
+        // Owned container: its pin is re-appended, never the admin query.
+        assert_eq!(
+            with_database_name(
+                &crate::postgres_container::postgres_admin_url(5432),
+                "lease_1",
+                crate::postgres_container::OWNED_HOST_ADDRESS_QUERY
+            ),
+            "postgres://runledger:runledger@127.0.0.1:5432/lease_1?hostaddr=127.0.0.1"
         );
     }
 
