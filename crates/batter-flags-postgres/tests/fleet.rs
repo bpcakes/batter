@@ -173,19 +173,28 @@ async fn decoding_and_the_archive_gate_count_live_and_silent_declarers_only() {
         ),
         "{written:?}"
     );
-    // No declarer can decode a variant a toggle does not have.
+    // A declaration of another kind cannot decode the row: here the build's
+    // catalog entry says mode where the stored row says release.
+    sqlx::query("UPDATE flags.flag_catalog_entries SET kind = 'mode' WHERE key = 'fast_path'")
+        .execute(&f.pool)
+        .await
+        .unwrap();
     let WriteOutcome::Refused(Refusal::UndecodableByLiveDeclaration { builds: blocking }) = f
         .store
-        .write(set("fast_path", "express", None), deadline())
+        .write(set("fast_path", "off", None), deadline())
         .await
         .unwrap()
     else {
-        panic!("an undecodable variant is refused");
+        panic!("an undecodable write is refused");
     };
     assert_eq!(
         builds(&blocking),
         [("live", Presence::Live), ("silent", Presence::Silent)]
     );
+    sqlx::query("UPDATE flags.flag_catalog_entries SET kind = 'release' WHERE key = 'fast_path'")
+        .execute(&f.pool)
+        .await
+        .unwrap();
 
     let WriteOutcome::Refused(Refusal::StillDeclared { builds: blocking }) = f
         .store

@@ -49,7 +49,13 @@ switch governing the written flag and each unjudged catalog under
 `data.deferral` and as a warning. `data.deferral.flip` is `rolling` or
 `coordinated`; a coordinated flip written with `--accept-rolling-flip` also
 warns that processes apply the write poll by poll, not together. Releasing a kill switch warns with the
-number of Live processes whose settings floor keeps it engaged.
+number of Live declarers whose settings floor keeps it engaged, and separately
+with the number whose floor sample overflowed without listing it, which may.
+`invariants_unjudged` names each cause apart (`data.undecodable`,
+`data.held_governors`) and suggests an upgrade only for the first. `fleet
+--version V` groups Live processes by build, `snapshot_source`,
+`snapshot_version` and declared revision, so a version restored from the
+last-good file never merges with one the control plane applied.
 
 There is one end-to-end `--timeout` (1 to 60 s) and no operation is ever
 retried. The pool holds at most one connection at a time, but each store

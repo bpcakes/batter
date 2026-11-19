@@ -143,6 +143,7 @@ async fn releasing_a_switch_a_settings_floor_holds_warns_with_the_count() {
             .starts_with("1 Live processes keep halt engaged"),
         "{warnings}"
     );
+    assert_eq!(warnings.as_array().unwrap().len(), 1, "{warnings}");
     db.close().await;
 }
 
@@ -221,11 +222,9 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
     assert_eq!(fleet["data"]["live_groups"].as_array().unwrap().len(), 1);
     assert_eq!(fleet["data"]["live_groups"][0]["processes"], 2);
     assert_eq!(
-        fleet["data"]["not_live"].as_array().unwrap().len(),
-        1,
-        "the stopped process stands apart"
+        fleet["data"]["live_groups"][0]["snapshot_source"],
+        "control_plane"
     );
-    assert_eq!(fleet["data"]["rollout"]["reached"], false);
     let declarers = db.cli_args(&["fleet", "--flag", "fast_path"]).json();
     let presence: Vec<&str> = declarers["data"]["declarers"]
         .as_array()

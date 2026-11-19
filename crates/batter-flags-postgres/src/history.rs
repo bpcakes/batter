@@ -64,22 +64,21 @@ impl PooledStore {
     /// read refuses a standby and a schema this build cannot read, in its own
     /// snapshot, as [`preflight`](Self::preflight) does. No version above the
     /// store's `bigint` range exists, so such an `after` reads a complete, empty
-    /// page.
+    /// page, but only after the same guard: a standby or an unusable schema is
+    /// refused whatever the cursor.
     pub async fn history(
         &self,
         key: Option<&FlagKey>,
         after: Version,
         deadline: Instant,
     ) -> Result<HistoryPage, StoreError> {
-        let Ok(after) = i64::try_from(after.get()) else {
-            return Ok(HistoryPage {
-                entries: Vec::new(),
-                next: Continuation::Complete,
-            });
-        };
+        let cursor = i64::try_from(after.get());
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
         PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
                 self.read_guard(sql, deadline).await?;
+                let Ok(after) = cursor else {
+                    return Ok(HistoryPage { entries: Vec::new(), next: Continuation::Complete });
+                };
                 // One row beyond the page says whether more follow.
                 let rows = sqlx::query("SELECT version, flag_name, operation, actor, reason, guard, recorded_by::text, recorded_at, before_state, after_state FROM flags.flag_audit WHERE version > $1 AND ($2::text IS NULL OR flag_name = $2) ORDER BY version LIMIT $3")
                     .bind(after).bind(key.map(FlagKey::as_str)).bind(HISTORY_PAGE as i64 + 1).fetch_all(sql.executor()).await?;

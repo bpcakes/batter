@@ -17,6 +17,8 @@ use batter_flags_core::{
 
 use self::format::EntryValue;
 pub(crate) use self::path::Initial;
+#[cfg(test)]
+pub(crate) use self::path::read_bounded;
 pub use self::path::{SnapshotDirectory, SnapshotFilePath};
 pub(crate) use self::persist::{Persister, StatusReader};
 
@@ -172,11 +174,25 @@ pub(crate) struct FileRead {
 }
 
 /// Decodes the file found at startup and checks it was written for `base`'s
-/// scope; core's publisher validates its rows when it restores them.
+/// scope and repeats no key; core's publisher validates the rows it restores.
+///
+/// Uniqueness is checked over every decoded entry, absent ones included,
+/// before absent entries are dropped, so an absent entry and a valued one for
+/// the same key refuse the file rather than publish the valued one.
 pub(crate) fn read_file(base: &Base, bytes: &[u8]) -> Result<FileRead, FileProblem> {
     let file = format::decode(bytes)?;
     if file.scope != scope_label(base) {
         return Err(FileProblem::Foreign);
+    }
+    let mut keys = HashSet::with_capacity(file.entries.len());
+    if let Some(row) = file
+        .entries
+        .iter()
+        .position(|entry| !keys.insert(entry.key.as_str()))
+    {
+        return Err(FileProblem::Rejected(SnapshotRejection::DuplicateKey {
+            row,
+        }));
     }
     // An entry written without a value is absent: the declared base serves.
     let rows = file.entries.iter().filter_map(|entry| match &entry.value {

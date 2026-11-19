@@ -250,6 +250,14 @@ async fn every_read_and_the_load_refuse_a_standby_before_reading_anything() {
                         .await,
                 ),
             ),
+            (
+                "history past the bigint range",
+                class(
+                    store
+                        .history(None, batter_flags_core::Version::new(u64::MAX), deadline())
+                        .await,
+                ),
+            ),
             ("fleet", class(store.fleet(deadline()).await)),
             (
                 "fleet_declaring",

@@ -156,12 +156,17 @@ impl Refresh {
             ),
             Err(FetchFailure::Failed(cause)) => (self.shared.failed(cause), Err(cause)),
             Ok(fetched) => {
-                let rows = match self.persistence {
-                    Persistence::Off => Vec::new(),
-                    Persistence::File(_) => fetched.rows().to_vec(),
+                // Only a version the queue would take is copied for the
+                // file: a confirming read of a version it already holds,
+                // settled or found too large builds nothing.
+                let rows = match &self.persistence {
+                    Persistence::Off => None,
+                    Persistence::File(persister) => persister
+                        .wants(fetched.version.get())
+                        .then(|| fetched.rows().to_vec()),
                 };
                 let judged = self.publish(fetched, deadline);
-                if judged.1.is_ok() {
+                if let (Ok(()), Some(rows)) = (judged.1, rows) {
                     self.offer(&rows);
                 }
                 judged

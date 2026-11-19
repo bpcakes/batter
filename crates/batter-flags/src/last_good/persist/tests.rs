@@ -356,7 +356,10 @@ async fn a_publication_too_large_for_the_file_is_not_retried() {
         written: None,
     };
     assert_eq!(persister.status(), too_large);
-    // The refresh offers after every confirming read, then attempts.
+    // A confirming read of the same version copies no rows for the file,
+    // and a direct offer changes nothing either.
+    assert!(!persister.wants(4));
+    assert!(persister.wants(5));
     for _ in 0..2 {
         persister.offer(large.clone());
         assert_eq!(persister.status(), too_large);
@@ -373,8 +376,11 @@ async fn a_publication_too_large_for_the_file_is_not_retried() {
 async fn a_publication_dropped_for_a_newer_file_is_not_attempted_again() {
     let directory = Directory::new();
     let persister = Persister::new(directory.path());
+    assert!(persister.wants(1), "an empty queue takes any version");
     persister.offer(snapshot(1));
+    assert!(!persister.wants(1), "a waiting version is not copied again");
     assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+    assert!(!persister.wants(1), "nor a written one");
     // Another process publishes a newer file.
     std::fs::write(
         directory.path().file(),
@@ -386,6 +392,7 @@ async fn a_publication_dropped_for_a_newer_file_is_not_attempted_again() {
         persister.attempt(deadline()).await,
         Ok(Persisted::NewerOnDisk)
     );
+    assert!(!persister.wants(3));
     persister.offer(snapshot(3));
     assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Idle));
     assert_eq!(on_disk(&directory), 99);

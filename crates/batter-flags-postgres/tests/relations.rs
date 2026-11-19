@@ -353,27 +353,6 @@ async fn only_running_declarers_are_judged_and_a_silent_ones_holds_are_still_rep
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
-async fn a_catalog_this_writer_cannot_decode_refuses_a_strict_write() {
-    let f = Fixture::migrated().await;
-    // A Live declarer whose manifest no version of this writer decodes.
-    f.seed("ledger_v2", "mode", "toggle", "live").await;
-    let refused = strict(&f, "ledger_v2", "on").await;
-    assert!(
-        matches!(refused, WriteOutcome::Refused(Refusal::InvariantsUnjudged { catalogs }) if catalogs.get() == 1),
-        "{refused:?}"
-    );
-    let accepted = submit(
-        &f,
-        set("ledger_v2", "on", None),
-        InvariantPolicy::AcceptHeld,
-    )
-    .await;
-    assert_eq!(deferral(&accepted).unjudged_catalogs, 1);
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18"]
 async fn a_governed_flag_reports_its_engaged_switch_and_a_kill_switch_is_never_refused() {
     let f = Fixture::migrated().await;
     let _process = declarer(&f).await;
@@ -472,16 +451,6 @@ async fn a_governor_readers_hold_is_judged_both_engaged_and_released() {
     f.close().await;
 }
 
-/// Seeds a kill switch row a newer build wrote, which readers hold.
-async fn unreadable_switch(f: &Fixture, name: &str) {
-    let mut tx = f.pool.begin().await.unwrap();
-    sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','newer encoding',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
-        .execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) SELECT $1,'switch','switch','{\"encoding\":2,\"switch\":\"engaged\"}',version,version FROM flags.flag_control")
-        .bind(name).execute(&mut *tx).await.unwrap();
-    tx.commit().await.unwrap();
-}
-
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn independently_held_governors_are_judged_in_every_combination() {
@@ -517,8 +486,8 @@ async fn independently_held_governors_are_judged_in_every_combination() {
         .await
         .unwrap();
     let _ = submit(&f, set("pair_x", "on", None), InvariantPolicy::AcceptHeld).await;
-    unreadable_switch(&f, "halt_x").await;
-    unreadable_switch(&f, "halt_y").await;
+    f.unreadable_switch("halt_x").await;
+    f.unreadable_switch("halt_y").await;
     // Both released or both engaged, the pair meets; with only `halt_x`
     // engaged, `pair_x` serves off and the written `pair_y` would be held.
     let refused = strict(&f, "pair_y", "on").await;

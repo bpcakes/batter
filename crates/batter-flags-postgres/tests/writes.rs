@@ -48,6 +48,15 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
         ("orphan_flag", "orphan", UndeclaredBasis::Orphaned),
     ] {
         f.seed(name, "mode", "toggle", presence).await;
+        // The seeded declaration lists `express`, but no toggle takes it,
+        // and no Live declarer is needed to say so.
+        assert!(matches!(
+            f.store
+                .write(set(name, "express", Some(0)), deadline())
+                .await
+                .unwrap(),
+            WriteOutcome::Refused(Refusal::NotAToggleVariant)
+        ));
         assert!(
             matches!(f.store.write(set(name,"on",Some(0)),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { basis: b, .. } if b == basis)
         );
@@ -76,9 +85,15 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
             .unwrap(),
         WriteOutcome::Refused(Refusal::WrongKind { .. })
     ));
-    assert!(
-        matches!(f.store.write(set("live_flag","other",None),deadline()).await.unwrap(),WriteOutcome::Refused(Refusal::UndecodableByLiveDeclaration { builds }) if builds.len() == 1 && builds[0].presence == Presence::Live)
-    );
+    // A toggle takes only on or off, even where a Live declaration lists
+    // more; an enumeration's own vocabulary is judged by the fleet below.
+    assert!(matches!(
+        f.store
+            .write(set("live_flag", "other", None), deadline())
+            .await
+            .unwrap(),
+        WriteOutcome::Refused(Refusal::NotAToggleVariant)
+    ));
     for name in ["live_flag", "silent_flag"] {
         assert!(
             matches!(f.store.archive(Archive::new(key(name),change(None)),deadline()).await.unwrap(),WriteOutcome::Refused(Refusal::StillDeclared { builds }) if builds.len() == 1)
@@ -184,7 +199,7 @@ async fn refusal_order_future_encoding_restrictions_and_fleet_regression() {
             .unwrap(),
         WriteOutcome::Refused(Refusal::UnknownRowEncoding)
     ));
-    f.seed("normal", "mode", "toggle", "silent").await;
+    f.seed("normal", "mode", "enum", "silent").await;
     assert!(
         matches!(f.store.write(set("normal","unlisted",None),deadline()).await.unwrap(),WriteOutcome::Refused(Refusal::UndecodableByLiveDeclaration { builds }) if builds[0].presence == Presence::Silent)
     );

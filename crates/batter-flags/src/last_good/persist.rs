@@ -59,6 +59,12 @@ impl Queue {
             Self::Settled { version } | Self::TooLarge { version } => Some(*version),
         }
     }
+
+    /// Whether a publication of `version` replaces this queue's: only a
+    /// newer one does.
+    fn admits(&self, version: u64) -> bool {
+        self.version().is_none_or(|held| held < version)
+    }
 }
 
 struct State {
@@ -253,18 +259,26 @@ impl Persister {
     }
 
     /// Queues a control-plane publication newer than the one the queue holds
-    /// or has settled. Every confirming read offers the version it serves
+    /// or has settled. A confirming read can offer the version it serves
     /// again, so an equal offer must keep what the queue already knows: a
     /// version written or dropped for a newer file stays settled, one too
     /// large for the file is not retried, and a waiting one keeps its failure.
     pub(crate) fn offer(&self, file: FileSnapshot) {
         let mut state = lock(&self.state);
-        if state.queue.version().is_none_or(|held| held < file.version) {
+        if state.queue.admits(file.version) {
             state.queue = Queue::Waiting {
                 file,
                 failure: None,
             };
         }
+    }
+
+    /// Whether an [`offer`](Self::offer) of `version` would replace what the
+    /// queue holds or has settled. A refresh asks before it copies a fetch's
+    /// rows, so a confirming read builds no file; `offer` judges again under
+    /// its lock, so an answer gone stale by then only costs a discarded copy.
+    pub(crate) fn wants(&self, version: u64) -> bool {
+        lock(&self.state).queue.admits(version)
     }
 
     /// What the persister is doing now, read under its one lock.

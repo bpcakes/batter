@@ -4,8 +4,10 @@
 //! is unchanged, named `feature_flag.evaluation` after the OpenTelemetry
 //! semantic convention (v1.45.0). Its target is `batter::flags`, so
 //! `batter=warn` filters it like the rest of Batter and `batter::flags=debug`
-//! brings it back. It is emitted under the dispatcher and parent span captured
-//! with the view, never under whatever happens to be current at evaluation.
+//! brings it back. It is emitted under the dispatcher captured with the view,
+//! with the span current at capture as its explicit parent: a view captured
+//! outside any span emits a root event, never one under whatever span happens
+//! to be current at evaluation.
 //!
 //! Attributes, all text: `feature_flag.key`, `feature_flag.result.variant`
 //! (omitted when no variant was served), `feature_flag.result.reason`,
@@ -24,7 +26,7 @@
 
 use std::{collections::HashSet, sync::Mutex};
 
-use tracing::{Dispatch, Span};
+use tracing::{Dispatch, Span, span::Id};
 
 use crate::{
     decision::{ErrorCause, Reason, SourceVersion},
@@ -39,6 +41,9 @@ pub(crate) const TARGET: &str = "batter::flags";
 pub(crate) const PROVIDER: &str = "batter-flags";
 
 /// The dispatcher and parent span current when a view was captured.
+///
+/// The parent is always given to the event explicitly, `None` included, so a
+/// root capture stays a root event.
 pub(crate) struct EventContext {
     dispatch: Dispatch,
     parent: Span,
@@ -52,8 +57,8 @@ impl EventContext {
         }
     }
 
-    fn scope<R>(&self, emit: impl FnOnce() -> R) -> R {
-        tracing::dispatcher::with_default(&self.dispatch, || self.parent.in_scope(emit))
+    fn scope<R>(&self, emit: impl FnOnce(Option<Id>) -> R) -> R {
+        tracing::dispatcher::with_default(&self.dispatch, || emit(self.parent.id()))
     }
 }
 
@@ -144,15 +149,16 @@ pub(crate) fn emit(
             Surface::Ordinary | Surface::GateReleased => Severity::Debug,
         },
     };
-    context.scope(|| fire(severity, set, evaluation));
+    context.scope(|parent| fire(severity, parent, set, evaluation));
 }
 
 /// One callsite per level: a callsite's level is fixed where it is written.
 macro_rules! evaluation_event {
-    ($level:expr, $set:expr, $evaluation:expr) => {
+    ($level:expr, $parent:expr, $set:expr, $evaluation:expr) => {
         tracing::event!(
             name: "feature_flag.evaluation",
             target: TARGET,
+            parent: $parent,
             $level,
             feature_flag.key = $evaluation.key,
             feature_flag.result.variant = $evaluation.variant,
@@ -166,25 +172,25 @@ macro_rules! evaluation_event {
     };
 }
 
-fn fire(severity: Severity, set: &CatalogDigest, evaluation: &Evaluation<'_>) {
+fn fire(severity: Severity, parent: Option<Id>, set: &CatalogDigest, evaluation: &Evaluation<'_>) {
     match severity {
-        Severity::Warn => at_warn(set, evaluation),
-        Severity::Info => at_info(set, evaluation),
-        Severity::Debug => at_debug(set, evaluation),
+        Severity::Warn => at_warn(parent, set, evaluation),
+        Severity::Info => at_info(parent, set, evaluation),
+        Severity::Debug => at_debug(parent, set, evaluation),
     }
 }
 
 // One expansion per function: how much code `tracing::event!` expands to
 // depends on the `tracing` features the whole build unifies, so a function
 // holding all three would pass alone and fail inside the workspace.
-fn at_warn(set: &CatalogDigest, evaluation: &Evaluation<'_>) {
-    evaluation_event!(tracing::Level::WARN, set, evaluation);
+fn at_warn(parent: Option<Id>, set: &CatalogDigest, evaluation: &Evaluation<'_>) {
+    evaluation_event!(tracing::Level::WARN, parent, set, evaluation);
 }
 
-fn at_info(set: &CatalogDigest, evaluation: &Evaluation<'_>) {
-    evaluation_event!(tracing::Level::INFO, set, evaluation);
+fn at_info(parent: Option<Id>, set: &CatalogDigest, evaluation: &Evaluation<'_>) {
+    evaluation_event!(tracing::Level::INFO, parent, set, evaluation);
 }
 
-fn at_debug(set: &CatalogDigest, evaluation: &Evaluation<'_>) {
-    evaluation_event!(tracing::Level::DEBUG, set, evaluation);
+fn at_debug(parent: Option<Id>, set: &CatalogDigest, evaluation: &Evaluation<'_>) {
+    evaluation_event!(tracing::Level::DEBUG, parent, set, evaluation);
 }

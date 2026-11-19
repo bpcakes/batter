@@ -267,7 +267,9 @@ the longer of the poll interval and the refresh run budget, plus one more run
 budget (derived from the serial schedule; no test measures it). The settings floor
 (`FLAG_OUTBOUND_HALT=engaged` and a restart) engages the switch without the
 store. Releasing a switch warns with the number of Live processes whose settings
-floor keeps it engaged.
+floor keeps it engaged, counting only processes whose catalog declares the
+switch; a process whose floor sample overflowed without listing it is counted
+in a separate warning, as possibly engaged.
 
 ### Change flags an invariant relates
 
@@ -277,12 +279,14 @@ and its invariant under `data.unmet`; nothing is written. Write the missing
 flag first. A `both_or_none` pair, or two flags that require each other,
 cannot change one strict write at a time: pass `--accept-invariant-hold` on
 the first write, read the warning naming the held flag, then write the other
-without it. `invariants_unjudged` (`data.catalogs`) has two causes: a
-running build's catalog is newer than the command, which upgrading
-`batter-flags` resolves, or a catalog has more than four governing kill
-switches whose stored rows a newer build wrote, which only a write of those
+without it. `invariants_unjudged` (`data.catalogs`) has two causes, counted
+apart and each named in the message: a running build's catalog is newer than
+the command (`data.undecodable`), which upgrading `batter-flags` resolves, or
+a catalog has more than four governing kill switches whose stored rows a
+newer build wrote (`data.held_governors`), which only a write of those
 switches from a build that reads them resolves; accept the hold only once the
-fleet's holds are known. Invariant holds never refuse a `kill`, whose report
+fleet's holds are known. An accepted write reports the same counts under
+`data.deferral.unjudged`. Invariant holds never refuse a `kill`, whose report
 lists the flags engaging the switch newly holds; its revision, encoding and
 coordinated-flip refusals still apply.
 

@@ -63,7 +63,7 @@ pub use presence::{
     SnapshotReport, StopFailure, StopOutcome,
 };
 pub use prune::{PruneLimit, Pruned};
-pub use relations::{Basis, Deferral, UnmetInvariant};
+pub use relations::{Basis, Deferral, UnjudgedCatalogs, UnmetInvariant};
 pub use request::{
     Actor, Archive, Change, ChangeReason, ExplicitValue, Precondition, Variant, Write,
 };

@@ -42,8 +42,11 @@ twice. A state of length zero means the entry carries no value; no state
 encoding produces an empty state, so it is never ambiguous.
 
 The file name MUST end with `.bfsn`. The temporary name is the file name
-followed by `.tmp`, and the probe the directory check creates is the file
-name followed by `.probe`; neither can be another valid file name.
+followed by `.tmp`. Each directory check creates and removes a probe of its
+own, named the file name followed by `.probe-`, the process id, the wall
+clock in nanoseconds and a process-wide attempt count, and retries an
+existing name under a new one; a probe left by a crashed process therefore
+never fails a later check. Neither name can be another valid file name.
 
 ## Reading
 
@@ -58,9 +61,11 @@ A reader MUST refuse, publishing nothing from the file:
 - a scope label other than its own (`Foreign`);
 - a repeated key (`Rejected`).
 
-A reader MUST read only a regular file, and MUST NOT read more than one byte
-past the limit before refusing it, so a FIFO, a device or an oversized file
-neither blocks nor exhausts the reader. An entry without a value MUST be
+A reader MUST read only a regular file, judged on the descriptor it opened
+without blocking, and MUST NOT read more than one byte past the limit before
+refusing it, so a FIFO, a device or an oversized file neither blocks nor
+exhausts the reader. A reader MUST check that no key repeats across every
+entry, those without a value included, before treating any entry as absent. An entry without a value MUST be
 treated as absent: the reader serves the switch's safe state or the declared
 base for it.
 

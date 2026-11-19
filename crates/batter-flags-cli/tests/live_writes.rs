@@ -154,10 +154,16 @@ async fn archive_and_restore_follow_the_declaration_gate_and_silent_blocks_name_
         .await
         .unwrap();
     db.silent("build-silent").await;
+    // The Silent build declares fast_path as a mode flag, so it cannot decode
+    // the stored release row.
+    sqlx::query("UPDATE flags.flag_catalog_entries SET kind = 'mode' WHERE key = 'fast_path'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let blocked = db.cli_args(&[
         "set",
         "fast_path",
-        "express",
+        "off",
         "--actor",
         "ops",
         "--reason",
@@ -240,5 +246,27 @@ async fn a_write_leaving_an_invariant_unmet_is_refused_until_the_hold_is_accepte
         met.json()["data"]["deferral"]["unmet"],
         serde_json::json!([])
     );
+    db.close().await;
+}
+
+/// A toggle takes only on or off: the store refuses another variant from the
+/// stored row's shape alone, and the command reports it with exit 3.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn a_toggle_variant_other_than_on_or_off_is_refused() {
+    let db = Database::seeded().await;
+    let run = db.cli_args(&[
+        "set",
+        "fast_path",
+        "maybe",
+        "--actor",
+        "ops",
+        "--reason",
+        "x",
+        "--yes",
+    ]);
+    assert_eq!(run.code, 3, "{run:?}");
+    assert_eq!(run.json()["data"]["refusal"], "not_a_toggle_variant");
+    assert_eq!(db.head().await, 0);
     db.close().await;
 }

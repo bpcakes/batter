@@ -41,6 +41,13 @@ async fn every_read_and_write_refuses_an_unmigrated_store_as_revision_zero() {
             .await
             .unwrap_err(),
     );
+    behind(
+        "history past the bigint range",
+        f.store
+            .history(None, Version::new(u64::MAX), deadline())
+            .await
+            .unwrap_err(),
+    );
     behind("fleet", f.store.fleet(deadline()).await.unwrap_err());
     behind(
         "write",

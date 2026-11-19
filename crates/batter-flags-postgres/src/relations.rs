@@ -66,9 +66,9 @@ pub struct Deferral {
     /// their stored row or their safe state, sorted: processes serve the
     /// flag's code default until each is released.
     pub overridden_by: Vec<FlagKey>,
-    /// Catalogs of Live or Silent declarers whose manifest this writer cannot
-    /// decode, a newer build's, so nothing of theirs was judged.
-    pub unjudged_catalogs: usize,
+    /// Catalogs of Live or Silent declarers nothing of which was judged, by
+    /// cause; `None` when every such catalog was judged.
+    pub unjudged: Option<UnjudgedCatalogs>,
     /// Whether a retained catalog declares the written key's flips
     /// coordinated. A policy that accepts it, as [`PooledStore::write`],
     /// `archive` and `restore` do, writes the flip anyway, and processes apply
@@ -76,6 +76,47 @@ pub struct Deferral {
     ///
     /// [`PooledStore::write`]: crate::PooledStore::write
     pub flip: crate::Coordination,
+}
+
+/// Catalogs of running declarers whose invariants a write could not judge,
+/// counted by cause. At least one count is non-zero: the store builds one
+/// only when a catalog went unjudged.
+///
+/// The causes need different remedies. An undecodable manifest is a newer
+/// build's, which a newer writer reads. Too many held governors means a
+/// decoded catalog has more than four governing kill switches whose stored
+/// rows its processes hold, too many combinations to enumerate; no writer
+/// upgrade changes that, only writes of those switches that the catalog's
+/// build can read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnjudgedCatalogs {
+    undecodable: usize,
+    held_governors: usize,
+}
+
+impl UnjudgedCatalogs {
+    fn new(undecodable: usize, held_governors: usize) -> Option<Self> {
+        (undecodable + held_governors > 0).then_some(Self {
+            undecodable,
+            held_governors,
+        })
+    }
+
+    /// Catalogs whose manifest this writer cannot decode.
+    pub fn undecodable(self) -> usize {
+        self.undecodable
+    }
+
+    /// Decoded catalogs with more than four held governing switches.
+    pub fn held_governors(self) -> usize {
+        self.held_governors
+    }
+
+    /// Every unjudged catalog, whatever its cause.
+    pub fn total(self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(self.undecodable + self.held_governors)
+            .unwrap_or(std::num::NonZeroUsize::MIN)
+    }
 }
 
 /// The state a write leaves its key in, as judged.
@@ -108,12 +149,13 @@ pub(crate) async fn judge(
     .fetch_all(sql.executor())
     .await?;
     let mut deferral = Deferral::default();
+    let (mut undecodable, mut held_governors) = (0, 0);
     let manifests: Vec<Manifest> = manifests
         .into_iter()
         .filter_map(|manifest| {
             let decoded = serde_json::from_value(manifest).ok();
             if decoded.is_none() {
-                deferral.unjudged_catalogs += 1;
+                undecodable += 1;
             }
             decoded
         })
@@ -139,7 +181,7 @@ pub(crate) async fn judge(
             .collect();
         let held: Vec<&FlagKey> = held.into_iter().collect();
         if held.len() > MAX_HELD_GOVERNORS {
-            deferral.unjudged_catalogs += 1;
+            held_governors += 1;
             continue;
         }
         for subset in 0..1_usize << held.len() {
@@ -152,6 +194,7 @@ pub(crate) async fn judge(
             judge_catalog(manifest, &rows, key, written, &engaged, &mut deferral);
         }
     }
+    deferral.unjudged = UnjudgedCatalogs::new(undecodable, held_governors);
     deferral.unmet.sort();
     deferral.unmet.dedup();
     deferral.overridden_by.sort();

@@ -144,6 +144,37 @@ fn damage_of_every_kind_is_refused_by_name() {
     assert_eq!(decode(&[]), Err(FileProblem::Truncated));
 }
 
+/// A file of `count` 1024-byte entries under a `scope_length` scope: 1023
+/// entries under a 909-byte scope fill the limit exactly.
+fn sized(scope_length: usize, count: usize) -> FileSnapshot {
+    let entry = |index: usize| FileEntry {
+        key: format!("k{index:06}"),
+        kind: "switch".into(),
+        value_type: "switch".into(),
+        fingerprint: [0; 32],
+        updated_version: 1,
+        value: EntryValue::State("x".repeat(960)),
+    };
+    FileSnapshot {
+        scope: "s".repeat(scope_length),
+        catalog_digest: [0; 32],
+        manifest_digest: [0; 32],
+        version: 1,
+        entries: (0..count).map(entry).collect(),
+    }
+}
+
+#[test]
+fn encoding_fills_the_limit_exactly_and_refuses_one_byte_more() {
+    let full = encode(&sized(909, 1023)).unwrap();
+    assert_eq!(full.len(), LIMIT);
+    assert_eq!(decode(&full).unwrap(), sized(909, 1023));
+    assert_eq!(encode(&sized(910, 1023)), Err(FileProblem::TooLarge));
+    assert_eq!(encode(&sized(909, 1024)), Err(FileProblem::TooLarge));
+    // Far over the limit, refusal comes from the first entry past it.
+    assert_eq!(encode(&sized(0, 1 << 16)), Err(FileProblem::TooLarge));
+}
+
 #[test]
 fn a_usable_file_loads_as_persisted_and_is_matched_entry_by_entry() {
     let base = base();
@@ -190,6 +221,22 @@ fn a_foreign_scope_a_changed_declaration_and_a_corrupt_entry_list_publish_nothin
         load(&base, &encode(&twice).unwrap()).unwrap_err(),
         FileProblem::Rejected(SnapshotRejection::DuplicateKey { row: 1 })
     );
+}
+
+#[test]
+fn an_absent_entry_counts_against_a_repeated_key() {
+    let base = base();
+    let mut absent = halt(&base, "engaged");
+    absent.value = EntryValue::Absent;
+    for (entries, row) in [
+        (vec![absent.clone(), halt(&base, "engaged")], 1),
+        (vec![halt(&base, "engaged"), absent], 1),
+    ] {
+        assert_eq!(
+            load(&base, &encode(&file(&base, entries)).unwrap()).unwrap_err(),
+            FileProblem::Rejected(SnapshotRejection::DuplicateKey { row })
+        );
+    }
 }
 
 #[test]

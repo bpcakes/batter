@@ -5,7 +5,7 @@
 use batter_flags_core::FlagKey;
 use batter_flags_postgres::{
     Basis, Coordination, Deferral, ErrorClass, PooledStore, Refusal, Request, StoreError,
-    UndeclaredBasis, UnmetInvariant, WriteOutcome, WritePolicy,
+    UndeclaredBasis, UnjudgedCatalogs, UnmetInvariant, WriteOutcome, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
@@ -100,6 +100,11 @@ fn refused(name: &'static str, key: &FlagKey, refusal: Refusal) -> Report {
             format!("the key is a {stored}, not a {requested}"),
             json!({"stored": stored, "requested": requested}),
         ),
+        Refusal::NotAToggleVariant => report(
+            "not_a_toggle_variant",
+            "the key is a toggle, which takes only on or off".into(),
+            Value::Null,
+        ),
         Refusal::Archived => report(
             "archived",
             "the key is archived; restore it first".into(),
@@ -154,9 +159,10 @@ fn refused(name: &'static str, key: &FlagKey, refusal: Refusal) -> Report {
         Refusal::InvariantsUnjudged { catalogs } => report(
             "invariants_unjudged",
             format!(
-                "{catalogs} running declarer catalog(s) come from a newer build this command cannot read, so their invariants were not judged; upgrade batter-flags, or pass --accept-invariant-hold to write unjudged"
+                "{}; pass --accept-invariant-hold to write unjudged once the fleet's holds are known",
+                unjudged_text(catalogs)
             ),
-            json!({"catalogs": catalogs.get()}),
+            unjudged_data(catalogs),
         ),
     }
 }
@@ -176,11 +182,8 @@ fn deferred(mut report: Report, key: &FlagKey, deferral: &Deferral) -> Report {
     for unmet in &deferral.unmet {
         report = report.warn(format!("held until met: {}", described(unmet)));
     }
-    if deferral.unjudged_catalogs > 0 {
-        report = report.warn(format!(
-            "{} running declarer catalog(s) come from a newer build; their invariants were not judged",
-            deferral.unjudged_catalogs
-        ));
+    if let Some(catalogs) = deferral.unjudged {
+        report = report.warn(unjudged_text(catalogs));
     }
     for switch in &deferral.overridden_by {
         report = report.warn(format!(
@@ -190,6 +193,33 @@ fn deferred(mut report: Report, key: &FlagKey, deferral: &Deferral) -> Report {
         ));
     }
     report
+}
+
+/// Why running declarer catalogs went unjudged, one clause per cause with
+/// its own remedy: only a newer manifest is fixed by upgrading the command.
+fn unjudged_text(catalogs: UnjudgedCatalogs) -> String {
+    let mut causes = Vec::new();
+    if catalogs.undecodable() > 0 {
+        causes.push(format!(
+            "{} running declarer catalog(s) come from a newer build this command cannot read (upgrading batter-flags reads them)",
+            catalogs.undecodable()
+        ));
+    }
+    if catalogs.held_governors() > 0 {
+        causes.push(format!(
+            "{} running declarer catalog(s) hold more than four governing kill switches whose rows their processes cannot read (only writing those switches from a build that reads them clears this)",
+            catalogs.held_governors()
+        ));
+    }
+    format!("{}, so their invariants were not judged", causes.join("; "))
+}
+
+fn unjudged_data(catalogs: UnjudgedCatalogs) -> Value {
+    json!({
+        "catalogs": catalogs.total().get(),
+        "undecodable": catalogs.undecodable(),
+        "held_governors": catalogs.held_governors(),
+    })
 }
 
 fn described(unmet: &UnmetInvariant) -> String {
@@ -227,7 +257,8 @@ fn deferral_data(deferral: &Deferral) -> Value {
     json!({
         "unmet": deferral.unmet.iter().map(unmet_data).collect::<Vec<_>>(),
         "overridden_by": deferral.overridden_by.iter().map(FlagKey::as_str).collect::<Vec<_>>(),
-        "unjudged_catalogs": deferral.unjudged_catalogs,
+        "unjudged_catalogs": deferral.unjudged.map_or(0, |catalogs| catalogs.total().get()),
+        "unjudged": deferral.unjudged.map(unjudged_data),
         "flip": match deferral.flip {
             Coordination::Rolling => "rolling",
             Coordination::Coordinated => "coordinated",

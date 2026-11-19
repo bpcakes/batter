@@ -69,34 +69,62 @@ impl std::fmt::Debug for FileEntry {
     }
 }
 
+/// Encodes `file`, refusing it as `TooLarge` as soon as the body and its
+/// trailer would pass the limit, so an oversized catalog is never buffered
+/// or hashed whole.
 pub(crate) fn encode(file: &FileSnapshot) -> Result<Vec<u8>, FileProblem> {
-    let mut out = Vec::with_capacity(256);
-    out.extend_from_slice(MAGIC);
-    out.push(FORMAT_VERSION);
-    put_text(&mut out, &file.scope, Width::Two)?;
-    out.extend_from_slice(&file.catalog_digest);
-    out.extend_from_slice(&file.manifest_digest);
-    out.extend_from_slice(&file.version.to_be_bytes());
+    let mut out = Body(Vec::with_capacity(256));
+    out.put(MAGIC)?;
+    out.put(&[FORMAT_VERSION])?;
+    out.text(&file.scope, Width::Two)?;
+    out.put(&file.catalog_digest)?;
+    out.put(&file.manifest_digest)?;
+    out.put(&file.version.to_be_bytes())?;
     let count = u32::try_from(file.entries.len()).map_err(|_| FileProblem::TooLarge)?;
-    out.extend_from_slice(&count.to_be_bytes());
+    out.put(&count.to_be_bytes())?;
     for entry in &file.entries {
-        put_text(&mut out, &entry.key, Width::One)?;
-        put_text(&mut out, &entry.kind, Width::One)?;
-        put_text(&mut out, &entry.value_type, Width::One)?;
-        out.extend_from_slice(&entry.fingerprint);
-        out.extend_from_slice(&entry.updated_version.to_be_bytes());
+        out.text(&entry.key, Width::One)?;
+        out.text(&entry.kind, Width::One)?;
+        out.text(&entry.value_type, Width::One)?;
+        out.put(&entry.fingerprint)?;
+        out.put(&entry.updated_version.to_be_bytes())?;
         match &entry.value {
             EntryValue::State(state) if state.is_empty() => return Err(FileProblem::Malformed),
-            EntryValue::State(state) => put_text(&mut out, state, Width::Two)?,
-            EntryValue::Absent => put_text(&mut out, "", Width::Two)?,
+            EntryValue::State(state) => out.text(state, Width::Two)?,
+            EntryValue::Absent => out.text("", Width::Two)?,
         }
     }
+    let Body(mut out) = out;
     let trailer = Sha256::digest(&out);
     out.extend_from_slice(&trailer);
-    if out.len() > LIMIT {
-        return Err(FileProblem::TooLarge);
-    }
     Ok(out)
+}
+
+/// A file body that never grows past the room the limit leaves its trailer.
+struct Body(Vec<u8>);
+
+impl Body {
+    fn put(&mut self, bytes: &[u8]) -> Result<(), FileProblem> {
+        if bytes.len() > LIMIT - TRAILER - self.0.len() {
+            return Err(FileProblem::TooLarge);
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn text(&mut self, text: &str, width: Width) -> Result<(), FileProblem> {
+        match width {
+            Width::One => {
+                self.put(&[u8::try_from(text.len()).map_err(|_| FileProblem::TooLarge)?])?
+            }
+            Width::Two => self.put(
+                &u16::try_from(text.len())
+                    .map_err(|_| FileProblem::TooLarge)?
+                    .to_be_bytes(),
+            )?,
+        }
+        self.put(text.as_bytes())
+    }
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<FileSnapshot, FileProblem> {
@@ -152,19 +180,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<FileSnapshot, FileProblem> {
 enum Width {
     One,
     Two,
-}
-
-fn put_text(out: &mut Vec<u8>, text: &str, width: Width) -> Result<(), FileProblem> {
-    match width {
-        Width::One => out.push(u8::try_from(text.len()).map_err(|_| FileProblem::TooLarge)?),
-        Width::Two => out.extend_from_slice(
-            &u16::try_from(text.len())
-                .map_err(|_| FileProblem::TooLarge)?
-                .to_be_bytes(),
-        ),
-    }
-    out.extend_from_slice(text.as_bytes());
-    Ok(())
 }
 
 struct Reader<'a> {

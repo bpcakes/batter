@@ -272,6 +272,13 @@ fn an_event_goes_to_the_dispatcher_and_span_captured_with_the_view() {
         second.events()
     );
 
+    // Captured outside any span, evaluated inside one on the same dispatcher:
+    // the absent parent is kept, so the event is a root event.
+    first.clear();
+    let view = first.within(|| base.declared_view());
+    first.within(|| tracing::info_span!("unrelated").in_scope(|| view.evaluate(&h.fast_path)));
+    assert_eq!(only(&first).parent, None, "never the evaluation-time span");
+
     // A view captured with no dispatcher current emits to nobody.
     let (catalog, h) = world();
     let bare = self::base(catalog, &h.serving, &[]);

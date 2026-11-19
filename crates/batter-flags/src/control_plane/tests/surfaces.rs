@@ -49,6 +49,7 @@ fn an_unusable_directory_fails_startup_and_names_are_reserved() {
         ".bfsn",
         "a.bfsn.tmp",
         "last-good.bfsn.probe",
+        "last-good.bfsn.probe-1-2-3",
         "spa ce.bfsn",
     ] {
         assert_eq!(
@@ -88,6 +89,54 @@ fn an_unusable_directory_fails_startup_and_names_are_reserved() {
         crate::last_good::Initial::Unreadable
     ));
     assert!(!format!("{opened:?}").contains("BFSN"));
+}
+
+#[test]
+fn a_leftover_probe_never_blocks_a_later_open_and_concurrent_opens_succeed() {
+    let directory = Directory::new();
+    // What a process that died between creating and removing its probe left.
+    let leftovers = [
+        "last-good.bfsn.probe".to_owned(),
+        format!("last-good.bfsn.probe-{}-0-0", std::process::id()),
+    ];
+    for leftover in &leftovers {
+        std::fs::write(directory.0.join(leftover), b"").unwrap();
+    }
+    let _first = directory.open();
+    let openers: Vec<_> = (0..8)
+        .map(|_| {
+            let path = directory.path();
+            std::thread::spawn(move || SnapshotDirectory::open(path).map(drop))
+        })
+        .collect();
+    for opener in openers {
+        assert_eq!(opener.join().unwrap(), Ok(()));
+    }
+    let mut left: Vec<_> = std::fs::read_dir(&directory.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
+    assert_eq!(left, leftovers, "every probe an open made was removed");
+}
+
+#[test]
+fn reading_a_fifo_returns_at_once_without_a_writer() {
+    let directory = Directory::new();
+    let fifo = directory.0.join("last-good.bfsn");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    // The descriptor is opened before its type is judged, so the open itself
+    // must not wait for a writer that never comes.
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sent.send(crate::last_good::read_bounded(&fifo)));
+    let initial = received
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the read waited on the FIFO");
+    assert!(matches!(initial, crate::last_good::Initial::Unreadable));
 }
 
 #[tokio::test(start_paused = true)]

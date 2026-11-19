@@ -113,8 +113,8 @@ pub enum Request {
 
 impl PooledStore {
     /// Runs one audited mutation that `interrupt` may stop before COMMIT is
-    /// sent: a signal while the transaction is being prepared, or before
-    /// COMMIT, rolls it back and returns [`ErrorClass::Interrupted`], with
+    /// sent: a signal while a connection is acquired or the transaction
+    /// begins, while it is being prepared, or before COMMIT, rolls it back and returns [`ErrorClass::Interrupted`], with
     /// nothing written. Once COMMIT is sent it is never interrupted, so the
     /// outcome reported is the real one. Dropping the sender interrupts
     /// nothing. `policy` decides what is refused inside the transaction.
@@ -180,12 +180,19 @@ impl PooledStore {
         mut interrupt: Interrupt,
     ) -> Result<WriteOutcome, StoreError> {
         let acquire_deadline = deadline.min(Instant::now() + self.timing.acquire);
-        let tx = bounded(acquire_deadline, async {
+        let birth = bounded(acquire_deadline, async {
             PgAtomicTransaction::begin(&self.pool)
                 .await
                 .map_err(StoreError::from)
-        })
-        .await?;
+        });
+        // An interrupt while a connection is acquired, reset or begins its
+        // transaction drops the birth whole, as the acquire deadline would:
+        // nothing has been written, and nothing waits for an exhausted pool.
+        let tx = tokio::select! {
+            biased;
+            () = interrupt.wait() => return Err(StoreError::classified(ErrorClass::Interrupted)),
+            born = birth => born?,
+        };
         let operation = tx.operation_until(deadline, async |sql| {
             self.prepare(sql, &mutation, policy, deadline).await
         });
@@ -277,7 +284,7 @@ impl PooledStore {
         // A report is the serving role's own claim, so one at or beyond the
         // window above the head is ignored: it can neither refuse this write
         // nor move the counter further than the guard trigger allows.
-        let applied: Option<i64> = sqlx::query_scalar("SELECT max(snapshot_version) FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > clock_timestamp() AND snapshot_source = 'control_plane' AND snapshot_version > $1 AND snapshot_version - $1 < $2")
+        let applied: Option<i64> = sqlx::query_scalar("SELECT max(snapshot_version) FROM flags.flag_processes WHERE stopped_at IS NULL AND expires_at > statement_timestamp() AND snapshot_source = 'control_plane' AND snapshot_version > $1 AND snapshot_version - $1 < $2")
             .bind(head).bind(crate::MAX_VERSION_JUMP).fetch_one(sql.executor()).await?;
         let next = applied
             .unwrap_or(head)

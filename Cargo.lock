@@ -419,6 +419,7 @@ dependencies = [
  "batter-runledger",
  "batter-sqlx",
  "batter-test-support",
+ "libc",
  "pin-project-lite",
  "postgres-test-harness",
  "runledger-core",

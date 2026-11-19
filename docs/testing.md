@@ -33,7 +33,11 @@ The standalone [at-rest portability gate](../scripts/check-batter-at-rest-portab
 runs separately in CI. Hosted Rust job selection belongs to
 [ci_plan.py](../scripts/ci_plan.py); a planner failure selects the full run.
 The native Runlimit and flags PostgreSQL jobs run only when their packages'
-local closures or a workspace-wide input change; manual dispatch runs both.
+local closures, a Rust source those closures load by `#[path]` or a literal
+`include!`-family macro from elsewhere (such as `test-support/process/`), or a
+workspace-wide input change; if either job's inputs cannot be established,
+every job runs and no earlier verification is reused. Manual dispatch runs
+both.
 Weekly CI checks floating stable. A workflow definition is not evidence that it ran.
 
 <a id="verification-commands"></a>

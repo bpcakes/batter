@@ -59,8 +59,9 @@ lives in the blocking task, records its outcome and releases admission in one
 critical section, and a later destruction releases only its own selection.
 `RegisteredFlags::last_good` reads that state; never keep a failure apart from
 the publication it failed. The queue names the version it holds or has
-settled, and an offer replaces it only with a newer one, because every
-confirming read offers its version again.
+settled, and an offer replaces it only with a newer one. A refresh asks the
+queue before copying a fetch's rows, so a confirming read builds no file,
+while a publication already waiting is still attempted every run.
 Registration validates every input before registering anything, and refuses a base an
 engaged governing switch would leave breaking an invariant. The writer owns
 core's `Publisher`; the refresh publishes and records its verdict in one

@@ -67,15 +67,23 @@ pub(crate) async fn report<F: From<batter_flags_postgres::StoreError>>(
         )
         .with_data(json!({"head": fleet.head().get(), "processes": processes})));
     };
-    // Live processes grouped by the rule-set triple; Silent and Stopped apart.
-    let mut groups: BTreeMap<(String, Option<u64>, String), usize> = BTreeMap::new();
+    // Live processes grouped by build, snapshot source and version, and
+    // declared revision; Silent and Stopped apart. The source is part of the
+    // key: a version restored from the last-good file is not one the control
+    // plane applied, and `rollout` counts such a process as behind.
+    let mut groups: BTreeMap<(String, &'static str, Option<u64>, String), usize> = BTreeMap::new();
     let mut others = Vec::new();
     for p in fleet.processes() {
         match p.state() {
             ProcessState::Live => {
-                let (_, applied) = snapshot_text(p.snapshot());
+                let (source, version) = snapshot_text(p.snapshot());
                 *groups
-                    .entry((p.build().to_owned(), applied, hex(p.declared_revision())))
+                    .entry((
+                        p.build().to_owned(),
+                        source,
+                        version,
+                        hex(p.declared_revision()),
+                    ))
                     .or_default() += 1;
             }
             ProcessState::Silent | ProcessState::Stopped => others.push(process(p)),
@@ -83,7 +91,7 @@ pub(crate) async fn report<F: From<batter_flags_postgres::StoreError>>(
     }
     let groups: Vec<Value> = groups
         .into_iter()
-        .map(|((build, applied, revision), count)| json!({"build": build, "snapshot_version": applied, "declared_revision": revision, "processes": count}))
+        .map(|((build, source, version, revision), count)| json!({"build": build, "snapshot_source": source, "snapshot_version": version, "declared_revision": revision, "processes": count}))
         .collect();
     let (message, reached) = match fleet.rollout(Version::new(version)) {
         Rollout::Reached { live } => (
@@ -106,29 +114,59 @@ pub(crate) async fn report<F: From<batter_flags_postgres::StoreError>>(
         .with_data(json!({"head": fleet.head().get(), "rollout": reached, "live_groups": groups, "not_live": others})))
 }
 
-/// Adds the warning a released switch needs: Live processes whose settings
-/// floor holds it engaged stay engaged. A process whose list overflowed
-/// counts as possibly engaged.
+/// What one Live declarer's floor sample says about a switch.
+enum Floor {
+    /// The sample lists the switch: the floor keeps it engaged.
+    Engaged,
+    /// The sample omits the switch but overflowed, so the floor may or may
+    /// not keep it engaged.
+    Unknown,
+    /// The sample is complete and omits the switch.
+    Clear,
+}
+
+fn floor(process: &FleetProcess, switch: &FlagKey) -> Floor {
+    let sample = process.floor_engaged();
+    match (sample.keys().contains(switch), sample.overflow()) {
+        (true, _) => Floor::Engaged,
+        (false, 0) => Floor::Clear,
+        (false, _) => Floor::Unknown,
+    }
+}
+
+/// Adds the warnings a released switch needs, over the Live processes whose
+/// catalog declares it: those whose settings floor sample lists it stay
+/// engaged, and those whose sample overflowed without listing it may. The two
+/// are counted apart, because an overflow omits keys without saying which.
 pub(crate) async fn floor_warning(
     store: &PooledStore,
     deadline: Instant,
     switch: &FlagKey,
-    report: Report,
+    mut report: Report,
 ) -> Report {
-    let Ok(fleet) = store.fleet(deadline).await else {
+    let Ok(fleet) = store.fleet_declaring(switch, deadline).await else {
         return report.warn("the fleet could not be read to count processes whose settings floor keeps the switch engaged");
     };
-    let floored = fleet
-        .processes()
-        .iter()
-        .filter(|p| p.state() == ProcessState::Live)
-        .filter(|p| p.floor_engaged().keys().contains(switch) || p.floor_engaged().overflow() > 0)
-        .count();
-    if floored == 0 {
-        return report;
+    let (mut engaged, mut unknown) = (0_usize, 0_usize);
+    for process in fleet.processes() {
+        match (process.state(), floor(process, switch)) {
+            (ProcessState::Live, Floor::Engaged) => engaged += 1,
+            (ProcessState::Live, Floor::Unknown) => unknown += 1,
+            (ProcessState::Live, Floor::Clear)
+            | (ProcessState::Silent | ProcessState::Stopped, _) => {}
+        }
     }
-    report.warn(format!(
-        "{floored} Live processes keep {} engaged by their settings floor",
-        switch.as_str()
-    ))
+    if engaged > 0 {
+        report = report.warn(format!(
+            "{engaged} Live processes keep {} engaged by their settings floor",
+            switch.as_str()
+        ));
+    }
+    if unknown > 0 {
+        report = report.warn(format!(
+            "{unknown} Live processes declaring {} report more floor-engaged switches than their sample lists, so whether their floor keeps it engaged is unknown",
+            switch.as_str()
+        ));
+    }
+    report
 }

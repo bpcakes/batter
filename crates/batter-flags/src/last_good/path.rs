@@ -1,10 +1,12 @@
 //! Where the last-good file lives, and the directory opened for it.
 
 use std::{
-    fs::{File, OpenOptions},
-    io::Read,
+    fs::OpenOptions,
+    io::{ErrorKind, Read},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use super::{DirectoryError, format::LIMIT};
@@ -57,11 +59,29 @@ impl SnapshotFilePath {
         self.directory.join(format!("{}.tmp", self.name))
     }
 
-    /// The name `open` creates and removes to prove the directory writable.
+    /// A name `open` creates and removes to prove the directory writable,
+    /// distinct for each attempt: the file name, `.probe-`, then this
+    /// process's id, the wall clock in nanoseconds and a process-wide count.
+    /// A probe a crashed process left behind, or one a concurrent opener of
+    /// the same path holds, therefore does not fail a later attempt: in the
+    /// unlikely event a name already exists, `open` retries under a new one.
     fn probe(&self) -> PathBuf {
-        self.directory.join(format!("{}.probe", self.name))
+        static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+        let attempt = ATTEMPT.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        self.directory.join(format!(
+            "{}.probe-{}-{nanos}-{attempt}",
+            self.name,
+            std::process::id()
+        ))
     }
 }
+
+/// How many distinct probe names `open` tries before calling a directory
+/// unwritable; only an existing name is retried.
+const PROBE_ATTEMPTS: usize = 4;
 
 /// What the directory held at startup.
 #[derive(Clone)]
@@ -106,18 +126,7 @@ impl SnapshotDirectory {
         }
         // Permission bits say nothing about ownership, ACLs or a read-only
         // mount, so prove the operations a persist needs.
-        let probe = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path.probe());
-        match probe {
-            Ok(file) => {
-                drop(file);
-                std::fs::remove_file(path.probe()).map_err(|_| DirectoryError::NotWritable)?;
-            }
-            Err(_) => return Err(DirectoryError::NotWritable),
-        }
+        prove_writable(&path)?;
         let initial = read_bounded(&path.file());
         Ok(Self { path, initial })
     }
@@ -129,6 +138,28 @@ impl SnapshotDirectory {
     pub(crate) fn initial(&self) -> &Initial {
         &self.initial
     }
+}
+
+/// Creates and removes a fresh probe. An existing name, which only a
+/// leftover or a racing opener can explain, is retried under a new one.
+fn prove_writable(path: &SnapshotFilePath) -> Result<(), DirectoryError> {
+    for _ in 0..PROBE_ATTEMPTS {
+        let probe = path.probe();
+        let created = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&probe);
+        match created {
+            Ok(file) => {
+                drop(file);
+                return std::fs::remove_file(&probe).map_err(|_| DirectoryError::NotWritable);
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(DirectoryError::NotWritable),
+        }
+    }
+    Err(DirectoryError::NotWritable)
 }
 
 impl std::fmt::Debug for SnapshotDirectory {
@@ -148,16 +179,25 @@ impl std::fmt::Debug for SnapshotDirectory {
 /// Reads at most one byte over the limit from `path`, and only from a
 /// regular file, so a FIFO or a device never blocks the reader and an
 /// oversized file is never allocated whole.
+///
+/// The open never waits, since `O_NONBLOCK` returns at once for a FIFO
+/// without a writer, and the type is judged on the opened descriptor, so a
+/// path replaced after any earlier look cannot slip a FIFO past the check.
+/// `O_NONBLOCK` does not change reads of a regular file.
 pub(crate) fn read_bounded(path: &Path) -> Initial {
-    match std::fs::metadata(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Initial::Absent,
+    let opened = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path);
+    let file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Initial::Absent,
         Err(_) => return Initial::Unreadable,
-        Ok(metadata) if !metadata.is_file() => return Initial::Unreadable,
-        Ok(_) => {}
-    }
-    let Ok(file) = File::open(path) else {
-        return Initial::Unreadable;
     };
+    match file.metadata() {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) | Err(_) => return Initial::Unreadable,
+    }
     let mut bytes = Vec::new();
     match file.take(LIMIT as u64 + 1).read_to_end(&mut bytes) {
         Ok(_) => Initial::Read(bytes),

@@ -45,6 +45,25 @@ impl Shape {
             RequestedValue::Explicit(v) => self == Self::explicit(v),
         }
     }
+    /// Whether a declared flag's variant lies in this shape's closed
+    /// vocabulary. A toggle's is `on` and `off`, fixed by the type and so
+    /// judged whether or not any Live or Silent process declares the key; an
+    /// enumeration's vocabulary is each declaration's own and is judged
+    /// against the fleet. Requests other than a declared flag carry a typed
+    /// value and always pass.
+    pub(crate) fn closed_vocabulary_admits(self, request: &RequestedValue) -> bool {
+        use batter_flags_core::{FlagValue, Toggle};
+        match (self, request) {
+            (Self::ReleaseToggle | Self::ModeToggle, RequestedValue::DeclaredFlag(variant)) => {
+                Toggle::from_variant(&variant.0).is_some()
+            }
+            (
+                Self::ReleaseEnum | Self::ModeEnum | Self::Switch,
+                RequestedValue::DeclaredFlag(_),
+            )
+            | (_, RequestedValue::DeclaredSwitch(_) | RequestedValue::Explicit(_)) => true,
+        }
+    }
     pub(crate) fn explicit(value: &ExplicitValue) -> Self {
         match value {
             ExplicitValue::ReleaseToggle(_) => Self::ReleaseToggle,

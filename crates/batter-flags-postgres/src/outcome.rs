@@ -48,6 +48,10 @@ pub enum Refusal {
         /// Requested kind/type tag.
         requested: String,
     },
+    /// The key is a toggle, which takes only `on` or `off`, and the
+    /// requested variant is neither. Judged from the stored row or retained
+    /// declaration alone, so no Live or Silent declarer is needed to refuse it.
+    NotAToggleVariant,
     /// Ordinary writes cannot change an archived key.
     Archived,
     /// Archive requires all declarers to be stopped or pruned.
@@ -82,12 +86,12 @@ pub enum Refusal {
         /// The flags it would newly hold, sorted; never empty.
         unmet: Vec<UnmetInvariant>,
     },
-    /// A Live or Silent declarer's manifest is one this writer cannot
-    /// decode, so the write's invariants could not be judged, and the
-    /// request refused that.
+    /// A Live or Silent declarer's catalog could not be judged, because
+    /// this writer cannot decode its manifest or because it holds more than
+    /// four governing switches, and the request refused that.
     InvariantsUnjudged {
-        /// How many catalogs could not be judged.
-        catalogs: std::num::NonZeroUsize,
+        /// The catalogs that could not be judged, by cause.
+        catalogs: crate::UnjudgedCatalogs,
     },
 }
 /// Commit acknowledgement was not obtained. Reconcile; never blindly replay.

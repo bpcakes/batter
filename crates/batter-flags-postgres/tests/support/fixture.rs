@@ -96,6 +96,15 @@ impl Fixture {
         sqlx::query("INSERT INTO flags.flag_processes(process_id,application,environment,build,manifest_digest,snapshot_source,snapshot_version,declared_revision,declared_shared_revision,held_keys,held_overflow,floor_engaged_keys,floor_overflow,liveness_seconds,retention_seconds,expires_at,stopped_at) VALUES (uuidv7(),'service','test',$2,$1,'control_plane',0,$1,$1,'{}',0,'{}',0,60,3600,clock_timestamp() + CASE WHEN $2 = 'live' THEN interval '1 hour' ELSE interval '-1 hour' END,CASE WHEN $2 = 'stopped' THEN clock_timestamp() ELSE NULL END)")
             .bind(digest).bind(presence).execute(&self.pool).await.unwrap();
     }
+    /// Seeds a kill switch row a newer build wrote, which readers hold.
+    pub async fn unreadable_switch(&self, name: &str) {
+        let mut tx = self.pool.begin().await.unwrap();
+        sqlx::raw_sql("SELECT set_config('batter_flags.actor','fixture',true),set_config('batter_flags.reason','newer encoding',true),set_config('batter_flags.guard','unconditional',true); UPDATE flags.flag_control SET version=version+1;")
+            .execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO flags.flag_state(name,kind,value_type,state,created_version,updated_version) SELECT $1,'switch','switch','{\"encoding\":2,\"switch\":\"engaged\"}',version,version FROM flags.flag_control")
+            .bind(name).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
     pub async fn head(&self) -> i64 {
         sqlx::query_scalar("SELECT version FROM flags.flag_control")
             .fetch_one(&self.pool)

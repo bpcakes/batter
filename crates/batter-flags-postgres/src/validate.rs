@@ -104,7 +104,7 @@ pub(crate) async fn apply(
         ControlFlow::Break(decision) => return Ok(Prepared::Rollback(decision)),
         ControlFlow::Continue(plan) => plan,
     };
-    let processes = sqlx::query("SELECT p.build, CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > clock_timestamp() THEN 'live' ELSE 'silent' END AS presence, p.row_encoding, e.kind, e.value_type, e.variants FROM flags.flag_processes p JOIN flags.flag_catalog_entries e USING(manifest_digest) WHERE e.key = $1 ORDER BY p.build, p.process_id")
+    let processes = sqlx::query("SELECT p.build, CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > statement_timestamp() THEN 'live' ELSE 'silent' END AS presence, p.row_encoding, e.kind, e.value_type, e.variants FROM flags.flag_processes p JOIN flags.flag_catalog_entries e USING(manifest_digest) WHERE e.key = $1 ORDER BY p.build, p.process_id")
         .bind(key).fetch_all(sql.executor()).await?.into_iter().map(Process::read).collect::<Result<Vec<_>, _>>()?;
     let active: Vec<_> = processes.iter().filter_map(Process::active).collect();
     if matches!(plan, ChangePlan::Archive(_)) && !active.is_empty() {
@@ -194,7 +194,8 @@ fn invariant_refusal(deferral: &crate::Deferral) -> Option<Refusal> {
             unmet: deferral.unmet.clone(),
         });
     }
-    NonZeroUsize::new(deferral.unjudged_catalogs)
+    deferral
+        .unjudged
         .map(|catalogs| Refusal::InvariantsUnjudged { catalogs })
 }
 fn preflight(
@@ -235,6 +236,12 @@ fn preflight(
             stored: format!("{kind}/{value_type}"),
             requested: requested.into(),
         });
+    }
+    if let Mutation::Write(w) = mutation
+        && let Some(shape) = shape
+        && !shape.closed_vocabulary_admits(&w.value)
+    {
+        return refuse(Refusal::NotAToggleVariant);
     }
     match (mutation, &stored) {
         (Mutation::Write(_), StoredRow::Archived(_)) => return refuse(Refusal::Archived),

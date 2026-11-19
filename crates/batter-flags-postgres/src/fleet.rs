@@ -11,7 +11,9 @@ use sqlx::{Row, postgres::PgRow};
 use std::num::NonZeroUsize;
 use tokio::time::Instant;
 
-/// A process row's state on the server clock when the fleet was read.
+/// A process row's state on the server clock when the fleet was read. Every
+/// row of one [`Fleet`] is classified at the same server instant, the read's
+/// statement timestamp, so no fleet combines states that never held together.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProcessState {
     /// Not stopped, and its heartbeat has not expired.
@@ -206,7 +208,7 @@ impl PooledStore {
             self.read_guard(sql, deadline).await?;
             let head = version(sqlx::query_scalar("SELECT version FROM flags.flag_control WHERE singleton").fetch_one(sql.executor()).await?)?;
             let processes = sqlx::query("SELECT p.process_id, p.application, p.environment, p.build, \
-                CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > clock_timestamp() THEN 'live' ELSE 'silent' END AS state, \
+                CASE WHEN p.stopped_at IS NOT NULL THEN 'stopped' WHEN p.expires_at > statement_timestamp() THEN 'live' ELSE 'silent' END AS state, \
                 p.snapshot_source, p.snapshot_version, p.declared_revision, p.held_keys, p.held_overflow, p.floor_engaged_keys, p.floor_overflow, p.last_seen_at, p.expires_at \
                 FROM flags.flag_processes p \
                 WHERE $1::text IS NULL OR EXISTS (SELECT FROM flags.flag_catalog_entries e WHERE e.manifest_digest = p.manifest_digest AND e.key = $1) \

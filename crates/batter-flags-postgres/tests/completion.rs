@@ -48,6 +48,49 @@ async fn dropping_the_interrupt_sender_before_preparation_still_commits_once() {
     assert_eq!(loaded.rows().len(), 1);
     fixture.close().await;
 }
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn an_interrupt_while_the_pool_is_exhausted_stops_the_write_before_its_acquire_timeout() {
+    let f = Fixture::migrated().await;
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(f.lease.database_url())
+        .await
+        .unwrap();
+    let held = pool.acquire().await.unwrap();
+    let long = Duration::from_secs(30);
+    let store = PooledStore::new(
+        pool.clone(),
+        StoreTiming::new(long, long, long, long).unwrap(),
+    );
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let started = tokio::time::Instant::now();
+    let interrupter = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sender.send(()).unwrap();
+    });
+    let error = store
+        .submit(
+            Request::Write(write()),
+            WritePolicy::STRICT,
+            started + Duration::from_secs(60),
+            receiver,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.class(), ErrorClass::Interrupted);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    interrupter.await.unwrap();
+    drop(held);
+    assert_eq!(f.head().await, 0);
+    pool.close().await;
+    f.close().await;
+}
+
 fn sqlstate(mut error: &(dyn Error + 'static)) -> Option<String> {
     loop {
         if let Some(native) = error.downcast_ref::<sqlx::Error>() {

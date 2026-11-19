@@ -25,6 +25,29 @@ contracts, capability facts and validation history.
   runtime without waiting for blocking work, so a stalled host-name lookup
   cannot delay process exit after command settlement or an unwinding panic.
 
+- Flags (unreleased packages, so no migration applies; `batter-jkw6.59`):
+  `PooledStore::submit` honours its interrupt while the write's connection is
+  acquired and its transaction begins, so a signal no longer waits out an
+  exhausted pool. A write of a toggle variant other than `on` or `off` is
+  refused as `Refusal::NotAToggleVariant` (`not_a_toggle_variant`) even when
+  no Live or Silent process declares the key. `Refusal::InvariantsUnjudged`
+  and `Deferral::unjudged` carry `UnjudgedCatalogs`, which counts undecodable
+  manifests apart from catalogs over the four-held-governor limit; the
+  operator command suggests an upgrade only for the first. `history` past the
+  `bigint` range runs the read guard before answering with an empty page.
+  Fleet reads and a write's declarer check classify every row at one
+  statement instant. `batter-flags fleet --version` groups Live processes by
+  snapshot source too, and releasing a switch counts declarers whose floor
+  sample lists it apart from those whose sample overflowed. The last-good
+  file's directory check uses a fresh probe name per attempt, so a probe left
+  by a crash no longer fails startup; the file is opened without blocking and
+  judged on the opened descriptor; a key repeated by an absent entry refuses
+  the file; encoding stops at the 1 MiB limit; and a confirming refresh no
+  longer copies the fetched rows. A view captured outside any span emits its
+  evaluation events as root events. The CI planner counts Rust sources a job's
+  packages load by path from outside their directories, and runs every job,
+  reusing no earlier verification, when either job's inputs are unknown.
+
 - `batter_axum::GateView` (and so `batter_flags::http::AdmittedFlags`)
   extracted where no gate of the route's group captured its value still
   rejects with the sanitized 500, and the completion event now carries
