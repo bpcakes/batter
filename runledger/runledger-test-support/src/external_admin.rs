@@ -19,10 +19,19 @@ use url::Url;
 /// reads them. An unparseable URL is left to SQLx's own error.
 pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str> {
     let url = Url::parse(admin_url).ok()?;
-    // Lease URLs replace the database path segment; without exactly one, the
-    // last-"/" split would land inside "://" or keep extra segments.
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Some(
+            "RUNLEDGER_TEST_ADMIN_DATABASE_URL must be a postgres:// or postgresql:// URL",
+        );
+    }
+    // Lease URLs replace the text after the last raw "/" before any query or
+    // fragment. That must be exactly the one database segment this parser
+    // reads, or the split would land inside "://", keep extra segments, or
+    // read a different path (a backslash, say) than SQLx connects to.
     let database = url.path().strip_prefix('/').unwrap_or("");
-    if database.is_empty() || database.contains('/') {
+    let location = admin_url.split(['?', '#']).next().unwrap_or(admin_url);
+    let raw_database = location.rsplit_once('/').map(|(_, database)| database);
+    if database.is_empty() || database.contains('/') || raw_database != Some(database) {
         return Some(
             "give RUNLEDGER_TEST_ADMIN_DATABASE_URL exactly one database path segment: lease URLs \
              replace it",
@@ -103,6 +112,9 @@ mod tests {
             "postgres://alice@db.example",
             "postgres://alice@db.example/",
             "postgres://alice@db.example/one/two",
+            // Another scheme, or a path the raw split reads differently.
+            "http://u@db.example:5432/postgres",
+            "postgres://u@db.example:5432\\postgres",
             // Transports the native proxies cannot dial.
             "postgres://u:p@%2Ftmp/postgres",
             "postgres://u:p@[::1]:5432/postgres?hostaddr=::1",

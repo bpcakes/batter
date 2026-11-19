@@ -219,6 +219,9 @@ def parse_database_url(database):
 def psql_environment(parts):
     """The environment psql connects with: no inherited PG* setting, the parsed parts."""
     environment = {key: value for key, value in os.environ.items() if not key.startswith("PG")}
+    # libpq defaults gssencmode to prefer, which sslmode=disable does not
+    # cover; the query macros never use GSS encryption, so psql must not either.
+    environment["PGGSSENCMODE"] = "disable"
     environment.update(PGHOST=parts["host"], PGPORT=str(parts["port"]),
                        PGDATABASE=parts["database"], PGCONNECT_TIMEOUT="10")
     if parts["user"] is not None:
@@ -328,7 +331,9 @@ def refuse_sqlx_config(directory):
         # volumes (macOS by default) fold names beyond ASCII, so matching the
         # listing's spelling would miss a file SQLx finds.
         candidate = Path(current) / "sqlx.toml"
-        if candidate.is_file():
+        # SQLx CLI tests exists() and then reads the path, whatever its type:
+        # a FIFO or a directory counts too.
+        if candidate.exists():
             relative = candidate.relative_to(directory)
             raise ValueError("remove sqlx.toml (" + relative.as_posix()
                              + "): SQLx CLI could read another database URL variable than psql checked")

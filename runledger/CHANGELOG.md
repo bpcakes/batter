@@ -384,9 +384,10 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   derived from them, now end in `?hostaddr=127.0.0.1`; consumers that append
   their own query to such a URL must use `&`. An external
   `RUNLEDGER_TEST_ADMIN_DATABASE_URL`'s derived URLs still carry no query, so
-  such a URL is now refused before provisioning unless it names a DNS or IPv4
-  host and exactly one database path segment (an empty path made the lease
-  name the host), or when it has any query other than a `hostaddr` repeating
+  such a URL is now refused before provisioning unless it is a `postgres://`
+  or `postgresql://` URL naming a DNS or IPv4 host and exactly one database
+  path segment that the lease derivation reads the same way (an empty path
+  made the lease name the host), or when it has any query other than a `hostaddr` repeating
   its own IP literal host: the admin pool would
   follow `host`, `port` or TLS settings such as `sslmode=verify-full` while
   the leases fell back to SQLx's defaults. An external fixture therefore

@@ -197,6 +197,7 @@ class RefreshTests(unittest.TestCase):
         self.assertNotIn('PGHOSTADDR', environment)
         # Both clients use the macros' only transport, whatever the URL accepted.
         self.assertEqual(environment['PGSSLMODE'], 'disable')
+        self.assertEqual(environment['PGGSSENCMODE'], 'disable')
         self.assertEqual(environment['HOME'], '/home/x')
 
     def test_urls_that_cannot_reach_both_clients_alike_never_run_a_command(self):
@@ -272,6 +273,14 @@ class RefreshTests(unittest.TestCase):
                     refresh(root)
                 command.assert_not_called()
                 psql.assert_not_called()
+
+    def test_sqlx_config_of_any_file_type_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.mkfifo(root / 'sqlx.toml')
+            # Refused from the directory listing alone; the FIFO is never opened.
+            with self.assertRaisesRegex(ValueError, 'remove sqlx.toml'):
+                refuse_sqlx_config(root)
 
     def test_sqlx_config_lookup_follows_the_filesystem(self):
         # A long-s (U+017F) spelling is the file SQLx opens exactly when the
