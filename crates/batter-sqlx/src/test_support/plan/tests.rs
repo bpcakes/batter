@@ -8,6 +8,15 @@ use super::*;
 const LEASE: &str = "postgres://owner:ownersecret@127.0.0.1:5439/pgh_probe_1\
     ?sslmode=disable&application_name=fixture&options=-c%20search_path%3Dpublic";
 
+/// The endpoint of a harness whose leases look like `lease_url`: the same URL
+/// with its admin database in the path.
+fn harness(lease_url: &str) -> HarnessEndpoint {
+    super::super::endpoint::require_clean_environment();
+    let parsed = url::Url::parse(lease_url).unwrap();
+    let admin = lease_url.replacen(parsed.path(), "/postgres", 1);
+    HarnessEndpoint::from_admin_url(&admin, Environment::CLEAN).expect("supported endpoint")
+}
+
 fn plan(pools: Vec<PlannedPool>) -> ConnectionPlan {
     super::super::endpoint::require_clean_environment();
     let mut declaration = ConnectionPlan::declare(0);
@@ -48,7 +57,7 @@ fn lease_login_resolves_to_the_parsed_lease_url() {
         PlannedPool::lease_login(one()),
         PlannedPool::lease_login(one()),
     ])
-    .resolve(LEASE, LEASE, "pgh_probe_1", Environment::CLEAN)
+    .resolve(&harness(LEASE), LEASE, "pgh_probe_1", Environment::CLEAN)
     .unwrap();
     assert_eq!(resolved.len(), 2);
     for (_, options) in &resolved {
@@ -69,7 +78,7 @@ fn password_login_replaces_only_credentials() {
             secret("loginsecret"),
         ),
     ])
-    .resolve(LEASE, LEASE, "pgh_probe_1", Environment::CLEAN)
+    .resolve(&harness(LEASE), LEASE, "pgh_probe_1", Environment::CLEAN)
     .unwrap();
     let (pool, restricted) = &resolved[1];
     assert_eq!(pool.get_max_connections(), 3);
@@ -84,12 +93,8 @@ fn password_login_replaces_only_credentials() {
 fn socket_hosts_survive_a_password_login() {
     // A `host` parameter beside an authority host is a second candidate to
     // the harness's tokio-postgres client, so it is refused, not resolved.
-    let ambiguous = "postgres://owner:ownersecret@localhost/pgh_probe_2?host=/var/run/postgresql";
-    assert!(
-        plan(vec![PlannedPool::lease_login(one())])
-            .resolve(ambiguous, ambiguous, "pgh_probe_2", Environment::CLEAN)
-            .is_err()
-    );
+    let ambiguous = "postgres://owner:ownersecret@localhost/postgres?host=/var/run/postgresql";
+    assert!(HarnessEndpoint::from_admin_url(ambiguous, Environment::CLEAN).is_err());
     // Provisioning needs no password, while this pool supplies its own.
     let url = "postgres://owner@%2Fvar%2Frun%2Fpostgresql/pgh_probe_2";
     let expected: PgConnectOptions =
@@ -102,7 +107,7 @@ fn socket_hosts_survive_a_password_login() {
         "restricted",
         secret("x1"),
     )])
-    .resolve(url, url, "pgh_probe_2", Environment::CLEAN)
+    .resolve(&harness(url), url, "pgh_probe_2", Environment::CLEAN)
     .unwrap();
     assert_eq!(identity(&resolved[0].1), identity(&expected));
     assert_eq!(resolved[0].1.get_username(), "restricted");
@@ -117,7 +122,7 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
         PlannedPool::password_login(one(), "restricted", secret("loginsecret")),
     ] {
         let error = plan(vec![pool])
-            .resolve(url, url, "pgh_probe_3", Environment::CLEAN)
+            .resolve(&harness(url), url, "pgh_probe_3", Environment::CLEAN)
             .expect_err("query parameter retargets the database");
         let sqlx::Error::Configuration(source) = &error else {
             panic!("configuration error required");
@@ -131,18 +136,47 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
 }
 
 #[test]
-fn an_unparseable_lease_url_keeps_its_native_parse_error() {
+fn an_unparseable_lease_url_is_refused_before_construction() {
+    // tokio-postgres reads no database from it, so it names no lease; the
+    // native parse error is not retained.
     let error = plan(vec![PlannedPool::lease_login(one())])
         .resolve(
-            "not a lease url",
+            &harness(LEASE),
             "not a lease url",
             "pgh_probe_4",
             Environment::CLEAN,
         )
         .expect_err("unparseable URL");
     assert!(
-        matches!(error, sqlx::Error::Configuration(source) if !source.is::<LeaseDatabaseMismatch>())
+        matches!(error, sqlx::Error::Configuration(source) if source.is::<LeaseDatabaseMismatch>())
     );
+}
+
+#[test]
+fn a_lease_from_another_endpoint_or_naming_the_admin_database_is_refused() {
+    use super::super::{HarnessEndpointReason, UnsupportedHarnessEndpoint};
+    let endpoint = harness(LEASE);
+    for (url, name, expected) in [
+        (
+            LEASE.replace(":5439/", ":5440/"),
+            "pgh_probe_1",
+            HarnessEndpointReason::LeaseEndpointMismatch,
+        ),
+        (
+            LEASE.replace("/pgh_probe_1", "/postgres"),
+            "postgres",
+            HarnessEndpointReason::LeaseNamesAdminDatabase,
+        ),
+    ] {
+        let error = plan(vec![PlannedPool::lease_login(one())])
+            .resolve(&endpoint, &url, name, Environment::CLEAN)
+            .unwrap_err();
+        assert!(
+            matches!(&error, sqlx::Error::Configuration(source)
+            if source.downcast_ref::<UnsupportedHarnessEndpoint>().map(|e| e.reason()) == Some(expected)),
+            "{url}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -161,7 +195,7 @@ async fn every_pool_registers_before_the_first_connectivity_check() {
         PlannedPool::lease_login(quick()),
         PlannedPool::password_login(quick(), "restricted", secret("loginsecret")),
     ])
-    .resolve(&url, &url, "pgh_probe_5", Environment::CLEAN)
+    .resolve(&harness(&url), &url, "pgh_probe_5", Environment::CLEAN)
     .unwrap();
     let mut registry = Vec::new();
     let pools = construct(resolved, &mut registry);

@@ -1067,18 +1067,23 @@ database. The lease owner's password is always replaced.
 Fixture pools never reparse a lease URL with SQLx. The harness provisions
 through tokio-postgres, which reads no environment, while SQLx 0.9.1, like
 libpq, fills unset settings from `PG*` variables and reads some URL text
-differently. Each resolution therefore reads the harness admin URL
-once with tokio-postgres, sets every SQLx field from that typed parse (host or
+differently. A suite therefore reads the harness admin URL
+once with tokio-postgres when it adopts the harness, sets every SQLx field from that typed parse (host or
 Unix socket, port with 5432 as default, login, plaintext transport,
 `application_name` and `-c key=value` `options`), and takes the database from
-the name the harness recorded. It refuses with `UnsupportedHarnessEndpoint`,
-whose `HarnessEndpointReason` names the cause, when any `PG*` environment
-variable is set (put every setting in the admin URL instead), when the admin
+the name the harness recorded. Every acquisition and template call refuses
+with `FixtureError::Endpoint(UnsupportedHarnessEndpoint)`, whose
+`HarnessEndpointReason` names the cause, before the harness provisions a
+database or looks up a template, when a `PG*` variable a PostgreSQL client
+could read is set (every `PG` name except `PGDATA` and `PG_`-prefixed ones
+such as `PG_COLOR`; put every setting in the admin URL instead), when the admin
 URL declares `hostaddr` or several hosts, or
 when it selects a setting SQLx options cannot carry. A lease URL whose database
 differs from the recorded name as tokio-postgres reads it, as a `dbname` query
-parameter would cause, is refused with `LeaseDatabaseMismatch`. Both errors
-travel inside `sqlx::Error::Configuration` before any pool exists. The
+parameter would cause, is refused with `LeaseDatabaseMismatch`, and one that
+reaches another endpoint with `UnsupportedHarnessEndpoint`; these lease checks,
+and an environment recheck, travel inside `sqlx::Error::Configuration` before
+any pool exists. The
 `fixture_lease_database_mismatch_retained` live probe proves that refusal and
 its retention on both the owned and low-level paths; offline unit tests cover
 the endpoint mapping and refusals.
@@ -1086,16 +1091,18 @@ the endpoint mapping and refusals.
 The pinned harness opens connections with `NoTls`. An omitted TLS mode,
 `sslmode=prefer` and `sslmode=disable` all yield plaintext for the harness,
 fixture pools and initializer URLs. A TLS requirement is refused. Clients
-using the harness login require its password to be explicit. For a trust or
-peer login, `?password=` explicitly selects an empty password. Omitting it
-would let SQLx consult a passfile when parsing a URL or send an empty password
-when challenged on a typed connection, where tokio-postgres would stop.
-A pool declared with `PlannedPool::password_login` supplies its own credentials
-and can use a passwordless provisioning URL.
+using the harness login use its password; an admin URL without one, as for a
+trust or peer login, is the same login as an explicit empty `?password=`.
+Neither fixture pools nor initializer URLs let SQLx read a passfile: pools are
+built without one and initializer URLs carry `password=`. Where a server asks
+for a password, SQLx sends an empty one and tokio-postgres stops locally; both
+fail, since PostgreSQL does not store an empty password.
+A pool declared with `PlannedPool::password_login` supplies its own credentials.
 
-Both fixture template entry points refuse ambient `PG*` settings before the harness
-looks up the fingerprint. The owned run retains this preparation failure even if
-the body handles it. On cache misses, initializers receive a URL rebuilt for the
+Both fixture template entry points check the endpoint before the harness
+looks up the fingerprint, so a cached and an uncached template are refused
+alike; a refused call starts no producer and the owned run records nothing for
+it. On cache misses, initializers receive a URL rebuilt for the
 template's recorded name and checked by reading it back with both
 tokio-postgres and SQLx; if no such URL exists, the initializer is not called
 and the harness aborts the template. Test code that opens its own pool beside

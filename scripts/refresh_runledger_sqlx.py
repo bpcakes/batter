@@ -11,7 +11,8 @@ import subprocess
 import tempfile
 from urllib.parse import quote, unquote, urlsplit
 
-from runledger_compiler_endpoint import cargo_build_config, cargo_compiler_endpoint, guard_preparation, refresh_build_root
+from runledger_compiler_endpoint import (cargo_build_config, cargo_compiler_endpoint, guard_preparation,
+                                        is_client_variable, refresh_build_root)
 from runledger_source import copy_source, run
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,10 +56,10 @@ UNVERIFIED_SSL_MODES = ("disable", "allow", "prefer")
 
 
 def refuse_ambient_postgres_environment(environment):
-    """Refuse any PG* variable: psql and SQLx both fill unset settings from
-    them, so the refresh takes every connection setting from DATABASE_URL
+    """Refuse any client PG* variable: psql and SQLx both fill unset settings
+    from them, so the refresh takes every connection setting from DATABASE_URL
     rather than carry or translate inherited ones. Names only, never values."""
-    names = sorted(key for key in environment if key.startswith("PG"))
+    names = sorted(key for key in environment if is_client_variable(key))
     if names:
         raise ValueError("unset " + ", ".join(names) + ": the refresh takes every connection "
                          "setting from DATABASE_URL")
@@ -165,7 +166,8 @@ def parse_database_url(database):
         host = unquote(host, errors="strict")
         database_name = unquote(parts.path[1:], errors="strict")
         user = unquote(parts.username, errors="strict") if parts.username is not None else None
-        # Empty userinfo and omitted passwords both let libpq consult its passfile.
+        # Empty userinfo and omitted passwords both let libpq consult its
+        # passfile; see passfile_lookup for when both clients may.
         password = unquote(parts.password, errors="strict") if parts.password else None
     except UnicodeDecodeError:
         raise ValueError("DATABASE_URL must percent-encode UTF-8 text") from None
@@ -225,6 +227,22 @@ def parse_database_url(database):
     }
 
 
+def passfile_lookup(parts):
+    """Whether both clients may look up a passwordless login in ~/.pgpass.
+
+    They choose the entry by host, port, database and user, but key the host
+    differently for a Unix socket (libpq searches localhost for its default
+    socket directory, SQLx a directory it probes for itself) and an IPv6
+    literal (SQLx keeps the URL brackets). Only for a DNS or IPv4 host do both
+    look up the same entry; otherwise neither consults a passfile. A
+    passfile the clients still read differently (SQLx checks its permissions
+    only on Linux, and libpq ends a password at an unescaped ':') makes one
+    client fail authentication, which stops the refresh before it writes.
+    """
+    host = parts["host"]
+    return parts["password"] is None and not host.startswith("/") and ":" not in host
+
+
 def environment_bytes(environment):
     """The child environment as bytes: PG* values (the parsed URL fields) as
     UTF-8, as the URL meant them, and inherited values round-tripped through
@@ -246,6 +264,8 @@ def psql_environment(parts):
         environment["PGUSER"] = parts["user"]
     if parts["password"] is not None:
         environment["PGPASSWORD"] = parts["password"]
+    elif not passfile_lookup(parts):
+        environment["PGPASSFILE"] = os.devnull
     for key, value in parts["parameters"].items():
         environment[CARRIED_PARAMETERS[key]] = value
     return environment
@@ -266,7 +286,12 @@ def sqlx_database_url(parts):
             userinfo += ":" + encode(password)
         userinfo += "@"
     url = f"postgres://{userinfo}{host}:{parts['port']}/{encode(parts['database'])}"
-    query = "&".join(f"{key}={encode(value)}" for key, value in parts["parameters"].items())
+    pairs = list(parts["parameters"].items())
+    if password is None and not passfile_lookup(parts):
+        # An explicit empty password keeps SQLx from reading a passfile, as
+        # PGPASSFILE does for psql; a server that asks for one refuses both.
+        pairs.append(("password", ""))
+    query = "&".join(f"{key}={encode(value)}" for key, value in pairs)
     return url + ("?" + query if query else "")
 
 
@@ -319,7 +344,8 @@ def query(root, parts, sql, purpose):
     # credentials stay out of the process list and connection diagnostics.
     try:
         result = subprocess.run(
-            ["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", sql],
+            # -w: fail rather than prompt when the server asks for a password.
+            ["psql", "-X", "-w", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", sql],
             env=environment_bytes(psql_environment(parts)),
             # Both queries return ASCII identifiers. Discard libpq diagnostics,
             # which may contain endpoint text in the client locale.
@@ -351,6 +377,10 @@ def refresh_with(root, parts):
     rebuilt = os.environ["DATABASE_URL"]
     refuse_sqlx_config(root)
     target = refresh_build_root(root)
+    # Fail before any database command. Cargo applies [env] to builds, not to
+    # external subcommands such as `cargo sqlx migrate info`, so the binding
+    # check is the source copy's probe below, under the configuration
+    # discovery preparation really uses; this one only refuses early.
     refuse_cargo_endpoint(root, rebuilt, target)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":

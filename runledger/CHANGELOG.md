@@ -378,7 +378,8 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   unchanged. Online index repair keeps its explicit `ROLLBACK` after a failed
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
   runs outside a block and only warns. `runledger-test-support` now refuses
-  any `PG*` environment variable in every fixture mode, before provisioning:
+  any client `PG*` environment variable (every `PG` name except `PGDATA` and
+  `PG_`-prefixed ones such as `PG_COLOR`) in every fixture mode, before provisioning:
   SQLx 0.9.1 fills unset settings from them, but native test proxies dial and
   forward to the URL host themselves. Put every setting in the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
   derived from them, now end in `?hostaddr=127.0.0.1&sslmode=disable` (the
@@ -397,13 +398,15 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   the leases fell back to SQLx's defaults. An external fixture therefore
   cannot require TLS for its leases yet. The endpoint split already existed
   under SQLx 0.9.0.
-  `scripts/refresh_runledger_sqlx.py` now refuses any ambient `PG*` variable,
+  `scripts/refresh_runledger_sqlx.py` now refuses any ambient client `PG*` variable,
   parses `DATABASE_URL` once, gives `psql` the parts as its own PG* variables
   (no credentials in its arguments), gives SQLx CLI a URL
   rebuilt from the same parts, refuses any `sqlx.toml` (whose
   `database-url-var` SQLx CLI 0.9.1 reads by default), and refuses a Cargo
-  `[env]` that sets any `PG*` variable or changes
-  `DATABASE_URL` for the query macros. The refresh decodes the Unix environment
+  `[env]` that sets any client `PG*` variable or changes
+  `DATABASE_URL` for the query macros. A passwordless refresh uses `~/.pgpass`
+  only for a DNS or IPv4 host, where psql and SQLx look up the same entry;
+  for a Unix socket or IPv6 host neither reads one. The refresh decodes the Unix environment
   bytes as UTF-8 and checks the effective environment immediately before
   each native rustc invocation in live preparation. Compiler wrappers are
   unsupported for this command. No target runner is invoked or credential embedded in

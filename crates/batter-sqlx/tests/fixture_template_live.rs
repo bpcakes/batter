@@ -1,22 +1,18 @@
-//! Cache-hit and cache-miss controls for the fixture template entry points.
+//! Cache-hit and cache-miss controls for the fixture template entry points,
+//! and the pre-provisioning endpoint refusal of every acquisition path.
 use batter_sqlx::test_support::{
-    AcquisitionFailure, FixtureError, FixtureSuite, HarnessEndpointReason,
-    UnsupportedHarnessEndpoint, template_spec,
+    ConnectionPlan, FixtureError, FixtureSuite, HarnessEndpointReason, template_spec,
 };
-use postgres_test_harness::{Error, HarnessConfig, POSTGRES_TEST_ADMIN_URL_ENV, PostgresHarness};
+use postgres_test_harness::{HarnessConfig, POSTGRES_TEST_ADMIN_URL_ENV, PostgresHarness};
+use sqlx::postgres::PgPoolOptions;
 
-fn assert_ambient(error: &Error) {
-    let Error::TemplateInitializer { source } = error else {
-        panic!("expected template preparation refusal");
-    };
-    let Some(sqlx::Error::Configuration(source)) = source.downcast_ref::<sqlx::Error>() else {
-        panic!("expected an endpoint configuration error");
+fn assert_ambient(error: &FixtureError) {
+    let FixtureError::Endpoint(refusal) = error else {
+        panic!("expected a pre-lookup endpoint refusal");
     };
     assert_eq!(
-        source
-            .downcast_ref::<UnsupportedHarnessEndpoint>()
-            .map(UnsupportedHarnessEndpoint::reason),
-        Some(HarnessEndpointReason::AmbientEnvironment),
+        refusal.reason(),
+        HarnessEndpointReason::AmbientEnvironment,
         "expected an ambient PostgreSQL setting to be refused",
     );
 }
@@ -44,7 +40,7 @@ async fn template_environment_is_checked_on_cold_and_warm_lookups()
     let retained = harness.template(warm, |_| async { Ok(()) }).await?;
     let specs = [template_spec(&[], "cold"), warm];
     for spec in specs {
-        let Err(FixtureError::Harness(error)) = suite
+        let Err(error) = suite
             .template(spec, |_| async {
                 panic!("initializer must not run");
             })
@@ -54,11 +50,17 @@ async fn template_environment_is_checked_on_cold_and_warm_lookups()
         };
         assert_ambient(&error);
     }
+    // Acquisition is refused before the harness provisions a database.
+    let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
+    let Err(error) = suite.empty(&plan).await else {
+        panic!("manual acquisition must refuse the environment");
+    };
+    assert_ambient(&error);
     let report = suite
         .start(move |scope| {
             Box::pin(async move {
                 for spec in specs {
-                    let Err(FixtureError::Acquisition(error)) = scope
+                    let Err(error) = scope
                         .template(spec, |_| async {
                             panic!("initializer must not run");
                         })
@@ -68,23 +70,21 @@ async fn template_environment_is_checked_on_cold_and_warm_lookups()
                     };
                     assert_ambient(&error);
                 }
+                let Err(error) = scope.empty(&plan).await else {
+                    panic!("owned acquisition must refuse the environment");
+                };
+                assert_ambient(&error);
                 Ok::<(), FixtureError>(())
             })
         })
         .into_report()
         .await?;
     assert!(report.body.is_ok(), "body must observe both refusals");
-    assert_eq!(
-        report.acquisitions.len(),
-        2,
-        "retain both refused producers"
+    assert!(
+        report.acquisitions.is_empty(),
+        "a refusal before the lookup or provisioning starts no producer"
     );
-    for outcome in &report.acquisitions {
-        let Err(AcquisitionFailure::Native(error)) = outcome else {
-            panic!("expected a retained template refusal");
-        };
-        assert_ambient(error);
-    }
+    assert!(report.databases.is_empty(), "no database was provisioned");
     drop(retained);
     harness.drain_deferred_cleanup().await?;
     Ok(())

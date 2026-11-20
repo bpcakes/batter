@@ -179,10 +179,13 @@ contract in the README rather than duplicating it here. Declared capacity, the
 lease-bound pool logins and the resolve/construct/check order live in
 `src/test_support/plan.rs`; never let a declaration select another server or
 database, and keep every pool registered before the first check.
-`src/test_support/endpoint.rs` reads the harness admin URL once with
-tokio-postgres (the harness's own parser) and maps that typed parse into SQLx
-options; never hand harness URL text to SQLx, and keep the round-trip check on
-rebuilt initializer URLs. Session observation and
+`src/test_support/endpoint.rs` reads the harness admin URL once per suite with
+tokio-postgres (the harness's own parser), maps that typed parse into SQLx
+options and binds every lease and template URL to it with one check
+(`HarnessEndpoint::bind`); suites refuse an unusable endpoint before
+provisioning. Never hand harness URL text to SQLx, and keep the round-trip
+check on rebuilt initializer URLs (`endpoint/rebuild.rs`); refusal types live
+in `endpoint/refusal.rs`. Session observation and
 retry ownership live in `src/test_support/sessions.rs`; retained outcomes and
 redacted summaries live in `src/test_support/report.rs`. Reference composition
 and live failure controls belong to `examples/reference-service`, not the generic

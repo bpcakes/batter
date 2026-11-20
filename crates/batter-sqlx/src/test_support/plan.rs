@@ -120,32 +120,30 @@ impl ConnectionPlan {
     ///
     /// The endpoint comes from the harness's own parse of its admin URL and the
     /// database from the name the harness recorded, so the lease URL text is
-    /// never reparsed by SQLx; see [`super::harness_connect_options`].
+    /// never reparsed by SQLx; the lease is bound to that endpoint exactly as
+    /// [`super::harness_connect_options`] binds it.
     pub(super) fn resolve(
         &self,
-        admin_url: &str,
+        endpoint: &HarnessEndpoint,
         lease_url: &str,
         lease_name: &str,
         environment: Environment,
     ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
-        let endpoint = HarnessEndpoint::from_admin_url(admin_url, environment)?;
-        // The harness keeps the admin URL's query, including a `dbname` that
-        // would override the path, when it builds the lease URL.
-        if !HarnessEndpoint::names_database(lease_url, lease_name) {
-            return Err(sqlx::Error::Configuration(Box::new(LeaseDatabaseMismatch)));
-        }
-        self.pools
+        environment.validate()?;
+        endpoint.bind(lease_url, lease_name)?;
+        Ok(self
+            .pools
             .iter()
             .map(|pool| {
                 let options = match &pool.login {
-                    Login::Lease => endpoint.options(lease_name)?,
+                    Login::Lease => endpoint.options(lease_name),
                     Login::Password { username, password } => {
                         endpoint.options_for_login(lease_name, username, password.expose_secret())
                     }
                 };
-                Ok((pool.options.clone(), options))
+                (pool.options.clone(), options)
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -216,13 +214,14 @@ pub(super) fn lookup(pools: &[PgPool], plan: u64, key: PoolKey) -> Option<&PgPoo
 /// Both logins keep everything else from the harness endpoint: server address
 /// or socket, port, plaintext transport, `application_name` and `-c key=value` startup
 /// options from the admin URL, and the lease's recorded database. A pool that
-/// inherits the harness login requires an explicit password, including
-/// `password=` for an intentional empty password. SQLx's own
+/// inherits the harness login uses the admin URL's password, or none when it
+/// omits one, as trust and peer authentication allow; no passfile is read.
+/// SQLx's own
 /// defaults apply to settings the admin URL cannot carry, such as certificates
 /// and the statement cache. Put startup options and every other setting in the
 /// harness admin URL: an ambient `PG*` variable such as `PGOPTIONS` makes
-/// resolution refuse with `HarnessEndpointReason::AmbientEnvironment` before
-/// any pool exists. Pool capacity, timeouts and the native session hooks
+/// the suite refuse with `HarnessEndpointReason::AmbientEnvironment` before
+/// provisioning a database. Pool capacity, timeouts and the native session hooks
 /// (`after_connect`, `before_acquire`, `after_release`) come from `options`.
 /// Neither constructor can select another server or database.
 ///

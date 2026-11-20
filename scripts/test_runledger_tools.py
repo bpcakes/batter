@@ -217,8 +217,9 @@ class RefreshTests(unittest.TestCase):
 
     def test_ambient_postgres_variables_are_refused_before_any_command(self):
         secret = 'postgresql://user:private-marker@localhost/database'
+        # PGDATA and PG_COLOR are read by no client and pass through.
         with patch.dict(os.environ, DATABASE_URL=secret, PGSSLMODE='verify-full',
-                        PGHOSTADDR='192.0.2.1'), \
+                        PGHOSTADDR='192.0.2.1', PGDATA='/unused', PG_COLOR='never'), \
              patch('refresh_runledger_sqlx.run') as command, \
              patch('refresh_runledger_sqlx.subprocess.run') as psql:
             with self.assertRaisesRegex(ValueError, 'unset PGHOSTADDR, PGSSLMODE: ') as error:
@@ -239,14 +240,27 @@ class RefreshTests(unittest.TestCase):
                                   '?application_name=a%2Bb&sslmode=disable')
         self.assertEqual(parse_database_url(rebuilt), parts)
         colon = parse_database_url('postgres://u@%2Ftmp%2Fpg%3A18/db')
-        self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db?sslmode=disable')
+        self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db?sslmode=disable&password=')
+        # Empty userinfo and an omitted password let both clients look up the
+        # same passfile entry for a DNS or IPv4 host.
         empty = parse_database_url('postgres://u:@db.invalid:5432/db')
         self.assertEqual(empty, parse_database_url('postgres://u@db.invalid:5432/db'))
-        self.assertNotIn('PGPASSWORD', psql_environment(empty))
+        for passfile in (empty, parse_database_url('postgres://u@192.0.2.1/db')):
+            self.assertNotIn('PGPASSWORD', psql_environment(passfile))
+            self.assertNotIn('PGPASSFILE', psql_environment(passfile))
+            self.assertNotIn('password=', sqlx_database_url(passfile))
         self.assertEqual(sqlx_database_url(empty), 'postgres://u@db.invalid:5432/db?sslmode=disable')
+        # For a socket or IPv6 host they would key the entry differently, so
+        # neither reads a passfile: psql gets an empty one, SQLx an empty password.
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
-        self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db?sslmode=disable')
+        self.assertEqual(sqlx_database_url(socket),
+                         'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db?sslmode=disable&password=')
+        for no_passfile in (socket, parse_database_url('postgres://u:@[::1]/db'),
+                            parse_database_url('postgres://%2Ftmp/db')):
+            self.assertNotIn('PGPASSWORD', psql_environment(no_passfile))
+            self.assertEqual(psql_environment(no_passfile)['PGPASSFILE'], os.devnull)
+            self.assertTrue(sqlx_database_url(no_passfile).endswith('&password='))
         # psql receives URL fields as the UTF-8 bytes the URL encodes,
         # independent of the locale's filesystem encoding.
         cafe = parse_database_url('postgres://u@db.invalid/caf%C3%A9')
@@ -434,7 +448,7 @@ class RefreshTests(unittest.TestCase):
             (root / '.cargo/extra.toml').write_text(
                 '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\nPGDATA = "/x"\n')
             (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-            self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
+            self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], (['PGHOSTADDR', 'PGOPTIONS'], True))
             (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
             (home / 'config.toml').write_text(
                 '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')

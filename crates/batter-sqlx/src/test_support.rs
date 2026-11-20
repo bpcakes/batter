@@ -104,6 +104,19 @@ pub fn template_spec(bundles: &[MigrationBundle<'_>], setup_revision: &str) -> T
 pub enum FixtureError {
     /// An empty, overflowing or over-budget connection declaration.
     InvalidBudget,
+    /// The harness endpoint was refused before anything was provisioned: no
+    /// lease, template lookup, producer or pool exists for this call, so there
+    /// is nothing to clean up and the run report records nothing for it.
+    /// Returned by every suite and scope acquisition and template entry point;
+    /// later refusals (after a lease exists) stay in [`Self::PoolAcquire`],
+    /// [`Self::Connect`] or the harness's template initializer failure.
+    ///
+    /// Migration: before this variant, a `PG*` refusal before a template
+    /// lookup was reported as `FixtureError::Harness(Error::TemplateInitializer
+    /// { .. })` (or `FixtureError::Acquisition` in a scope), and a refused
+    /// endpoint was found only after provisioning, in `PoolAcquire` or
+    /// `Connect`; match this variant instead.
+    Endpoint(UnsupportedHarnessEndpoint),
     /// A single run requested more leases than can coexist in its harness.
     BatchCapacity,
     /// The template was not retained by this suite.
@@ -146,6 +159,7 @@ impl fmt::Display for FixtureError {
         f.write_str(match self {
             Self::BatchCapacity => "fixture batch exceeds simultaneous lease capacity",
             Self::InvalidBudget => "invalid fixture connection budget",
+            Self::Endpoint(_) => "fixture harness endpoint refused before provisioning",
             Self::UnknownTemplate => "template does not belong to this fixture suite",
             Self::Harness(_) => "fixture harness failed",
             Self::Acquisition(_) => "fixture acquisition producer failed",
@@ -169,6 +183,7 @@ impl fmt::Debug for FixtureError {
 impl std::error::Error for FixtureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Endpoint(error) => Some(error),
             Self::Harness(error) => Some(error),
             Self::Acquisition(error) => Some(error.as_ref()),
             Self::PoolAcquire(error) => Some(error.as_ref()),
@@ -178,42 +193,34 @@ impl std::error::Error for FixtureError {
     }
 }
 
-// The harness can return a ready template without polling the initializer.
-// Keep the same typed initialization failure on both sides of that cache boundary.
-async fn checked_template<F, Fut>(
-    harness: &PostgresHarness,
-    spec: TemplateSpec,
-    initializer: F,
-) -> Result<DatabaseTemplate, postgres_test_harness::Error>
-where
-    F: FnOnce(String) -> Fut,
-    Fut: Future<Output = Result<(), postgres_test_harness::BoxError>>,
-{
-    endpoint::Environment::process()
-        .validate()
-        .map_err(|error| postgres_test_harness::Error::TemplateInitializer {
-            source: Box::new(error),
-        })?;
-    harness.template(spec, initializer).await
-}
-
 /// Runtime-local fixture composition and retained upstream template handles.
 /// The caller owns the server lifetime, including shutdown. Harness clones share
 /// native admission; other owners must release leases for waiting runs to progress.
 pub struct FixtureSuite {
     harness: PostgresHarness,
+    endpoint: endpoint::SuiteEndpoint,
     templates: Vec<DatabaseTemplate>,
     observer: Option<SessionObserver>,
 }
 
 impl FixtureSuite {
     /// Adopt a configured, started harness. Environment parsing stays in consumers.
+    ///
+    /// Reads the harness admin URL once, with the harness's own parser. An
+    /// endpoint fixture clients cannot use is not refused here: every
+    /// acquisition and template call returns [`FixtureError::Endpoint`] before
+    /// provisioning anything, after checking the process environment again.
     pub fn new(harness: PostgresHarness) -> Self {
         Self {
+            endpoint: endpoint::SuiteEndpoint::new(&harness),
             harness,
             templates: Vec::new(),
             observer: None,
         }
+    }
+
+    fn endpoint(&self) -> Result<Arc<endpoint::HarnessEndpoint>, FixtureError> {
+        self.endpoint.checked().map_err(FixtureError::Endpoint)
     }
 
     /// Require independently observed session absence before owned-run lease cleanup.
@@ -234,7 +241,8 @@ impl FixtureSuite {
     /// deferred drain. Use [`FixtureScope::template`] inside [`Self::start`] for
     /// owned preparation and panic-to-abort handling. Neither path joins detached
     /// initializer operations or promises cleanup of initializer-owned live pools.
-    /// Both refuse an ambient `PG*` variable before looking up a cached template.
+    /// Both return [`FixtureError::Endpoint`] for an ambient `PG*` variable or
+    /// an unusable admin URL before looking up a cached template.
     /// On a cache miss, both pass the initializer a URL rebuilt from the harness's own parse of
     /// its admin URL and the template's recorded name; it reads back as the same
     /// endpoint in tokio-postgres and SQLx. If no such URL exists, or the
@@ -250,19 +258,23 @@ impl FixtureSuite {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     {
-        let admin_url = self.harness.admin_database_url().to_owned();
-        let template = checked_template(&self.harness, spec, move |url| async move {
-            // Hand caller code a URL rebuilt from the harness's own endpoint
-            // parse and recorded name, never the harness URL text itself.
-            initializer(endpoint::initializer_url(
-                &admin_url,
-                &url,
-                endpoint::Environment::process(),
-            )?)
+        // Refuse before the lookup: the harness can return a cached template
+        // without polling the initializer.
+        let endpoint = self.endpoint()?;
+        let template = self
+            .harness
+            .template(spec, move |url| async move {
+                // Hand caller code a URL rebuilt from the harness's own endpoint
+                // parse and recorded name, never the harness URL text itself.
+                initializer(endpoint::initializer_url(
+                    &endpoint,
+                    &url,
+                    endpoint::Environment::process(),
+                )?)
+                .await
+            })
             .await
-        })
-        .await
-        .map_err(FixtureError::Harness)?;
+            .map_err(FixtureError::Harness)?;
         if !self
             .templates
             .iter()
@@ -279,12 +291,13 @@ impl FixtureSuite {
     /// SQLx maintains minimum connections in the background.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        let endpoint = self.endpoint()?;
         let lease = self
             .harness
             .empty_database()
             .await
             .map_err(FixtureError::Harness)?;
-        DatabaseFixture::connect(self.harness.admin_database_url(), lease, plan).await
+        DatabaseFixture::connect(&endpoint, lease, plan).await
     }
 
     /// Low-level clone acquisition, validating capacity and retained template identity.
@@ -300,8 +313,9 @@ impl FixtureSuite {
             .iter()
             .find(|retained| retained.database_name() == template.database_name())
             .ok_or(FixtureError::UnknownTemplate)?;
+        let endpoint = self.endpoint()?;
         let lease = template.database().await.map_err(FixtureError::Harness)?;
-        DatabaseFixture::connect(self.harness.admin_database_url(), lease, plan).await
+        DatabaseFixture::connect(&endpoint, lease, plan).await
     }
 
     /// Drain submissions accepted before this call. Call after producers finish.
@@ -337,7 +351,7 @@ pub struct DatabaseFixture {
 
 impl DatabaseFixture {
     async fn connect(
-        admin_url: &str,
+        endpoint: &endpoint::HarnessEndpoint,
         lease: DatabaseLease,
         plan: &ConnectionPlan,
     ) -> Result<Self, FixtureError> {
@@ -347,7 +361,7 @@ impl DatabaseFixture {
             pool_failures: Vec::new(),
             plan: plan.id(),
         };
-        if let Err(source) = fixture.open_pools(admin_url, plan).await {
+        if let Err(source) = fixture.open_pools(endpoint, plan).await {
             let cleanup = fixture.dispose().await.err();
             return Err(FixtureError::Connect { source, cleanup });
         }
@@ -356,11 +370,11 @@ impl DatabaseFixture {
 
     async fn open_pools(
         &mut self,
-        admin_url: &str,
+        endpoint: &endpoint::HarnessEndpoint,
         plan: &ConnectionPlan,
     ) -> Result<(), sqlx::Error> {
         let resolved = plan.resolve(
-            admin_url,
+            endpoint,
             self.lease.database_url(),
             self.lease.database_name(),
             endpoint::Environment::process(),

@@ -27,10 +27,21 @@ fn main() {
 """
 
 
+def is_client_variable(name):
+    """Whether a PG* name is one a PostgreSQL client could read.
+
+    libpq documents only PG followed by a letter (PGHOST, PGCONNECT_TIMEOUT,
+    ...) and SQLx reads a subset of those. The server's PGDATA and PG_-prefixed
+    names such as the client tools' PG_COLOR are read by no client; any other
+    PG name counts, including one a later SQLx release starts reading.
+    """
+    return name.startswith("PG") and name != "PGDATA" and not name.startswith("PG_")
+
+
 def endpoint_signature(salt):
     actual = os.environb.get(b"DATABASE_URL")
     digest = hashlib.sha256(salt + actual).hexdigest() if actual is not None else None
-    return sorted(name for name in os.environ if name.startswith("PG")), digest
+    return sorted(name for name in os.environ if is_client_variable(name)), digest
 
 
 def observe():

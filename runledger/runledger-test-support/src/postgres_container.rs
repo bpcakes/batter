@@ -54,35 +54,45 @@ pub(crate) async fn admin_database_url_and_derived_query() -> (&'static str, &'s
 }
 
 async fn shared_postgres() -> &'static SharedPostgres {
-    let shared = SHARED_POSTGRES
-        .get_or_init(initialize_shared_postgres)
-        .await;
-    // Checked on every use, not only at initialization: each create or drop
-    // opens a fresh SQLx pool, which would follow a PG* variable set since.
+    // Checked on every use, before initialization too: provisioning and each
+    // later create or drop open a fresh SQLx pool, which would follow a PG*
+    // variable set since the previous use.
     reject_ambient_postgres_environment(&ambient_postgres_variables());
-    shared
+    SHARED_POSTGRES
+        .get_or_init(initialize_shared_postgres)
+        .await
 }
 
 async fn initialize_shared_postgres() -> SharedPostgres {
     initialize_postgres(configured_postgres_source()).await
 }
 
-/// The names of every `PG*` variable in the process environment.
+/// The names of every `PG*` variable in the process environment that a
+/// PostgreSQL client could read; see [`is_client_variable`].
 pub(crate) fn ambient_postgres_variables() -> Vec<String> {
     let mut names: Vec<String> = std::env::vars_os()
         .map(|(key, _)| key.to_string_lossy().into_owned())
-        .filter(|key| key.starts_with("PG"))
+        .filter(|key| is_client_variable(key))
         .collect();
     names.sort();
     names
 }
 
+/// libpq documents only `PG` followed by a letter (`PGHOST`,
+/// `PGCONNECT_TIMEOUT`, ...) and SQLx reads a subset of those. The server's
+/// `PGDATA` and `PG_`-prefixed names such as the client tools' `PG_COLOR` are
+/// read by no client and allowed; any other `PG` name is refused, including
+/// one a later SQLx release starts reading.
+fn is_client_variable(name: &str) -> bool {
+    name.starts_with("PG") && name != "PGDATA" && !name.starts_with("PG_")
+}
+
 /// SQLx 0.9.1, like libpq, fills unset settings from `PG*` variables
 /// (`PGHOSTADDR`, `PGPASSWORD`, `PGOPTIONS` and others), but the fixture's
 /// clients are not all SQLx: native test proxies dial and forward to the URL
-/// host themselves. Every fixture mode therefore refuses any `PG*` variable
-/// before provisioning, so every client reads only the URL. The message names
-/// the variables, never their values.
+/// host themselves. Every fixture mode therefore refuses any client `PG*`
+/// variable before provisioning, so every client reads only the URL. The
+/// message names the variables, never their values.
 pub(crate) fn reject_ambient_postgres_environment(names: &[String]) {
     assert!(
         names.is_empty(),
@@ -118,7 +128,6 @@ async fn initialize_postgres(source: PostgresSource) -> SharedPostgres {
 }
 
 async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
-    reject_ambient_postgres_environment(&ambient_postgres_variables());
     crate::external_admin::reject_dropped_endpoint_parameters(&admin_url);
     // The native test proxies connect without TLS; pin every external
     // connection to that transport so all clients meet the same pg_hba rule,
@@ -290,9 +299,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unset PGDATA, PGHOSTADDR for Runledger PostgreSQL fixtures")]
-    fn any_postgres_variable_refuses_fixture_startup() {
-        reject_ambient_postgres_environment(&["PGDATA".to_owned(), "PGHOSTADDR".to_owned()]);
+    #[should_panic(expected = "unset PGHOSTADDR, PGSERVICE for Runledger PostgreSQL fixtures")]
+    fn any_client_postgres_variable_refuses_fixture_startup() {
+        reject_ambient_postgres_environment(&["PGHOSTADDR".to_owned(), "PGSERVICE".to_owned()]);
+    }
+
+    #[test]
+    fn only_client_postgres_variables_are_refused() {
+        for name in [
+            "PGHOST",
+            "PGHOSTADDR",
+            "PGPASSFILE",
+            "PGCONNECT_TIMEOUT",
+            "PGNEWSETTING",
+        ] {
+            assert!(is_client_variable(name), "{name}");
+        }
+        for name in ["PGDATA", "PG_COLOR", "PG_COLORS", "XPGHOST"] {
+            assert!(!is_client_variable(name), "{name}");
+        }
     }
 
     #[tokio::test]

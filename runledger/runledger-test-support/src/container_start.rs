@@ -17,7 +17,8 @@ static ATTEMPT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) async fn start_postgres(image: PostgresImage) -> DockerContainer {
     // An ambient PG* variable would change SQLx's connection but not the
-    // native test proxies'; refuse before starting a container.
+    // native test proxies'; refuse before starting a container. The shared
+    // fixture already checked, but tests start containers directly.
     crate::postgres_container::reject_ambient_postgres_environment(
         &crate::postgres_container::ambient_postgres_variables(),
     );

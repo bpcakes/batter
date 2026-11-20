@@ -23,7 +23,7 @@ database URL end in `?hostaddr=127.0.0.1&sslmode=disable`: the address pin
 overrides an ambient
 `PGHOSTADDR` in SQLx 0.9.1 and libpq, and `sslmode=disable` matches the
 native test proxies' plaintext; derivation re-appends only that query, never
-the admin query. Every fixture mode refuses any ambient `PG*` variable
+the admin query. Every fixture mode refuses any ambient client `PG*` variable (all but `PGDATA` and `PG_*`)
 before provisioning: SQLx fills unset settings from them, but native test
 proxies dial and forward to the URL host themselves, without TLS. Every
 external connection is therefore pinned to `sslmode=disable`, and derived URLs

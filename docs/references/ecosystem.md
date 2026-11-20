@@ -87,29 +87,41 @@ contracts cite:
   `harness_admin_connect_options` therefore read the harness admin URL once
   with tokio-postgres, map its typed `Config` field by field into SQLx options,
   and take the database from the name the harness recorded, refusing any
-  ambient `PG*` variable, `hostaddr`, several hosts and settings SQLx cannot
-  carry. Template initializers receive a URL rebuilt
+  ambient client `PG*` variable (every `PG` name except `PGDATA` and
+  `PG_`-prefixed ones), `hostaddr`, several hosts and settings SQLx cannot
+  carry. Suites parse once and refuse before provisioning or template lookup. Template initializers receive a URL rebuilt
   from that parse and checked by reading it back with both parsers.
   The pinned [harness connector](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
-  uses `NoTls`, so fixture clients use plaintext. Inheriting the harness login
-  requires an explicit password, including an intentional empty one.
+  uses `NoTls`, so fixture clients use plaintext. A passwordless admin URL
+  (trust or peer) is the harness login with an empty password.
   [tokio-postgres authentication](https://docs.rs/crate/tokio-postgres/0.7.18/source/src/connect_raw.rs)
   refuses a password challenge when the password is absent.
   [SQLx authentication](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/connection/establish.rs)
-  uses an empty response credential for that case, and its
+  uses an empty response credential for that case, so both fail it:
+  PostgreSQL 18's [`CREATE ROLE`](https://www.postgresql.org/docs/18/sql-createrole.html)
+  and [`ALTER ROLE`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/user.c)
+  clear any password that verifies the empty string, pre-encrypted secrets
+  included, and [`recv_password_packet`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/libpq/auth.c)
+  refuses an empty plaintext or MD5 response. Its
   [URL parser](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/parse.rs)
-  first tries a passfile. Explicitly declared pool credentials can still be
-  used with a passwordless provisioning URL. The
-  metadata refresh script refuses any ambient `PG*` variable, parses
+  first tries a passfile, so initializer URLs carry `password=`. The
+  metadata refresh script refuses any ambient client `PG*` variable, parses
   the Unix bytes of `DATABASE_URL` as UTF-8 and treats an empty userinfo password
-  as omitted. [libpq 18 passfile lookup](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/interfaces/libpq/fe-connect.c)
-  applies to both forms. The SQLx URL omits the password so its parser also
-  consults the passfile. The refresh gives `psql` the parts as its own PG* variables, gives
+  as omitted. The [libpq 18 passfile](https://www.postgresql.org/docs/18/libpq-pgpass.html)
+  matches the `host` parameter, but searches `localhost` for libpq's default
+  socket directory and ignores a group- or world-accessible file on Unix;
+  [SQLx 0.9.1's lookup](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/pgpass.rs)
+  keys a socket URL by its own probed default host, keeps IPv6 brackets,
+  checks permissions only on Linux and keeps a password's unescaped `:`, which
+  libpq's [`passwordFromFile`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/interfaces/libpq/fe-connect.c)
+  treats as the end of the password. Passwordless refreshes therefore use the
+  passfile only for a DNS or IPv4 host; for a socket or IPv6 host psql gets
+  `PGPASSFILE=/dev/null` and the SQLx URL `password=`. The refresh gives `psql` the parts as its own PG* variables, gives
   SQLx CLI a URL rebuilt from the same parts, and asks a Cargo build script for
   the merged environment and selected compiler. Live preparation requires native
   rustc without compiler wrappers. Each actual compiler invocation checks its
   inherited settings immediately before executing rustc, including any
-  package-specific `cargo::rustc-env` values. Runledger's fixtures refuse any `PG*`
+  package-specific `cargo::rustc-env` values. Runledger's fixtures refuse any client `PG*`
   variable in every mode, since their native test proxies dial the URL host
   themselves, and pin
   `hostaddr=127.0.0.1` in the owned container's admin
@@ -123,7 +135,7 @@ contracts cite:
   settings. SQLx 0.9.0 honoured these parameters too, so that split
   predates this upgrade. Template initializer URLs carry `connect_timeout` and
   `channel_binding=disable`, and refuse other connection tuning they cannot
-  carry. Refusing every `PG*` variable replaced earlier attempts to carry or
+  carry. Refusing every client `PG*` variable replaced earlier attempts to carry or
   translate inherited settings, each of which missed a variable that changed
   one client's connection. The metadata refresh
   drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.

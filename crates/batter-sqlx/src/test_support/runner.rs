@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use tokio::task::JoinHandle;
 
 use super::acquisition::{Registered, Resources, join_producers, produce};
+use super::endpoint::{HarnessEndpoint, SuiteEndpoint};
 use super::plan::{PoolKey, check, construct, lookup};
 use super::report::{BodyFailure, FixtureReport, FixtureReportRef};
 use super::{ConnectionPlan, DatabaseFixture, FixtureError, FixtureSuite};
@@ -74,6 +75,7 @@ impl FixtureDatabase {
 /// ```
 pub struct FixtureScope {
     harness: PostgresHarness,
+    endpoint: SuiteEndpoint,
     resources: Resources,
     capacity: Arc<tokio::sync::Semaphore>,
 }
@@ -84,7 +86,9 @@ impl FixtureScope {
     /// Preparation is an owned producer, so its initializer must be Send and static.
     /// Cancelling this waiter does not cancel preparation or discard its failure.
     /// The initializer receives the same rebuilt URL as
-    /// [`super::FixtureSuite::template`] describes.
+    /// [`super::FixtureSuite::template`] describes, and the same
+    /// [`FixtureError::Endpoint`] refusal precedes the lookup; a refused call
+    /// starts no producer, so the report records nothing for it.
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
@@ -94,31 +98,34 @@ impl FixtureScope {
         F: FnOnce(String) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
     {
+        // Refuse before the lookup: the harness can return a cached template
+        // without polling the initializer.
+        let endpoint = self.endpoint()?;
         let harness = self.harness.clone();
         let resources = self.resources.clone();
-        let admin_url = harness.admin_database_url().to_owned();
         produce(&self.resources, async move {
-            let template = super::checked_template(&harness, spec, move |url| async move {
-                // Native template Drop can retain an initializing database. Turn
-                // initializer panic into its returned-error path so upstream
-                // awaits abort and preserves any independent abort failure.
-                // The URL check runs inside the same task: a refusal then drops
-                // the initializer there too, so a panic in its destructor still
-                // reaches the awaited abort instead of unwinding past it.
-                tokio::spawn(with_current_dispatch(async move {
-                    // Caller code receives a URL rebuilt from the harness's own
-                    // endpoint parse and recorded name, never the harness text.
-                    let url = super::endpoint::initializer_url(
-                        &admin_url,
-                        &url,
-                        super::endpoint::Environment::process(),
-                    )?;
-                    initializer(url).await
-                }))
-                .await
-                .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
-            })
-            .await?;
+            let template = harness
+                .template(spec, move |url| async move {
+                    // Native template Drop can retain an initializing database. Turn
+                    // initializer panic into its returned-error path so upstream
+                    // awaits abort and preserves any independent abort failure.
+                    // The URL check runs inside the same task: a refusal then drops
+                    // the initializer there too, so a panic in its destructor still
+                    // reaches the awaited abort instead of unwinding past it.
+                    tokio::spawn(with_current_dispatch(async move {
+                        // Caller code receives a URL rebuilt from the harness's own
+                        // endpoint parse and recorded name, never the harness text.
+                        let url = super::endpoint::initializer_url(
+                            &endpoint,
+                            &url,
+                            super::endpoint::Environment::process(),
+                        )?;
+                        initializer(url).await
+                    }))
+                    .await
+                    .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
+                })
+                .await?;
             let mut registered = resources.lock().unwrap_or_else(|error| error.into_inner());
             if !registered
                 .templates
@@ -171,6 +178,7 @@ impl FixtureScope {
         F: Future<Output = Result<DatabaseLease, postgres_test_harness::Error>> + Send + 'static,
     {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        let endpoint = self.endpoint()?;
         let capacity = self
             .capacity
             .clone()
@@ -192,7 +200,11 @@ impl FixtureScope {
             Ok(index)
         })
         .await?;
-        self.open(index, plan).await
+        self.open(&endpoint, index, plan).await
+    }
+
+    fn endpoint(&self) -> Result<Arc<HarnessEndpoint>, FixtureError> {
+        self.endpoint.checked().map_err(FixtureError::Endpoint)
     }
 
     fn pool_failed(&self, index: usize, error: sqlx::Error) -> FixtureError {
@@ -208,10 +220,10 @@ impl FixtureScope {
 
     async fn open(
         &self,
+        endpoint: &HarnessEndpoint,
         index: usize,
         plan: &ConnectionPlan,
     ) -> Result<FixtureDatabase, FixtureError> {
-        let admin_url = self.harness.admin_database_url().to_owned();
         let (name, url) = {
             let resources = self
                 .resources
@@ -227,7 +239,7 @@ impl FixtureScope {
         // pool constructed; the lease is already registered for cleanup.
         let resolved = plan
             .resolve(
-                &admin_url,
+                endpoint,
                 &url,
                 &name,
                 super::endpoint::Environment::process(),
@@ -364,6 +376,7 @@ impl FixtureSuite {
         let mut scope = FixtureScope {
             capacity,
             harness: self.harness,
+            endpoint: self.endpoint,
             resources: resources.clone(),
         };
         let body = tokio::spawn(with_current_dispatch(async move { body(&mut scope).await }));

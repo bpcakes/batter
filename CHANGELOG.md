@@ -32,9 +32,12 @@ contracts, capability facts and validation history.
   several, the harness from none; put every setting in the admin URL) or when
   the admin URL declares `hostaddr`, several hosts or a setting SQLx cannot
   carry. Fixture clients use the harness connector's plaintext transport.
-  Clients inheriting its login require an explicit password, which may be
-  empty (`?password=`). A pool with its own declared credentials can still
-  use a passwordless provisioning URL. Template initializers receive a URL
+  Clients inheriting its login use the admin URL's password, or none for a
+  trust or peer URL (treated as an empty password; no passfile is read).
+  A client `PG*` variable is any `PG` name except the server's `PGDATA` and
+  `PG_`-prefixed names such as `PG_COLOR`, which no client reads; the same
+  rule applies in Runledger's test support and the metadata refresh.
+  Template initializers receive a URL
   rebuilt from that parse and checked with both parsers; it carries
   `connect_timeout` and `channel_binding=disable`, and other connection tuning it cannot carry
   (`tcp_user_timeout`, `keepalives*`) is refused. Offline fixture endpoint
@@ -42,6 +45,37 @@ contracts, capability facts and validation history.
   since SQLx reads them in-process and tests may not change the environment.
   Reference-service
   fixture tests use the new helpers instead of reparsing harness URLs.
+- **Breaking:** `batter_sqlx::test_support::FixtureError` gains
+  `Endpoint(UnsupportedHarnessEndpoint)` (`batter-c5ci`). `FixtureSuite` now
+  parses its harness admin URL once, and every acquisition and template
+  call (`FixtureSuite::{empty, from_template, template}` and the same
+  `FixtureScope` methods) returns `Endpoint` before the harness provisions a
+  database or looks up a template, so a refused endpoint no longer costs a
+  provision/drop round trip and is no longer reported as a template
+  initializer failure. A refused scope call starts no producer and the run
+  report records nothing for it. Exhaustive matches need a new arm:
+
+  ```rust
+  // Before
+  match error {
+      FixtureError::InvalidBudget => {}
+      // ...every other variant
+  }
+  // After
+  match error {
+      FixtureError::InvalidBudget => {}
+      FixtureError::Endpoint(refusal) => {
+          let _reason = refusal.reason();
+      }
+      // ...every other variant
+  }
+  ```
+
+  A `PG*` refusal before a template lookup matched before as
+  `FixtureError::Harness(Error::TemplateInitializer { source })` (manual) or
+  `FixtureError::Acquisition(error)` (owned), with `UnsupportedHarnessEndpoint`
+  two downcasts deep; match `FixtureError::Endpoint(refusal)` instead. No
+  `#[deprecated]` shim applies: an added variant has no old name to alias.
 - Disclosed upstream regressions: outside a server transaction SQLx re-sends a
   statement whose first response is SQLSTATE `26000` or a stale cached-plan
   `0A000`, which can repeat a non-transactional effect; with the statement

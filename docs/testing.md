@@ -151,16 +151,19 @@ Native Runledger's PostgreSQL 18 Docker tests are different: they run in ordinar
 workspace verification through its own test-support package. Do not infer an
 external Batter live-suite result from those native tests or from a runner-control test.
 
-Run fixture-backed tests from a shell without `PG*` environment variables.
-SQLx fixture endpoints, Runledger's test support and the metadata refresh
-refuse any of them, so every client reads only the URL; offline fixture
+Run fixture-backed tests from a shell without `PG*` client environment
+variables: every `PG` name except the server's `PGDATA` and `PG_`-prefixed
+names such as `PG_COLOR`, which no client reads. SQLx fixture endpoints,
+Runledger's test support and the metadata refresh refuse the rest, including
+names a later SQLx release might start reading, so every client reads only the URL; offline fixture
 endpoint tests say so in one assertion, because SQLx reads those variables
 in-process and tests may not change the environment. Where the settings go
 depends on the mode:
 
 - SQLx fixtures use the harness connector's plaintext transport and carry
   `application_name` and `-c key=value` options. Clients inheriting the harness
-  login require an explicit password, which may be empty.
+  login use its password, or none for a passwordless (trust or peer) URL; no
+  passfile is read.
 - An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`: credentials only, a DNS or
   IPv4 host and exactly one database path segment. Any query is refused,
   except a `hostaddr` repeating its own IP literal host, because lease URLs
@@ -168,8 +171,13 @@ depends on the mode:
   native test proxies' transport; such a fixture cannot use TLS yet.
 - The metadata refresh: credentials, `application_name` and `options`. A
   TLS-required refresh is unsupported, and both clients connect without TLS.
-  An empty userinfo password (`user:@host`) allows the same passfile lookup
-  as an omitted password in both psql and SQLx.
+  An omitted or empty userinfo password (`user:@host`) lets both psql and
+  SQLx look up `~/.pgpass` only for a DNS or IPv4 host, where both key the
+  entry by the same host text. For a Unix socket or IPv6 host they would key it
+  differently, so neither reads a passfile there: put the password in
+  `DATABASE_URL`. psql never prompts for one. A passfile the clients still read
+  differently (SQLx checks its permissions only on Linux) fails one client's
+  authentication and stops the refresh before it writes.
   Run live preparation with native rustc and no Cargo compiler wrappers.
   Each compilation checks its effective endpoint before starting rustc.
   Refresh requires evidence that both query libraries compiled. The temporary
