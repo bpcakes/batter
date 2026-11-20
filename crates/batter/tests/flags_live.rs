@@ -19,7 +19,7 @@ use batter::flags::{
     control_plane::LatestRead,
     core::{Source, SwitchState, Version},
     low_level::capture_now,
-    postgres::{PooledStore, Rollout, Write, WriteOutcome},
+    postgres::{PooledStore, Rollout, Write, WriteId, WriteOutcome},
 };
 use sqlx::postgres::PgPoolOptions;
 use support::*;
@@ -113,23 +113,26 @@ async fn restore_remedy(
     retired: String,
     directory: std::path::PathBuf,
 ) {
-    reach_100_with_a_restore_point_at_90(&database, &restored).await;
+    let writes = reach_100_with_a_restore_point_at_90(&database, &restored).await;
     // A serving process applies 100, persists it and reports it.
     let (flags, running) = start(&database.options, &directory).await;
     until(|| matches!(capture_now(&flags).source(), Source::ControlPlane { version, .. } if version == Version::new(100))).await;
     let probe = database.pool().await;
     heartbeat_reports(&probe, flags.process().as_uuid(), ("control_plane", 100)).await;
     probe.close().await;
-    fail_over_under_the_running_process(&database, &restored, &retired, &flags).await;
+    fail_over_under_the_running_process(&database, &restored, &retired, &flags, writes).await;
     running.shutdown_checked().await.unwrap();
 }
 
 /// The store reaches 90, is copied as a restore point, then reaches 100.
-async fn reach_100_with_a_restore_point_at_90(database: &Database, restored: &str) {
+async fn reach_100_with_a_restore_point_at_90(
+    database: &Database,
+    restored: &str,
+) -> (WriteId, WriteId) {
     let pool = database.pool().await;
     let store = PooledStore::new(pool.clone(), timing());
     store.migrate(deadline()).await.unwrap();
-    write_until(&store, 90).await;
+    let kept = write_until(&store, 90).await;
     pool.close().await;
     database
         .exclusive(
@@ -138,8 +141,9 @@ async fn reach_100_with_a_restore_point_at_90(database: &Database, restored: &st
         )
         .await;
     let pool = database.pool().await;
-    write_until(&PooledStore::new(pool.clone(), timing()), 100).await;
+    let lost = write_until(&PooledStore::new(pool.clone(), timing()), 100).await;
     pool.close().await;
+    (kept, lost)
 }
 
 /// The database name now serves the restore point at 90 under the running
@@ -151,6 +155,7 @@ async fn fail_over_under_the_running_process(
     restored: &str,
     retired: &str,
     flags: &batter::flags::control_plane::RegisteredFlags,
+    (kept, lost): (WriteId, WriteId),
 ) {
     database
         .exclusive(
@@ -179,11 +184,7 @@ async fn fail_over_under_the_running_process(
     heartbeat_reports(&pool, flags.process().as_uuid(), ("control_plane", 100)).await;
     let store = PooledStore::new(pool.clone(), timing());
     assert!(matches!(
-        store
-            .fleet(deadline())
-            .await
-            .unwrap()
-            .rollout(Version::new(90)),
+        store.rollout(kept, deadline()).await.unwrap().1,
         Rollout::Pending { reached: 0, .. }
     ));
     let written = store
@@ -193,14 +194,18 @@ async fn fail_over_under_the_running_process(
         )
         .await
         .unwrap();
-    assert!(
-        matches!(&written, WriteOutcome::Written { version, .. } if *version == Version::new(101)),
-        "{written:?}"
-    );
+    let WriteOutcome::Written { write_id, .. } = written else {
+        panic!("{written:?}")
+    };
+    assert_eq!(write_id.version(), Version::new(101));
     until(|| matches!(capture_now(flags).source(), Source::ControlPlane { version, .. } if version == Version::new(101))).await;
     heartbeat_reports(&pool, flags.process().as_uuid(), ("control_plane", 101)).await;
+    assert_eq!(
+        store.rollout(lost, deadline()).await.unwrap().1,
+        Rollout::WriteAbsent
+    );
     assert!(
-        matches!(store.fleet(deadline()).await.unwrap().rollout(Version::new(101)), Rollout::Reached { live } if live.get() == 1)
+        matches!(store.rollout(write_id, deadline()).await.unwrap().1, Rollout::Reached { live } if live.get() == 1)
     );
     pool.close().await;
 }

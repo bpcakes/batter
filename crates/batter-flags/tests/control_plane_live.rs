@@ -110,8 +110,9 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
 
     assert!(flags.prune().succeeded > 0, "pruning as the serving role");
 
-    // The stop marker runs before the pool registered first closes.
-    running.shutdown_checked().await.unwrap();
+    deny_refresh(&migrator, &serving, &flags).await;
+    let shutdown = running.shutdown_checked().await.unwrap();
+    assert_denied_refresh(shutdown.report());
     assert!(pool.pool().is_closed());
     let stopped: bool = sqlx::query_scalar(
         "SELECT stopped_at IS NOT NULL FROM flags.flag_processes WHERE process_id = $1",
@@ -131,6 +132,42 @@ async fn a_registered_process_heartbeats_loads_and_records_its_stop_before_the_p
     migrator.close().await;
     lease.cleanup().await.unwrap();
     harness.shutdown().await.unwrap();
+}
+
+fn assert_denied_refresh(report: &batter_core::lifecycle::ShutdownReport) {
+    let refresh = report
+        .periodic
+        .iter()
+        .find(|p| p.name == "flags.refresh")
+        .unwrap();
+    let failure = refresh.summary.first_failure.as_ref().unwrap();
+    let store = failure
+        .error
+        .source()
+        .unwrap()
+        .downcast_ref::<batter_flags::postgres::StoreError>()
+        .unwrap();
+    assert_eq!(store.sqlstate().as_deref(), Some("42501"));
+}
+
+async fn deny_refresh(
+    db: &sqlx::PgPool,
+    serving: &str,
+    flags: &batter_flags::control_plane::RegisteredFlags,
+) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "REVOKE SELECT(state) ON flags.flag_state FROM {serving}"
+    )))
+    .execute(db)
+    .await
+    .unwrap();
+    tokio::time::timeout(SECOND * 15, async {
+        while flags.refresh().first_failure.is_none() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
 }
 
 async fn install_serving_role(migrator: &sqlx::PgPool, login: &str, serving: &str) {

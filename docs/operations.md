@@ -248,7 +248,7 @@ nothing and skips its heartbeat until the migration runs, each skip counted in
 `Gate::Published` it never becomes ready.
 
 Schema revision 2 assigns an immutable identity to each audit event. Apply the
-migration first, then apply the updated serving and fleet-read grants before
+migration first, then apply the updated serving, audited-write and fleet-read grants before
 upgrading processes or the CLI. During a rolling upgrade, the new fleet reader
 lists a Live process with a version-only heartbeat under `behind` until it
 reports an accepted primary read with its event identity.
@@ -258,14 +258,14 @@ reports an accepted primary read with its event identity.
 ```sh
 batter-flags show outbound_halt                 # note its revision
 batter-flags kill outbound_halt engage --actor ops --reason "contain failures" --if-revision N
-batter-flags fleet --version V                  # V from the write's report
+batter-flags fleet --write VERSION/UUID         # data.write_id from the write report
 ```
 
 Exit 0 means the command succeeded, not that it wrote: read the report's
 `outcome` (`written`, `written_undeclared` or `unchanged`). Exit 3 is a
 precondition (nothing written) and 4 is unknown: run
 `batter-flags history outbound_halt` and re-run with `--if-revision`. `fleet
---version V` also exits 0 while the rollout is pending or no process is Live;
+--write VERSION/UUID` also exits 0 while the rollout is pending or no process is Live;
 the change has reached every Live process only when `data.rollout.reached` is
 `true`. A committed write notifies nobody: each process applies it at the
 first refresh that starts after the commit. Before reading the rollout, allow
@@ -322,9 +322,7 @@ fleet has applied, and it learns that from heartbeats:
    does write: any audited write of any key carries the whole state to every
    process, for example setting a flag that is safe to move to another value
    and back.
-4. Check `batter-flags fleet --version V` with V from the report of a write
-   that answered `written`. Do not use a version from a write made before
-   step 1: the fleet can exceed it without having applied it.
+4. Pass `data.write_id` from the acknowledged recovery write to `batter-flags fleet --write VERSION/UUID`. A write missing from the restored audit history returns `write_absent`, even when every Live process confirms a later write.
 
 Versions therefore skip from the restored head to above the fleet; the counter
 is never rebased. One write moves the counter by at most 1,000,000
@@ -346,7 +344,7 @@ applies each switch's stale rule.
 ### Version the environment with the build
 
 A process's settings floor, its environment class and its catalog travel with
-its build: change them by deploying, and expect `batter-flags fleet --version`
+its build: change them by deploying, and expect `batter-flags fleet --write`
 to group processes by build, applied version and declared revision.
 
 ## Deployment prerequisites

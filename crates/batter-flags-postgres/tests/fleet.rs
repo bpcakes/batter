@@ -87,7 +87,7 @@ async fn only_a_live_control_plane_report_above_the_head_moves_the_next_version(
                 .write(set("fast_path", "off", None), deadline())
                 .await
                 .unwrap(),
-            WriteOutcome::Written { version, .. } if version == Version::new(51)
+            WriteOutcome::Written { write_id, .. } if write_id.version() == Version::new(51)
         ),
         "a Live process above the head moves the next version above itself"
     );
@@ -95,7 +95,7 @@ async fn only_a_live_control_plane_report_above_the_head_moves_the_next_version(
     beat(&mut live, SnapshotReport::ControlPlane(Version::new(51))).await;
     assert!(matches!(
         f.store.write(set("fast_path", "on", None), deadline()).await.unwrap(),
-        WriteOutcome::Written { version, .. } if version == Version::new(52)
+        WriteOutcome::Written { write_id, .. } if write_id.version() == Version::new(52)
     ));
     f.close().await;
 }
@@ -115,7 +115,7 @@ async fn a_report_at_or_beyond_the_jump_window_never_moves_or_refuses_a_write() 
         .await
         .unwrap()
     {
-        WriteOutcome::Written { version, .. } => version.get(),
+        WriteOutcome::Written { write_id, .. } => write_id.version().get(),
         other => panic!("{other:?}"),
     };
     // The largest storable version: no write is refused and none jumps.
@@ -272,11 +272,28 @@ async fn decoding_and_the_archive_gate_count_live_and_silent_declarers_only() {
 async fn a_rollout_counts_only_live_control_plane_publications() {
     let f = Fixture::migrated().await;
     let v = Version::new;
+    let seeded = f
+        .store
+        .write(
+            Write::explicit(
+                key("seed"),
+                ExplicitValue::ModeToggle(batter_flags_core::Toggle::On),
+                change(None),
+            ),
+            deadline(),
+        )
+        .await
+        .unwrap();
+    let WriteOutcome::WrittenUndeclared { write_id: seed, .. } = seeded else {
+        panic!("expected committed seed")
+    };
     assert_eq!(
-        f.store.fleet(deadline()).await.unwrap().rollout(v(1)),
+        f.store.rollout(seed, deadline()).await.unwrap().1,
         Rollout::NoLiveProcess
     );
 
+    f.close().await;
+    let f = Fixture::migrated().await;
     let mut early = process(&f.store, Build::Base, "a-early", 60, 600);
     let mut late = process(&f.store, Build::Extended, "b-late", 60, 600);
     let mut file = process(&f.store, Build::Base, "c-file", 60, 600);
@@ -288,16 +305,17 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
     stopped.stop(deadline()).await.unwrap();
     // Five writes give the store a head every report below stays within.
     let mut publications = Vec::new();
+    let mut writes = Vec::new();
     for variant in ["on", "off", "on", "off", "on"] {
         let written = f
             .store
             .write(set("fast_path", variant, None), deadline())
             .await
             .unwrap();
-        assert!(
-            matches!(written, WriteOutcome::Written { .. }),
-            "{written:?}"
-        );
+        let WriteOutcome::Written { write_id, .. } = written else {
+            panic!("{written:?}")
+        };
+        writes.push(write_id);
         publications.push(f.store.load(deadline()).await.unwrap().publication());
     }
     published(&mut early, publications[2]).await;
@@ -309,7 +327,7 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
     assert_eq!(fleet.head(), v(5));
     assert_eq!(fleet.processes().len(), 5);
     assert_eq!(
-        fleet.rollout(v(3)),
+        f.store.rollout(writes[2], deadline()).await.unwrap().1,
         Rollout::Pending {
             reached: 2,
             behind: vec![file.process()]
@@ -317,7 +335,7 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
         "a persisted file never counts as applied"
     );
     assert_eq!(
-        fleet.rollout(v(4)),
+        f.store.rollout(writes[3], deadline()).await.unwrap().1,
         Rollout::Pending {
             reached: 1,
             behind: vec![early.process(), file.process()]
@@ -325,9 +343,8 @@ async fn a_rollout_counts_only_live_control_plane_publications() {
     );
     published(&mut early, publications[4]).await;
     published(&mut file, publications[4]).await;
-    let fleet = f.store.fleet(deadline()).await.unwrap();
     assert_eq!(
-        fleet.rollout(v(5)),
+        f.store.rollout(writes[4], deadline()).await.unwrap().1,
         Rollout::Reached {
             live: NonZeroUsize::new(3).unwrap()
         }
@@ -373,7 +390,7 @@ async fn a_report_above_the_head_never_counts_as_reached() {
         SnapshotReport::ControlPlane(Version::new(i64::MAX as u64)),
     )
     .await;
-    let WriteOutcome::Written { version, .. } = f
+    let WriteOutcome::Written { write_id, .. } = f
         .store
         .write(set("fast_path", "on", None), deadline())
         .await
@@ -381,6 +398,7 @@ async fn a_report_above_the_head_never_counts_as_reached() {
     else {
         panic!("the write lands");
     };
+    let version = write_id.version();
     assert_eq!(version, Version::new(1), "a wild report moves no write");
     published(
         &mut applied,
@@ -390,7 +408,7 @@ async fn a_report_above_the_head_never_counts_as_reached() {
     let fleet = f.store.fleet(deadline()).await.unwrap();
     assert_eq!(fleet.head(), version);
     assert_eq!(
-        fleet.rollout(version),
+        f.store.rollout(write_id, deadline()).await.unwrap().1,
         Rollout::Pending {
             reached: 1,
             behind: vec![wild.process()]
@@ -415,13 +433,23 @@ async fn a_report_above_the_head_never_counts_as_reached() {
         matches!(written, WriteOutcome::WrittenUndeclared { .. }),
         "{written:?}"
     );
+    let WriteOutcome::WrittenUndeclared {
+        write_id: reused, ..
+    } = written
+    else {
+        panic!("{written:?}")
+    };
+    assert_eq!(
+        f.store.rollout(reused, deadline()).await.unwrap().1,
+        Rollout::WriteAbsent
+    );
     let other = previous.store.load(deadline()).await.unwrap().publication();
     assert_eq!(other.version(), version);
     published(&mut wild, other).await;
     let fleet = f.store.fleet(deadline()).await.unwrap();
     assert_eq!(fleet.head(), version);
     assert_eq!(
-        fleet.rollout(version),
+        f.store.rollout(write_id, deadline()).await.unwrap().1,
         Rollout::Pending {
             reached: 1,
             behind: vec![wild.process()]

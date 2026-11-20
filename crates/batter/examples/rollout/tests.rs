@@ -73,7 +73,9 @@ async fn interrupted_migration_finishes_pool_cleanup() {
         "postgres://serving@{}/flags?sslmode=disable",
         stalled.local_addr().unwrap()
     );
-    let owner = super::migration(&url).unwrap().start_without_signals();
+    let owner = super::migration(url.parse().unwrap())
+        .unwrap()
+        .start_without_signals();
     let (_peer, _) = tokio::time::timeout(super::SECOND * 5, stalled.accept())
         .await
         .unwrap()
@@ -91,4 +93,31 @@ async fn interrupted_migration_finishes_pool_cleanup() {
         cleanup.is_success() && cleanup.records.iter().any(|r| r.name == "migration.pool"),
         "pool closed before completion"
     );
+}
+
+#[test]
+fn invocation_requires_complete_arguments_and_redacts_url_errors() {
+    let settings = SettingsSource::from_pairs([(
+        "DATABASE_URL".into(),
+        "postgres://serving@localhost/flags?sslmode=private-marker".into(),
+    )])
+    .unwrap();
+    for args in [
+        vec![],
+        vec!["migrate"],
+        vec!["migrate", "--dry-run"],
+        vec!["migrate", "--help"],
+        vec!["unknown"],
+    ] {
+        let expected = if args.len() <= 1 && args.first() != Some(&"unknown") {
+            "invalid DATABASE_URL"
+        } else {
+            "usage: rollout [migrate]"
+        };
+        let failure = super::Invocation::parse(args.into_iter().map(Into::into), &settings)
+            .err()
+            .expect("invalid invocation");
+        assert_eq!(failure.to_string(), expected);
+        assert!(!format!("{failure:?}").contains("private-marker"));
+    }
 }

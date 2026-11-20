@@ -63,7 +63,7 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
     }
     f.seed("live_flag", "release", "toggle", "live").await;
     assert!(
-        matches!(f.store.write(set("live_flag","on",Some(0)),deadline()).await.unwrap(),WriteOutcome::Written { version, previous: None, live_declaring: 1, .. } if version == Version::new(5))
+        matches!(f.store.write(set("live_flag","on",Some(0)),deadline()).await.unwrap(),WriteOutcome::Written { write_id, previous: None, live_declaring: 1, .. } if write_id.version() == Version::new(5))
     );
     let before = f.head().await;
     assert!(
@@ -110,7 +110,7 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
         5
     );
     assert!(
-        matches!(f.store.archive(Archive::new(key("stopped_flag"),change(None)),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { version, .. } if version == Version::new(6))
+        matches!(f.store.archive(Archive::new(key("stopped_flag"),change(None)),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version() == Version::new(6))
     );
     assert!(matches!(
         f.store
@@ -138,7 +138,7 @@ async fn all_write_and_archive_outcomes_preserve_counter_and_audit() {
         WriteOutcome::RevisionMismatch { .. }
     ));
     assert!(
-        matches!(f.store.restore(Archive::new(key("stopped_flag"),change(Some(6))),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { version, .. } if version == Version::new(7))
+        matches!(f.store.restore(Archive::new(key("stopped_flag"),change(Some(6))),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version() == Version::new(7))
     );
     assert!(matches!(
         f.store
@@ -213,7 +213,7 @@ async fn refusal_order_future_encoding_restrictions_and_fleet_regression() {
                 .write(set("normal", "on", None), deadline())
                 .await
                 .unwrap(),
-            WriteOutcome::Written { version, .. } | WriteOutcome::WrittenUndeclared { version, .. } if version == Version::new(51)
+            WriteOutcome::Written { write_id, .. } | WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version() == Version::new(51)
         ),
         "a write behind a Live process is numbered above it"
     );
@@ -232,7 +232,7 @@ async fn refusal_order_future_encoding_restrictions_and_fleet_regression() {
         .await
         .unwrap();
     assert!(
-        matches!(&after_file, WriteOutcome::Written { version, .. } | WriteOutcome::WrittenUndeclared { version, .. } if *version == Version::new(52)),
+        matches!(&after_file, WriteOutcome::Written { write_id, .. } | WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version() == Version::new(52)),
         "{after_file:?}"
     );
     f.close().await;
@@ -289,8 +289,8 @@ async fn concurrent_first_writes_and_poller_observe_commit_order() {
             .unwrap()
             .entries;
         for row in rows {
-            assert_eq!(row.version.get(), last.get() + 1);
-            last = row.version;
+            assert_eq!(row.write_id.version().get(), last.get() + 1);
+            last = row.write_id.version();
             seen.push(last);
         }
         if let Some(result) = tasks.join_next().await {
@@ -307,8 +307,8 @@ async fn concurrent_first_writes_and_poller_observe_commit_order() {
         .unwrap()
         .entries
     {
-        assert_eq!(row.version.get(), last.get() + 1);
-        last = row.version;
+        assert_eq!(row.write_id.version().get(), last.get() + 1);
+        last = row.write_id.version();
         seen.push(last);
     }
     assert_eq!(seen.len(), 21);
@@ -385,11 +385,11 @@ async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
         f.seed("archived_flag", "mode", "enum", "stopped").await;
         assert!(matches!(
             f.store.write(set("archived_flag", "express", Some(0)), deadline()).await.unwrap(),
-            WriteOutcome::WrittenUndeclared { version, .. } if version.get() == 1
+            WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version().get() == 1
         ));
         assert!(matches!(
             f.store.archive(Archive::new(key("archived_flag"), change(Some(1))), deadline()).await.unwrap(),
-            WriteOutcome::WrittenUndeclared { version, .. } if version.get() == 2
+            WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version().get() == 2
         ));
         // A new build declares a narrower catalog after the old build stops.
         let build = match presence {
@@ -435,8 +435,8 @@ async fn restore_retains_archived_value_until_incompatible_declarers_stop() {
             .unwrap();
         assert!(matches!(
             f.store.restore(Archive::new(key("archived_flag"), change(Some(2))), deadline()).await.unwrap(),
-            WriteOutcome::WrittenUndeclared { version, basis: UndeclaredBasis::NoLiveDeclarer, .. }
-                if version.get() == 3
+            WriteOutcome::WrittenUndeclared { write_id, basis: UndeclaredBasis::NoLiveDeclarer, .. }
+                if write_id.version().get() == 3
         ));
         let restored: (serde_json::Value, i64, Option<i64>) = sqlx::query_as(
             "SELECT state, updated_version, archived_version FROM flags.flag_state WHERE name='archived_flag'",

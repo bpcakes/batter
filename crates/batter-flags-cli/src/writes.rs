@@ -32,21 +32,21 @@ pub(crate) async fn write(
 
 fn outcome_report(name: &'static str, key: &FlagKey, outcome: WriteOutcome) -> Report {
     match outcome {
-        WriteOutcome::Written { version, live_declaring, deferral, .. } => deferred(
-            Report::new(name, Exit::Ok, "written", format!("written at version {}", version.get()))
-                .with_data(json!({"version": version.get(), "live_declaring": live_declaring, "deferral": deferral_data(&deferral)})),
+        WriteOutcome::Written { write_id, live_declaring, deferral, .. } => deferred(
+            Report::new(name, Exit::Ok, "written", format!("written at version {} (write {write_id})", write_id.version().get()))
+                .with_data(json!({"version": write_id.version().get(), "write_id": write_id.to_string(), "live_declaring": live_declaring, "deferral": deferral_data(&deferral)})),
             key,
             &deferral,
         ),
-        WriteOutcome::WrittenUndeclared { version, basis, deferral } => {
+        WriteOutcome::WrittenUndeclared { write_id, basis, deferral } => {
             let basis = match basis {
                 UndeclaredBasis::NoLiveDeclarer => "no_live_declarer",
                 UndeclaredBasis::Orphaned => "orphaned",
                 UndeclaredBasis::NeverDeclared => "never_declared",
             };
             deferred(
-                Report::new(name, Exit::Ok, "written_undeclared", format!("written at version {}", version.get()))
-                    .with_data(json!({"version": version.get(), "basis": basis, "deferral": deferral_data(&deferral)}))
+                Report::new(name, Exit::Ok, "written_undeclared", format!("written at version {} (write {write_id})", write_id.version().get()))
+                    .with_data(json!({"version": write_id.version().get(), "write_id": write_id.to_string(), "basis": basis, "deferral": deferral_data(&deferral)}))
                     .warn(format!("no Live process declares the key ({basis}); nothing applies it yet")),
                 key,
                 &deferral,

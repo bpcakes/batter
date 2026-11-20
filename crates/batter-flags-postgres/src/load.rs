@@ -14,7 +14,7 @@ pub struct Publication(Event);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Event {
     Initial,
-    Write { version: Version, id: uuid::Uuid },
+    Write(crate::WriteId),
 }
 
 impl Publication {
@@ -22,13 +22,13 @@ impl Publication {
     pub fn version(self) -> Version {
         match self.0 {
             Event::Initial => Version::new(0),
-            Event::Write { version, .. } => version,
+            Event::Write(write) => write.version(),
         }
     }
     pub(crate) fn id(self) -> uuid::Uuid {
         match self.0 {
             Event::Initial => uuid::Uuid::nil(),
-            Event::Write { id, .. } => id,
+            Event::Write(write) => write.event,
         }
     }
 }
@@ -94,7 +94,7 @@ impl ServingStore {
                 let id = sqlx::query_scalar("SELECT publication_id FROM flags.flag_audit WHERE version = $1")
                     .bind(head)
                     .fetch_one(sql.executor()).await?;
-                Event::Write { version: version(head)?, id }
+                Event::Write(crate::WriteId { version: version(head)?, event: id })
             });
             let rows = sqlx::query("SELECT name, kind, value_type, updated_version, state::text FROM flags.flag_state WHERE archived_version IS NULL ORDER BY name")
                 .fetch_all(sql.executor()).await?

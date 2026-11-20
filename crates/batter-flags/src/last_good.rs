@@ -8,7 +8,10 @@ pub(crate) mod format;
 mod path;
 mod persist;
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use batter_flags_core::{
     DeclarationFingerprint, FlagKey, Version,
@@ -238,11 +241,12 @@ pub(crate) fn file_of(
     // Only an engagement is carried into the file: a held switch that carries
     // a release is written without a value, so a restart serves its safe
     // state rather than a release the current row no longer supports.
-    let carried: Vec<_> = snapshot
+    let carried: HashMap<_, _> = snapshot
         .carried()
         .filter(|carried| {
             carried.provenance() == Provenance::ControlPlane && carried.state().is_engaged()
         })
+        .map(|kept| (kept.key().as_str(), kept))
         .collect();
     let mut entries = Vec::with_capacity(rows.len());
     for row in rows {
@@ -265,7 +269,7 @@ pub(crate) fn file_of(
                 row.updated_version(),
                 EntryValue::State(row.state_text().to_owned()),
             ));
-        } else if let Some(kept) = carried.iter().find(|kept| kept.key().as_str() == row.key()) {
+        } else if let Some(kept) = carried.get(row.key()) {
             entries.push(entry(
                 kept.since(),
                 EntryValue::State(format!(

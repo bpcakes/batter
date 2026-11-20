@@ -62,7 +62,8 @@ pub(crate) enum Command {
     /// Shows the fleet, or whether a version reached every Live process.
     Fleet {
         #[arg(long, conflicts_with = "flag")]
-        version: Option<u64>,
+        /// Check the VERSION/UUID from a committed write or audit history.
+        write: Option<batter_flags_postgres::WriteId>,
         #[arg(long)]
         flag: Option<String>,
     },
@@ -207,8 +208,8 @@ async fn execute(
         Plan::History(key, window) => {
             interruptible(&mut interrupt, history(store, deadline, &key, window)).await
         }
-        Plan::Fleet { version, flag } => {
-            let fleet = crate::fleet::report::<Failure>(store, deadline, version, flag.as_ref());
+        Plan::Fleet(query) => {
+            let fleet = crate::fleet::report::<Failure>(store, deadline, query);
             interruptible(&mut interrupt, fleet).await
         }
         Plan::Write {
@@ -299,7 +300,7 @@ async fn history(
 
 fn event(entry: &HistoryEntry) -> Value {
     json!({
-        "version": entry.version.get(),
+        "version": entry.write_id.version().get(), "write_id": entry.write_id.to_string(),
         "operation": entry.operation,
         "actor": entry.actor,
         "reason": entry.reason,

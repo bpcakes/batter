@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use batter_flags_core::{FlagKey, Version};
+use batter_flags_core::FlagKey;
 use batter_flags_postgres::{FleetProcess, PooledStore, ProcessState, Rollout};
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -38,35 +38,40 @@ fn process(process: &FleetProcess) -> Value {
 pub(crate) async fn report<F: From<batter_flags_postgres::StoreError>>(
     store: &PooledStore,
     deadline: Instant,
-    version: Option<u64>,
-    flag: Option<&FlagKey>,
+    query: crate::plan::FleetQuery,
 ) -> Result<Report, F> {
-    if let Some(key) = flag {
-        let fleet = store.fleet_declaring(key, deadline).await?;
-        let declarers: Vec<Value> = fleet
+    use crate::plan::FleetQuery;
+    let write = match query {
+        FleetQuery::Declaring(key) => {
+            let fleet = store.fleet_declaring(&key, deadline).await?;
+            let declarers: Vec<Value> = fleet
             .processes()
             .iter()
             .map(|p| json!({"build": p.build(), "presence": state_text(p.state()), "process": p.process().as_uuid().to_string()}))
             .collect();
-        return Ok(Report::new(
-            "fleet",
-            Exit::Ok,
-            "ok",
-            format!("{} processes declare {}", declarers.len(), key.as_str()),
-        )
-        .with_data(json!({"head": fleet.head().get(), "declarers": declarers})));
-    }
-    let fleet = store.fleet(deadline).await?;
-    let Some(version) = version else {
-        let processes: Vec<Value> = fleet.processes().iter().map(process).collect();
-        return Ok(Report::new(
-            "fleet",
-            Exit::Ok,
-            "ok",
-            format!("{} processes", processes.len()),
-        )
-        .with_data(json!({"head": fleet.head().get(), "processes": processes})));
+            return Ok(Report::new(
+                "fleet",
+                Exit::Ok,
+                "ok",
+                format!("{} processes declare {}", declarers.len(), key.as_str()),
+            )
+            .with_data(json!({"head": fleet.head().get(), "declarers": declarers})));
+        }
+        FleetQuery::All => {
+            let fleet = store.fleet(deadline).await?;
+            let processes: Vec<Value> = fleet.processes().iter().map(process).collect();
+            return Ok(Report::new(
+                "fleet",
+                Exit::Ok,
+                "ok",
+                format!("{} processes", processes.len()),
+            )
+            .with_data(json!({"head": fleet.head().get(), "processes": processes})));
+        }
+        FleetQuery::Rollout(write) => write,
     };
+    let (fleet, rollout) = store.rollout(write, deadline).await?;
+    let version = write.version().get();
     // Live processes grouped by build, snapshot source and version, and
     // declared revision; Silent and Stopped apart. The source is part of the
     // key: a version restored from the last-good file is not one the control
@@ -93,7 +98,11 @@ pub(crate) async fn report<F: From<batter_flags_postgres::StoreError>>(
         .into_iter()
         .map(|((build, source, version, revision), count)| json!({"build": build, "snapshot_source": source, "snapshot_version": version, "declared_revision": revision, "processes": count}))
         .collect();
-    let (message, reached) = match fleet.rollout(Version::new(version)) {
+    let (message, reached) = match rollout {
+        Rollout::WriteAbsent => (
+            format!("write {write} is absent from this history"),
+            json!({"reached":false,"write_absent":true}),
+        ),
         Rollout::Reached { live } => (
             format!("version {version} reached all {live} Live processes"),
             json!({"reached": true, "live": live.get()}),

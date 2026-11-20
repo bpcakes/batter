@@ -29,7 +29,16 @@ async fn a_restored_file_version_is_grouped_apart_from_an_applied_one() {
         "--yes",
     ]);
     assert_eq!(written.code, 0, "{written:?}");
-    let fleet = db.cli_args(&["fleet", "--version", "1"]).json();
+    let written = written.json();
+    let write_id = written["data"]["write_id"].as_str().unwrap();
+    let absent = db
+        .cli_args(&["fleet", "--write", "1/00000000-0000-0000-0000-000000000000"])
+        .json();
+    assert_eq!(
+        absent["data"]["rollout"],
+        serde_json::json!({"reached": false, "write_absent": true})
+    );
+    let fleet = db.cli_args(&["fleet", "--write", write_id]).json();
     assert_eq!(
         fleet["data"]["live_groups"][0]["snapshot_source"],
         "control_plane"
@@ -49,7 +58,7 @@ async fn a_restored_file_version_is_grouped_apart_from_an_applied_one() {
     .execute(&db.pool)
     .await
     .unwrap();
-    let split = db.cli_args(&["fleet", "--version", "1"]).json();
+    let split = db.cli_args(&["fleet", "--write", write_id]).json();
     let mut sources: Vec<(String, u64)> = split["data"]["live_groups"]
         .as_array()
         .unwrap()

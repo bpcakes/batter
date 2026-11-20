@@ -214,7 +214,7 @@ enum MigrationError {
 
 /// Prepare a finite command. The root selects the Unix signal policy.
 fn migration(
-    url: &str,
+    options: PgConnectOptions,
 ) -> Result<
     Command<
         impl for<'a> FnOnce(
@@ -225,7 +225,6 @@ fn migration(
     >,
     BoxError,
 > {
-    let options: PgConnectOptions = url.parse()?;
     let timing = StoreTiming::new(SECOND * 2, SECOND * 2, SECOND, SECOND * 2)?;
     Ok(Command::new(
         OperationOwner::new(SECOND * 30)?.into_context(),
@@ -252,8 +251,10 @@ fn migration(
 /// Control-plane mode: an audited store decides, refreshed every poll. It
 /// never migrates and connects lazily, so a restart during an outage serves
 /// its last-good file or the declared base instead of failing.
-async fn run_control_plane(settings: &SettingsSource, url: &str) -> Result<(), BoxError> {
-    let options: PgConnectOptions = url.parse()?;
+async fn run_control_plane(
+    settings: &SettingsSource,
+    options: PgConnectOptions,
+) -> Result<(), BoxError> {
     let second = Duration::from_secs(1);
     let timing = StoreTiming::new(second * 2, second * 2, second, second * 2)?;
     let (resolved, handles) = resolve(settings, today()?)?;
@@ -277,8 +278,11 @@ async fn run_control_plane(settings: &SettingsSource, url: &str) -> Result<(), B
             )?;
             // Required: the file restores kill-switch states at startup, so it lives
             // in a directory this process owns, never a shared temporary one.
+            let path = SnapshotFilePath::new(directory, "rollout.bfsn")?;
+            // The protected initializer bounds the wait for this single blocking open.
+            // A syscall already submitted can outlive that wait.
             let last_good =
-                SnapshotDirectory::open(SnapshotFilePath::new(directory, "rollout.bfsn")?)?;
+                tokio::task::spawn_blocking(move || SnapshotDirectory::open(path)).await??;
             let policy =
                 LoadPolicy::start_on_defaults(RefreshTiming::new(second * 5, second * 60)?)
                     .with_last_good(last_good);
@@ -305,6 +309,37 @@ async fn run_control_plane(settings: &SettingsSource, url: &str) -> Result<(), B
     Ok(())
 }
 
+enum Invocation {
+    Declared,
+    ControlPlane(PgConnectOptions),
+    Migrate(PgConnectOptions),
+}
+
+impl Invocation {
+    fn parse(
+        mut args: impl Iterator<Item = OsString>,
+        settings: &SettingsSource,
+    ) -> Result<Self, BoxError> {
+        let command = args.next();
+        if args.next().is_some() || command.as_deref().is_some_and(|arg| arg != "migrate") {
+            return Err("usage: rollout [migrate]".into());
+        }
+        let options = settings
+            .text("DATABASE_URL")?
+            .map(|url| {
+                url.parse::<PgConnectOptions>()
+                    .map_err(|_| "invalid DATABASE_URL")
+            })
+            .transpose()?;
+        match (command, options) {
+            (None, None) => Ok(Self::Declared),
+            (None, Some(options)) => Ok(Self::ControlPlane(options)),
+            (Some(_), Some(options)) => Ok(Self::Migrate(options)),
+            (Some(_), None) => Err("rollout migrate needs DATABASE_URL".into()),
+        }
+    }
+}
+
 fn main() -> ExitCode {
     std::panic::set_hook(batter::redacting_panic_hook());
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
@@ -317,10 +352,9 @@ fn main() -> ExitCode {
     let outcome = runtime.block_on(async {
         let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
         let settings = SettingsSource::from_pairs(environment)?;
-        let command = std::env::args().nth(1);
-        match (command.as_deref(), settings.text("DATABASE_URL")?) {
-            (Some("migrate"), Some(url)) => {
-                migration(url)?
+        match Invocation::parse(std::env::args_os().skip(1), &settings)? {
+            Invocation::Migrate(options) => {
+                migration(options)?
                     .start_with_unix_signals()?
                     .finish()
                     .await?
@@ -328,10 +362,8 @@ fn main() -> ExitCode {
                 println!("flags schema migrated");
                 Ok(())
             }
-            (Some("migrate"), None) => Err("rollout migrate needs DATABASE_URL".into()),
-            (Some(_), _) => Err("usage: rollout [migrate]".into()),
-            (None, Some(url)) => run_control_plane(&settings, url).await,
-            (None, None) => run_declared(&settings).await.map(|_| ()),
+            Invocation::ControlPlane(options) => run_control_plane(&settings, options).await,
+            Invocation::Declared => run_declared(&settings).await.map(|_| ()),
         }
     });
     // A persist the drain abandoned may still be writing; give it a bound.

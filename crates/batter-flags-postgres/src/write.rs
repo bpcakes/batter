@@ -231,7 +231,7 @@ impl PooledStore {
         };
         // Do not poll commit at all after a known pre-commit timeout.
         remaining(deadline)?;
-        let proposed_version = pending.version;
+        let proposed_version = pending.write_id.version();
         // An interrupt is honoured until COMMIT is sent, including during the
         // native continuity check before it, and never after.
         let committed = tokio::time::timeout_at(deadline, tx.commit_unless(interrupt.wait())).await;

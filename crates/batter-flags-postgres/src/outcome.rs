@@ -121,14 +121,58 @@ impl Error for CommitUncertainty {
         }
     }
 }
+/// An audit event identified across restores. Its text form travels from the
+/// acknowledged write report to the operator's rollout query.
+///
+/// ```
+/// use batter_flags_postgres::WriteId;
+/// let text = "8/6d76ed65-80cf-4ec2-a203-de11dfa82e89";
+/// let write: WriteId = text.parse().unwrap();
+/// assert_eq!(write.version().get(), 8);
+/// assert_eq!(write.to_string(), text);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WriteId {
+    pub(crate) version: Version,
+    pub(crate) event: uuid::Uuid,
+}
+
+impl WriteId {
+    /// Counter allocated to this audit event.
+    pub fn version(self) -> Version {
+        self.version
+    }
+}
+
+impl std::fmt::Display for WriteId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.version.get(), self.event)
+    }
+}
+
+impl std::str::FromStr for WriteId {
+    type Err = crate::ValidationError;
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (version, event) = text.split_once('/').ok_or(crate::ValidationError)?;
+        let version: i64 = version.parse().map_err(|_| crate::ValidationError)?;
+        if version <= 0 {
+            return Err(crate::ValidationError);
+        }
+        Ok(Self {
+            version: Version::new(version as u64),
+            event: event.parse().map_err(|_| crate::ValidationError)?,
+        })
+    }
+}
 /// Exhaustive write/archive/restore result, released only after disposition.
 #[derive(Debug)]
 #[must_use]
 pub enum WriteOutcome {
     /// Acknowledged write with at least one live declaring process.
     Written {
-        /// Committed counter.
-        version: Version,
+        /// Identity to pass to [`crate::PooledStore::rollout`].
+        /// Migration: read the former `version` field with `write_id.version()`.
+        write_id: WriteId,
         /// Previous state, available for deliberate inspection.
         previous: Option<StoredState>,
         /// Number of live declaring processes.
@@ -138,8 +182,9 @@ pub enum WriteOutcome {
     },
     /// Acknowledged write without a live declaring process.
     WrittenUndeclared {
-        /// Committed counter.
-        version: Version,
+        /// Identity to pass to [`crate::PooledStore::rollout`].
+        /// Migration: read the former `version` field with `write_id.version()`.
+        write_id: WriteId,
         /// Why there was no live declaration.
         basis: UndeclaredBasis,
         /// Why a Silent declarer's processes will not serve the state as

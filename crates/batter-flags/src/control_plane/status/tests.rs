@@ -31,7 +31,7 @@ fn served(shared: &Shared) -> Option<Version> {
 }
 
 /// While the shared state's lock is held, a concurrent publication cannot
-/// become visible: the writer judges, publishes and records its verdict inside
+/// become visible: the writer installs its judged read and records the verdict inside
 /// that lock, so a status can never pair the new publication with the
 /// previous read's refusal. Were the writer run outside the lock, the record
 /// would change here while the test still holds it.

@@ -61,7 +61,8 @@ pub use migrate::{
     REQUIRED_SCHEMA_REVISION,
 };
 pub use outcome::{
-    BlockingBuild, CommitUncertainty, Presence, Refusal, StoredState, UndeclaredBasis, WriteOutcome,
+    BlockingBuild, CommitUncertainty, Presence, Refusal, StoredState, UndeclaredBasis, WriteId,
+    WriteOutcome,
 };
 pub use presence::{
     Cadence, HeartbeatSnapshot, KeySample, PresenceReport, ProcessId, ProcessLabel, ProcessLabels,

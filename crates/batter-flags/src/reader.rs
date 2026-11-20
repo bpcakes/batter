@@ -351,19 +351,41 @@ impl Writer {
     ///
     /// [`Late`] when the deadline passed while the read was judged: nothing is
     /// published or recorded.
+    #[cfg(test)]
     pub(crate) fn read(
         &mut self,
         candidate: Candidate,
         deadline: Instant,
     ) -> Result<Disposition, Late> {
+        self.read_guarded(candidate, deadline, || (), |_, result| result)
+    }
+
+    /// Judge under exclusive writer ownership. Acquire the reader-facing lock
+    /// only to install the result and let the caller record its verdict.
+    pub(crate) fn read_guarded<G, R>(
+        &mut self,
+        candidate: Candidate,
+        deadline: Instant,
+        guard: impl FnOnce() -> G,
+        finish: impl FnOnce(&mut G, Result<Disposition, Late>) -> R,
+    ) -> R {
+        if Instant::now() >= deadline {
+            return finish(&mut guard(), Err(Late));
+        }
         let judged = self.publisher.judge(candidate);
+        let mut guard = guard();
         let at = Instant::now();
         if at >= deadline {
-            return Err(Late);
+            return finish(&mut guard, Err(Late));
         }
         let disposition = judged.publish(at);
-        self.install();
-        Ok(disposition)
+        let retired = self
+            .sender
+            .send_replace(Arc::new(self.publisher.record().clone()));
+        let result = finish(&mut guard, Ok(disposition));
+        drop(guard);
+        drop(retired);
+        result
     }
 
     /// Judges and publishes one read that vouches for `at`, with no deadline.
@@ -380,6 +402,7 @@ impl Writer {
         self.publisher.record()
     }
 
+    #[cfg(test)]
     fn install(&mut self) {
         // `send_replace` returns the replaced record once its lock is
         // released; it is dropped here, never under the lock.

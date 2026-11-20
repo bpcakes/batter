@@ -537,3 +537,31 @@ failure owns the full completion after shutdown, including any cleanup error.
 The migration command reserves pool cleanup before acquisition and uses the
 command’s absolute deadline. This reuses the existing service and command
 owners for the two executable lifecycles.
+
+## Requested write identity and refresh ownership (batter-jkw6.63)
+
+A restore can omit an entire range of writes, then reuse a counter or jump
+past it. A matching heartbeat authenticates only the process publication.
+The write owner retrieves its trigger-generated audit identity in the write
+transaction and releases it on acknowledged commit. The fleet owner checks
+the requested identity and process publications in one primary snapshot.
+Operator input is a lookup key. The database verifies it before confirmation.
+
+The writer owns candidate validation and prepares a publication before
+taking the status lock. The final clock check, record replacement and
+status transition share that lock. A queued file remains available after
+expiry during preparation. Once submitted, the blocking writer owns its
+completion. An inherited idle limit is resolved against each session's
+PostgreSQL reset value at application and verification.
+
+The rollout executable admits exactly two argument lists. Both serving and
+migration receive parsed connection options, and a parse error carries only
+the setting name. The single directory open runs on a blocking worker under
+the protected startup deadline. Its syscall can outlive the initializer.
+
+The repository’s rustdoc JSON surface comparison against `b1182b36` found
+two removals in the store package, `Fleet::rollout` and `HistoryEntry.version`.
+The replacement lookup, write identity and `WriteAbsent` outcome are present.
+The walker omits enum-variant fields. Inspection of the two acknowledged
+`WriteOutcome` variants confirmed their counter now comes from the write ID.
+Their before/after call shapes and the compatibility decision are in CHANGELOG.

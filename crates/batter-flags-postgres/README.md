@@ -75,8 +75,7 @@ waiting on a prune's lock publishes its catalog again once the delete commits.
 
 `fleet` and `fleet_declaring(&key)` read every process row (or every declarer of
 a key) with the head in one read-only snapshot, each as `ProcessState::{Live,
-Silent, Stopped}`. `Fleet::rollout(version)` answers whether every Live process
-applied a version. Its control-plane counter must fall between the requested
+Silent, Stopped}`. `PooledStore::rollout(write_id, deadline)` checks the requested audit event in that same snapshot and returns `WriteAbsent` if it was lost or replaced. For each Live process, its control-plane counter must fall between the requested
 version and the current head, and its publication identity must match the
 immutable event at that counter in this database. A version reused after a
 restore can describe a different write. Version-only reports, including those
@@ -128,8 +127,7 @@ has the full procedure):
    that Live processes report `control_plane` versions above the restored head.
 2. Make an audited write. If it answers `unchanged`, the restored store already
    holds that state and nothing was written: make a change that does write.
-3. Check the rollout with the version of a write that answered `written` after
-   step 1, never with the version of an earlier write.
+3. Check the rollout with the write ID from the acknowledged recovery write.
 4. A fleet at or beyond `MAX_VERSION_JUMP` above the restored head does not
    converge by writing; restart its processes.
 

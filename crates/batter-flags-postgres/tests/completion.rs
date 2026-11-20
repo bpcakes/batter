@@ -41,7 +41,7 @@ async fn dropping_the_interrupt_sender_before_preparation_still_commits_once() {
         .await
         .unwrap();
     assert!(
-        matches!(outcome, WriteOutcome::WrittenUndeclared { version, .. } if version.get() == 1)
+        matches!(outcome, WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version().get() == 1)
     );
     let loaded = fixture.store.load(deadline()).await.unwrap();
     assert_eq!(loaded.version().get(), 1);

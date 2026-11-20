@@ -217,6 +217,37 @@ struct State {
     last_rejection: Option<Refusal>,
 }
 
+impl State {
+    fn record_read(
+        &mut self,
+        observed: super::source::Observed,
+        disposition: Result<Disposition, Late>,
+    ) -> (LastRun, Result<(), LoadCause>) {
+        let (latest_read, result) = match disposition {
+            Err(Late) => (self.latest_read, Err(LoadCause::Deadline)),
+            Ok(Disposition::Applied | Disposition::Confirmed) => {
+                (Judgement::Accepted(observed), Ok(()))
+            }
+            Ok(Disposition::Refused(refusal)) => {
+                self.last_rejection = Some(refusal);
+                (
+                    Judgement::Refused {
+                        refusal,
+                        observed: observed.version(),
+                    },
+                    Err(cause(refusal)),
+                )
+            }
+        };
+        self.latest_read = latest_read;
+        let run = match result {
+            Ok(()) => LastRun::Loaded,
+            Err(cause) => LastRun::Failed(cause),
+        };
+        (std::mem::replace(&mut self.last_run, run), result)
+    }
+}
+
 /// What the loader shares with the registered flags.
 ///
 /// Its lock is held while the refresh publishes, so a status read under it
@@ -244,7 +275,7 @@ impl Shared {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Publishes one read read at `observed` through `writer` and records
+    /// Judges the fetched candidate under writer ownership, then installs and records
     /// what it did, in one critical section of the shared state, and returns
     /// the cause of the run before it and this run's outcome.
     pub(crate) fn publish(
@@ -254,30 +285,13 @@ impl Shared {
         scope: &ValidationScope,
         deadline: Instant,
     ) -> (LastRun, Result<(), LoadCause>) {
-        let mut state = self.state();
         let observed = fetched.observed();
-        let (latest_read, result) = match writer.read(fetched.candidate(scope), deadline) {
-            Err(Late) => (state.latest_read, Err(LoadCause::Deadline)),
-            Ok(Disposition::Applied | Disposition::Confirmed) => {
-                (Judgement::Accepted(observed), Ok(()))
-            }
-            Ok(Disposition::Refused(refusal)) => {
-                state.last_rejection = Some(refusal);
-                (
-                    Judgement::Refused {
-                        refusal,
-                        observed: observed.version(),
-                    },
-                    Err(cause(refusal)),
-                )
-            }
-        };
-        state.latest_read = latest_read;
-        let run = match result {
-            Ok(()) => LastRun::Loaded,
-            Err(cause) => LastRun::Failed(cause),
-        };
-        (std::mem::replace(&mut state.last_run, run), result)
+        writer.read_guarded(
+            fetched.candidate(scope),
+            deadline,
+            || self.state(),
+            |state, disposition| state.record_read(observed, disposition),
+        )
     }
 
     /// Records a read that found the schema behind.

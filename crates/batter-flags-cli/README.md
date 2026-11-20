@@ -24,7 +24,7 @@ a SQLSTATE at most.
 | `kill <switch> engage\|release` | engages or releases a kill switch |
 | `archive <key>`, `restore <key>` | archives or restores a key |
 | `history <key> [--after V]` | the key's newest page of audited events in one bounded read, so the event an uncertain write points to is always shown, with a warning when older events are retained; `--after V` reads the page after version V instead (`0` starts from the first event) and warns with the next `--after` when more follow; each event carries `recorded_at`, the database's time of the write |
-| `fleet [--version N \| --flag KEY]` | the fleet, a rollout check, or a key's declarers |
+| `fleet [--write VERSION/UUID \| --flag KEY]` | the fleet, a rollout check, or a key's declarers |
 
 `--if-revision N` is a store-version watermark. A change requires the key’s
 last revision to be at most N and N to be at most the store head. The revision
@@ -58,9 +58,11 @@ settings floor keeps it engaged, and separately with the number whose floor
 sample overflowed without listing it, which may.
 `invariants_unjudged` names each cause apart (`data.undecodable`,
 `data.held_governors`) and suggests an upgrade only for the first. `fleet
---version V` groups Live processes by build, `snapshot_source`,
+--write VERSION/UUID` groups Live processes by build, `snapshot_source`,
 `snapshot_version` and declared revision, so a version restored from the
 last-good file never merges with one the control plane applied.
+
+Copy `data.write_id` from the write or history report. A missing or replaced audit event yields `data.rollout.write_absent = true` and `reached = false`.
 
 There is one end-to-end `--timeout` (1 to 60 s) and no operation is ever
 retried. The pool holds at most one connection at a time, but each store

@@ -100,7 +100,7 @@ async fn a_history_longer_than_a_page_says_where_to_continue() {
         .await
         .unwrap();
     assert_eq!(first.entries.len(), HISTORY_PAGE);
-    let last = first.entries.last().unwrap().version;
+    let last = first.entries.last().unwrap().write_id.version();
     assert_eq!(first.next, Continuation::After(last));
     // Each row carries when the database recorded it, in commit order.
     assert!(
@@ -116,7 +116,10 @@ async fn a_history_longer_than_a_page_says_where_to_continue() {
         .unwrap();
     assert_eq!(second.entries.len(), 1);
     assert_eq!(second.next, Continuation::Complete);
-    assert_eq!(second.entries[0].version, Version::new(writes as u64));
+    assert_eq!(
+        second.entries[0].write_id.version(),
+        Version::new(writes as u64)
+    );
 
     // Exactly a page ends complete, without an empty read to find out.
     let exact = f
@@ -131,9 +134,9 @@ async fn a_history_longer_than_a_page_says_where_to_continue() {
     // retained; a key with one event has nothing earlier.
     let recent = f.store.recent_history(&busy, deadline()).await.unwrap();
     assert_eq!(recent.entries.len(), HISTORY_PAGE);
-    assert_eq!(recent.entries[0].version, Version::new(2));
+    assert_eq!(recent.entries[0].write_id.version(), Version::new(2));
     assert_eq!(
-        recent.entries.last().unwrap().version,
+        recent.entries.last().unwrap().write_id.version(),
         Version::new(writes as u64)
     );
     assert_eq!(recent.earlier, Earlier::Retained);

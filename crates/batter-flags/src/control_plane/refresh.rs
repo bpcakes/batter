@@ -25,7 +25,7 @@ use tokio::time::Instant;
 
 use super::{
     LoadCause,
-    source::{FetchFailure, Fetched, LoadSource},
+    source::{FetchFailure, Fetched, LoadFailed, LoadSource},
     status::{LastRun, Shared},
     timing::{FILE_SUBDEADLINE, FirstFailure, Startup, work_deadline},
 };
@@ -50,11 +50,6 @@ pub(crate) enum Persistence {
     Off,
     File(Persister),
 }
-
-/// A run that published nothing.
-#[derive(Debug, thiserror::Error)]
-#[error("flags load failed ({})", .0.as_str())]
-pub(crate) struct LoadFailed(LoadCause);
 
 /// What the next run does with a failure.
 #[derive(Clone, Copy)]
@@ -134,9 +129,11 @@ impl Prepared {
                     (Err(OperationError::Failed(failed)), Tolerance::Strict) => {
                         Err(PeriodicFailure::recoverable(failed))
                     }
-                    (Err(OperationError::Interrupted(_)), Tolerance::Strict) => Err(
-                        PeriodicFailure::recoverable(LoadFailed(LoadCause::Deadline)),
-                    ),
+                    (Err(OperationError::Interrupted(_)), Tolerance::Strict) => {
+                        Err(PeriodicFailure::recoverable(LoadFailed::Local(
+                            FetchFailure::Failed(LoadCause::Deadline),
+                        )))
+                    }
                 }
             }
         };
@@ -150,11 +147,13 @@ impl Refresh {
         // Everything below is synchronous: a run either publishes in this
         // poll or not at all.
         let (previous, result) = match fetched {
-            Err(FetchFailure::SchemaBehind { found }) => (
-                self.shared.schema_behind(found),
-                Err(LoadCause::SchemaBehind),
-            ),
-            Err(FetchFailure::Failed(cause)) => (self.shared.failed(cause), Err(cause)),
+            Err(error) => {
+                let previous = match error.classification() {
+                    FetchFailure::SchemaBehind { found } => self.shared.schema_behind(found),
+                    FetchFailure::Failed(cause) => self.shared.failed(cause),
+                };
+                (previous, Err(error))
+            }
             Ok(fetched) => {
                 // Only a version the queue would take is copied for the
                 // file: a confirming read of a version it already holds,
@@ -169,13 +168,24 @@ impl Refresh {
                 if let (Ok(()), Some(rows)) = (judged.1, rows) {
                     self.offer(&rows);
                 }
-                judged
+                (
+                    judged.0,
+                    judged
+                        .1
+                        .map_err(|cause| LoadFailed::Local(FetchFailure::Failed(cause))),
+                )
             }
         };
-        report(previous, result);
+        report(
+            previous,
+            result
+                .as_ref()
+                .copied()
+                .map_err(|error| error.classification().cause()),
+        );
         // Whatever this run read, a publication still waiting is retried.
         self.persist(deadline).await;
-        result.map_err(LoadFailed)
+        result
     }
 
     /// Queues the published control-plane snapshot for the last-good file.

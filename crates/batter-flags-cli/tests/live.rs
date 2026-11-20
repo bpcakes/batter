@@ -218,7 +218,13 @@ async fn the_read_commands_report_revisions_filters_history_and_the_fleet() {
     .unwrap();
     assert_eq!(recorded.timestamp_micros(), stored);
 
-    let fleet = db.cli_args(&["fleet", "--version", "1"]).json();
+    let fleet = db
+        .cli_args(&[
+            "fleet",
+            "--write",
+            history["data"][0]["write_id"].as_str().unwrap(),
+        ])
+        .json();
     assert_eq!(fleet["data"]["live_groups"].as_array().unwrap().len(), 1);
     assert_eq!(fleet["data"]["live_groups"][0]["processes"], 2);
     assert_eq!(

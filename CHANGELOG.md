@@ -8,6 +8,24 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Breaking: rollout confirmation uses the write ID returned by an acknowledged
+  write. A restored history can omit or reuse a numeric version.
+  Replace `fleet.rollout(version)` with
+  `store.rollout(write_id, deadline).await?.1`, and
+  `batter-flags fleet --version 8` with `batter-flags fleet --write 8/UUID`
+  using the complete `data.write_id` from the write or history report.
+  An exhaustive `match rollout { Reached { .. } => …, Pending { .. } => …, NoLiveProcess => … }`
+  now includes `WriteAbsent => …`. A version-only compatibility shim could
+  confirm a different write after a restore, so it is omitted.
+  Replace `Written { version, .. } => version` with
+  `Written { write_id, .. } => write_id.version()`, and
+  `WrittenUndeclared { version, .. } => version` with
+  `WrittenUndeclared { write_id, .. } => write_id.version()`.
+  Replace `entry.version` with `entry.write_id.version()` for history rows.
+  A duplicate public counter could disagree with the ID, so these field
+  changes have no deprecated shim. Reapply the audited-write grants to allow
+  the writer to read the identity of its trigger-created audit row.
+
 - Flags schema revision 2 identifies each audit event across restores. Migrate
   and apply the updated serving and fleet-read grants before upgrading. The
   fleet reader keeps older version-only heartbeats pending. Registered flags

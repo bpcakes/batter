@@ -147,13 +147,10 @@ pub fn halt() -> FlagKey {
 
 /// Advances the store's head to `version` by alternating explicit writes,
 /// which need no published catalog.
-pub async fn write_until(store: &PooledStore, version: u64) {
+pub async fn write_until(store: &PooledStore, version: u64) -> batter::flags::postgres::WriteId {
     loop {
         let head = store.load(deadline()).await.unwrap().version().get();
-        if head >= version {
-            assert_eq!(head, version);
-            return;
-        }
+        assert!(head < version);
         let state = if head % 2 == 0 {
             SwitchState::Engaged
         } else {
@@ -166,13 +163,14 @@ pub async fn write_until(store: &PooledStore, version: u64) {
             )
             .await
             .unwrap();
-        assert!(
-            matches!(
-                outcome,
-                WriteOutcome::Written { .. } | WriteOutcome::WrittenUndeclared { .. }
-            ),
-            "{outcome:?}"
-        );
+        let (WriteOutcome::Written { write_id, .. }
+        | WriteOutcome::WrittenUndeclared { write_id, .. }) = outcome
+        else {
+            panic!("{outcome:?}")
+        };
+        if write_id.version().get() == version {
+            return write_id;
+        }
     }
 }
 

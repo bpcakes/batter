@@ -93,16 +93,49 @@ pub(crate) enum FetchFailure {
     Failed(LoadCause),
 }
 
+/// An operation failure retains its native cause. Status and telemetry use
+/// the bounded classification independently of the retained error chain.
+#[derive(thiserror::Error)]
+#[error("flags load failed ({})", self.classification().cause().as_str())]
+pub(crate) enum LoadFailed {
+    Store(#[source] StoreError),
+    Local(FetchFailure),
+}
+
+impl std::fmt::Debug for LoadFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl LoadFailed {
+    pub(crate) fn classification(&self) -> FetchFailure {
+        match self {
+            Self::Store(error) => classify(error),
+            Self::Local(class) => *class,
+        }
+    }
+}
+
+impl FetchFailure {
+    pub(crate) fn cause(self) -> LoadCause {
+        match self {
+            Self::SchemaBehind { .. } => LoadCause::SchemaBehind,
+            Self::Failed(cause) => cause,
+        }
+    }
+}
+
 impl LoadSource {
     /// Reads once, within `deadline`. Nothing here retries.
-    pub(crate) async fn fetch(&self, deadline: Instant) -> Result<Fetched, FetchFailure> {
+    pub(crate) async fn fetch(&self, deadline: Instant) -> Result<Fetched, LoadFailed> {
         match self {
             Self::Store(store) => match store.load(deadline).await {
                 Ok(loaded) => Ok(Fetched(Read::Store(loaded))),
-                Err(error) => Err(classify(&error)),
+                Err(error) => Err(LoadFailed::Store(error)),
             },
             #[cfg(test)]
-            Self::Fake(fake) => fake.fetch(deadline).await,
+            Self::Fake(fake) => fake.fetch(deadline).await.map_err(LoadFailed::Local),
         }
     }
 }

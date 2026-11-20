@@ -3595,13 +3595,19 @@ columns, including canonical submitted requests for intent submission.
 Registered serving operations re-establish the pool’s declared session profile
 after reset, before reading or changing flags data. Store budgets cap the
 statement, lock and idle waits. Bounded SQLx phases check the absolute clock
-before polling SQL work, including each time a pending phase resumes.
+before polling SQL work, including each time a pending phase resumes. An inherited idle timeout resolves against the PostgreSQL session’s reset value when the store caps the profile.
 
 A heartbeat from a registered process reports the audit event identity of its
 accepted primary read. Fleet confirmation checks this identity at the reported
 version in the same snapshot as the head and presence rows. A version reused
 after a restore, a version-only heartbeat, and a refused divergent read leave
-the process unconfirmed until it reports a matching publication.
+the process unconfirmed until it reports a matching publication. The same
+snapshot checks the requested `WriteId` against the audit table. A gap or a
+different event at its version returns `WriteAbsent`. Refresh judgement precedes
+the shared status lock. The lock covers the deadline check, installation and
+status update. Recoverable database failures retain the original store error
+in the periodic report. An expired file-write attempt keeps the publication
+queued unless disk work was already submitted.
 
 Observed application rejections survive bounded native cleanup: the store's
 `RollbackFailure` retains both the operation cause and a cleanup deadline. This

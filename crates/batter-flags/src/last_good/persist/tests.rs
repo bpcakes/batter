@@ -245,7 +245,7 @@ async fn an_attempt_during_an_in_flight_write_is_refused_before_it_can_hold_stal
         Err(PersistFailure::Deadline)
     );
     persister.offer(snapshot(2));
-    let (reached, resume) = persister.pause_after_selection();
+    let (reached, resume) = persister.pause_before_submission();
     let second = persister.attempt(deadline());
     tokio::pin!(second);
     // Admission is part of selection, so the second attempt is refused at
@@ -432,4 +432,30 @@ async fn a_failure_is_reported_while_its_publication_waits_and_cleared_by_a_writ
             written: Some(Version::new(7))
         }
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn expiry_before_submission_keeps_the_publication_queued() {
+    let directory = Directory::new();
+    let path = directory.path();
+    let persister = Persister::new(path.clone());
+    persister.offer(snapshot(4));
+    assert_eq!(
+        persister.attempt(Instant::now()).await,
+        Err(PersistFailure::Deadline)
+    );
+    let (selected, resume) = persister.pause_before_submission();
+    let by = Instant::now() + Duration::from_secs(1);
+    let attempt = persister.attempt(by);
+    tokio::pin!(attempt);
+    tokio::select! {
+        () = async { selected.await.unwrap(); } => {}
+        _ = &mut attempt => panic!("write completed before release"),
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+    resume.send(()).unwrap();
+    assert_eq!(attempt.await, Err(PersistFailure::Deadline));
+    assert!(!path.file().exists());
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+    assert_eq!(on_disk(&directory), 4);
 }

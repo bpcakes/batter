@@ -10,10 +10,7 @@ pub(crate) enum Plan {
     List(ListFilter),
     Show(FlagKey),
     History(FlagKey, HistoryWindow),
-    Fleet {
-        version: Option<u64>,
-        flag: Option<FlagKey>,
-    },
+    Fleet(FleetQuery),
     Write {
         name: &'static str,
         key: FlagKey,
@@ -21,6 +18,12 @@ pub(crate) enum Plan {
         policy: WritePolicy,
         after: AfterWrite,
     },
+}
+
+pub(crate) enum FleetQuery {
+    All,
+    Declaring(FlagKey),
+    Rollout(batter_flags_postgres::WriteId),
 }
 
 /// Which audited events a history read shows.
@@ -47,7 +50,7 @@ impl Plan {
             Self::List(_) => "list",
             Self::Show(_) => "show",
             Self::History(..) => "history",
-            Self::Fleet { .. } => "fleet",
+            Self::Fleet(_) => "fleet",
             Self::Write { name, .. } => name,
         }
     }
@@ -75,10 +78,12 @@ pub(crate) fn plan(command: Command) -> Result<Plan, String> {
                 HistoryWindow::After(Version::new(after))
             }),
         ),
-        Command::Fleet { version, flag } => Plan::Fleet {
-            version,
-            flag: flag.as_deref().map(key).transpose()?,
-        },
+        Command::Fleet { write, flag } => Plan::Fleet(match (write, flag) {
+            (None, None) => FleetQuery::All,
+            (None, Some(text)) => FleetQuery::Declaring(key(&text)?),
+            (Some(write), None) => FleetQuery::Rollout(write),
+            (Some(_), Some(_)) => return Err("--write and --flag are mutually exclusive".into()),
+        }),
         Command::Set {
             key: text,
             variant,

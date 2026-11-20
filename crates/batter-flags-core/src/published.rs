@@ -151,13 +151,14 @@ pub enum Restored {
 #[must_use = "a judged read changes nothing until it is published"]
 pub struct Judged<'p, C> {
     publisher: &'p mut Publisher<C>,
-    verdict: Verdict,
+    verdict: Verdict<C>,
 }
 
 /// What judging a read found, before publication.
-enum Verdict {
+enum Verdict<C> {
     Refuse(Refusal),
-    Valid(Snapshot),
+    Apply(Arc<Snapshot>, Authority),
+    Confirm(Published<C>),
 }
 
 impl<C: Clone> Publisher<C> {
@@ -232,7 +233,19 @@ impl<C: Clone> Publisher<C> {
                 Record::Published(published) => candidate.carry_from(&published.snapshot),
             }
             match Snapshot::validate(candidate) {
-                Ok(snapshot) => Verdict::Valid(snapshot),
+                Ok(snapshot) => match &self.record {
+                    Record::Unpublished(_) => {
+                        let authority = Authority::first(&snapshot);
+                        Verdict::Apply(Arc::new(snapshot), authority)
+                    }
+                    Record::Published(published) => match published.authority.consider(&snapshot) {
+                        Transition::Apply(authority) => {
+                            Verdict::Apply(Arc::new(snapshot), authority)
+                        }
+                        Transition::Confirm => Verdict::Confirm(published.clone()),
+                        Transition::Refuse(refusal) => Verdict::Refuse(refusal),
+                    },
+                },
                 Err(rejection) => Verdict::Refuse(Refusal::Rejected(rejection)),
             }
         };
@@ -282,18 +295,27 @@ impl<C: Clone> Judged<'_, C> {
                 }),
                 Disposition::Refused(refusal),
             ),
-            (Record::Unpublished(_), Verdict::Valid(snapshot)) => (
-                Record::Published(Published::first(Arc::new(snapshot), at)),
+            (_, Verdict::Apply(snapshot, authority)) => (
+                Record::Published(Published {
+                    snapshot,
+                    authority,
+                    age_origin: at,
+                    refusal: None,
+                }),
                 Disposition::Applied,
+            ),
+            (_, Verdict::Confirm(prior)) => (
+                Record::Published(Published {
+                    age_origin: at,
+                    refusal: None,
+                    ..prior
+                }),
+                Disposition::Confirmed,
             ),
             (Record::Published(published), Verdict::Refuse(refusal)) => (
                 Record::Published(published.refused(refusal)),
                 Disposition::Refused(refusal),
             ),
-            (Record::Published(published), Verdict::Valid(snapshot)) => {
-                let (next, disposition) = published.next(Arc::new(snapshot), at);
-                (Record::Published(next), disposition)
-            }
         };
         publisher.record = record;
         disposition
@@ -368,31 +390,6 @@ impl<C: Clone> Published<C> {
         }
     }
 
-    /// The record after a later valid read, and what that read did.
-    fn next(&self, snapshot: Arc<Snapshot>, at: C) -> (Self, Disposition) {
-        match self.authority.consider(&snapshot) {
-            Transition::Apply(authority) => (
-                Self {
-                    snapshot,
-                    authority,
-                    age_origin: at,
-                    refusal: None,
-                },
-                Disposition::Applied,
-            ),
-            Transition::Confirm => (
-                Self {
-                    snapshot: Arc::clone(&self.snapshot),
-                    authority: self.authority,
-                    age_origin: at,
-                    refusal: None,
-                },
-                Disposition::Confirmed,
-            ),
-            Transition::Refuse(refusal) => (self.refused(refusal), Disposition::Refused(refusal)),
-        }
-    }
-
     fn refused(&self, refusal: Refusal) -> Self {
         Self {
             refusal: Some(refusal),
@@ -446,7 +443,10 @@ impl<C> fmt::Debug for Judged<'_, C> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let verdict = match &self.verdict {
             Verdict::Refuse(refusal) => format!("Refuse({refusal:?})"),
-            Verdict::Valid(snapshot) => format!("Valid(version {})", snapshot.version().get()),
+            Verdict::Apply(snapshot, _) => format!("Apply(version {})", snapshot.version().get()),
+            Verdict::Confirm(prior) => {
+                format!("Confirm(version {})", prior.snapshot.version().get())
+            }
         };
         formatter
             .debug_struct("Judged")

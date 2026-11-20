@@ -192,7 +192,15 @@ pub(crate) async fn apply(
         }),
     };
     Ok(Prepared::Commit(PendingWrite {
-        version: Version::new(next as u64),
+        write_id: crate::WriteId {
+            version: Version::new(next as u64),
+            event: sqlx::query_scalar(
+                "SELECT publication_id FROM flags.flag_audit WHERE version = $1",
+            )
+            .bind(next)
+            .fetch_one(sql.executor())
+            .await?,
+        },
         declaration,
         deferral,
     }))

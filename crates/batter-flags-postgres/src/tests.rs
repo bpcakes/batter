@@ -102,7 +102,9 @@ async fn stalled_counter_owner_expires_and_kill_switch_progresses() {
     );
     let (stalled, killed) = tokio::join!(task, kill);
     assert_eq!(stalled.unwrap().unwrap_err().class(), ErrorClass::Deadline);
-    assert!(matches!(killed.unwrap(),WriteOutcome::Written { version, .. } if version.get()==1));
+    assert!(
+        matches!(killed.unwrap(),WriteOutcome::Written { write_id, .. } if write_id.version().get()==1)
+    );
     assert!(before.elapsed() < Duration::from_secs(3));
     assert_eq!(pool.size(), 0);
     pool.close().await;
@@ -145,7 +147,7 @@ async fn dropping_stalled_write_retires_and_does_not_commit() {
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(pool.size(), 0);
     assert!(
-        matches!(f.store.write(Write::explicit(key("following"),ExplicitValue::ModeToggle(batter_flags_core::Toggle::On),change(None)),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { version, .. } if version.get()==1)
+        matches!(f.store.write(Write::explicit(key("following"),ExplicitValue::ModeToggle(batter_flags_core::Toggle::On),change(None)),deadline()).await.unwrap(),WriteOutcome::WrittenUndeclared { write_id, .. } if write_id.version().get()==1)
     );
     pool.close().await;
     f.close().await;

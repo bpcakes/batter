@@ -32,7 +32,7 @@ pub(crate) enum DeclarationEvidence {
     Undeclared(UndeclaredBasis),
 }
 pub(crate) struct PendingWrite {
-    pub(crate) version: Version,
+    pub(crate) write_id: crate::WriteId,
     pub(crate) declaration: DeclarationEvidence,
     pub(crate) deferral: Deferral,
 }
@@ -40,13 +40,13 @@ impl PendingWrite {
     pub(crate) fn committed(self, _: PgCommitConfirmed) -> WriteOutcome {
         match self.declaration {
             DeclarationEvidence::Live { previous, count } => WriteOutcome::Written {
-                version: self.version,
+                write_id: self.write_id,
                 previous,
                 live_declaring: count.get(),
                 deferral: self.deferral,
             },
             DeclarationEvidence::Undeclared(basis) => WriteOutcome::WrittenUndeclared {
-                version: self.version,
+                write_id: self.write_id,
                 basis,
                 deferral: self.deferral,
             },

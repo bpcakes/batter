@@ -8,7 +8,7 @@ use tokio::time::Instant;
 macro_rules! audit {
     ($tail:literal) => {
         concat!(
-            "SELECT version, flag_name, operation, actor, reason, guard, recorded_by::text, \
+            "SELECT version, publication_id, flag_name, operation, actor, reason, guard, recorded_by::text, \
              recorded_at, before_state, after_state FROM flags.flag_audit ",
             $tail
         )
@@ -18,8 +18,9 @@ macro_rules! audit {
 /// One retained audit event. Actor, reason and state are deliberately explicit fields.
 /// Default formatting discloses only the counter.
 pub struct HistoryEntry {
-    /// Commit-ordered counter.
-    pub version: Version,
+    /// The immutable write identified by this event.
+    /// Migration: read the former `HistoryEntry::version` field with `write_id.version()`.
+    pub write_id: crate::WriteId,
     /// Affected key.
     pub key: String,
     /// Trigger-derived operation.
@@ -83,8 +84,12 @@ pub enum Earlier {
 
 impl HistoryEntry {
     fn read(r: &PgRow) -> Result<Self, StoreError> {
+        let version = crate::load::version(r.try_get("version")?)?;
         Ok(Self {
-            version: crate::load::version(r.try_get("version")?)?,
+            write_id: crate::WriteId {
+                version,
+                event: r.try_get("publication_id")?,
+            },
             key: r.try_get("flag_name")?,
             operation: r.try_get("operation")?,
             actor: r.try_get("actor")?,
@@ -103,7 +108,7 @@ impl HistoryEntry {
 impl std::fmt::Debug for HistoryEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HistoryEntry")
-            .field("version", &self.version)
+            .field("version", &self.write_id.version())
             .finish_non_exhaustive()
     }
 }
@@ -161,7 +166,7 @@ impl PooledStore {
                 .map(HistoryEntry::read)
                 .collect::<Result<Vec<_>, StoreError>>()?;
             let next = match (more, entries.last()) {
-                (true, Some(last)) => Continuation::After(last.version),
+                (true, Some(last)) => Continuation::After(last.write_id.version()),
                 (false, _) | (true, None) => Continuation::Complete,
             };
             Ok(HistoryPage { entries, next })
@@ -187,7 +192,7 @@ impl PooledStore {
     ///     .recent_history(&FlagKey::new("outbound")?, Instant::now() + Duration::from_secs(3))
     ///     .await?;
     /// if let Some(newest) = recent.entries.last() {
-    ///     println!("newest change: version {}", newest.version.get());
+    ///     println!("newest change: version {}", newest.write_id.version().get());
     /// }
     /// if recent.earlier == Earlier::Retained {
     ///     // Older events: page forward from the start with `history`.

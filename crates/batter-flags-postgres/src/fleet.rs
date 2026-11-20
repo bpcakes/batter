@@ -157,6 +157,9 @@ pub struct Fleet {
 /// Stopped processes are not counted either way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Rollout {
+    /// The requested audit event is absent from this history.
+    /// Migration: exhaustive `Rollout` matches must handle `WriteAbsent`.
+    WriteAbsent,
     /// Every Live process applied the version.
     Reached {
         /// How many Live processes there are.
@@ -185,7 +188,7 @@ impl Fleet {
     }
 
     /// Answers "did `version` reach every Live process?".
-    pub fn rollout(&self, version: Version) -> Rollout {
+    fn confirmed_rollout(&self, version: Version) -> Rollout {
         let live = self
             .processes
             .iter()
@@ -211,7 +214,8 @@ impl PooledStore {
     /// [`ErrorClass::Standby`](crate::ErrorClass::Standby), because its rows
     /// can lag the primary's.
     pub async fn fleet(&self, deadline: Instant) -> Result<Fleet, StoreError> {
-        self.read_fleet(None, deadline).await
+        self.read_fleet(None, deadline, async |fleet, _| Ok(fleet))
+            .await
     }
 
     /// Reads the process rows whose catalog declares `key`, with the head.
@@ -220,10 +224,37 @@ impl PooledStore {
         key: &FlagKey,
         deadline: Instant,
     ) -> Result<Fleet, StoreError> {
-        self.read_fleet(Some(key.as_str()), deadline).await
+        self.read_fleet(Some(key.as_str()), deadline, async |fleet, _| Ok(fleet))
+            .await
     }
 
-    async fn read_fleet(&self, key: Option<&str>, deadline: Instant) -> Result<Fleet, StoreError> {
+    /// Check a requested write and every reported publication in one primary snapshot.
+    /// Migration: replace `Fleet::rollout(version)` with this lookup using the acknowledged write ID.
+    ///
+    /// ```no_run
+    /// # async fn check(store: &batter_flags_postgres::PooledStore, id: batter_flags_postgres::WriteId, deadline: tokio::time::Instant) -> Result<(), batter_flags_postgres::StoreError> {
+    /// let (fleet, result) = store.rollout(id, deadline).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn rollout(
+        &self,
+        write: crate::WriteId,
+        deadline: Instant,
+    ) -> Result<(Fleet, Rollout), StoreError> {
+        self.read_fleet(None, deadline, async |fleet, sql| {
+            let present: bool = sqlx::query_scalar("SELECT EXISTS (SELECT FROM flags.flag_audit WHERE version = $1 AND publication_id = $2)")
+                .bind(write.version.get() as i64).bind(write.event).fetch_one(sql.executor()).await?;
+            let result = if present { fleet.confirmed_rollout(write.version) } else { Rollout::WriteAbsent };
+            Ok((fleet, result))
+        }).await
+    }
+
+    async fn read_fleet<T>(
+        &self,
+        key: Option<&str>,
+        deadline: Instant,
+        finish: impl AsyncFnOnce(Fleet, &mut batter_sqlx::PgReadOnlySql<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
         let deadline = deadline.min(Instant::now() + self.timing.acquire);
         PgReadOnlySnapshot::inspect_until(&self.pool, deadline, async |sql| {
             // A standby can lag: a process still heartbeating on the primary
@@ -246,7 +277,7 @@ impl PooledStore {
                 ORDER BY p.build, p.process_id")
                 .bind(key).fetch_all(sql.executor()).await?
                 .iter().map(FleetProcess::read).collect::<Result<Vec<_>, StoreError>>()?;
-            Ok(Fleet { head, processes })
+            finish(Fleet { head, processes }, sql).await
         })
         .await
         .map_err(snapshot_error)

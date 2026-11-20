@@ -129,7 +129,7 @@ async fn write(store: &PooledStore, states: &[(&str, &str)]) -> Version {
             .await
             .unwrap()
         {
-            WriteOutcome::Written { version, .. } => head = version,
+            WriteOutcome::Written { write_id, .. } => head = write_id.version(),
             other => panic!("{name}: {other:?}"),
         }
     }

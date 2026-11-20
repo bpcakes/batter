@@ -42,7 +42,7 @@ enum Queue {
     /// failed. It is retried every run, whatever that run read, until it is
     /// written or a newer one replaces it.
     Waiting {
-        file: FileSnapshot,
+        file: Arc<FileSnapshot>,
         failure: Option<PersistFailure>,
     },
     /// The latest publication does not fit the file, so it is never retried;
@@ -89,7 +89,7 @@ enum Phase {
 /// delivery or the write itself unwinds.
 struct Selected {
     state: Arc<Mutex<State>>,
-    file: FileSnapshot,
+    file: Arc<FileSnapshot>,
     written: Written,
     selection: u64,
 }
@@ -196,7 +196,7 @@ pub(crate) struct Persister {
     /// so a test can abandon a write through [`Persister::attempt`].
     #[cfg(test)]
     hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-    /// Test builds only: pauses the next attempt right after it selects, so
+    /// Test builds only: pauses the selected attempt before disk submission, so
     /// a test can show that no in-flight write can change what it selected.
     #[cfg(test)]
     pause: Mutex<Option<Pause>>,
@@ -230,10 +230,10 @@ impl Persister {
         }
     }
 
-    /// Pauses the next attempt right after its selection: the receiver
+    /// Pauses the next admitted attempt after encoding: the receiver
     /// completes when it gets there, and sending resumes it.
     #[cfg(test)]
-    fn pause_after_selection(
+    fn pause_before_submission(
         &self,
     ) -> (
         tokio::sync::oneshot::Receiver<()>,
@@ -267,7 +267,7 @@ impl Persister {
         let mut state = lock(&self.state);
         if state.queue.admits(file.version) {
             state.queue = Queue::Waiting {
-                file,
+                file: Arc::new(file),
                 failure: None,
             };
         }
@@ -322,10 +322,20 @@ impl Persister {
     /// abandons finishes in the background, holds the slot until it does and
     /// records its own outcome.
     pub(crate) async fn attempt(&self, deadline: Instant) -> Result<Persisted, PersistFailure> {
+        check_deadline(deadline)?;
         let selected = match self.select()? {
             Some(selected) => selected,
             None => return Ok(Persisted::Idle),
         };
+        check_deadline(deadline)?;
+        let encoded = format::encode(&selected.file);
+        let path = self.path.clone();
+        #[cfg(test)]
+        let hold = self
+            .hold
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         #[cfg(test)]
         {
             let pause = self
@@ -338,18 +348,12 @@ impl Persister {
                 let _ = resume.await;
             }
         }
-        let Ok(bytes) = format::encode(&selected.file) else {
+        check_deadline(deadline)?;
+        let Ok(bytes) = encoded else {
             // It can never fit, so it is not retried; a newer one replaces it.
             selected.too_large();
             return Err(PersistFailure::TooLarge);
         };
-        let path = self.path.clone();
-        #[cfg(test)]
-        let hold = self
-            .hold
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
         let task = tokio::task::spawn_blocking(move || {
             #[cfg(test)]
             if let Some(hold) = hold {
@@ -364,6 +368,14 @@ impl Persister {
             Ok(Err(_)) => Err(PersistFailure::Io),
             Ok(Ok(outcome)) => outcome,
         }
+    }
+}
+
+fn check_deadline(deadline: Instant) -> Result<(), PersistFailure> {
+    if Instant::now() >= deadline {
+        Err(PersistFailure::Deadline)
+    } else {
+        Ok(())
     }
 }
 

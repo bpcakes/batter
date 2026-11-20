@@ -194,6 +194,13 @@ const PRESENCE_PRUNE: &[Requirement] = &[
 ];
 
 const AUDITED_WRITE: &[Requirement] = &[
+    Requirement {
+        relation: AUDIT,
+        relation_privileges: &[],
+        select: &["publication_id", "version"],
+        insert: &[],
+        update: &[],
+    },
     // `UPDATE(version)` also authorizes the counter's `FOR UPDATE`.
     Requirement {
         relation: CONTROL,
