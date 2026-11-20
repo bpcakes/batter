@@ -1053,8 +1053,8 @@ including separate consuming-cleanup and deferred-drain causes.
 
 ### Fixture pools for separately provisioned logins
 
-`ConnectionPlan::new` declares pools that authenticate with the lease URL's own
-login, the harness admin that owns the disposable database.
+`ConnectionPlan::new` declares pools that authenticate with the harness admin
+URL's login, which owns the disposable database.
 `ConnectionPlan::declare(reserved)` returns a `PlanDeclaration` whose `pool`
 method takes a `PlannedPool` and returns an opaque `PoolKey`; `finish` applies
 the same capacity rules. `PlannedPool::password_login(options, username,
@@ -1077,7 +1077,7 @@ with `FixtureError::Endpoint(UnsupportedHarnessEndpoint)`, whose
 database or looks up a template, when a `PG*` variable a PostgreSQL client
 could read is set (every `PG` name except `PGDATA` and `PG_`-prefixed ones
 such as `PG_COLOR`; put every setting in the admin URL instead), when the admin
-URL declares `hostaddr` or several hosts, or
+URL declares `hostaddr`, no host, or several hosts or ports, or
 when it selects a setting SQLx options cannot carry. A lease URL whose database
 differs from the recorded name as tokio-postgres reads it, as a `dbname` query
 parameter would cause, is refused with `LeaseDatabaseMismatch`, and one that

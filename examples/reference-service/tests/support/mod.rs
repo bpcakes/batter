@@ -70,6 +70,20 @@ pub async fn pool(options: Result<PgConnectOptions, sqlx::Error>) -> Result<PgPo
         .await
 }
 
+/// An observer pool on the harness's administrative database, at most
+/// `max_connections` wide, from the harness's own endpoint parse.
+pub async fn admin_pool(
+    harness: &PostgresHarness,
+    max_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
+    PgPoolOptions::new()
+        .max_connections(max_connections)
+        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
+            harness,
+        )?)
+        .await
+}
+
 pub async fn with_database<F, Fut>(body: F)
 where
     F: FnOnce(PgPool) -> Fut + Send + 'static,

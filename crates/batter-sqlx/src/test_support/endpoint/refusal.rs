@@ -55,6 +55,12 @@ pub enum HarnessEndpointReason {
     Unparseable,
     /// The admin URL names several hosts.
     MultipleHosts,
+    /// The admin URL names no host. tokio-postgres would not connect, and
+    /// SQLx would substitute a default socket directory or `localhost`.
+    MissingHost,
+    /// The admin URL names one host but several ports, for example in its
+    /// authority and again in a `port` parameter.
+    MultiplePorts,
     /// The admin URL declares `hostaddr`, which SQLx can replace with a Unix
     /// socket.
     HostAddress,
@@ -94,6 +100,10 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
             }
             HarnessEndpointReason::Unparseable => "the fixture admin URL could not be parsed",
             HarnessEndpointReason::MultipleHosts => "the fixture admin URL names several hosts",
+            HarnessEndpointReason::MissingHost => "the fixture admin URL names no host",
+            HarnessEndpointReason::MultiplePorts => {
+                "the fixture admin URL names several ports for its host"
+            }
             HarnessEndpointReason::HostAddress => "the fixture admin URL declares hostaddr",
             HarnessEndpointReason::UnsupportedSetting => {
                 "the fixture admin URL selects a setting fixture pools cannot carry"

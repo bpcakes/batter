@@ -70,6 +70,15 @@ fn unsupported_endpoints_are_refused_with_their_reason() {
             Some(HostAddress),
         ),
         ("postgres://u@db-a,db-b:5432/postgres", Some(MultipleHosts)),
+        ("postgres://u@/postgres", Some(MissingHost)),
+        (
+            "postgres://u@db-a:5432/postgres?port=5433",
+            Some(MultiplePorts),
+        ),
+        (
+            "postgres://u@db-a/postgres?port=5432,5433",
+            Some(MultiplePorts),
+        ),
         (
             "postgres://u@127.0.0.1/postgres?options=--x%3Dy",
             Some(UnsupportedSetting),

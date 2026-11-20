@@ -105,12 +105,7 @@ async fn cancelled(mode: Creation) -> ProbeResult {
     // Reclaim only tagged, inactive resources through upstream ownership checks.
     // Stable inputs are reused; no random template identity is introduced.
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(2)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 2).await?;
     let (suite, template) = prepare_suite(harness.clone(), mode).await?;
     let before = inventory(&observer).await?;
     let (lock, blocker) = catalog_lock(&observer).await?;
@@ -232,12 +227,7 @@ async fn failed_template(panic_choice: FixtureFailure) -> ProbeResult {
     let harness = harness(8).await?;
     let url = harness.admin_database_url().to_owned();
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let (ready_sender, ready_receiver) = oneshot::channel();
     let (release_sender, release_receiver) = oneshot::channel();
     let (cancel_sender, cancel_receiver) = oneshot::channel();
@@ -316,12 +306,7 @@ pub async fn shared_admission() -> ProbeResult {
     let suite = FixtureSuite::new(harness.clone());
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
     let held = suite.empty(&plan).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
     let (started_sender, started_receiver) = oneshot::channel();

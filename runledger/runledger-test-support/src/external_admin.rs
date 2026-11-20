@@ -82,11 +82,9 @@ pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str
     if pins.is_empty() {
         return None;
     }
-    // `postgres` is not a special URL scheme, so an IPv4 host arrives as text.
-    let authority = url
-        .host_str()
-        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
-        .and_then(|host| host.parse::<IpAddr>().ok());
+    // `postgres` is not a special URL scheme, so an IPv4 host arrives as text;
+    // a bracketed IPv6 host was refused above.
+    let authority = host.parse::<IpAddr>().ok();
     let repeats_authority = authority.is_some()
         && pins
             .iter()

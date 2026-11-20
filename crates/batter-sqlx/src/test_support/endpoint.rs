@@ -9,7 +9,11 @@
 //! take their endpoint from the harness's own parse of its admin URL, set every
 //! field explicitly, and take the database from the name the harness recorded.
 
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, LazyLock},
+};
 
 use postgres_test_harness::{DatabaseLease, PostgresHarness};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -22,8 +26,9 @@ const DEFAULT_PORT: u16 = 5432;
 /// Native options for `lease`'s database on the server the harness
 /// provisioned it on.
 ///
-/// Reads the harness admin URL once with tokio-postgres, the parser the harness
-/// itself connects with, and builds SQLx options from that parse field by
+/// Each call parses the harness admin URL with tokio-postgres, the parser the
+/// harness itself connects with (fixture suites and scopes keep one parse
+/// instead), and builds SQLx options from that parse field by
 /// field: host or Unix socket, port (5432 when the URL names none), user,
 /// password (none when the URL omits it; no passfile is read) and the harness
 /// connector’s plaintext transport, plus the lease's recorded database. The lease, not a
@@ -88,8 +93,8 @@ fn lease_options(
 
 /// Native options for the harness's own administrative database.
 ///
-/// The same single parse as [`harness_connect_options`], for the database the
-/// admin URL itself selects.
+/// The same per-call parse as [`harness_connect_options`], for the database
+/// the admin URL itself selects.
 pub fn harness_admin_connect_options(
     harness: &PostgresHarness,
 ) -> Result<PgConnectOptions, sqlx::Error> {
@@ -101,7 +106,9 @@ pub fn harness_admin_connect_options(
 /// A suite's harness endpoint, parsed once when the suite adopts its harness.
 ///
 /// Every acquisition and template call checks the process environment again
-/// and then uses this parse, before the harness provisions anything.
+/// and then uses this parse, before the harness provisions anything. The
+/// environment is checked once more after provisioning, before pools are built
+/// or a template initializer runs, since provisioning can take a while.
 #[derive(Clone)]
 pub(super) struct SuiteEndpoint(Result<Arc<HarnessEndpoint>, UnsupportedHarnessEndpoint>);
 
@@ -259,6 +266,8 @@ impl HarnessEndpoint {
                     config.get_ports().first().copied().unwrap_or(DEFAULT_PORT),
                 )
             }
+            ([], _) => return Err(refusal(MissingHost)),
+            ([_], _) => return Err(refusal(MultiplePorts)),
             _ => return Err(refusal(MultipleHosts)),
         };
         // tokio-postgres can shuffle the addresses one host name resolves to;
@@ -349,9 +358,7 @@ impl HarnessEndpoint {
         user: &str,
         password: &str,
     ) -> PgConnectOptions {
-        // `from_admin_url` already refused every `PG*` variable, so SQLx's
-        // defaults below read nothing from the environment.
-        let options = PgConnectOptions::new_without_pgpass();
+        let options = base_options();
         let options = match &self.address {
             Address::Tcp(name) => options.host(name),
             Address::Unix(path) => options.socket(path),
@@ -404,6 +411,16 @@ impl HarnessEndpoint {
         tokio_postgres::Config::from_str(url)
             .is_ok_and(|config| config.get_dbname() == Some(database))
     }
+}
+
+/// SQLx's default options, built once per process. The constructor probes
+/// socket directories and looks up the operating-system user, and every field
+/// it fills from those is overwritten here. It also reads `PG*` variables, so
+/// it runs only on the first call, which, like every later one, follows a
+/// refusal of every client `PG*` variable; it therefore reads none.
+fn base_options() -> PgConnectOptions {
+    static BASE: LazyLock<PgConnectOptions> = LazyLock::new(PgConnectOptions::new_without_pgpass);
+    BASE.clone()
 }
 
 /// The raw startup `options` text SQLx 0.9.1's `PgConnectOptions::options`

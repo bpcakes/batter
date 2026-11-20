@@ -1130,8 +1130,9 @@ submissions from another owner; it is not an exclusive per-run queue.
 `PoolAcquire(Arc<sqlx::Error>)` means registered pools await driver cleanup. Its
 SQLx-typed cause also remains in `DatabaseCleanup::pool_failures` if handled by the body. Low-level `Connect`
 means all opened pools were closed and lease cleanup was awaited; its absent
-cleanup error means success. Both paths parse the lease URL once, construct and
-retain every declared lazy pool, then check one connection per pool in
+cleanup error means success. Both paths build every pool's options from the
+suite's one parse of the harness admin URL, never a SQLx parse of the lease URL,
+construct and retain every declared lazy pool, then check one connection per pool in
 declaration order. After a failed check every declared pool, including pools
 after the failing one, is closed before lease cleanup. SQLx maintains its
 configured minimum in the background; an eager pool may connect as soon as it
@@ -1153,7 +1154,8 @@ beside a fixture.
 `PlannedPool::password_login` declarations, each returning a `PoolKey` that
 selects its pool from the acquired database and never another plan's. A password
 login takes a `SecretString` password and replaces only the username and
-password of the lease's native connect options; it cannot select another server
+password of the options built from the harness admin URL's parse; it cannot
+select another server
 or database and never reuses the owner's password. Role provisioning, grants
 and `DROP ROLE` remain consumer or outer-server responsibilities, after the
 report. Lease cleanup can terminate a lingering restricted session only when the

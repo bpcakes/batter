@@ -3032,7 +3032,7 @@ owned `FixtureScope` acquisition waiter, leaves all of them closed before lease
 cleanup. Cancelling low-level `empty`/`from_template` can still drop pools
 unclosed and invoke destructive lease Drop. `PoolKey` lookup refuses keys from
 another plan. `PlannedPool::password_login` replaces only the
-username and password of the lease's native options; a lease URL selecting
+username and password of the options built from the harness admin URL's parse; a lease URL selecting
 another database is refused before any pool exists and retained on both paths
 (live probe `fixture_lease_database_mismatch_retained`). Live probes prove distinct
 `session_user` and `system_user` for a lease-login and a restricted-login pool,

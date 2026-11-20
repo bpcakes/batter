@@ -13,8 +13,9 @@ postgres-test-harness revision `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` and
 PostgreSQL 18.6.
 
 - SQLx [`PoolOptions::connect_lazy`](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/pool/options.rs)
-  is `connect_lazy_with(url.parse()?)`, so parsing the lease URL once and cloning
-  the result preserves plain lease-login pools. Lazy construction
+  is `connect_lazy_with(url.parse()?)`, so building options once and cloning them
+  preserves plain lease-login pools (fixture pools now build those options from
+  the harness admin URL's tokio-postgres parse, not from the lease URL). Lazy construction
   ([`PoolInner::new_arc`](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/pool/inner.rs))
   opens no connection unless `min_connections > 0` with both idle timeout and
   maximum lifetime disabled; then a spawned task connects at once with a

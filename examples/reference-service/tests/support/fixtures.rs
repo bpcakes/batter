@@ -267,12 +267,7 @@ pub async fn lock_operation() -> ProbeResult {
 
 pub async fn returned_body_failure() -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let report = FixtureSuite::new(harness)
         .start(|scope| {
             Box::pin(async move {

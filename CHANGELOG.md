@@ -30,8 +30,8 @@ contracts, capability facts and validation history.
   with the new `UnsupportedHarnessEndpoint` (see `HarnessEndpointReason`)
   while any `PG*` environment variable is set (SQLx fills unset settings from
   several, the harness from none; put every setting in the admin URL) or when
-  the admin URL declares `hostaddr`, several hosts or a setting SQLx cannot
-  carry. Fixture clients use the harness connector's plaintext transport.
+  the admin URL declares `hostaddr`, no host, several hosts or ports, or a
+  setting SQLx cannot carry. Fixture clients use the harness connector's plaintext transport.
   Clients inheriting its login use the admin URL's password, or none for a
   trust or peer URL (treated as an empty password; no passfile is read).
   A client `PG*` variable is any `PG` name except the server's `PGDATA` and
@@ -57,8 +57,8 @@ contracts, capability facts and validation history.
   admin URL SQLx could read, or an ambient `PG*` variable, was accepted and
   any parse failure surfaced as a native SQLx error in `PoolAcquire` or
   `Connect`. Calls that succeeded before can now return `Endpoint` (for a
-  client `PG*` variable, `hostaddr`, several hosts or a setting the endpoint
-  cannot carry; see `HarnessEndpointReason`), and exhaustive matches need a
+  client `PG*` variable, `hostaddr`, no host, several hosts or ports, or a
+  setting the endpoint cannot carry; see `HarnessEndpointReason`), and exhaustive matches need a
   new arm:
 
   ```rust

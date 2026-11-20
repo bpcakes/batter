@@ -25,18 +25,8 @@ where
     F: for<'a> FnOnce(&'a mut FixtureScope) -> FixtureBody<'a, (), FixtureError> + Send + 'static,
 {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
-    let session_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
+    let session_pool = super::admin_pool(&harness, 1).await?;
     let session_observer = batter::sqlx::test_support::SessionObserver::new(
         session_pool.clone(),
         Duration::from_secs(5),
@@ -163,12 +153,7 @@ async fn wait_absent(observer: &PgPool, name: &str) -> ProbeResult {
 
 pub async fn close_order_and_resumable_wait() -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let (sender, receiver) = oneshot::channel();
     let mut run = FixtureSuite::new(harness).start(move |scope| {
         Box::pin(async move {
@@ -288,12 +273,7 @@ pub async fn observer_failure_preserves_body() -> ProbeResult {
 
 async fn low_level_partial() -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(batter::sqlx::test_support::harness_admin_connect_options(
-            &harness,
-        )?)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let suite = FixtureSuite::new(harness.clone());
     let names = Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed_names = names.clone();
