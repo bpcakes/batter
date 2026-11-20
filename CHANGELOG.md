@@ -60,6 +60,15 @@ contracts, capability facts and validation history.
   let response = client.request(next).await;
   ```
 
+- Stop two non-yielding fixture tests from counting child startup against their
+  five-second bounds (`batter-hiuu`). Parent-unwind cleanup is now timed from
+  startup evidence, with a separate spawn-to-cleanup bound below the ten-second
+  child emergency exit; the parent-pipe-closure exit window starts at closure,
+  and its exact exit code still separates it from the emergency exit.
+
+- Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
+  (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
+
 - Refuse reused Axum routing state in Runlimit's in-process test transport
   (`batter-gp93`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
@@ -81,8 +90,8 @@ contracts, capability facts and validation history.
   `InProcessRefusal`, with one static ERROR event, no completion event, no
   `x-request-id` header and no consumed quota. The marker is removed from every
   dispatched response. At this change the check detected Axum routing records
-  only; the entry above closes the residual it left for a map that keeps
-  Batter's own records. `RouterClient` establishes nothing about its router's
+  only; the `batter-nff2` entry above closes the residual it left for a map
+  that keeps Batter's own records. `RouterClient` establishes nothing about its router's
   composition, has no crate-root alias and has no conversion into
   `InProcessClient` or back into a `Router`. The change adds `RouterClient` and removes no name, so it
   needs no deprecated shim; public signatures are unchanged.

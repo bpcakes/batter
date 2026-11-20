@@ -1,7 +1,7 @@
 # Guarantees, preconditions, and non-guarantees
 
 These describe the implemented contract and its limits. All workspace packages
-declare Rust 1.98.1, the pinned development toolchain, as their minimum.
+declare Rust 1.100.0, the pinned development toolchain, as their minimum.
 SQLx 0.9.0 belongs to the optional PostgreSQL adapter and unpublished example
 packages, not the foundation or generic test support. Passing tests do not establish guarantees beyond their scope.
 
@@ -967,9 +967,12 @@ flooding output beyond each limit, proving that overflow does not stop draining.
 The Linux parent-death probe must reject incorrect termination and forbidden
 cleanup evidence even when Python optimization is enabled; its checks do not
 depend on Python's removable `assert` statements.
-The fixture-owner unwind control must finish within its five-second startup
-budget, before the child's ten-second emergency exit; waiting for that fallback
-does not establish prompt kill/reap behavior.
+The fixture-owner unwind control must finish cleanup within five seconds of
+startup evidence and within ten seconds of spawn. The child arms its ten-second
+emergency exit only after spawn, so the second bound excludes waiting for that
+fallback, which does not establish prompt kill/reap behavior. The parent-pipe
+closure control allows five seconds from closure and requires the distinct
+parent-gone exit code rather than the emergency code.
 
 A direct task join says nothing about descendants it detached. Component authors
 must preserve ownership themselves. After any requested abort, observed panic,

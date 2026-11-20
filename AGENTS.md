@@ -37,9 +37,8 @@ not broaden this repository's platform support.
 ## Verification
 
 Local development and CI use the stable release pinned in `rust-toolchain.toml`
-(Rust 1.98.1). It is also every package's declared minimum (`rust-version =
-"1.98.1"`), so one toolchain covers both; 1.98.1 fixes a 1.98.0 vtable
-miscompilation. Upgrade the pin deliberately, together with every `rust-version`,
+(Rust 1.100.0). It is also every package's declared minimum (`rust-version =
+"1.100.0"`), so one toolchain covers both. Upgrade the pin deliberately, together with every `rust-version`,
 the pinned CI entries and the `batter-at-rest` portability gate. Keeping an older
 minimum after a pin upgrade first requires a separate exact-minimum CI job.
 Run `bash scripts/verify.sh` with the default toolchain.
