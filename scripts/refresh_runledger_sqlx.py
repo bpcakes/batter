@@ -165,7 +165,8 @@ def parse_database_url(database):
         host = unquote(host, errors="strict")
         database_name = unquote(parts.path[1:], errors="strict")
         user = unquote(parts.username, errors="strict") if parts.username is not None else None
-        password = unquote(parts.password, errors="strict") if parts.password is not None else None
+        # Empty userinfo and omitted passwords both let libpq consult its passfile.
+        password = unquote(parts.password, errors="strict") if parts.password else None
     except UnicodeDecodeError:
         raise ValueError("DATABASE_URL must percent-encode UTF-8 text") from None
     # A decoded NUL (%00) cannot travel in a Unix environment variable or a C
@@ -259,18 +260,13 @@ def sqlx_database_url(parts):
     host = encode(host) if host.startswith("/") else f"[{host}]" if ":" in host else host
     userinfo = ""
     password = parts["password"]
-    if parts["user"] is not None or password:
+    if parts["user"] is not None or password is not None:
         userinfo = encode(parts["user"] or "")
-        if password:
+        if password is not None:
             userinfo += ":" + encode(password)
         userinfo += "@"
     url = f"postgres://{userinfo}{host}:{parts['port']}/{encode(parts['database'])}"
-    pairs = list(parts["parameters"].items())
-    if password == "":
-        # SQLx reads an empty userinfo password as none and may then read a
-        # passfile; an explicit empty password travels as a parameter.
-        pairs.append(("password", ""))
-    query = "&".join(f"{key}={encode(value)}" for key, value in pairs)
+    query = "&".join(f"{key}={encode(value)}" for key, value in parts["parameters"].items())
     return url + ("?" + query if query else "")
 
 

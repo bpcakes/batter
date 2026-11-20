@@ -1091,7 +1091,9 @@ when challenged on a typed connection, where tokio-postgres would stop.
 A pool declared with `PlannedPool::password_login` supplies its own credentials
 and can use a passwordless provisioning URL.
 
-Template initializers receive a URL rebuilt from the same parse for the
+Both fixture template entry points refuse ambient `PG*` settings before the harness
+looks up the fingerprint. The owned run retains this preparation failure even if
+the body handles it. On cache misses, initializers receive a URL rebuilt for the
 template's recorded name and checked by reading it back with both
 tokio-postgres and SQLx; if no such URL exists, the initializer is not called
 and the harness aborts the template. Test code that opens its own pool beside

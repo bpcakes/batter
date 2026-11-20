@@ -96,7 +96,10 @@ contracts cite:
   first tries a passfile. Explicitly declared pool credentials can still be
   used with a passwordless provisioning URL. The
   metadata refresh script refuses any ambient `PG*` variable, parses
-  the Unix bytes of `DATABASE_URL` as UTF-8, gives `psql` the parts as its own PG* variables, gives
+  the Unix bytes of `DATABASE_URL` as UTF-8 and treats an empty userinfo password
+  as omitted. [libpq 18 passfile lookup](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/interfaces/libpq/fe-connect.c)
+  applies to both forms. The SQLx URL omits the password so its parser also
+  consults the passfile. The refresh gives `psql` the parts as its own PG* variables, gives
   SQLx CLI a URL rebuilt from the same parts, and asks a Cargo build script for
   the merged environment and selected compiler. Live preparation requires native
   rustc without compiler wrappers. Each actual compiler invocation checks its

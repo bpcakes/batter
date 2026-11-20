@@ -57,6 +57,10 @@ name = "verification_live"
 required-features = ["test-support"]
 
 [[test]]
+name = "fixture_template_live"
+required-features = ["test-support"]
+
+[[test]]
 name = "fixture_offline"
 required-features = ["test-support"]
 

@@ -165,6 +165,8 @@ depends on the mode:
   native test proxies' transport; such a fixture cannot use TLS yet.
 - The metadata refresh: credentials, `application_name` and `options`. A
   TLS-required refresh is unsupported, and both clients connect without TLS.
+  An empty userinfo password (`user:@host`) allows the same passfile lookup
+  as an omitted password in both psql and SQLx.
   Run live preparation with native rustc and no Cargo compiler wrappers.
   Each compilation checks its effective endpoint before starting rustc.
   Refresh requires evidence that both query libraries compiled.

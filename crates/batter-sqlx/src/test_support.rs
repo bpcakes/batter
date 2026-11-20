@@ -178,6 +178,25 @@ impl std::error::Error for FixtureError {
     }
 }
 
+// The harness can return a ready template without polling the initializer.
+// Keep the same typed initialization failure on both sides of that cache boundary.
+async fn checked_template<F, Fut>(
+    harness: &PostgresHarness,
+    spec: TemplateSpec,
+    initializer: F,
+) -> Result<DatabaseTemplate, postgres_test_harness::Error>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(), postgres_test_harness::BoxError>>,
+{
+    endpoint::Environment::process()
+        .validate()
+        .map_err(|error| postgres_test_harness::Error::TemplateInitializer {
+            source: Box::new(error),
+        })?;
+    harness.template(spec, initializer).await
+}
+
 /// Runtime-local fixture composition and retained upstream template handles.
 /// The caller owns the server lifetime, including shutdown. Harness clones share
 /// native admission; other owners must release leases for waiting runs to progress.
@@ -215,7 +234,8 @@ impl FixtureSuite {
     /// deferred drain. Use [`FixtureScope::template`] inside [`Self::start`] for
     /// owned preparation and panic-to-abort handling. Neither path joins detached
     /// initializer operations or promises cleanup of initializer-owned live pools.
-    /// Both pass the initializer a URL rebuilt from the harness's own parse of
+    /// Both refuse an ambient `PG*` variable before looking up a cached template.
+    /// On a cache miss, both pass the initializer a URL rebuilt from the harness's own parse of
     /// its admin URL and the template's recorded name; it reads back as the same
     /// endpoint in tokio-postgres and SQLx. If no such URL exists, or the
     /// harness URL would select another database, the initializer is not called
@@ -231,20 +251,18 @@ impl FixtureSuite {
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     {
         let admin_url = self.harness.admin_database_url().to_owned();
-        let template = self
-            .harness
-            .template(spec, move |url| async move {
-                // Hand caller code a URL rebuilt from the harness's own endpoint
-                // parse and recorded name, never the harness URL text itself.
-                initializer(endpoint::initializer_url(
-                    &admin_url,
-                    &url,
-                    endpoint::Environment::process(),
-                )?)
-                .await
-            })
+        let template = checked_template(&self.harness, spec, move |url| async move {
+            // Hand caller code a URL rebuilt from the harness's own endpoint
+            // parse and recorded name, never the harness URL text itself.
+            initializer(endpoint::initializer_url(
+                &admin_url,
+                &url,
+                endpoint::Environment::process(),
+            )?)
             .await
-            .map_err(FixtureError::Harness)?;
+        })
+        .await
+        .map_err(FixtureError::Harness)?;
         if !self
             .templates
             .iter()

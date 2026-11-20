@@ -233,7 +233,9 @@ class RefreshTests(unittest.TestCase):
         colon = parse_database_url('postgres://u@%2Ftmp%2Fpg%3A18/db')
         self.assertEqual(sqlx_database_url(colon), 'postgres://u@%2Ftmp%2Fpg%3A18:5432/db?sslmode=disable')
         empty = parse_database_url('postgres://u:@db.invalid:5432/db')
-        self.assertEqual(sqlx_database_url(empty), 'postgres://u@db.invalid:5432/db?sslmode=disable&password=')
+        self.assertEqual(empty, parse_database_url('postgres://u@db.invalid:5432/db'))
+        self.assertNotIn('PGPASSWORD', psql_environment(empty))
+        self.assertEqual(sqlx_database_url(empty), 'postgres://u@db.invalid:5432/db?sslmode=disable')
         socket = parse_database_url('postgres://u@%2Fvar%2Frun%2FPostgres/db')
         self.assertEqual((socket['host'], socket['port']), ('/var/run/Postgres', 5432))
         self.assertEqual(sqlx_database_url(socket), 'postgres://u@%2Fvar%2Frun%2FPostgres:5432/db?sslmode=disable')
@@ -591,7 +593,16 @@ class RefreshTests(unittest.TestCase):
                 self.assertTrue(migrations_current(info))  # SQLx omits the extra applied version.
                 self.assertIn('999999999999', query(source, parse_database_url(os.environ['DATABASE_URL']),
                                                    'SELECT version FROM _sqlx_migrations', 'inventory'))
-                with patch('refresh_runledger_sqlx.copy_source') as prepare_copy:
+                # Exercise both native clients' default passfile lookup for empty
+                # userinfo. Keep Cargo's installed tools available in this private HOME.
+                passfile = source / '.pgpass'
+                passfile.touch(mode=0o600)
+                passfile.write_text(f'127.0.0.1:{port}:postgres:postgres:fixture\n')
+                with patch.dict(os.environ, HOME=str(source),
+                                CARGO_HOME=os.environ.get('CARGO_HOME', str(Path.home() / '.cargo')),
+                                RUSTUP_HOME=os.environ.get('RUSTUP_HOME', str(Path.home() / '.rustup')),
+                                DATABASE_URL=f'postgresql://postgres:@127.0.0.1:{port}/postgres'), \
+                     patch('refresh_runledger_sqlx.copy_source') as prepare_copy:
                     with self.assertRaisesRegex(ValueError, 'inventory must exactly match'):
                         refresh(source)
                     prepare_copy.assert_not_called()

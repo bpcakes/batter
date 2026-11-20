@@ -185,6 +185,13 @@ impl Environment {
         pg_variables: false,
     };
 
+    pub(super) fn validate(self) -> Result<(), sqlx::Error> {
+        if self.pg_variables {
+            return Err(refusal(HarnessEndpointReason::AmbientEnvironment));
+        }
+        Ok(())
+    }
+
     /// The current process environment.
     pub(super) fn process() -> Self {
         Self {
@@ -200,9 +207,7 @@ impl HarnessEndpoint {
         environment: Environment,
     ) -> Result<Self, sqlx::Error> {
         use HarnessEndpointReason::*;
-        if environment.pg_variables {
-            return Err(refusal(AmbientEnvironment));
-        }
+        environment.validate()?;
         let config =
             tokio_postgres::Config::from_str(admin_url).map_err(|_| refusal(Unparseable))?;
         if !config.get_hostaddrs().is_empty() {
