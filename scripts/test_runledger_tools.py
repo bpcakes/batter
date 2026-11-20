@@ -1,5 +1,5 @@
 """Independent failure controls for exported consumers and native SQLx refresh."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import copy
 import os
 from pathlib import Path
@@ -107,6 +107,38 @@ class SourceTests(unittest.TestCase):
             validate_consumer(drift, source, consumer, {('dependency', '1', 'registry+fixture')})
 
 
+def cargo_workspace_parent(candidates):
+    # Cargo searches every physical ancestor of its cwd, even with a private
+    # CARGO_HOME. This applies to system temp directories as well as TMPDIR.
+    for candidate in candidates:
+        parent = Path(candidate).resolve()
+        if parent.is_dir() and os.access(parent, os.W_OK | os.X_OK) and not any(
+            (ancestor / '.cargo' / name).exists()
+            for ancestor in (parent, *parent.parents) for name in ('config', 'config.toml')
+        ):
+            return parent
+    raise RuntimeError('Cargo probe tests need a writable temp directory outside Cargo configuration')
+
+
+@contextmanager
+def cargo_probe_workspace(database_url):
+    parent = cargo_workspace_parent((tempfile.gettempdir(), '/tmp', '/var/tmp'))
+    # Executables and build output still use the caller's normal temp volume.
+    with tempfile.TemporaryDirectory(dir=parent) as directory, tempfile.TemporaryDirectory() as build:
+        root = Path(directory)
+        (root / '.cargo').mkdir()
+        shutil.copy(Path(__file__).resolve().parents[1] / 'rust-toolchain.toml', root)
+        home = Path(build) / 'cargo-home'
+        home.mkdir()
+        compiler_settings = {'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'RUSTFLAGS'}
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith('CARGO_') and key not in compiler_settings}
+        environment.update(CARGO_HOME=str(home), CARGO_TARGET_DIR=str(Path(build) / 'target'),
+                           DATABASE_URL=database_url)
+        with patch.dict(os.environ, environment, clear=True):
+            yield root, home
+
+
 class RefreshTests(unittest.TestCase):
     def setUp(self):
         environment = patch.dict(os.environ)
@@ -117,9 +149,9 @@ class RefreshTests(unittest.TestCase):
         for key in [key for key in os.environ if key.startswith('PG')]:
             del os.environ[key]
         # The real Cargo probe compiles a crate; its own test exercises it.
-        self.cargo_probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=([], True, "/test/rustc"))
-        self.cargo_probe.start()
-        self.addCleanup(patch.stopall)
+        probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=([], True, "/test/rustc"))
+        probe.start()
+        self.addCleanup(probe.stop)
 
     def test_connection_failure_does_not_expose_url_or_prepare(self):
         secret = 'postgresql://user:private-marker@localhost/database'
@@ -353,54 +385,54 @@ class RefreshTests(unittest.TestCase):
                 psql.assert_not_called()
 
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
+    def test_probe_selects_a_workspace_outside_configured_temp_parents(self):
+        url = 'postgres://u@db.invalid/database'
+        with cargo_probe_workspace(url) as (root, _home):
+            candidates = []
+            for name in ('config', 'config.toml'):
+                ancestor = root / name
+                candidate = ancestor / 'nested' / 'tmp'
+                candidate.mkdir(parents=True)
+                (ancestor / '.cargo').mkdir()
+                (ancestor / '.cargo' / name).write_text('[env]\nPGHOSTADDR = "192.0.2.1"\n')
+                candidates.append(candidate)
+            clean = root / 'clean'
+            clean.mkdir()
+            parent = cargo_workspace_parent([*candidates, clean])
+            self.assertEqual(parent, clean.resolve())
+            self.assertEqual(cargo_compiler_endpoint(parent, url)[:2], ([], True))
+
+    @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
     def test_cargo_probe_sees_included_home_and_forced_env_settings(self):
         # Cargo, not this script, resolves config discovery, includes and force.
-        self.cargo_probe.stop()
-        repository = Path(__file__).resolve().parent.parent
         url = 'postgres://u:private-marker@db.invalid:5432/database'
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / 'workspace'
-            (root / '.cargo').mkdir(parents=True)
-            # Use the repository's pinned toolchain, not rustup's default.
-            shutil.copy(repository / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
-            home = Path(directory) / 'cargo-home'
-            home.mkdir()
-            environment = {'CARGO_HOME': str(home), 'DATABASE_URL': url, 'RUSTUP_HOME': os.environ.get(
-                'RUSTUP_HOME', str(Path.home() / '.rustup'))}
-            with patch.dict(os.environ, environment):
-                os.environ.pop('PGHOSTADDR', None)
-                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
-                (root / '.cargo/extra.toml').write_text(
-                    '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\nPGDATA = "/x"\n')
-                (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
-                (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
-                (home / 'config.toml').write_text(
-                    '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
-                # Forcing a would-be expected-value variable too changes nothing:
-                # the comparison is bound to the URL in the parent process.
-                (home / 'config.toml').write_text(
-                    '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
-                    'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
+        with patch.dict(os.environ, RUSTC_WRAPPER='/usr/bin/false'), cargo_probe_workspace(url) as (root, home):
+            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
+            (root / '.cargo/extra.toml').write_text(
+                '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\nPGDATA = "/x"\n')
+            (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
+            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
+            (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
+            (home / 'config.toml').write_text(
+                '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
+            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
+            # Forcing a would-be expected-value variable too changes nothing:
+            # the comparison is bound to the URL in the parent process.
+            (home / 'config.toml').write_text(
+                '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
+                'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
+            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
 
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
     def test_probe_observes_rustc_even_with_an_unusable_target_runner(self):
-        self.cargo_probe.stop()
-        repository = Path(__file__).resolve().parent.parent
         url = 'postgres://u:compiler-private-marker@db.invalid/database'
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / '.cargo').mkdir()
-            shutil.copy(repository / 'rust-toolchain.toml', root)
+        with cargo_probe_workspace(url) as (root, home):
             # A target program cannot run, but a target compilation can.
             (root / '.cargo/config.toml').write_text(
                 "[target.'cfg(unix)']\nrunner = 'false'\n")
-            scratch = root / 'probe'
+            scratch = home / 'probe'
             scratch.mkdir()
-            with patch.dict(os.environ, DATABASE_URL=url), \
-                 patch('runledger_compiler_endpoint.tempfile.TemporaryDirectory', return_value=nullcontext(scratch)):
+            with patch('runledger_compiler_endpoint.tempfile.TemporaryDirectory', return_value=nullcontext(scratch)):
                 self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
             for artifact in (scratch / 'target').rglob('*'):
                 if artifact.is_file():
@@ -410,9 +442,7 @@ class RefreshTests(unittest.TestCase):
     def test_prepare_checks_the_actual_query_crate_compiler_environment(self):
         packages = ('runledger-postgres', 'runledger-runtime')
         url = 'postgres://u:compiler-private-marker@db.invalid/database'
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, DATABASE_URL=url):
-            root = Path(directory)
-            shutil.copy(Path(__file__).resolve().parents[1] / 'rust-toolchain.toml', root)
+        with cargo_probe_workspace(url) as (root, home):
             (root / 'Cargo.toml').write_text(
                 '[workspace]\nmembers = ["runledger-postgres", "runledger-runtime"]\nresolver = "2"\n')
             for package in packages:
@@ -423,11 +453,10 @@ class RefreshTests(unittest.TestCase):
                 (crate / 'src/lib.rs').touch()
             # A wrapper may alter only the real query package or return an
             # artifact without invoking rustc. Either Cargo wrapper is opaque.
-            wrapper = root / 'package-wrapper'
+            wrapper = home / 'package-wrapper'
             wrapper.write_text('#!/bin/sh\nif [ "$CARGO_PKG_NAME" = runledger-postgres ]; then\n'
                                'export PGHOSTADDR=192.0.2.1\nfi\nexec "$@"\n')
             wrapper.chmod(0o700)
-            (root / '.cargo').mkdir()
             config = root / '.cargo/config.toml'
             for key in ('rustc-wrapper', 'rustc-workspace-wrapper'):
                 config.write_text(f'[build]\n{key} = "{wrapper}"\n')
