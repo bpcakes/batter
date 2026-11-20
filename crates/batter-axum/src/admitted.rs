@@ -11,7 +11,7 @@ use axum::{
 };
 use batter_core::{
     lifecycle::{ShutdownSignal, low_level::OperationContinuation},
-    operation::OperationContext,
+    operation::{OperationContext, OperationOwner, RootDeadline},
 };
 use std::{error::Error, fmt};
 
@@ -230,9 +230,10 @@ impl Admission {
     /// constructed, which the request's own context outlives by nothing.
     /// After that a request kept by the application, or a second extraction,
     /// cannot start work that admission would now refuse.
-    pub(crate) fn start_continuation(&self) -> Option<OperationContinuation> {
+    pub(crate) fn start_continuation(&self, deadline: RootDeadline) -> Option<OperationOwner> {
         let continuation = self.start.take_continuation();
-        continuation.filter(|_| self.context.check().is_ok())
+        self.context.check().ok()?;
+        continuation?.try_start(deadline)
     }
 }
 

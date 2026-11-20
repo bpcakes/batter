@@ -249,16 +249,17 @@ impl AdmittedRequest {
         // The budget was representable when validated; an unrepresentable
         // deadline now yields an already expired body rather than a panic.
         let deadline = started.checked_add(budget.total()).unwrap_or(started);
-        let (owner, refused) = if let Some(continuation) = admission.start_continuation() {
-            (continuation.start(RootDeadline::at(deadline)), false)
-        } else {
-            // A second call for this request, or one after its response was
-            // constructed: admission's decision no longer covers new work, so
-            // a body with content ends at its first poll, truncated.
-            let refused = OperationOwner::at(RootDeadline::at(started));
-            refused.cancel();
-            (refused, true)
-        };
+        let (owner, refused) =
+            if let Some(owner) = admission.start_continuation(RootDeadline::at(deadline)) {
+                (owner, false)
+            } else {
+                // A second call for this request, or one after its response was
+                // constructed: admission's decision no longer covers new work, so
+                // a body with content ends at its first poll, truncated.
+                let refused = OperationOwner::at(RootDeadline::at(started));
+                refused.cancel();
+                (refused, true)
+            };
         let scope = BodyScope {
             context: owner.context().clone(),
             shutdown: admission.shutdown.clone(),
@@ -570,27 +571,16 @@ impl OwnedBody {
         let mut arm = || {
             let wake = wake.get_or_insert_with(|| {
                 let cancellation = context.clone();
-                Wake::new(tokio::time::sleep_until(context.deadline()), async move {
-                    cancellation.cancelled().await
-                })
+                let total = context.deadline();
+                let since = asked.unwrap_or_else(Instant::now);
+                let idle = since.checked_add(*idle).unwrap_or(total);
+                Wake::new(idle, total, async move { cancellation.cancelled().await })
             });
             if wake.cancelled.as_mut().poll(cx).is_ready() {
                 return Some(BodyEnd::Cancelled);
             }
-            if !wake.armed {
-                let total = context.deadline();
-                let since = asked.unwrap_or_else(Instant::now);
-                let idle = since.checked_add(*idle).unwrap_or(total);
-                wake.idle_first = idle < total;
-                wake.timer.as_mut().reset(idle.min(total));
-                wake.armed = true;
-            }
             if wake.timer.as_mut().poll(cx).is_ready() {
-                return Some(if wake.idle_first {
-                    BodyEnd::IdleTimeout
-                } else {
-                    BodyEnd::DeadlineExceeded
-                });
+                return Some(wake.timeout);
             }
             None
         };

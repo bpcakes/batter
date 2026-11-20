@@ -33,8 +33,7 @@ impl OwnedBody {
         }
         // A wait for the next frame starts with the poll that first asks for
         // it, so synchronous work the source does in that poll counts too.
-        let armed = this.wake.as_ref().is_some_and(|wake| wake.armed);
-        let asked = (!armed).then(Instant::now);
+        let asked = this.wake.is_none().then(Instant::now);
         let Some(inner) = this.inner.as_mut() else {
             return Poll::Ready(None);
         };
@@ -98,8 +97,9 @@ impl OwnedBody {
                     // so the body ends here and never asks the source again.
                     let end = this.yielded_end();
                     return Poll::Ready(this.finish_holding(end, frame).map(Ok));
-                } else if let Some(wake) = &mut this.wake {
-                    wake.armed = false;
+                }
+                if let Some(wait) = this.wake.take() {
+                    this.application(|| drop(wait));
                 }
                 Poll::Ready(Some(Ok(frame)))
             }

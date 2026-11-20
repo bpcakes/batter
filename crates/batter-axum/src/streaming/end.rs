@@ -61,30 +61,31 @@ impl std::error::Error for BodyInterrupted {}
 pub(super) struct Wake {
     pub(super) timer: Pin<Box<Sleep>>,
     pub(super) cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
-    /// Whether the timer currently describes this wait.
-    pub(super) armed: bool,
-    /// Whether the armed instant is the idle bound rather than the total.
-    pub(super) idle_first: bool,
+    /// The bound the timer expires at.
+    pub(super) timeout: BodyEnd,
 }
 
 impl Wake {
-    pub(super) fn new(timer: Sleep, cancelled: impl Future<Output = ()> + Send + 'static) -> Self {
+    pub(super) fn new(
+        idle: Instant,
+        total: Instant,
+        cancelled: impl Future<Output = ()> + Send + 'static,
+    ) -> Self {
         Self {
-            timer: Box::pin(timer),
+            timer: Box::pin(tokio::time::sleep_until(idle.min(total))),
             cancelled: Box::pin(cancelled),
-            armed: false,
-            idle_first: false,
+            timeout: if idle < total {
+                BodyEnd::IdleTimeout
+            } else {
+                BodyEnd::DeadlineExceeded
+            },
         }
     }
 
     /// The armed bound's outcome once its instant has passed, so a source
     /// that becomes ready only after its wait expired does not extend it.
     pub(super) fn due(&self) -> Option<BodyEnd> {
-        (self.armed && self.timer.deadline() <= Instant::now()).then_some(if self.idle_first {
-            BodyEnd::IdleTimeout
-        } else {
-            BodyEnd::DeadlineExceeded
-        })
+        (self.timer.deadline() <= Instant::now()).then_some(self.timeout)
     }
 }
 

@@ -63,7 +63,8 @@ pub fn admit_root_with_continuation(
 /// let signal = continuation.signal();
 /// // Drain closes admission, but the admitted operation may still continue.
 /// control.request();
-/// let body = continuation.start(RootDeadline::after(second * 60)?);
+/// let body = continuation.try_start(RootDeadline::after(second * 60)?)
+///     .expect("the admitted operation is live");
 /// assert!(body.context().deadline() > request.context().deadline());
 /// request.cancel();
 /// assert!(body.context().check().is_ok());
@@ -133,11 +134,23 @@ impl OperationContinuation {
     /// forced cancellation, or once the admitted operation was cancelled or
     /// passed its deadline, the returned context is already cancelled.
     pub fn start(self, deadline: RootDeadline) -> OperationOwner {
-        let owner = OperationOwner::under(deadline, &self.shared.operation_token());
-        if self.admitted.check().is_err() {
+        self.try_start(deadline).unwrap_or_else(|| {
+            let owner = OperationOwner::at(deadline);
             owner.cancel();
-        }
-        owner
+            owner
+        })
+    }
+
+    /// Consume the proof and start continued work if the admitted operation
+    /// is still live. `None` records refusal at this check. A returned owner
+    /// remains subject to forced cancellation and its own deadline.
+    /// See [the continuation example](Self).
+    pub fn try_start(self, deadline: RootDeadline) -> Option<OperationOwner> {
+        self.admitted.check().ok()?;
+        Some(OperationOwner::under(
+            deadline,
+            &self.shared.operation_token(),
+        ))
     }
 
     /// Read-only drain and forced-cancellation observation for the continued
@@ -202,6 +215,22 @@ mod tests {
             started(expired_proof),
             Err(Interruption::Cancelled),
             "expired"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn try_start_observes_expiry_after_a_callers_liveness_check() {
+        let (_control, admission) = ready();
+        let (request, proof) = admitted(&admission);
+        let body_deadline = RootDeadline::after(SECOND * 60).expect("a positive budget");
+        assert!(
+            request.context().check().is_ok(),
+            "request live at hand-over"
+        );
+        tokio::time::advance(SECOND).await;
+        assert!(
+            proof.try_start(body_deadline).is_none(),
+            "start was refused"
         );
     }
 

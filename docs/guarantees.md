@@ -938,7 +938,8 @@ which is what lets admitted work continue through drain. It has no public
 constructor, is not `Clone`, and `start` consumes it, so one admission
 continues into at most one root; a compile-fail doctest rejects a second start
 and a copy. A start after the admitted operation was cancelled or passed its
-deadline returns an already-cancelled owner; a unit test covers a live, a
+deadline returns an already-cancelled owner. Adapters can use `try_start` to
+observe refusal directly, including expiry since their own liveness check. A unit test covers a live, a
 cancelled, an expired and a forced-cancelled start. Its holder owns the
 obligations the type cannot express: an admitted owner abandoned without
 cancellation stays live until its deadline, so when the continued work starts,
@@ -2732,7 +2733,8 @@ library destroys it the same way, keeps or starts the idle wait instead of
 restarting it, and yields, so an always-ready source of empty frames ends at
 the idle bound without starving its runtime; a final empty frame, after which
 the source reports its end, ends the body at once, as Hyper ends the message; and a pending body
-registers for forced cancellation and the nearer bound. The idle wait starts at
+registers for forced cancellation and the nearer bound. Yielding nonempty data
+releases both registrations under the hand-over dispatcher. The idle wait starts at
 the body's first pending poll after a frame, so time the transport spends not
 polling a body it cannot yet write is not counted. Each of the three ends the body with an error at a
 poll: the library wakes a poll it left pending, a holder not waiting on one

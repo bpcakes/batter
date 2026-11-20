@@ -101,6 +101,43 @@ fn a_question_that_unwinds_still_wakes_a_pending_poll() {
     assert_finished(&capture, "WARN", "panicked");
 }
 
+#[test]
+fn yielding_data_releases_the_previous_poller_before_the_next_frame_wait() {
+    let capture = Capture::new();
+    paused(&capture, async {
+        let (mut response, _escaped) = served(|| {
+            let mut polls = 0;
+            Body::from_stream(futures_util::stream::poll_fn(move |_| {
+                polls += 1;
+                if polls == 2 {
+                    Poll::Ready(Some(Ok::<_, Infallible>(Bytes::from_static(b"data"))))
+                } else {
+                    Poll::Pending
+                }
+            }))
+        })
+        .await;
+        let body = response.body_mut();
+        let old = Arc::new(CountsWakes::default());
+        assert!(poll_with(body, &old.clone().into()).is_pending());
+        let Poll::Ready(Some(Ok(frame))) = poll_with(body, std::task::Waker::noop()) else {
+            panic!("expected the data frame");
+        };
+        assert_eq!(frame.into_data().unwrap(), "data");
+        assert_eq!(Arc::strong_count(&old), 1, "old waker still registered");
+        let allowance = std::time::Duration::from_secs(6);
+        tokio::time::sleep(allowance).await;
+        assert_eq!(old.0.load(Ordering::SeqCst), 0);
+        let next = Arc::new(CountsWakes::default());
+        assert!(poll_with(body, &next.clone().into()).is_pending());
+        tokio::time::sleep(allowance).await;
+        assert!(
+            next.0.load(Ordering::SeqCst) > 0,
+            "next wait must wake its poller"
+        );
+    });
+}
+
 /// A task waker that does nothing, counted by its handles.
 struct Quiet;
 
