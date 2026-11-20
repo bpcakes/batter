@@ -51,10 +51,30 @@ def observe():
     Path("answer").write_text(json.dumps([names, digest, str(compiler)]), encoding="ascii")
 
 
-def cargo_compiler_endpoint(directory, database):
+def refresh_build_root(workspace):
+    """Ask Cargo for the original workspace's effective intermediate build directory."""
     from parallel_process import run_parallel
 
-    with tempfile.TemporaryDirectory(prefix="batter-cargo-env-probe-") as scratch:
+    result, = run_parallel([["cargo", "metadata", "--format-version=1", "--no-deps", "--offline", "--locked"]],
+                           cwd=workspace, timeout=60, output_limit=8 * 1024 * 1024)
+    if not result.ok:
+        raise ValueError("could not resolve the Cargo workspace build directory")
+    # A conventional target subtree also keeps refresh artifacts out of source
+    # copies when the configured build directory lives inside the checkout.
+    build = Path(json.loads(result.stdout)["build_directory"]) / "runledger-prepare" / "target"
+    build.mkdir(parents=True, exist_ok=True)
+    return build
+
+
+def cargo_build_config(directory):
+    # Cargo can configure intermediate artifacts independently of --target-dir.
+    return "build.build-dir=" + json.dumps(str(directory), ensure_ascii=False)
+
+
+def cargo_compiler_endpoint(directory, database, build):
+    from parallel_process import run_parallel
+
+    with tempfile.TemporaryDirectory(dir=build, prefix="batter-cargo-env-probe-") as scratch:
         probe = Path(scratch)
         (probe / "src").mkdir()
         (probe / "Cargo.toml").write_text(
@@ -67,7 +87,8 @@ def cargo_compiler_endpoint(directory, database):
         (probe / "salt").write_bytes(salt)
         expected = hashlib.sha256(salt + database.encode("utf-8")).hexdigest()
         command = ["cargo", "check", "--lib", "--quiet", "--offline",
-                   "--manifest-path", str(probe / "Cargo.toml"), "--target-dir", str(probe / "target")]
+                   "--config", cargo_build_config(probe / "target"), "--target-dir", str(probe / "target"),
+                   "--manifest-path", str(probe / "Cargo.toml")]
         result, = run_parallel([command], cwd=directory, timeout=300, output_limit=64 * 1024)
         failure = "could not ask Cargo which [env] settings apply"
         if (probe / "wrapped").exists():
@@ -84,9 +105,9 @@ def cargo_compiler_endpoint(directory, database):
 
 
 @contextmanager
-def guard_preparation(compiler, database, packages):
+def guard_preparation(compiler, database, packages, build):
     """Check the actual Cargo-provided environment immediately before exec of rustc."""
-    with tempfile.TemporaryDirectory(prefix="batter-prepare-compiler-") as scratch:
+    with tempfile.TemporaryDirectory(dir=build, prefix="batter-prepare-compiler-") as scratch:
         root = Path(scratch)
         salt = os.urandom(32)
         (root / "settings").write_text(json.dumps({
@@ -100,8 +121,9 @@ def guard_preparation(compiler, database, packages):
         launcher.chmod(0o700)
         config = root / "compiler.toml"
         path = json.dumps(str(launcher), ensure_ascii=False)
+        output = json.dumps(str(build), ensure_ascii=False)
         config.write_text(
-            f'[build]\nrustc = {path}\nrustc-wrapper = ""\nrustc-workspace-wrapper = ""\n'
+            f'[build]\ntarget-dir = {output}\nbuild-dir = {output}\nrustc = {path}\nrustc-wrapper = ""\nrustc-workspace-wrapper = ""\n'
             f'[env]\nRUSTC = {{ value = {path}, force = true }}\n'
             'RUSTC_WRAPPER = { value = "", force = true }\n'
             'RUSTC_WORKSPACE_WRAPPER = { value = "", force = true }\n', encoding="utf-8")

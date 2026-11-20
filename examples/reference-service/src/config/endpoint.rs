@@ -63,13 +63,20 @@ impl Endpoint {
             Some(url::Host::Ipv6(ip)) => ip.to_string(),
             Some(url::Host::Ipv4(ip)) => ip.to_string(),
             Some(url::Host::Domain(host)) if !host.is_empty() => {
-                decode(host, PercentDecoding::Component)?
+                let decoded = decode(host, PercentDecoding::Component)?;
+                // Check the text the native setter receives. Percent escapes in a
+                // domain can otherwise introduce socket paths or bracket syntax.
+                // An encoded bare IPv6 literal already has a native TCP meaning.
+                if decoded.parse::<std::net::Ipv6Addr>().is_err()
+                    && (!matches!(url::Host::parse_opaque(&decoded), Ok(url::Host::Domain(_)))
+                        || decoded.chars().any(|c| c.is_control() || c.is_whitespace()))
+                {
+                    return Err(error("explicit TCP host required"));
+                }
+                decoded
             }
             _ => return Err(error("explicit TCP host required")),
         };
-        if host.contains(['/', '\\']) {
-            return Err(error("explicit TCP host required"));
-        }
         let username = decode(url.username(), PercentDecoding::Component)?;
         let database = decode(
             url.path().strip_prefix('/').unwrap_or(""),

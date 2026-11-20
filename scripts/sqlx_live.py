@@ -244,7 +244,7 @@ def command(target):
     if target in ("verification_live", "fixture_template_live"):
         command += ["--features", "test-support"]
     if target == "fixture_template_live":
-        command = ["env", "PGHOSTADDR=192.0.2.1", *command]
+        command = ["env", "-u", "BATTER_SQLX_ADMIN_URL", "PGHOSTADDR=192.0.2.1", *command]
     return command + ["--test", target, "--locked", "--"]
 
 
@@ -269,7 +269,7 @@ def complete_execution(output, cases):
 
 def main():
     missing = [name for name in ("DATABASE_URL", "BATTER_SQLX_AUTH_ACCEPT_URL",
-                                 "BATTER_SQLX_ADMIN_URL")
+                                 "BATTER_SQLX_ADMIN_URL", "POSTGRES_TEST_ADMIN_URL")
                if not os.environ.get(name)]
     if missing:
         print(("missing live PostgreSQL prerequisites: " + ", ".join(missing) +

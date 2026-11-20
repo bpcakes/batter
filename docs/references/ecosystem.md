@@ -53,7 +53,12 @@ contracts cite:
   18 with 0.9.1, not 0.9.0. Unverified workarounds: keep the cache enabled or
   mark such queries
   `.persistent(false)`. No checked-in package disables the cache.
-- IPv6 URL hosts are bracketed and unbracketed consistently
+- The TCP connector trims leading and trailing brackets from host strings.
+  The reference service checks decoded domain names before using the native
+  setter, which preserves genuine IPv6 authority syntax and rejects encoded
+  bracket delimiters. See the pinned
+  [SQLx host implementation](https://docs.rs/crate/sqlx-core/0.9.1/source/src/net/mod.rs).
+  IPv6 URL hosts are bracketed and unbracketed consistently
   ([#4529](https://github.com/transact-rs/sqlx/pull/4529)); see
   [native live URL compatibility](fixtures.md#native-live-url-compatibility-2026-09-10).
 - `hostaddr` and `PGHOSTADDR` no longer replace `host`

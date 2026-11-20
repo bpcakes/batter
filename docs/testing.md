@@ -140,7 +140,10 @@ bash scripts/test_reference_live.sh
 
 The runners fail closed on missing prerequisites or inventory mismatches. SQLx
 requires `DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL` and
-`BATTER_SQLX_ADMIN_URL`; the reference runner checks independent cluster identity
+`BATTER_SQLX_ADMIN_URL`. The template cache test additionally requires the
+native harness’s `POSTGRES_TEST_ADMIN_URL` to select its disposable provisioning
+cluster. Other SQLx targets use SQLx’s interpretation of `BATTER_SQLX_ADMIN_URL`.
+The reference runner checks independent cluster identity
 and its selected schema/authority policy. Never point these commands at a
 non-disposable database. Provisioning remains external to Batter.
 
@@ -169,7 +172,9 @@ depends on the mode:
   as an omitted password in both psql and SQLx.
   Run live preparation with native rustc and no Cargo compiler wrappers.
   Each compilation checks its effective endpoint before starting rustc.
-  Refresh requires evidence that both query libraries compiled.
+  Refresh requires evidence that both query libraries compiled. The temporary
+  source copy uses the system temp directory. Executable probes, compiler
+  guards and compilation output use the original workspace’s Cargo build directory.
 
 For the reference suite, set `POSTGRES_TEST_ADMIN_URL` and
 `POSTGRES_TEST_OBSERVER_URL` to two dedicated disposable local PostgreSQL 18

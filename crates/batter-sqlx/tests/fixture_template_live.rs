@@ -3,7 +3,7 @@ use batter_sqlx::test_support::{
     AcquisitionFailure, FixtureError, FixtureSuite, HarnessEndpointReason,
     UnsupportedHarnessEndpoint, template_spec,
 };
-use postgres_test_harness::{Error, HarnessConfig, PostgresHarness};
+use postgres_test_harness::{Error, HarnessConfig, POSTGRES_TEST_ADMIN_URL_ENV, PostgresHarness};
 
 fn assert_ambient(error: &Error) {
     let Error::TemplateInitializer { source } = error else {
@@ -22,16 +22,18 @@ fn assert_ambient(error: &Error) {
 }
 
 #[tokio::test]
-#[ignore = "requires a dedicated PostgreSQL 18 admin URL and PGHOSTADDR"]
+#[ignore = "requires a disposable POSTGRES_TEST_ADMIN_URL and PGHOSTADDR"]
 async fn template_environment_is_checked_on_cold_and_warm_lookups()
 -> Result<(), postgres_test_harness::BoxError> {
     assert!(
         std::env::var_os("PGHOSTADDR").is_some(),
         "run through the SQLx live runner"
     );
+    // This input belongs to the native harness. BATTER_SQLX_ADMIN_URL belongs
+    // to SQLx, whose host selection can differ for the same URI.
     let harness = PostgresHarness::start(
         HarnessConfig::new("template_env")?
-            .with_admin_database_url(std::env::var("BATTER_SQLX_ADMIN_URL")?)
+            .with_admin_database_url(std::env::var(POSTGRES_TEST_ADMIN_URL_ENV)?)
             .with_cleanup_on_start(false),
     )
     .await?;

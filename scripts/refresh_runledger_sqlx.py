@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from urllib.parse import quote, unquote, urlsplit
 
-from runledger_compiler_endpoint import cargo_compiler_endpoint, guard_preparation
+from runledger_compiler_endpoint import cargo_build_config, cargo_compiler_endpoint, guard_preparation, refresh_build_root
 from runledger_source import copy_source, run
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -304,8 +304,8 @@ def refuse_sqlx_config(directory):
                              + "): SQLx CLI could read another database URL variable than psql checked")
 
 
-def refuse_cargo_endpoint(directory, database):
-    names, same_url, compiler = cargo_compiler_endpoint(directory, database)
+def refuse_cargo_endpoint(directory, database, build):
+    names, same_url, compiler = cargo_compiler_endpoint(directory, database, build)
     if names:
         raise ValueError("remove " + ", ".join(names) + " from Cargo [env]: the query macros would read "
                          "settings psql did not check")
@@ -350,7 +350,8 @@ def refresh(root):
 def refresh_with(root, parts):
     rebuilt = os.environ["DATABASE_URL"]
     refuse_sqlx_config(root)
-    refuse_cargo_endpoint(root, rebuilt)
+    target = refresh_build_root(root)
+    refuse_cargo_endpoint(root, rebuilt, target)
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.1":
         raise ValueError("SQLx CLI 0.9.1 is required to match the workspace dependency")
@@ -371,16 +372,16 @@ def refresh_with(root, parts):
                     "migration inventory").splitlines()
     if not expected or set(applied) != expected:
         raise ValueError("database migration inventory must exactly match canonical Runledger migrations")
-    target = Path(os.environ.get("CARGO_TARGET_DIR", root / "target")).resolve() / "runledger-prepare"
     with tempfile.TemporaryDirectory(prefix="batter-native-prepare-") as directory:
         candidate = copy_source(root, Path(directory) / "source")
         native = candidate / "runledger"
         for package in MIGRATION_PACKAGES:
             sync_files(native / "migrations", native / package / "migrations", ".sql")
         refuse_sqlx_config(candidate)
-        compiler = refuse_cargo_endpoint(candidate, rebuilt)
-        with guard_preparation(compiler, rebuilt, CACHE_PACKAGES) as (launcher, config):
-            run(["env", "CARGO_TARGET_DIR=" + str(target), "RUSTC=" + str(launcher),
+        compiler = refuse_cargo_endpoint(candidate, rebuilt, target)
+        with guard_preparation(compiler, rebuilt, CACHE_PACKAGES, target) as (launcher, config):
+            run(["env", "CARGO_TARGET_DIR=" + str(target), "CARGO_BUILD_BUILD_DIR=" + str(target),
+                 "RUSTC=" + str(launcher),
                  "cargo", "--config", str(config), "sqlx", "prepare", "--workspace", "--no-dotenv",
                  "--", "--config", str(config), "-p", "runledger-postgres", "-p", "runledger-runtime",
                  "--all-targets", "--all-features", "--locked"], candidate)
@@ -389,7 +390,7 @@ def refresh_with(root, parts):
             sync_files(generated, destination, ".json")
         run(["env", "SQLX_OFFLINE=true", "cargo", "check", "-p", "runledger-postgres",
              "-p", "runledger-runtime", "--all-targets", "--all-features", "--locked", "--offline",
-             "--target-dir", str(target)], candidate)
+             "--config", cargo_build_config(target), "--target-dir", str(target)], candidate)
         # Failed preparation/verification above cannot change the original checkout.
         for destination in (root / "runledger/.sqlx",
                             *(root / "runledger" / p / ".sqlx" for p in CACHE_PACKAGES)):

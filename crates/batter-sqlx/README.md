@@ -714,8 +714,10 @@ contracts. Live cases are ignored in ordinary all-feature checks. Configure
 `DATABASE_URL` for an external disposable database and
 `BATTER_SQLX_AUTH_ACCEPT_URL` for a known-good password-authenticated endpoint,
 and `BATTER_SQLX_ADMIN_URL` for a PostgreSQL superuser connection on a dedicated
-disposable cluster, then run `bash scripts/test_sqlx_live.sh`; missing
-prerequisites fail. Restricted-login fixtures use the admin endpoint for both
+disposable cluster. Set `POSTGRES_TEST_ADMIN_URL` explicitly for the native
+harness that seeds the template cache test. The two admin settings may select
+different clusters and follow their respective clients’ URL semantics. Run
+`bash scripts/test_sqlx_live.sh` after configuring both. Restricted-login fixtures use the admin endpoint for both
 provisioning and login; it must admit their password-authenticated connections.
 It need not share a cluster or database name with `DATABASE_URL`.
 The separate `profile_privileges_live` target temporarily revokes PUBLIC

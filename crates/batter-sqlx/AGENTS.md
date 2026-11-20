@@ -165,7 +165,8 @@ New supported semantics require primary PostgreSQL18 evidence and native tests.
 Run `cargo test -p batter-sqlx --features test-support --locked` for offline contracts and
 `bash scripts/test_sqlx_live.sh` with `DATABASE_URL`, a known-good password
 endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` and a superuser connection to a
-dedicated disposable cluster in `BATTER_SQLX_ADMIN_URL` for the ignored live cases. The explicit
+dedicated disposable cluster in `BATTER_SQLX_ADMIN_URL`. The template seed uses the native
+harness’s separately configured `POSTGRES_TEST_ADMIN_URL`. The explicit
 invocation must fail when prerequisites are missing. Also run the root
 complete pinned-toolchain verification, including HTTP smoke profiles, locally;
 the pinned toolchain is also the minimum.

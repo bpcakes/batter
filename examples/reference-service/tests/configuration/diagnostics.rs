@@ -10,10 +10,16 @@ fn native_endpoint_mapping_preserves_credentials_tls_and_encoded_values() {
 }
 
 pub(crate) fn native_options() {
-    for host in ["localhost", "127.0.0.1", "[::1]"] {
+    for (host, native_host) in [
+        ("localhost", "localhost"),
+        ("local%68ost", "localhost"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("[::1]", "[::1]"),
+        ("%3A%3A1", "[::1]"),
+    ] {
         let root = load(&[("DATABASE_URL", &format!("postgresql://user%40name:fake%2540pass%3Aword@{host}:6543/data%2Fbase?sslmode=verify-full&application_name=configured%20app"))]).unwrap();
         let options = root.connect_options_from_process().unwrap();
-        assert_eq!(options.get_host(), host.trim_matches(['[', ']']));
+        assert_eq!(options.get_host(), native_host.trim_matches(['[', ']']));
         assert_eq!(options.get_port(), 6543);
         assert_eq!(options.get_username(), "user@name");
         assert_eq!(options.get_database(), Some("data/base"));
@@ -25,7 +31,7 @@ pub(crate) fn native_options() {
         // brackets a setter-provided IPv6 host, so every host round-trips; the
         // separate native wire test below proves IPv6 endpoint consumption.
         let native_url = options.to_url_lossy();
-        assert_eq!(native_url.host_str(), Some(host));
+        assert_eq!(native_url.host_str(), Some(native_host));
         let password = percent_encoding::percent_decode_str(native_url.password().unwrap())
             .decode_utf8()
             .unwrap();
@@ -64,6 +70,32 @@ pub(crate) fn native_options() {
     ] {
         assert!(!text.contains("secret-maintenance-marker"));
         assert!(text.contains("PreparedMaintenance([REDACTED])"));
+    }
+}
+
+#[test]
+fn serving_and_maintenance_reject_decoded_host_delimiters() {
+    for host in [
+        "%5Blocalhost",
+        "localhost%5D",
+        "%5Blocalhost%5D",
+        "local%5Bhost",
+        "%5B%3A%3A1%5D",
+        "%2Ftmp",
+        "host%3Ainvalid",
+    ] {
+        let url = format!("postgres://user:secret-marker@{host}/db?sslmode=disable");
+        let serving = load(&[("DATABASE_URL", &url)]).unwrap_err();
+        let maintenance = MaintenanceSettings::from_sources(
+            None,
+            SettingsSource::default(),
+            source(&[("DATABASE_URL", &url)]),
+        )
+        .unwrap_err();
+        for error in [serving, maintenance] {
+            assert_eq!(error.field(), "DATABASE_URL");
+            assert!(!format!("{error} {error:?}").contains("secret-marker"));
+        }
     }
 }
 

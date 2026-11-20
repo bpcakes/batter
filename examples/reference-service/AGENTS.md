@@ -102,6 +102,8 @@ behind static diagnostics, and pass validated outputs to native constructors
 without fallback. Worker settings return validated configuration data. Keep
 native preparation and managed registration in the composition root; do not add
 a settings convenience method that exposes immediate worker launch.
+Validate the decoded TCP host before calling the SQLx host setter. Brackets
+in a decoded domain cannot stand in for IPv6 authority syntax.
 Never use native from_env/builder_from_env or raw URL parsing after this validation.
 The private live-endpoint handoff canonicalizes selected host/database/TLS values,
 preserves explicit empty passwords and encodes query spaces as `%20` for the

@@ -15,7 +15,7 @@ from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
 from refresh_runledger_sqlx import (environment_bytes, refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
-from runledger_compiler_endpoint import guard_preparation
+from runledger_compiler_endpoint import guard_preparation, refresh_build_root
 from runledger_source import copy_source, run, validate_consumer
 
 
@@ -123,8 +123,10 @@ def cargo_workspace_parent(candidates):
 @contextmanager
 def cargo_probe_workspace(database_url):
     parent = cargo_workspace_parent((tempfile.gettempdir(), '/tmp', '/var/tmp'))
-    # Executables and build output still use the caller's normal temp volume.
-    with tempfile.TemporaryDirectory(dir=parent) as directory, tempfile.TemporaryDirectory() as build:
+    # The manifest need only be readable. Wrappers and Cargo output need an
+    # executable filesystem, including when the caller puts TMPDIR on noexec.
+    build_volume = refresh_build_root(Path(__file__).resolve().parents[1])
+    with tempfile.TemporaryDirectory(dir=parent) as directory, tempfile.TemporaryDirectory(dir=build_volume) as build:
         root = Path(directory)
         (root / '.cargo').mkdir()
         shutil.copy(Path(__file__).resolve().parents[1] / 'rust-toolchain.toml', root)
@@ -133,10 +135,12 @@ def cargo_probe_workspace(database_url):
         compiler_settings = {'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'RUSTFLAGS'}
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith('CARGO_') and key not in compiler_settings}
-        environment.update(CARGO_HOME=str(home), CARGO_TARGET_DIR=str(Path(build) / 'target'),
+        target = Path(build) / 'target'
+        target.mkdir()
+        environment.update(CARGO_HOME=str(home), CARGO_TARGET_DIR=str(target),
                            DATABASE_URL=database_url)
         with patch.dict(os.environ, environment, clear=True):
-            yield root, home
+            yield root, home, target
 
 
 class RefreshTests(unittest.TestCase):
@@ -148,6 +152,10 @@ class RefreshTests(unittest.TestCase):
         # without them, inside the patch so the caller's environment returns.
         for key in [key for key in os.environ if key.startswith('PG')]:
             del os.environ[key]
+        self.build = Path('/unused/build')
+        layout = patch('refresh_runledger_sqlx.refresh_build_root', return_value=self.build)
+        layout.start()
+        self.addCleanup(layout.stop)
         # The real Cargo probe compiles a crate; its own test exercises it.
         probe = patch('refresh_runledger_sqlx.cargo_compiler_endpoint', return_value=([], True, "/test/rustc"))
         probe.start()
@@ -382,14 +390,27 @@ class RefreshTests(unittest.TestCase):
                  patch('refresh_runledger_sqlx.subprocess.run') as psql:
                 with self.assertRaisesRegex(ValueError, message):
                     refresh(Path.cwd())
-                probe.assert_called_once_with(Path.cwd().resolve(), 'postgres://u@db.invalid:5432/database?sslmode=disable')
+                probe.assert_called_once_with(Path.cwd().resolve(), 'postgres://u@db.invalid:5432/database?sslmode=disable', self.build)
                 command.assert_not_called()
                 psql.assert_not_called()
 
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
+    def test_refresh_resolves_relative_and_split_cargo_build_volumes(self):
+        url = 'postgres://u@db.invalid/database'
+        with cargo_probe_workspace(url) as (root, _home, target):
+            (root / 'Cargo.toml').write_text('[workspace]\nmembers = []\nresolver = "2"\n')
+            self.assertEqual(refresh_build_root(root), target / 'runledger-prepare/target')
+            del os.environ['CARGO_TARGET_DIR']
+            config = root / '.cargo/config.toml'
+            config.write_text('[build]\ntarget-dir = "local target"\n')
+            self.assertEqual(refresh_build_root(root), root.resolve() / 'local target/runledger-prepare/target')
+            config.write_text('[build]\ntarget-dir = "final"\nbuild-dir = "intermediate"\n')
+            self.assertEqual(refresh_build_root(root), root.resolve() / 'intermediate/runledger-prepare/target')
+
+    @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
     def test_probe_selects_a_workspace_outside_configured_temp_parents(self):
         url = 'postgres://u@db.invalid/database'
-        with cargo_probe_workspace(url) as (root, _home):
+        with cargo_probe_workspace(url) as (root, _home, target):
             candidates = []
             for name in ('config', 'config.toml'):
                 ancestor = root / name
@@ -402,40 +423,41 @@ class RefreshTests(unittest.TestCase):
             clean.mkdir()
             parent = cargo_workspace_parent([*candidates, clean])
             self.assertEqual(parent, clean.resolve())
-            self.assertEqual(cargo_compiler_endpoint(parent, url)[:2], ([], True))
+            self.assertEqual(cargo_compiler_endpoint(parent, url, target)[:2], ([], True))
 
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
     def test_cargo_probe_sees_included_home_and_forced_env_settings(self):
         # Cargo, not this script, resolves config discovery, includes and force.
         url = 'postgres://u:private-marker@db.invalid:5432/database'
-        with patch.dict(os.environ, RUSTC_WRAPPER='/usr/bin/false'), cargo_probe_workspace(url) as (root, home):
-            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
+        with patch.dict(os.environ, RUSTC_WRAPPER='/usr/bin/false'), cargo_probe_workspace(url) as (root, home, target):
+            self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], ([], True))
             (root / '.cargo/extra.toml').write_text(
                 '[env]\nPGHOSTADDR = "192.0.2.1"\nPGOPTIONS = "-c search_path=shadow"\nPGDATA = "/x"\n')
             (root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
-            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
+            self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], (['PGDATA', 'PGHOSTADDR', 'PGOPTIONS'], True))
             (root / '.cargo/config.toml').write_text('[env]\nSQLX_OFFLINE = "true"\n')
             (home / 'config.toml').write_text(
                 '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
+            self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], ([], False))
             # Forcing a would-be expected-value variable too changes nothing:
             # the comparison is bound to the URL in the parent process.
             (home / 'config.toml').write_text(
                 '[env]\nDATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n'
                 'BATTER_PROBE_EXPECTED_DATABASE_URL = { value = "postgres://other.invalid:5432/db", force = true }\n')
-            self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], False))
+            self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], ([], False))
 
     @unittest.skipUnless(shutil.which('cargo'), 'requires cargo')
     def test_probe_observes_rustc_even_with_an_unusable_target_runner(self):
         url = 'postgres://u:compiler-private-marker@db.invalid/database'
-        with cargo_probe_workspace(url) as (root, home):
+        with cargo_probe_workspace(url) as (root, home, target):
             # A target program cannot run, but a target compilation can.
             (root / '.cargo/config.toml').write_text(
                 "[target.'cfg(unix)']\nrunner = 'false'\n")
-            scratch = home / 'probe'
+            scratch = target / 'probe'
             scratch.mkdir()
-            with patch('runledger_compiler_endpoint.tempfile.TemporaryDirectory', return_value=nullcontext(scratch)):
-                self.assertEqual(cargo_compiler_endpoint(root, url)[:2], ([], True))
+            with patch('runledger_compiler_endpoint.tempfile.TemporaryDirectory', return_value=nullcontext(scratch)) as temp:
+                self.assertEqual(cargo_compiler_endpoint(root, url, target)[:2], ([], True))
+                self.assertEqual(temp.call_args.kwargs['dir'], target)
             for artifact in (scratch / 'target').rglob('*'):
                 if artifact.is_file():
                     self.assertFalse(b'compiler-private-marker' in artifact.read_bytes(), artifact.name)
@@ -444,7 +466,7 @@ class RefreshTests(unittest.TestCase):
     def test_prepare_checks_the_actual_query_crate_compiler_environment(self):
         packages = ('runledger-postgres', 'runledger-runtime')
         url = 'postgres://u:compiler-private-marker@db.invalid/database'
-        with cargo_probe_workspace(url) as (root, home):
+        with cargo_probe_workspace(url) as (root, home, target):
             (root / 'Cargo.toml').write_text(
                 '[workspace]\nmembers = ["runledger-postgres", "runledger-runtime"]\nresolver = "2"\n')
             for package in packages:
@@ -463,12 +485,13 @@ class RefreshTests(unittest.TestCase):
             for key in ('rustc-wrapper', 'rustc-workspace-wrapper'):
                 config.write_text(f'[build]\n{key} = "{wrapper}"\n')
                 with self.assertRaisesRegex(ValueError, 'wrapper-free'):
-                    cargo_compiler_endpoint(root, url)
+                    cargo_compiler_endpoint(root, url, target)
             config.unlink()
-            names, matches, compiler = cargo_compiler_endpoint(root, url)
+            names, matches, compiler = cargo_compiler_endpoint(root, url, target)
             self.assertEqual((names, matches), ([], True))
             def check():
-                with guard_preparation(compiler, url, packages) as (launcher, config):
+                with guard_preparation(compiler, url, packages, target) as (launcher, config):
+                    self.assertEqual(launcher.parent.parent, target)
                     return subprocess.run(['cargo', 'check', '--config', str(config),
                                            '--workspace', '--offline'], cwd=root,
                                           env=dict(os.environ, RUSTC=str(launcher)), capture_output=True,
@@ -476,7 +499,7 @@ class RefreshTests(unittest.TestCase):
 
             check()
             with self.assertRaisesRegex(ValueError, 'every query package'):
-                with guard_preparation(compiler, url, packages):
+                with guard_preparation(compiler, url, packages, target):
                     pass
             # Cargo injects a package build script's rustc-env *after* applying
             # its own configuration. Only the real compilation sees the setting.
