@@ -50,10 +50,16 @@ contracts, capability facts and validation history.
   parses its harness admin URL once, and every acquisition and template
   call (`FixtureSuite::{empty, from_template, template}` and the same
   `FixtureScope` methods) returns `Endpoint` before the harness provisions a
-  database or looks up a template, so a refused endpoint no longer costs a
-  provision/drop round trip and is no longer reported as a template
-  initializer failure. A refused scope call starts no producer and the run
-  report records nothing for it. Exhaustive matches need a new arm:
+  database or looks up a template. A refused scope call starts no producer
+  and the run report records nothing for it. In 0.0.1 these calls had no such
+  refusal: template calls handed the harness URL straight to the initializer,
+  and acquisitions parsed the lease URL with SQLx after provisioning, so an
+  admin URL SQLx could read, or an ambient `PG*` variable, was accepted and
+  any parse failure surfaced as a native SQLx error in `PoolAcquire` or
+  `Connect`. Calls that succeeded before can now return `Endpoint` (for a
+  client `PG*` variable, `hostaddr`, several hosts or a setting the endpoint
+  cannot carry; see `HarnessEndpointReason`), and exhaustive matches need a
+  new arm:
 
   ```rust
   // Before
@@ -71,10 +77,8 @@ contracts, capability facts and validation history.
   }
   ```
 
-  A `PG*` refusal before a template lookup matched before as
-  `FixtureError::Harness(Error::TemplateInitializer { source })` (manual) or
-  `FixtureError::Acquisition(error)` (owned), with `UnsupportedHarnessEndpoint`
-  two downcasts deep; match `FixtureError::Endpoint(refusal)` instead. No
+  To keep a run working, unset client `PG*` variables (all but `PGDATA` and
+  `PG_*`) and move every connection setting into the harness admin URL. No
   `#[deprecated]` shim applies: an added variant has no old name to alias.
 - Disclosed upstream regressions: outside a server transaction SQLx re-sends a
   statement whose first response is SQLSTATE `26000` or a stale cached-plan

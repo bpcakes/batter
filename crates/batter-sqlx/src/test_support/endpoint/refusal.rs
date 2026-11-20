@@ -12,11 +12,12 @@ pub(super) fn configuration(refusal: UnsupportedHarnessEndpoint) -> sqlx::Error 
 
 /// The harness endpoint cannot be carried faithfully into SQLx options.
 ///
-/// Returned as [`super::FixtureError::Endpoint`] when a fixture suite or scope
+/// Returned as [`crate::test_support::FixtureError::Endpoint`] when a fixture suite or scope
 /// refuses its endpoint before provisioning a database or looking up a
 /// template, and carried inside `sqlx::Error::Configuration` by later checks:
 /// pool resolution, the URL handed to a template initializer,
-/// [`harness_connect_options`] and [`harness_admin_connect_options`]. Every
+/// [`crate::test_support::harness_connect_options`] and
+/// [`crate::test_support::harness_admin_connect_options`]. Every
 /// refusal happens before any pool or caller code exists. Formatting names no
 /// URL part.
 ///

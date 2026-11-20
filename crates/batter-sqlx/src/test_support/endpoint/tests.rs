@@ -381,3 +381,23 @@ fn only_client_pg_variables_are_refused() {
         assert_eq!(refused, name == "PGDATA_EXTRA", "{name}");
     }
 }
+
+#[test]
+fn startup_options_render_as_the_sqlx_setter_writes_them_without_reading_the_environment() {
+    require_clean_environment();
+    for pairs in [
+        vec![("search_path".to_owned(), "public".to_owned())],
+        vec![
+            ("search_path".to_owned(), "tenant blue".to_owned()),
+            ("application.note".to_owned(), r"a\b c".to_owned()),
+        ],
+    ] {
+        let setter = PgConnectOptions::new_without_pgpass()
+            .options(pairs.iter().cloned())
+            .get_options()
+            .map(str::to_owned);
+        assert_eq!(raw_options(&pairs), setter, "{pairs:?}");
+        assert_eq!(option_pairs(&raw_options(&pairs).unwrap()), Some(pairs));
+    }
+    assert_eq!(raw_options(&[]), None);
+}

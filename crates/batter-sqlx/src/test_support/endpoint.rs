@@ -406,14 +406,30 @@ impl HarnessEndpoint {
     }
 }
 
-/// SQLx's rendering of startup option pairs. SQLx's constructor would prepend
-/// an ambient `PGOPTIONS`; a suite may parse before its environment check,
-/// but every use of the parse checks the environment first.
+/// The raw startup `options` text SQLx 0.9.1's `PgConnectOptions::options`
+/// setter writes for `pairs` (`-c key=value`, space-separated, with spaces
+/// and backslashes backslash-escaped), rendered without a SQLx constructor:
+/// those prepend an ambient `PGOPTIONS`, and a suite parses its admin URL
+/// before any environment check, so the cached parse must depend only on the
+/// URL. A unit test pins this rendering to the setter's.
 fn raw_options(pairs: &[(String, String)]) -> Option<String> {
-    PgConnectOptions::new_without_pgpass()
-        .options(pairs.iter().cloned())
-        .get_options()
-        .map(str::to_owned)
+    if pairs.is_empty() {
+        return None;
+    }
+    let mut raw = String::new();
+    for (key, value) in pairs {
+        if !raw.is_empty() {
+            raw.push(' ');
+        }
+        raw.push_str("-c ");
+        for character in format!("{key}={value}").chars() {
+            if matches!(character, ' ' | '\\') {
+                raw.push('\\');
+            }
+            raw.push(character);
+        }
+    }
+    Some(raw)
 }
 
 /// Split a raw startup `options` string of the form `-c key=value ...`, with

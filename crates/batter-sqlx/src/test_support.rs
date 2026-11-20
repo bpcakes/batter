@@ -111,11 +111,12 @@ pub enum FixtureError {
     /// later refusals (after a lease exists) stay in [`Self::PoolAcquire`],
     /// [`Self::Connect`] or the harness's template initializer failure.
     ///
-    /// Migration: before this variant, a `PG*` refusal before a template
-    /// lookup was reported as `FixtureError::Harness(Error::TemplateInitializer
-    /// { .. })` (or `FixtureError::Acquisition` in a scope), and a refused
-    /// endpoint was found only after provisioning, in `PoolAcquire` or
-    /// `Connect`; match this variant instead.
+    /// Migration: 0.0.1 had no such refusal. Its template calls handed the
+    /// harness URL straight to the initializer, and its acquisitions parsed the
+    /// lease URL with SQLx after provisioning, honouring ambient `PG*`
+    /// variables. Calls that succeeded then can now return this variant;
+    /// exhaustive `FixtureError` matches need an arm for it, and suites should
+    /// unset client `PG*` variables and put every setting in the admin URL.
     Endpoint(UnsupportedHarnessEndpoint),
     /// A single run requested more leases than can coexist in its harness.
     BatchCapacity,
