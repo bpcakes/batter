@@ -50,8 +50,9 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> PolicyResponse + S
 /// maps the sanitized [`MutationRejection`] into the application's envelope and
 /// receives the request metadata, including a
 /// [`CorrelationId`](crate::CorrelationId) and the admitted
-/// `OperationContext` extension, but not the body, the private
-/// quota/observation/operational ownership state or the admission record.
+/// `OperationContext` extension, but not the body or any private request
+/// record that [`InProcessClient::request`](crate::InProcessClient::request)
+/// lists.
 /// Redispatching cloned metadata cannot mutate the original request's
 /// observation, and the new request is not admitted without admission of its own.
 ///

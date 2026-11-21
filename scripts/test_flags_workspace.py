@@ -30,7 +30,7 @@ class Fixture(unittest.TestCase):
         self.root = Path('/workspace').resolve()
         names = list(PACKAGES) + OTHERS
         self.metadata = dict(
-            packages=[dict(name=n, id=n, source=None, version='0.0.1', rust_version='1.98.1',
+            packages=[dict(name=n, id=n, source=None, version='0.0.1', rust_version='1.100.0',
                            license='MIT', publish=[] if n == COMMAND else ['crates-io'],
                            manifest_path=str(self.root / 'crates' / n / 'Cargo.toml'))
                       for n in names],

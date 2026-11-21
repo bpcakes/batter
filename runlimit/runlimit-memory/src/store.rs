@@ -276,7 +276,7 @@ impl<C: Clock> MemoryStore<C> {
     pub fn check(&self, check: &Check<'_>) -> Result<Decision, PoisonedShardError> {
         let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_inner(check);
-        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
+        let elapsed = started.map_or_default(|start| start.elapsed());
 
         match &result {
             Ok(evaluation) => {
@@ -307,7 +307,7 @@ impl<C: Clock> MemoryStore<C> {
         let cleanup_requested = self.config.max_expired_removals_per_check();
         let started = self.observer.as_ref().map(|_| Instant::now());
         let cleanup_removed = shard.prune_expired(now_millis, cleanup_requested);
-        let cleanup_elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
+        let cleanup_elapsed = started.map_or_default(|start| start.elapsed());
 
         let decision = if let Some(denial) = shard.quota_denial(&prepared, now_millis) {
             if check.policy().quota_mode() == QuotaMode::Shadow {
@@ -350,7 +350,7 @@ impl<C: Clock> MemoryStore<C> {
     pub fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, MemoryBatchError> {
         let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_all_inner(checks);
-        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
+        let elapsed = started.map_or_default(|start| start.elapsed());
 
         match &result {
             Ok(evaluation) => {
@@ -406,7 +406,7 @@ impl<C: Clock> MemoryStore<C> {
             cleanup_effects.push(CleanupEffect {
                 requested: cleanup_limit,
                 removed,
-                elapsed: started.map(|start| start.elapsed()).unwrap_or_default(),
+                elapsed: started.map_or_default(|start| start.elapsed()),
             });
         }
 

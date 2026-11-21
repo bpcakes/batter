@@ -120,7 +120,7 @@ impl GroupGate {
 
 /// Non-generic so every renderer can strip it without knowing the value's type.
 #[derive(Clone)]
-pub(crate) struct GateRecord(Arc<dyn Any + Send + Sync>);
+pub(crate) struct GateRecord(pub(crate) Arc<dyn Any + Send + Sync>);
 
 /// The gate's captured value, extracted without capturing again.
 ///

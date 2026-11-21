@@ -24,7 +24,7 @@ mod probe;
 mod tests;
 
 pub use assembled::AssembledHttp;
-pub use client::InProcessClient;
+pub use client::{InProcessClient, InProcessRefusal};
 pub use declared::{RouteInventory, RouteInventoryError};
 pub use gate::{GateView, Gated, GroupGate};
 pub use group::{BrowserPolicy, GroupPolicy, MutationCheckWaiver, RouteGroup, RouteGroupError};
@@ -283,8 +283,8 @@ impl HttpBoundary {
     /// admission, with the application's response.
     ///
     /// `render` receives the request metadata, including the generated
-    /// [`CorrelationId`](crate::CorrelationId) but not the body or private
-    /// quota/observation/operational ownership state, and returns
+    /// [`CorrelationId`](crate::CorrelationId) but not the body or a private
+    /// record [`InProcessClient::request`] lists, and returns
     /// the application's response, for example a documented JSON body and its
     /// headers. Answering at all is the liveness signal, so the boundary then
     /// sets status 200, replacing any status the renderer chose, and removes
@@ -334,8 +334,8 @@ impl HttpBoundary {
     /// Each request takes one fresh decision from `policy`, including any
     /// application conditions added with [`ReadinessPolicy::with_condition`],
     /// and passes it to `render` with the request metadata, including the
-    /// generated [`CorrelationId`](crate::CorrelationId) but not the body or
-    /// private quota/observation/operational ownership state. Cloned renderer
+    /// generated [`CorrelationId`](crate::CorrelationId) but not the body or a
+    /// private record [`InProcessClient::request`] lists. Cloned renderer
     /// metadata cannot rewrite the original request's observation on redispatch.
     /// `render` chooses the body and headers, for example an
     /// OpenAPI-documented JSON document, and cannot alter the decision: the

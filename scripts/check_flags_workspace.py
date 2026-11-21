@@ -7,7 +7,7 @@ release-train record. The rules, each with a negative control in
 `test_flags_workspace.py`:
 
 1. Each package resolves locally as one workspace member at version 0.0.1,
-   `rust-version` 1.98.1 and license MIT; the libraries target crates.io and
+   `rust-version` 1.100.0 and license MIT; the libraries target crates.io and
    the command is `publish = false`.
 2. `batter-flags-core` depends on no Batter, Runledger or Runlimit package, for
    any dependency kind.
@@ -39,7 +39,7 @@ LIBRARIES = ('batter-flags-core', 'batter-flags-postgres', 'batter-flags')
 COMMAND = 'batter-flags-cli'
 PACKAGES = LIBRARIES + (COMMAND,)
 VERSION = '0.0.1'
-RUST_VERSION = '1.98.1'
+RUST_VERSION = '1.100.0'
 LICENSE = 'MIT'
 CORE_EXCLUDED = {'tokio', 'tokio-util', 'sqlx', 'axum', 'tower', 'http', 'hyper', 'reqwest',
                  'tracing-subscriber', 'clap', 'serde', 'serde_json'}

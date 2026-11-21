@@ -5,13 +5,13 @@
 
 ## Verification
 
-From the repository root, with the pinned Rust 1.98.1 toolchain:
+From the repository root, with the pinned Rust 1.100.0 toolchain:
 
 ```sh
 bash scripts/verify.sh
 ```
 
-Rust 1.98.1 is also the declared minimum; there is no separate MSRV run.
+Rust 1.100.0 is also the declared minimum; there is no separate MSRV run.
 Prerequisites include Python 3.9+, Docker for native Runledger PostgreSQL 18
 tests, loopback TCP, Unix subprocess permissions and a host certificate store.
 Initial dependency and file-budget-runtime downloads require network access.
@@ -235,6 +235,21 @@ forwarded headers cannot supply that authority.
 Compile-fail examples reject access to an assembled raw router and unregistered
 serving. In-process tests select an explicit synthetic peer through the opaque
 client. They exercise boundary assembly without claiming socket provenance.
+Route-group tests refuse a whole extension map reused from an earlier dispatch,
+and [Runlimit's reused-routing tests](../crates/batter-runlimit/tests/http/reused_routing.rs)
+prove its test transport shares that refusal before lifecycle admission,
+authentication, the quota check, a public probe or a handler runs, accepts a
+fresh request's application extensions and strips a forwarded refusal marker.
+Two tests in the same file exercise each check without the other. One covers a
+map that keeps only the adapter's own request records: once the only Axum
+record of an `OPTIONS *` dispatch, its `OriginalUri`, is removed, and the test
+has asserted that no Axum record is left, the request is still refused, with no
+authentication, no quota consumed and no completion event. The other replays a
+map from a bare Axum `Router`, which holds routing records and no Batter
+record. The `batter-axum` routing-record maps and one of the reference
+service's maps also come from a bare `Router`, so a private record cannot mask
+the routing check, and the in-crate tests require one fixture per entry of the
+shared private-record list, holding only that record.
 
 ## Probe response policy
 

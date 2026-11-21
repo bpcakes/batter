@@ -490,10 +490,13 @@ public API change. Comparison with current remote master `4e57ab62` confirmed
 the client implementation and Axum 0.8.9 are unchanged on the committed flags
 branch; the native-routing defect predates this work. The fetched
 `fix/http-forced-close-9wig` at `af5f5f7a` changes connection shutdown and body
-ownership, not this client or the native routing behavior. Native routing
-isolation is therefore split to `batter-oj37`, with the reproduction and frozen
-reports retained in `batter-jkw6.58`. No accepted-input contract change is made
-here and no complete native-routing reset is claimed.
+ownership, not this client or the native routing behavior. Native routing isolation is therefore split to `batter-oj37`, with the
+reproduction and frozen reports retained in `batter-jkw6.58`. Subsequent merges
+of `batter-oj37`, `batter-gp93` and `batter-nff2` replaced the in-process
+record-stripping filter with `RouterClient::request`'s arrival-shaped entry
+refusal (`InProcessRefusal`), which refuses Axum routing records and the one
+private-record list (`GateRecord` included) before the boundary runs, while
+group entry continues to clear inherited gate and credential records.
 
 Public-surface check of the whole working tree, `.39` to `.57` together,
 against branch commit `04627167`, with the same walker and nightly toolchain and

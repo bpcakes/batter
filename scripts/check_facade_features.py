@@ -241,7 +241,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if chosen & {"axum", "runlimit-axum", "flags-axum"}:
         # Supported paths only: assembly is sealed into protected serving or
         # an opaque request client, and the raw helpers live in low_level.
-        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, RequestPolicy};")
+        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, InProcessRefusal, RequestPolicy};")
         # An exhaustive match: a new failure variant is a visible facade change.
         lines.append("#[allow(dead_code)]\nfn failure_name(failure: batter::axum::HttpFailure) -> &'static str { match failure { batter::axum::HttpFailure::Unavailable => \"unavailable\", batter::axum::HttpFailure::Cancelled => \"cancelled\", batter::axum::HttpFailure::DeadlineExceeded => \"deadline\", batter::axum::HttpFailure::Overloaded => \"overloaded\", batter::axum::HttpFailure::Internal => \"internal\", batter::axum::HttpFailure::Disabled => \"disabled\" } }")
     if chosen & FLAGS_SELECTORS:
@@ -299,7 +299,7 @@ def manifest(name: str, dependencies: list[str], selected: tuple[str, ...] = ())
         f"name = {json.dumps(name)}\n"
         "version = \"0.0.0\"\n"
         "edition = \"2024\"\n"
-        "rust-version = \"1.98.1\"\n"
+        "rust-version = \"1.100.0\"\n"
         "publish = false\n\n"
         "[workspace]\nresolver = \"3\"\n\n"
         "[dependencies]\n"

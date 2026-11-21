@@ -1,7 +1,12 @@
 //! The opaque in-process request client that sealed assembly consumes into.
 
+use crate::low_level::RouterClient;
 use axum::{body::Body, extract::Request, response::Response};
-use tower::ServiceExt;
+#[cfg(doc)]
+use {
+    crate::{HttpFailure, render_infrastructure_failure},
+    axum::extract::{MatchedPath, NestedPath, OriginalUri, RawPathParams},
+};
 
 /// An assembled boundary consumed into an in-process request transport.
 ///
@@ -16,7 +21,17 @@ use tower::ServiceExt;
 /// body streaming and no detached descendant. Register the assembled boundary
 /// for those. Requests may carry explicitly inserted synthetic extensions, such
 /// as a chosen [`ConnectInfo`](axum::extract::ConnectInfo); choosing them, and
-/// their meaning, belongs to the caller.
+/// their meaning, belongs to the caller. Axum's own routing records are the
+/// exception: the client cannot tell a hand-inserted one, such as an
+/// [`OriginalUri`], from an inherited one, and refuses both.
+///
+/// The client accepts only an arrival-shaped request: one whose extensions
+/// carry no Axum routing record and none of Batter's own private request
+/// records. A request built from a whole extension map that a router already
+/// dispatched, and a live request that another Axum router forwards into the
+/// client, are refused before the boundary runs, with a response carrying
+/// [`InProcessRefusal`]; see [`InProcessClient::request`] for the records,
+/// the outcome and the migration.
 ///
 /// The inner router stays private. The client is not a Tower service, cannot
 /// become a [`Router`](axum::Router), and cannot be served:
@@ -108,20 +123,16 @@ use tower::ServiceExt;
 #[derive(Clone)]
 #[must_use = "issue requests through the client"]
 pub struct InProcessClient {
-    prepared: axum::Router,
+    prepared: RouterClient,
 }
 
 impl InProcessClient {
-    /// Prepare the assembled router once, exactly as a served router is prepared.
-    ///
-    /// Pinned Axum 0.8.9 `Router::into_make_service` and
-    /// `Router::into_make_service_with_connect_info` both call
-    /// `Router::with_state(())` so that endpoints become routes eagerly instead
-    /// of once per request. This uses the same preparation, so a layer wrapping
-    /// a lazily built endpoint is constructed here and never again.
+    /// Prepare the assembled router once, exactly as a served router is
+    /// prepared, through [`RouterClient::new`], which documents the pinned
+    /// Axum preparation.
     pub(super) fn new(router: axum::Router) -> Self {
         Self {
-            prepared: router.with_state(()),
+            prepared: RouterClient::new(router),
         }
     }
 
@@ -132,18 +143,259 @@ impl InProcessClient {
     /// and nothing is spawned. A dropped `request` future therefore drops the
     /// boundary's future the same way a dropped connection does.
     ///
-    /// Every call reuses the router prepared at construction. Request
-    /// public extensions the caller inserts are kept. Private observation,
-    /// correlation, admission and policy records copied from an earlier request
-    /// are discarded before the boundary installs this request's own state.
-    /// This does not reset Axum's native path parameters or nested-routing
-    /// metadata: reusing an entire routed extension map can still contaminate
-    /// destination path extraction and route telemetry.
-    pub async fn request(&self, mut request: Request<Body>) -> Response {
-        crate::correlation::clear_request_records(request.extensions_mut());
-        match self.prepared.clone().oneshot(request).await {
-            Ok(response) => response,
-            Err(never) => match never {},
-        }
+    /// Every call reuses the router prepared at construction. Application
+    /// extensions the caller inserts are kept, while a request carrying an
+    /// Axum routing record or one of Batter's own private request records is
+    /// refused, as described below.
+    ///
+    /// # Accepted requests
+    ///
+    /// The request must be arrival-shaped: its extensions carry no record that
+    /// Axum routing writes and none that only this crate's layers write. Four
+    /// routing records are detected, using only public
+    /// Axum types: the path-parameter record that
+    /// [`RawPathParams`] reads (any result except its missing-parameters
+    /// rejection counts, including an empty capture list or an invalid UTF-8
+    /// capture), [`MatchedPath`], [`NestedPath`] and [`OriginalUri`]. Every
+    /// request an Axum [`Router`](axum::Router) dispatches gains an
+    /// `OriginalUri`, and every request it routes to a route, a path fallback
+    /// or a service mounted with `nest_service` also gains a path-parameter
+    /// record, so cloning the whole extension map of a dispatched request, for
+    /// example `request.extensions().clone()` inside a handler, always carries
+    /// at least one of them. A live request that another Axum router
+    /// dispatched and a route, fallback or `nest_service` closure hands on
+    /// whole carries the same records and is refused too; the client cannot
+    /// tell it from a reused map. The migration below rebuilds it. That is
+    /// in-process composition and does not make this client a server: a
+    /// router that rebuilds requests into it and is itself served still
+    /// serves the boundary outside protected registration, the supported
+    /// serving path.
+    ///
+    /// Every private request record that only this crate's layers write is
+    /// detected as well. This is the one list of them: the observation state,
+    /// the operational wrapper's marker, the admission record, the route-group
+    /// gate record, the browser
+    /// credential record and the quota record. Their types cannot be named or
+    /// built outside this crate, so one is present only in a request that a
+    /// Batter layer already processed, or in a map copied from one, including
+    /// a map that no longer carries any routing record and a live request
+    /// that a service behind one of the `low_level` wrappers that write one
+    /// hands on whole. [`RouterClient::request`] names those wrappers;
+    /// `request_admission` alone writes none. Public
+    /// values such as a [`CorrelationId`](crate::CorrelationId) are not among
+    /// them; a copied one is not refused, and the boundary generates its own
+    /// identity.
+    ///
+    /// Application extensions, such as a chosen
+    /// [`ConnectInfo`](axum::extract::ConnectInfo) or an application's own
+    /// types, are accepted and reach handlers untouched. So are request
+    /// settings that an Axum layer outside the client wrote, which are not
+    /// routing records: a request handed on whole from behind
+    /// [`DefaultBodyLimit`](axum::extract::DefaultBodyLimit) keeps that
+    /// layer's body limit wherever no layer inside the boundary sets its own,
+    /// so an outer `DefaultBodyLimit::disable()` removes Axum's default limit
+    /// for the boundary's extractors. A rebuilt request carries no such
+    /// setting. An in-process result under an outer limit is therefore not
+    /// evidence of how a served request is limited.
+    ///
+    /// The check runs at entry, before the router, any layer or any
+    /// application code is polled, and costs a few type-map lookups.
+    ///
+    /// # Refusal
+    ///
+    /// If any one of those records is present, the whole request is refused:
+    /// nothing is stripped or repaired, and the request is destroyed unrouted.
+    /// The response is the sanitized internal failure that
+    /// [`render_infrastructure_failure`] renders for
+    /// [`HttpFailure::Internal`] with no correlation identifier, and it carries
+    /// the [`InProcessRefusal`] response extension. The client removes that
+    /// extension from every response it dispatched, so a returned response
+    /// carries it only when this call refused the request, even if a handler
+    /// forwarded a marker from another refusal. One ERROR event with a fixed
+    /// message and no request-derived field is emitted on the caller's
+    /// dispatch. Because the request never entered the boundary, there is no
+    /// completion event, no request span and no `x-request-id` header. The
+    /// status and body are those of any sanitized internal failure, so only
+    /// the response extension identifies a refusal.
+    ///
+    /// Without the refusal, pinned Axum 0.8.9 would treat the inherited
+    /// records as an outer router's state: path parameters are appended to,
+    /// so `Path` extraction fails or reads another route's captures, an
+    /// inherited invalid UTF-8 capture rejects a valid path, the matched path
+    /// is prefixed with the earlier route's pattern, and the inherited Batter
+    /// state suppresses the destination's own observation.
+    ///
+    /// # Migration
+    ///
+    /// Build a fresh request and copy each application extension by type,
+    /// instead of copying the whole map:
+    ///
+    /// ```
+    /// use axum::{body::Body, extract::Request, http::Extensions};
+    ///
+    /// #[derive(Clone)]
+    /// struct Label(&'static str);
+    ///
+    /// fn redispatch(earlier: &Extensions) -> Request<Body> {
+    ///     let mut request = Request::builder().uri("/view/9").body(Body::empty()).unwrap();
+    ///     if let Some(label) = earlier.get::<Label>() {
+    ///         request.extensions_mut().insert(label.clone());
+    ///     }
+    ///     request
+    /// }
+    /// # let _ = redispatch(&Extensions::new());
+    /// ```
+    ///
+    /// A handler of another router that hands a request on does the same
+    /// with the request it received, instead of passing it through whole:
+    ///
+    /// ```
+    /// use axum::{body::Body, extract::Request};
+    ///
+    /// #[derive(Clone)]
+    /// struct Label(&'static str);
+    ///
+    /// fn rebuild(arrival: Request<Body>) -> Request<Body> {
+    ///     let (parts, body) = arrival.into_parts();
+    ///     let mut request = Request::builder()
+    ///         .method(parts.method)
+    ///         .version(parts.version)
+    ///         .uri(parts.uri)
+    ///         .body(body)
+    ///         .unwrap();
+    ///     *request.headers_mut() = parts.headers;
+    ///     if let Some(label) = parts.extensions.get::<Label>() {
+    ///         request.extensions_mut().insert(label.clone());
+    ///     }
+    ///     request
+    /// }
+    /// # let _ = rebuild(Request::new(Body::empty()));
+    /// ```
+    ///
+    /// Under `nest` or `nest_service`, the arrival's URI is the path below
+    /// the mount, so the rebuilt request targets that path; Axum's
+    /// [`OriginalUri`] on the arrival keeps the full one. Without
+    /// `.version(parts.version)` the builder's default, HTTP/1.1, is used.
+    /// Copy every extension the destination reads, not only the example's
+    /// `Label`: a served outer router's
+    /// [`ConnectInfo`](axum::extract::ConnectInfo) peer, for instance, is
+    /// dropped unless it is copied too. An outer `DefaultBodyLimit` cannot be
+    /// copied, since Axum keeps its record private: set the limit with a
+    /// `DefaultBodyLimit` layer on the boundary's own routes instead.
+    ///
+    /// The detection is a run-time check because the records cannot be reset
+    /// individually: Axum keeps its path-parameter record and its nested
+    /// matched-path record private, and `http` 1.5.0 `Extensions` cannot be
+    /// iterated or filtered, so no public facility removes routing state while
+    /// keeping unknown application extensions. A private nested matched-path
+    /// record is only ever written in the same routing step as the
+    /// path-parameter record, so it never arrives without a detected one.
+    /// These facts are verified against Axum 0.8.9 only. The crate's
+    /// dependency requirement also admits later 0.8 releases, for which they
+    /// are unverified; recheck them whenever the Axum or `http` pin changes.
+    ///
+    /// The check and the marker removal live in [`RouterClient::request`],
+    /// which this method delegates to. Lower-level transports that hold a
+    /// [`RouterClient`], such as `batter-runlimit`'s test client, share this
+    /// one implementation rather than a copy of it.
+    pub async fn request(&self, request: Request<Body>) -> Response {
+        self.prepared.request(request).await
+    }
+}
+
+/// Response extension marking a request that [`InProcessClient::request`]
+/// refused at entry, before its router ran.
+///
+/// The name states the outcome, not a cause. Today the client refuses a
+/// request that is not arrival-shaped: one whose extensions carry an Axum
+/// routing record or one of Batter's own private request records. That is
+/// usually state copied from an earlier dispatch, but the client cannot tell
+/// a hand-inserted routing record from an inherited one, and a live request
+/// another router forwards carries the same records, so both are marked the
+/// same way. [`InProcessClient::request`] lists the records.
+///
+/// Migration: this marker was named `ReusedRoutingState` when it was
+/// introduced and was renamed before its first release, so no deprecated
+/// alias exists; replace that name with `InProcessRefusal`.
+///
+/// The check belongs to the lower-level [`RouterClient::request`], which the
+/// protected client delegates to, so every transport that holds a
+/// [`RouterClient`], such as `batter-runlimit`'s test client, refuses with
+/// this same marker. The refused response is otherwise the sanitized internal
+/// failure of [`render_infrastructure_failure`] for [`HttpFailure::Internal`],
+/// so this marker is what tells a client refusal apart from a 500 the router
+/// built: on a response returned by one of those clients it means that call
+/// refused the request, and no route, layer, renderer or handler of its
+/// router ran. It has no public constructor and no public field, so an
+/// application cannot make one. It is `Copy`, so an application can read one
+/// from a refused response and put it on a response of its own, for example
+/// by returning an inner client's refusal from a handler; the client removes
+/// the marker from every response it dispatched, so such a copy never leaves
+/// `request`. It is a response extension, not a header, and is never sent on a
+/// served connection.
+///
+/// ```
+/// use axum::{
+///     body::Body,
+///     extract::{OriginalUri, Request},
+///     http::{StatusCode, Uri},
+///     routing::get,
+/// };
+/// use batter_axum::{
+///     GuardedRouter, HttpBoundary, InProcessRefusal, RequestPolicy, ResponseConstructionBudget,
+/// };
+/// use batter_core::lifecycle::ShutdownHandle;
+/// use std::time::Duration;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+/// approval.approve();
+/// let budget = ResponseConstructionBudget::new(Duration::from_secs(1))?;
+/// let client = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
+///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+///     .await?
+///     .in_process();
+///
+/// // A routing record, here inserted by hand: refused before any route runs.
+/// let mut reused = Request::builder().uri("/work").body(Body::empty())?;
+/// reused
+///     .extensions_mut()
+///     .insert(OriginalUri(Uri::from_static("/earlier")));
+/// let refused = client.request(reused).await;
+/// assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+/// assert!(refused.extensions().get::<InProcessRefusal>().is_some());
+///
+/// // A response the boundary builds never carries it.
+/// let fresh = Request::builder().uri("/work").body(Body::empty())?;
+/// let served = client.request(fresh).await;
+/// assert_eq!(served.status(), StatusCode::OK);
+/// assert!(served.extensions().get::<InProcessRefusal>().is_none());
+/// # Ok(()) }
+/// ```
+///
+/// An application cannot construct it, by its field or by the crate's own
+/// constructor:
+///
+/// ```compile_fail,E0451
+/// fn forge() -> batter_axum::InProcessRefusal {
+///     batter_axum::InProcessRefusal { _private: () }
+/// }
+/// ```
+///
+/// ```compile_fail,E0624
+/// fn forge() -> batter_axum::InProcessRefusal {
+///     batter_axum::InProcessRefusal::new()
+/// }
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct InProcessRefusal {
+    _private: (),
+}
+
+impl InProcessRefusal {
+    /// The marker of a refusal by [`RouterClient::request`], its only caller.
+    pub(crate) const fn new() -> Self {
+        Self { _private: () }
     }
 }

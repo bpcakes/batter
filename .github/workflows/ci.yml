@@ -32,7 +32,7 @@ jobs:
       runlimit_postgres: ${{ steps.plan.outputs.runlimit_postgres }}
       flags_postgres: ${{ steps.plan.outputs.flags_postgres }}
     env:
-      RUSTUP_TOOLCHAIN: "1.98.1"
+      RUSTUP_TOOLCHAIN: "1.100.0"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -53,7 +53,7 @@ jobs:
     if: >-
       ${{ !cancelled() && github.event_name != 'schedule'
       && (needs.plan.result != 'success' || needs.plan.outputs.runlimit_postgres == 'true') }}
-    name: Native Runlimit PostgreSQL (1.98.1)
+    name: Native Runlimit PostgreSQL (1.100.0)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -71,7 +71,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      RUSTUP_TOOLCHAIN: "1.98.1"
+      RUSTUP_TOOLCHAIN: "1.100.0"
       RUNLIMIT_POSTGRES_TEST_DATABASE_URL: postgresql://runlimit:runlimit@127.0.0.1:5432/runlimit
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -99,7 +99,7 @@ jobs:
     if: >-
       ${{ !cancelled() && github.event_name != 'schedule'
       && (needs.plan.result != 'success' || needs.plan.outputs.flags_postgres == 'true') }}
-    name: Flags PostgreSQL 18 (1.98.1)
+    name: Flags PostgreSQL 18 (1.100.0)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -124,7 +124,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      RUSTUP_TOOLCHAIN: "1.98.1"
+      RUSTUP_TOOLCHAIN: "1.100.0"
       # A superuser admin URL; each test leases and drops its own database.
       BATTER_FLAGS_POSTGRES_TEST_DATABASE_URL: postgresql://ci_admin:ci_admin@127.0.0.1:5432/ci_admin
     steps:
@@ -153,11 +153,11 @@ jobs:
     needs: plan
     if: ${{ !cancelled() && github.event_name != 'schedule' }}
     # Linux verification covers the workspace; this job covers macOS process behavior.
-    name: Subprocess harness (macOS, 1.98.1)
+    name: Subprocess harness (macOS, 1.100.0)
     runs-on: macos-latest
     timeout-minutes: 30
     env:
-      RUSTUP_TOOLCHAIN: "1.98.1"
+      RUSTUP_TOOLCHAIN: "1.100.0"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust toolchain
@@ -210,7 +210,7 @@ jobs:
       fail-fast: false
       matrix:
         # The pinned toolchain is also every package's declared rust-version.
-        rust: ${{ fromJSON(github.event_name == 'schedule' && '["stable"]' || '["1.98.1"]') }}
+        rust: ${{ fromJSON(github.event_name == 'schedule' && '["stable"]' || '["1.100.0"]') }}
     env:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:

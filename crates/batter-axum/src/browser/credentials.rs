@@ -150,7 +150,7 @@ pub(crate) fn record(extensions: &mut Extensions, access: CredentialAccess) {
 /// Application layers that replace extensions after admission remain
 /// application-controlled. A handler can still
 /// parse the raw `Cookie` field itself, and
-/// [`low_level::read_unchecked_cookie`](crate::low_level::read_unchecked_cookie)
+/// [`crate::low_level::read_unchecked_cookie`]
 /// reads one without the group's decision; both leave the mutation check with
 /// the caller.
 pub struct BrowserCredentials {

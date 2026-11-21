@@ -2,7 +2,7 @@
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 
 use super::*;
-use crate::{GroupPolicy, GuardedRouter, HttpBoundary, ResponseConstructionBudget, correlation};
+use crate::{GroupPolicy, ResponseConstructionBudget, correlation};
 use axum::{body::Body, routing::get};
 use batter_core::lifecycle::ShutdownHandle;
 use std::time::Duration;
@@ -32,29 +32,27 @@ async fn renderer_metadata_strips_every_value_type_and_preserves_public_extensio
 
 #[tokio::test]
 async fn a_new_gate_replaces_an_inbound_record_instead_of_reusing_it() {
+    use axum::{Router, middleware};
+    use tower::ServiceExt;
     let (control, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let policy = RequestPolicy::new(
         control.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     );
-    let app = HttpBoundary::new(GroupPolicy::gated(
-        policy,
-        GroupGate::new(|| Gated::Serve(23_u64)),
-    ))
-    .assemble(GuardedRouter::new().route(
-        "/work",
-        get(|view: GateView<u64>| async move {
-            assert_eq!(*view.value(), 23);
-        }),
-    ))
-    .await
-    .unwrap()
-    .in_process();
+    // Exercise group entry directly: client entry refuses private records first.
+    let app = GroupPolicy::gated(policy, GroupGate::new(|| Gated::Serve(23_u64)))
+        .apply(Router::new().route(
+            "/work",
+            get(|view: GateView<u64>| async move {
+                assert_eq!(*view.value(), 23);
+            }),
+        ))
+        .layer(middleware::from_fn(crate::low_level::operational_http));
     let mut request = Request::builder().uri("/work").body(Body::empty()).unwrap();
     request.extensions_mut().insert(GateRecord(Arc::new(7_u64)));
     assert_eq!(
-        app.request(request).await.status(),
+        app.oneshot(request).await.unwrap().status(),
         axum::http::StatusCode::OK
     );
 }

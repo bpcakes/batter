@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use crate::{
     HttpFailure,
     observation::{ObservationState, observe_response},
@@ -20,32 +23,72 @@ use tracing::Instrument;
 #[derive(Clone)]
 struct OperationalScope(CorrelationId);
 
-/// Pass data to application renderers without delegating the original
-/// request's observation, operational ownership or admission. A renderer can
-/// clone Parts into another request and run supported middleware, so removing
-/// only the direct quota writer would leave shared observation mutation
-/// reachable, and a kept admission record would admit the new request. A kept
-/// browser credential record would let the new request present cookies under
-/// the original request's decision; no current renderer runs after a group's
-/// browser gate records one, so its removal guards future layer orders. The
-/// group gate record is also removed, independent of its captured value type.
-/// Keep public correlation and application extensions available for rendering.
-pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
-    clear_request_records(&mut parts.extensions);
-    parts
+/// Generate [`renderer_parts`] and [`carries_private_record`] from one list,
+/// so the filter and the in-process entry check cannot name different
+/// records. Tests read `private_record_names` to require a fixture per record
+/// and `private_records_present` to check that each fixture holds only its
+/// own. Adding a record here changes the documented refusal: also add it to
+/// the list in `InProcessClient::request`'s rustdoc.
+macro_rules! private_records {
+    ($($record:ty),+ $(,)?) => {
+        /// Pass data to application renderers without delegating the original
+        /// request's observation, operational ownership or admission. A
+        /// renderer can clone Parts into another request and run supported
+        /// middleware, so removing only the direct quota writer would leave
+        /// shared observation mutation reachable, and a kept admission record
+        /// would admit the new request. A kept browser credential record
+        /// would let the new request present cookies under the original
+        /// request's decision; no current renderer runs after a group's
+        /// browser gate records one, so its removal guards future layer
+        /// orders. The group gate record is also removed, independent of its
+        /// captured value type. Keep public correlation and application
+        /// extensions available for rendering.
+        pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
+            $(parts.extensions.remove::<$record>();)+
+            parts
+        }
+
+        /// Whether the extensions carry a request record that only a Batter
+        /// layer writes: one of the private types [`renderer_parts`] removes.
+        ///
+        /// An arriving request never carries one. None of these types can be
+        /// named or constructed outside this crate, so one is present only in
+        /// a request that a Batter layer already processed, or in a map
+        /// copied from one. The in-process entry check refuses such a request.
+        pub(crate) fn carries_private_record(extensions: &Extensions) -> bool {
+            $(extensions.get::<$record>().is_some())||+
+        }
+
+        /// The type name of every record in the list, for tests that need
+        /// one fixture per record.
+        #[cfg(test)]
+        pub(crate) fn private_record_names() -> Vec<&'static str> {
+            vec![$(std::any::type_name::<$record>()),+]
+        }
+
+        /// The type names of the listed records present in `extensions`,
+        /// for tests that need to know which record a map holds.
+        #[cfg(test)]
+        pub(crate) fn private_records_present(extensions: &Extensions) -> Vec<&'static str> {
+            let mut present = Vec::new();
+            $(
+                if extensions.get::<$record>().is_some() {
+                    present.push(std::any::type_name::<$record>());
+                }
+            )+
+            present
+        }
+    };
 }
 
-/// A new in-process request and renderer metadata inherit public metadata,
-/// never the previous request's observation or policy ownership. Internal
-/// nested middleware on the same request still shares these records.
-pub(crate) fn clear_request_records(extensions: &mut Extensions) {
-    extensions.remove::<crate::quota_observation::QuotaObservation>();
-    extensions.remove::<ObservationState>();
-    extensions.remove::<crate::boundary::gate::GateRecord>();
-    extensions.remove::<OperationalScope>();
-    extensions.remove::<crate::admitted::Admission>();
-    extensions.remove::<crate::browser::CredentialAccess>();
-}
+private_records!(
+    crate::quota_observation::QuotaObservation,
+    ObservationState,
+    crate::boundary::gate::GateRecord,
+    OperationalScope,
+    crate::admitted::Admission,
+    crate::browser::CredentialAccess,
+);
 
 /// The correlation generated by the operational wrapper that owns this request.
 ///

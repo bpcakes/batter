@@ -1,16 +1,17 @@
-//! Copy only public HTTP extensions from a genuinely admitted request.
+//! Whole extension maps from a gated browser group are refused; public extensions copied by type are rejudged.
 use crate::capture::Capture;
 use axum::{
     Extension,
     body::{Body, to_bytes},
-    extract::Request,
+    extract::{OriginalUri, Request},
     http::{Extensions, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use batter_axum::{
-    BrowserPolicy, GateView, Gated, GroupGate, GroupPolicy, GuardedRouter, HttpBoundary,
-    MutationCheckWaiver, RequestPolicy, ResponseConstructionBudget, RouteGroup,
+    BrowserPolicy, CorrelationId, GateView, Gated, GroupGate, GroupPolicy, GuardedRouter,
+    HttpBoundary, InProcessRefusal, MutationCheckWaiver, RequestPolicy, ResponseConstructionBudget,
+    RouteGroup,
     browser::{BrowserCredentials, CookieHeaderPolicy, CookieName, PrivateResponsePolicy},
 };
 use batter_core::lifecycle::ShutdownHandle;
@@ -89,10 +90,31 @@ fn copied_extensions_are_rejudged_by_the_destination_group() {
                     HttpBoundary::new(policy).assemble(routes).await.unwrap()
                 }.in_process();
                 for path in ["/view", "/cookies", "/metadata"] {
+                    // Whole-map reuse is refused at entry, even with OriginalUri removed,
+                    // because private gate, credential and observation records remain.
+                    let mut stripped = inherited.clone();
+                    stripped.remove::<OriginalUri>();
+                    for map in [inherited.clone(), stripped] {
+                        let mut refused_request = Request::builder().method("POST").uri(path)
+                            .header("cookie", "session=opaque").body(Body::empty()).unwrap();
+                        *refused_request.extensions_mut() = map;
+                        let refused = destination.request(refused_request).await;
+                        assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+                        assert!(refused.extensions().get::<InProcessRefusal>().is_some());
+                        assert!(!refused.headers().contains_key("x-request-id"));
+                    }
+
+                    // Public extensions copied by type are accepted and rejudged by the destination group.
                     let mut request = Request::builder().method("POST").uri(path)
                         .header("cookie", "session=opaque").body(Body::empty()).unwrap();
-                    *request.extensions_mut() = inherited.clone();
+                    if let Some(value) = inherited.get::<u64>() {
+                        request.extensions_mut().insert(*value);
+                    }
+                    if let Some(id) = inherited.get::<CorrelationId>() {
+                        request.extensions_mut().insert(id.clone());
+                    }
                     let response = destination.request(request).await;
+                    assert!(response.extensions().get::<InProcessRefusal>().is_none());
                     let expected = match path {
                         "/view" if gated => Some("23"),
                         "/metadata" => Some("17"),

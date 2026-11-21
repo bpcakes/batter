@@ -47,6 +47,209 @@ contracts, capability facts and validation history.
   operations use the pool’s effective role after reset, and unreadable rows
   are isolated during write-side invariant checks.
 
+- **Breaking:** refuse in-process requests that carry the adapter's own
+  request records (`batter-nff2`, `batter-28kb`;
+  [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)).
+  This is a runtime break: nothing stops compiling, but two request shapes
+  that were served now get the sanitized 500 carrying `InProcessRefusal` on
+  every call. The entry check of
+  `batter_axum::low_level::RouterClient::request`, which
+  `InProcessClient::request` and `batter_runlimit::http::TestClient::request`
+  delegate to, looked only for Axum routing records. A map that kept Batter's
+  own records with no Axum record left was accepted and lost the
+  destination's completion event. When the map also carried the operational
+  wrapper's marker, as the map of an `OPTIONS *` dispatch does after the
+  caller removed its `OriginalUri`, or one captured behind
+  `low_level::operational_http` around a service that is not a `Router`, the
+  destination answered with the earlier request's correlation and no
+  `x-request-id`; one captured behind `low_level::observe_http` alone got a
+  fresh correlation. Through `TestClient` such a map was authenticated and
+  charged. The check now also refuses a request carrying any of the adapter's
+  private request records (at this change the quota record, observation
+  state, operational marker, admission record, route-group gate record and
+  browser credential record;
+  the rustdoc of `InProcessClient::request` keeps the list), before the
+  router or any application code is polled. The filter that strips those
+  records for renderers and the new check are generated from one type list,
+  so they cannot diverge. Public values copied by type, such as
+  `CorrelationId`, are not refused, and a map captured behind
+  `low_level::request_admission` alone, which carries only the public
+  `OperationContext` and `RequestInterruptionResponder`, stays accepted; the
+  rendered probes, fallback renderer, admission's failure and interruption
+  renderers and caller-composed routers that
+  receive its earlier, possibly cancelled, context are tracked as
+  `batter-nff2.1`. No public signature changed.
+
+  Newly refused, each with its replacement:
+
+  ```rust,ignore
+  // Before: a service behind one of `observe_http`, `operational_http`,
+  // `operational_http_with_quota` or `request_scope` passed its live request
+  // to the client whole, with no router involved. It was served; now refused.
+  let response = client.request(arrival).await;
+
+  // After: a fresh request from the arrival's own parts, with each
+  // application extension copied by type. Under `nest` or `nest_service`,
+  // `parts.uri` is the path below the mount.
+  let (parts, body) = arrival.into_parts();
+  let mut next = Request::builder()
+      .method(parts.method)
+      .version(parts.version)
+      .uri(parts.uri)
+      .body(body)?;
+  *next.headers_mut() = parts.headers;
+  if let Some(label) = parts.extensions.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  // Copy every other extension the destination reads, such as a served
+  // outer router's `ConnectInfo<SocketAddr>` peer, the same way. An outer
+  // `DefaultBodyLimit` cannot be copied: set it on the boundary's own routes.
+  let response = client.request(next).await;
+  ```
+
+  ```rust,ignore
+  // Before: a map with Batter's records and no Axum record left, such as an
+  // `OPTIONS *` capture with its `OriginalUri` removed or a capture behind a
+  // `low_level` wrapper around a non-Router service. It was served; now refused.
+  earlier.remove::<OriginalUri>();
+  *next.extensions_mut() = earlier;
+
+  // After: copy each application extension by type.
+  if let Some(label) = earlier.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  ```
+
+  Unchanged, and now documented: a live request that an outer Axum router
+  dispatched and a route, fallback or `nest_service` closure hands on whole
+  was already refused for its routing records and takes the same rebuild;
+  rebuilding is in-process composition, not serving; a hand-inserted
+  `OriginalUri` is refused like an inherited one; and detection of Axum's
+  records is verified for Axum 0.8.9 only, although the dependency
+  requirement admits later 0.8 releases. The refusal's single ERROR event,
+  for every refusal, now reads
+  `in-process request refused: the request is not arrival-shaped` instead of
+  `in-process request refused: its extensions carry routing state from an
+  earlier dispatch`, so a log filter or alert on the old text must change.
+  The reference service's request client has tests for both refusals it
+  inherits.
+
+- **Breaking:** rename the in-process refusal marker from
+  `batter_axum::ReusedRoutingState` (and `batter::axum::ReusedRoutingState`)
+  to `InProcessRefusal` (`batter-nff2`). The old name stated one cause and no
+  longer fitted once the client also refused Batter's own records and a
+  hand-inserted `OriginalUri`; the new one states the outcome. The old name
+  was added on master by the `batter-oj37` entry below and never released, so
+  this cut affects only code written against unreleased master, which stops
+  compiling. No deprecated alias is kept: the name was never released, and
+  the hard-cut rule keeps none in any case. The marker's rustdoc carries a
+  `Migration:` sentence naming the old type. A public-API surface diff
+  against master finds that removal, the matching addition and no other change
+  ([output](docs/evidence/public-api-diff-2026-10-09/in-process-refusal-2026-11-20.txt)).
+  The entries below use the new name.
+
+  ```rust,ignore
+  // Before, on unreleased master only:
+  response.extensions().get::<batter::axum::ReusedRoutingState>()
+  // After:
+  response.extensions().get::<batter::axum::InProcessRefusal>()
+  ```
+
+- Stop two non-yielding fixture tests from counting child startup against their
+  five-second bounds (`batter-hiuu`). Parent-unwind cleanup is now timed from
+  startup evidence, with a separate spawn-to-cleanup bound below the ten-second
+  child emergency exit; the parent-pipe-closure exit window starts at closure,
+  and its exact exit code still separates it from the emergency exit.
+
+- Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
+  (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
+
+- **Breaking:** refuse reused Axum routing state in Runlimit's in-process
+  test transport (`batter-gp93`;
+  [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
+  `batter_runlimit::http::PreparedHttp::in_process` returned a `TestClient`
+  that dispatched its own prepared router, so it did not inherit the
+  `InProcessClient` entry check below. A request built from a whole extension
+  map cloned inside an earlier protected handler was authenticated and charged
+  one native quota unit before `Path<u64>` answered 500 with the inherited
+  captures, and inherited observation state suppressed its completion event.
+  The check, the refusal and the marker removal now live once, in the new
+  `batter_axum::low_level::RouterClient` (also
+  `batter::axum::low_level::RouterClient`), an in-process transport over a
+  caller-composed router that prepares it once with `Router::with_state(())`.
+  `InProcessClient` and `TestClient` both delegate to it. `TestClient::request`
+  still replaces the request's peer with the synthetic one, then refuses such a
+  request at entry, before lifecycle admission, authentication, the quota
+  check, a public probe or any handler: the response is
+  `render_infrastructure_failure(HttpFailure::Internal, None)` carrying
+  `InProcessRefusal`, with one static ERROR event, no completion event, no
+  `x-request-id` header and no consumed quota. The marker is removed from every
+  dispatched response. At this change the check detected Axum routing records
+  only; the `batter-nff2` entry above closes the residual it left for a map
+  that keeps Batter's own records. `RouterClient` establishes nothing about its router's
+  composition, has no crate-root alias and has no conversion into
+  `InProcessClient` or back into a `Router`. The change adds `RouterClient` and removes no name, so it
+  needs no deprecated shim; public signatures are unchanged.
+  `batter-runlimit` no longer declares `tower` as a normal dependency; its
+  `axum` feature still selects Axum, which depends on it. Behavior change: a
+  `TestClient` request whose extension map came from a dispatched request is
+  now refused.
+
+  ```rust,ignore
+  // Before: the whole map of an earlier dispatch, including its routing records.
+  let mut next = Request::builder().method("POST").uri("/view/9").body(Body::empty())?;
+  *next.extensions_mut() = earlier.clone();
+  let response = client.request(next, peer).await; // now refused: InProcessRefusal
+
+  // After: a fresh request with each application extension copied by type.
+  let mut next = Request::builder().method("POST").uri("/view/9").body(Body::empty())?;
+  if let Some(label) = earlier.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  let response = client.request(next, peer).await;
+  ```
+
+- **Breaking:** refuse `batter-axum` in-process requests that reuse Axum
+  routing state (`batter-oj37`;
+  [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-routing-state-reuse-assessment-batter-oj37)).
+  `InProcessClient::request` forwarded a request built from a whole extension
+  map cloned inside an earlier dispatch, and pinned Axum 0.8.9 treated the
+  inherited records as outer-router state: `Path` extraction answered 500 or
+  read another route's captures, an inherited invalid UTF-8 capture made a
+  valid path answer 400, `MatchedPath` and the completion event's `route`
+  gained the earlier pattern as a prefix, and inherited Batter state suppressed
+  the destination's request span and completion event. The client now checks,
+  at entry and before the router, any layer or any handler is polled, for the
+  path-parameter record that `RawPathParams` reads, `MatchedPath`, `NestedPath`
+  and `OriginalUri`; any one refuses the whole request, and nothing is
+  stripped. A refusal returns `render_infrastructure_failure(HttpFailure::Internal,
+  None)` carrying the new `InProcessRefusal` response extension (also
+  `batter::axum::InProcessRefusal`), which has no public constructor, and
+  emits one ERROR event with a fixed message and no request field; it has no
+  completion event and no `x-request-id` header. The client removes that
+  extension from every response it dispatched, so a marker a handler copied
+  or forwarded never leaves `request`. Application extensions such
+  as `ConnectInfo` are still accepted untouched. The reference service's
+  request client inherits the refusal by delegating, and
+  `batter_runlimit::http::TestClient` shares it through
+  `low_level::RouterClient` (entry above). Public signatures are unchanged.
+  Behavior change: a request whose extension map came from a dispatched
+  request is now refused.
+
+  ```rust,ignore
+  // Before: the whole map of an earlier dispatch, including its routing records.
+  let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
+  *next.extensions_mut() = earlier.clone();
+  let response = client.request(next).await; // now refused: InProcessRefusal
+
+  // After: a fresh request with each application extension copied by type.
+  let mut next = Request::builder().uri("/view/9").body(Body::empty())?;
+  if let Some(label) = earlier.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  let response = client.request(next).await;
+  ```
+
 - Outbound HTTP: give each DNS candidate a one-second minimum within the shared
   setup deadline, avoiding tiny attempt windows caused by long answer lists.
   Earlier stalled candidates can still exhaust the shared budget before a
@@ -54,12 +257,10 @@ contracts, capability facts and validation history.
   Add opt-in connection, resolver-queue and response-buffer measurements.
 
 - `batter-axum` route-group admission discards the gate and browser
-  credential records a request arrived with. A request built from another
-  request's cloned extensions and sent through an in-process client to a group
-  without a gate, or without a browser policy, no longer lets `GateView` or
-  `BrowserCredentials` accept the earlier request's record; both reject with
-  their sanitized 500. In-process dispatch also discards inherited observation
-  and operational ownership, preserving fresh correlation and completion events.
+  credential records a request arrived with, and the private gate record joins
+  the in-process client's entry refusal list (`batter-nff2` above). Rebuilding
+  a request by copying public extensions by type preserves those extensions
+  while the destination group records its own gate and browser decisions.
   The `batter-flags` operator command releases its
   runtime without waiting for blocking work, so a stalled host-name lookup
   cannot delay process exit after command settlement or an unwinding panic.
@@ -260,8 +461,9 @@ contracts, capability facts and validation history.
   router once instead of on every `TestClient::request`, matching its served
   registration (`batter-70qx`).
 
-- Fix a supervisor with no critical component and no finite-work capacity
-  publishing `Ready` before it drained with `ShutdownCause::EmptySupervisor`.
+- **Breaking:** fix a supervisor with no critical component and no
+  finite-work capacity publishing `Ready` before it drained with
+  `ShutdownCause::EmptySupervisor`.
   Admission now closes before its driver counts as started. Public signatures
   are unchanged. Behavior change: for such a service
   `StartingService::into_ready` returns `Err` and `ServiceObserver::wait_ready`
@@ -269,6 +471,14 @@ contracts, capability facts and validation history.
   `ServiceReadinessError::StoppedBeforeReady`, where they previously reported
   success for a service already draining as a configuration failure
   (`batter-70qx`).
+
+  ```rust,ignore
+  // Before: Ok for a supervisor with nothing to run, already draining.
+  let supervisor = Supervisor::new(budget);
+  // After: that readiness is Err(StoppedBeforeReady); register a critical
+  // component, or give the supervisor finite-work capacity.
+  let supervisor = Supervisor::with_process_capacity(budget, ProcessCapacity::new(8)?);
+  ```
 
 - Remove dependency declarations nothing used: the `sqlx` normal dependency and
   a duplicate `serde_json` dev-dependency of `batter-runledger`, the `rt` feature
@@ -279,10 +489,11 @@ contracts, capability facts and validation history.
   the SQLx verifier README examples, which still called three removed
   boolean-parameter constructors (`batter-70qx`).
 
-- Zero the response-body storage `batter-outbound-http` allocates before
-  releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
-  future is dropped, when growth replaces an allocation, and when the last
-  `Bytes` clone or slice of a `Body::Complete` is released (`batter-53nf`).
+- **Breaking:** zero the response-body storage `batter-outbound-http`
+  allocates before releasing it: after `TooLarge` and every `Body::Failed`,
+  when an exchange future is dropped, when growth replaces an allocation, and
+  when the last `Bytes` clone or slice of a `Body::Complete` is released
+  (`batter-53nf`).
   Public signatures are unchanged, so callers compile as before. Behavior change:
   a returned body is never uniquely owned, even through its only handle.
   `try_into_mut` now always returns `Err`, so code that unwraps it panics, and
@@ -290,6 +501,13 @@ contracts, capability facts and validation history.
   to wipe. A completed body also keeps the allocation it grew into, at most twice
   its length, instead of being shrunk. Hyper, rustls and kernel buffers, response
   headers and request bodies are not covered.
+
+  ```rust,ignore
+  // Before: reclaimed the allocation when this was the only handle.
+  let owned = bytes.try_into_mut().unwrap(); // now always Err, so this panics
+  // After: copy, and wipe the copy when done with it.
+  let owned = bytes.to_vec();
+  ```
 
 - Preserve nested HTTP interruption outcomes in response-construction telemetry,
   including deadline expiry before bulkhead execution starts. Carry classification
@@ -1061,7 +1279,8 @@ contracts, capability facts and validation history.
   reference worker keeps two only as negative controls, for services without an
   exit claim and for an invocation that already ended.
 
-- Add fixture pools for separately provisioned PostgreSQL logins (`batter-7r3.8`).
+- **Breaking:** add fixture pools for separately provisioned PostgreSQL logins
+  (`batter-7r3.8`).
   `ConnectionPlan::declare(reserved)` returns a `PlanDeclaration`; each
   `pool(PlannedPool)` returns an opaque `PoolKey`, and `FixtureDatabase::pool` /
   `DatabaseFixture::pool` select by key, refusing keys from another plan.
@@ -1074,8 +1293,9 @@ contracts, capability facts and validation history.
   the lease. Role provisioning, grants and `DROP ROLE` stay caller-owned.
   `ConnectionPlan::new` keeps its signature and lease-login behaviour.
 
-  Changed (not a hard cut; no `Breaking:`, `Migration:` or shim applies, and no
-  public item, signature or variant changed): every declared pool of a lease is
+  Changed (not a hard cut, so no `Migration:` rustdoc applies, and no public
+  item, signature or variant changed; labelled `Breaking:` for the run-time
+  failure below): every declared pool of a lease is
   now constructed and registered before the first connectivity check, so pools
   after a failed check, or after a cancelled owned acquisition waiter, exist and
   are closed before lease cleanup.
@@ -1087,6 +1307,14 @@ contracts, capability facts and validation history.
   and `DatabaseCleanup::pool_failures` docs now say SQLx-typed rather than native,
   since that one cause is adapter-created. `ConnectionPlan` moved into a private
   submodule and is re-exported at the same path.
+
+  ```text
+  # Before: the pools connected to `other`, not to the lease's database.
+  postgres://owner@db.example/lease_db?dbname=other
+  # After: that lease URL fails with PoolAcquire/Connect before any pool
+  # exists; a lease URL selects only the lease's own database.
+  postgres://owner@db.example/lease_db
+  ```
 
 - **Breaking:** Remove all 17 public boolean-parameter wrappers introduced as
   deprecated compatibility paths in PR #67 (`batter-4dmd`). Settings selection,
@@ -1213,7 +1441,8 @@ contracts, capability facts and validation history.
   within every dependent's semver range. The
   [publication dossier](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/evidence/publication-dossier-2026-10-17.md)
   records the remaining gates; nothing is published.
-- Manage constraint triggers with the routines they bind (`batter-n2s1`,
+- **Breaking:** manage constraint triggers with the routines they bind
+  (`batter-n2s1`,
   [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
   `ManagedObject::constraint_trigger(table, name, source)` declares one
   `CREATE CONSTRAINT TRIGGER` statement (`OR REPLACE` is rejected, as
@@ -1277,6 +1506,14 @@ contracts, capability facts and validation history.
   next entry. The runtime changes above are not: the `READ COMMITTED` pin,
   and the lock privileges that existing deployments may need to grant first.
   Their migration guidance is above; no Rust shim applies to them.
+
+  ```sql
+  -- Before: enough for apply to create or replace a plain trigger.
+  GRANT TRIGGER ON app_table TO applying_login;
+  -- After: apply also locks each relation, partitions included, so the
+  -- owner grants one of the lock privileges, for example:
+  GRANT MAINTAIN ON app_table TO applying_login;
+  ```
 
 - Breaking: `batter_sqlx::managed::ManagedObjectKind` (also
   `batter::sqlx::managed::ManagedObjectKind`) gains `ConstraintTrigger`. Values
