@@ -377,11 +377,15 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   before refreshing offline query metadata. The checked-in `.sqlx` metadata is
   unchanged. Online index repair keeps its explicit `ROLLBACK` after a failed
   bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
-  runs outside a block and only warns. `runledger-test-support` now refuses
-  any client `PG*` environment variable (every `PG` name except `PGDATA` and
-  `PG_`-prefixed ones such as `PG_COLOR`) in every fixture mode, before provisioning:
-  SQLx 0.9.1 fills unset settings from them, but native test proxies dial and
-  forward to the URL host themselves. Put every setting in the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
+  runs outside a block and only warns.
+- **Breaking:** `runledger-test-support` fixtures refuse endpoints and
+  environments they accepted before (`batter-c5ci`). This is a runtime break;
+  nothing stops compiling, but test runs that passed now panic before
+  provisioning. It refuses any client `PG*` environment variable (every `PG`
+  name except `PGDATA` and `PG_`-prefixed ones such as `PG_COLOR`) in every
+  fixture mode: SQLx 0.9.1 fills unset settings from them, but native test
+  proxies dial and forward to the URL host themselves. Put every setting in
+  the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
   derived from them, now end in `?sslmode=disable` (the native test proxies'
   plaintext transport); consumers that append their own query to such a URL
   must use `&`. Every connection to an external
@@ -396,7 +400,31 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   follow `host`, `port` or TLS settings such as `sslmode=verify-full` while
   the leases fell back to SQLx's defaults. An external fixture therefore
   cannot require TLS for its leases yet. The endpoint split already existed
-  under SQLx 0.9.0.
+  under SQLx 0.9.0. Newly refused, each with its replacement:
+
+  ```rust,ignore
+  // Before: a client PG* variable was read by the fixture's SQLx pools.
+  //   $ PGSSLMODE=require cargo test -p my-jobs
+  // After: unset it; every setting comes from the URL.
+  //   $ cargo test -p my-jobs
+
+  // Before: an external admin URL with endpoint or TLS settings in its query.
+  //   RUNLEDGER_TEST_ADMIN_DATABASE_URL=postgres://u:p@db.internal/postgres?port=6543&sslmode=require
+  // After: host and port in the authority, and at most `sslmode=disable`.
+  //   RUNLEDGER_TEST_ADMIN_DATABASE_URL=postgres://u:p@db.internal:6543/postgres
+
+  // Before: appending to a derived URL with `?`.
+  let url = format!("{}?application_name=jobs", database.url());
+  // After: the derived URL already has a query.
+  let url = format!("{}&application_name=jobs", database.url());
+  ```
+
+  The panics read `unset PGSSLMODE for Runledger PostgreSQL fixtures: put
+  every connection setting in the URL` (naming every refused variable, never
+  a value) and, for an external URL, a message starting `remove the query
+  from RUNLEDGER_TEST_ADMIN_DATABASE_URL`, `give
+  RUNLEDGER_TEST_ADMIN_DATABASE_URL a DNS name or IPv4 host` or `give
+  RUNLEDGER_TEST_ADMIN_DATABASE_URL exactly one database path segment`.
   `scripts/refresh_runledger_sqlx.py` now refuses any ambient client `PG*` variable,
   parses `DATABASE_URL` once, gives `psql` the parts as its own PG* variables
   (no credentials in its arguments), gives SQLx CLI a URL

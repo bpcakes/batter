@@ -33,14 +33,9 @@ contracts, capability facts and validation history.
   the admin URL declares `hostaddr`, no host, several hosts or ports, a
   `dbname` parameter (the harness copies the query into every lease URL, so
   it would retarget each lease) or a setting SQLx cannot carry.
-  `HarnessEndpointReason` is `#[non_exhaustive]`. Behaviour change: every fixture client, including `PlannedPool::password_login`
-  pools and template targets, now uses the harness connector's plaintext
-  transport (`sslmode=disable`). In 0.0.1 an omitted or `prefer` mode let SQLx
-  negotiate TLS for fixture pools when it was built with a TLS backend; a server whose `pg_hba.conf` admits a fixture
-  login only over `hostssl` now refuses that login, and passwords for
-  `password`-method logins cross the connection unencrypted. Such fixtures are
-  unsupported, as a TLS requirement in the admin URL already was, because the
-  harness itself provisions over plaintext.
+  `HarnessEndpointReason` is `#[non_exhaustive]`. Every fixture client now
+  uses the harness connector's plaintext transport (see the breaking entry
+  below).
   Clients inheriting its login use the admin URL's password, or none for a
   trust or peer URL (treated as an empty password; no passfile is read).
   A client `PG*` variable is any `PG` name except the server's `PGDATA` and
@@ -88,7 +83,66 @@ contracts, capability facts and validation history.
 
   To keep a run working, unset client `PG*` variables (all but `PGDATA` and
   `PG_*`) and move every connection setting into the harness admin URL. No
-  `#[deprecated]` shim applies: an added variant has no old name to alias.
+  shim is kept, as the hard-cut rule requires.
+
+  This is also a runtime break: calls that succeeded in 0.0.1 now fail before
+  provisioning. Newly refused, each with its replacement:
+
+  ```rust,ignore
+  // Before: a client PG* variable in the test environment (PGHOST, PGUSER,
+  // PGSSLMODE, ...) was read by SQLx for fixture pools. Now every suite and
+  // scope call returns Endpoint(AmbientEnvironment).
+  //   $ PGHOST=db.internal cargo test
+  // After: unset it and put the setting in the harness admin URL.
+  HarnessConfig::new("suite")?
+      .with_admin_database_url("postgres://owner:secret@db.internal:5432/postgres");
+
+  // Before: the admin URL carried `dbname`, which the harness copied into
+  // every lease URL. Now Endpoint(DatabaseParameter).
+  "postgres://owner:secret@db.internal/postgres?dbname=postgres"
+  // After: name the admin database in the path only.
+  "postgres://owner:secret@db.internal/postgres"
+
+  // Before: `hostaddr`, several hosts (`db-a,db-b`), several ports, no host,
+  // or settings SQLx options cannot carry (`target_session_attrs`,
+  // `load_balance_hosts`, `keepalives*`, `tcp_user_timeout`, a required TLS
+  // `sslmode`, `options` other than `-c key=value`). Now refused with the
+  // matching `HarnessEndpointReason`.
+  // After: one host and port in the authority, and in the query only what
+  // fixture options carry, such as `sslmode=disable` or `prefer`,
+  // `application_name`, `-c key=value` `options`, `connect_timeout` or
+  // `channel_binding=disable`.
+  ```
+
+  The error's `Display` is `fixture harness endpoint refused before
+  provisioning`; its source names the reason, for example `a PG* client
+  environment variable is set; put every fixture setting in the admin URL` or
+  `the fixture admin URL sets dbname, which would override every lease
+  database`. Neither text existed in 0.0.1, so a filter that matched the
+  earlier SQLx connection error must change.
+- **Breaking:** every fixture client, including `PlannedPool::password_login`
+  pools and template targets, now uses the harness connector's plaintext
+  transport (`sslmode=disable`) (`batter-c5ci.20`). This is a runtime break;
+  nothing stops compiling. In 0.0.1 an admin URL with an omitted or `prefer`
+  `sslmode` let SQLx negotiate TLS for fixture pools when SQLx was built with
+  a TLS backend. The harness itself always provisions over plaintext, so
+  fixtures that need TLS are unsupported, as a TLS requirement in the admin
+  URL already was.
+
+  ```rust,ignore
+  // Before: a restricted login admitted only by a `hostssl` pg_hba.conf rule
+  // connected over TLS. Now the same declaration connects in plaintext and the
+  // server refuses it.
+  plan.pool(PlannedPool::password_login(options, "restricted", secret));
+  // After: admit fixture logins over plaintext on the disposable cluster,
+  // for example with a `host` rule beside the `hostssl` one:
+  //   host  all  restricted  127.0.0.1/32  scram-sha-256
+  ```
+
+  PostgreSQL reports the refusal as SQLSTATE `28000` with a message such as
+  `no pg_hba.conf entry for host "127.0.0.1", user "restricted", database
+  "...", no encryption`. Passwords for `password`-method logins now cross the
+  connection unencrypted; use `scram-sha-256` for fixture logins.
 - **Breaking:** fixture template initializers receive a typed
   `batter_sqlx::test_support::TemplateTarget` instead of a URL `String`, and
   `FixtureSuite::template` and `FixtureScope::template` return the new
@@ -137,6 +191,9 @@ contracts, capability facts and validation history.
   needs them uses the harness directly, outside the fixture contract. No
   `#[deprecated]` shim is kept: a `String` initializer or a returned harness
   template would restore exactly the raw-URL path this change removes.
+  A public-API surface diff against master finds no removal; the signature
+  changes it cannot see are listed in its notes
+  ([output](docs/evidence/public-api-diff-2026-10-09/fixture-endpoint-2026-11-21.txt)).
 - Disclosed upstream regressions: outside a server transaction SQLx re-sends a
   statement whose first response is SQLSTATE `26000` or a stale cached-plan
   `0A000`, which can repeat a non-transactional effect; with the statement
