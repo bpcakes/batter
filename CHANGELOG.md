@@ -120,8 +120,8 @@ contracts, capability facts and validation history.
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
 
-- Refuse reused Axum routing state in Runlimit's in-process test transport
-  (`batter-gp93`;
+- **Breaking:** refuse reused Axum routing state in Runlimit's in-process
+  test transport (`batter-gp93`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#runlimit-in-process-routing-state-assessment-batter-gp93)).
   `batter_runlimit::http::PreparedHttp::in_process` returned a `TestClient`
   that dispatched its own prepared router, so it did not inherit the
@@ -165,8 +165,8 @@ contracts, capability facts and validation history.
   let response = client.request(next, peer).await;
   ```
 
-- Refuse `batter-axum` in-process requests that reuse Axum routing state
-  (`batter-oj37`;
+- **Breaking:** refuse `batter-axum` in-process requests that reuse Axum
+  routing state (`batter-oj37`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-routing-state-reuse-assessment-batter-oj37)).
   `InProcessClient::request` forwarded a request built from a whole extension
   map cloned inside an earlier dispatch, and pinned Axum 0.8.9 treated the
@@ -230,8 +230,9 @@ contracts, capability facts and validation history.
   router once instead of on every `TestClient::request`, matching its served
   registration (`batter-70qx`).
 
-- Fix a supervisor with no critical component and no finite-work capacity
-  publishing `Ready` before it drained with `ShutdownCause::EmptySupervisor`.
+- **Breaking:** fix a supervisor with no critical component and no
+  finite-work capacity publishing `Ready` before it drained with
+  `ShutdownCause::EmptySupervisor`.
   Admission now closes before its driver counts as started. Public signatures
   are unchanged. Behavior change: for such a service
   `StartingService::into_ready` returns `Err` and `ServiceObserver::wait_ready`
@@ -239,6 +240,14 @@ contracts, capability facts and validation history.
   `ServiceReadinessError::StoppedBeforeReady`, where they previously reported
   success for a service already draining as a configuration failure
   (`batter-70qx`).
+
+  ```rust,ignore
+  // Before: Ok for a supervisor with nothing to run, already draining.
+  let supervisor = Supervisor::new(budget);
+  // After: that readiness is Err(StoppedBeforeReady); register a critical
+  // component, or give the supervisor finite-work capacity.
+  let supervisor = Supervisor::with_process_capacity(budget, ProcessCapacity::new(8)?);
+  ```
 
 - Remove dependency declarations nothing used: the `sqlx` normal dependency and
   a duplicate `serde_json` dev-dependency of `batter-runledger`, the `rt` feature
@@ -249,10 +258,11 @@ contracts, capability facts and validation history.
   the SQLx verifier README examples, which still called three removed
   boolean-parameter constructors (`batter-70qx`).
 
-- Zero the response-body storage `batter-outbound-http` allocates before
-  releasing it: after `TooLarge` and every `Body::Failed`, when an exchange
-  future is dropped, when growth replaces an allocation, and when the last
-  `Bytes` clone or slice of a `Body::Complete` is released (`batter-53nf`).
+- **Breaking:** zero the response-body storage `batter-outbound-http`
+  allocates before releasing it: after `TooLarge` and every `Body::Failed`,
+  when an exchange future is dropped, when growth replaces an allocation, and
+  when the last `Bytes` clone or slice of a `Body::Complete` is released
+  (`batter-53nf`).
   Public signatures are unchanged, so callers compile as before. Behavior change:
   a returned body is never uniquely owned, even through its only handle.
   `try_into_mut` now always returns `Err`, so code that unwraps it panics, and
@@ -260,6 +270,13 @@ contracts, capability facts and validation history.
   to wipe. A completed body also keeps the allocation it grew into, at most twice
   its length, instead of being shrunk. Hyper, rustls and kernel buffers, response
   headers and request bodies are not covered.
+
+  ```rust,ignore
+  // Before: reclaimed the allocation when this was the only handle.
+  let owned = bytes.try_into_mut().unwrap(); // now always Err, so this panics
+  // After: copy, and wipe the copy when done with it.
+  let owned = bytes.to_vec();
+  ```
 
 - Preserve nested HTTP interruption outcomes in response-construction telemetry,
   including deadline expiry before bulkhead execution starts. Carry classification
