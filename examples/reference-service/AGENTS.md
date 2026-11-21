@@ -55,8 +55,10 @@ Unix-only application is not a reusable database framework.
   the client fixes HTTP/1.1, no redirects/proxies/retries/decompression regardless
   of additive reqwest features. Its TLS helper is also loaded by live fixtures.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
-  `src/http.rs` assembles them through `HttpBoundary`; `src/http/tests.rs` and
-  `src/http/tests/admission_order.rs` cover the boundary without PostgreSQL.
+  `src/http.rs` assembles them through `HttpBoundary`; `src/http/tests.rs`,
+  `src/http/tests/admission_order.rs` and `src/http/tests/reused_request.rs`
+  cover the boundary without PostgreSQL, the last one the request client's
+  inherited refusal of a reused extension map.
 - `src/request.rs` owns direct-socket peer trust and combines it with the shared
   adapter correlation without owning application authority or request lifetime.
 - `src/schema.rs` owns repeated migration/compatibility/producer-definition startup.

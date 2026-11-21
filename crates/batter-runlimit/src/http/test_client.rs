@@ -13,8 +13,8 @@ use std::net::SocketAddr;
 /// It dispatches through `batter_axum::low_level::RouterClient`, the transport
 /// that `batter_axum::InProcessClient` also delegates to, so it accepts only
 /// an arrival-shaped request: [`Self::request`] refuses one whose extensions
-/// carry an Axum routing record from an earlier dispatch before the protected
-/// assembly runs.
+/// carry an Axum routing record or one of the HTTP adapter's own private
+/// request records before the protected assembly runs.
 ///
 /// ```compile_fail
 /// async fn cannot_serve(listener: tokio::net::TcpListener, client: batter_runlimit::http::TestClient) {
@@ -44,7 +44,8 @@ impl TestClient {
     /// The request must be arrival-shaped. The entry contract is
     /// `batter_axum::low_level::RouterClient::request`, the one that
     /// `batter_axum::InProcessClient::request` also delegates to, which lists
-    /// the detected Axum routing records and the refusal: a request built
+    /// the detected Axum routing records, the adapter's private records and
+    /// the refusal: a request built
     /// from a whole extension map cloned inside an earlier dispatch is
     /// refused whole, nothing is stripped, and the response carries the
     /// `batter_axum::InProcessRefusal` marker; a dispatched response never

@@ -1,12 +1,15 @@
-//! The entry check's private-record predicate and the renderer filter cover
-//! the same records, and the in-process client refuses each of them alone.
+//! Every record of the one private-record list has a fixture, the renderer
+//! filter removes it, and the in-process client refuses it alone.
 
-use super::{CorrelationId, OperationalScope, carries_private_record, renderer_parts};
+use super::{
+    CorrelationId, OperationalScope, carries_private_record, private_record_names, renderer_parts,
+};
 use crate::{
     InProcessRefusal, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
     admitted,
     browser::{CredentialAccess, record_credential_access},
     low_level::RouterClient,
+    observation::ObservationState,
     quota_observation::QuotaObservation,
 };
 use axum::{
@@ -56,21 +59,35 @@ fn admission_alone() -> Extensions {
     extensions
 }
 
-/// Each private record the renderer filter removes, alone in a map. The
-/// observation state's own module covers that fifth type.
+fn alone<T: Clone + Send + Sync + 'static>(record: T) -> (&'static str, Extensions) {
+    let mut extensions = Extensions::new();
+    extensions.insert(record);
+    (std::any::type_name::<T>(), extensions)
+}
+
+/// Each private record, alone in a map and named by its type.
 fn each_alone() -> Vec<(&'static str, Extensions)> {
-    let mut quota = Extensions::new();
-    quota.insert(QuotaObservation::default());
-    let mut operational = Extensions::new();
-    operational.insert(scope());
     let mut credential = Extensions::new();
     record_credential_access(&mut credential, CredentialAccess::Accepted);
     vec![
-        ("quota", quota),
-        ("operational", operational),
-        ("credential", credential),
-        ("admission", admission_alone()),
+        alone(QuotaObservation::default()),
+        alone(ObservationState::default()),
+        alone(scope()),
+        (std::any::type_name::<CredentialAccess>(), credential),
+        (
+            std::any::type_name::<admitted::Admission>(),
+            admission_alone(),
+        ),
     ]
+}
+
+#[test]
+fn every_listed_private_record_has_a_fixture() {
+    let mut listed = private_record_names();
+    let mut fixtures: Vec<_> = each_alone().into_iter().map(|(name, _)| name).collect();
+    listed.sort_unstable();
+    fixtures.sort_unstable();
+    assert_eq!(listed, fixtures);
 }
 
 #[tokio::test]
@@ -106,11 +123,12 @@ async fn each_private_record_alone_is_detected_and_refused_before_the_router_run
 }
 
 #[tokio::test]
-async fn the_renderer_filter_removes_every_record_the_predicate_detects() {
+async fn the_renderer_filter_removes_each_private_record() {
     for (name, extensions) in each_alone() {
         let mut request = Request::new(());
         *request.extensions_mut() = extensions;
         let (parts, ()) = request.into_parts();
+        assert!(carries_private_record(&parts.extensions), "{name}");
         let filtered = renderer_parts(parts);
         assert!(!carries_private_record(&filtered.extensions), "{name}");
     }

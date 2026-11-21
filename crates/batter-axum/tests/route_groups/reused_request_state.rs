@@ -3,18 +3,19 @@
 
 use super::{
     reused_routing::{Fixture, Label, assert_refusal, get_request, raw_params, reusing},
-    support::{body_text, count},
+    support::{SECOND, body_text, count, ready_handle, request_policy},
 };
 use axum::{
     Router,
     body::Body,
     extract::{MatchedPath, NestedPath, OriginalUri, Request, rejection::RawPathParamsRejection},
-    http::{Extensions, Method, StatusCode},
-    middleware::from_fn,
-    response::IntoResponse,
+    http::{Extensions, Method, StatusCode, Version},
+    middleware::{from_fn, from_fn_with_state},
+    response::{IntoResponse, Response},
     routing::any,
 };
-use batter_axum::{CorrelationId, InProcessRefusal, low_level};
+use batter_axum::{CorrelationId, InProcessRefusal, RequestInterruptionResponder, low_level};
+use batter_core::operation::OperationContext;
 use std::{
     convert::Infallible,
     sync::{Arc, Mutex},
@@ -99,32 +100,59 @@ async fn a_public_correlation_copied_by_type_is_replaced_not_refused() {
     assert_eq!(count(&fixture.views), 1);
 }
 
+/// The documented migration for a request another router hands on: a fresh
+/// request from the arrival's own parts, with each application extension
+/// copied by type.
+fn rebuild(arrival: Request) -> Request {
+    let (parts, body) = arrival.into_parts();
+    let mut request = Request::builder()
+        .method(parts.method)
+        .version(parts.version)
+        .uri(parts.uri)
+        .body(body)
+        .unwrap();
+    *request.headers_mut() = parts.headers;
+    if let Some(label) = parts.extensions.get::<Label>() {
+        request.extensions_mut().insert(label.clone());
+    }
+    request
+}
+
+/// A request carrying a method, version, header, body and application
+/// extension that the destination's `/echo` route reports.
+fn arrival(path: &str) -> Request {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .version(Version::HTTP_2)
+        .uri(path)
+        .header("x-scenario", "forwarded")
+        .body(Body::from("payload"))
+        .unwrap();
+    request.extensions_mut().insert(Label("carried"));
+    request
+}
+
 #[tokio::test]
 async fn a_live_request_forwarded_by_an_outer_router_is_refused_and_a_rebuilt_one_is_served() {
     let fixture = Fixture::new().await;
-    let forwarding = fixture.client.clone();
-    let rebuilding = fixture.client.clone();
+    let (forwarding, rebuilding, mounted) = (
+        fixture.client.clone(),
+        fixture.client.clone(),
+        fixture.client.clone(),
+    );
     let outer = Router::new()
         .route(
-            "/rebuilt",
+            "/echo",
             any(move |request: Request| {
                 let client = rebuilding.clone();
-                async move {
-                    // The supported shape: a fresh request from the arrival's
-                    // method, headers and body, with each application
-                    // extension copied by type.
-                    let (parts, body) = request.into_parts();
-                    let mut fresh = Request::builder()
-                        .method(parts.method)
-                        .uri("/view/9")
-                        .body(body)
-                        .unwrap();
-                    *fresh.headers_mut() = parts.headers;
-                    if let Some(label) = parts.extensions.get::<Label>() {
-                        fresh.extensions_mut().insert(label.clone());
-                    }
-                    client.request(fresh).await
-                }
+                async move { client.request(rebuild(request)).await }
+            }),
+        )
+        .nest_service(
+            "/mounted",
+            tower::service_fn(move |request: Request| {
+                let client = mounted.clone();
+                async move { Ok::<_, Infallible>(client.request(rebuild(request)).await) }
             }),
         )
         .fallback(move |request: Request| {
@@ -140,13 +168,122 @@ async fn a_live_request_forwarded_by_an_outer_router_is_refused_and_a_rebuilt_on
     assert_eq!(fixture.entered(), entered, "an application layer ran");
     assert_eq!(count(&fixture.views), 0);
 
-    let mut arrival = get_request("/rebuilt");
-    arrival.extensions_mut().insert(Label("carried"));
-    let served = outer.oneshot(arrival).await.unwrap();
+    // The rebuilt request keeps the arrival's method, version, target,
+    // headers, body and copied application extension.
+    let served = outer.clone().oneshot(arrival("/echo")).await.unwrap();
     assert_eq!(served.status(), StatusCode::OK);
     assert_eq!(
         body_text(served).await,
-        "id=9;route=/view/{id};label=Some(\"carried\");peer=None"
+        r#"POST HTTP/2.0 /echo scenario=Some("forwarded") label=Some("carried") body=payload"#
     );
+
+    // Under `nest_service` the arrival's target is the path below the mount,
+    // so the rebuilt request is dispatched there.
+    let served = outer.oneshot(arrival("/mounted/echo")).await.unwrap();
+    assert_eq!(served.status(), StatusCode::OK);
+    assert_eq!(
+        body_text(served).await,
+        r#"POST HTTP/2.0 /echo scenario=Some("forwarded") label=Some("carried") body=payload"#
+    );
+}
+
+/// Send `request` through `wrapper`, whose response the caller inspects.
+async fn through<S>(wrapper: S, request: Request) -> Response
+where
+    S: tower::Service<Request, Response = Response, Error = Infallible>,
+{
+    wrapper.oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_live_request_forwarded_from_inside_a_low_level_wrapper_is_refused() {
+    let fixture = Fixture::new().await;
+    let client = fixture.client.clone();
+    let forward = tower::service_fn(move |request: Request| {
+        let client = client.clone();
+        async move { Ok::<_, Infallible>(client.request(request).await) }
+    });
+    let policy = request_policy(&ready_handle(), SECOND);
+    let entered = fixture.entered();
+
+    // No router ran, so each wrapper's own record is what refuses it. The
+    // plain observer passes the refusal through untouched.
+    let observed = from_fn(low_level::observe_http).layer(forward.clone());
+    assert_refusal(through(observed, get_request("/view/9")).await).await;
+
+    // The other wrappers rewrite the refused response on the way out, but
+    // the marker survives each of them.
+    let refused = [
+        through(
+            from_fn(low_level::operational_http).layer(forward.clone()),
+            get_request("/view/9"),
+        )
+        .await,
+        through(
+            from_fn(low_level::operational_http_with_quota).layer(forward.clone()),
+            get_request("/view/9"),
+        )
+        .await,
+        through(
+            from_fn_with_state(policy, low_level::request_scope).layer(forward.clone()),
+            get_request("/view/9"),
+        )
+        .await,
+    ];
+    for (index, response) in refused.into_iter().enumerate() {
+        assert_eq!(
+            response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{index}"
+        );
+        assert!(
+            response.extensions().get::<InProcessRefusal>().is_some(),
+            "{index}"
+        );
+    }
+    assert_eq!(fixture.entered(), entered, "an application layer ran");
+    assert_eq!(count(&fixture.views), 0);
+
+    // A rebuilt request passes the same wrapper.
+    let observed = from_fn(low_level::observe_http).layer(tower::service_fn({
+        let client = fixture.client.clone();
+        move |request: Request| {
+            let client = client.clone();
+            async move { Ok::<_, Infallible>(client.request(rebuild(request)).await) }
+        }
+    }));
+    let served = through(observed, get_request("/view/9")).await;
+    assert_eq!(served.status(), StatusCode::OK);
     assert_eq!(count(&fixture.views), 1);
+}
+
+#[tokio::test]
+async fn a_map_captured_behind_request_admission_alone_carries_only_public_values() {
+    let fixture = Fixture::new().await;
+    let slot = Arc::new(Mutex::new(None));
+    let capture = slot.clone();
+    let service = tower::service_fn(move |request: Request| {
+        *capture.lock().unwrap() = Some(request.extensions().clone());
+        async { Ok::<_, Infallible>(StatusCode::OK.into_response()) }
+    });
+    // Without the operational wrapper, admission records no admission and
+    // inserts only its public context and interruption responder.
+    let admitted = from_fn_with_state(
+        request_policy(&ready_handle(), SECOND),
+        low_level::request_admission,
+    )
+    .layer(service);
+    admitted.oneshot(get_request("/anything")).await.unwrap();
+    let captured = slot.lock().unwrap().take().unwrap();
+    assert_no_routing_record(&captured).await;
+    // The earlier request's context was cancelled when its response was built.
+    assert!(captured.get::<OperationContext>().unwrap().check().is_err());
+    assert!(captured.get::<RequestInterruptionResponder>().is_some());
+
+    // Neither is a private record, so the request is served, and the
+    // boundary's own admission gives the admitted route a fresh context.
+    let response = fixture.client.request(reusing("/context", captured)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
+    assert_eq!(body_text(response).await, "live");
 }

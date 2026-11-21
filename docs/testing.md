@@ -229,8 +229,11 @@ authentication, the quota check, a public probe or a handler runs, accepts a
 fresh request's application extensions and strips a forwarded refusal marker.
 The last test in the same file covers a map that keeps only the adapter's own
 request records: once the only Axum record of an `OPTIONS *` dispatch, its
-`OriginalUri`, is removed, the request is still refused, with no
-authentication, no quota consumed and no completion event.
+`OriginalUri`, is removed, and the test has asserted that no Axum record is
+left, the request is still refused, with no authentication, no quota consumed
+and no completion event. The `batter-axum` routing-record-only maps come from a
+bare `Router`, so a private record cannot mask the routing check, and its
+in-crate tests require one fixture per entry of the shared private-record list.
 
 ## Probe response policy
 

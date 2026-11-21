@@ -6,7 +6,10 @@
 
 use super::*;
 use axum::{
-    extract::{ConnectInfo, MatchedPath, OriginalUri, Path},
+    extract::{
+        ConnectInfo, FromRequestParts, MatchedPath, NestedPath, OriginalUri, Path, RawPathParams,
+        rejection::RawPathParamsRejection,
+    },
     http::{Extensions, HeaderValue, Uri},
     response::{IntoResponse, Response},
 };
@@ -373,6 +376,21 @@ async fn a_reused_map_is_refused_before_lifecycle_admission() {
     finish(running).await;
 }
 
+/// No record that Axum routing writes is left in the map, so only the
+/// adapter's own records can refuse it.
+async fn assert_no_routing_record(extensions: &Extensions) {
+    assert!(extensions.get::<MatchedPath>().is_none());
+    assert!(extensions.get::<NestedPath>().is_none());
+    assert!(extensions.get::<OriginalUri>().is_none());
+    let mut probe = Request::new(());
+    *probe.extensions_mut() = extensions.clone();
+    let (mut parts, ()) = probe.into_parts();
+    assert!(matches!(
+        RawPathParams::from_request_parts(&mut parts, &()).await,
+        Err(RawPathParamsRejection::MissingPathParams(_))
+    ));
+}
+
 /// A map that keeps the adapter's own observation and operational records
 /// with no Axum record left is refused like any other reused map, before
 /// authentication and the quota check. Until `batter-28kb` this was accepted,
@@ -404,6 +422,7 @@ async fn a_map_with_only_inherited_batter_records_is_refused_before_authenticati
     // Once the caller removes it, no Axum record is left, and the inherited
     // Batter records are what the check refuses.
     unmatched.remove::<OriginalUri>();
+    assert_no_routing_record(&unmatched).await;
     let before = fixture.counts();
     let capture = Capture::new("info");
     let mut reused = request("/inbound", "Bearer secret-a");

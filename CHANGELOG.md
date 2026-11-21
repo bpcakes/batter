@@ -14,50 +14,79 @@ contracts, capability facts and validation history.
   The entry check of `batter_axum::low_level::RouterClient::request`, which
   `InProcessClient::request` and `batter_runlimit::http::TestClient::request`
   delegate to, looked only for Axum routing records. A map that kept Batter's
-  own records with no Axum record left, such as the map of an `OPTIONS *`
-  dispatch after the caller removed its `OriginalUri`, or one captured behind
-  a `low_level` wrapper around a service that is not a `Router`, was accepted:
-  the destination answered with the earlier request's correlation, no
-  `x-request-id` and no completion event, and through `TestClient` it was
-  authenticated and charged. The check now also refuses a request carrying
-  any of the adapter's five private request records (quota record, observation
-  state, operational marker, admission record, browser credential record),
-  with the same `InProcessRefusal` response and static ERROR event, before
-  the router or any application code is polled. Public values copied by type,
-  such as `CorrelationId`, are not refused. The contract documents now state
-  three things the earlier entries left open: a live request that an outer
-  Axum router forwards into the client is refused, and must be rebuilt; a
-  hand-inserted `OriginalUri` is refused like an inherited one; and detection
-  of Axum's records is verified for Axum 0.8.9 only, although the dependency
-  requirement admits later 0.8 releases. The reference service's request
-  client now has a test for the refusal it inherits. The response marker of a
-  refusal is renamed from `ReusedRoutingState` to `InProcessRefusal`: the old
-  name stated one cause and no longer fitted, the new one states the outcome.
-  The old name was introduced by the `batter-oj37` entry below and was never
-  released, so there is no deprecated alias; the entries below use the new
-  name. No other public signature changed. Behavior change: a request whose
-  extensions carry one of those private records is now refused.
-
-  ```rust,ignore
-  // Before, on unreleased master only:
-  response.extensions().get::<batter::axum::ReusedRoutingState>()
-  // After:
-  response.extensions().get::<batter::axum::InProcessRefusal>()
-  ```
+  own records with no Axum record left was accepted and lost the
+  destination's completion event. When the map also carried the operational
+  wrapper's marker, as the map of an `OPTIONS *` dispatch does after the
+  caller removed its `OriginalUri`, or one captured behind
+  `low_level::operational_http` around a service that is not a `Router`, the
+  destination answered with the earlier request's correlation and no
+  `x-request-id`; one captured behind `low_level::observe_http` alone got a
+  fresh correlation. Through `TestClient` such a map was authenticated and
+  charged. The check now also refuses a request carrying any of the adapter's
+  five private request records (quota record, observation state, operational
+  marker, admission record, browser credential record), with the same
+  `InProcessRefusal` response, before the router or any application code is
+  polled. The filter that strips those records for renderers and the new
+  check are generated from one type list, so they cannot diverge. Public
+  values copied by type, such as `CorrelationId`, are not refused, and a map
+  captured behind `low_level::request_admission` alone, which carries only
+  the public `OperationContext` and `RequestInterruptionResponder`, stays
+  accepted. The contract documents now state what the earlier entries left
+  open: a live request that an outer Axum router, or a service behind
+  `low_level::observe_http`, `operational_http`, `operational_http_with_quota`
+  or `request_scope`, hands to the client whole is refused and must be
+  rebuilt; rebuilding is in-process
+  composition, not serving; a hand-inserted `OriginalUri` is refused like an
+  inherited one; and detection of Axum's records is verified for Axum 0.8.9
+  only, although the dependency requirement admits later 0.8 releases. The
+  reference service's request client now has a test for the refusal it
+  inherits. No public signature changed. Behavior changes: a request whose
+  extensions carry one of those private records is now refused, including a
+  live request handed on from inside one of those `low_level` wrappers with
+  no router involved, which was served before; and the refusal's single
+  ERROR event, for every refusal, now reads
+  `in-process request refused: the request is not arrival-shaped` instead of
+  `in-process request refused: its extensions carry routing state from an
+  earlier dispatch`, so a log filter or alert on the old text must change.
 
   ```rust,ignore
   // Before: a handler of another router passes its request to the client whole.
   let response = client.request(arrival).await; // refused: InProcessRefusal
 
   // After: a fresh request from the arrival's own parts, with each
-  // application extension copied by type.
+  // application extension copied by type. Under `nest` or `nest_service`,
+  // `parts.uri` is the path below the mount.
   let (parts, body) = arrival.into_parts();
-  let mut next = Request::builder().method(parts.method).uri(parts.uri).body(body)?;
+  let mut next = Request::builder()
+      .method(parts.method)
+      .version(parts.version)
+      .uri(parts.uri)
+      .body(body)?;
   *next.headers_mut() = parts.headers;
   if let Some(label) = parts.extensions.get::<Label>() {
       next.extensions_mut().insert(label.clone());
   }
   let response = client.request(next).await;
+  ```
+
+- **Breaking:** rename the in-process refusal marker from
+  `batter_axum::ReusedRoutingState` (and `batter::axum::ReusedRoutingState`)
+  to `InProcessRefusal` (`batter-nff2`). The old name stated one cause and no
+  longer fitted once the client also refused Batter's own records and a
+  hand-inserted `OriginalUri`; the new one states the outcome. The old name
+  was added on master by the `batter-oj37` entry below and never released, so
+  this cut affects only code written against unreleased master, which stops
+  compiling. No deprecated alias is kept, as for every hard cut; the
+  marker's rustdoc carries a `Migration:` sentence naming the old type. A public-API surface diff against master finds that removal, the
+  matching addition and no other change
+  ([output](docs/evidence/public-api-diff-2026-10-09/in-process-refusal-2026-11-20.txt)).
+  The entries below use the new name.
+
+  ```rust,ignore
+  // Before, on unreleased master only:
+  response.extensions().get::<batter::axum::ReusedRoutingState>()
+  // After:
+  response.extensions().get::<batter::axum::InProcessRefusal>()
   ```
 
 - Stop two non-yielding fixture tests from counting child startup against their

@@ -414,7 +414,8 @@ with `AssembledHttp::in_process` and wraps the adapter's opaque
 `InProcessClient` in a non-service type that requires a synthetic peer for every
 request; it owns insertion of the exact `ConnectInfo<SocketAddr>` and exposes
 neither the adapter client nor a router. It delegates every request to the
-adapter client, so it inherits that client's refusal of reused routing records.
+adapter client, so it inherits that client's refusal of requests carrying Axum
+routing records or one of the adapter's own private request records.
 A synthetic peer is not evidence of a remote client, and an in-process response
 is not evidence of serving.
 `MockConnectInfo` affects extractor

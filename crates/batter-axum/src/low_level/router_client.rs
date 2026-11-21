@@ -44,10 +44,9 @@ use tower::ServiceExt;
 ///   inside its make-service conversions, so a layer wrapping a lazily built
 ///   endpoint is constructed here and never again per request.
 /// - [`request`](Self::request) accepts only an arrival-shaped request. It
-///   refuses one whose extensions carry an Axum routing record, or one of
-///   Batter's own private request records, from an earlier dispatch before
-///   the router is polled, with the sanitized internal failure carrying
-///   [`InProcessRefusal`].
+///   refuses one whose extensions carry an Axum routing record or one of
+///   Batter's own private request records before the router is polled, with
+///   the sanitized internal failure carrying [`InProcessRefusal`].
 /// - That marker is removed from every dispatched response, so a response
 ///   carries it only when the same call refused the request.
 /// - Nothing is spawned: the request is polled, and its future destroyed,
@@ -114,8 +113,8 @@ use tower::ServiceExt;
 /// }
 /// ```
 ///
-/// A bare router has none of the boundary's layers, yet a reused routing
-/// record is still refused before it runs:
+/// A bare router has none of the boundary's layers, yet a routing record,
+/// here inserted by hand, is still refused before it runs:
 ///
 /// ```
 /// use axum::{
@@ -188,12 +187,26 @@ impl RouterClient {
     /// observation state, the operational wrapper's marker, the admission
     /// record, the browser credential record or the quota record. None of
     /// those types can be named or built outside this crate, so one is
-    /// present only in a map copied from a request a Batter layer already
-    /// processed. That covers a map with no Axum record left, for example
-    /// the map of a dispatch no pattern matched, such as `OPTIONS *`, after
-    /// the caller removed its `OriginalUri`, or one captured behind a
-    /// lower-level wrapper around a service that is not a `Router`. The
-    /// refusal precedes everything inside the router, including
+    /// present only in a request a Batter layer already processed, or in a
+    /// map copied from one. That covers a map with no Axum record left, for
+    /// example the map of a dispatch no pattern matched, such as `OPTIONS *`,
+    /// after the caller removed its `OriginalUri`, or one captured behind
+    /// [`observe_http`](super::observe_http),
+    /// [`operational_http`](super::operational_http),
+    /// [`operational_http_with_quota`](super::operational_http_with_quota) or
+    /// [`request_scope`](super::request_scope) around a service that is not a
+    /// `Router`. It also covers a live request that a service behind one of
+    /// those wrappers hands to this client whole, although no router ran. A
+    /// map captured behind [`request_admission`](super::request_admission)
+    /// alone carries none: outside `operational_http` that layer inserts only
+    /// its public `OperationContext` and
+    /// [`RequestInterruptionResponder`](crate::RequestInterruptionResponder),
+    /// which are accepted like any application extension. The protected
+    /// boundary's admission gives its admitted routes fresh values, but its
+    /// probes and its metadata-only fallback renderer run outside admission
+    /// and see the inherited ones in the request metadata they receive, and a
+    /// caller-composed router that does not admit the request again hands
+    /// that earlier, possibly cancelled, context to its handlers. The refusal precedes everything inside the router, including
     /// authentication or a quota check it composes.
     pub async fn request(&self, request: Request<Body>) -> Response {
         let (mut parts, body) = request.into_parts();
@@ -240,7 +253,7 @@ async fn carries_routing_record(parts: &mut Parts) -> bool {
 fn refuse_at_entry() -> Response {
     tracing::error!(
         target: "batter",
-        "in-process request refused: its extensions carry state from an earlier dispatch"
+        "in-process request refused: the request is not arrival-shaped"
     );
     let mut response = render_infrastructure_failure(HttpFailure::Internal, None);
     response.extensions_mut().insert(InProcessRefusal::new());

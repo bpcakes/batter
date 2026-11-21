@@ -164,17 +164,24 @@ impl InProcessClient {
     /// example `request.extensions().clone()` inside a handler, always carries
     /// at least one of them. A live request that another Axum router
     /// dispatched and a route, fallback or `nest_service` closure hands on
-    /// carries the same records and is refused too: the client is an arrival
-    /// transport, not a service to mount behind a router.
+    /// whole carries the same records and is refused too; the client cannot
+    /// tell it from a reused map. The migration below rebuilds it. That is
+    /// in-process composition and does not make this client a server: a
+    /// router that rebuilds requests into it and is itself served still
+    /// serves the boundary outside protected registration, the supported
+    /// serving path.
     ///
     /// Five private records are detected as well: the observation state, the
     /// operational wrapper's marker, the admission record, the browser
     /// credential record and the quota record. Their types cannot be named or
-    /// built outside this crate, so one is present only in a map copied from
-    /// a request that a Batter layer already processed, including a map that
-    /// no longer carries any routing record. Public values such as a
-    /// [`CorrelationId`](crate::CorrelationId) are not among them; a copied
-    /// one is not refused, and the boundary generates its own identity.
+    /// built outside this crate, so one is present only in a request that a
+    /// Batter layer already processed, or in a map copied from one, including
+    /// a map that no longer carries any routing record and a live request
+    /// that a service behind a `low_level` wrapper hands on whole.
+    /// [`RouterClient::request`] names the wrappers that write one. Public
+    /// values such as a [`CorrelationId`](crate::CorrelationId) are not among
+    /// them; a copied one is not refused, and the boundary generates its own
+    /// identity.
     ///
     /// Application extensions, such as a chosen
     /// [`ConnectInfo`](axum::extract::ConnectInfo) or an application's own
@@ -241,6 +248,7 @@ impl InProcessClient {
     ///     let (parts, body) = arrival.into_parts();
     ///     let mut request = Request::builder()
     ///         .method(parts.method)
+    ///         .version(parts.version)
     ///         .uri(parts.uri)
     ///         .body(body)
     ///         .unwrap();
@@ -252,6 +260,11 @@ impl InProcessClient {
     /// }
     /// # let _ = rebuild(Request::new(Body::empty()));
     /// ```
+    ///
+    /// Under `nest` or `nest_service`, the arrival's URI is the path below
+    /// the mount, so the rebuilt request targets that path; Axum's
+    /// [`OriginalUri`] on the arrival keeps the full one. Without
+    /// `.version(parts.version)` the builder's default, HTTP/1.1, is used.
     ///
     /// The detection is a run-time check because the records cannot be reset
     /// individually: Axum keeps its path-parameter record and its nested
@@ -327,7 +340,7 @@ impl InProcessClient {
 ///     .await?
 ///     .in_process();
 ///
-/// // A routing record from an earlier dispatch: refused before any route runs.
+/// // A routing record, here inserted by hand: refused before any route runs.
 /// let mut reused = Request::builder().uri("/work").body(Body::empty())?;
 /// reused
 ///     .extensions_mut()

@@ -2432,9 +2432,14 @@ authenticity or what an application's own wrapper puts around the client. A
 wrapper is still bound by the entry check below: one that hands the client a
 live request another Axum router dispatched, from a route, fallback or
 `nest_service` closure, is refused on every request, because that request
-carries the outer router's records; it must build a fresh request from the
-arrival's method, target, headers and body and copy application extensions by
-type. Axum's routing records are the exception to caller-chosen extensions:
+carries the outer router's records; so is one that a service behind
+`low_level::observe_http`, `operational_http`, `operational_http_with_quota`
+or `request_scope` hands on whole, because it carries that wrapper's private record. Such a wrapper must
+build a fresh request from the arrival's method, version, target, headers and
+body and copy application extensions by type; under `nest` or `nest_service`
+that target is the path below the mount. Rebuilding is in-process composition,
+not serving: a router that rebuilds requests into the client and is itself
+served still serves the boundary outside protected registration. Axum's routing records are the exception to caller-chosen extensions:
 the client cannot tell a hand-inserted `OriginalUri` from an inherited one and
 refuses both. The client accepts only an arrival-shaped request:
 at entry, before the router, any layer or any application code is polled, it
@@ -2475,11 +2480,19 @@ span and completion event. Axum keeps the path-parameter and nested
 matched-path records private and `http` 1.5.0 `Extensions` has no iteration or
 retain, so individual records cannot be reset while keeping unknown application
 extensions. A map that carries Batter's private records with no Axum record
-left, such as one captured behind a `low_level` wrapper around a service that
-is not a `Router`, or the map of a dispatch no pattern matched after the
-application removed its `OriginalUri`, is refused by the private-record check.
-Public values a caller copies by type, such as a `CorrelationId`, are not
-refused; the boundary generates its own identity. The status and body of a
+left, such as one captured behind `low_level::observe_http`,
+`operational_http`, `operational_http_with_quota` or `request_scope` around a
+service that is not a `Router`, or the map of a dispatch no pattern matched
+after the application removed its `OriginalUri`, is refused by the
+private-record check. A map captured behind `low_level::request_admission`
+alone carries none: outside `operational_http` that layer inserts only its
+public `OperationContext` and `RequestInterruptionResponder`, which are
+accepted. The boundary's admission gives admitted routes fresh values, but its
+probes and metadata-only fallback renderer, outside admission, see the
+inherited ones in their request metadata, and a caller-composed router without
+admission hands the earlier, possibly cancelled, context to its handlers. Public values a caller
+copies by type, such as a `CorrelationId`, are not refused; the boundary
+generates its own identity. The status and body of a
 refusal are those of any sanitized internal failure, so only the marker
 identifies one. The check, the refusal and the marker removal are
 implemented once, in `low_level::RouterClient::request`, which

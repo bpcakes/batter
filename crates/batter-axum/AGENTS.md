@@ -87,9 +87,11 @@ Windows support and non-Unix fallbacks are out of scope.
   and the standard infrastructure renderer; it composes the existing observer once.
   Its private operational marker carries the generated identity that admission
   records. Its private `renderer_parts` filter removes quota, observation and
-  operational ownership state and the admission record at every application
-  renderer boundary, retaining public metadata. Its `carries_private_record`
-  predicate names the same records for the in-process entry check.
+  operational ownership state, the admission record and the browser credential
+  record at every application renderer boundary, retaining public metadata.
+  Its `carries_private_record` predicate, for the in-process entry check, is
+  generated from the same `private_records!` type list, so the two cannot
+  diverge.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
   `low_level::operational_http_with_quota`; its consuming start/finish states prevent terminal
   facts from being downgraded. Native quota execution belongs in batter-runlimit.
@@ -139,16 +141,22 @@ Windows support and non-Unix fallbacks are out of scope.
   client's refusal of whole extension maps captured from routed, nested,
   invalid UTF-8, fallback and native `nest_service` dispatches and of each
   routing record alone, before any layer or handler runs, with one static
-  ERROR event and no completion; `reused_routing_accepted.rs` covers
+  ERROR event and no completion. Its routing-record-only maps are captured
+  from a bare `Router`, so no private record masks the routing check;
+  `reused_routing_accepted.rs` covers
   arrival-shaped requests with application extensions, a copied or forwarded
   refusal marker removed from a dispatched response, the copy-by-type
   migration and nested captures accumulating inside one dispatch.
   `reused_request_state.rs` covers the refusal of a map that keeps only the
   boundary's own records, of maps captured behind `low_level` wrappers around
-  a service that is not a `Router`, and of a live request an outer router
-  forwards, with the rebuilt request it must send instead and a copied public
-  `CorrelationId` that is not refused; `src/correlation/tests.rs` and
-  `src/observation/tests.rs` cover each private record alone.
+  a service that is not a `Router`, of a live request an outer router or a
+  `low_level` wrapper forwards whole, the rebuilt request they must send
+  instead (method, version, target, headers, body and a copied extension,
+  also under `nest_service`), the accepted public values a
+  `request_admission`-only map carries, replaced by a live context for an
+  admitted route, and a copied public `CorrelationId`
+  that is not refused; `src/correlation/tests.rs` requires one fixture per
+  listed private record and refuses each alone.
   The pattern unit tests also compare the parser with Axum's own route
   registration, and the declared-pattern index with native routing.
 - `benches/declared_dispatch.rs` measures in-process request cost through
@@ -261,11 +269,14 @@ and no second entry point or `Result` variant. Refuse the same way a request
 carrying one of the crate's own private request records, through
 `correlation::carries_private_record`: the quota record, the observation state,
 the operational wrapper's marker, the admission record and the browser
-credential record. Keep that list identical to the one `renderer_parts`
-removes, add a new private request record to both, and never add a public type
-to it: a public value is a caller's choice. Keep refusing a live request that
-an outer Axum router forwards; the client is not a service to mount behind a
-router. The refusal is
+credential record. Both functions are generated from the one
+`private_records!` list in `src/correlation.rs`; add a new private request
+record there, with its fixture in `src/correlation/tests.rs`, and never add a
+public type to it: a public value is a caller's choice. Keep refusing a live
+request that an outer Axum router or a `low_level` wrapper forwards whole; it
+carries that dispatch's records. Do not describe the rebuild migration as
+preventing serving: a router that rebuilds into the client can still be
+served. The refusal is
 `render_infrastructure_failure(HttpFailure::Internal, None)` with the
 `InProcessRefusal` response extension, which has no public constructor or
 field, plus one static ERROR event with no request-derived field; it has no

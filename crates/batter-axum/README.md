@@ -611,15 +611,27 @@ every request it routes to a route, a path fallback or a `nest_service` service
 also gains the path-parameter record, so a request built from a whole extension
 map cloned inside an earlier dispatch is refused whole. So is a live request
 that another Axum router dispatched and a route, fallback or `nest_service`
-closure hands on: the client is an arrival transport, not a service to mount
-behind a router. These facts are verified against Axum 0.8.9 only; later 0.8
+closure hands on whole: it carries that router's records, and the client cannot
+tell it from a reused map. Rebuilding it, as below, is in-process composition
+and does not make the client a server: a router that rebuilds requests into
+the client and is itself served still serves the boundary outside protected
+registration, which is the supported serving path. These facts are verified against Axum 0.8.9 only; later 0.8
 releases, which the dependency requirement admits, are unverified. The client
 also checks the adapter's five private request records (the observation state,
 the operational wrapper's marker, the admission record, the browser credential
 record and the quota record). Only the adapter's layers write them and no other
-crate can name them, so a map that carries one came from an earlier dispatch
-even when no routing record is left on it. A public `CorrelationId` copied by
-type is not refused; the boundary generates its own identity. Nothing is
+crate can name them, so a request that carries one was already processed by a
+Batter layer, or its map was copied from one, even when no routing record is
+left on it. That includes a live request a service behind `low_level::observe_http`,
+`operational_http`, `operational_http_with_quota` or `request_scope` hands to
+the client whole. A map captured behind `low_level::request_admission` alone
+carries none of them: outside `operational_http` that layer inserts only its
+public `OperationContext` and `RequestInterruptionResponder`, which are
+accepted like any application extension. The boundary's admission gives
+admitted routes fresh values; probes and the metadata-only fallback renderer,
+which run outside admission, see the inherited ones. A public
+`CorrelationId` copied by type is not refused; the boundary generates its own
+identity. Nothing is
 stripped or repaired. The refusal is the sanitized `HttpFailure::Internal` response of
 `render_infrastructure_failure` with no correlation identifier, carrying the
 `InProcessRefusal` response extension, which has no public constructor, plus
@@ -644,10 +656,18 @@ if let Some(label) = earlier.get::<Label>() {
 }
 
 // A handler of another router does the same with the request it received,
-// instead of passing it to the client whole.
+// instead of passing it to the client whole. Under `nest` or `nest_service`,
+// `parts.uri` is the path below the mount; `OriginalUri` keeps the full one.
 let (parts, body) = arrival.into_parts();
-let mut next = Request::builder().method(parts.method).uri(parts.uri).body(body)?;
+let mut next = Request::builder()
+    .method(parts.method)
+    .version(parts.version)
+    .uri(parts.uri)
+    .body(body)?;
 *next.headers_mut() = parts.headers;
+if let Some(label) = parts.extensions.get::<Label>() {
+    next.extensions_mut().insert(label.clone());
+}
 ```
 
 Without the refusal, pinned Axum 0.8.9 would treat inherited records as outer

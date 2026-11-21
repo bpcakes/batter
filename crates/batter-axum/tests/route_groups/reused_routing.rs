@@ -6,7 +6,7 @@ use super::{
     support::{SECOND, body_text, count, ready_handle, request, request_policy},
 };
 use axum::{
-    Router,
+    Extension, Router,
     body::Body,
     extract::{
         ConnectInfo, FromRequestParts, MatchedPath, NestedPath, OriginalUri, Path, RawPathParams,
@@ -21,6 +21,7 @@ use batter_axum::{
     GuardedRouter, HttpBoundary, HttpFailure, InProcessClient, InProcessRefusal,
     render_infrastructure_failure,
 };
+use batter_core::operation::OperationContext;
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -82,6 +83,28 @@ impl Fixture {
                 ),
             )
             .route(
+                "/echo",
+                any(|request: Request| async move {
+                    let (parts, body) = request.into_parts();
+                    let label = parts.extensions.get::<Label>().map(|label| label.0);
+                    let scenario = parts.headers.get("x-scenario").cloned();
+                    let body = axum::body::to_bytes(body, 1024).await.unwrap();
+                    format!(
+                        "{} {:?} {} scenario={scenario:?} label={label:?} body={}",
+                        parts.method,
+                        parts.version,
+                        parts.uri,
+                        String::from_utf8_lossy(&body),
+                    )
+                }),
+            )
+            .route(
+                "/context",
+                get(|Extension(context): Extension<OperationContext>| async move {
+                    if context.check().is_ok() { "live" } else { "cancelled" }
+                }),
+            )
+            .route(
                 "/broken",
                 get(|| async { render_infrastructure_failure(HttpFailure::Internal, None) }),
             )
@@ -138,6 +161,29 @@ fn capturing(slot: &Slot) -> MethodRouter {
         *slot.lock().unwrap() = Some(request.extensions().clone());
         async { "captured" }
     })
+}
+
+/// The extension map of `request` dispatched through a bare Axum router with
+/// the fixture's source patterns and no Batter layer, so it carries Axum's
+/// routing records and none of Batter's private ones. A map captured inside
+/// the boundary would also carry those, and the private-record check would
+/// refuse it whatever the routing check decided.
+pub async fn natively_captured(request: Request) -> Extensions {
+    let slot = Slot::default();
+    let fallback = slot.clone();
+    let native = Router::new()
+        .route("/source/{source_id}", capturing(&slot))
+        .route("/source", capturing(&slot))
+        .nest(
+            "/outer/{outer_id}",
+            Router::new().route("/source/{source_id}", capturing(&slot)),
+        )
+        .fallback(move |request: Request| {
+            *fallback.lock().unwrap() = Some(request.extensions().clone());
+            async { StatusCode::NOT_FOUND }
+        });
+    native.oneshot(request).await.unwrap();
+    slot.lock().unwrap().take().unwrap()
 }
 
 pub fn get_request(path: &str) -> Request {
@@ -202,13 +248,12 @@ async fn a_map_with_an_invalid_utf8_capture_is_refused_for_a_valid_path() {
         raw_params(&captured).await,
         Err(RawPathParamsRejection::InvalidUtf8InPathParam(_))
     ));
-    fixture
-        .assert_refused(reusing("/view/9", captured.clone()))
-        .await;
+    fixture.assert_refused(reusing("/view/9", captured)).await;
 
     // Without the nameable records the extractor's rejection is the only
-    // evidence left, and it alone refuses the request.
-    let mut alone = captured;
+    // evidence left, and it alone refuses the request. The map comes from a
+    // bare router, so no private Batter record can refuse it instead.
+    let mut alone = natively_captured(get_request("/source/%ff")).await;
     alone.remove::<MatchedPath>();
     alone.remove::<NestedPath>();
     alone.remove::<OriginalUri>();
@@ -294,11 +339,13 @@ async fn a_map_from_a_native_nested_service_is_refused_with_its_private_record()
 #[tokio::test]
 async fn each_routing_record_alone_is_refused() {
     let fixture = Fixture::new().await;
-    let routed = fixture.captured_at("/source/7").await;
-    let nested = fixture.captured_at("/outer/3/source/7").await;
-    let unmatched = fixture.captured_at("/missing").await;
+    // Maps from a bare router carry no private Batter record, so only the
+    // routing check can refuse what is left of them.
+    let routed = natively_captured(get_request("/source/7")).await;
+    let nested = natively_captured(get_request("/outer/3/source/7")).await;
+    let unmatched = natively_captured(get_request("/missing")).await;
     // A static route has no capture, and its match still writes a list.
-    let fixed = fixture.captured_at("/source").await;
+    let fixed = natively_captured(get_request("/source")).await;
     assert_eq!(fixed.get::<MatchedPath>().unwrap().as_str(), "/source");
     assert!(raw_params(&fixed).await.unwrap().is_empty());
 
@@ -351,9 +398,7 @@ fn a_refusal_emits_one_error_and_no_completion_or_request_fields() {
         "{text}"
     );
     assert!(
-        text.contains(
-            "in-process request refused: its extensions carry state from an earlier dispatch"
-        ),
+        text.contains("in-process request refused: the request is not arrival-shaped"),
         "{text}"
     );
     for leaked in ["4242424242", "5151515151", "/view", "/source", "source_id"] {
