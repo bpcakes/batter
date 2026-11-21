@@ -1,6 +1,6 @@
 //! Process-environment ownership, checked in source: no Batter library
 //! production source reads or mutates the process environment, or discovers a
-//! directory through it, outside the one declared seam.
+//! directory through it, outside the declared seams.
 //!
 //! The scan covers the `src/` tree of every workspace member under `crates/`,
 //! minus the executable roots the shared inventory classifies and the files
@@ -33,10 +33,16 @@ use std::{
 
 use inventory::{executable_roots, members, production_sources, workspace_root};
 
-/// The one seam, and how many reads it holds: the OpenTelemetry adapter
-/// refuses ambient `OTEL_*` settings, which its upstream builders would
-/// otherwise read, by checking that none is set. It never reads a value.
-const DECLARED_SEAMS: [(&str, usize); 1] = [("crates/batter-otlp/src/lib.rs", 1)];
+/// The seams, and how many reads each holds. Both refuse ambient settings an
+/// upstream dependency would otherwise read, by checking that no variable of
+/// that kind is set, and neither reads a value: the OpenTelemetry adapter
+/// refuses `OTEL_*`, which its upstream builders read, and the SQLx fixture
+/// endpoint refuses client `PG*` variables, which SQLx's option constructor
+/// reads and the database harness does not.
+const DECLARED_SEAMS: [(&str, usize); 2] = [
+    ("crates/batter-otlp/src/lib.rs", 1),
+    ("crates/batter-sqlx/src/test_support/endpoint.rs", 1),
+];
 
 #[test]
 fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_not() {
@@ -170,7 +176,7 @@ fn no_batter_library_reads_the_process_environment_outside_its_seam() {
     assert_eq!(
         scan(&root),
         declared,
-        "environment reads outside the declared seam, or a seam whose count changed"
+        "environment reads outside the declared seams, or a seam whose count changed"
     );
     // The scope reaches the core, adapters and facade under `crates/`, while
     // classified executable roots stay exempt.

@@ -245,7 +245,10 @@ impl Environment {
         Ok(())
     }
 
-    /// The current process environment.
+    /// The current process environment: variable names only, never values.
+    /// This is a declared environment seam in
+    /// `crates/batter/tests/process_environment_ownership.rs`; keep it the
+    /// crate's only read.
     pub(super) fn process() -> Self {
         Self {
             pg_variables: std::env::vars_os()

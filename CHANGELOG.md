@@ -202,7 +202,7 @@ contracts, capability facts and validation history.
   `PgQueryHandle` rustdoc now say Batter adds no replay but SQLx can re-send.
 
 - Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
-  library read of the process environment outside the one declared seam, share
+  library read of the process environment outside the declared seams, share
   the executable-root inventory with the panic-hook scan, and record the
   repository-wide explicit state-machine policy (`batter-j79l`, extracted from
   `batter-jkw6.3`).
