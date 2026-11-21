@@ -222,10 +222,6 @@ impl FixtureSuite {
         }
     }
 
-    fn endpoint(&self) -> Result<Arc<endpoint::HarnessEndpoint>, FixtureError> {
-        self.endpoint.checked().map_err(FixtureError::Endpoint)
-    }
-
     /// Require independently observed session absence before owned-run lease cleanup.
     /// This applies to `start`, including partial acquisition; manual `empty` and
     /// `DatabaseFixture::finish` retain their existing caller-driven contract.
@@ -266,7 +262,7 @@ impl FixtureSuite {
     {
         // Refuse before the lookup: the harness can return a cached template
         // without polling the initializer.
-        let endpoint = self.endpoint()?;
+        let endpoint = self.endpoint.checked()?;
         let template = self
             .harness
             .template(spec, move |url| {
@@ -315,8 +311,9 @@ impl FixtureSuite {
         F: FnOnce(TemplateTarget) -> Fut,
         Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     {
+        // The endpoint refusal comes first on every template entry point.
+        let endpoint = self.endpoint.checked()?;
         let parent = self.retained(parent)?.clone();
-        let endpoint = self.endpoint()?;
         let template = parent
             .derive(spec, move |url| {
                 template::initialize(endpoint, url, initializer)
@@ -340,7 +337,7 @@ impl FixtureSuite {
     /// SQLx maintains minimum connections in the background.
     pub async fn empty(&self, plan: &ConnectionPlan) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
-        let endpoint = self.endpoint()?;
+        let endpoint = self.endpoint.checked()?;
         let lease = self
             .harness
             .empty_database()
@@ -357,8 +354,8 @@ impl FixtureSuite {
         plan: &ConnectionPlan,
     ) -> Result<DatabaseFixture, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        let endpoint = self.endpoint.checked()?;
         let template = self.retained(template)?;
-        let endpoint = self.endpoint()?;
         let lease = template.database().await.map_err(FixtureError::Harness)?;
         DatabaseFixture::connect(&endpoint, lease, plan).await
     }

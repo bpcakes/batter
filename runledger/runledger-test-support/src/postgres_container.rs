@@ -132,10 +132,17 @@ async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
     }
 }
 
-/// The external admin URL with [`FIXTURE_TRANSPORT_QUERY`] appended; its only
-/// other query can be a redundant `hostaddr` pin.
+/// The external admin URL with [`FIXTURE_TRANSPORT_QUERY`] appended unless it
+/// already selects it; its only other query can be a redundant `hostaddr` pin.
 fn with_external_transport(admin_url: &str) -> String {
     let transport = &FIXTURE_TRANSPORT_QUERY[1..];
+    let present = url::Url::parse(admin_url).is_ok_and(|url| {
+        url.query_pairs()
+            .any(|(key, value)| key == "sslmode" && value == "disable")
+    });
+    if present {
+        return admin_url.to_owned();
+    }
     let separator = if admin_url.contains('?') { '&' } else { '?' };
     format!("{admin_url}{separator}{transport}")
 }

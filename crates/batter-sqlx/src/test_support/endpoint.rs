@@ -135,11 +135,15 @@ impl SuiteEndpoint {
         Self(HarnessEndpoint::parse(harness.admin_database_url()).map(Arc::new))
     }
 
-    /// The parsed endpoint, or the reason fixture clients cannot use it in
-    /// the current environment.
-    pub(super) fn checked(&self) -> Result<Arc<HarnessEndpoint>, UnsupportedHarnessEndpoint> {
-        Environment::process().check()?;
-        self.0.clone()
+    /// The parsed endpoint, or why fixture clients cannot use it. A refused
+    /// admin URL is reported before the environment, since unsetting a
+    /// variable would not make it usable.
+    pub(super) fn checked(&self) -> Result<Arc<HarnessEndpoint>, super::FixtureError> {
+        let endpoint = self.0.clone().map_err(super::FixtureError::Endpoint)?;
+        Environment::process()
+            .check()
+            .map_err(super::FixtureError::Endpoint)?;
+        Ok(endpoint)
     }
 }
 

@@ -131,8 +131,8 @@ contracts cite:
   against SQLx 0.9.1 and psql 18 with an ambient `PGHOSTADDR`) was dropped
   once every mode refused client `PG*` variables before provisioning. Derivation
   re-appends only that query; an external admin URL's query is not carried, so an external URL
-  with any query is refused before provisioning (a `hostaddr` repeating its IP
-  literal host is accepted), since leases would lose its endpoint or TLS
+  with any other query is refused before provisioning (`sslmode=disable` and a
+  `hostaddr` repeating its IP literal host are accepted), since leases would lose its endpoint or TLS
   settings. SQLx 0.9.0 honoured these parameters too, so that split
   predates this upgrade. Fixture endpoints accept `connect_timeout` and
   `channel_binding=disable` without carrying them into SQLx options, and refuse

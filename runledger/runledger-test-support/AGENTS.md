@@ -25,8 +25,8 @@ the admin query. Every fixture mode refuses any ambient client `PG*` variable (a
 before provisioning: SQLx fills unset settings from them, but native test
 proxies dial and forward to the URL host themselves, without TLS. Every
 external connection is therefore pinned to `sslmode=disable`, and derived URLs
-carry only that from the admin URL, so every query key is refused except a `hostaddr` that repeats its
-own IP literal host, and the URL must name a DNS or IPv4 host the native
+carry only that from the admin URL, so every query key is refused except
+`sslmode=disable` and a `hostaddr` that repeats its own IP literal host, and the URL must name a DNS or IPv4 host the native
 proxies can dial and exactly one database path segment (`src/external_admin.rs`); otherwise provisioning and
 leases could reach different servers or leases could silently lose TLS
 settings. Failed startup cleanup verifies the

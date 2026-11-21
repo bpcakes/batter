@@ -8,13 +8,15 @@ use url::Url;
 /// Why derived database URLs would reach a different endpoint than the
 /// external admin URL, if they would.
 ///
-/// Derived database URLs keep the authority and drop the query, so any query
-/// parameter reaches the admin pool but not the leases: `host` or `port`
-/// would move them to another endpoint, and `sslmode`, `sslrootcert` and the
-/// other TLS settings would apply to the admin connection alone (every
-/// external connection is pinned to `sslmode=disable`). Every key
-/// is therefore refused, except a `hostaddr` that repeats the authority's own
-/// IP literal, where dropping it changes nothing. Ambient `PG*` variables are
+/// Derived database URLs keep the authority and replace the query with
+/// `sslmode=disable`, so any other query parameter reaches the admin pool but
+/// not the leases: `host` or `port` would move them to another endpoint, and
+/// other `sslmode` values, `sslrootcert` and the other TLS settings would
+/// apply to the admin connection alone (every external connection is pinned
+/// to `sslmode=disable`). Every key is therefore refused, except
+/// `sslmode=disable` itself, which every derived URL carries, and a
+/// `hostaddr` that repeats the authority's own IP literal, where dropping it
+/// changes nothing. Ambient `PG*` variables are
 /// refused separately in every fixture mode, so an external fixture has no
 /// way to require TLS for its leases. Query keys are read decoded, as SQLx
 /// reads them. An unparseable URL is left to SQLx's own error.
@@ -71,6 +73,8 @@ pub(crate) fn dropped_endpoint_parameter(admin_url: &str) -> Option<&'static str
     for (key, value) in url.query_pairs() {
         if key == "hostaddr" {
             pins.push(value.into_owned());
+        } else if key == "sslmode" && value == "disable" {
+            // The transport every derived URL carries already.
         } else {
             return Some(
                 "remove the query from RUNLEDGER_TEST_ADMIN_DATABASE_URL (host and port belong in \
@@ -112,6 +116,9 @@ mod tests {
         for url in [
             "postgres://u:p@db.invalid:5432/postgres",
             "postgres://u:p@127.0.0.1:5432/postgres?hostaddr=127.0.0.1",
+            // The transport every derived URL carries.
+            "postgres://u:p@db.invalid:5432/postgres?sslmode=disable",
+            "postgres://u:p@127.0.0.1:5432/postgres?sslmode=disable&hostaddr=127.0.0.1",
             "not a url",
         ] {
             assert_eq!(dropped_endpoint_parameter(url), None, "{url}");
@@ -124,8 +131,9 @@ mod tests {
             "postgres://u:p@localhost/postgres?port=6543",
             // TLS settings the leases would lose.
             "postgres://u:p@db.invalid/postgres?sslmode=verify-full&sslrootcert=/ca/root.pem",
-            "postgres://u:p@db.invalid/postgres?sslmode=disable",
             "postgres://u:p@db.invalid/postgres?ss%6Cmode=require",
+            "postgres://u:p@db.invalid/postgres?sslmode=prefer",
+            "postgres://u:p@db.invalid/postgres?sslmode=disable&sslmode=require",
             // No database path, or more than one segment: the lease URL would
             // lose its authority or keep stray segments.
             "postgres://alice@db.example",

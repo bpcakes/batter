@@ -391,8 +391,8 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   now refused before provisioning unless it is a `postgres://`
   or `postgresql://` URL naming a DNS or IPv4 host and exactly one database
   path segment that the lease derivation reads the same way (an empty path
-  made the lease name the host), or when it has any query other than a `hostaddr` repeating
-  its own IP literal host: the admin pool would
+  made the lease name the host), or when it has any query other than `sslmode=disable` and a
+  `hostaddr` repeating its own IP literal host: the admin pool would
   follow `host`, `port` or TLS settings such as `sslmode=verify-full` while
   the leases fell back to SQLx's defaults. An external fixture therefore
   cannot require TLS for its leases yet. The endpoint split already existed

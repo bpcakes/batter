@@ -33,7 +33,14 @@ contracts, capability facts and validation history.
   the admin URL declares `hostaddr`, no host, several hosts or ports, a
   `dbname` parameter (the harness copies the query into every lease URL, so
   it would retarget each lease) or a setting SQLx cannot carry.
-  `HarnessEndpointReason` is `#[non_exhaustive]`. Fixture clients use the harness connector's plaintext transport.
+  `HarnessEndpointReason` is `#[non_exhaustive]`. Behaviour change: every fixture client, including `PlannedPool::password_login`
+  pools and template targets, now uses the harness connector's plaintext
+  transport (`sslmode=disable`). In 0.0.1 an omitted or `prefer` mode let SQLx
+  negotiate TLS for fixture pools when it was built with a TLS backend; a server whose `pg_hba.conf` admits a fixture
+  login only over `hostssl` now refuses that login, and passwords for
+  `password`-method logins cross the connection unencrypted. Such fixtures are
+  unsupported, as a TLS requirement in the admin URL already was, because the
+  harness itself provisions over plaintext.
   Clients inheriting its login use the admin URL's password, or none for a
   trust or peer URL (treated as an empty password; no passfile is read).
   A client `PG*` variable is any `PG` name except the server's `PGDATA` and

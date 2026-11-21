@@ -130,7 +130,7 @@ impl FixtureScope {
     {
         // Refuse before the lookup: the harness can return a cached template
         // without polling the initializer.
-        let endpoint = self.endpoint()?;
+        let endpoint = self.endpoint.checked()?;
         let harness = self.harness.clone();
         self.retain(async move {
             harness
@@ -184,8 +184,9 @@ impl FixtureScope {
         F: FnOnce(TemplateTarget) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
+        // The endpoint refusal comes first on every template entry point.
+        let endpoint = self.endpoint.checked()?;
         let parent = self.retained(parent)?;
-        let endpoint = self.endpoint()?;
         self.retain(async move {
             parent
                 .derive(spec, move |url| in_task(endpoint, url, initializer))
@@ -233,6 +234,9 @@ impl FixtureScope {
         plan: &ConnectionPlan,
     ) -> Result<FixtureDatabase, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
+        // Report an endpoint refusal before an unknown template, as `empty`
+        // and the template entry points do; `acquire` checks it again.
+        self.endpoint.checked()?;
         let template = self.retained(template)?;
         self.acquire(plan, async move { template.database().await })
             .await
@@ -247,7 +251,7 @@ impl FixtureScope {
         F: Future<Output = Result<DatabaseLease, postgres_test_harness::Error>> + Send + 'static,
     {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
-        let endpoint = self.endpoint()?;
+        let endpoint = self.endpoint.checked()?;
         let capacity = self
             .capacity
             .clone()
@@ -270,10 +274,6 @@ impl FixtureScope {
         })
         .await?;
         self.open(&endpoint, index, plan).await
-    }
-
-    fn endpoint(&self) -> Result<Arc<HarnessEndpoint>, FixtureError> {
-        self.endpoint.checked().map_err(FixtureError::Endpoint)
     }
 
     fn pool_failed(&self, index: usize, error: sqlx::Error) -> FixtureError {
