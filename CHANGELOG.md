@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
+  library read of the process environment outside the one declared seam, share
+  the executable-root inventory with the panic-hook scan, and record the
+  repository-wide explicit state-machine policy (`batter-j79l`, extracted from
+  `batter-jkw6.3`).
+
 - **Breaking:** refuse in-process requests that carry the adapter's own
   request records (`batter-nff2`, `batter-28kb`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)).
