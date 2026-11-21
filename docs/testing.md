@@ -227,10 +227,16 @@ and [Runlimit's reused-routing tests](../crates/batter-runlimit/tests/http/reuse
 prove its test transport shares that refusal before lifecycle admission,
 authentication, the quota check, a public probe or a handler runs, accepts a
 fresh request's application extensions and strips a forwarded refusal marker.
-A characterization test in the same file pins the documented residual: a map
-whose only detected record, an `OPTIONS *` dispatch's `OriginalUri`, was
-removed is authenticated and charged without fresh correlation or a completion
-event, until `batter-28kb` closes it.
+Two tests in the same file exercise each check without the other. One covers a
+map that keeps only the adapter's own request records: once the only Axum
+record of an `OPTIONS *` dispatch, its `OriginalUri`, is removed, and the test
+has asserted that no Axum record is left, the request is still refused, with no
+authentication, no quota consumed and no completion event. The other replays a
+map from a bare Axum `Router`, which holds routing records and no Batter
+record. The `batter-axum` routing-record maps and one of the reference
+service's maps also come from a bare `Router`, so a private record cannot mask
+the routing check, and the in-crate tests require one fixture per entry of the
+shared private-record list, holding only that record.
 
 ## Probe response policy
 
