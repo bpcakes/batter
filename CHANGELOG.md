@@ -201,6 +201,12 @@ contracts, capability facts and validation history.
   type fails. The `PgLease`, `PgLease::migrate`, `migrate_and_apply` and
   `PgQueryHandle` rustdoc now say Batter adds no replay but SQLx can re-send.
 
+- Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
+  library read of the process environment outside the one declared seam, share
+  the executable-root inventory with the panic-hook scan, and record the
+  repository-wide explicit state-machine policy (`batter-j79l`, extracted from
+  `batter-jkw6.3`).
+
 - Fix `scripts/ci_plan.py` missing out-of-directory Rust sources loaded by
   `#[path = "..."]` or `include!`-family macros, and stop `push` runs from
   reusing an earlier verified-tree marker when package-closure discovery fails
