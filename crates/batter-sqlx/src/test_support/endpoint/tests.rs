@@ -21,8 +21,7 @@ fn endpoint(admin_url: &str) -> HarnessEndpoint {
 
 #[test]
 fn any_pg_variable_is_refused_before_parsing() {
-    let error = HarnessEndpoint::from_admin_url("not a url", Environment { pg_variables: true })
-        .unwrap_err();
+    let error = HarnessEndpoint::from_admin_url("not a url", Environment::AMBIENT).unwrap_err();
     let sqlx::Error::Configuration(source) = &error else {
         panic!("configuration error expected");
     };
@@ -134,40 +133,6 @@ fn unsupported_endpoints_are_refused_with_their_reason() {
 }
 
 #[test]
-fn rebuilt_urls_read_back_as_the_same_endpoint_in_both_parsers() {
-    for admin in [
-        "postgres://owner:p%40ss%2Bw+rd@127.0.0.1:6543/postgres?sslmode=disable&application_name=a%20b",
-        "postgres://owner:p@[::1]:5432/postgres?sslmode=prefer",
-        "postgres://owner:p@%2Ftmp%2Fpg%20socket:5432/postgres",
-        "postgres://own%40er:p@db.invalid/postgres?sslmode=disable",
-        "postgres://owner:p@127.0.0.1:5432/postgres?options=-c%20search_path%3Dpublic",
-        // `~` is unreserved: both parsers keep it literally in a host name.
-        "postgres://owner:p@db~blue.invalid:5432/postgres",
-    ] {
-        let endpoint = endpoint(admin);
-        let url = endpoint.url("pgh_template_1").expect(admin);
-        assert!(matches!(
-            endpoint.options("pgh_template_1").get_ssl_mode(),
-            PgSslMode::Disable
-        ));
-        assert_eq!(
-            tokio_postgres::Config::from_str(&url)
-                .unwrap()
-                .get_ssl_mode(),
-            SslMode::Disable
-        );
-        let options: PgConnectOptions = url.parse().unwrap();
-        assert!(matches!(options.get_ssl_mode(), PgSslMode::Disable));
-        assert_eq!(options.get_database(), Some("pgh_template_1"), "{url}");
-        assert!(
-            HarnessEndpoint::names_database(&url, "pgh_template_1"),
-            "{url}"
-        );
-        assert!(!url.contains("secret"), "{url}");
-    }
-}
-
-#[test]
 fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
     require_clean_environment();
     let harness_url = "postgres://u@127.0.0.1:5432/pgh_template_1?sslmode=disable";
@@ -185,17 +150,8 @@ fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
         overridden,
         "pgh_template_1"
     ));
-    let error = initializer_url(
-        &endpoint("postgres://u@127.0.0.1:5432/postgres?dbname=postgres"),
-        overridden,
-        Environment::CLEAN,
-    )
-    .unwrap_err();
-    assert!(matches!(&error, sqlx::Error::Configuration(source)
-        if source.is::<super::super::LeaseDatabaseMismatch>()));
-    // Paths the harness never writes select no database the initializer is
-    // given: either no recorded name, or one tokio-postgres reads differently.
-    let admin = endpoint("postgres://u@127.0.0.1:5432/postgres");
+    // Paths the harness never writes select no recorded database: either no
+    // name, or one tokio-postgres reads differently.
     for url in [
         "postgres://u@127.0.0.1:5432//jobs",
         "postgres://u@127.0.0.1:5432/one/../jobs",
@@ -209,39 +165,7 @@ fn recorded_names_and_database_overrides_are_read_from_harness_urls() {
                 .is_none_or(|name| !HarnessEndpoint::names_database(url, name)),
             "{url}"
         );
-        assert!(
-            initializer_url(&admin, url, Environment::CLEAN).is_err(),
-            "{url}"
-        );
     }
-    let rebuilt = initializer_url(
-        &endpoint("postgres://u:p@127.0.0.1:5432/postgres?sslmode=disable"),
-        "postgres://u:p@127.0.0.1:5432/pgh_template_1?sslmode=disable",
-        Environment::CLEAN,
-    )
-    .unwrap();
-    assert_eq!(
-        rebuilt,
-        "postgres://u:p@127.0.0.1:5432/pgh_template_1?sslmode=disable"
-    );
-}
-
-#[test]
-fn rebuilt_urls_refuse_tcp_names_sqlx_would_not_decode() {
-    // tokio-postgres decodes the authority host; SQLx resolves it as written,
-    // so a re-encoded `+` would name another host and must be refused.
-    let endpoint = endpoint("postgres://owner:p@db%2Bblue.example/postgres");
-    assert_eq!(endpoint.options("db").get_host(), "db+blue.example");
-    let error = endpoint.url("pgh_template_1").unwrap_err();
-    let sqlx::Error::Configuration(source) = &error else {
-        panic!("configuration error expected");
-    };
-    assert_eq!(
-        source
-            .downcast_ref::<UnsupportedHarnessEndpoint>()
-            .map(UnsupportedHarnessEndpoint::reason),
-        Some(HarnessEndpointReason::RoundTrip)
-    );
 }
 
 #[test]
@@ -256,10 +180,6 @@ fn omitted_and_empty_passwords_are_one_login_in_both_clients() {
         let endpoint = endpoint(admin);
         assert_eq!(endpoint.password, "", "{admin}");
         assert_eq!(endpoint.options("pgh_lease_1").get_username(), "owner");
-        let url = endpoint.url("pgh_template_1").unwrap();
-        assert!(url.ends_with("&password="), "{url}");
-        let again = HarnessEndpoint::from_admin_url(&url, Environment::CLEAN).unwrap();
-        assert_eq!(again.password, "", "{url}");
         // A passwordless lease URL from the same harness binds to it.
         let lease = admin.replace("/postgres", "/pgh_lease_1");
         assert!(endpoint.bind(&lease, "pgh_lease_1").is_ok(), "{lease}");
@@ -277,15 +197,12 @@ fn debug_output_omits_the_password() {
 }
 
 #[test]
-fn initializer_urls_keep_the_connect_timeout_and_refuse_other_tuning() {
-    let endpoint = endpoint("postgres://owner:p@127.0.0.1:5432/postgres?connect_timeout=2");
-    let url = endpoint.url("pgh_template_1").unwrap();
-    assert!(url.ends_with("&connect_timeout=2"), "{url}");
-    let config = tokio_postgres::Config::from_str(&url).unwrap();
-    assert_eq!(
-        config.get_connect_timeout(),
-        Some(&std::time::Duration::from_secs(2))
-    );
+fn connection_tuning_is_refused_but_timeout_and_disabled_binding_are_accepted() {
+    require_clean_environment();
+    for setting in ["connect_timeout=2", "channel_binding=disable"] {
+        let url = format!("postgres://owner:p@127.0.0.1:5432/postgres?{setting}");
+        assert_eq!(reason(&url), None, "{url}");
+    }
     for setting in [
         "tcp_user_timeout=5",
         "keepalives=0",
@@ -350,45 +267,22 @@ fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
 }
 
 #[test]
-fn initializer_urls_keep_disabled_channel_binding() {
-    let disabled = endpoint("postgres://owner:p@127.0.0.1:5432/postgres?channel_binding=disable");
-    let url = disabled.url("pgh_template_1").unwrap();
-    let config = tokio_postgres::Config::from_str(&url).unwrap();
-    assert_eq!(
-        config.get_channel_binding(),
-        ChannelBinding::Disable,
-        "{url}"
-    );
-    let preferred = endpoint("postgres://owner:p@127.0.0.1:5432/postgres")
-        .url("pgh_template_1")
-        .unwrap();
-    assert!(!preferred.contains("channel_binding"), "{preferred}");
-}
-
-#[test]
 fn only_client_pg_variables_are_refused() {
-    for name in [
-        "PGHOST",
-        "PGHOSTADDR",
-        "PGPASSWORD",
-        "PGPASSFILE",
-        "PGCONNECT_TIMEOUT",
-        "PGSERVICE",
-        "PGFUTURESETTING",
-    ] {
-        assert!(is_client_variable(name.as_bytes()), "{name}");
+    let vector = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test-support/postgres-client-variables.txt"
+    ));
+    let mut checked = 0;
+    for line in vector.lines().filter(|line| !line.starts_with('#')) {
+        let (verdict, name) = line.split_once(' ').expect("verdict and name");
+        assert_eq!(
+            is_client_variable(name.as_bytes()),
+            verdict == "refuse",
+            "{line}"
+        );
+        checked += 1;
     }
-    for name in [
-        "PGDATA",
-        "PG_COLOR",
-        "PG_COLORS",
-        "PATH",
-        "XPG",
-        "PGDATA_EXTRA",
-    ] {
-        let refused = is_client_variable(name.as_bytes());
-        assert_eq!(refused, name == "PGDATA_EXTRA", "{name}");
-    }
+    assert!(checked > 0, "empty client-variable vector");
 }
 
 #[test]

@@ -15,7 +15,7 @@ from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
 from refresh_runledger_sqlx import (environment_bytes, refuse_sqlx_config, cargo_compiler_endpoint, migrations_current, parse_database_url,
                                      psql_environment, query, refresh, sqlx_database_url)
-from runledger_compiler_endpoint import guard_preparation, refresh_build_root
+from runledger_compiler_endpoint import guard_preparation, is_client_variable, refresh_build_root
 from runledger_source import copy_source, run, validate_consumer
 
 
@@ -215,6 +215,15 @@ class RefreshTests(unittest.TestCase):
         self.assertNotIn(b'private-marker', invalid.stderr)
         self.assertNotIn(b'UnicodeDecodeError', invalid.stderr)
 
+    def test_client_variable_rule_matches_the_shared_vector(self):
+        # batter-sqlx and Runledger's test support implement the same rule.
+        vector = Path(__file__).resolve().parent.parent / "test-support/postgres-client-variables.txt"
+        cases = [line.split(" ", 1) for line in vector.read_text(encoding="utf-8").splitlines()
+                 if not line.startswith("#")]
+        self.assertTrue(cases)
+        for verdict, name in cases:
+            self.assertEqual(is_client_variable(name), verdict == "refuse", name)
+
     def test_ambient_postgres_variables_are_refused_before_any_command(self):
         secret = 'postgresql://user:private-marker@localhost/database'
         # PGDATA and PG_COLOR are read by no client and pass through.
@@ -281,7 +290,7 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(parse_database_url('postgres://u@localhost:/db')['host'], 'localhost')
         empty_socket_port = parse_database_url('postgres://u@%2Ftmp:/db')
         self.assertEqual((empty_socket_port['host'], empty_socket_port['port']), ('/tmp', 5432))
-        # The Runledger-owned container's redundant loopback pin is dropped.
+        # A redundant loopback pin repeating the host is dropped.
         owned = parse_database_url('postgres://runledger:runledger@127.0.0.1:5432/db?hostaddr=127.0.0.1')
         self.assertEqual(sqlx_database_url(owned), 'postgres://runledger:runledger@127.0.0.1:5432/db?sslmode=disable')
         # The same address in another spelling is the same pin.

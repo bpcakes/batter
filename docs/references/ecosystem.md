@@ -89,8 +89,8 @@ contracts cite:
   and take the database from the name the harness recorded, refusing any
   ambient client `PG*` variable (every `PG` name except `PGDATA` and
   `PG_`-prefixed ones), `hostaddr`, no host, several hosts or ports, and
-  settings SQLx cannot carry. Suites parse once and refuse before provisioning or template lookup. Template initializers receive a URL rebuilt
-  from that parse and checked by reading it back with both parsers.
+  settings SQLx cannot carry. Suites parse once and refuse before provisioning or template lookup. Template initializers receive a typed
+  target whose SQLx options come from that parse, not a URL.
   The pinned [harness connector](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
   uses `NoTls`, so fixture clients use plaintext. A passwordless admin URL
   (trust or peer) is the harness login with an empty password.
@@ -104,7 +104,7 @@ contracts cite:
   included, and [`recv_password_packet`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/libpq/auth.c)
   refuses an empty plaintext or MD5 response. Its
   [URL parser](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/parse.rs)
-  first tries a passfile, so initializer URLs carry `password=`. The
+  first tries a passfile, so fixture code never hands SQLx a URL. The
   metadata refresh script refuses any ambient client `PG*` variable, parses
   the Unix bytes of `DATABASE_URL` as UTF-8 and treats an empty userinfo password
   as omitted. The [libpq 18 passfile](https://www.postgresql.org/docs/18/libpq-pgpass.html)
@@ -123,19 +123,19 @@ contracts cite:
   inherited settings immediately before executing rustc, including any
   package-specific `cargo::rustc-env` values. Runledger's fixtures refuse any client `PG*`
   variable in every mode, since their native test proxies dial the URL host
-  themselves, and pin
-  `hostaddr=127.0.0.1` in the owned container's admin
-  URL and the database URLs derived from it, since a URL `hostaddr` overrides
-  the environment for a TCP host in both SQLx and libpq (checked against SQLx
-  0.9.1 and psql 18 with an ambient `PGHOSTADDR`), alongside `sslmode=disable`
-  so every connection uses the native proxies' plaintext. Derivation
+  themselves, and append `sslmode=disable` to every admin and derived
+  database URL so every connection uses the native proxies' plaintext. An
+  earlier `hostaddr=127.0.0.1` pin on owned-container URLs (a URL `hostaddr`
+  overrides the environment for a TCP host in both SQLx and libpq, checked
+  against SQLx 0.9.1 and psql 18 with an ambient `PGHOSTADDR`) was dropped
+  once every mode refused client `PG*` variables before provisioning. Derivation
   re-appends only that query; an external admin URL's query is not carried, so an external URL
   with any query is refused before provisioning (a `hostaddr` repeating its IP
   literal host is accepted), since leases would lose its endpoint or TLS
   settings. SQLx 0.9.0 honoured these parameters too, so that split
-  predates this upgrade. Template initializer URLs carry `connect_timeout` and
-  `channel_binding=disable`, and refuse other connection tuning they cannot
-  carry. Refusing every client `PG*` variable replaced earlier attempts to carry or
+  predates this upgrade. Fixture endpoints accept `connect_timeout` and
+  `channel_binding=disable` without carrying them into SQLx options, and refuse
+  other connection tuning. Refusing every client `PG*` variable replaced earlier attempts to carry or
   translate inherited settings, each of which missed a variable that changed
   one client's connection. The metadata refresh
   drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.

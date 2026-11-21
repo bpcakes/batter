@@ -382,10 +382,9 @@ a redacting hook such as Batter's `redacting_panic_hook`.
   `PG_`-prefixed ones such as `PG_COLOR`) in every fixture mode, before provisioning:
   SQLx 0.9.1 fills unset settings from them, but native test proxies dial and
   forward to the URL host themselves. Put every setting in the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
-  derived from them, now end in `?hostaddr=127.0.0.1&sslmode=disable` (the
-  address pin, and the native test proxies' plaintext transport); consumers
-  that append
-  their own query to such a URL must use `&`. Every connection to an external
+  derived from them, now end in `?sslmode=disable` (the native test proxies'
+  plaintext transport); consumers that append their own query to such a URL
+  must use `&`. Every connection to an external
   `RUNLEDGER_TEST_ADMIN_DATABASE_URL` now uses `sslmode=disable`, the native
   test proxies' transport, so its admin URL and every derived URL end in that
   query; derived URLs carry nothing else from the admin URL, so such a URL is

@@ -146,11 +146,10 @@ pub(super) struct HarnessEndpoint {
     /// tokio-postgres's raw `options` as `-c key=value` pairs, from which
     /// SQLx's setter rebuilds the raw text byte for byte (checked at parse).
     options: Option<Vec<(String, String)>>,
-    /// Carried to template initializers, which may use tokio-postgres; SQLx
-    /// ignores the parameter, as it always has for these pools.
+    /// Compared when binding a lease, whose URL the harness derives from the
+    /// admin URL; SQLx options carry neither this nor the next field.
     connect_timeout: Option<std::time::Duration>,
-    /// `channel_binding=disable`, carried to initializers (tokio-postgres
-    /// would otherwise prefer it); SQLx does not implement channel binding.
+    /// `channel_binding=disable`; SQLx does not implement channel binding.
     channel_binding_disabled: bool,
     admin_database: String,
 }
@@ -200,11 +199,15 @@ pub(super) fn is_client_variable(name: &[u8]) -> bool {
 }
 
 impl Environment {
-    /// An environment without `PG*` variables: tests, and URLs read after the
-    /// process environment was already checked.
+    /// An environment without client `PG*` variables, for tests.
+    #[cfg(test)]
     pub(super) const CLEAN: Self = Self {
         pg_variables: false,
     };
+
+    /// An environment holding a client `PG*` variable, for refusal tests.
+    #[cfg(test)]
+    pub(super) const AMBIENT: Self = Self { pg_variables: true };
 
     pub(super) fn validate(self) -> Result<(), sqlx::Error> {
         self.check().map_err(configuration)
@@ -276,7 +279,7 @@ impl HarnessEndpoint {
             || config.get_ssl_negotiation() != SslNegotiation::Postgres
             || config.get_channel_binding() == ChannelBinding::Require
             || config.get_load_balance_hosts() != LoadBalanceHosts::Disable
-            // Connection tuning the rebuilt initializer URL does not carry.
+            // Connection tuning SQLx options do not carry.
             || config.get_tcp_user_timeout().is_some()
             || !config.get_keepalives()
             || config.get_keepalives_idle() != tokio_postgres::Config::new().get_keepalives_idle()
@@ -482,23 +485,6 @@ fn option_pairs(raw: &str) -> Option<Vec<(String, String)>> {
         .collect()
 }
 
-/// The URL a template initializer receives in place of `harness_url`: rebuilt
-/// from the harness's parse of its admin URL for the database the harness
-/// recorded in `harness_url`'s path. The environment is checked again, since
-/// the initializer may run long after the suite's pre-provisioning check.
-pub(super) fn initializer_url(
-    endpoint: &HarnessEndpoint,
-    harness_url: &str,
-    environment: Environment,
-) -> Result<String, sqlx::Error> {
-    environment.validate()?;
-    let database = HarnessEndpoint::recorded_database(harness_url)
-        .ok_or_else(|| refusal(HarnessEndpointReason::RoundTrip))?;
-    endpoint.bind(harness_url, &database)?;
-    endpoint.url(&database)
-}
-
-mod rebuild;
 mod refusal;
 #[cfg(test)]
 mod tests;

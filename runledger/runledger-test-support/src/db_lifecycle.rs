@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::postgres_container::{admin_database_url, admin_database_url_and_derived_query};
+use crate::postgres_container::{FIXTURE_TRANSPORT_QUERY, admin_database_url};
 
 const TEST_DB_CONNECTION_BUDGET_ENV: &str = "RUNLEDGER_TEST_DB_CONNECTION_BUDGET";
 const DEFAULT_TEST_DB_CONNECTION_BUDGET: usize = 64;
@@ -151,7 +151,7 @@ async fn create_ephemeral_database_with_permit(
     prefix: &str,
     permit: OwnedSemaphorePermit,
 ) -> Result<EphemeralDatabase, sqlx::Error> {
-    let (admin_url, derived_query) = admin_database_url_and_derived_query().await;
+    let admin_url = admin_database_url().await;
     let name = build_database_name(prefix);
     let admin_pool = connect_admin_pool(admin_url).await?;
 
@@ -164,7 +164,7 @@ async fn create_ephemeral_database_with_permit(
 
     Ok(EphemeralDatabase {
         identity: EphemeralDatabaseIdentity {
-            url: with_database_name(admin_url, &name, derived_query),
+            url: with_database_name(admin_url, &name),
             name,
         },
         permit: Some(permit),
@@ -251,16 +251,15 @@ fn build_database_name(prefix: &str) -> String {
 }
 
 /// Replace the admin URL's database, dropping whatever followed it, and
-/// append `derived_query`: the owned container's address and transport pin, or
-/// the external fixture's plaintext pin. The admin URL's query is never
+/// append the fixture's plaintext transport. The admin URL's query is never
 /// carried over.
-fn with_database_name(admin_url: &str, database_name: &str, derived_query: &str) -> String {
+fn with_database_name(admin_url: &str, database_name: &str) -> String {
     // Cut the query and fragment first: either may contain a '/'.
     let location = admin_url.split(['?', '#']).next().unwrap_or(admin_url);
     let (base, _) = location
         .rsplit_once('/')
         .expect("DATABASE_URL must include database name");
-    format!("{base}/{database_name}{derived_query}")
+    format!("{base}/{database_name}{FIXTURE_TRANSPORT_QUERY}")
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -306,21 +305,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derived_database_urls_carry_only_their_fixture_pin() {
+    fn derived_database_urls_carry_only_the_fixture_transport() {
         // External admin URLs: the query is dropped and the plaintext pin added.
         assert_eq!(
-            with_database_name(
-                "postgres://u:p@db.invalid:5432/postgres",
-                "lease_1",
-                crate::postgres_container::EXTERNAL_DERIVED_QUERY
-            ),
+            with_database_name("postgres://u:p@db.invalid:5432/postgres", "lease_1",),
             "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
         );
         assert_eq!(
             with_database_name(
                 "postgres://u:p@db.invalid:5432/postgres?%64bname=other&statement-cache-capacity=0",
                 "lease_1",
-                crate::postgres_container::EXTERNAL_DERIVED_QUERY
             ),
             "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
         );
@@ -329,25 +323,22 @@ mod tests {
             with_database_name(
                 "postgres://u:p@db.invalid:5432/postgres?sslrootcert=/etc/ssl/ca.pem#a/b",
                 "lease_1",
-                crate::postgres_container::EXTERNAL_DERIVED_QUERY
             ),
             "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
         );
-        // Owned container: its pin is re-appended, never the admin query.
+        // Owned container: the transport is re-appended, never the admin query.
         assert_eq!(
             with_database_name(
                 &crate::postgres_container::postgres_admin_url(5432),
                 "lease_1",
-                crate::postgres_container::OWNED_HOST_ADDRESS_QUERY
             ),
-            "postgres://runledger:runledger@127.0.0.1:5432/lease_1?hostaddr=127.0.0.1&sslmode=disable"
+            "postgres://runledger:runledger@127.0.0.1:5432/lease_1?sslmode=disable"
         );
         // External fixture: the lease carries the plaintext pin and nothing
         // else from the admin URL, and SQLx reads it as sslmode=disable.
         let external = with_database_name(
             "postgres://u:p@db.invalid:5432/postgres?sslmode=disable",
             "lease_1",
-            crate::postgres_container::EXTERNAL_DERIVED_QUERY,
         );
         assert_eq!(
             external,

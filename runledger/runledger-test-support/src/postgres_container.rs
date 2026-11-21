@@ -20,18 +20,16 @@ static SHARED_POSTGRES: tokio::sync::OnceCell<SharedPostgres> = tokio::sync::Onc
 
 struct SharedPostgres {
     admin_url: String,
-    /// Appended to every database URL derived from `admin_url`: the owned
-    /// container's loopback pin, or nothing for an external admin URL.
-    derived_query: &'static str,
     _container: Option<ProcessContainer>,
 }
 
-/// Pins the owned container's TCP address and transport. A URL `hostaddr`
-/// overrides an ambient `PGHOSTADDR` in SQLx and libpq, and for the IP literal
-/// host it repeats it names the same address, so every client still reaches
-/// the container; `sslmode=disable` matches the native test proxies'
-/// plaintext even if the image and the SQLx build both support TLS.
-pub(crate) const OWNED_HOST_ADDRESS_QUERY: &str = "?hostaddr=127.0.0.1&sslmode=disable";
+/// The transport every fixture connection uses, owned or external, and the
+/// only query a derived database URL carries: the native test proxies'
+/// plaintext, even where the server and the SQLx build both support TLS.
+/// External fixtures cannot use TLS yet (`batter-c5ci.16`). Every other
+/// setting comes from the URL alone, since every fixture mode refuses client
+/// `PG*` variables before provisioning.
+pub(crate) const FIXTURE_TRANSPORT_QUERY: &str = "?sslmode=disable";
 
 #[derive(Debug, Eq, PartialEq)]
 enum PostgresSource {
@@ -45,12 +43,6 @@ pub async fn admin_database_url() -> &'static str {
 
 async fn shared_admin_database_url() -> &'static str {
     &shared_postgres().await.admin_url
-}
-
-/// The admin URL together with the query every derived database URL carries.
-pub(crate) async fn admin_database_url_and_derived_query() -> (&'static str, &'static str) {
-    let shared = shared_postgres().await;
-    (&shared.admin_url, shared.derived_query)
 }
 
 async fn shared_postgres() -> &'static SharedPostgres {
@@ -136,21 +128,16 @@ async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
-        derived_query: EXTERNAL_DERIVED_QUERY,
         _container: None,
     }
 }
 
-/// The transport every external fixture connection uses: the native test
-/// proxies' plaintext. External fixtures cannot use TLS yet (`batter-c5ci.16`).
-const EXTERNAL_TRANSPORT: &str = "sslmode=disable";
-pub(crate) const EXTERNAL_DERIVED_QUERY: &str = "?sslmode=disable";
-
-/// The external admin URL with [`EXTERNAL_TRANSPORT`] appended; its only
+/// The external admin URL with [`FIXTURE_TRANSPORT_QUERY`] appended; its only
 /// other query can be a redundant `hostaddr` pin.
 fn with_external_transport(admin_url: &str) -> String {
+    let transport = &FIXTURE_TRANSPORT_QUERY[1..];
     let separator = if admin_url.contains('?') { '&' } else { '?' };
-    format!("{admin_url}{separator}{EXTERNAL_TRANSPORT}")
+    format!("{admin_url}{separator}{transport}")
 }
 
 async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
@@ -166,7 +153,6 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
-        derived_query: OWNED_HOST_ADDRESS_QUERY,
         _container: Some(process_container),
     }
 }
@@ -222,7 +208,7 @@ pub(crate) fn parse_image_ref(image_ref: &str) -> (String, String) {
 
 pub(crate) fn postgres_admin_url(port: u16) -> String {
     format!(
-        "postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}{OWNED_HOST_ADDRESS_QUERY}"
+        "postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}{FIXTURE_TRANSPORT_QUERY}"
     )
 }
 
@@ -306,18 +292,19 @@ mod tests {
 
     #[test]
     fn only_client_postgres_variables_are_refused() {
-        for name in [
-            "PGHOST",
-            "PGHOSTADDR",
-            "PGPASSFILE",
-            "PGCONNECT_TIMEOUT",
-            "PGNEWSETTING",
-        ] {
-            assert!(is_client_variable(name), "{name}");
+        // Shared with batter-sqlx and the metadata refresh, which implement
+        // the same rule.
+        let vector = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-support/postgres-client-variables.txt"
+        ));
+        let mut checked = 0;
+        for line in vector.lines().filter(|line| !line.starts_with('#')) {
+            let (verdict, name) = line.split_once(' ').expect("verdict and name");
+            assert_eq!(is_client_variable(name), verdict == "refuse", "{line}");
+            checked += 1;
         }
-        for name in ["PGDATA", "PG_COLOR", "PG_COLORS", "XPGHOST"] {
-            assert!(!is_client_variable(name), "{name}");
-        }
+        assert!(checked > 0, "empty client-variable vector");
     }
 
     #[tokio::test]

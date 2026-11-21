@@ -8,11 +8,9 @@ use std::{
 
 use batter::sqlx::test_support::{
     AcquisitionFailure, BodyFailure, ConnectionPlan, FixtureError, FixtureScope, FixtureSuite,
-    PlannedPool, template_spec,
+    FixtureTemplate, PlannedPool, template_spec,
 };
-use postgres_test_harness::{
-    DatabaseTemplate, HarnessConfig, PostgresHarness, cleanup_stale_databases,
-};
+use postgres_test_harness::{HarnessConfig, PostgresHarness, cleanup_stale_databases};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::oneshot;
 
@@ -50,7 +48,7 @@ async fn inventory(observer: &PgPool) -> Result<Vec<String>, sqlx::Error> {
 async fn create(
     scope: &mut FixtureScope,
     mode: Creation,
-    template: Option<DatabaseTemplate>,
+    template: Option<FixtureTemplate>,
 ) -> Result<(), FixtureError> {
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
     match mode {
@@ -154,7 +152,7 @@ async fn catalog_lock(
 async fn prepare_suite(
     harness: PostgresHarness,
     mode: Creation,
-) -> Result<(FixtureSuite, Option<DatabaseTemplate>), FixtureError> {
+) -> Result<(FixtureSuite, Option<FixtureTemplate>), FixtureError> {
     let mut suite = FixtureSuite::new(harness);
     let template = if matches!(mode, Creation::Clone) {
         Some(
@@ -171,7 +169,7 @@ async fn prepare_suite(
 fn start_creation(
     suite: FixtureSuite,
     mode: Creation,
-    template: Option<DatabaseTemplate>,
+    template: Option<FixtureTemplate>,
     cancel_receiver: oneshot::Receiver<()>,
     body_sender: oneshot::Sender<()>,
 ) -> batter::sqlx::test_support::FixtureRun<(), FixtureError> {

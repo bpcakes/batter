@@ -37,10 +37,10 @@ contracts, capability facts and validation history.
   A client `PG*` variable is any `PG` name except the server's `PGDATA` and
   `PG_`-prefixed names such as `PG_COLOR`, which no client reads; the same
   rule applies in Runledger's test support and the metadata refresh.
-  Template initializers receive a URL
-  rebuilt from that parse and checked with both parsers; it carries
-  `connect_timeout` and `channel_binding=disable`, and other connection tuning it cannot carry
-  (`tcp_user_timeout`, `keepalives*`) is refused. Offline fixture endpoint
+  Template initializers receive a typed `TemplateTarget` built from that
+  parse (see the breaking entry below). `connect_timeout` and
+  `channel_binding=disable` are accepted but not carried into SQLx options;
+  other connection tuning (`tcp_user_timeout`, `keepalives*`) is refused. Offline fixture endpoint
   tests require a shell without `PG*` variables and say so in one assertion,
   since SQLx reads them in-process and tests may not change the environment.
   Reference-service
@@ -80,6 +80,54 @@ contracts, capability facts and validation history.
   To keep a run working, unset client `PG*` variables (all but `PGDATA` and
   `PG_*`) and move every connection setting into the harness admin URL. No
   `#[deprecated]` shim applies: an added variant has no old name to alias.
+- **Breaking:** fixture template initializers receive a typed
+  `batter_sqlx::test_support::TemplateTarget` instead of a URL `String`, and
+  `FixtureSuite::template` and `FixtureScope::template` return the new
+  `FixtureTemplate` instead of `postgres_test_harness::DatabaseTemplate`
+  (`batter-c5ci.24`). In 0.0.1 the initializer received the harness URL text,
+  which SQLx could read differently from the harness (an ambient `PG*`
+  variable, a `dbname` parameter, a passfile), and the returned template's own
+  `derive` handed its initializer that raw URL too. `TemplateTarget` exposes
+  only `connect_options()`, built from the suite's tokio-postgres parse
+  exactly as fixture pools are, and `database_name()`. `FixtureTemplate`
+  exposes only `database_name()` and `fingerprint()`; children are derived
+  through the new `FixtureSuite::derive` and `FixtureScope::derive`, which
+  retain the child, refuse an unretained parent with `UnknownTemplate`, check
+  the endpoint before lookup and, on the scope path, own preparation like
+  `template`. `from_template` takes `&FixtureTemplate`.
+
+  ```rust
+  // Before (0.0.1)
+  let template: DatabaseTemplate = suite
+      .template(spec, |url: String| async move {
+          let pool = PgPoolOptions::new().connect(&url).await?;
+          migrate(&pool).await?;
+          pool.close().await;
+          Ok(())
+      })
+      .await?;
+  let child = template.derive(child_spec, |url: String| async move { seed(&url).await }).await?;
+  let lease = template.database().await?;
+  let pool = template.prewarm(4).await?;
+  // After
+  let template: FixtureTemplate = suite
+      .template(spec, |target: TemplateTarget| async move {
+          let pool = PgPoolOptions::new().connect_with(target.connect_options()).await?;
+          migrate(&pool).await?;
+          pool.close().await;
+          Ok(())
+      })
+      .await?;
+  let child = suite.derive(&template, child_spec, |target| async move { seed(target).await }).await?;
+  let fixture = suite.from_template(&template, &plan).await?; // or scope.from_template
+  // `prewarm` has no fixture-path replacement.
+  ```
+
+  `database()` and `prewarm` are removed from the fixture path because their
+  leases would sit outside the suite's capacity, plan and cleanup; code that
+  needs them uses the harness directly, outside the fixture contract. No
+  `#[deprecated]` shim is kept: a `String` initializer or a returned harness
+  template would restore exactly the raw-URL path this change removes.
 - Disclosed upstream regressions: outside a server transaction SQLx re-sends a
   statement whose first response is SQLSTATE `26000` or a stale cached-plan
   `0A000`, which can repeat a non-transactional effect; with the statement

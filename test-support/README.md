@@ -71,3 +71,9 @@ choose another candidate. Tests retain the owner and explicitly check `close`;
 Drop is only a best-effort panic fallback. Settings and configuration fixtures
 share this private source, with collision/symlink controls in the foundation
 settings target. It is not a public crate API or a database fixture.
+
+`postgres-client-variables.txt` lists environment variable names and whether
+PostgreSQL fixture code refuses them as client `PG*` variables. batter-sqlx,
+Runledger's test support and the metadata refresh each implement that rule,
+since no shared crate is allowed between them; each one's tests read this
+file so the three cannot drift apart.

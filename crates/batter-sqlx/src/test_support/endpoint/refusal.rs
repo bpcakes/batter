@@ -15,7 +15,7 @@ pub(super) fn configuration(refusal: UnsupportedHarnessEndpoint) -> sqlx::Error 
 /// Returned as [`crate::test_support::FixtureError::Endpoint`] when a fixture suite or scope
 /// refuses its endpoint before provisioning a database or looking up a
 /// template, and carried inside `sqlx::Error::Configuration` by later checks:
-/// pool resolution, the URL handed to a template initializer,
+/// pool resolution, the target handed to a template initializer,
 /// [`crate::test_support::harness_connect_options`] and
 /// [`crate::test_support::harness_admin_connect_options`]. Every
 /// refusal happens before any pool or caller code exists. Formatting names no
@@ -74,7 +74,7 @@ pub enum HarnessEndpointReason {
     MissingUser,
     /// The admin URL's TCP host name contains a bracket. SQLx trims leading
     /// and trailing brackets before resolving, so it would look up a different
-    /// name, and its URL rendering panics on such a host.
+    /// name.
     UnsupportedHostName,
     /// The lease's URL reaches another server, login or session settings than
     /// this harness's admin URL. A matching endpoint does not prove the lease
@@ -88,8 +88,6 @@ pub enum HarnessEndpointReason {
     /// The admin URL's Unix socket directory is not UTF-8, which SQLx would
     /// rewrite when it formats the socket path.
     NonUtf8SocketPath,
-    /// A rebuilt URL would not read back as the same endpoint in both parsers.
-    RoundTrip,
 }
 
 impl fmt::Display for UnsupportedHarnessEndpoint {
@@ -121,9 +119,6 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
             HarnessEndpointReason::NonUtf8Password => "the fixture admin URL password is not UTF-8",
             HarnessEndpointReason::NonUtf8SocketPath => {
                 "the fixture admin URL socket directory is not UTF-8"
-            }
-            HarnessEndpointReason::RoundTrip => {
-                "a rebuilt fixture URL would not select the same endpoint"
             }
         })
     }

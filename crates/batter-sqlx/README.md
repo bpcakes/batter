@@ -1090,11 +1090,11 @@ the endpoint mapping and refusals.
 
 The pinned harness opens connections with `NoTls`. An omitted TLS mode,
 `sslmode=prefer` and `sslmode=disable` all yield plaintext for the harness,
-fixture pools and initializer URLs. A TLS requirement is refused. Clients
+fixture pools and template targets. A TLS requirement is refused. Clients
 using the harness login use its password; an admin URL without one, as for a
 trust or peer login, is the same login as an explicit empty `?password=`.
-Neither fixture pools nor initializer URLs let SQLx read a passfile: pools are
-built without one and initializer URLs carry `password=`. Where a server asks
+Neither fixture pools nor template targets let SQLx read a passfile: both
+are built without one. Where a server asks
 for a password, SQLx sends an empty one and tokio-postgres stops locally; both
 fail, since PostgreSQL does not store an empty password.
 A pool declared with `PlannedPool::password_login` supplies its own credentials.
@@ -1102,10 +1102,13 @@ A pool declared with `PlannedPool::password_login` supplies its own credentials.
 Both fixture template entry points check the endpoint before the harness
 looks up the fingerprint, so a cached and an uncached template are refused
 alike; a refused call starts no producer and the owned run records nothing for
-it. On cache misses, initializers receive a URL rebuilt for the
-template's recorded name and checked by reading it back with both
-tokio-postgres and SQLx; if no such URL exists, the initializer is not called
-and the harness aborts the template. Test code that opens its own pool beside
+it. On cache misses, initializers receive a `TemplateTarget` whose
+`connect_options()` are built like fixture pool options for the template's
+recorded name; if the harness URL would select another database or endpoint,
+the initializer is not called and the harness aborts the template. The
+returned `FixtureTemplate` exposes only its name and fingerprint: derive a
+child with `FixtureSuite::derive` or `FixtureScope::derive`, which retain it
+for `from_template`. Test code that opens its own pool beside
 a fixture uses `harness_connect_options(&harness, &lease)` or
 `harness_admin_connect_options(&harness)` instead of handing
 `admin_database_url()` or a lease URL to SQLx. The first takes the lease, not

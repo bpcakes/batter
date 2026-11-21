@@ -228,7 +228,9 @@ process machinery included by foundation and Axum integration tests, the facade
 HTTP example and the reference service's tests. It is not
 the `batter-test-support` crate or a SQLx feature. Preserve its workspace-relative
 layout when moving consuming crates; suite-specific fixtures and self-tests stay
-with their owning suite.
+with their owning suite. `test-support/postgres-client-variables.txt` is the
+shared client-`PG*` name vector that the batter-sqlx, Runledger test-support and
+metadata-refresh tests read, since those three copies of the rule cannot share code.
 [`consumers/`](consumers/README.md) contains the external single-dependency
 consumer and its provisioning harness as standalone sources. They are not
 workspace members; `scripts/check_single_facade_consumer.py` builds them from a

@@ -199,8 +199,8 @@ def parse_database_url(database):
     if len(set(keys)) != len(keys):
         raise ValueError("DATABASE_URL may declare each parameter once")
     # A hostaddr equal to an IP literal host names the address the host already
-    # does (the Runledger-owned container's pin), so it is redundant for both
-    # clients and dropped; any other hostaddr is refused.
+    # does (as Runledger's external fixture also accepts), so it is redundant
+    # for both clients and dropped; any other hostaddr is refused.
     if "hostaddr" in keys:
         # Compare addresses, not spellings: [0:0:0:0:0:0:0:1] and ::1 are one
         # address, as Runledger's external fixture also reads them.

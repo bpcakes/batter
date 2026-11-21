@@ -273,9 +273,14 @@ def main():
                if not os.environ.get(name)]
     if missing:
         print(("missing live PostgreSQL prerequisites: " + ", ".join(missing) +
-               "; provide an ordinary disposable database and a known-good "
-               "password-authenticated endpoint plus a PostgreSQL superuser "
-               "connection to a dedicated disposable cluster"), file=sys.stderr)
+               "; provide an ordinary disposable database (DATABASE_URL), a "
+               "known-good password-authenticated endpoint "
+               "(BATTER_SQLX_AUTH_ACCEPT_URL), a PostgreSQL superuser "
+               "connection to a dedicated disposable cluster as SQLx reads it "
+               "(BATTER_SQLX_ADMIN_URL), and the same cluster's admin URL for "
+               "the native fixture harness (POSTGRES_TEST_ADMIN_URL, used by "
+               "the template target); every target runs, so all four are "
+               "required"), file=sys.stderr)
         return 1
     for target, cases in TARGETS.items():
         inventory = invoke(target, ["--ignored", "--list", "--format", "terse"])

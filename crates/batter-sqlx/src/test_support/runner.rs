@@ -1,7 +1,9 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use batter_core::telemetry::with_current_dispatch;
-use postgres_test_harness::{DatabaseLease, DatabaseTemplate, PostgresHarness, TemplateSpec};
+use postgres_test_harness::{
+    BoxError, DatabaseLease, DatabaseTemplate, PostgresHarness, TemplateSpec,
+};
 use sqlx::PgPool;
 use tokio::task::JoinHandle;
 
@@ -9,7 +11,32 @@ use super::acquisition::{Registered, Resources, join_producers, produce};
 use super::endpoint::{HarnessEndpoint, SuiteEndpoint};
 use super::plan::{PoolKey, check, construct, lookup};
 use super::report::{BodyFailure, FixtureReport, FixtureReportRef};
+use super::template::{FixtureTemplate, TemplateTarget, initialize};
 use super::{ConnectionPlan, DatabaseFixture, FixtureError, FixtureSuite};
+
+/// Run a template initializer in its own task. Native template Drop can retain
+/// an initializing database, so an initializer panic becomes its returned-error
+/// path and upstream awaits abort and preserves any independent abort failure.
+/// The target check runs inside the same task: a refusal then drops the
+/// initializer there too, so a panic in its destructor still reaches the
+/// awaited abort instead of unwinding past it.
+async fn in_task<F, Fut>(
+    endpoint: Arc<HarnessEndpoint>,
+    url: String,
+    initializer: F,
+) -> Result<(), BoxError>
+where
+    F: FnOnce(TemplateTarget) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
+{
+    tokio::spawn(with_current_dispatch(initialize(
+        endpoint,
+        url,
+        initializer,
+    )))
+    .await
+    .map_err(|error| Box::new(error) as BoxError)?
+}
 
 #[cfg(test)]
 mod tests;
@@ -85,47 +112,107 @@ impl FixtureScope {
     /// Initializers must explicitly close any pools they create before returning.
     /// Preparation is an owned producer, so its initializer must be Send and static.
     /// Cancelling this waiter does not cancel preparation or discard its failure.
-    /// The initializer receives the same rebuilt URL as
+    /// The initializer receives the same [`TemplateTarget`] as
     /// [`super::FixtureSuite::template`] describes, and the same
     /// [`FixtureError::Endpoint`] refusal precedes the lookup; a refused call
     /// starts no producer, so the report records nothing for it.
+    ///
+    /// Migration: 0.0.1 took `FnOnce(String)` and returned the harness's
+    /// `DatabaseTemplate`; see [`TemplateTarget`] and [`FixtureTemplate`].
     pub async fn template<F, Fut>(
         &mut self,
         spec: TemplateSpec,
         initializer: F,
-    ) -> Result<DatabaseTemplate, FixtureError>
+    ) -> Result<FixtureTemplate, FixtureError>
     where
-        F: FnOnce(String) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
+        F: FnOnce(TemplateTarget) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
         // Refuse before the lookup: the harness can return a cached template
         // without polling the initializer.
         let endpoint = self.endpoint()?;
         let harness = self.harness.clone();
+        self.retain(async move {
+            harness
+                .template(spec, move |url| in_task(endpoint, url, initializer))
+                .await
+        })
+        .await
+    }
+
+    /// Retain a child of a template this scope's suite retains, as
+    /// [`super::FixtureSuite::derive`] describes, with the owned preparation
+    /// and panic handling of [`Self::template`]. A `parent` the suite did not
+    /// retain is refused with [`FixtureError::UnknownTemplate`] before any
+    /// producer starts.
+    ///
+    /// ```no_run
+    /// use batter_sqlx::test_support::{ConnectionPlan, FixtureError, FixtureSuite, template_spec};
+    /// use sqlx::postgres::PgPoolOptions;
+    /// # async fn example(suite: FixtureSuite) -> Result<(), Box<dyn std::error::Error>> {
+    /// let run = suite.start(|scope| Box::pin(async move {
+    ///     let schema = scope
+    ///         .template(template_spec(&[], "schema-v1"), |target| async move {
+    ///             let pool = PgPoolOptions::new().connect_with(target.connect_options()).await?;
+    ///             sqlx::query("CREATE TABLE items (id bigint)").execute(&pool).await?;
+    ///             pool.close().await;
+    ///             Ok(())
+    ///         })
+    ///         .await?;
+    ///     let seeded = scope
+    ///         .derive(&schema, template_spec(&[], "seed-v1"), |target| async move {
+    ///             let pool = PgPoolOptions::new().connect_with(target.connect_options()).await?;
+    ///             sqlx::query("INSERT INTO items VALUES (1)").execute(&pool).await?;
+    ///             pool.close().await;
+    ///             Ok(())
+    ///         })
+    ///         .await?;
+    ///     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
+    ///     let _fixture = scope.from_template(&seeded, &plan).await?;
+    ///     Ok::<_, FixtureError>(())
+    /// }));
+    /// run.into_report().await?.into_result()?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn derive<F, Fut>(
+        &mut self,
+        parent: &FixtureTemplate,
+        spec: TemplateSpec,
+        initializer: F,
+    ) -> Result<FixtureTemplate, FixtureError>
+    where
+        F: FnOnce(TemplateTarget) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
+    {
+        let parent = self.retained(parent)?;
+        let endpoint = self.endpoint()?;
+        self.retain(async move {
+            parent
+                .derive(spec, move |url| in_task(endpoint, url, initializer))
+                .await
+        })
+        .await
+    }
+
+    fn retained(&self, template: &FixtureTemplate) -> Result<DatabaseTemplate, FixtureError> {
+        self.resources
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .templates
+            .iter()
+            .find(|retained| retained.database_name() == template.database_name())
+            .cloned()
+            .ok_or(FixtureError::UnknownTemplate)
+    }
+
+    /// Run a template lookup as an owned producer and retain its result.
+    async fn retain<W>(&self, lookup: W) -> Result<FixtureTemplate, FixtureError>
+    where
+        W: Future<Output = Result<DatabaseTemplate, postgres_test_harness::Error>> + Send + 'static,
+    {
         let resources = self.resources.clone();
         produce(&self.resources, async move {
-            let template = harness
-                .template(spec, move |url| async move {
-                    // Native template Drop can retain an initializing database. Turn
-                    // initializer panic into its returned-error path so upstream
-                    // awaits abort and preserves any independent abort failure.
-                    // The URL check runs inside the same task: a refusal then drops
-                    // the initializer there too, so a panic in its destructor still
-                    // reaches the awaited abort instead of unwinding past it.
-                    tokio::spawn(with_current_dispatch(async move {
-                        // Caller code receives a URL rebuilt from the harness's own
-                        // endpoint parse and recorded name, never the harness text.
-                        let url = super::endpoint::initializer_url(
-                            &endpoint,
-                            &url,
-                            super::endpoint::Environment::process(),
-                        )?;
-                        initializer(url).await
-                    }))
-                    .await
-                    .map_err(|error| Box::new(error) as postgres_test_harness::BoxError)?
-                })
-                .await?;
+            let template = lookup.await?;
             let mut registered = resources.lock().unwrap_or_else(|error| error.into_inner());
             if !registered
                 .templates
@@ -134,7 +221,7 @@ impl FixtureScope {
             {
                 registered.templates.push(template.clone());
             }
-            Ok(template)
+            Ok(FixtureTemplate { inner: template })
         })
         .await
     }
@@ -152,19 +239,11 @@ impl FixtureScope {
     /// Clone only a template retained by this scope's suite, with checked capacity.
     pub async fn from_template(
         &self,
-        template: &DatabaseTemplate,
+        template: &FixtureTemplate,
         plan: &ConnectionPlan,
     ) -> Result<FixtureDatabase, FixtureError> {
         plan.validate(self.harness.connection_limits().connections_per_database())?;
-        let template = self
-            .resources
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .templates
-            .iter()
-            .find(|retained| retained.database_name() == template.database_name())
-            .ok_or(FixtureError::UnknownTemplate)?
-            .clone();
+        let template = self.retained(template)?;
         self.acquire(plan, async move { template.database().await })
             .await
     }

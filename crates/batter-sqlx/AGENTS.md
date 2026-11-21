@@ -183,9 +183,10 @@ database, and keep every pool registered before the first check.
 tokio-postgres (the harness's own parser), maps that typed parse into SQLx
 options and binds every lease and template URL to it with one check
 (`HarnessEndpoint::bind`); suites refuse an unusable endpoint before
-provisioning. Never hand harness URL text to SQLx, and keep the round-trip
-check on rebuilt initializer URLs (`endpoint/rebuild.rs`); refusal types live
-in `endpoint/refusal.rs`. Session observation and
+provisioning. Never hand harness URL text to SQLx or to caller code:
+template initializers get a typed `TemplateTarget` and suites hand out only
+an identity-only `FixtureTemplate` (`src/test_support/template.rs`); refusal
+types live in `endpoint/refusal.rs`. Session observation and
 retry ownership live in `src/test_support/sessions.rs`; retained outcomes and
 redacted summaries live in `src/test_support/report.rs`. Reference composition
 and live failure controls belong to `examples/reference-service`, not the generic
