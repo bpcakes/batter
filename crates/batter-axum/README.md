@@ -691,7 +691,8 @@ if let Some(label) = parts.extensions.get::<Label>() {
     next.extensions_mut().insert(label.clone());
 }
 // Copy every other extension the destination reads, such as a served outer
-// router's `ConnectInfo<SocketAddr>` peer, the same way.
+// router's `ConnectInfo<SocketAddr>` peer, the same way. An outer
+// `DefaultBodyLimit` cannot be copied: set it on the boundary's own routes.
 ```
 
 Without the refusal, pinned Axum 0.8.9 would treat inherited records as outer

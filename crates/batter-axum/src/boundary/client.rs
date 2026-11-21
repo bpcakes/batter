@@ -278,7 +278,9 @@ impl InProcessClient {
     /// Copy every extension the destination reads, not only the example's
     /// `Label`: a served outer router's
     /// [`ConnectInfo`](axum::extract::ConnectInfo) peer, for instance, is
-    /// dropped unless it is copied too.
+    /// dropped unless it is copied too. An outer `DefaultBodyLimit` cannot be
+    /// copied, since Axum keeps its record private: set the limit with a
+    /// `DefaultBodyLimit` layer on the boundary's own routes instead.
     ///
     /// The detection is a run-time check because the records cannot be reset
     /// individually: Axum keeps its path-parameter record and its nested

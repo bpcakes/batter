@@ -62,7 +62,8 @@ contracts, capability facts and validation history.
       next.extensions_mut().insert(label.clone());
   }
   // Copy every other extension the destination reads, such as a served
-  // outer router's `ConnectInfo<SocketAddr>` peer, the same way.
+  // outer router's `ConnectInfo<SocketAddr>` peer, the same way. An outer
+  // `DefaultBodyLimit` cannot be copied: set it on the boundary's own routes.
   let response = client.request(next).await;
   ```
 
