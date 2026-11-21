@@ -44,8 +44,9 @@ impl TestClient {
     /// The request must be arrival-shaped. The entry contract is
     /// `batter_axum::low_level::RouterClient::request`, the one that
     /// `batter_axum::InProcessClient::request` also delegates to, which lists
-    /// the detected Axum routing records, the adapter's private records and
-    /// the refusal: a request built
+    /// the detected Axum routing records and the refusal;
+    /// `InProcessClient::request` lists the adapter's private records. A
+    /// request built
     /// from a whole extension map cloned inside an earlier dispatch is
     /// refused whole, nothing is stripped, and the response carries the
     /// `batter_axum::InProcessRefusal` marker; a dispatched response never

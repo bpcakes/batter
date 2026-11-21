@@ -194,8 +194,8 @@ impl RequestInterruptionResponder {
     /// Render cancellation or deadline expiry with the admission policy's envelope.
     ///
     /// The custom renderer receives the original request metadata captured
-    /// before inner adapter extensions were inserted, without private quota,
-    /// observation or operational ownership state.
+    /// before inner adapter extensions were inserted, without any private
+    /// request record that [`InProcessClient::request`] lists.
     /// Returning this response through admission also records `reason` as the
     /// response-construction operation's outcome, preserving the rendered body,
     /// headers and status. Rendering and discarding it changes no outcome.
@@ -295,8 +295,8 @@ impl RequestPolicy {
     ///
     /// The callback receives a snapshot of the original request parts at entry
     /// to this middleware, including application extensions but excluding
-    /// Batter's private quota writer, shared observation state, operational
-    /// ownership marker and admission record. Redispatching cloned metadata
+    /// every private request record that [`InProcessClient::request`] lists.
+    /// Redispatching cloned metadata
     /// creates independent observation and correlation under an operational
     /// wrapper and is admitted only by admission of its own. Install trusted
     /// correlation/identity extensions in an outer layer before this boundary;

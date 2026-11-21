@@ -178,8 +178,9 @@ impl InProcessClient {
     /// built outside this crate, so one is present only in a request that a
     /// Batter layer already processed, or in a map copied from one, including
     /// a map that no longer carries any routing record and a live request
-    /// that a service behind a `low_level` wrapper hands on whole.
-    /// [`RouterClient::request`] names the wrappers that write one. Public
+    /// that a service behind one of the `low_level` wrappers that write one
+    /// hands on whole. [`RouterClient::request`] names those wrappers;
+    /// `request_admission` alone writes none. Public
     /// values such as a [`CorrelationId`](crate::CorrelationId) are not among
     /// them; a copied one is not refused, and the boundary generates its own
     /// identity.

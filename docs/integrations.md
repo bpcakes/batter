@@ -1015,9 +1015,9 @@ commit-outcome-loss and commit-timeout are `PossiblyConsumed`; pre-commit failur
 are `NotConsumed`. The native exhaustive errors no longer contain a
 post-commit malformed-response variant. Native decisions are built before commit.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
-quota rejection. `low_level::request_admission` captures the original request metadata without the
-private quota writer, shared observation state and operational ownership marker,
-and installs an opaque interruption responder for the inner
+quota rejection. `low_level::request_admission` captures the original request
+metadata without any private request record that `InProcessClient::request`
+lists, and installs an opaque interruption responder for the inner
 adapter; it uses
 the same `RequestPolicy` renderer as an outer cancellation or deadline. A
 custom renderer, including `with_infrastructure_json`, owns that response's

@@ -54,10 +54,31 @@ async fn the_request_client_refuses_a_map_from_an_earlier_dispatch() {
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert!(refused.headers().get("x-request-id").is_none());
+
+    // That map also holds the adapter's own records. A map from a bare Axum
+    // router holds only Axum's routing records, so only the routing check
+    // can refuse it.
+    let native = Arc::new(Mutex::new(None));
+    let slot = native.clone();
+    let bare = axum::Router::new().route(
+        "/inspect",
+        get(move |request: axum::extract::Request| {
+            *slot.lock().unwrap() = Some(request.extensions().clone());
+            async { "inspected" }
+        }),
+    );
+    bare.oneshot(fresh()).await.unwrap();
+    let routed = native.lock().unwrap().take().unwrap();
+    assert!(routed.get::<MatchedPath>().is_some());
+    let mut reused = fresh();
+    *reused.extensions_mut() = routed;
+    let refused = client.request(reused, peer).await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
-        "the handler ran for the reused map"
+        "the handler ran for a reused map"
     );
 }
 

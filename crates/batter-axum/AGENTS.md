@@ -140,8 +140,8 @@ Windows support and non-Unix fallbacks are out of scope.
   client's refusal of whole extension maps captured from routed, nested,
   invalid UTF-8, fallback and native `nest_service` dispatches and of each
   routing record alone, before any layer or handler runs, with one static
-  ERROR event and no completion. Its routing-record-only maps are captured
-  from a bare `Router`, so no private record masks the routing check;
+  ERROR event and no completion. Its refused maps are captured from a bare
+  `Router`, so no private record masks the routing check;
   `reused_routing_accepted.rs` covers
   arrival-shaped requests with application extensions, a copied or forwarded
   refusal marker removed from a dispatched response, the copy-by-type
@@ -149,7 +149,7 @@ Windows support and non-Unix fallbacks are out of scope.
   `reused_request_state.rs` covers the refusal of a map that keeps only the
   boundary's own records, of maps captured behind each of the four
   record-writing `low_level` wrappers around a service that is not a
-  `Router`, of a live request an outer router or a `low_level` wrapper
+  `Router`, of a live request an outer router or one of those wrappers
   forwards whole, the rebuilt request they must send instead (method,
   version, target, headers, body and a copied extension, also under `nest`
   and `nest_service`), the accepted public values a `request_admission`-only
@@ -275,8 +275,10 @@ record there, with its fixture in `src/correlation/tests.rs`, name it in the
 one documented list in `InProcessClient::request`'s rustdoc (other documents
 refer to that list rather than repeating it), and never add a public type to
 it: a public value is a caller's choice. Keep refusing a live
-request that an outer Axum router or a `low_level` wrapper forwards whole; it
-carries that dispatch's records. Do not describe the rebuild migration as
+request that an outer Axum router or one of the four record-writing
+`low_level` wrappers forwards whole; it carries that dispatch's records.
+`request_admission` alone writes only public values, so its forwarded request
+is accepted (`batter-nff2.1`). Do not describe the rebuild migration as
 preventing serving: a router that rebuilds into the client can still be
 served. The refusal is
 `render_infrastructure_failure(HttpFailure::Internal, None)` with the

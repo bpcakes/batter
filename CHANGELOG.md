@@ -995,7 +995,8 @@ contracts, capability facts and validation history.
   reference worker keeps two only as negative controls, for services without an
   exit claim and for an invocation that already ended.
 
-- Add fixture pools for separately provisioned PostgreSQL logins (`batter-7r3.8`).
+- **Breaking:** add fixture pools for separately provisioned PostgreSQL logins
+  (`batter-7r3.8`).
   `ConnectionPlan::declare(reserved)` returns a `PlanDeclaration`; each
   `pool(PlannedPool)` returns an opaque `PoolKey`, and `FixtureDatabase::pool` /
   `DatabaseFixture::pool` select by key, refusing keys from another plan.
@@ -1008,8 +1009,9 @@ contracts, capability facts and validation history.
   the lease. Role provisioning, grants and `DROP ROLE` stay caller-owned.
   `ConnectionPlan::new` keeps its signature and lease-login behaviour.
 
-  Changed (not a hard cut; no `Breaking:`, `Migration:` or shim applies, and no
-  public item, signature or variant changed): every declared pool of a lease is
+  Changed (not a hard cut, so no `Migration:` rustdoc applies, and no public
+  item, signature or variant changed; labelled `Breaking:` for the run-time
+  failure below): every declared pool of a lease is
   now constructed and registered before the first connectivity check, so pools
   after a failed check, or after a cancelled owned acquisition waiter, exist and
   are closed before lease cleanup.
@@ -1021,6 +1023,14 @@ contracts, capability facts and validation history.
   and `DatabaseCleanup::pool_failures` docs now say SQLx-typed rather than native,
   since that one cause is adapter-created. `ConnectionPlan` moved into a private
   submodule and is re-exported at the same path.
+
+  ```text
+  # Before: the pools connected to `other`, not to the lease's database.
+  postgres://owner@db.example/lease_db?dbname=other
+  # After: that lease URL fails with PoolAcquire/Connect before any pool
+  # exists; a lease URL selects only the lease's own database.
+  postgres://owner@db.example/lease_db
+  ```
 
 - **Breaking:** Remove all 17 public boolean-parameter wrappers introduced as
   deprecated compatibility paths in PR #67 (`batter-4dmd`). Settings selection,
@@ -1147,7 +1157,8 @@ contracts, capability facts and validation history.
   within every dependent's semver range. The
   [publication dossier](https://github.com/bpcakes/batter/blob/1630fe8d3f9b51b75417396bbd97478d4167b806/docs/evidence/publication-dossier-2026-10-17.md)
   records the remaining gates; nothing is published.
-- Manage constraint triggers with the routines they bind (`batter-n2s1`,
+- **Breaking:** manage constraint triggers with the routines they bind
+  (`batter-n2s1`,
   [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
   `ManagedObject::constraint_trigger(table, name, source)` declares one
   `CREATE CONSTRAINT TRIGGER` statement (`OR REPLACE` is rejected, as
@@ -1211,6 +1222,14 @@ contracts, capability facts and validation history.
   next entry. The runtime changes above are not: the `READ COMMITTED` pin,
   and the lock privileges that existing deployments may need to grant first.
   Their migration guidance is above; no Rust shim applies to them.
+
+  ```sql
+  -- Before: enough for apply to create or replace a plain trigger.
+  GRANT TRIGGER ON app_table TO applying_login;
+  -- After: apply also locks each relation, partitions included, so the
+  -- owner grants one of the lock privileges, for example:
+  GRANT MAINTAIN ON app_table TO applying_login;
+  ```
 
 - Breaking: `batter_sqlx::managed::ManagedObjectKind` (also
   `batter::sqlx::managed::ManagedObjectKind`) gains `ConstraintTrigger`. Values

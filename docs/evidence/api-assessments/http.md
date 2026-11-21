@@ -953,12 +953,14 @@ a live context; characterize the inherited context a rendered probe and the
 fallback renderer receive; and accept a copied public `CorrelationId`.
 Runlimit's test first asserts that no Axum record is left, then refuses the
 same map with no authentication, quota check, handler or probe run. The
-reference service's request client has two tests: one replays a map from a
-routed dispatch, which the routing check refuses, and one replays a map
-captured behind `operational_http` that holds no Axum record, which only the
-private-record check refuses. Hand-run negative controls, not part of the
-suite, run on
-2026-11-20 in a separate build directory: with the private-record check
+reference service's request client has two tests. One replays the map of a
+routed dispatch through its own boundary, which holds both kinds of record,
+and the map of a bare Axum `Router`, which holds only routing records, so only
+the routing check can refuse it. The other replays a map captured behind
+`operational_http` that holds no Axum record, which only the private-record
+check refuses. The `batter-axum` routing tests and one Runlimit test likewise
+replay bare-`Router` maps. Hand-run negative controls, not part of the suite,
+run on 2026-11-20 in a separate build directory: with the private-record check
 disabled, the in-crate refusal test, the route-group tests for the
 `OPTIONS *` map, the `low_level` captures and the request forwarded from
 inside a `low_level` wrapper, and Runlimit's test fail; with Runlimit's
@@ -966,7 +968,12 @@ inside a `low_level` wrapper, and Runlimit's test fail; with Runlimit's
 Controls run on 2026-11-21 after the review follow-up: with the private-record
 check disabled, the reference service's Batter-records-only test fails; with
 a second listed record inserted into one fixture, the one-record-per-fixture
-test fails.
+test fails. With the routing check disabled, the six `batter-axum` routing
+tests that replay bare-`Router` maps, the outer-router forwarding test, the
+reference service's routed-dispatch test and Runlimit's bare-`Router` test
+fail; before the second review round several of the routing tests replayed
+maps captured inside the boundary, whose private records refused them
+anyway.
 
 Unverified: detection of Axum's routing records is checked against Axum 0.8.9
 only, while the dependency requirement admits later 0.8 releases. Fresh-agent

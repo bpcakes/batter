@@ -1,5 +1,9 @@
 //! A whole extension map from an earlier dispatch is refused at client entry,
-//! before the router, any layer or any handler runs.
+//! before the router, any layer or any handler runs. The maps these tests
+//! replay come from a bare Axum router, so they carry Axum's routing records
+//! and none of Batter's private ones: only the routing check can refuse them.
+//! Maps that also carry Batter's records are covered in
+//! `reused_request_state.rs`.
 
 use super::{
     capture::Capture,
@@ -217,7 +221,7 @@ pub async fn raw_params(extensions: &Extensions) -> Result<Vec<String>, RawPathP
 #[tokio::test]
 async fn a_map_from_a_captured_route_is_refused_for_another_captured_route() {
     let fixture = Fixture::new().await;
-    let captured = fixture.captured_at("/source/7").await;
+    let captured = natively_captured(get_request("/source/7")).await;
     assert_eq!(raw_params(&captured).await.unwrap(), ["7"]);
     assert_eq!(
         captured.get::<MatchedPath>().unwrap().as_str(),
@@ -230,7 +234,7 @@ async fn a_map_from_a_captured_route_is_refused_for_another_captured_route() {
 #[tokio::test]
 async fn a_map_from_a_nested_route_is_refused() {
     let fixture = Fixture::new().await;
-    let captured = fixture.captured_at("/outer/3/source/7").await;
+    let captured = natively_captured(get_request("/outer/3/source/7")).await;
     assert_eq!(raw_params(&captured).await.unwrap(), ["3", "7"]);
     assert_eq!(
         captured.get::<NestedPath>().unwrap().as_str(),
@@ -243,17 +247,18 @@ async fn a_map_from_a_nested_route_is_refused() {
 #[tokio::test]
 async fn a_map_with_an_invalid_utf8_capture_is_refused_for_a_valid_path() {
     let fixture = Fixture::new().await;
-    let captured = fixture.captured_at("/source/%ff").await;
+    let captured = natively_captured(get_request("/source/%ff")).await;
     assert!(matches!(
         raw_params(&captured).await,
         Err(RawPathParamsRejection::InvalidUtf8InPathParam(_))
     ));
-    fixture.assert_refused(reusing("/view/9", captured)).await;
+    fixture
+        .assert_refused(reusing("/view/9", captured.clone()))
+        .await;
 
     // Without the nameable records the extractor's rejection is the only
-    // evidence left, and it alone refuses the request. The map comes from a
-    // bare router, so no private Batter record can refuse it instead.
-    let mut alone = natively_captured(get_request("/source/%ff")).await;
+    // evidence left, and it alone refuses the request.
+    let mut alone = captured;
     alone.remove::<MatchedPath>();
     alone.remove::<NestedPath>();
     alone.remove::<OriginalUri>();
@@ -268,7 +273,7 @@ async fn a_map_with_an_invalid_utf8_capture_is_refused_for_a_valid_path() {
 #[tokio::test]
 async fn a_map_captured_in_a_fallback_is_refused() {
     let fixture = Fixture::new().await;
-    let captured = fixture.captured_at("/missing/path").await;
+    let captured = natively_captured(get_request("/missing/path")).await;
     // A fallback dispatch writes only the original URI and an empty capture list.
     assert!(captured.get::<MatchedPath>().is_none());
     assert!(captured.get::<NestedPath>().is_none());
@@ -286,7 +291,7 @@ async fn a_map_captured_in_a_fallback_is_refused() {
         .uri("*")
         .body(Body::empty())
         .unwrap();
-    let captured = fixture.captured(asterisk).await;
+    let captured = natively_captured(asterisk).await;
     assert!(matches!(
         raw_params(&captured).await,
         Err(RawPathParamsRejection::MissingPathParams(_))

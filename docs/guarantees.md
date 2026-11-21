@@ -2340,8 +2340,8 @@ root/nested guarded fallback return `BoundaryAssemblyError::ConflictingFallback`
 The renderer chooses status, body and headers in every lifecycle state. Group
 browser policies do not apply to it: application prefix policy may use
 `PrivateResponsePolicy::apply` on its response headers. Metadata retains public
-correlation but excludes the body and private admission, quota, observation and
-operational ownership state. Assembly never calls the renderer. Like probe
+correlation but excludes the body and every private request record that
+`InProcessClient::request` lists. Assembly never calls the renderer. Like probe
 renderers it must not block or perform business work, and carries no request
 deadline or body-lifetime guarantee. Existing guarded fallback behavior is
 unchanged when no renderer is selected.
@@ -2353,9 +2353,11 @@ the same assembly check against every group's routes, and the probe is mounted
 outside every group's admission, inside correlation and the single observer.
 The application renderer runs synchronously for each probe request with the
 request metadata, including the generated `CorrelationId`, but without the
-body or Batter's private quota writer, observation state or operational ownership
-marker; a probe is never admitted, so no
-`OperationContext` or `RequestInterruptionResponder` is present. The renderer
+body or any private request record that `InProcessClient::request` lists. A
+probe is never admitted, so an arriving probe request carries no
+`OperationContext` or `RequestInterruptionResponder`; an in-process request
+built from a map captured behind `low_level::request_admission` carries the
+earlier request's (`batter-nff2.1`). The renderer
 returns the response body and headers, for example an OpenAPI-documented JSON
 document, but not the probe's outcome. The boundary then sets liveness to 200
 and removes any `HttpObservationLevel` override from it, so its completion

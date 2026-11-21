@@ -1,8 +1,10 @@
 //! The test transport accepts only arrival-shaped requests, exactly as the
 //! Axum adapter's in-process client does: a whole extension map from an
 //! earlier dispatch is refused at entry, before lifecycle admission,
-//! authentication, the native quota check or any handler runs. The last test
-//! covers a map that keeps only the adapter's own request records.
+//! authentication, the native quota check or any handler runs. The last two
+//! tests replay a map that keeps only the adapter's own request records and
+//! one that keeps only Axum's routing records, so each check is exercised
+//! without the other.
 
 use super::*;
 use axum::{
@@ -445,5 +447,41 @@ async fn a_map_with_only_inherited_batter_records_is_refused_before_authenticati
         "{output}"
     );
     assert!(capture.events().is_empty(), "{output}");
+    finish(running).await;
+}
+
+#[tokio::test]
+async fn a_map_with_only_axum_routing_records_is_refused_before_the_protected_assembly() {
+    let running = running().await;
+    let fixture = Fixture::new(&running);
+    // A bare Axum router writes its routing records and none of Batter's,
+    // so only the routing check can refuse what it captured.
+    let slot = Arc::new(Mutex::new(None));
+    let inner = slot.clone();
+    let mut bare = Router::new().route(
+        "/source/{source_id}",
+        axum::routing::any(move |request: Request| {
+            *inner.lock().unwrap() = Some(request.extensions().clone());
+            async { "captured" }
+        }),
+    );
+    tower::Service::call(&mut bare, request("/source/7", "Bearer secret-a"))
+        .await
+        .unwrap();
+    let captured = slot.lock().unwrap().take().unwrap();
+    assert!(captured.get::<MatchedPath>().is_some());
+    assert!(captured.get::<Authenticated<Principal>>().is_none());
+    let before = fixture.counts();
+
+    let mut reused = request("/view/9", "Bearer secret-a");
+    *reused.extensions_mut() = captured;
+    let refused = fixture.client.request(reused, peer()).await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
+    assert_eq!(
+        fixture.counts(),
+        before,
+        "authentication, the quota check, a handler or a probe ran"
+    );
     finish(running).await;
 }

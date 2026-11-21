@@ -334,10 +334,11 @@ the `ReadinessDecision` and `HttpObservationLevel` extensions with the decision
 and the policy's severity. A renderer therefore chooses what the probe says,
 never whether the process is ready or how the completion event is logged.
 
-All application renderers (probes, admission/interruption and browser rejection)
-receive metadata without Batter's private quota writer, shared observation
-state or operational ownership marker. Public correlation and application
-extensions remain available. If a renderer redispatches cloned metadata through
+All application renderers (probes, admission/interruption, browser rejection
+and the metadata-only fallback) receive metadata without any of Batter's
+private request records, which the rustdoc of `InProcessClient::request`
+lists. Public correlation and application extensions remain available. If a
+renderer redispatches cloned metadata through
 an operational wrapper, that request gets its own correlation and completion;
 its quota facts cannot replace the original request's facts.
 
