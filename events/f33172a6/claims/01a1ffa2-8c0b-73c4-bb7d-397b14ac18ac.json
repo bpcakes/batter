@@ -1,0 +1,1 @@
+{"v":1,"id":"01a1ffa2-8c0b-73c4-bb7d-397b14ac18ac","replica":"f33172a6","deps":["01a1ffa2-72e4-7d60-a1a9-58c89b538ab0"],"actor":{"agent":"human"},"op":"claim","issue":"01a1ff83-ba18-7ad6-a6c7-678802e28c08","data":{"mode":"online","generation":2},"where":{"branch":"t3/scan-consumer-state-machines","commit":"8b086612d7422eafe1d9e33c42aced43462d1022"}}
