@@ -327,7 +327,9 @@ impl Persister {
             Some(selected) => selected,
             None => return Ok(Persisted::Idle),
         };
-        check_deadline(deadline)?;
+        if let Err(error) = check_deadline(deadline) {
+            return selected.finish(Err(error));
+        }
         let encoded = format::encode(&selected.file);
         let path = self.path.clone();
         #[cfg(test)]
@@ -348,7 +350,9 @@ impl Persister {
                 let _ = resume.await;
             }
         }
-        check_deadline(deadline)?;
+        if let Err(error) = check_deadline(deadline) {
+            return selected.finish(Err(error));
+        }
         let Ok(bytes) = encoded else {
             // It can never fit, so it is not retried; a newer one replaces it.
             selected.too_large();
@@ -428,12 +432,16 @@ fn write(
         Err(std::fs::TryLockError::WouldBlock) => return Err(PersistFailure::Busy),
         Err(std::fs::TryLockError::Error(_)) => return Err(PersistFailure::Io),
     }
-    if let Written::At(_) = written
-        && let Initial::Read(existing) = read_bounded(&path.file())
-        && let Ok(existing) = format::decode(&existing)
-        && existing.version > version
-    {
-        return Ok(Persisted::NewerOnDisk);
+    if let Written::At(_) = written {
+        match read_bounded(&path.file()) {
+            Initial::Unreadable => return Err(PersistFailure::Io),
+            Initial::Read(bytes)
+                if format::decode(&bytes).is_ok_and(|file| file.version > version) =>
+            {
+                return Ok(Persisted::NewerOnDisk);
+            }
+            Initial::Read(_) | Initial::Absent => {}
+        }
     }
     // Residue of an abandoned write is ours to remove: only a holder of the
     // directory lock writes the temporary file, and no valid file name is

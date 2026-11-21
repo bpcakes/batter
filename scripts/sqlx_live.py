@@ -78,6 +78,7 @@ TARGETS = {
         "snapshot_is_coherent_read_only_and_normalized",
         "snapshot_transaction_control_never_returns_evidence",
         "commit_in_flight_cancellation_and_disconnect_are_uncertain",
+        "commit_until_reports_only_a_sent_commit_as_uncertain",
         "snapshot_error_requires_original_guard",
         "runner_releases_only_acknowledged_outputs",
         "runner_uncertainty_retains_output_and_rejection",

@@ -2,12 +2,12 @@
 //! stop and prune. The audited write keeps its own completion, because its
 //! uncertain commit is a [`WriteOutcome`](crate::WriteOutcome), not an error.
 use crate::{
-    ErrorClass, PooledStore, StoreError,
+    CommitUncertainty, ErrorClass, PooledStore, StoreError,
     errors::ErrorKind,
-    store::{bounded, remaining},
+    store::bounded,
     write::{RollbackFailure, known_commit_rejection},
 };
-use batter_sqlx::{PgDeadlineError, PgScopeFailure, PgScopedSql};
+use batter_sqlx::{PgCommitError, PgDeadlineError, PgScopeFailure, PgScopedSql};
 use tokio::time::Instant;
 
 impl crate::ServingStore {
@@ -41,14 +41,19 @@ impl crate::ServingStore {
                 };
             }
         };
-        remaining(deadline)?;
-        match tokio::time::timeout_at(deadline, tx.commit()).await {
-            Ok(Ok(_)) => Ok(value),
-            Ok(Err(cause)) if known_commit_rejection(cause.cause()) => {
-                Err(cause.into_cause().into())
+        match tx
+            .commit_until(deadline, std::future::pending())
+            .await
+            .map_err(CommitFailure::from)
+        {
+            Ok(_) => Ok(value),
+            Err(CommitFailure::Certain(error)) => Err(error),
+            Err(CommitFailure::Uncertain(CommitUncertainty::Native(cause))) => {
+                Err(StoreError(ErrorKind::Unconfirmed(cause.into_cause())))
             }
-            Ok(Err(cause)) => Err(StoreError(ErrorKind::Unconfirmed(cause.into_cause()))),
-            Err(_) => Err(StoreError::classified(ErrorClass::CommitUnknown)),
+            Err(CommitFailure::Uncertain(CommitUncertainty::Deadline)) => {
+                Err(StoreError::classified(ErrorClass::CommitUnknown))
+            }
         }
     }
 }
@@ -75,5 +80,29 @@ pub(crate) fn scope_error(
         PgDeadlineError::Elapsed => StoreError::classified(ErrorClass::Deadline),
         PgDeadlineError::Failed(error) => StoreError(ErrorKind::Scope(Box::new(error))),
         PgDeadlineError::RecoveryElapsed(error) => RollbackFailure::deadline(error),
+    }
+}
+
+pub(crate) enum CommitFailure {
+    Certain(StoreError),
+    Uncertain(CommitUncertainty),
+}
+
+impl From<PgCommitError> for CommitFailure {
+    fn from(error: PgCommitError) -> Self {
+        match error {
+            PgCommitError::Interrupted => {
+                Self::Certain(StoreError::classified(ErrorClass::Interrupted))
+            }
+            PgCommitError::DeadlineBeforeCommit => {
+                Self::Certain(StoreError::classified(ErrorClass::Deadline))
+            }
+            PgCommitError::Validation(cause) => Self::Certain(cause.into()),
+            PgCommitError::Unconfirmed(cause) if known_commit_rejection(cause.cause()) => {
+                Self::Certain(cause.into_cause().into())
+            }
+            PgCommitError::Unconfirmed(cause) => Self::Uncertain(CommitUncertainty::Native(cause)),
+            PgCommitError::AcknowledgementDeadline => Self::Uncertain(CommitUncertainty::Deadline),
+        }
     }
 }

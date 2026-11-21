@@ -23,7 +23,7 @@ a SQLSTATE at most.
 | `set <key> <variant>` | sets a release or mode flag |
 | `kill <switch> engage\|release` | engages or releases a kill switch |
 | `archive <key>`, `restore <key>` | archives or restores a key |
-| `history <key> [--after V]` | the key's newest page of audited events in one bounded read, so the event an uncertain write points to is always shown, with a warning when older events are retained; `--after V` reads the page after version V instead (`0` starts from the first event) and warns with the next `--after` when more follow; each event carries `recorded_at`, the database's time of the write |
+| `history <key> [--after V]` | the key's newest page of audited events in one bounded read, with a warning when older events are retained; `--after V` reads the page after version V instead (`0` starts from the first event) and warns with the next `--after` when more follow; each event carries `recorded_at`, the database's time of the write |
 | `fleet [--write VERSION/UUID \| --flag KEY]` | the fleet, a rollout check, or a key's declarers |
 
 `--if-revision N` is a store-version watermark. A change requires the key’s
@@ -70,10 +70,10 @@ operation retires its connection when it ends, so a command that reads before
 it writes opens one connection per operation, and connection establishment
 follows SQLx's own retry within the timeout. Every command first refuses a
 standby and a schema older than it requires. SIGINT or SIGTERM during that
-check or a read ends the command at once with `interrupted` (exit 1). During a
+check or a standalone read ends the command at once with `interrupted` (exit 1). During a
 write, a signal before COMMIT is sent, including during the continuity check
 just before it, rolls the write back; once COMMIT is sent the signal waits and
-the real outcome is reported.
+the real outcome is reported. On release, a signal that arrives during COMMIT or during the subsequent fleet read returns the settled write report with a warning that the settings floor count was unavailable.
 
 After the command settles and closes its pool, runtime shutdown does not wait
 for blocking work. A stalled hostname lookup therefore cannot delay delivery
@@ -86,8 +86,7 @@ it does not stall the operating system's resolver itself.
 
 Exit codes: 0 ok, 1 failed with nothing written (a database rejection of
 COMMIT included), 2 usage, 3 precondition not met (a revision mismatch, every
-store refusal, a coordinated flip and an unmet invariant), 4 commit outcome unknown (re-run with
-`--if-revision` after `batter-flags history <key>`), 101 panic. Under
+store refusal, a coordinated flip and an unmet invariant), 4 commit outcome unknown (check `data.proposed_write_id` using `batter-flags fleet --write VERSION/UUID` and inspect history before considering a new write with `--if-revision`), 101 panic. Under
 `--output json` every exit writes exactly one JSON document, except the
 argument parser's own exits (a usage error, `--help` and `--version`) and a
 panic. The document has `command`, `exit`, `outcome`,

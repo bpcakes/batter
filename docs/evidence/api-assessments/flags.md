@@ -565,3 +565,34 @@ The replacement lookup, write identity and `WriteAbsent` outcome are present.
 The walker omits enum-variant fields. Inspection of the two acknowledged
 `WriteOutcome` variants confirmed their counter now comes from the write ID.
 Their before/after call shapes and the compatibility decision are in CHANGELOG.
+
+## Commit submission and command interruption (batter-jkw6.64)
+
+The store's outer timeout could expire during native continuity validation.
+Only the transaction owner can check the clock at the first poll of COMMIT
+and distinguish a pre-submission failure from a missing acknowledgement.
+Both audited writes and presence operations now use that owner's
+`commit_until` method. An uncertain audited write retains the trigger's
+proposed audit identity so an operator can check even a reused counter. Local
+submission cannot establish whether PostgreSQL committed. The completion test
+parks an audited write at its final validation row, forwards the whole server
+response, then advances the deadline before polling the write again. The store
+returns a definite deadline and the counter stays at zero.
+
+The CLI borrows one interrupt for preflight, the write and the optional fleet
+read. Once COMMIT begins, the write owns settlement. A pending signal then
+stops the read while preserving the settled report. The persistence selection
+likewise owns failure attribution until it hands the file to the blocking
+writer. An I/O failure during the subsequent disk-version comparison leaves
+the selected publication available for retry.
+
+The rustdoc JSON comparison with `8ef8f292` found five additions in
+`batter-flags-postgres` and, in `batter-sqlx`, eleven `commit_until` and
+`PgCommitError` additions with eight removed `commit_unless` and
+`PgCommitStop` entries. Both removed items were unreleased and absent from
+`master`, and no caller remained, so no deprecated shim is kept: an outer
+timeout around `commit_unless` could not tell expiry before COMMIT from a lost
+acknowledgement. A PostgreSQL 18 case in `atomic_live` lets an abandoned
+COMMIT finish after `AcknowledgementDeadline` and observes the committed row.
+The walker omits enum variant fields. Manual comparison identified one field replacement,
+`WriteOutcome::Uncertain::proposed_version`, documented in the changelog.

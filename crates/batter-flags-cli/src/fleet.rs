@@ -152,8 +152,14 @@ pub(crate) async fn floor_warning(
     deadline: Instant,
     switch: &FlagKey,
     mut report: Report,
+    interrupt: &mut batter_flags_postgres::WriteInterrupt,
 ) -> Report {
-    let Ok(fleet) = store.fleet_declaring(switch, deadline).await else {
+    let fleet = tokio::select! {
+        biased;
+        () = interrupt.wait() => return report.warn("fleet read interrupted before the settings floor count was obtained"),
+        result = store.fleet_declaring(switch, deadline) => result,
+    };
+    let Ok(fleet) = fleet else {
         return report.warn("the fleet could not be read to count processes whose settings floor keeps the switch engaged");
     };
     let (mut engaged, mut unknown) = (0_usize, 0_usize);

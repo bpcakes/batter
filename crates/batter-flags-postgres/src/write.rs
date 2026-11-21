@@ -1,16 +1,14 @@
 use crate::{
-    Archive, Change, CommitUncertainty, ErrorClass, PooledStore, StoreError, Write, WriteOutcome,
-    errors::ErrorKind,
-    prepared::Prepared,
-    store::{bounded, remaining},
+    Archive, Change, ErrorClass, PooledStore, StoreError, Write, WriteOutcome,
+    atomic::CommitFailure, errors::ErrorKind, prepared::Prepared, store::bounded,
 };
 use batter_flags_core::FlagKey;
-use batter_sqlx::{PgCommitStop, PgScopedSql, PgTransactionError, low_level::PgAtomicTransaction};
+use batter_sqlx::{PgScopedSql, PgTransactionError, low_level::PgAtomicTransaction};
 use sqlx::Row;
 use tokio::time::Instant;
 
 mod interrupt;
-use interrupt::Interrupt;
+pub use interrupt::WriteInterrupt;
 
 pub(crate) enum Mutation {
     Write(Write),
@@ -125,12 +123,37 @@ impl PooledStore {
         deadline: Instant,
         interrupt: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<WriteOutcome, StoreError> {
+        self.submit_with_interrupt(
+            request,
+            policy,
+            deadline,
+            &mut WriteInterrupt::new(interrupt),
+        )
+        .await
+    }
+
+    /// Submit one write with an interrupt shared across the caller's command.
+    /// The same signal can stop a subsequent read after commit settlement.
+    ///
+    /// ```no_run
+    /// # async fn example(store: &batter_flags_postgres::PooledStore, request: batter_flags_postgres::Request, deadline: tokio::time::Instant, signal: &mut batter_flags_postgres::WriteInterrupt) -> Result<(), batter_flags_postgres::StoreError> {
+    /// let outcome = store.submit_with_interrupt(request, batter_flags_postgres::WritePolicy::STRICT, deadline, signal).await?;
+    /// # let _ = outcome;
+    /// # Ok(()) }
+    /// ```
+    pub async fn submit_with_interrupt(
+        &self,
+        request: Request,
+        policy: WritePolicy,
+        deadline: Instant,
+        interrupt: &mut WriteInterrupt,
+    ) -> Result<WriteOutcome, StoreError> {
         let mutation = match request {
             Request::Write(write) => Mutation::Write(write),
             Request::Archive(archive) => Mutation::Archive(archive),
             Request::Restore(restore) => Mutation::Restore(restore),
         };
-        self.mutate_until(mutation, policy, deadline, Interrupt::On(interrupt))
+        self.mutate_until(mutation, policy, deadline, interrupt)
             .await
     }
 
@@ -167,7 +190,7 @@ impl PooledStore {
             mutation,
             WritePolicy::ACCEPT_ALL,
             deadline,
-            Interrupt::Never,
+            &mut WriteInterrupt::never(),
         )
         .await
     }
@@ -177,7 +200,7 @@ impl PooledStore {
         mutation: Mutation,
         policy: WritePolicy,
         deadline: Instant,
-        mut interrupt: Interrupt,
+        interrupt: &mut WriteInterrupt,
     ) -> Result<WriteOutcome, StoreError> {
         let acquire_deadline = deadline.min(Instant::now() + self.timing.acquire);
         let birth = bounded(acquire_deadline, async {
@@ -229,27 +252,16 @@ impl PooledStore {
                 return Ok(decision.completed(proof));
             }
         };
-        // Do not poll commit at all after a known pre-commit timeout.
-        remaining(deadline)?;
-        let proposed_version = pending.write_id.version();
-        // An interrupt is honoured until COMMIT is sent, including during the
-        // native continuity check before it, and never after.
-        let committed = tokio::time::timeout_at(deadline, tx.commit_unless(interrupt.wait())).await;
-        match committed {
-            Ok(Ok(proof)) => Ok(pending.committed(proof)),
-            Ok(Err(PgCommitStop::Interrupted)) => {
-                Err(StoreError::classified(ErrorClass::Interrupted))
-            }
-            Ok(Err(PgCommitStop::Unconfirmed(cause))) if known_commit_rejection(cause.cause()) => {
-                Err(cause.into_cause().into())
-            }
-            Ok(Err(PgCommitStop::Unconfirmed(cause))) => Ok(WriteOutcome::Uncertain {
-                proposed_version,
-                cause: CommitUncertainty::Native(cause),
-            }),
-            Err(_) => Ok(WriteOutcome::Uncertain {
-                proposed_version,
-                cause: CommitUncertainty::Deadline,
+        match tx
+            .commit_until(deadline, interrupt.wait())
+            .await
+            .map_err(CommitFailure::from)
+        {
+            Ok(proof) => Ok(pending.committed(proof)),
+            Err(CommitFailure::Certain(error)) => Err(error),
+            Err(CommitFailure::Uncertain(cause)) => Ok(WriteOutcome::Uncertain {
+                proposed_write_id: pending.write_id,
+                cause,
             }),
         }
     }

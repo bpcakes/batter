@@ -50,7 +50,7 @@ async fn an_interrupt_before_commit_rolls_back_and_one_during_commit_is_deferred
         "20",
         "kill",
         "halt",
-        "engage",
+        "release",
         "--actor",
         "ops",
         "--reason",
@@ -62,6 +62,57 @@ async fn an_interrupt_before_commit_rolls_back_and_one_during_commit_is_deferred
     let run = finish(child);
     assert_eq!(run.code, 0, "{run:?}");
     assert_eq!(run.json()["outcome"], "written");
+    assert!(
+        run.json()["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("fleet read interrupted"))
+    );
+    assert_eq!(db.audits().await, 1);
+    db.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn sigterm_during_the_floor_read_returns_the_settled_release() {
+    let db = Database::seeded().await;
+    db.slow_commit(2).await;
+    let child = db.spawn(&[
+        "--output",
+        "json",
+        "--timeout",
+        "20",
+        "kill",
+        "halt",
+        "release",
+        "--actor",
+        "ops",
+        "--reason",
+        "x",
+        "--yes",
+    ]);
+    db.wait_for_sleep().await;
+    // Queue behind the write's lock. The floor read then waits behind us.
+    let mut holder = db.pool.begin().await.unwrap();
+    sqlx::query("LOCK flags.flag_processes IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    db.wait_for_lock_wait().await;
+    signal(&child, "-TERM");
+    let run = finish(child);
+    holder.rollback().await.unwrap();
+    let report = run.json();
+    assert_eq!(run.code, 0, "{run:?}");
+    assert_eq!(report["outcome"], "written");
+    assert!(report["data"]["write_id"].is_string());
+    assert!(
+        report["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("fleet read interrupted")
+    );
     assert_eq!(db.audits().await, 1);
     db.close().await;
 }
@@ -104,9 +155,37 @@ async fn a_lost_commit_acknowledgement_exits_4_with_re_run_guidance() {
             .unwrap()
             .contains("--if-revision")
     );
+    let proposed: batter_flags_postgres::WriteId = report["data"]["proposed_write_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(report["data"]["proposed_version"], proposed.version().get());
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains(&proposed.to_string())
+    );
     // The session ended inside COMMIT, so here the transaction rolled back;
     // the command could not know that, and `history` is how to find out.
     assert_eq!(db.audits().await, 0);
+    sqlx::query("DROP TRIGGER lose_commit ON flags.flag_audit")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let replacement = db
+        .cli_args(&[
+            "kill", "halt", "engage", "--actor", "ops", "--reason", "x", "--yes",
+        ])
+        .json();
+    assert_eq!(replacement["data"]["version"], proposed.version().get());
+    assert_ne!(replacement["data"]["write_id"], proposed.to_string());
+    let fleet = db
+        .cli_args(&["fleet", "--write", &proposed.to_string()])
+        .json();
+    assert_eq!(fleet["data"]["rollout"]["write_absent"], true);
+
     db.close().await;
 }
 

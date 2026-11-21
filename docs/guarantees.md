@@ -3626,8 +3626,11 @@ non-owner, non-superuser and cannot set `session_replication_role`; owners,
 superusers and replica mode are outside the claim. Audit actor/reason are supplied
 text; `recorded_by` independently records the session login.
 
-No automatic retry occurs. A lost COMMIT acknowledgement or commit-phase deadline
-is uncertain, even when the server committed. Native SQLx owners retire sessions;
+The transaction owner checks the absolute deadline after continuity validation
+and immediately before native COMMIT submission. Expiry before submission is
+a definite failure. A missing acknowledgement after submission returns the
+proposed write ID for reconciliation, including when a later writer reuses its
+counter. The store never automatically retries. Native SQLx owners retire sessions;
 retirement does not prove server termination. A committed write notifies
 nobody; processes see it at the first refresh that starts after the commit. Declared settings floors remain
 application containment. The [store README](../crates/batter-flags-postgres/README.md) records
@@ -3729,7 +3732,7 @@ values this process published from the control plane, under a directory lock,
 synced and renamed into place within the directory, and never changes a run's
 outcome or narrows readiness. A replacement whose directory sync fails counts
 as this process's write for the rule that a later write keeps a newer file, and
-is retried. A publication too large for the file is reported as
+is retried. A subsequent comparison that encounters an I/O failure leaves the destination in place and the publication queued. Expiry after selection and before disk submission records a deadline on that selection if it is still the queued version. A publication too large for the file is reported as
 `LastGoodStatus::TooLarge` and not retried. Every confirming read offers the
 version it serves again, and that changes nothing: a version already written,
 dropped for a newer file on disk or too large is not attempted again until a
@@ -3784,8 +3787,7 @@ Flags registration rejects unregistered, foreign-owner and extracted-cleanup
 pools before registering components. The pool's opaque cleanup evidence and the
 presence reservation bind shutdown ordering to the same local owner; they do not
 prove that the native pool remains open or that PostgreSQL sessions terminated.
-A dropped write-interrupt sender disables both pre-commit waits without polling
-its completed receiver again. Last-good work selection and write admission are
+The command retains its interrupt across preflight, write preparation and the optional floor read. An interrupted floor read adds a warning to the settled release report. Dropping the sender disables subsequent waits. Last-good work selection and write admission are
 atomic, and a timed-out blocking write retains admission until it finishes. A
 failed selection retains the latest queued publication for retry.
 Declaration `only_in` and `governed_by` policies each assign once in the type

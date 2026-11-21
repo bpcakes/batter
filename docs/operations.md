@@ -263,8 +263,10 @@ batter-flags fleet --write VERSION/UUID         # data.write_id from the write r
 
 Exit 0 means the command succeeded, not that it wrote: read the report's
 `outcome` (`written`, `written_undeclared` or `unchanged`). Exit 3 is a
-precondition (nothing written) and 4 is unknown: run
-`batter-flags history outbound_halt` and re-run with `--if-revision`. `fleet
+precondition failure with nothing written. Exit 4 means the outcome is unknown.
+Use the report's `data.proposed_write_id` with `batter-flags fleet --write VERSION/UUID`
+to check for that exact event. Inspect `batter-flags history outbound_halt`
+and the current revision before deciding whether a new write is appropriate. `fleet
 --write VERSION/UUID` also exits 0 while the rollout is pending or no process is Live;
 the change has reached every Live process only when `data.rollout.reached` is
 `true`. A committed write notifies nobody: each process applies it at the
@@ -275,7 +277,8 @@ budget (derived from the serial schedule; no test measures it). The settings flo
 store. Releasing a switch, even one the store already holds released, warns
 with the number of Live processes whose settings floor keeps it engaged, counting only processes whose catalog declares the
 switch; a process whose floor sample overflowed without listing it is counted
-in a separate warning, as possibly engaged.
+in a separate warning, as possibly engaged. If a signal interrupts this read,
+the report retains the write outcome and warns that the count is unavailable.
 
 ### Change flags an invariant relates
 

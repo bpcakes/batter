@@ -456,6 +456,45 @@ async fn expiry_before_submission_keeps_the_publication_queued() {
     resume.send(()).unwrap();
     assert_eq!(attempt.await, Err(PersistFailure::Deadline));
     assert!(!path.file().exists());
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::Waiting {
+            version: Version::new(4),
+            written: None,
+            last_failure: Some(PersistFailure::Deadline)
+        }
+    );
     assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
     assert_eq!(on_disk(&directory), 4);
+}
+
+#[tokio::test]
+async fn inability_to_compare_the_existing_file_keeps_the_retry_and_destination() {
+    let directory = Directory::new();
+    let path = directory.path();
+    let persister = Persister::new(path.clone());
+    persister.offer(snapshot(1));
+    assert_eq!(persister.attempt(deadline()).await, Ok(Persisted::Written));
+
+    // ELOOP fails the read even if the test account has elevated permissions.
+    std::fs::remove_file(path.file()).unwrap();
+    std::os::unix::fs::symlink(path.file(), path.file()).unwrap();
+    persister.offer(snapshot(2));
+    assert_eq!(persister.attempt(deadline()).await, Err(PersistFailure::Io));
+    assert!(path.file().is_symlink());
+    assert_eq!(
+        persister.status(),
+        LastGoodStatus::Waiting {
+            version: Version::new(2),
+            written: Some(Version::new(1)),
+            last_failure: Some(PersistFailure::Io)
+        }
+    );
+    std::fs::remove_file(path.file()).unwrap();
+    std::fs::write(path.file(), format::encode(&snapshot(3)).unwrap()).unwrap();
+    assert_eq!(
+        persister.attempt(deadline()).await,
+        Ok(Persisted::NewerOnDisk)
+    );
+    assert_eq!(on_disk(&directory), 3);
 }

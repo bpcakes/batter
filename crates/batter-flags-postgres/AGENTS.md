@@ -45,8 +45,9 @@ writes/archive. Heartbeats do not take the counter lock, so everything a write
 judges about the fleet, the version it is numbered with included, comes from
 one statement (`declared.rs`); a heartbeat
 and a stop of one process serialize on a transaction advisory lock keyed by
-its id. Uncertain commit never becomes ordinary failure or automatic
-replay. The private mutation callback cannot accept arbitrary caller SQL.
+its id. An uncertain write retains its proposed audit identity for reconciliation.
+The native owner gates COMMIT submission on the absolute deadline. A missing
+acknowledgement never authorizes replay. The private mutation callback cannot accept arbitrary caller SQL.
 Default formatting does not expose values or native error contents.
 `PooledStore::migrate` refuses (`ErrorClass::SearchPath`) when its own
 session's default path resolves into `flags`, decided before anything is
@@ -56,8 +57,8 @@ nothing was applied.
 `load`, `preflight` and every operator read call `PooledStore::refuse_standby`
 first in their snapshot, before any schema or row; keep that one check, which
 the test-only `standby` hook exercises.
-The write interrupt retains its terminal state across preparation and commit
-validation. A closed sender disables interruption; it is never polled again.
+The write interrupt retains its terminal state across preparation, commit
+validation and subsequent command reads. A closed sender disables interruption; it is never polled again.
 
 ## Common commands
 

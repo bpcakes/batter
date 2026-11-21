@@ -76,7 +76,8 @@ pub use request::{
 pub use serving::ServingStore;
 pub use store::{PooledStore, StoreTiming};
 pub use write::{
-    FlipPolicy, InvariantPolicy, MAX_VERSION_JUMP, Request, RollbackFailure, WritePolicy,
+    FlipPolicy, InvariantPolicy, MAX_VERSION_JUMP, Request, RollbackFailure, WriteInterrupt,
+    WritePolicy,
 };
 #[cfg(test)]
 extern crate self as batter_flags_postgres;

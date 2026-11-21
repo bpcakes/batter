@@ -1157,6 +1157,14 @@ methods. An externally dropped future loses its result and retires; these APIs
 do not promise asynchronous Drop or remote termination. The bounded snapshot
 budget covers its complete acquisition/setup/inspection/cleanup workflow.
 
+`low_level::PgAtomicTransaction::commit_until(deadline, interrupt)` is the
+bounded commit. The interrupt and deadline stop continuity validation, and the
+deadline is checked again immediately before COMMIT is sent. `PgCommitError`
+separates the outcomes: `Interrupted`, `DeadlineBeforeCommit` and `Validation`
+mean COMMIT was never sent and nothing committed. `AcknowledgementDeadline`
+and `Unconfirmed` leave the outcome unknown, even when the server later commits.
+Wrapping `commit` in an outer timeout cannot make that distinction.
+
 ### Foundation dependency direction
 
 No SQLx feature depends on Runledger. `run_atomic`, `PgScopedSql` and

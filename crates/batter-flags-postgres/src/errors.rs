@@ -41,7 +41,7 @@ pub enum ErrorClass {
     /// was rolled back and nothing was written.
     Interrupted,
     /// An unaudited operation (heartbeat, stop or prune) may have committed:
-    /// its commit, including the native checks just before COMMIT, failed
+    /// its submitted COMMIT failed
     /// without a database rejection or ran out of time. The next heartbeat
     /// restates presence, and a prune that did commit deleted only rows that
     /// were already due; an unknown stop is its own case,

@@ -42,4 +42,4 @@ uuid = { version = "1.29.0", features = ["serde", "v7"] }
 postgres-test-harness = { version = "0.2.0", git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
 # Pins the migration checksums the schema tests assert.
 sha2 = "0.11.1"
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "test-util"] }

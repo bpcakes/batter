@@ -164,11 +164,24 @@ async fn deadline_during_commit_is_uncertain_and_retires() {
     pool.close().await;
     f.close().await;
 }
-#[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18"]
-async fn lost_commit_acknowledgement_is_uncertain_even_when_the_write_committed() {
-    let f = Fixture::migrated().await;
-    let target: PgConnectOptions = f.lease.database_url().parse().unwrap();
+// A commit fault or the transaction milestone at which the proxy must signal.
+enum WireGate {
+    DropCommitAck,
+    AwaitRelease(ValidationResponse),
+    AwaitRow(ValidationResponse),
+    ForwardValidation(tokio::sync::oneshot::Sender<()>),
+}
+
+struct ValidationResponse {
+    row: tokio::sync::oneshot::Sender<()>,
+    forwarded: tokio::sync::oneshot::Sender<()>,
+}
+
+async fn withholding_proxy(
+    url: &str,
+    gate: WireGate,
+) -> (sqlx::PgPool, tokio::task::JoinHandle<()>) {
+    let target: PgConnectOptions = url.parse().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let upstream = TcpStream::connect((target.get_host(), target.get_port()))
@@ -181,6 +194,7 @@ async fn lost_commit_acknowledgement_is_uncertain_even_when_the_write_committed(
         let outgoing = tokio::spawn(async move {
             let _ = tokio::io::copy(&mut client_read, &mut server_write).await;
         });
+        let mut gate = gate;
         loop {
             let mut header = [0; 5];
             server_read.read_exact(&mut header).await.unwrap();
@@ -188,16 +202,30 @@ async fn lost_commit_acknowledgement_is_uncertain_even_when_the_write_committed(
             assert!((4..=1_000_000).contains(&length));
             let mut payload = vec![0; length - 4];
             server_read.read_exact(&mut payload).await.unwrap();
-            if header[0] == b'C' && payload == b"COMMIT\0" {
-                // PostgreSQL has committed; intentionally suppress its acknowledgement.
-                outgoing.abort();
-                let _ = outgoing.await;
-                drop(client_write);
-                break;
-            }
+            gate = match (gate, header[0], payload.as_slice()) {
+                (WireGate::DropCommitAck, b'C', b"COMMIT\0") => break,
+                (WireGate::AwaitRelease(response), b'C', b"RELEASE\0") => {
+                    WireGate::AwaitRow(response)
+                }
+                (WireGate::AwaitRow(response), b'D', _) => {
+                    // Park the test's write before returning the validation row.
+                    response.row.send(()).unwrap();
+                    WireGate::ForwardValidation(response.forwarded)
+                }
+                (gate, _, _) => gate,
+            };
             client_write.write_all(&header).await.unwrap();
             client_write.write_all(&payload).await.unwrap();
+            if header[0] == b'Z'
+                && let WireGate::ForwardValidation(forwarded) = gate
+            {
+                forwarded.send(()).unwrap();
+                let _ = tokio::io::copy(&mut server_read, &mut client_write).await;
+                break;
+            }
         }
+        outgoing.abort();
+        let _ = outgoing.await;
     });
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -209,11 +237,64 @@ async fn lost_commit_acknowledgement_is_uncertain_even_when_the_write_committed(
         )
         .await
         .unwrap();
+    (pool, proxy)
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn expiry_during_commit_validation_is_definite_and_retires() {
+    let f = Fixture::migrated().await;
+    let (row, reached) = tokio::sync::oneshot::channel();
+    let (forwarded, ready) = tokio::sync::oneshot::channel();
+    let (pool, proxy) = withholding_proxy(
+        f.lease.database_url(),
+        WireGate::AwaitRelease(ValidationResponse { row, forwarded }),
+    )
+    .await;
+    let store = PooledStore::new(pool.clone(), timing());
+    let write = store.write(write(), deadline());
+    tokio::pin!(write);
+    tokio::select! {
+        biased;
+        reached = reached => reached.unwrap(),
+        result = &mut write => panic!("write settled before its final validation: {result:?}"),
+    }
+    ready.await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(11)).await;
+    let error = write.await.unwrap_err();
+    tokio::time::resume();
+    assert_eq!(error.class(), ErrorClass::Deadline);
+    tokio::time::timeout(Duration::from_secs(2), proxy)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pool.size(), 0);
+    assert_eq!(f.head().await, 0);
+    pool.close().await;
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn lost_commit_acknowledgement_is_uncertain_even_when_the_write_committed() {
+    let f = Fixture::migrated().await;
+    let (pool, proxy) = withholding_proxy(f.lease.database_url(), WireGate::DropCommitAck).await;
     let store = PooledStore::new(pool.clone(), timing());
     let outcome = store.write(write(), deadline()).await.unwrap();
-    assert!(
-        matches!(outcome,WriteOutcome::Uncertain { proposed_version, cause: CommitUncertainty::Native(_) } if proposed_version.get()==1)
-    );
+    let WriteOutcome::Uncertain {
+        proposed_write_id,
+        cause: CommitUncertainty::Native(_),
+    } = outcome
+    else {
+        panic!("lost acknowledgement must retain the proposed identity");
+    };
+    let history = f
+        .store
+        .recent_history(&key("change"), deadline())
+        .await
+        .unwrap();
+    assert_eq!(history.entries[0].write_id, proposed_write_id);
     tokio::time::timeout(Duration::from_secs(2), proxy)
         .await
         .unwrap()

@@ -99,8 +99,7 @@ pub enum Refusal {
 pub enum CommitUncertainty {
     /// Native commit completion failure.
     Native(CommitUnconfirmed),
-    /// Budget expired while the consuming commit future was active.
-    /// The upstream owner does not expose its send point; this is conservative.
+    /// Budget expired after native COMMIT submission began and before acknowledgement.
     Deadline,
 }
 impl fmt::Debug for CommitUncertainty {
@@ -207,8 +206,9 @@ pub enum WriteOutcome {
     Refused(Refusal),
     /// The proposed write may have committed. Its version is provisional.
     Uncertain {
-        /// Proposed counter, for explicit reconciliation.
-        proposed_version: Version,
+        /// Proposed audit identity to compare with the retained history.
+        /// Migration: read the former `proposed_version` as `proposed_write_id.version()`.
+        proposed_write_id: WriteId,
         /// Native failure or commit-phase deadline.
         cause: CommitUncertainty,
     },

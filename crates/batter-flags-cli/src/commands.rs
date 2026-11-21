@@ -4,7 +4,7 @@ use batter_flags_core::{FlagKey, Version};
 use batter_flags_postgres::{
     Actor, Change, ChangeReason, Continuation, Coordination, Declaration, Earlier, Expiry,
     FlipPolicy, HistoryEntry, InvariantPolicy, KeyListing, PooledStore, Precondition, ProcessState,
-    Reference, SnapshotReport, StoreError, Stored, WritePolicy,
+    Reference, SnapshotReport, StoreError, Stored, WriteInterrupt, WritePolicy,
 };
 use serde_json::{Value, json};
 use tokio::{sync::oneshot, time::Instant};
@@ -62,7 +62,7 @@ pub(crate) enum Command {
     /// Shows the fleet, or whether a version reached every Live process.
     Fleet {
         #[arg(long, conflicts_with = "flag")]
-        /// Check the VERSION/UUID from a committed write or audit history.
+        /// Check the VERSION/UUID from a write report or audit history.
         write: Option<batter_flags_postgres::WriteId>,
         #[arg(long)]
         flag: Option<String>,
@@ -137,12 +137,13 @@ pub(crate) async fn run(
     plan: Plan,
     store: &PooledStore,
     deadline: Instant,
-    mut interrupt: oneshot::Receiver<()>,
+    interrupt: oneshot::Receiver<()>,
 ) -> Report {
+    let mut interrupt = WriteInterrupt::new(interrupt);
     let name = plan.name();
     let preflight = async { Ok(store.preflight(deadline).await?) };
     let outcome = match interruptible(&mut interrupt, preflight).await {
-        Ok(()) => execute(plan, store, deadline, interrupt).await,
+        Ok(()) => execute(plan, store, deadline, &mut interrupt).await,
         Err(failure) => Err(failure),
     };
     match outcome {
@@ -168,12 +169,12 @@ pub(crate) enum Failure {
 /// Runs `work` until it ends or `interrupt` fires, whichever is first. A
 /// closed sender never counts as an interrupt.
 async fn interruptible<T>(
-    interrupt: &mut oneshot::Receiver<()>,
+    interrupt: &mut WriteInterrupt,
     work: impl Future<Output = Result<T, Failure>>,
 ) -> Result<T, Failure> {
     tokio::select! {
         biased;
-        Ok(()) = interrupt => Err(Failure::Interrupted),
+        () = interrupt.wait() => Err(Failure::Interrupted),
         outcome = work => outcome,
     }
 }
@@ -188,12 +189,12 @@ async fn execute(
     plan: Plan,
     store: &PooledStore,
     deadline: Instant,
-    mut interrupt: oneshot::Receiver<()>,
+    interrupt: &mut WriteInterrupt,
 ) -> Result<Report, Failure> {
     match plan {
-        Plan::List(filter) => interruptible(&mut interrupt, list(store, deadline, &filter)).await,
+        Plan::List(filter) => interruptible(interrupt, list(store, deadline, &filter)).await,
         Plan::Show(key) => {
-            interruptible(&mut interrupt, async {
+            interruptible(interrupt, async {
                 let listing = store.key(&key, deadline).await?;
                 Ok(Report::new(
                     "show",
@@ -206,11 +207,11 @@ async fn execute(
             .await
         }
         Plan::History(key, window) => {
-            interruptible(&mut interrupt, history(store, deadline, &key, window)).await
+            interruptible(interrupt, history(store, deadline, &key, window)).await
         }
         Plan::Fleet(query) => {
             let fleet = crate::fleet::report::<Failure>(store, deadline, query);
-            interruptible(&mut interrupt, fleet).await
+            interruptible(interrupt, fleet).await
         }
         Plan::Write {
             name,
@@ -226,7 +227,7 @@ async fn execute(
                 // An unchanged release says nothing about the floors: a switch
                 // already released in the store can still be held engaged.
                 (AfterWrite::FloorWarning, "written" | "written_undeclared" | "unchanged") => {
-                    crate::fleet::floor_warning(store, deadline, &key, report).await
+                    crate::fleet::floor_warning(store, deadline, &key, report, interrupt).await
                 }
                 _ => report,
             })

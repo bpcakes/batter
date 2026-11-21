@@ -61,7 +61,7 @@ pub mod managed;
 pub mod verification;
 
 pub use atomic::{
-    CommitUnconfirmed, PgCommitConfirmed, PgCommitStop, PgRollbackConfirmed, PgScopeError,
+    CommitUnconfirmed, PgCommitConfirmed, PgCommitError, PgRollbackConfirmed, PgScopeError,
     PgScopeFailure, PgScopeLoss, PgScopedSql, PgTransactionError,
 };
 pub use atomic_context::{run_atomic_in, run_atomic_profiled_in};

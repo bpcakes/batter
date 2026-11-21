@@ -8,7 +8,7 @@ use batter_flags_postgres::{
     UndeclaredBasis, UnjudgedCatalogs, UnmetInvariant, WriteOutcome, WritePolicy,
 };
 use serde_json::{Value, json};
-use tokio::{sync::oneshot, time::Instant};
+use tokio::time::Instant;
 
 use crate::{commands::Failure, exit::Exit, output::Report};
 
@@ -19,12 +19,15 @@ pub(crate) async fn write(
     name: &'static str,
     store: &PooledStore,
     deadline: Instant,
-    interrupt: oneshot::Receiver<()>,
+    interrupt: &mut batter_flags_postgres::WriteInterrupt,
     policy: WritePolicy,
     key: &FlagKey,
     request: Request,
 ) -> Result<Report, Failure> {
-    match store.submit(request, policy, deadline, interrupt).await {
+    match store
+        .submit_with_interrupt(request, policy, deadline, interrupt)
+        .await
+    {
         Ok(outcome) => Ok(outcome_report(name, key, outcome)),
         Err(error) => Err(Failure::Store(error)),
     }
@@ -58,9 +61,9 @@ fn outcome_report(name: &'static str, key: &FlagKey, outcome: WriteOutcome) -> R
             format!("nothing written: the key is at revision {}, the store head is {}", current.get(), head.get()))
             .with_data(json!({"current": current.get(), "head": head.get()})),
         WriteOutcome::Refused(refusal) => refused(name, key, refusal),
-        WriteOutcome::Uncertain { proposed_version, .. } => Report::new(name, Exit::Uncertain, "uncertain",
-            format!("the commit's outcome is unknown; run `batter-flags history {key}` and re-run with --if-revision", key = key.as_str()))
-            .with_data(json!({"proposed_version": proposed_version.get()})),
+        WriteOutcome::Uncertain { proposed_write_id, .. } => Report::new(name, Exit::Uncertain, "uncertain",
+            format!("the commit outcome is unknown. Check proposed write {proposed_write_id} with `batter-flags fleet --write {proposed_write_id}` and inspect `batter-flags history {key}` before considering a new write with --if-revision", key = key.as_str()))
+            .with_data(json!({"proposed_version": proposed_write_id.version().get(), "proposed_write_id": proposed_write_id.to_string()})),
     }
 }
 

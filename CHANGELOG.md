@@ -8,6 +8,21 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Breaking: `WriteOutcome::Uncertain` carries the proposed audit identity.
+  Replace `Uncertain { proposed_version, .. } => proposed_version` with
+  `Uncertain { proposed_write_id, .. } => proposed_write_id.version()`.
+  For reconciliation, compare the full `proposed_write_id` with the retained
+  audit event. A deprecated counter field could disagree with that identity,
+  so the Rust type omits it. CLI JSON derives its existing `proposed_version`
+  from the new `proposed_write_id` field.
+
+- Add `batter_flags_postgres::WriteInterrupt` and
+  `PooledStore::submit_with_interrupt`. One interrupt can span a command's
+  reads, write preparation and settlement: a request is retained once seen,
+  and a dropped sender disables it for every later wait. `submit` keeps its
+  one-shot receiver and wraps it. The `batter-flags` command uses it so a
+  signal during COMMIT still stops the follow-up fleet read (`batter-jkw6.64`).
+
 - Breaking: rollout confirmation uses the write ID returned by an acknowledged
   write. A restored history can omit or reuse a numeric version.
   Replace `fleet.rollout(version)` with
@@ -123,11 +138,17 @@ contracts, capability facts and validation history.
   narrowed by `select_dedicated` or `select_environment`
   (`SettingsSource::selection()`, `SettingsSelection::{Captured, Selected}`);
   `overlay` keeps `Selected` from either layer (`batter-jkw6.53`).
-- Add `batter_sqlx::low_level::PgAtomicTransaction::commit_unless`, which
-  commits unless a caller-supplied interrupt completes first. An interrupt
-  before COMMIT is sent returns `PgCommitStop::Interrupted` and commits
-  nothing; once COMMIT is sent nothing interrupts it, and a failure is
-  `PgCommitStop::Unconfirmed`. `commit` is unchanged.
+- Add `batter_sqlx::low_level::PgAtomicTransaction::commit_until(deadline,
+  interrupt)` and `batter_sqlx::PgCommitError`. The interrupt and the absolute
+  deadline stop continuity validation, and the deadline is checked again
+  immediately before COMMIT is sent: `Interrupted`, `DeadlineBeforeCommit` and
+  `Validation` mean nothing committed. Once COMMIT is sent only its result or
+  the deadline ends the wait, and `AcknowledgementDeadline` or `Unconfirmed`
+  leaves the outcome unknown. `commit` is unchanged. The unreleased
+  `commit_unless` and `PgCommitStop` are removed: an outer timeout around them
+  could not tell expiry before COMMIT from a lost acknowledgement. Replace
+  `tx.commit_unless(interrupt)` with `tx.commit_until(deadline, interrupt)`
+  (`batter-jkw6.64`).
 - Add `batter_core::registration::Registration::check_names`, which checks
   component and finalizer names against the target before anything is
   registered, so a helper that registers several pieces installs all of them or

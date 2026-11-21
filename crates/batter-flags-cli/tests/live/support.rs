@@ -85,6 +85,7 @@ pub fn finish(mut child: Child) -> Run {
 
 pub struct Database {
     pub pool: PgPool,
+    expiries: Expiries,
     lease: DatabaseLease,
     harness: PostgresHarness,
     url: String,
@@ -94,11 +95,26 @@ fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(10)
 }
 
-fn process(store: &PooledStore, catalog_keys: &[&str], build: &str) -> ProcessPresence {
-    process_with(store, catalog_keys, build, 3_600)
+#[derive(Clone, Copy)]
+struct Expiries {
+    past: Expiry,
+    future: Expiry,
 }
 
-fn process_with(
+impl Expiries {
+    async fn from_database(pool: &PgPool) -> Self {
+        let (past, future): (String, String) = sqlx::query_as(
+            "SELECT to_char(current_date - 365, 'YYYY-MM-DD'), to_char(current_date + 365, 'YYYY-MM-DD')"
+        ).fetch_one(pool).await.unwrap();
+        Self {
+            past: Expiry::on(past.parse::<CivilDate>().unwrap()),
+            future: Expiry::on(future.parse::<CivilDate>().unwrap()),
+        }
+    }
+}
+
+fn process(
+    expiries: Expiries,
     store: &PooledStore,
     catalog_keys: &[&str],
     build: &str,
@@ -106,8 +122,6 @@ fn process_with(
 ) -> ProcessPresence {
     let (mut catalog, serving, _) =
         CatalogBuilder::new(SettingsPrefix::new("FLAG_").unwrap(), "serving", "hosted").unwrap();
-    let later = Expiry::on(CivilDate::new(2027, 3, 31).unwrap());
-    let past = Expiry::on(CivilDate::new(2020, 1, 1).unwrap());
     for key in catalog_keys {
         match *key {
             "halt" => {
@@ -118,14 +132,14 @@ fn process_with(
             }
             "rollout" => {
                 catalog
-                    .release_flag("rollout", Toggle::Off, later)
+                    .release_flag("rollout", Toggle::Off, expiries.future)
                     .coordinated()
                     .declare()
                     .unwrap();
             }
             "old_path" => {
                 catalog
-                    .release_flag("old_path", Toggle::Off, past)
+                    .release_flag("old_path", Toggle::Off, expiries.past)
                     .declare()
                     .unwrap();
             }
@@ -145,7 +159,7 @@ fn process_with(
             }
             other => {
                 catalog
-                    .release_flag(other, Toggle::Off, later)
+                    .release_flag(other, Toggle::Off, expiries.future)
                     .declare()
                     .unwrap();
             }
@@ -202,10 +216,11 @@ impl Database {
             .migrate(Instant::now() + Duration::from_secs(30))
             .await
             .unwrap();
+        let expiries = Expiries::from_database(&pool).await;
         let keys = ["fast_path", "halt", "rollout", "old_path"];
-        let mut first = process(&store, &keys, "build-a");
-        let mut second_live = process(&store, &keys, "build-a");
-        let mut stopped = process(&store, &keys, "build-a");
+        let mut first = process(expiries, &store, &keys, "build-a", 3_600);
+        let mut second_live = process(expiries, &store, &keys, "build-a", 3_600);
+        let mut stopped = process(expiries, &store, &keys, "build-a", 3_600);
         first
             .heartbeat(&report(&["halt"]), deadline())
             .await
@@ -216,7 +231,7 @@ impl Database {
             .unwrap();
         stopped.heartbeat(&report(&[]), deadline()).await.unwrap();
         stopped.stop(deadline()).await.unwrap();
-        let mut orphan = process(&store, &["orphan_path"], "build-b");
+        let mut orphan = process(expiries, &store, &["orphan_path"], "build-b", 3_600);
         orphan.heartbeat(&report(&[]), deadline()).await.unwrap();
         sqlx::query("DELETE FROM flags.flag_processes WHERE build = 'build-b'")
             .execute(&pool)
@@ -228,6 +243,7 @@ impl Database {
         let url = format!("{base}?sslmode=disable");
         Self {
             pool,
+            expiries,
             lease,
             harness,
             url,
@@ -363,7 +379,7 @@ impl Database {
             self.pool.clone(),
             StoreTiming::new(second * 3, second * 3, second * 3, second * 3).unwrap(),
         );
-        let mut live = process(&store, keys, build);
+        let mut live = process(self.expiries, &store, keys, build, 3_600);
         live.heartbeat(&report(&[]), deadline()).await.unwrap();
     }
 
@@ -374,7 +390,7 @@ impl Database {
             self.pool.clone(),
             StoreTiming::new(second * 3, second * 3, second * 3, second * 3).unwrap(),
         );
-        let mut silent = process_with(&store, &["fast_path"], build, 1);
+        let mut silent = process(self.expiries, &store, &["fast_path"], build, 1);
         silent.heartbeat(&report(&[]), deadline()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(1_500)).await;
     }

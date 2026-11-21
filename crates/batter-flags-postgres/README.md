@@ -47,8 +47,8 @@ a `HistoryPage` of at most `HISTORY_PAGE` (1000) rows strictly after a version,
 in counter order, with `next: Continuation` saying whether more follow; a keyed
 read has its own statement over the keyed index. `recent_history(&key)` returns
 a key's newest page in one read, with `earlier: Earlier` saying whether older
-events are retained, so reconciling an uncertain write never needs the whole
-history. `keys`, `key`, `history`, `recent_history` and the fleet reads refuse a standby and an unusable schema in
+events are retained. To reconcile a proposed identity directly, pass it to
+`rollout`. `keys`, `key`, `history`, `recent_history` and the fleet reads refuse a standby and an unusable schema in
 their own snapshot. A `ProcessPresence` heartbeats and stops only through the
 store that issued it. Only explicit fields expose actor, reason and row images. Default diagnostics do not print them.
 
@@ -149,16 +149,26 @@ A write notifies nobody: processes see it at their next refresh. The application
 declared settings floor remains the outage containment mechanism.
 
 `Uncertain` retains native `batter-sqlx::CommitUnconfirmed` or a commit-phase
-deadline, with the provisional version. SQLSTATE ErrorResponses rejecting COMMIT
+deadline, with the complete proposed audit identity (`proposed_write_id`).
+A later write with the same version, actor and reason has a different ID.
+SQLSTATE ErrorResponses rejecting COMMIT
 (such as P0001) are certain errors; connection-loss/unknown-completion and
 shutdown codes remain uncertain. There is no replay. Before COMMIT is invoked,
 deadline/drop retires the connection and cannot commit this library's private
 body; local retirement is not acknowledgement of server-session termination.
 
+`PooledStore::submit` and `submit_with_interrupt` accept an interrupt that
+ends the write with `ErrorClass::Interrupted` until COMMIT is sent and never
+after. `submit_with_interrupt` borrows a `WriteInterrupt`, so one signal can
+also stop the command's later reads: a request is retained once seen, and a
+dropped sender disables every later wait. `submit` wraps a one-shot receiver.
+
 The current Batter atomic/snapshot owners retire even after acknowledged success
 or rollback. This store retains that policy instead of adding a second pooling
-protocol. The native COMMIT owner does not expose its send point; a timeout in
-its validate-and-commit future is conservatively uncertain. The snapshot owner
+protocol. The native COMMIT owner checks the absolute deadline immediately before
+submission, after continuity validation. Expiry before submission is a definite
+deadline failure. A deadline during acknowledgement leaves the outcome uncertain.
+The snapshot owner
 also has no separately bounded acquisition seam, so load/history and migration
 preflight are wholly capped by the acquire limit as well as the caller deadline.
 Writes cap acquisition/setup separately and bound all subsequent work by the

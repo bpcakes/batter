@@ -88,6 +88,9 @@ caught rejections cannot regain SQL or commit authority. Explicit recoverable_sq
 retains operation recovery. Application savepoints may persist between fast calls.
 Boundary/transport loss and abandonment remain uncertain, never known rollback.
 Commit validates immediately before COMMIT; no await follows its acknowledgement.
+`commit_until` checks its absolute deadline after validation and before the first
+COMMIT poll; only expiry after that poll is uncertain. Keep it the only
+interruptible commit.
 Never equate retirement, commit cancellation or an unconfirmed commit with rollback.
 Public lease closures never receive a native connection or transaction and the
 opaque wrappers never implement native `DerefMut`/`AsMut`; disposition must apply

@@ -33,7 +33,8 @@ commit outcome unknown and 101 panic; under `--output json` every exit except
 the argument parser's own and a panic writes exactly one document whose field
 names are a public contract. No operation is retried. A signal during the
 preflight or a read ends the command with `interrupted`; during a write, one
-before COMMIT rolls back and one after it waits for the real outcome. The command never prints a
+before COMMIT rolls back and one during COMMIT waits for the outcome. An
+interrupted post-release fleet read preserves that outcome with a warning. The command never prints a
 connection string or a stored value it did not ask for.
 After command settlement, release the runtime without waiting for blocking
 work before returning the report; a cancelled DNS future can leave a resolver
