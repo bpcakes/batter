@@ -4,8 +4,8 @@ use super::{
     support::{Result, bounded, require},
 };
 use batter_sqlx::{
-    PgAtomicError, PgReadOnlySnapshot, PgSessionProfile, PgSnapshotError, SqlxFailure,
-    run_atomic_profiled,
+    PgAtomicError, PgReadOnlySnapshot, PgSessionProfile, PgSessionTimeouts, PgSnapshotError,
+    SqlxFailure, run_atomic_profiled,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{
@@ -24,10 +24,7 @@ fn policy(login: &str, role: &str) -> Result<PgSessionProfile> {
         login,
         role,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?)
 }
 

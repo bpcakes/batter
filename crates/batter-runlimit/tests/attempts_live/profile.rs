@@ -36,18 +36,17 @@ impl ProfileFixture {
         let options = base.pool.connect_options();
         let login = options.get_username();
         let profile = |role: &str| {
-            PgSessionProfile::new(
-                login,
-                role,
-                vec![schema.clone()],
+            let timeouts = PgSessionTimeouts::new(
                 Duration::from_secs(2),
                 Duration::from_millis(250),
                 Duration::ZERO,
                 Duration::ZERO,
             )
-            .unwrap()
-            .with_setting("app.tenant", "expected")
-            .unwrap()
+            .unwrap();
+            PgSessionProfile::new(login, role, vec![schema.clone()], timeouts)
+                .unwrap()
+                .with_setting("app.tenant", "expected")
+                .unwrap()
         };
         let migration =
             batter_sqlx::low_level::connect_profiled_pool((*options).clone(), profile(login), 2)
@@ -117,10 +116,7 @@ async fn fallback_schemas_are_rejected_before_execution() {
         "login",
         "serving",
         vec!["authoritative".into(), "public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .unwrap();
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(

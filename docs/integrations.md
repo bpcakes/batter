@@ -457,9 +457,11 @@ bound an `AsyncFnOnce` future by `Send`) and separately erase transaction birth,
 so SQLx acquisition stays out of consumer `Send` proofs. See the
 [size and depth contract](../crates/batter-sqlx/README.md#future-size-and-composition-depth).
 
-For a declared session policy, use `PgSessionProfile::new` and
-`PgProfiledPool`; select statement, lock, idle-in-transaction and total-transaction
-timeouts together. Zero explicitly disables the selected limit. Pool hooks and
+For a declared session policy, use `PgSessionProfile::new` with
+`PgSessionTimeouts` (`PgSessionTimeouts::new` for statement, lock,
+idle-in-transaction and total-transaction timeouts together, or
+`PgSessionTimeouts::disabled()` when all four are explicitly disabled) and
+`PgProfiledPool`. Zero explicitly disables the selected limit. Pool hooks and
 profiled atomic/snapshot checks apply and verify the same declaration, so no
 checkout callback is needed. `PgSessionProfile` requires PostgreSQL's
 `transaction_timeout` (17+; native evidence uses 18).

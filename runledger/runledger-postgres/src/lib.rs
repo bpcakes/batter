@@ -42,18 +42,16 @@
 //!
 //! ```rust,no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-//! use runledger_postgres::PgSessionProfile;
+//! use runledger_postgres::{PgSessionProfile, PgSessionTimeouts};
 //! use std::time::Duration;
 //! let options = "postgres://login@localhost/runledger".parse()?;
-//! let profile = PgSessionProfile::new(
-//!     "login",
-//!     "serving",
-//!     vec!["application".into()],
+//! let timeouts = PgSessionTimeouts::new(
 //!     Duration::from_secs(30),
 //!     Duration::from_secs(5),
 //!     Duration::from_secs(10),
 //!     Duration::from_secs(60),
 //! )?;
+//! let profile = PgSessionProfile::new("login", "serving", vec!["application".into()], timeouts)?;
 //! let database = runledger_postgres::low_level::connect_database(options, profile, 8).await?;
 //! runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
 //! let pool = database.pool(); // ordinary APIs and runtime use the same policy
@@ -469,9 +467,9 @@ pub mod prelude {
         OnlineIndexExecutionError, OnlineIndexPhase, OnlineIndexPreparation, OnlineIndexProblem,
         OnlineIndexRollbackError, PgAtomicError, PgAtomicUncertainty, PgFailurePolicy,
         PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope, PgScopeFailure,
-        PgScopeLoss, PgSessionProfile, QueryError, QueryErrorCategory, QueryErrorKind,
-        RequiredIntentError, RetainedIntent, RunledgerDatabase, SchemaCompatibilityError,
-        WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
+        PgScopeLoss, PgSessionProfile, PgSessionTimeouts, QueryError, QueryErrorCategory,
+        QueryErrorKind, RequiredIntentError, RetainedIntent, RunledgerDatabase,
+        SchemaCompatibilityError, WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
         ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
         prepare_online_indexes_for_external_migrator, run_atomic, run_atomic_fail_fast_with,
         run_atomic_with,
@@ -480,7 +478,7 @@ pub mod prelude {
 
 pub type DbPool = sqlx::PgPool;
 mod database;
-pub use database::{PgProfileError, PgSessionProfile, RunledgerDatabase};
+pub use database::{PgProfileError, PgSessionProfile, PgSessionTimeouts, RunledgerDatabase};
 pub type DbTx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 pub type Result<T> = std::result::Result<T, Error>;
 

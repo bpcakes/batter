@@ -1,5 +1,5 @@
 use super::{OBSERVE, Observation};
-use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+use runledger_postgres::{PgSessionProfile, PgSessionTimeouts, RunledgerDatabase};
 use runledger_test_support::{
     EphemeralDatabase, setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool,
 };
@@ -31,18 +31,17 @@ impl Fixture {
         ))).execute(&admin).await.expect("provision profile fixture");
         let options = admin.connect_options();
         let login = options.get_username().to_owned();
-        let profile = PgSessionProfile::new(
-            &login,
-            &role,
-            vec![SCHEMA.into()],
+        let timeouts = PgSessionTimeouts::new(
             Duration::from_secs(2),
             Duration::from_millis(250),
             Duration::ZERO,
             Duration::ZERO,
         )
-        .expect("profile")
-        .with_setting("app.tenant", "tenant-one")
-        .expect("tenant");
+        .expect("timeouts");
+        let profile = PgSessionProfile::new(&login, &role, vec![SCHEMA.into()], timeouts)
+            .expect("profile")
+            .with_setting("app.tenant", "tenant-one")
+            .expect("tenant");
         let database = runledger_postgres::low_level::connect_database_lazy(
             (*options).clone(),
             profile,

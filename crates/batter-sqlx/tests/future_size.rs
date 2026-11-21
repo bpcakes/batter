@@ -84,10 +84,7 @@ impl Fixture {
             "login",
             "serving",
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            batter_sqlx::PgSessionTimeouts::disabled(),
         )
         .unwrap();
         Self {

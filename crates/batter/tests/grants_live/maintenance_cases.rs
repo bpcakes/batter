@@ -187,10 +187,7 @@ async fn maintain<L: Store>(fixture: &mut Fixture, owner: &PgPool, family: Famil
             &login,
             &login,
             vec![quotas.clone()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            batter::sqlx::PgSessionTimeouts::disabled(),
         )?,
     )?
     .pool()
@@ -341,10 +338,7 @@ async fn refused<L: Store>(fixture: &mut Fixture, family: Family) -> Result {
             &login,
             &login,
             vec![quotas.clone()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            batter::sqlx::PgSessionTimeouts::disabled(),
         )?,
     )?
     .pool()

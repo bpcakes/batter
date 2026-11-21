@@ -3,7 +3,7 @@
 //! The executable root owns SIGINT and SIGTERM: either cancels the query, and
 //! the registered pool close still runs under its own cleanup budget.
 
-use batter::sqlx::{PgSessionProfile, SqlxFailure, pool_in, probe};
+use batter::sqlx::{PgSessionProfile, PgSessionTimeouts, SqlxFailure, pool_in, probe};
 use batter::{
     BoxError, RegistrationError,
     cleanup::{CleanupBudget, CleanupReport},
@@ -75,10 +75,7 @@ async fn main() -> Result<ExitCode, BoxError> {
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?;
     let second = Duration::from_secs(1);
     let context = OperationOwner::new(Duration::from_secs(5))?.into_context();

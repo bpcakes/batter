@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use runledger_postgres::{
-    MIGRATOR, OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
-    ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
-    prepare_online_indexes_for_external_migrator,
+    MIGRATOR, OnlineIndexProblem, PgSessionProfile, PgSessionTimeouts, RunledgerDatabase,
+    SchemaCompatibilityError, ensure_schema_compatible_after_idempotency_cutover,
+    migrate_after_idempotency_cutover, prepare_online_indexes_for_external_migrator,
 };
 use sqlx::{AssertSqlSafe, PgPool};
 
@@ -88,10 +87,7 @@ async fn quoted_schema_delimiters_and_keywords_preserve_canonical_definitions() 
             login,
             login,
             vec![schema.into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )
         .expect("supported schema identifier");
         let options = (*options).clone().options([(

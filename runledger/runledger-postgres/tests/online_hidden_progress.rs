@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use runledger_postgres::{
-    OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
-    ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
-    prepare_online_indexes_for_external_migrator,
+    OnlineIndexProblem, PgSessionProfile, PgSessionTimeouts, RunledgerDatabase,
+    SchemaCompatibilityError, ensure_schema_compatible_after_idempotency_cutover,
+    migrate_after_idempotency_cutover, prepare_online_indexes_for_external_migrator,
 };
 use sqlx::{AssertSqlSafe, PgPool};
 use tokio::task::JoinHandle;
@@ -44,10 +44,7 @@ impl RestrictedOwner {
             options.get_username(),
             &role,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )
         .expect("restricted profile");
         let database =

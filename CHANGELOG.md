@@ -8,16 +8,20 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
-- **Breaking:** require all four server timeouts in `PgSessionProfile::new` and
-  remove `PgSessionProfile::with_timeouts` (`batter-ndpi`;
+- **Breaking:** require a validated `PgSessionTimeouts` in
+  `PgSessionProfile::new` and remove `PgSessionProfile::with_timeouts`
+  (`batter-ndpi`;
   [ADR-010 assessment](docs/evidence/api-assessments/postgresql.md#session-profile-timeout-requirement-assessment-batter-ndpi)).
   `PgSessionProfile` previously stored `transaction_timeouts_ms: Option<(u32, u32)>`
   behind two constructors: the default-named five-argument `new` silently left
   `idle_in_transaction_session_timeout` and `transaction_timeout` undeclared
-  and unverified, while `with_timeouts` enforced all four. `PgSessionProfile`
-  now stores all four millisecond bounds unconditionally and exposes only the
-  seven-argument `PgSessionProfile::new`; `with_timeouts` is removed without a
-  deprecated shim. The cut applies identically through `batter_sqlx`,
+  and unverified, while `with_timeouts` enforced all four. The four server
+  timeouts now live in the opaque validated `PgSessionTimeouts` value
+  (`PgSessionTimeouts::new` for explicit bounds, `PgSessionTimeouts::disabled`
+  when all four are explicitly `0ms`, with no `Default`), and
+  `PgSessionProfile::new` takes `PgSessionTimeouts` as its fourth argument.
+  `with_timeouts` is removed without a deprecated shim. Both `PgSessionProfile`
+  and `PgSessionTimeouts` are exposed identically through `batter_sqlx`,
   `batter::sqlx`, `batter::runledger`, and `runledger_postgres`.
 
   ```rust,ignore
@@ -30,16 +34,27 @@ contracts, capability facts and validation history.
       Duration::from_secs(5),
   )?;
 
-  // After: supply `idle_in_transaction_session_timeout` and
-  // `transaction_timeout` explicitly (use `Duration::ZERO` only to disable one).
-  let profile = PgSessionProfile::new(
-      "login",
-      "serving",
-      vec!["application".into()],
+  // After: declare all four bounds in `PgSessionTimeouts::new`, or use
+  // `PgSessionTimeouts::disabled()` when all four are intentionally disabled.
+  let timeouts = PgSessionTimeouts::new(
       Duration::from_secs(30),
       Duration::from_secs(5),
       Duration::from_secs(10),
       Duration::from_secs(60),
+  )?;
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      timeouts,
+  )?;
+
+  // Or, when all four server timeouts are explicitly disabled (`0ms`):
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      PgSessionTimeouts::disabled(),
   )?;
   ```
 
@@ -55,15 +70,18 @@ contracts, capability facts and validation history.
       Duration::from_secs(60),
   )?;
 
-  // After: rename to `PgSessionProfile::new` with the same seven arguments.
-  let profile = PgSessionProfile::new(
-      "login",
-      "serving",
-      vec!["application".into()],
+  // After: build `PgSessionTimeouts::new` and pass it to `PgSessionProfile::new`.
+  let timeouts = PgSessionTimeouts::new(
       Duration::from_secs(30),
       Duration::from_secs(5),
       Duration::from_secs(10),
       Duration::from_secs(60),
+  )?;
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      timeouts,
   )?;
   ```
 

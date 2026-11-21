@@ -86,10 +86,7 @@
 //!         login,
 //!         login,
 //!         vec!["public".into()],
-//!         Duration::ZERO,
-//!         Duration::ZERO,
-//!         Duration::ZERO,
-//!         Duration::ZERO,
+//!         batter_sqlx::PgSessionTimeouts::disabled(),
 //!     )?;
 //!     // The pool's finalizer runs only after maintenance has stopped.
 //!     let pool = batter_sqlx::pool_in(

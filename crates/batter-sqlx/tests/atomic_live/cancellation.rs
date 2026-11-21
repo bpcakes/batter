@@ -38,10 +38,7 @@ async fn cancelled_application_operation_and_snapshot_retire() -> Result {
                 &login,
                 &login,
                 vec!["public".into()],
-                std::time::Duration::ZERO,
-                std::time::Duration::ZERO,
-                std::time::Duration::ZERO,
-                std::time::Duration::ZERO,
+                batter_sqlx::PgSessionTimeouts::disabled(),
             )
             .unwrap();
             if mode % 3 == 2 {

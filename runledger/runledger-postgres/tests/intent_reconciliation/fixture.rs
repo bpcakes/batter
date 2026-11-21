@@ -4,7 +4,8 @@ use batter_sqlx::verification::{
 use runledger_postgres::grants::{RunledgerOperation, grant_fragment};
 use runledger_postgres::jobs::JobScope;
 use runledger_postgres::{
-    DbPool, IntentReconciliation, PgSessionProfile, RetainedIntent, RunledgerDatabase, run_atomic,
+    DbPool, IntentReconciliation, PgSessionProfile, PgSessionTimeouts, RetainedIntent,
+    RunledgerDatabase, run_atomic,
 };
 use runledger_test_support::{EphemeralDatabase, setup_ephemeral_pool, teardown_ephemeral_pool};
 use sqlx::{AssertSqlSafe, types::Uuid};
@@ -61,16 +62,15 @@ impl Fixture {
             .clone()
             .username(&role)
             .password("disposable-fixture-only");
-        let profile = PgSessionProfile::new(
-            &role,
-            &role,
-            vec!["public".into()],
+        let timeouts = PgSessionTimeouts::new(
             Duration::from_secs(5),
             Duration::from_secs(2),
             Duration::ZERO,
             Duration::ZERO,
         )
-        .expect("construct validated fixture input");
+        .expect("construct validated fixture timeouts");
+        let profile = PgSessionProfile::new(&role, &role, vec!["public".into()], timeouts)
+            .expect("construct validated fixture input");
         let service = runledger_postgres::low_level::connect_database(options, profile, 3)
             .await
             .expect("complete fixture database operation");

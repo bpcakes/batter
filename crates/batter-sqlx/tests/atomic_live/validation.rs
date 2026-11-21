@@ -1,12 +1,11 @@
 use super::{fixture, support::Result};
-use batter_sqlx::{PgSessionProfile, low_level::PgAtomicTransaction};
+use batter_sqlx::{PgSessionProfile, PgSessionTimeouts, low_level::PgAtomicTransaction};
 use std::{
     future::Future,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
@@ -79,19 +78,13 @@ async fn atomic_scope_statement_counts_include_recovery_and_completion() -> Resu
             &login,
             &login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?;
         let with_settings = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?
         .with_setting("app.tenant", "counted")?
         .with_setting("timezone", "UTC")?;
@@ -158,10 +151,7 @@ async fn profiled_scope_checks_external_schema_loss_before_work() -> Result {
             &login,
             &login,
             vec!["public".into(), schema.clone()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?;
         let tx = PgAtomicTransaction::begin_profiled(&fixture.pool, &profile).await?;
         let (tx, ()) = tx.application(async |_| Ok::<_, sqlx::Error>(())).await?;

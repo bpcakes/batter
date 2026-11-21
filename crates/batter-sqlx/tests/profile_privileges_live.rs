@@ -2,9 +2,8 @@
 #[allow(dead_code, reason = "shared support; this crate uses part of it")]
 mod support;
 
-use batter_sqlx::PgSessionProfile;
+use batter_sqlx::{PgSessionProfile, PgSessionTimeouts};
 use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
-use std::time::Duration;
 use support::{Result, bounded, combine, require};
 
 // This target runs separately from atomic_live: the function ACL is shared by
@@ -149,10 +148,7 @@ async fn check_profiles(
         login,
         role,
         vec![schema.into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?
     .with_setting("app.tenant", "restricted")?;
     let mut connection = bounded(PgConnection::connect_with(&options)).await??;

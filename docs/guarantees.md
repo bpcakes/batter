@@ -1872,7 +1872,9 @@ role. A mismatch fails setup before protected application or inspection callback
 receive SQL access.
 PostgreSQL 18 is the minimum supported server for all PostgreSQL integration
 paths, including `PgSessionProfile`.
-`PgSessionProfile::new` requires all four server timeout selections,
+`PgSessionProfile::new` requires a validated `PgSessionTimeouts` value
+(`PgSessionTimeouts::new` for all four server timeout selections, or
+`PgSessionTimeouts::disabled` when all four are explicitly zero),
 including idle-in-transaction and total-transaction limits. The adapter validates
 exact bounded milliseconds before I/O, applies explicit zero as disable, and
 revalidates all four settings alongside the existing policy. The shared validation

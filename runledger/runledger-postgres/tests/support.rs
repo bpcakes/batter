@@ -13,17 +13,14 @@ use serde_json::Value;
 use sqlx::types::Uuid;
 
 pub async fn profiled_database(pool: &DbPool) -> runledger_postgres::RunledgerDatabase {
-    use runledger_postgres::PgSessionProfile;
+    use runledger_postgres::{PgSessionProfile, PgSessionTimeouts};
     let options = pool.connect_options();
     let login = options.get_username();
     let profile = PgSessionProfile::new(
         login,
         login,
         vec!["public".into()],
-        std::time::Duration::ZERO,
-        std::time::Duration::ZERO,
-        std::time::Duration::ZERO,
-        std::time::Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .expect("valid test profile");
     runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)

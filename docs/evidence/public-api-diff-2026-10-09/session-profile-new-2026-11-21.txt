@@ -9,21 +9,39 @@ Method: existing surface.py over rustdoc JSON from
 This is a structural inspection only; supported verification uses the
 unmodified pinned toolchain.
 Result: the only removed item is `batter_sqlx::PgSessionProfile::with_timeouts`.
-`batter_sqlx::PgSessionProfile::new` changes signature from five parameters to
-seven, adding `idle_in_transaction_session_timeout: Duration` and
-`transaction_timeout: Duration` (checked via `git diff` over changed `pub`
-declarations across `crates/` and `runledger/`). `runledger-postgres`,
-`batter-runledger` and `batter` re-export `PgSessionProfile` without wrapping
-it, so their own walked entries are unchanged while every caller through
-`batter::sqlx`, `batter::runledger` and `runledger_postgres` sees the same
-constructor cut. Hard cut recorded as a `Breaking:` CHANGELOG entry with
+`batter_sqlx::PgSessionTimeouts` is added as an opaque validated value (`new`,
+`disabled`, four duration accessors, no `Default`), re-exported through
+`runledger-postgres`, `batter-runledger`, and `batter::{sqlx, runledger}`, and
+`batter_sqlx::PgSessionProfile::timeouts` exposes it.
+`batter_sqlx::PgSessionProfile::new` changes signature from five parameters
+(two raw `Duration`s) to four parameters taking `PgSessionTimeouts` (checked
+via `git diff` over changed `pub` declarations across `crates/` and
+`runledger/`). Hard cut recorded as a `Breaking:` CHANGELOG entry with
 before/after code for both call shapes; no deprecated shim or alias.
 
-## batter-sqlx: 1379 -> 1378 entries; 1 removed, 0 added
+## batter-sqlx: 1379 -> 1393 entries; 1 removed, 15 added
 - REMOVED method batter_sqlx::PgSessionProfile::with_timeouts
++ ADDED   impl batter_sqlx::PgSessionTimeouts: Clone
++ ADDED   impl batter_sqlx::PgSessionTimeouts: Copy
++ ADDED   impl batter_sqlx::PgSessionTimeouts: Debug
++ ADDED   impl batter_sqlx::PgSessionTimeouts: Eq
++ ADDED   impl batter_sqlx::PgSessionTimeouts: PartialEq
++ ADDED   impl batter_sqlx::PgSessionTimeouts: StructuralPartialEq
++ ADDED   method batter_sqlx::PgSessionProfile::timeouts
++ ADDED   method batter_sqlx::PgSessionTimeouts::disabled
++ ADDED   method batter_sqlx::PgSessionTimeouts::idle_in_transaction
++ ADDED   method batter_sqlx::PgSessionTimeouts::lock
++ ADDED   method batter_sqlx::PgSessionTimeouts::new
++ ADDED   method batter_sqlx::PgSessionTimeouts::statement
++ ADDED   method batter_sqlx::PgSessionTimeouts::transaction
++ ADDED   struct batter_sqlx::PgSessionTimeouts
++ ADDED   use batter_sqlx::PgSessionTimeouts <- profile::PgSessionTimeouts
 
-## runledger-postgres: 3398 -> 3398 entries; 0 removed, 0 added
+## runledger-postgres: 3398 -> 3400 entries; 0 removed, 2 added
++ ADDED   use runledger_postgres::PgSessionTimeouts <- database::PgSessionTimeouts
++ ADDED   use runledger_postgres::prelude::PgSessionTimeouts <- crate::PgSessionTimeouts
 
-## batter-runledger: 123 -> 123 entries; 0 removed, 0 added
+## batter-runledger: 123 -> 124 entries; 0 removed, 1 added
++ ADDED   use batter_runledger::PgSessionTimeouts <- runledger_postgres::PgSessionTimeouts
 
 ## batter: 21 -> 21 entries; 0 removed, 0 added

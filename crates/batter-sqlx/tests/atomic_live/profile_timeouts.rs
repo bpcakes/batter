@@ -2,7 +2,7 @@ use super::{
     fixture,
     support::{Result, bounded},
 };
-use batter_sqlx::{PgReadOnlySnapshot, PgSessionProfile, run_atomic_profiled};
+use batter_sqlx::{PgReadOnlySnapshot, PgSessionProfile, PgSessionTimeouts, run_atomic_profiled};
 use sqlx::{PgConnection, postgres::PgPoolOptions};
 use std::time::Duration;
 
@@ -11,16 +11,14 @@ pub(super) const VALUES: &str = "SELECT \
     (SELECT setting::bigint FROM pg_settings WHERE name = 'transaction_timeout')";
 
 pub(super) fn complete(login: &str, idle: Duration, total: Duration) -> PgSessionProfile {
-    PgSessionProfile::new(
-        login,
-        login,
-        vec!["public".into()],
+    let timeouts = PgSessionTimeouts::new(
         Duration::from_secs(2),
         Duration::from_millis(250),
         idle,
         total,
     )
-    .unwrap()
+    .unwrap();
+    PgSessionProfile::new(login, login, vec!["public".into()], timeouts).unwrap()
 }
 
 async fn values(connection: &mut PgConnection) -> Result<(i64, i64)> {

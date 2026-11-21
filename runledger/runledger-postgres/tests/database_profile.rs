@@ -1,6 +1,7 @@
 use runledger_postgres::{
-    PgSessionProfile, RunledgerDatabase, ensure_schema_compatible_after_idempotency_cutover,
-    migrate_after_idempotency_cutover, run_atomic,
+    PgSessionProfile, PgSessionTimeouts, RunledgerDatabase,
+    ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
+    run_atomic,
 };
 use runledger_test_support::{setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool};
 use std::time::Duration;
@@ -21,10 +22,7 @@ async fn profile_setup_failure_is_redacted_but_native_cause_is_inspectable() {
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .expect("valid profile declaration");
     let marker = "runledger-profile-secret-invalid-timezone";
@@ -90,18 +88,17 @@ async fn authority_schema_and_timeouts_agree_across_all_paths() {
     let options = admin.connect_options();
     let login = options.get_username();
     let profile = |role: &str| {
-        PgSessionProfile::new(
-            login,
-            role,
-            vec![schema.into()],
+        let timeouts = PgSessionTimeouts::new(
             Duration::from_secs(2),
             Duration::from_millis(250),
             Duration::ZERO,
             Duration::ZERO,
         )
-        .expect("profile")
-        .with_setting("app.tenant", "tenant-one")
-        .expect("tenant policy")
+        .expect("timeouts");
+        PgSessionProfile::new(login, role, vec![schema.into()], timeouts)
+            .expect("profile")
+            .with_setting("app.tenant", "tenant-one")
+            .expect("tenant policy")
     };
     let migration_db =
         runledger_postgres::low_level::connect_database((*options).clone(), profile(login), 2)
@@ -156,10 +153,7 @@ async fn authority_schema_and_timeouts_agree_across_all_paths() {
         "not_the_authenticated_role",
         &role,
         vec![schema.into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .expect("syntactically valid but wrong profile");
     let mut called = false;

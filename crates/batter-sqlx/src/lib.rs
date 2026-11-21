@@ -78,7 +78,7 @@ pub mod low_level;
 pub use failure::{FailureClass, SqlxFailure};
 pub use native_query::PgNativeQuery;
 pub use pooled_query::PgQueryHandle;
-pub use profile::{PgProfileError, PgSessionProfile};
+pub use profile::{PgProfileError, PgSessionProfile, PgSessionTimeouts};
 pub use profiled_pool::PgProfiledPool;
 use session::PoolReturnReady;
 pub use session::{PgExecutor, PgSession};
@@ -541,19 +541,22 @@ pub async fn probe(
 ///
 /// ```no_run
 /// use batter_core::cleanup::{CleanupBudget, CleanupStack};
-/// use batter_sqlx::{PgSessionProfile, pool_in};
+/// use batter_sqlx::{PgSessionProfile, PgSessionTimeouts, pool_in};
 /// use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 /// use std::time::Duration;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// let mut cleanup = CleanupStack::new();
-/// let profile = PgSessionProfile::new(
-///     "service",
-///     "service",
-///     vec!["public".into()],
+/// let timeouts = PgSessionTimeouts::new(
 ///     Duration::from_secs(30),
 ///     Duration::from_secs(5),
 ///     Duration::from_secs(10),
 ///     Duration::from_secs(60),
+/// )?;
+/// let profile = PgSessionProfile::new(
+///     "service",
+///     "service",
+///     vec!["public".into()],
+///     timeouts,
 /// )?;
 /// let database = pool_in(cleanup.reserve("postgres.pool")?,
 ///     PgPoolOptions::new(), PgConnectOptions::new(), profile)?;

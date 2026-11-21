@@ -165,8 +165,10 @@ Use `run_atomic_profiled(&pool, &profile, ...)` and
 `PgReadOnlySnapshot::inspect_profiled(&pool, &profile, ...)` when role, trusted
 schema path, server timeouts or custom tenant settings matter. `PgSessionProfile`
 declares login/effective roles and safely quoted trusted schemas, plus explicit
-timeouts and bound custom settings. `PgSessionProfile::new` requires statement,
-lock, idle-in-transaction and total-transaction timeouts together.
+timeouts (`PgSessionTimeouts`) and bound custom settings. `PgSessionProfile::new`
+takes a validated `PgSessionTimeouts` constructed with `PgSessionTimeouts::new`
+(statement, lock, idle-in-transaction and total-transaction timeouts together)
+or `PgSessionTimeouts::disabled()` when all four are intentionally disabled.
 Every duration must be exact whole milliseconds in `0..=i32::MAX`; zero explicitly
 disables that timeout, including over nonzero inherited defaults. Setup is library-owned, runs
 after reset and before BEGIN, and is verified before application work. Atomic

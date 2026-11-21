@@ -6,7 +6,9 @@ use batter_core::operation::OperationContext;
 use batter_runlimit::attempts::{
     AttemptError, AttemptPhase, AttemptRunner, AttemptWriteError, Authentication,
 };
-use batter_sqlx::{PgAtomicError, PgProfiledPool, PgScopeError, PgSessionProfile};
+use batter_sqlx::{
+    PgAtomicError, PgProfiledPool, PgScopeError, PgSessionProfile, PgSessionTimeouts,
+};
 use runlimit_core::{KeyHasher, PolicyId, QuotaPeriod, ScopeId, attempts::*};
 use runlimit_postgres::attempts::PostgresAttemptLimiter;
 use sqlx::PgPool;
@@ -40,10 +42,7 @@ impl Fixture {
             login,
             login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )
         .unwrap();
         let database = batter_sqlx::low_level::connect_profiled_pool(options, profile, 8)

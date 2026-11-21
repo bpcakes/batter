@@ -10,10 +10,7 @@ async fn application_and_runledger_share_physical_capacity_and_awaited_close() {
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .unwrap();
     let mut stack = CleanupStack::new();

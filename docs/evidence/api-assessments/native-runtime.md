@@ -258,7 +258,7 @@ owner shared with Runledger (`batter-nhu5`) and a handler test facility
 sizing remains application policy; the consumer
 default between `PgSessionProfile::with_timeouts` and `new` remained unresolved
 at baseline delivery (since resolved by `batter-ndpi`, which unified both into
-the seven-argument `PgSessionProfile::new`). The evidence README records each disposition.
+`PgSessionProfile::new` taking a validated `PgSessionTimeouts`). The evidence README records each disposition.
 This is one run of one agent and does not establish population reliability.
 
 ## Handler test facility assessment (`batter-3upk`)

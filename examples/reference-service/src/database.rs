@@ -1,7 +1,6 @@
 //! Application-owned database policy. Native endpoint validation happens first.
-use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+use runledger_postgres::{PgSessionProfile, PgSessionTimeouts, RunledgerDatabase};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::time::Duration;
 
 /// Caller-owned fixture construction; the fixture must await pool closure.
 /// Production startup uses `configured`.
@@ -26,10 +25,7 @@ pub fn session_profile(login: &str) -> Result<PgSessionProfile, sqlx::Error> {
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .map_err(|error| sqlx::Error::Configuration(Box::new(error)))
 }

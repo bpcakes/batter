@@ -1,13 +1,10 @@
 use super::support::{Result, bounded, combine, require};
 use batter_sqlx::{
-    PgAtomicError, PgProfileError, PgReadOnlySnapshot, PgSessionProfile, PgSnapshotError,
-    PgTransactionError, SqlxFailure, run_atomic_profiled,
+    PgAtomicError, PgProfileError, PgReadOnlySnapshot, PgSessionProfile, PgSessionTimeouts,
+    PgSnapshotError, PgTransactionError, SqlxFailure, run_atomic_profiled,
 };
 use sqlx::{Connection, PgConnection, PgPool, postgres::PgPoolOptions};
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
@@ -56,10 +53,7 @@ fn profile(login: &str, role: &str, schema: &str) -> Result<PgSessionProfile> {
         login,
         role,
         vec![schema.into()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?
     .with_setting("app.tenant", "restricted")?)
 }

@@ -94,8 +94,9 @@ pub use runledger_postgres::{
     AcceptedIntentOutcome, AcceptedIntentState, CorrelatedDefinition, CorrelatedJob,
     IntentCorrelationState, IntentReconciliation, PgAtomicError, PgAtomicUncertainty,
     PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
-    PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgSessionProfile, PgTransactionError,
-    RequiredIntentError, RetainedIntent, RunledgerDatabase, SchemaCompatibilitySnapshot,
+    PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgSessionProfile, PgSessionTimeouts,
+    PgTransactionError, RequiredIntentError, RetainedIntent, RunledgerDatabase,
+    SchemaCompatibilitySnapshot,
     ensure_schema_compatible_after_idempotency_cutover as verify_schema, run_atomic,
     run_atomic_fail_fast_with, run_atomic_with,
 };
