@@ -5,7 +5,7 @@
 use super::{
     capture::Capture,
     reused_routing::{Fixture, Label, REFUSAL_BODY, get_request, reusing},
-    support::{SECOND, body_text, count, ready_handle, request_policy},
+    support::{SECOND, body_text, completions, count, ready_handle, request_policy},
 };
 use axum::{
     Router,
@@ -14,15 +14,9 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use batter_axum::{CorrelationId, GuardedRouter, HttpBoundary, ReusedRoutingState, RouteInventory};
+use batter_axum::{CorrelationId, GuardedRouter, HttpBoundary, InProcessRefusal, RouteInventory};
 use std::net::SocketAddr;
 use tracing::instrument::WithSubscriber;
-
-fn completions(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter(|line| line.contains("HTTP response boundary finished"))
-        .collect()
-}
 
 #[tokio::test]
 async fn a_fresh_request_keeps_its_application_extensions() {
@@ -33,7 +27,7 @@ async fn a_fresh_request_keeps_its_application_extensions() {
     fresh.extensions_mut().insert(ConnectInfo(peer));
     let response = fixture.client.request(fresh).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert!(response.headers().contains_key("x-request-id"));
     assert_eq!(
         body_text(response).await,
@@ -47,7 +41,7 @@ async fn a_boundary_built_internal_failure_carries_no_refusal_marker() {
     let fixture = Fixture::new().await;
     let response = fixture.client.request(get_request("/broken")).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert!(response.headers().contains_key("x-request-id"));
     // The same sanitized body: only the marker separates a refusal from it.
     assert_eq!(body_text(response).await, REFUSAL_BODY);
@@ -61,7 +55,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         .client
         .request(reusing("/view/9", captured.clone()))
         .await;
-    let marker = *refused.extensions().get::<ReusedRoutingState>().unwrap();
+    let marker = *refused.extensions().get::<InProcessRefusal>().unwrap();
 
     let forwarding = inner.client.clone();
     let routes = GuardedRouter::new()
@@ -92,7 +86,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
 
     let copied = outer.request(get_request("/copied")).await;
     assert_eq!(copied.status(), StatusCode::OK);
-    assert!(copied.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(copied.extensions().get::<InProcessRefusal>().is_none());
     let kept = copied.extensions().get::<Label>().map(|label| label.0);
     assert_eq!(kept, Some("kept"), "other response extensions stay");
     assert!(copied.headers().contains_key("x-request-id"));
@@ -103,7 +97,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
     // marker.
     let forwarded = outer.request(get_request("/forwarded")).await;
     assert_eq!(forwarded.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(forwarded.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(forwarded.extensions().get::<InProcessRefusal>().is_none());
     assert!(forwarded.headers().contains_key("x-request-id"));
     assert_eq!(body_text(forwarded).await, REFUSAL_BODY);
 }
@@ -131,7 +125,7 @@ fn copying_application_extensions_by_type_routes_as_a_fresh_arrival() {
             .with_subscriber(scoped.dispatch.clone())
             .await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+        assert!(response.extensions().get::<InProcessRefusal>().is_none());
         let response_id = response.headers()["x-request-id"]
             .to_str()
             .unwrap()
@@ -214,4 +208,76 @@ fn nested_routing_inside_one_dispatch_keeps_every_capture() {
         "{text}"
     );
     assert!(!text.contains("ERROR"), "{text}");
+}
+
+/// Send `body` to `path` through a service behind `limit` that hands each
+/// request to `client` whole.
+async fn forwarded_behind(
+    limit: axum::extract::DefaultBodyLimit,
+    client: &batter_axum::InProcessClient,
+    path: &str,
+    body: Vec<u8>,
+) -> axum::response::Response {
+    let client = client.clone();
+    let limited = tower::Layer::layer(
+        &limit,
+        tower::service_fn(move |request: axum::extract::Request| {
+            let client = client.clone();
+            async move { Ok::<_, std::convert::Infallible>(client.request(request).await) }
+        }),
+    );
+    tower::ServiceExt::oneshot(limited, sized(path, body))
+        .await
+        .unwrap()
+}
+
+fn sized(path: &str, body: Vec<u8>) -> axum::extract::Request {
+    axum::extract::Request::builder()
+        .method("POST")
+        .uri(path)
+        .body(axum::body::Body::from(body))
+        .unwrap()
+}
+
+/// Axum settings that a layer outside the client writes into the request are
+/// not routing records. They reach the router like application extensions,
+/// a limit set inside the boundary replaces them, and the documented rebuild
+/// drops them.
+#[tokio::test]
+async fn a_body_limit_chosen_outside_the_client_reaches_the_router() {
+    use axum::extract::DefaultBodyLimit;
+    let size =
+        || axum::routing::post(|body: axum::body::Bytes| async move { body.len().to_string() });
+    let client = HttpBoundary::new(request_policy(&ready_handle(), SECOND))
+        .assemble(
+            GuardedRouter::new()
+                .route("/size", size())
+                .route("/own-limit", size().layer(DefaultBodyLimit::max(1_000))),
+        )
+        .await
+        .unwrap()
+        .in_process();
+    let ten = || b"ten bytes!".to_vec();
+    // Axum's default limit is 2 MiB.
+    let large = || vec![b'x'; 2 * 1024 * 1024 + 1];
+
+    let outer = forwarded_behind(DefaultBodyLimit::max(4), &client, "/size", ten()).await;
+    assert_eq!(outer.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(outer.extensions().get::<InProcessRefusal>().is_none());
+    // A limit set inside the boundary overwrites the outer one.
+    let inner = forwarded_behind(DefaultBodyLimit::max(4), &client, "/own-limit", ten()).await;
+    assert_eq!(body_text(inner).await, "10");
+    // An outer `disable()` removes Axum's default limit for the boundary's
+    // extractors, which a served request would hit.
+    let disabled = forwarded_behind(DefaultBodyLimit::disable(), &client, "/size", large()).await;
+    assert_eq!(body_text(disabled).await, (2 * 1024 * 1024 + 1).to_string());
+
+    // A request built fresh, as the rebuild migration does, carries no such
+    // setting and gets the default limit.
+    assert_eq!(
+        body_text(client.request(sized("/size", ten())).await).await,
+        "10"
+    );
+    let fresh = client.request(sized("/size", large())).await;
+    assert_eq!(fresh.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }

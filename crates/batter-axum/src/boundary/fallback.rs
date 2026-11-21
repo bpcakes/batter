@@ -26,8 +26,10 @@ impl HttpBoundary {
     /// Render unmatched paths outside admission, with application status, body and headers.
     ///
     /// The renderer receives metadata, including the generated
-    /// [`CorrelationId`](crate::CorrelationId), but no body or private admission,
-    /// quota, observation or operational ownership state. It runs synchronously
+    /// [`CorrelationId`](crate::CorrelationId), but no body and none of the
+    /// private request records that
+    /// [`InProcessClient::request`](crate::InProcessClient::request) lists. It
+    /// runs synchronously
     /// and must not block or perform business work. There is no request deadline
     /// or streaming-body lifetime guarantee for this renderer, just as for probes.
     ///

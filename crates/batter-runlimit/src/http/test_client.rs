@@ -13,8 +13,8 @@ use std::net::SocketAddr;
 /// It dispatches through `batter_axum::low_level::RouterClient`, the transport
 /// that `batter_axum::InProcessClient` also delegates to, so it accepts only
 /// an arrival-shaped request: [`Self::request`] refuses one whose extensions
-/// carry an Axum routing record from an earlier dispatch before the protected
-/// assembly runs.
+/// carry an Axum routing record or one of the HTTP adapter's own private
+/// request records before the protected assembly runs.
 ///
 /// ```compile_fail
 /// async fn cannot_serve(listener: tokio::net::TcpListener, client: batter_runlimit::http::TestClient) {
@@ -44,24 +44,24 @@ impl TestClient {
     /// The request must be arrival-shaped. The entry contract is
     /// `batter_axum::low_level::RouterClient::request`, the one that
     /// `batter_axum::InProcessClient::request` also delegates to, which lists
-    /// the detected Axum routing records and the refusal: a request built
+    /// the detected Axum routing records and the refusal;
+    /// `InProcessClient::request` lists the adapter's private records. A
+    /// request built
     /// from a whole extension map cloned inside an earlier dispatch is
     /// refused whole, nothing is stripped, and the response carries the
-    /// `batter_axum::ReusedRoutingState` marker; a dispatched response never
+    /// `batter_axum::InProcessRefusal` marker; a dispatched response never
     /// does. Here that refusal happens at entry, before lifecycle admission,
     /// authentication, the native quota check, public probes or any handler
     /// run, so it consumes no quota and has no completion event or
     /// `x-request-id` header. Application extensions reach the assembly
     /// untouched.
     ///
-    /// The check covers Axum routing records only. A map that carries this
-    /// boundary's own observation and operational records but no detected
-    /// Axum record, such as one captured in a protected custom fallback for an
-    /// `OPTIONS *` request after the caller removed its `OriginalUri`, is not
-    /// refused: it is authenticated and charged by the native quota check
-    /// like a fresh request, yet answered without a fresh `x-request-id`,
-    /// with the client's inbound `x-request-id` unreplaced and without a
-    /// completion event.
+    /// The check also covers the adapter's own private request records. A
+    /// map that carries this boundary's observation and operational records
+    /// but no Axum record, such as one captured in a protected custom
+    /// fallback for an `OPTIONS *` request after the caller removed its
+    /// `OriginalUri`, is refused the same way, before authentication and the
+    /// native quota check.
     ///
     /// Migration: build a fresh request and copy each application extension
     /// by type instead of the whole map:

@@ -152,15 +152,16 @@ pub mod outbound_http {
 /// `HttpBoundary` is the canonical composition and its assembly is sealed: it
 /// is consumed into protected serving or into an opaque request client, with
 /// one `batter` dependency and no direct adapter declaration. The client
-/// accepts only arrival-shaped requests; one that reuses an earlier dispatch's
-/// routing records is refused with the `ReusedRoutingState` response marker.
+/// accepts only arrival-shaped requests; one that carries Axum routing records
+/// or one of the adapter's own private request records, as a reused earlier
+/// dispatch's map does, is refused with the `InProcessRefusal` response marker.
 ///
 /// ```
 /// use axum::{body::Body, extract::Request, http::StatusCode, routing::get};
 /// use batter::{
 ///     axum::{
-///         GuardedRouter, HttpBoundary, RequestPolicy, ResponseConstructionBudget,
-///         ReusedRoutingState,
+///         GuardedRouter, HttpBoundary, InProcessRefusal, RequestPolicy,
+///         ResponseConstructionBudget,
 ///     },
 ///     lifecycle::ShutdownHandle,
 /// };
@@ -176,7 +177,7 @@ pub mod outbound_http {
 /// let request = Request::builder().uri("/work").body(Body::empty())?;
 /// let response = client.request(request).await;
 /// assert_eq!(response.status(), StatusCode::OK);
-/// assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+/// assert!(response.extensions().get::<InProcessRefusal>().is_none());
 /// # Ok(()) }
 /// ```
 ///
