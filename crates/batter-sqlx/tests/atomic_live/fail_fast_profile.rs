@@ -15,7 +15,7 @@ async fn fail_fast_profile_checks_before_work_and_restores_rejected_changes() ->
         .await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
+        let profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into(), schema.clone()],

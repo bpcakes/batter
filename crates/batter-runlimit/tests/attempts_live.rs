@@ -42,6 +42,8 @@ impl Fixture {
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .unwrap();
         let database = batter_sqlx::low_level::connect_profiled_pool(options, profile, 8)

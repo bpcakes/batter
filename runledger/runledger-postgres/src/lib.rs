@@ -45,8 +45,15 @@
 //! use runledger_postgres::PgSessionProfile;
 //! use std::time::Duration;
 //! let options = "postgres://login@localhost/runledger".parse()?;
-//! let profile = PgSessionProfile::new("login", "serving", vec!["application".into()],
-//!     Duration::from_secs(30), Duration::from_secs(5))?;
+//! let profile = PgSessionProfile::new(
+//!     "login",
+//!     "serving",
+//!     vec!["application".into()],
+//!     Duration::from_secs(30),
+//!     Duration::from_secs(5),
+//!     Duration::from_secs(10),
+//!     Duration::from_secs(60),
+//! )?;
 //! let database = runledger_postgres::low_level::connect_database(options, profile, 8).await?;
 //! runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
 //! let pool = database.pool(); // ordinary APIs and runtime use the same policy

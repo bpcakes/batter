@@ -49,6 +49,8 @@ async fn policy_commit_uncertainty_survives_completion_poll_cancellation() -> Re
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )?;
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
         (*options).clone(),

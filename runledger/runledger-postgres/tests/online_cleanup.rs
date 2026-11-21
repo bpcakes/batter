@@ -39,6 +39,8 @@ async fn both_entry_points_retain_independent_operation_and_unlock_failures() {
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("restricted profile");
         let database =

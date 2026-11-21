@@ -546,8 +546,15 @@ pub async fn probe(
 /// use std::time::Duration;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// let mut cleanup = CleanupStack::new();
-/// let profile = PgSessionProfile::new("service", "service", vec!["public".into()],
-///     Duration::ZERO, Duration::ZERO)?;
+/// let profile = PgSessionProfile::new(
+///     "service",
+///     "service",
+///     vec!["public".into()],
+///     Duration::from_secs(30),
+///     Duration::from_secs(5),
+///     Duration::from_secs(10),
+///     Duration::from_secs(60),
+/// )?;
 /// let database = pool_in(cleanup.reserve("postgres.pool")?,
 ///     PgPoolOptions::new(), PgConnectOptions::new(), profile)?;
 /// // Probe database.pool() before readiness. Stop dependents before cleanup.

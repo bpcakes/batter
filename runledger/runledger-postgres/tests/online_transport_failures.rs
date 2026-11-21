@@ -21,8 +21,16 @@ use online_wire::{Fault, Relay};
 fn relayed_database(harness: &Harness, relay: &Relay, bound: Duration) -> RunledgerDatabase {
     let options = harness.pool.connect_options();
     let login = options.get_username();
-    let profile = PgSessionProfile::new(login, login, vec!["public".into()], Duration::ZERO, bound)
-        .expect("profile");
+    let profile = PgSessionProfile::new(
+        login,
+        login,
+        vec!["public".into()],
+        Duration::ZERO,
+        bound,
+        Duration::ZERO,
+        Duration::ZERO,
+    )
+    .expect("profile");
     // The eager constructor probes and closes a separate connection first;
     // this one-session relay targets the lazy pool's actual migration session.
     runledger_postgres::low_level::connect_database_lazy(

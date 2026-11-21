@@ -128,7 +128,7 @@ async fn native_query_macros_preserve_scope_modes_and_statement_counts() -> Resu
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
+        let profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],

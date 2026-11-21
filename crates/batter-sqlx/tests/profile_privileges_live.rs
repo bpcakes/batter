@@ -145,14 +145,7 @@ async fn check_profiles(
     role: &str,
     schema: &str,
 ) -> Result {
-    let legacy = PgSessionProfile::new(
-        login,
-        role,
-        vec![schema.into()],
-        Duration::ZERO,
-        Duration::ZERO,
-    )?;
-    let complete = PgSessionProfile::with_timeouts(
+    let profile = PgSessionProfile::new(
         login,
         role,
         vec![schema.into()],
@@ -160,50 +153,48 @@ async fn check_profiles(
         Duration::ZERO,
         Duration::ZERO,
         Duration::ZERO,
+    )?
+    .with_setting("app.tenant", "restricted")?;
+    let mut connection = bounded(PgConnection::connect_with(&options)).await??;
+    let apply = bounded(profile.reset_and_apply(&mut connection))
+        .await
+        .and_then(|result| result.map_err(Into::into));
+    let close = bounded(connection.close())
+        .await
+        .and_then(|result| result.map_err(Into::into));
+    combine(apply, close)?;
+    let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
+        options,
+        profile,
+        PgPoolOptions::new().max_connections(1),
     )?;
-    for profile in [legacy, complete] {
-        let profile = profile.with_setting("app.tenant", "restricted")?;
-        let mut connection = bounded(PgConnection::connect_with(&options)).await??;
-        let apply = bounded(profile.reset_and_apply(&mut connection))
-            .await
-            .and_then(|result| result.map_err(Into::into));
-        let close = bounded(connection.close())
-            .await
-            .and_then(|result| result.map_err(Into::into));
-        combine(apply, close)?;
-        let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
-            options.clone(),
-            profile,
-            PgPoolOptions::new().max_connections(1),
-        )?;
-        let body =
-            async {
-                let mut original = None;
-                for _ in 0..2 {
-                    let mut connection = bounded(database.pool().acquire()).await??;
-                    let (pid, effective, tenant): (i32, String, String) = sqlx::query_as(
-                    "SELECT pg_backend_pid(), current_user::text, current_setting('app.tenant')",
-                ).fetch_one(&mut *connection).await?;
-                    require!(
-                        effective == role && tenant == "restricted",
-                        "profile policy was not applied",
-                    )?;
-                    require!(
-                        *original.get_or_insert(pid) == pid,
-                        "idle acquisition must reuse the session",
-                    )?;
-                    drop(connection);
-                    bounded(async {
-                        while database.pool().num_idle() != 1 {
-                            tokio::task::yield_now().await;
-                        }
-                    })
-                    .await?;
+    let body = async {
+        let mut original = None;
+        for _ in 0..2 {
+            let mut connection = bounded(database.pool().acquire()).await??;
+            let (pid, effective, tenant): (i32, String, String) = sqlx::query_as(
+                "SELECT pg_backend_pid(), current_user::text, current_setting('app.tenant')",
+            )
+            .fetch_one(&mut *connection)
+            .await?;
+            require!(
+                effective == role && tenant == "restricted",
+                "profile policy was not applied",
+            )?;
+            require!(
+                *original.get_or_insert(pid) == pid,
+                "idle acquisition must reuse the session",
+            )?;
+            drop(connection);
+            bounded(async {
+                while database.pool().num_idle() != 1 {
+                    tokio::task::yield_now().await;
                 }
-                Ok(())
-            }
-            .await;
-        combine(body, bounded(database.pool().close()).await)?;
+            })
+            .await?;
+        }
+        Ok(())
     }
-    Ok(())
+    .await;
+    combine(body, bounded(database.pool().close()).await)
 }

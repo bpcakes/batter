@@ -88,6 +88,8 @@ pub(crate) fn runledger_database(
         vec![schema.to_owned()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )?;
     Ok(
         batter::runledger::native::postgres::low_level::connect_database_lazy(

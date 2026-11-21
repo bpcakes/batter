@@ -159,6 +159,8 @@ pub async fn migrate_with_profile_timeouts(
         vec!["public".into()],
         statement_timeout,
         lock_timeout,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .expect("profile with explicit timeouts");
     migrate_through_profile(pool, profile).await
@@ -172,7 +174,7 @@ pub async fn migrate_with_transaction_timeout(
     transaction_timeout: Duration,
 ) -> Result<(), SchemaCompatibilityError> {
     let login = pool.connect_options().get_username().to_owned();
-    let profile = PgSessionProfile::with_timeouts(
+    let profile = PgSessionProfile::new(
         &login,
         &login,
         vec!["public".into()],

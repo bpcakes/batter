@@ -457,13 +457,12 @@ bound an `AsyncFnOnce` future by `Send`) and separately erase transaction birth,
 so SQLx acquisition stays out of consumer `Send` proofs. See the
 [size and depth contract](../crates/batter-sqlx/README.md#future-size-and-composition-depth).
 
-For a declared session policy, use `PgSessionProfile::with_timeouts` and
+For a declared session policy, use `PgSessionProfile::new` and
 `PgProfiledPool`; select statement, lock, idle-in-transaction and total-transaction
 timeouts together. Zero explicitly disables the selected limit. Pool hooks and
 profiled atomic/snapshot checks apply and verify the same declaration, so no
-checkout callback is needed. The complete profile requires PostgreSQL's
-`transaction_timeout` (17+; native evidence uses 18). The existing `new`
-constructor preserves its weaker contract and inherited transaction defaults.
+checkout callback is needed. `PgSessionProfile` requires PostgreSQL's
+`transaction_timeout` (17+; native evidence uses 18).
 Server limits do not replace the cooperative `OperationContext` budget used by
 `run_atomic_profiled_in`, and do not prove local lease release or commit outcome.
 

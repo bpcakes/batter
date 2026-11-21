@@ -205,6 +205,8 @@ pub async fn session_policy_failure_retained() -> ProbeResult {
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )?);
         let first = Arc::new(Mutex::new(None));
         let recorder = Arc::clone(&first);

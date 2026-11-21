@@ -163,6 +163,8 @@ async fn attempt_runner_future_erases_native_admission_and_completion() {
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .unwrap();
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(

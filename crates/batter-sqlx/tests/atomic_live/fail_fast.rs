@@ -11,7 +11,7 @@ async fn fail_fast_scopes_have_no_per_operation_savepoint() -> Result {
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
+        let profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],

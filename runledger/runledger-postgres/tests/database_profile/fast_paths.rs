@@ -37,6 +37,8 @@ impl Fixture {
             vec![SCHEMA.into()],
             Duration::from_secs(2),
             Duration::from_millis(250),
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("profile")
         .with_setting("app.tenant", "tenant-one")

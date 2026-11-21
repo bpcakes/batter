@@ -20,7 +20,7 @@ use tracing_subscriber::prelude::*;
 const MARKER: &str = "profile-secret-marker-not-a-timezone";
 
 fn policy(login: &str, role: &str) -> Result<PgSessionProfile> {
-    Ok(PgSessionProfile::with_timeouts(
+    Ok(PgSessionProfile::new(
         login,
         role,
         vec!["public".into()],

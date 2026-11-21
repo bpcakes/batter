@@ -184,7 +184,7 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
     let login = options.get_username();
     // All three lifted settings nonzero, so a regression in any lift or
     // restore branch, including the transaction_timeout one, is visible.
-    let profile = crate::PgSessionProfile::with_timeouts(
+    let profile = crate::PgSessionProfile::new(
         login,
         login,
         vec!["public".into()],

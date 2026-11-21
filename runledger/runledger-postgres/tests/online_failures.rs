@@ -156,6 +156,8 @@ async fn restricted_verifier_recognizes_hidden_build_progress_and_settled_interr
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .expect("restricted profile");
     let verifier = runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
@@ -384,6 +386,8 @@ async fn external_preparation_exposes_the_same_typed_lock_wait_expiry() {
                 vec!["public".into()],
                 Duration::from_secs(2),
                 Duration::from_millis(250),
+                Duration::ZERO,
+                Duration::ZERO,
             )
             .expect("bounded profile");
             let database =

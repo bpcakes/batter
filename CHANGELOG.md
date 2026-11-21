@@ -8,6 +8,65 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** require all four server timeouts in `PgSessionProfile::new` and
+  remove `PgSessionProfile::with_timeouts` (`batter-ndpi`;
+  [ADR-010 assessment](docs/evidence/api-assessments/postgresql.md#session-profile-timeout-requirement-assessment-batter-ndpi)).
+  `PgSessionProfile` previously stored `transaction_timeouts_ms: Option<(u32, u32)>`
+  behind two constructors: the default-named five-argument `new` silently left
+  `idle_in_transaction_session_timeout` and `transaction_timeout` undeclared
+  and unverified, while `with_timeouts` enforced all four. `PgSessionProfile`
+  now stores all four millisecond bounds unconditionally and exposes only the
+  seven-argument `PgSessionProfile::new`; `with_timeouts` is removed without a
+  deprecated shim. The cut applies identically through `batter_sqlx`,
+  `batter::sqlx`, `batter::runledger`, and `runledger_postgres`.
+
+  ```rust,ignore
+  // Before: five-argument `new` left both transaction timeouts undeclared.
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+  )?;
+
+  // After: supply `idle_in_transaction_session_timeout` and
+  // `transaction_timeout` explicitly (use `Duration::ZERO` only to disable one).
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+      Duration::from_secs(10),
+      Duration::from_secs(60),
+  )?;
+  ```
+
+  ```rust,ignore
+  // Before: seven-argument `with_timeouts`.
+  let profile = PgSessionProfile::with_timeouts(
+      "login",
+      "serving",
+      vec!["application".into()],
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+      Duration::from_secs(10),
+      Duration::from_secs(60),
+  )?;
+
+  // After: rename to `PgSessionProfile::new` with the same seven arguments.
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+      Duration::from_secs(10),
+      Duration::from_secs(60),
+  )?;
+  ```
+
 - Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
   library read of the process environment outside the one declared seam, share
   the executable-root inventory with the panic-hook scan, and record the

@@ -22,6 +22,8 @@ pub async fn profiled_database(pool: &DbPool) -> runledger_postgres::RunledgerDa
         vec!["public".into()],
         std::time::Duration::ZERO,
         std::time::Duration::ZERO,
+        std::time::Duration::ZERO,
+        std::time::Duration::ZERO,
     )
     .expect("valid test profile");
     runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)

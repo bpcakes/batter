@@ -125,6 +125,8 @@ fn database_pool(
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )?;
     Ok(batter::sqlx::pool_in(slot, options, connection, profile)?
         .pool()

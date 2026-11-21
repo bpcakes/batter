@@ -29,6 +29,8 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )?;
     let database = runledger_postgres::low_level::connect_database_lazy(
         options,

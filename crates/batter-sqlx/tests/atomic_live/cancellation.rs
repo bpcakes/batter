@@ -34,7 +34,7 @@ async fn cancelled_application_operation_and_snapshot_retire() -> Result {
             let login = pool.connect_options().get_username().to_owned();
             // This control observes cancellation while server work remains
             // blocked, so no server clock may race that independent observation.
-            let profile = batter_sqlx::PgSessionProfile::with_timeouts(
+            let profile = batter_sqlx::PgSessionProfile::new(
                 &login,
                 &login,
                 vec!["public".into()],

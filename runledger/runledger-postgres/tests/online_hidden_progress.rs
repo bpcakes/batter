@@ -46,6 +46,8 @@ impl RestrictedOwner {
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("restricted profile");
         let database =

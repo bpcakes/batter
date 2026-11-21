@@ -142,6 +142,8 @@ async fn wrong_login_profile_prevents_both_factories() {
         vec![f.schema.clone()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .unwrap();
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(

@@ -90,6 +90,8 @@ async fn quoted_schema_delimiters_and_keywords_preserve_canonical_definitions() 
             vec![schema.into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("supported schema identifier");
         let options = (*options).clone().options([(

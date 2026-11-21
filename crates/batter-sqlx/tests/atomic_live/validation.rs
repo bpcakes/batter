@@ -75,14 +75,16 @@ async fn atomic_scope_statement_counts_include_recovery_and_completion() -> Resu
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let legacy = PgSessionProfile::new(
+        let plain = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )?;
-        let complete = PgSessionProfile::with_timeouts(
+        let with_settings = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],
@@ -93,7 +95,7 @@ async fn atomic_scope_statement_counts_include_recovery_and_completion() -> Resu
         )?
         .with_setting("app.tenant", "counted")?
         .with_setting("timezone", "UTC")?;
-        for profile in [None, Some(&legacy), Some(&complete)] {
+        for profile in [None, Some(&plain), Some(&with_settings)] {
             let mut tx = if let Some(profile) = profile {
                 PgAtomicTransaction::begin_profiled(&fixture.pool, profile).await?
             } else {
@@ -156,6 +158,8 @@ async fn profiled_scope_checks_external_schema_loss_before_work() -> Result {
             &login,
             &login,
             vec!["public".into(), schema.clone()],
+            Duration::ZERO,
+            Duration::ZERO,
             Duration::ZERO,
             Duration::ZERO,
         )?;

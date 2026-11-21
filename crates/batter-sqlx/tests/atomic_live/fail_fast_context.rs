@@ -23,6 +23,8 @@ async fn fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellat
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )?;
         let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
             (*options).clone(),

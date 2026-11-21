@@ -33,6 +33,8 @@ fn profile(schemas: &[&str]) -> PgSessionProfile {
         schemas.iter().map(|s| (*s).into()).collect(),
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .unwrap()
 }

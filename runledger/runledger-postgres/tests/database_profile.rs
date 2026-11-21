@@ -23,6 +23,8 @@ async fn profile_setup_failure_is_redacted_but_native_cause_is_inspectable() {
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .expect("valid profile declaration");
     let marker = "runledger-profile-secret-invalid-timezone";
@@ -94,6 +96,8 @@ async fn authority_schema_and_timeouts_agree_across_all_paths() {
             vec![schema.into()],
             Duration::from_secs(2),
             Duration::from_millis(250),
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("profile")
         .with_setting("app.tenant", "tenant-one")
@@ -152,6 +156,8 @@ async fn authority_schema_and_timeouts_agree_across_all_paths() {
         "not_the_authenticated_role",
         &role,
         vec![schema.into()],
+        Duration::ZERO,
+        Duration::ZERO,
         Duration::ZERO,
         Duration::ZERO,
     )

@@ -67,6 +67,8 @@ impl Fixture {
             vec!["public".into()],
             Duration::from_secs(5),
             Duration::from_secs(2),
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("construct validated fixture input");
         let service = runledger_postgres::low_level::connect_database(options, profile, 3)

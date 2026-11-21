@@ -51,15 +51,8 @@ async fn profiles_reject_declared_login_mismatch_before_application_work() -> Re
     combine(body, combine(pool_close, combine(cleanup, admin_close)))
 }
 
-fn profiles(login: &str, role: &str, schema: &str) -> Result<[PgSessionProfile; 2]> {
-    let legacy = PgSessionProfile::new(
-        login,
-        role,
-        vec![schema.into()],
-        Duration::ZERO,
-        Duration::ZERO,
-    )?;
-    let complete = PgSessionProfile::with_timeouts(
+fn profile(login: &str, role: &str, schema: &str) -> Result<PgSessionProfile> {
+    Ok(PgSessionProfile::new(
         login,
         role,
         vec![schema.into()],
@@ -67,44 +60,37 @@ fn profiles(login: &str, role: &str, schema: &str) -> Result<[PgSessionProfile; 
         Duration::ZERO,
         Duration::ZERO,
         Duration::ZERO,
-    )?;
-    Ok([
-        legacy.with_setting("app.tenant", "restricted")?,
-        complete.with_setting("app.tenant", "restricted")?,
-    ])
+    )?
+    .with_setting("app.tenant", "restricted")?)
 }
 
 async fn check_profiles(pool: &PgPool, login: &str, role: &str, schema: &str) -> Result {
     // The wrong declared login equals current_user, so accidentally selecting
     // current_user instead of session_user cannot satisfy this regression.
-    for (valid, mismatched) in profiles(login, role, schema)?
-        .into_iter()
-        .zip(profiles(role, role, schema)?)
-    {
-        let mut connection = bounded(pool.acquire()).await??;
-        bounded(valid.reset_and_apply(&mut connection)).await??;
-        let (actual_login, actual_role, superuser, tenant): (String, String, bool, String) =
-            sqlx::query_as(
-                "SELECT session_user::text, current_user::text, \
-                 (SELECT rolsuper FROM pg_roles WHERE rolname = session_user), \
-                 current_setting('app.tenant')",
-            )
-            .fetch_one(&mut *connection)
-            .await?;
-        require!(
-            actual_login == login && actual_role == role && !superuser && tenant == "restricted",
-            "valid profile control must establish restricted identity and settings",
-        )?;
-        let Err(error) = bounded(mismatched.reset_and_apply(&mut connection)).await? else {
-            return Err(std::io::Error::other("mismatched login must reject direct setup").into());
-        };
-        assert_mismatch(&error, login, role)?;
-        // A direct native reset failure leaves disposition to its caller.
-        // Close this connection instead of returning its rejected state.
-        bounded(connection.close()).await??;
-        check_protected_work(pool, &mismatched, login, role).await?;
-    }
-    Ok(())
+    let valid = profile(login, role, schema)?;
+    let mismatched = profile(role, role, schema)?;
+    let mut connection = bounded(pool.acquire()).await??;
+    bounded(valid.reset_and_apply(&mut connection)).await??;
+    let (actual_login, actual_role, superuser, tenant): (String, String, bool, String) =
+        sqlx::query_as(
+            "SELECT session_user::text, current_user::text, \
+             (SELECT rolsuper FROM pg_roles WHERE rolname = session_user), \
+             current_setting('app.tenant')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+    require!(
+        actual_login == login && actual_role == role && !superuser && tenant == "restricted",
+        "valid profile control must establish restricted identity and settings",
+    )?;
+    let Err(error) = bounded(mismatched.reset_and_apply(&mut connection)).await? else {
+        return Err(std::io::Error::other("mismatched login must reject direct setup").into());
+    };
+    assert_mismatch(&error, login, role)?;
+    // A direct native reset failure leaves disposition to its caller.
+    // Close this connection instead of returning its rejected state.
+    bounded(connection.close()).await??;
+    check_protected_work(pool, &mismatched, login, role).await
 }
 
 async fn check_protected_work(

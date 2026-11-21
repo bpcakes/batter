@@ -35,7 +35,7 @@ fn redaction_control_checks_all_pool_events() -> Result<(), batter_core::BoxErro
 }
 
 fn profile(schemas: Vec<String>) -> Result<PgSessionProfile, batter_sqlx::PgProfileError> {
-    PgSessionProfile::with_timeouts(
+    PgSessionProfile::new(
         "login",
         "serving",
         schemas,
@@ -65,7 +65,9 @@ fn rejects_empty_reserved_and_truncated_identifiers() {
             "serving",
             vec!["public".into()],
             Duration::ZERO,
-            Duration::ZERO
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .is_err()
     );
@@ -105,35 +107,6 @@ fn settings_cannot_override_owned_authority_or_transaction_parameters() {
 
 #[test]
 fn timeouts_are_exact_bounded_milliseconds() {
-    for value in [
-        Duration::from_nanos(1),
-        Duration::from_millis(i32::MAX as u64 + 1),
-    ] {
-        assert!(
-            PgSessionProfile::new(
-                "login",
-                "serving",
-                vec!["public".into()],
-                value,
-                Duration::ZERO
-            )
-            .is_err()
-        );
-    }
-    assert!(
-        PgSessionProfile::new(
-            "login",
-            "serving",
-            vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO
-        )
-        .is_ok()
-    );
-}
-
-#[test]
-fn complete_timeouts_validate_each_selection_before_io() {
     for field in 0..4 {
         for (value, valid) in [
             (Duration::ZERO, true),
@@ -145,7 +118,7 @@ fn complete_timeouts_validate_each_selection_before_io() {
         ] {
             let mut timeouts = [Duration::ZERO; 4];
             timeouts[field] = value;
-            let result = PgSessionProfile::with_timeouts(
+            let result = PgSessionProfile::new(
                 "private-login",
                 "private-role",
                 vec!["private-schema".into()],

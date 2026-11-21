@@ -78,6 +78,8 @@ fn relayed_database(pool: &PgPool, relay: &Relay) -> RunledgerDatabase {
         vec!["public".into()],
         Duration::ZERO,
         Duration::from_secs(5),
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .expect("profile");
     runledger_postgres::low_level::connect_database_lazy(

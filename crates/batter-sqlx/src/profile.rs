@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 /// Explicit policy re-established after session reset. Names are quoted as
 /// identifiers; setting values are bound parameters. No setup callback can run
 /// application SQL before the policy is checked.
-/// PostgreSQL 18 is the minimum supported server for both constructors.
+/// PostgreSQL 18 is the minimum supported server.
 ///
 /// Search-path schemas are a trust declaration: only include schemas whose
 /// object creators you trust. `pg_catalog` is implicitly searched first and
@@ -18,10 +18,16 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 /// # async fn example(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
 /// use batter_sqlx::{PgSessionProfile, run_atomic_profiled};
 /// use std::time::Duration;
-/// let profile = PgSessionProfile::with_timeouts("login", "serving", vec!["application".into()],
-///     Duration::from_secs(30), Duration::from_secs(5),
-///     Duration::from_secs(10), Duration::from_secs(60))?
-///     .with_setting("app.tenant", "tenant-one")?;
+/// let profile = PgSessionProfile::new(
+///     "login",
+///     "serving",
+///     vec!["application".into()],
+///     Duration::from_secs(30),
+///     Duration::from_secs(5),
+///     Duration::from_secs(10),
+///     Duration::from_secs(60),
+/// )?
+/// .with_setting("app.tenant", "tenant-one")?;
 /// let value = run_atomic_profiled(pool, &profile, async |scope| {
 ///     scope.application(async |sql| {
 ///         sqlx::query_scalar::<_, i64>("SELECT 1::bigint").fetch_one(sql.executor()).await
@@ -37,7 +43,8 @@ pub struct PgSessionProfile {
     search_path: String,
     statement_timeout_ms: u32,
     lock_timeout_ms: u32,
-    transaction_timeouts_ms: Option<(u32, u32)>,
+    idle_in_transaction_session_timeout_ms: u32,
+    transaction_timeout_ms: u32,
     settings: BTreeMap<String, String>,
 }
 
@@ -60,10 +67,11 @@ impl fmt::Debug for PgSessionProfile {
 
 impl PgSessionProfile {
     /// Declare all four server timeouts, roles and an ordered trusted schema path.
+    ///
     /// Each timeout must be an exact number of milliseconds in `0..=i32::MAX`.
     /// Zero explicitly disables that timeout, even over a nonzero startup default.
     /// All four values are applied after reset and checked at scope boundaries.
-    /// See the type's example for the canonical construction path.
+    /// No policy is inferred from SQLx hooks or the authenticated user's privileges.
     ///
     /// `idle_in_transaction_session_timeout` bounds each idle interval inside a
     /// transaction; `transaction_timeout` bounds the entire transaction. The
@@ -76,7 +84,47 @@ impl PgSessionProfile {
     /// Server termination does not cancel Rust work or release a held pool lease.
     /// Use [`crate::run_atomic_profiled_in`] for a cooperative operation budget.
     /// Arbitrary SQL can alter settings before revalidation; this is not a sandbox.
-    pub fn with_timeouts(
+    ///
+    /// Migration: `PgSessionProfile::with_timeouts` has been removed and the
+    /// five-argument compatibility `PgSessionProfile::new` now requires
+    /// `idle_in_transaction_session_timeout` and `transaction_timeout` explicitly.
+    /// Rename `PgSessionProfile::with_timeouts(...)` calls to
+    /// `PgSessionProfile::new(...)`, and supply both transaction timeouts (or
+    /// `Duration::ZERO` to disable one explicitly) on former five-argument
+    /// `PgSessionProfile::new(...)` calls.
+    ///
+    /// Omitting the two transaction timeouts does not compile:
+    ///
+    /// ```compile_fail,E0061
+    /// use batter_sqlx::PgSessionProfile;
+    /// use std::time::Duration;
+    ///
+    /// let _ = PgSessionProfile::new(
+    ///     "login",
+    ///     "serving",
+    ///     vec!["application".into()],
+    ///     Duration::from_secs(30),
+    ///     Duration::from_secs(5),
+    /// );
+    /// ```
+    ///
+    /// The former `with_timeouts` spelling has been removed:
+    ///
+    /// ```compile_fail,E0599
+    /// use batter_sqlx::PgSessionProfile;
+    /// use std::time::Duration;
+    ///
+    /// let _ = PgSessionProfile::with_timeouts(
+    ///     "login",
+    ///     "serving",
+    ///     vec!["application".into()],
+    ///     Duration::from_secs(30),
+    ///     Duration::from_secs(5),
+    ///     Duration::from_secs(10),
+    ///     Duration::from_secs(60),
+    /// );
+    /// ```
+    pub fn new(
         login_role: impl Into<String>,
         effective_role: impl Into<String>,
         schemas: Vec<String>,
@@ -84,37 +132,6 @@ impl PgSessionProfile {
         lock_timeout: Duration,
         idle_in_transaction_session_timeout: Duration,
         transaction_timeout: Duration,
-    ) -> Result<Self, PgProfileError> {
-        let mut profile = Self::new(
-            login_role,
-            effective_role,
-            schemas,
-            statement_timeout,
-            lock_timeout,
-        )?;
-        profile.transaction_timeouts_ms = Some((
-            timeout_ms(idle_in_transaction_session_timeout)?,
-            timeout_ms(transaction_timeout)?,
-        ));
-        Ok(profile)
-    }
-
-    /// Compatibility constructor declaring only statement and lock timeouts.
-    /// Prefer [`Self::with_timeouts`] to declare and verify all four timeouts.
-    ///
-    /// This weaker path leaves both transaction timeouts at their reset defaults
-    /// and never verifies them. Startup connection options and role/database
-    /// defaults survive reset; later `SET` values and pool hooks are not retained.
-    /// PostgreSQL 18 remains the minimum; compatibility refers to the timeout
-    /// declaration, not support for older servers.
-    /// A zero statement or lock timeout explicitly disables that timeout. No
-    /// policy is inferred from SQLx hooks or the authenticated user's privileges.
-    pub fn new(
-        login_role: impl Into<String>,
-        effective_role: impl Into<String>,
-        schemas: Vec<String>,
-        statement_timeout: Duration,
-        lock_timeout: Duration,
     ) -> Result<Self, PgProfileError> {
         let login_role = login_role.into();
         let effective_role = effective_role.into();
@@ -146,7 +163,10 @@ impl PgSessionProfile {
             search_path,
             statement_timeout_ms: timeout_ms(statement_timeout)?,
             lock_timeout_ms: timeout_ms(lock_timeout)?,
-            transaction_timeouts_ms: None,
+            idle_in_transaction_session_timeout_ms: timeout_ms(
+                idle_in_transaction_session_timeout,
+            )?,
+            transaction_timeout_ms: timeout_ms(transaction_timeout)?,
             settings: BTreeMap::new(),
         })
     }
@@ -272,22 +292,16 @@ impl PgSessionProfile {
         self.verify(connection).await
     }
 
-    fn timeouts(&self) -> impl Iterator<Item = (&'static str, u32)> {
+    fn timeouts(&self) -> [(&'static str, u32); 4] {
         [
             ("statement_timeout", self.statement_timeout_ms),
             ("lock_timeout", self.lock_timeout_ms),
+            (
+                "idle_in_transaction_session_timeout",
+                self.idle_in_transaction_session_timeout_ms,
+            ),
+            ("transaction_timeout", self.transaction_timeout_ms),
         ]
-        .into_iter()
-        .chain(
-            self.transaction_timeouts_ms
-                .into_iter()
-                .flat_map(|(idle, total)| {
-                    [
-                        ("idle_in_transaction_session_timeout", idle),
-                        ("transaction_timeout", total),
-                    ]
-                }),
-        )
     }
 }
 

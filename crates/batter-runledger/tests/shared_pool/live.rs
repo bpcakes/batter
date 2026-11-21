@@ -12,6 +12,8 @@ async fn application_and_runledger_share_physical_capacity_and_awaited_close() {
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .unwrap();
     let mut stack = CleanupStack::new();

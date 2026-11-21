@@ -42,6 +42,8 @@ impl ProfileFixture {
                 vec![schema.clone()],
                 Duration::from_secs(2),
                 Duration::from_millis(250),
+                Duration::ZERO,
+                Duration::ZERO,
             )
             .unwrap()
             .with_setting("app.tenant", "expected")
@@ -115,6 +117,8 @@ async fn fallback_schemas_are_rejected_before_execution() {
         "login",
         "serving",
         vec!["authoritative".into(), "public".into()],
+        Duration::ZERO,
+        Duration::ZERO,
         Duration::ZERO,
         Duration::ZERO,
     )

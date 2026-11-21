@@ -63,7 +63,7 @@ async fn idle_revocation(revocation: Revocation) -> Result {
     )))
     .execute(&mut admin)
     .await;
-    let mut profile = PgSessionProfile::with_timeouts(
+    let mut profile = PgSessionProfile::new(
         &login,
         &role,
         vec![schema.clone()],

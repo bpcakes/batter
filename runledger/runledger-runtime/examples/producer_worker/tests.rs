@@ -17,6 +17,8 @@ async fn shared_contract_transaction_and_worker_round_trip() {
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )
     .expect("test policy");
     let profiled = runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)

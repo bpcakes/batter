@@ -86,6 +86,8 @@ impl Fixture {
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .unwrap();
         Self {

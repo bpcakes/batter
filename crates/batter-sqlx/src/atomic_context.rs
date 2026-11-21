@@ -235,6 +235,8 @@ mod tests {
             vec!["public".into()],
             Duration::ZERO,
             Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .unwrap();
         let database = crate::low_level::connect_profiled_pool_lazy(

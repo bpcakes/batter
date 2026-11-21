@@ -52,6 +52,8 @@ impl Fixture {
             vec!["public".into()],
             Duration::from_secs(20),
             Duration::from_secs(20),
+            Duration::ZERO,
+            Duration::ZERO,
         )
         .expect("restricted verifier profile");
         let verifier =

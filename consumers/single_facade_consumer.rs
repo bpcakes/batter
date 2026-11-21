@@ -267,6 +267,8 @@ fn database(slot: batter::cleanup::CleanupSlot<'_>, url: &str) -> Outcome<Runled
         vec!["public".into()],
         Duration::ZERO,
         Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
     )?;
     let pool = batter::sqlx::pool_in(
         slot,
