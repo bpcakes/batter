@@ -165,7 +165,8 @@ New supported semantics require primary PostgreSQL18 evidence and native tests.
 Run `cargo test -p batter-sqlx --features test-support --locked` for offline contracts and
 `bash scripts/test_sqlx_live.sh` with `DATABASE_URL`, a known-good password
 endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` and a superuser connection to a
-dedicated disposable cluster in `BATTER_SQLX_ADMIN_URL` for the ignored live cases. The explicit
+dedicated disposable cluster in `BATTER_SQLX_ADMIN_URL`. The template seed uses the native
+harness’s separately configured `POSTGRES_TEST_ADMIN_URL`. The explicit
 invocation must fail when prerequisites are missing. Also run the root
 complete pinned-toolchain verification, including HTTP smoke profiles, locally;
 the pinned toolchain is also the minimum.
@@ -177,7 +178,15 @@ changing `src/test_support.rs`, `src/test_support/` or fixture tests. Keep that
 contract in the README rather than duplicating it here. Declared capacity, the
 lease-bound pool logins and the resolve/construct/check order live in
 `src/test_support/plan.rs`; never let a declaration select another server or
-database, and keep every pool registered before the first check. Session observation and
+database, and keep every pool registered before the first check.
+`src/test_support/endpoint.rs` reads the harness admin URL once per suite with
+tokio-postgres (the harness's own parser), maps that typed parse into SQLx
+options and binds every lease and template URL to it with one check
+(`HarnessEndpoint::bind`); suites refuse an unusable endpoint before
+provisioning. Never hand harness URL text to SQLx or to caller code:
+template initializers get a typed `TemplateTarget` and suites hand out only
+an identity-only `FixtureTemplate` (`src/test_support/template.rs`); refusal
+types live in `endpoint/refusal.rs`. Session observation and
 retry ownership live in `src/test_support/sessions.rs`; retained outcomes and
 redacted summaries live in `src/test_support/report.rs`. Reference composition
 and live failure controls belong to `examples/reference-service`, not the generic

@@ -11,14 +11,8 @@ const BOUND: Duration = Duration::from_secs(5);
 
 pub async fn pending_completion_recovers() -> ProbeResult {
     let harness = super::harness().await?;
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
-    let broken = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let pool = super::admin_pool(&harness, 1).await?;
+    let broken = super::admin_pool(&harness, 1).await?;
     broken.close().await;
     let observer = SessionObserver::new(broken.clone(), BOUND)?;
     let run = FixtureSuite::new(harness)

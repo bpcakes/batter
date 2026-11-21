@@ -23,6 +23,14 @@ struct SharedPostgres {
     _container: Option<ProcessContainer>,
 }
 
+/// The transport every fixture connection uses, owned or external, and the
+/// only query a derived database URL carries: the native test proxies'
+/// plaintext, even where the server and the SQLx build both support TLS.
+/// External fixtures cannot use TLS yet (`batter-c5ci.16`). Every other
+/// setting comes from the URL alone, since every fixture mode refuses client
+/// `PG*` variables before provisioning.
+pub(crate) const FIXTURE_TRANSPORT_QUERY: &str = "?sslmode=disable";
+
 #[derive(Debug, Eq, PartialEq)]
 enum PostgresSource {
     ExternalAdmin(String),
@@ -34,14 +42,55 @@ pub async fn admin_database_url() -> &'static str {
 }
 
 async fn shared_admin_database_url() -> &'static str {
-    &SHARED_POSTGRES
+    &shared_postgres().await.admin_url
+}
+
+async fn shared_postgres() -> &'static SharedPostgres {
+    // Checked on every use, before initialization too: provisioning and each
+    // later create or drop open a fresh SQLx pool, which would follow a PG*
+    // variable set since the previous use.
+    reject_ambient_postgres_environment(&ambient_postgres_variables());
+    SHARED_POSTGRES
         .get_or_init(initialize_shared_postgres)
         .await
-        .admin_url
 }
 
 async fn initialize_shared_postgres() -> SharedPostgres {
     initialize_postgres(configured_postgres_source()).await
+}
+
+/// The names of every `PG*` variable in the process environment that a
+/// PostgreSQL client could read; see [`is_client_variable`].
+pub(crate) fn ambient_postgres_variables() -> Vec<String> {
+    let mut names: Vec<String> = std::env::vars_os()
+        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .filter(|key| is_client_variable(key))
+        .collect();
+    names.sort();
+    names
+}
+
+/// libpq documents only `PG` followed by a letter (`PGHOST`,
+/// `PGCONNECT_TIMEOUT`, ...) and SQLx reads a subset of those. The server's
+/// `PGDATA` and `PG_`-prefixed names such as the client tools' `PG_COLOR` are
+/// read by no client and allowed; any other `PG` name is refused, including
+/// one a later SQLx release starts reading.
+fn is_client_variable(name: &str) -> bool {
+    name.starts_with("PG") && name != "PGDATA" && !name.starts_with("PG_")
+}
+
+/// SQLx 0.9.1, like libpq, fills unset settings from `PG*` variables
+/// (`PGHOSTADDR`, `PGPASSWORD`, `PGOPTIONS` and others), but the fixture's
+/// clients are not all SQLx: native test proxies dial and forward to the URL
+/// host themselves. Every fixture mode therefore refuses any client `PG*`
+/// variable before provisioning, so every client reads only the URL. The
+/// message names the variables, never their values.
+pub(crate) fn reject_ambient_postgres_environment(names: &[String]) {
+    assert!(
+        names.is_empty(),
+        "unset {} for Runledger PostgreSQL fixtures: put every connection setting in the URL",
+        names.join(", ")
+    );
 }
 
 fn configured_postgres_source() -> PostgresSource {
@@ -71,11 +120,31 @@ async fn initialize_postgres(source: PostgresSource) -> SharedPostgres {
 }
 
 async fn initialize_external_postgres(admin_url: String) -> SharedPostgres {
+    crate::external_admin::reject_dropped_endpoint_parameters(&admin_url);
+    // The native test proxies connect without TLS; pin every external
+    // connection to that transport so all clients meet the same pg_hba rule,
+    // instead of SQLx's default prefer negotiating TLS where they cannot.
+    let admin_url = with_external_transport(&admin_url);
     wait_for_postgres(&admin_url).await;
     SharedPostgres {
         admin_url,
         _container: None,
     }
+}
+
+/// The external admin URL with [`FIXTURE_TRANSPORT_QUERY`] appended unless it
+/// already selects it; its only other query can be a redundant `hostaddr` pin.
+fn with_external_transport(admin_url: &str) -> String {
+    let transport = &FIXTURE_TRANSPORT_QUERY[1..];
+    let present = url::Url::parse(admin_url).is_ok_and(|url| {
+        url.query_pairs()
+            .any(|(key, value)| key == "sslmode" && value == "disable")
+    });
+    if present {
+        return admin_url.to_owned();
+    }
+    let separator = if admin_url.contains('?') { '&' } else { '?' };
+    format!("{admin_url}{separator}{transport}")
 }
 
 async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
@@ -144,8 +213,10 @@ pub(crate) fn parse_image_ref(image_ref: &str) -> (String, String) {
     (repository, tag)
 }
 
-fn postgres_admin_url(port: u16) -> String {
-    format!("postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}")
+pub(crate) fn postgres_admin_url(port: u16) -> String {
+    format!(
+        "postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}{FIXTURE_TRANSPORT_QUERY}"
+    )
 }
 
 async fn connect_postgres(admin_url: &str, timeout: Duration) -> Result<sqlx::PgPool, sqlx::Error> {
@@ -214,6 +285,31 @@ mod tests {
 
     use super::*;
     const CONCURRENT_CALLERS: usize = 8;
+
+    #[test]
+    fn absent_postgres_environment_permits_fixture_startup() {
+        reject_ambient_postgres_environment(&[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "unset PGHOSTADDR, PGSERVICE for Runledger PostgreSQL fixtures")]
+    fn any_client_postgres_variable_refuses_fixture_startup() {
+        reject_ambient_postgres_environment(&["PGHOSTADDR".to_owned(), "PGSERVICE".to_owned()]);
+    }
+
+    #[test]
+    fn only_client_postgres_variables_are_refused() {
+        // Shared with batter-sqlx and the metadata refresh, which implement
+        // the same rule.
+        let vector = include_str!("client_variables.txt");
+        let mut checked = 0;
+        for line in vector.lines().filter(|line| !line.starts_with('#')) {
+            let (verdict, name) = line.split_once(' ').expect("verdict and name");
+            assert_eq!(is_client_variable(name), verdict == "refuse", "{line}");
+            checked += 1;
+        }
+        assert!(checked > 0, "empty client-variable vector");
+    }
 
     #[tokio::test]
     async fn bootstrap_deadline_bounds_a_stalled_handshake() {
@@ -354,7 +450,11 @@ mod tests {
             server_version_num >= 180_000,
             "initializer test requires PostgreSQL 18+, got {server_version} ({server_version_num})"
         );
+        // The shared URL is already normalized (pinned query appended), which
+        // the external check refuses as caller input; pass its raw form.
         admin_url
+            .split_once('?')
+            .map_or(admin_url.clone(), |(raw, _)| raw.to_owned())
     }
 
     #[tokio::test]
@@ -385,7 +485,7 @@ mod tests {
         for caller in callers {
             assert_eq!(
                 caller.await.expect("concurrent initializer caller joins"),
-                admin_url
+                with_external_transport(&admin_url)
             );
         }
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
@@ -396,7 +496,9 @@ mod tests {
         let admin_url = postgres_18_admin_url("failed initialization retry").await;
         let cell = Arc::new(OnceCell::<SharedPostgres>::new());
         let failed_cell = Arc::clone(&cell);
-        let failed_url = admin_url.clone();
+        // A direct connection uses the pinned form; the raw URL is only the
+        // external configuration input.
+        let failed_url = with_external_transport(&admin_url);
         let failure = tokio::spawn(async move {
             failed_cell
                 .get_or_init(|| async move {
@@ -413,7 +515,7 @@ mod tests {
         let initialized = cell
             .get_or_init(|| initialize_external_postgres(admin_url.clone()))
             .await;
-        assert_eq!(initialized.admin_url, admin_url);
+        assert_eq!(initialized.admin_url, with_external_transport(&admin_url));
     }
 
     #[tokio::test]
@@ -421,7 +523,7 @@ mod tests {
         let admin_url = postgres_18_admin_url("cancelled initialization retry").await;
         let cell = Arc::new(OnceCell::<SharedPostgres>::new());
         let cancelled_cell = Arc::clone(&cell);
-        let cancelled_url = admin_url.clone();
+        let cancelled_url = with_external_transport(&admin_url);
         let (started_tx, started_rx) = oneshot::channel();
         let initializer = tokio::spawn(async move {
             cancelled_cell
@@ -448,7 +550,7 @@ mod tests {
         let initialized = cell
             .get_or_init(|| initialize_external_postgres(admin_url.clone()))
             .await;
-        assert_eq!(initialized.admin_url, admin_url);
+        assert_eq!(initialized.admin_url, with_external_transport(&admin_url));
     }
 
     #[tokio::test]
@@ -462,7 +564,7 @@ mod tests {
 
         let cell = OnceCell::<SharedPostgres>::new();
         let initialized = cell.get_or_init(|| initialize_postgres(source)).await;
-        assert_eq!(initialized.admin_url, admin_url);
+        assert_eq!(initialized.admin_url, with_external_transport(&admin_url));
         assert!(initialized._container.is_none());
     }
 }

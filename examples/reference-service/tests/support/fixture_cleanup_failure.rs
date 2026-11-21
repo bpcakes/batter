@@ -19,10 +19,7 @@ pub async fn probe() -> ProbeResult {
         .with_connections_per_database(4)?
         .with_operation_timeout(Duration::from_secs(1))?;
     let harness = PostgresHarness::start(config).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let (ready_sender, ready_receiver) = oneshot::channel();
     let (release_sender, release_receiver) = oneshot::channel();
     let mut run = FixtureSuite::new(harness).start(move |scope| {
@@ -99,10 +96,7 @@ async fn low_level_both() -> ProbeResult {
         .with_cleanup_on_start(false)
         .with_operation_timeout(Duration::from_secs(1))?;
     let harness = PostgresHarness::start(config).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let suite = FixtureSuite::new(harness);
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
     let fixture = suite.empty(&plan).await?;
@@ -142,10 +136,7 @@ pub async fn deferred_and_consuming() -> ProbeResult {
         .with_operation_timeout(Duration::from_secs(1))?;
     let harness = PostgresHarness::start(config).await?;
     assert!(harness.is_external());
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     // A distinct resource owns the deferred queue error. The consuming lease
     // cannot be reused to manufacture an independent second cleanup failure.
     let deferred = harness.empty_database().await?;

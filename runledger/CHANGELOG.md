@@ -373,6 +373,78 @@ a redacting hook such as Batter's `redacting_panic_hook`.
 
 ### Changed
 
+- Upgrade SQLx from 0.9.0 to 0.9.1 (`batter-c5ci`); install SQLx CLI 0.9.1
+  before refreshing offline query metadata. The checked-in `.sqlx` metadata is
+  unchanged. Online index repair keeps its explicit `ROLLBACK` after a failed
+  bounded `BEGIN`: SQLx 0.9.1 now queues one itself, so the explicit statement
+  runs outside a block and only warns.
+- **Breaking:** `runledger-test-support` fixtures refuse endpoints and
+  environments they accepted before (`batter-c5ci`). This is a runtime break;
+  nothing stops compiling, but test runs that passed now panic before
+  provisioning. It refuses any client `PG*` environment variable (every `PG`
+  name except `PGDATA` and `PG_`-prefixed ones such as `PG_COLOR`) in every
+  fixture mode: SQLx 0.9.1 fills unset settings from them, but native test
+  proxies dial and forward to the URL host themselves. Put every setting in
+  the URL. Owned-container admin URLs, and every `EphemeralDatabase::url()`
+  derived from them, now end in `?sslmode=disable` (the native test proxies'
+  plaintext transport); consumers that append their own query to such a URL
+  must use `&`. Every connection to an external
+  `RUNLEDGER_TEST_ADMIN_DATABASE_URL` now uses `sslmode=disable`, the native
+  test proxies' transport, so its admin URL and every derived URL end in that
+  query; derived URLs carry nothing else from the admin URL, so such a URL is
+  now refused before provisioning unless it is a `postgres://`
+  or `postgresql://` URL naming a DNS or IPv4 host and exactly one database
+  path segment that the lease derivation reads the same way (an empty path
+  made the lease name the host), or when it has any query other than `sslmode=disable` and a
+  `hostaddr` repeating its own IP literal host: the admin pool would
+  follow `host`, `port` or TLS settings such as `sslmode=verify-full` while
+  the leases fell back to SQLx's defaults. An external fixture therefore
+  cannot require TLS for its leases yet. The endpoint split already existed
+  under SQLx 0.9.0. Newly refused, each with its replacement:
+
+  ```rust,ignore
+  // Before: a client PG* variable was read by the fixture's SQLx pools.
+  //   $ PGSSLMODE=require cargo test -p my-jobs
+  // After: unset it; every setting comes from the URL.
+  //   $ cargo test -p my-jobs
+
+  // Before: an external admin URL with endpoint or TLS settings in its query.
+  //   RUNLEDGER_TEST_ADMIN_DATABASE_URL=postgres://u:p@db.internal/postgres?port=6543&sslmode=require
+  // After: host and port in the authority, and at most `sslmode=disable`.
+  //   RUNLEDGER_TEST_ADMIN_DATABASE_URL=postgres://u:p@db.internal:6543/postgres
+
+  // Before: appending to a derived URL with `?`.
+  let url = format!("{}?application_name=jobs", database.url());
+  // After: the derived URL already has a query.
+  let url = format!("{}&application_name=jobs", database.url());
+  ```
+
+  The panics read `unset PGSSLMODE for Runledger PostgreSQL fixtures: put
+  every connection setting in the URL` (naming every refused variable, never
+  a value) and, for an external URL, a message starting `remove the query
+  from RUNLEDGER_TEST_ADMIN_DATABASE_URL`, `give
+  RUNLEDGER_TEST_ADMIN_DATABASE_URL a DNS name or IPv4 host` or `give
+  RUNLEDGER_TEST_ADMIN_DATABASE_URL exactly one database path segment`.
+  `scripts/refresh_runledger_sqlx.py` now refuses any ambient client `PG*` variable,
+  parses `DATABASE_URL` once, gives `psql` the parts as its own PG* variables
+  (no credentials in its arguments), gives SQLx CLI a URL
+  rebuilt from the same parts, refuses any `sqlx.toml` (whose
+  `database-url-var` SQLx CLI 0.9.1 reads by default), and refuses a Cargo
+  `[env]` that sets any client `PG*` variable or changes
+  `DATABASE_URL` for the query macros. A passwordless refresh uses `~/.pgpass`
+  only for a DNS or IPv4 host, where psql and SQLx look up the same entry;
+  for a Unix socket or IPv6 host neither reads one. The refresh decodes the Unix environment
+  bytes as UTF-8 and checks the effective environment immediately before
+  each native rustc invocation in live preparation. Compiler wrappers are
+  unsupported for this command. No target runner is invoked or credential embedded in
+  probe artifacts. It assumes the host name resolves to one server for the
+  whole refresh. It
+  accepts only one host, one database and the `sslmode`, `application_name`
+  and `options` parameters. A TLS-required refresh is unsupported: the query
+  macros it compiles (`runledger-postgres`, `runledger-runtime`) enable no
+  SQLx TLS backend, so `sslmode` is limited to `disable`, `allow` or `prefer`,
+  both clients then connect with `sslmode=disable`, and `sslrootcert` is
+  refused. No public item, schema or persisted data changes.
 - Caught main-handler panics now use the fixed message `Job handler panicked.`
   in durable failures and native settlement diagnostics. Panic payloads no
   longer reach queue, attempt, dead-letter or event records, dead-letter logs,

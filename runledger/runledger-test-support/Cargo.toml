@@ -33,8 +33,9 @@ large_futures = "deny"
 large_stack_frames = "deny"
 
 [dependencies]
-sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "migrate", "uuid"] }
+sqlx = { version = "0.9.1", features = ["runtime-tokio", "postgres", "migrate", "uuid"] }
 bollard = { version = "0.21.1", features = ["ssl"] }
 docker_credential = "1.4.0"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+url.workspace = true

@@ -342,8 +342,8 @@ async fn fixture_login_cancelled_waiter_retains_pools() {
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn fixture_lease_database_mismatch_retained() {
-    assert_probe(support::fixture_lease_target::mismatch_retained().await);
+async fn fixture_database_parameter_refused_before_provisioning() {
+    assert_probe(support::fixture_lease_target::database_parameter_refused().await);
 }
 
 #[tokio::test]

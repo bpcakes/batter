@@ -46,12 +46,12 @@ class SqlxLiveControls(unittest.TestCase):
         self.assertFalse(sqlx_live.complete_execution(output, cases))
 
     def test_missing_environment_fails_before_invocation(self):
-        for environment in ({}, {"DATABASE_URL": "ordinary"},
-                            {"BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"},
-                            {"DATABASE_URL": "ordinary",
-                             "BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"}):
-            with self.subTest(environment=environment), \
-                    patch.dict("os.environ", environment, clear=True), \
+        required = {"DATABASE_URL": "ordinary", "BATTER_SQLX_AUTH_ACCEPT_URL": "accepted",
+                    "BATTER_SQLX_ADMIN_URL": "postgres://user@authority/db?host=override",
+                    "POSTGRES_TEST_ADMIN_URL": "native-harness"}
+        for missing in required:
+            environment = {name: value for name, value in required.items() if name != missing}
+            with self.subTest(missing=missing), patch.dict("os.environ", environment, clear=True), \
                     patch.object(sqlx_live, "run_parallel") as run:
                 self.assertEqual(sqlx_live.main(), 1)
                 run.assert_not_called()
@@ -67,6 +67,7 @@ class SqlxLiveControls(unittest.TestCase):
                     "DATABASE_URL": "ordinary-redacted",
                     "BATTER_SQLX_AUTH_ACCEPT_URL": "accepted-redacted",
                     "BATTER_SQLX_ADMIN_URL": "admin-redacted",
+                    "POSTGRES_TEST_ADMIN_URL": "native-harness-redacted",
                 }, clear=True), \
                 patch.object(sqlx_live, "run_parallel",
                              side_effect=[([result]) for result in results]) as run, \

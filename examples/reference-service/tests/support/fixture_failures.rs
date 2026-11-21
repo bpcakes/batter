@@ -25,14 +25,8 @@ where
     F: for<'a> FnOnce(&'a mut FixtureScope) -> FixtureBody<'a, (), FixtureError> + Send + 'static,
 {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
-    let session_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
+    let session_pool = super::admin_pool(&harness, 1).await?;
     let session_observer = batter::sqlx::test_support::SessionObserver::new(
         session_pool.clone(),
         Duration::from_secs(5),
@@ -159,10 +153,7 @@ async fn wait_absent(observer: &PgPool, name: &str) -> ProbeResult {
 
 pub async fn close_order_and_resumable_wait() -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let (sender, receiver) = oneshot::channel();
     let mut run = FixtureSuite::new(harness).start(move |scope| {
         Box::pin(async move {
@@ -216,9 +207,34 @@ pub async fn foreign_template_rejected() -> ProbeResult {
     let mut foreign = FixtureSuite::new(harness.clone());
     let spec = batter::sqlx::test_support::template_spec(&[], "foreign-template-control-v1");
     let template = foreign.template(spec, |_| async { Ok(()) }).await?;
+    // The manual path derives a child of a template its own suite retains.
+    let child_spec = batter::sqlx::test_support::template_spec(&[], "foreign-template-child-v1");
+    let child = foreign
+        .derive(&template, child_spec, |target| async move {
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect_with(target.connect_options())
+                .await?;
+            let name: String = sqlx::query_scalar("SELECT current_database()")
+                .fetch_one(&pool)
+                .await?;
+            pool.close().await;
+            assert_eq!(name, target.database_name());
+            Ok(())
+        })
+        .await?;
+    assert_ne!(child.database_name(), template.database_name());
     let report = FixtureSuite::new(harness)
         .start(move |scope| {
             Box::pin(async move {
+                // Another suite's template is refused as a derive parent too,
+                // before any producer starts.
+                let derived = scope
+                    .derive(&template, child_spec, |_| async {
+                        panic!("initializer must not run for a foreign parent");
+                    })
+                    .await;
+                assert!(matches!(derived, Err(FixtureError::UnknownTemplate)));
                 let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
                 scope.from_template(&template, &plan).await?;
                 Ok::<_, FixtureError>(())
@@ -282,10 +298,7 @@ pub async fn observer_failure_preserves_body() -> ProbeResult {
 
 async fn low_level_partial() -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let suite = FixtureSuite::new(harness.clone());
     let names = Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed_names = names.clone();
@@ -330,11 +343,11 @@ async fn low_level_partial() -> ProbeResult {
 }
 
 pub async fn pending_pool_error() -> ProbeResult {
-    let (url, _) = super::live_endpoint::from_process()?;
-    let url = url.expose_secret().to_owned();
+    // The preflight's own setter-built options, not a second parse of its URL.
+    let (_, options) = super::live_endpoint::from_process()?;
     let observer = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&url)
+        .connect_with(options)
         .await?;
     let body_observer = observer.clone();
     let calls = Arc::new(AtomicUsize::new(0));

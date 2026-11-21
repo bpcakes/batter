@@ -15,6 +15,7 @@ from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
+    "fixture_template_live": {"template_environment_is_checked_on_cold_and_warm_lookups"},
     # Mutates a built-in function ACL in the dedicated admin database; keep
     # this target separate from other live sessions and restore the ACL.
     "profile_privileges_live": {
@@ -240,8 +241,10 @@ PACKAGES = {"grants_live": ("batter", ["--features", "runledger,runlimit-postgre
 def command(target):
     package, features = PACKAGES.get(target, ("batter-sqlx", []))
     command = ["cargo", "test", "-p", package, *features]
-    if target == "verification_live":
+    if target in ("verification_live", "fixture_template_live"):
         command += ["--features", "test-support"]
+    if target == "fixture_template_live":
+        command = ["env", "-u", "BATTER_SQLX_ADMIN_URL", "PGHOSTADDR=192.0.2.1", *command]
     return command + ["--test", target, "--locked", "--"]
 
 
@@ -266,13 +269,18 @@ def complete_execution(output, cases):
 
 def main():
     missing = [name for name in ("DATABASE_URL", "BATTER_SQLX_AUTH_ACCEPT_URL",
-                                 "BATTER_SQLX_ADMIN_URL")
+                                 "BATTER_SQLX_ADMIN_URL", "POSTGRES_TEST_ADMIN_URL")
                if not os.environ.get(name)]
     if missing:
         print(("missing live PostgreSQL prerequisites: " + ", ".join(missing) +
-               "; provide an ordinary disposable database and a known-good "
-               "password-authenticated endpoint plus a PostgreSQL superuser "
-               "connection to a dedicated disposable cluster"), file=sys.stderr)
+               "; provide an ordinary disposable database (DATABASE_URL), a "
+               "known-good password-authenticated endpoint "
+               "(BATTER_SQLX_AUTH_ACCEPT_URL), a PostgreSQL superuser "
+               "connection to a dedicated disposable cluster as SQLx reads it "
+               "(BATTER_SQLX_ADMIN_URL), and the same cluster's admin URL for "
+               "the native fixture harness (POSTGRES_TEST_ADMIN_URL, used by "
+               "the template target); every target runs, so all four are "
+               "required"), file=sys.stderr)
         return 1
     for target, cases in TARGETS.items():
         inventory = invoke(target, ["--ignored", "--list", "--format", "terse"])

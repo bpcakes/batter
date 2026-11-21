@@ -13,10 +13,7 @@ const BOUND: Duration = Duration::from_secs(5);
 
 pub async fn waiter_loss() -> ProbeResult {
     let harness = super::harness().await?;
-    let admin = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let admin = super::admin_pool(&harness, 1).await?;
     let (send, receive) = oneshot::channel();
     let run = FixtureSuite::new(harness.clone()).start(move |scope| {
         Box::pin(async move {
@@ -55,10 +52,7 @@ pub async fn waiter_loss() -> ProbeResult {
 
 pub async fn runtime_loss() -> ProbeResult {
     let harness = super::harness().await?;
-    let admin = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let admin = super::admin_pool(&harness, 1).await?;
     let owned_harness = harness.clone();
     let (send_run, receive_run) = oneshot::channel();
     let (send_resource, receive_resource) = oneshot::channel();

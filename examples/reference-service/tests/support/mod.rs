@@ -41,7 +41,10 @@ pub mod worker;
 use std::{future::Future, time::Duration};
 
 use postgres_test_harness::{HarnessConfig, PostgresHarness};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 
 pub type ProbeResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
@@ -56,11 +59,36 @@ pub async fn harness() -> Result<PostgresHarness, Box<dyn std::error::Error + Se
     Ok(PostgresHarness::start(config).await?)
 }
 
-pub async fn pool(url: &str) -> Result<PgPool, sqlx::Error> {
+/// A diagnostic pool from options derived through the harness's own endpoint
+/// parse. A refused endpoint returns on the same path as a connect failure, so
+/// callers keep their awaited lease cleanup.
+pub async fn pool(options: Result<PgConnectOptions, sqlx::Error>) -> Result<PgPool, sqlx::Error> {
+    diagnostic_pool(options, 4).await
+}
+
+/// An observer pool on the harness's administrative database, at most
+/// `max_connections` wide, from the harness's own endpoint parse.
+pub async fn admin_pool(
+    harness: &PostgresHarness,
+    max_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
+    diagnostic_pool(
+        batter::sqlx::test_support::harness_admin_connect_options(harness),
+        max_connections,
+    )
+    .await
+}
+
+/// Every diagnostic pool fails a blocked acquire after ten seconds instead of
+/// SQLx's default, so a stuck observer surfaces inside the probe's bound.
+async fn diagnostic_pool(
+    options: Result<PgConnectOptions, sqlx::Error>,
+    max_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
-        .max_connections(4)
+        .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(url)
+        .connect_with(options?)
         .await
 }
 

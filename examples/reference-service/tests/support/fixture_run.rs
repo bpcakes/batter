@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use batter::sqlx::test_support::{FixtureBody, FixtureScope, FixtureSuite, SessionObserver};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::PgPool;
 
 pub use super::fixture_diagnostics::ProbeError;
 
@@ -60,15 +60,9 @@ where
     let harness = super::harness().await?;
     // Two separate one-slot suite pools: body/catalog diagnostics and session
     // quiescence. Neither borrows capacity from a closing application pool.
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let body_observer = observer.clone();
-    let session_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let session_pool = super::admin_pool(&harness, 1).await?;
     let session_observer =
         SessionObserver::new(session_pool.clone(), std::time::Duration::from_secs(10))?;
     let run = FixtureSuite::new(harness)

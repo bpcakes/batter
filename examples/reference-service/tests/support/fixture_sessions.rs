@@ -41,14 +41,8 @@ pub async fn detached_sessions() -> ProbeResult {
 
 async fn detached_case(native: SessionKind) -> ProbeResult {
     let harness = super::harness().await?;
-    let admin = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
-    let session_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let admin = super::admin_pool(&harness, 1).await?;
+    let session_pool = super::admin_pool(&harness, 1).await?;
     let control = SessionObserver::new(session_pool.clone(), Duration::from_secs(2))?;
     let (send, receive) = oneshot::channel();
     let run = FixtureSuite::new(harness)
@@ -132,14 +126,8 @@ async fn observe_detached(
 
 pub async fn observer_failure() -> ProbeResult {
     let harness = super::harness().await?;
-    let admin = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
-    let broken = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let admin = super::admin_pool(&harness, 1).await?;
+    let broken = super::admin_pool(&harness, 1).await?;
     broken.close().await;
     let control = SessionObserver::new(broken.clone(), BOUND)?;
     let mut run = FixtureSuite::new(harness)

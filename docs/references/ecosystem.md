@@ -6,6 +6,173 @@ These source checks support current contracts. Each record names the
 version and date actually inspected; it is not a new dependency audit.
 Re-check the resolved dependency before changing an integration.
 
+## SQLx 0.9.1 upgrade, 2026-11-18
+
+For `batter-c5ci`, every SQLx requirement, the consumer manifests and the
+SQLx CLI refresh check moved from 0.9.0 to 0.9.1; Cargo resolves one SQLx
+0.9.1 graph and drops the SHA-2 0.10 duplicate
+([#4301](https://github.com/transact-rs/sqlx/pull/4301)). Rust remains 1.100.0
+(SQLx declares 1.94.0). The
+[0.9.1 changelog](https://docs.rs/crate/sqlx/0.9.1/source/CHANGELOG.md) and a
+diff of the downloaded 0.9.0 and 0.9.1 `sqlx-core`, `sqlx-postgres` and
+`sqlx-macros-core` registry sources were inspected for behavior that current
+contracts cite:
+
+- BEGIN depth is counted before its round trip
+  ([#4394](https://github.com/transact-rs/sqlx/pull/4394)); see
+  [failed bounded BEGIN](postgresql.md#postgresql-18-guarded-index-removal-2026-10-27).
+  Batter's owned atomic and snapshot transactions send `BEGIN` as raw
+  commands and do not use that manager.
+- Outside a transaction, the PostgreSQL executor now invalidates a cached
+  statement and sends it again when the first response to the statement is
+  `0A000` from `RevalidateCachedQuery` or `26000`
+  ([#4375](https://github.com/transact-rs/sqlx/pull/4375),
+  [`executor.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/connection/executor.rs)).
+  This is an automatic upstream replay, not only a re-send of a rejected
+  bind. It also applies to the simple-query path of `sqlx::raw_sql` and other
+  unprepared execution. It matches `26000` by code alone and `0A000` only
+  when the server reports the routine `RevalidateCachedQuery`. A statement
+  that has already caused a non-transactional effect, such as `nextval` or a
+  session advisory lock, before one of those errors repeats that effect:
+  an external review's PostgreSQL 18 comparison (not a checked-in test)
+  advanced a sequence twice with 0.9.1 and once with 0.9.0 for one autocommit
+  `DO` that raised `26000`. Owned
+  `run_atomic`, `low_level::PgAtomicTransaction` and snapshot work run inside
+  a server transaction, so SQLx returns the error there; low-level
+  `PgSession` and pooled execution outside a transaction can replay. Batter
+  cannot disable this. Statement counts in the reset-accounting references
+  assume no such error.
+- With the statement cache disabled (`statement_cache_capacity(0)` or
+  `statement-cache-capacity=0`), a persistent query now uses the unnamed
+  statement ([#4337](https://github.com/transact-rs/sqlx/pull/4337)), but the
+  re-parse after a custom-type catalog lookup applies only to nonpersistent
+  queries ([#4361](https://github.com/transact-rs/sqlx/pull/4361)). The first
+  query returning an uncached custom type, such as an enum, therefore fails
+  with `26000` inside a transaction, including `run_atomic`; outside one the
+  replay above hides it. The same external review reproduced this on PostgreSQL
+  18 with 0.9.1, not 0.9.0. Unverified workarounds: keep the cache enabled or
+  mark such queries
+  `.persistent(false)`. No checked-in package disables the cache.
+- The TCP connector trims leading and trailing brackets from host strings.
+  The reference service checks decoded domain names before using the native
+  setter, which preserves genuine IPv6 authority syntax and rejects encoded
+  bracket delimiters. See the pinned
+  [SQLx host implementation](https://docs.rs/crate/sqlx-core/0.9.1/source/src/net/mod.rs).
+  IPv6 URL hosts are bracketed and unbracketed consistently
+  ([#4529](https://github.com/transact-rs/sqlx/pull/4529)); see
+  [native live URL compatibility](fixtures.md#native-live-url-compatibility-2026-09-10).
+- `hostaddr` and `PGHOSTADDR` no longer replace `host`
+  ([#4514](https://github.com/transact-rs/sqlx/pull/4514)). URL parsing starts
+  from `new_without_pgpass`, which now reads an ambient `PGHOSTADDR` into a
+  separate address that the connection prefers over the URL host; SQLx
+  exposes no getter or reset for it. In 0.9.0 the URL host overrode the
+  variable. This matches libpq: the PostgreSQL 18
+  [environment variables](https://www.postgresql.org/docs/18/libpq-envars.html)
+  page says `PGHOSTADDR` "behaves the same as the `hostaddr` connection
+  parameter", and [connection setup](https://www.postgresql.org/docs/18/libpq-connect.html)
+  fills unset parameters from their environment variables, so `psql` also
+  connects to `PGHOSTADDR` beside a URL host. Where SQLx is an application's
+  only PostgreSQL client, Batter therefore keeps libpq's semantics. SQLx still
+  differs from libpq in one case: `make_socket_path` in
+  [`options/mod.rs`](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/mod.rs)
+  checks a Unix socket before `hostaddr`, while libpq says TCP "is always used
+  when a nonempty string is specified" for `hostaddr`; that divergence is
+  tracked for an upstream report.
+
+  The invariant Batter does keep is narrower: where two parsers act on one
+  endpoint, both reach the same server. Fixtures provision through the
+  `postgres-test-harness` client (tokio-postgres 0.7.18, which reads no
+  environment) and connect pools with SQLx. Fixture resolution, template
+  preparation and the public `harness_connect_options` and
+  `harness_admin_connect_options` therefore read the harness admin URL once
+  with tokio-postgres, map its typed `Config` field by field into SQLx options,
+  and take the database from the name the harness recorded, refusing any
+  ambient client `PG*` variable (every `PG` name except `PGDATA` and
+  `PG_`-prefixed ones), `hostaddr`, no host, several hosts or ports, a
+  `dbname` parameter (the harness keeps the admin query in every lease URL)
+  and settings SQLx cannot carry. Suites parse once and refuse before provisioning or template lookup. Template initializers receive a typed
+  target whose SQLx options come from that parse, not a URL.
+  The pinned [harness connector](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
+  uses `NoTls`, so fixture clients use plaintext. A passwordless admin URL
+  (trust or peer) is the harness login with an empty password.
+  [tokio-postgres authentication](https://docs.rs/crate/tokio-postgres/0.7.18/source/src/connect_raw.rs)
+  refuses a password challenge when the password is absent.
+  [SQLx authentication](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/connection/establish.rs)
+  uses an empty response credential for that case, so both fail it:
+  PostgreSQL 18's [`CREATE ROLE`](https://www.postgresql.org/docs/18/sql-createrole.html)
+  and [`ALTER ROLE`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/user.c)
+  clear any password that verifies the empty string, pre-encrypted secrets
+  included, and [`recv_password_packet`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/libpq/auth.c)
+  refuses an empty plaintext or MD5 response. Its
+  [URL parser](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/parse.rs)
+  first tries a passfile, so fixture code never hands SQLx a URL. The
+  metadata refresh script refuses any ambient client `PG*` variable, parses
+  the Unix bytes of `DATABASE_URL` as UTF-8 and treats an empty userinfo password
+  as omitted. The [libpq 18 passfile](https://www.postgresql.org/docs/18/libpq-pgpass.html)
+  matches the `host` parameter, but searches `localhost` for libpq's default
+  socket directory and ignores a group- or world-accessible file on Unix;
+  [SQLx 0.9.1's lookup](https://docs.rs/crate/sqlx-postgres/0.9.1/source/src/options/pgpass.rs)
+  keys a socket URL by its own probed default host, keeps IPv6 brackets,
+  checks permissions only on Linux and keeps a password's unescaped `:`, which
+  libpq's [`passwordFromFile`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/interfaces/libpq/fe-connect.c)
+  treats as the end of the password. Passwordless refreshes therefore use the
+  passfile only for a DNS or IPv4 host; for a socket or IPv6 host psql gets
+  `PGPASSFILE=/dev/null` and the SQLx URL `password=`. The refresh gives `psql` the parts as its own PG* variables, gives
+  SQLx CLI a URL rebuilt from the same parts, and asks a Cargo build script for
+  the merged environment and selected compiler. Live preparation requires native
+  rustc without compiler wrappers. Each actual compiler invocation checks its
+  inherited settings immediately before executing rustc, including any
+  package-specific `cargo::rustc-env` values. Runledger's fixtures refuse any client `PG*`
+  variable in every mode, since their native test proxies dial the URL host
+  themselves, and append `sslmode=disable` to every admin and derived
+  database URL so every connection uses the native proxies' plaintext. An
+  earlier `hostaddr=127.0.0.1` pin on owned-container URLs (a URL `hostaddr`
+  overrides the environment for a TCP host in both SQLx and libpq, checked
+  against SQLx 0.9.1 and psql 18 with an ambient `PGHOSTADDR`) was dropped
+  once every mode refused client `PG*` variables before provisioning. Derivation
+  re-appends only that query; an external admin URL's query is not carried, so an external URL
+  with any other query is refused before provisioning (`sslmode=disable` and a
+  `hostaddr` repeating its IP literal host are accepted), since leases would lose its endpoint or TLS
+  settings. SQLx 0.9.0 honoured these parameters too, so that split
+  predates this upgrade. Fixture endpoints accept `connect_timeout` and
+  `channel_binding=disable` without carrying them into SQLx options, and refuse
+  other connection tuning. Refusing every client `PG*` variable replaced earlier attempts to carry or
+  translate inherited settings, each of which missed a variable that changed
+  one client's connection. The metadata refresh
+  drops a `hostaddr` equal to its IP literal host and refuses any other. The reference root already rejects every PG* variable.
+
+  The invariant holds under three stated preconditions, which are not
+  enforced: a host name resolves to the same server for the duration of a run
+  (two lookups of one name can differ for any pair of clients, libpq
+  included); a URL handed to another process, such as a template initializer's
+  child or a consumer of `EphemeralDatabase::url()`, is read under that
+  process's own environment; and configuration files other than Cargo's, which
+  the refresh probe covers, and `sqlx.toml`, which the refresh refuses, are out
+  of scope.
+
+  An earlier revision of this unreleased branch instead added an app-wide URL
+  boundary that tried to make SQLx, tokio-postgres and libpq read arbitrary URL
+  text identically; ten external review rounds kept finding further
+  divergences in that open-ended invariant, so it was replaced by the
+  parse-once design above.
+- A `.sql` file in a migration directory that does not match
+  `<VERSION>_<DESCRIPTION>.sql` is now a resolve error
+  ([#4367](https://github.com/transact-rs/sqlx/pull/4367)). Every checked-in
+  migration directory conforms.
+- Pool `release` now publishes the idle count before the connection becomes
+  acquirable, and maintenance caps its idle sweep at `max_connections`
+  ([#4289](https://github.com/transact-rs/sqlx/pull/4289)). TCP sockets set
+  `TCP_NODELAY` ([#4336](https://github.com/transact-rs/sqlx/pull/4336)); the
+  rustls connector is cached per options value
+  ([#4242](https://github.com/transact-rs/sqlx/pull/4242)). Non-listener
+  connections discard `NotificationResponse`
+  ([#4485](https://github.com/transact-rs/sqlx/pull/4485)).
+- The offline query-metadata format is unchanged; 0.9.1 only scopes `.env`
+  lookup to the workspace and tracks fewer paths. The checked-in `.sqlx`
+  caches compile unchanged.
+
+Dated records below that cite 0.9.0 sources describe what was inspected then.
+
 ## Dependency refresh, 2026-11-04
 
 For `batter-8e8r`, Cargo updated Tokio 1.54.1, thiserror 2.0.21,

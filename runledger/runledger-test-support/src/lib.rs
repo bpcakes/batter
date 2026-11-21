@@ -8,6 +8,7 @@ mod container_start;
 mod db_lifecycle;
 mod docker;
 mod env;
+mod external_admin;
 mod postgres_container;
 
 pub use db_lifecycle::{

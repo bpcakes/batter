@@ -143,10 +143,7 @@ async fn rejection_before_eager_pool(role: &str, password: &str) -> ProbeResult 
 
 async fn low_level_rejection(role: &str, password: &str) -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let suite = FixtureSuite::new(harness.clone());
     let names = Arc::new(Mutex::new(Vec::new()));
     let recorder = Arc::clone(&names);

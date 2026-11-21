@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::postgres_container::admin_database_url;
+use crate::postgres_container::{FIXTURE_TRANSPORT_QUERY, admin_database_url};
 
 const TEST_DB_CONNECTION_BUDGET_ENV: &str = "RUNLEDGER_TEST_DB_CONNECTION_BUDGET";
 const DEFAULT_TEST_DB_CONNECTION_BUDGET: usize = 64;
@@ -250,11 +250,16 @@ fn build_database_name(prefix: &str) -> String {
     format!("{}_{}_{}", compact_prefix, std::process::id(), index)
 }
 
+/// Replace the admin URL's database, dropping whatever followed it, and
+/// append the fixture's plaintext transport. The admin URL's query is never
+/// carried over.
 fn with_database_name(admin_url: &str, database_name: &str) -> String {
-    let (base, _) = admin_url
+    // Cut the query and fragment first: either may contain a '/'.
+    let location = admin_url.split(['?', '#']).next().unwrap_or(admin_url);
+    let (base, _) = location
         .rsplit_once('/')
         .expect("DATABASE_URL must include database name");
-    format!("{base}/{database_name}")
+    format!("{base}/{database_name}{FIXTURE_TRANSPORT_QUERY}")
 }
 
 fn sanitize_identifier(input: &str) -> String {
@@ -299,6 +304,53 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn derived_database_urls_carry_only_the_fixture_transport() {
+        // External admin URLs: the query is dropped and the plaintext pin added.
+        assert_eq!(
+            with_database_name("postgres://u:p@db.invalid:5432/postgres", "lease_1",),
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
+        );
+        assert_eq!(
+            with_database_name(
+                "postgres://u:p@db.invalid:5432/postgres?%64bname=other&statement-cache-capacity=0",
+                "lease_1",
+            ),
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
+        );
+        // A '/' inside the query must not be taken for the database path.
+        assert_eq!(
+            with_database_name(
+                "postgres://u:p@db.invalid:5432/postgres?sslrootcert=/etc/ssl/ca.pem#a/b",
+                "lease_1",
+            ),
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
+        );
+        // Owned container: the transport is re-appended, never the admin query.
+        assert_eq!(
+            with_database_name(
+                &crate::postgres_container::postgres_admin_url(5432),
+                "lease_1",
+            ),
+            "postgres://runledger:runledger@127.0.0.1:5432/lease_1?sslmode=disable"
+        );
+        // External fixture: the lease carries the plaintext pin and nothing
+        // else from the admin URL, and SQLx reads it as sslmode=disable.
+        let external = with_database_name(
+            "postgres://u:p@db.invalid:5432/postgres?sslmode=disable",
+            "lease_1",
+        );
+        assert_eq!(
+            external,
+            "postgres://u:p@db.invalid:5432/lease_1?sslmode=disable"
+        );
+        let options: sqlx::postgres::PgConnectOptions = external.parse().expect("lease URL parses");
+        assert!(matches!(
+            options.get_ssl_mode(),
+            sqlx::postgres::PgSslMode::Disable
+        ));
+    }
+
     const CLEANUP_ATTEMPTS: usize = 100;
     const CLEANUP_POLL_INTERVAL: Duration = Duration::from_millis(50);
     static LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -342,7 +394,11 @@ mod tests {
         );
         assert_eq!(database.name(), name);
         assert_eq!(database.url(), url);
-        assert!(url.ends_with(&format!("/{name}")));
+        assert!(
+            url.split('?')
+                .next()
+                .is_some_and(|location| location.ends_with(&format!("/{name}")))
+        );
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT current_database()")
                 .fetch_one(&pool)

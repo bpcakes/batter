@@ -714,8 +714,10 @@ contracts. Live cases are ignored in ordinary all-feature checks. Configure
 `DATABASE_URL` for an external disposable database and
 `BATTER_SQLX_AUTH_ACCEPT_URL` for a known-good password-authenticated endpoint,
 and `BATTER_SQLX_ADMIN_URL` for a PostgreSQL superuser connection on a dedicated
-disposable cluster, then run `bash scripts/test_sqlx_live.sh`; missing
-prerequisites fail. Restricted-login fixtures use the admin endpoint for both
+disposable cluster. Set `POSTGRES_TEST_ADMIN_URL` explicitly for the native
+harness that seeds the template cache test. The two admin settings may select
+different clusters and follow their respective clients’ URL semantics. Run
+`bash scripts/test_sqlx_live.sh` after configuring both. Restricted-login fixtures use the admin endpoint for both
 provisioning and login; it must admit their password-authenticated connections.
 It need not share a cluster or database name with `DATABASE_URL`.
 The separate `profile_privileges_live` target temporarily revokes PUBLIC
@@ -1051,21 +1053,80 @@ including separate consuming-cleanup and deferred-drain causes.
 
 ### Fixture pools for separately provisioned logins
 
-`ConnectionPlan::new` declares pools that authenticate with the lease URL's own
-login, the harness admin that owns the disposable database.
+`ConnectionPlan::new` declares pools that authenticate with the harness admin
+URL's login, which owns the disposable database.
 `ConnectionPlan::declare(reserved)` returns a `PlanDeclaration` whose `pool`
 method takes a `PlannedPool` and returns an opaque `PoolKey`; `finish` applies
 the same capacity rules. `PlannedPool::password_login(options, username,
 password)` declares a real restricted PostgreSQL login, with the password typed
 as `SecretString` so it cannot be swapped with the username. Only the username and
-password change: server address, socket, database, TLS settings, startup options
-and statement cache come from the acquired lease, so no declaration can select
-another server or database. The lease owner's password (URL, `PGPASSWORD` or
-passfile) is always replaced. Each lease parses its URL once and refuses a URL
-whose database is not the lease's own, as a `dbname` query parameter would
-cause, with `LeaseDatabaseMismatch` inside `sqlx::Error::Configuration` before
-any pool exists. The `fixture_lease_database_mismatch_retained` live probe proves
-that refusal and its retention on both the owned and low-level paths. Select pools with `FixtureDatabase::pool(key)` (or
+password change: server address, socket, database, TLS settings and startup
+options come from the harness, so no declaration can select another server or
+database. The lease owner's password is always replaced.
+
+Fixture pools never reparse a lease URL with SQLx. The harness provisions
+through tokio-postgres, which reads no environment, while SQLx 0.9.1, like
+libpq, fills unset settings from `PG*` variables and reads some URL text
+differently. A suite therefore reads the harness admin URL
+once with tokio-postgres when it adopts the harness, sets every SQLx field from that typed parse (host or
+Unix socket, port with 5432 as default, login, plaintext transport,
+`application_name` and `-c key=value` `options`), and takes the database from
+the name the harness recorded. Every acquisition and template call refuses
+with `FixtureError::Endpoint(UnsupportedHarnessEndpoint)`, whose
+`HarnessEndpointReason` names the cause, before the harness provisions a
+database or looks up a template, when a `PG*` variable a PostgreSQL client
+could read is set (every `PG` name except `PGDATA` and `PG_`-prefixed ones
+such as `PG_COLOR`; put every setting in the admin URL instead), when the admin
+URL declares `hostaddr`, no host, or several hosts or ports, or a `dbname`
+parameter (which the harness would copy into every lease URL, overriding its
+database), or when it selects a setting SQLx options cannot carry. The
+`fixture_database_parameter_refused_before_provisioning` live probe proves the
+`dbname` refusal on the owned, low-level and template paths with nothing
+provisioned. A lease URL whose database still differs from the recorded name as
+tokio-postgres reads it is refused with `LeaseDatabaseMismatch`, and one that
+reaches another endpoint with `UnsupportedHarnessEndpoint`. These lease checks,
+and the environment recheck made just before pools are built, travel inside
+`sqlx::Error::Configuration` before any pool exists. Harness-derived leases can
+no longer fail the two lease checks, so offline unit tests, not a live probe,
+cover them and the endpoint mapping; the environment recheck still applies to
+every lease. Any of these refusals is retained by the same code as a failed
+connectivity check, which live pool-failure probes such as
+`fixture_handled_pool_error_retained` exercise; the refusal triggers
+themselves have offline cover only.
+
+The pinned harness opens connections with `NoTls`. An omitted TLS mode,
+`sslmode=prefer` and `sslmode=disable` all yield plaintext for the harness,
+fixture pools and template targets. A TLS requirement is refused. Clients
+using the harness login use its password; an admin URL without one, as for a
+trust or peer login, is the same login as an explicit empty `?password=`.
+Neither fixture pools nor template targets let SQLx read a passfile: both
+are built without one. Where a server asks
+for a password, SQLx sends an empty one and tokio-postgres stops locally; both
+fail, since PostgreSQL does not store an empty password.
+A pool declared with `PlannedPool::password_login` supplies its own credentials.
+
+Both fixture template entry points check the endpoint before the harness
+looks up the fingerprint, so a cached and an uncached template are refused
+alike; a refused call starts no producer and the owned run records nothing for
+it. On cache misses, initializers receive a `TemplateTarget` whose
+`connect_options()` are built like fixture pool options for the template's
+recorded name; if the harness URL would select another database or endpoint,
+the initializer is not called and the harness aborts the template. The
+returned `FixtureTemplate` exposes only its name and fingerprint: derive a
+child with `FixtureSuite::derive` or `FixtureScope::derive`, which retain it
+for `from_template`. Test code that opens its own pool beside
+a fixture uses `harness_connect_options(&harness, &lease)` or
+`harness_admin_connect_options(&harness)` instead of handing
+`admin_database_url()` or a lease URL to SQLx. The first takes the lease, not
+a database name, so it cannot open the admin database, and refuses a lease
+that reaches another endpoint than the harness. It cannot tell two harnesses
+on the same server and login apart, since a lease carries no issuer identity.
+
+These rules make the fixture's SQLx pools reach the server and database the
+harness provisioned under three preconditions that are not enforced: a host
+name resolves to the same server for the duration of a run; a URL handed to
+another process, such as an initializer's child, is read under that process's
+own environment; and SQLx and Cargo configuration files are out of scope. Select pools with `FixtureDatabase::pool(key)` (or
 `DatabaseFixture::pool(key)`); a key from another plan selects nothing.
 `pools()` keeps declaration order for inspecting every pool, such as close
 checks; on a `declare` plan an index does not record which login a pool uses.

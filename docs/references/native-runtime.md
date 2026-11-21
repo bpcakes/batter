@@ -37,8 +37,8 @@ mapping and failed-start contracts; its implementation is no longer selected.
 
 ## Runledger claim-write batching (2026-10-14)
 
-The workspace uses SQLx 0.9.0; checked-query metadata was generated with SQLx
-CLI 0.9.0 against PostgreSQL 18.6. PostgreSQL 18 documents
+At the time of this record the workspace used SQLx 0.9.0, and checked-query
+metadata was generated with SQLx CLI 0.9.0 against PostgreSQL 18.6. PostgreSQL 18 documents
 [`INSERT ... SELECT`](https://www.postgresql.org/docs/18/sql-insert.html) as
 inserting the rows produced by its query, and
 [row locks](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS)

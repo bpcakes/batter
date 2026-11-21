@@ -19,7 +19,7 @@ serde = ["dep:serde", "runlimit-core/serde"]
 runlimit-core.workspace = true
 serde = { version = "1.0.219", features = ["derive"], optional = true }
 sha2 = { version = "0.11.0", features = ["zeroize"] }
-sqlx = { version = "0.9.0", default-features = false, features = [
+sqlx = { version = "0.9.1", default-features = false, features = [
     "chrono",
     "macros",
     "migrate",

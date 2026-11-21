@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use batter::sqlx::test_support::{FixtureError, FixtureRun, FixtureSuite, SessionObserver};
-use sqlx::postgres::PgPoolOptions;
 
 use super::{ProbeResult, fixture_completion::ObservedRun};
 
@@ -64,14 +63,8 @@ async fn completion_case(
     let error = run.wait().await.expect_err("runtime destroyed the driver");
     assert!(error.is_cancelled());
     let task_id = error.id();
-    let diagnostic = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
-    let session = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let diagnostic = super::admin_pool(&harness, 1).await?;
+    let session = super::admin_pool(&harness, 1).await?;
     let checkouts = if held {
         Some((diagnostic.acquire().await?, session.acquire().await?))
     } else {
@@ -113,14 +106,8 @@ async fn completion_case(
 async fn successful_driver_with_blocked_admin_close(
     harness: postgres_test_harness::PostgresHarness,
 ) -> ProbeResult {
-    let diagnostic = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
-    let session = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let diagnostic = super::admin_pool(&harness, 1).await?;
+    let session = super::admin_pool(&harness, 1).await?;
     let held = session.acquire().await?;
     let observer = SessionObserver::new(session.clone(), BOUND)?;
     let mut run =

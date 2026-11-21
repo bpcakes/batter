@@ -18,7 +18,18 @@ cleanup, migration-copy equality and PostgreSQL 18 prerequisites. Missing Docker
 is a test failure. This package must not become a production dependency of the
 Batter foundation or facade.
 Docker owns dynamic host-port allocation on IPv4 loopback, matching the fixture
-URL. Failed startup cleanup verifies the
+URL. Every fixture admin URL, owned or external, and every derived database URL
+end in `?sslmode=disable`, the native test proxies' plaintext
+(`FIXTURE_TRANSPORT_QUERY`); derivation re-appends only that query, never
+the admin query. Every fixture mode refuses any ambient client `PG*` variable (all but `PGDATA` and `PG_*`)
+before provisioning: SQLx fills unset settings from them, but native test
+proxies dial and forward to the URL host themselves, without TLS. Every
+external connection is therefore pinned to `sslmode=disable`, and derived URLs
+carry only that from the admin URL, so every query key is refused except
+`sslmode=disable` and a `hostaddr` that repeats its own IP literal host, and the URL must name a DNS or IPv4 host the native
+proxies can dial and exactly one database path segment (`src/external_admin.rs`); otherwise provisioning and
+leases could reach different servers or leases could silently lose TLS
+settings. Failed startup cleanup verifies the
 attempt label before removing its immutable container ID and anonymous volumes;
 honor explicit keep policy and retain both startup and cleanup diagnostics.
 Keep Testcontainers and `astral-tokio-tar` absent from the dependency graph.

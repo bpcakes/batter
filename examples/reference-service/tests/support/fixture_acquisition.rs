@@ -8,11 +8,9 @@ use std::{
 
 use batter::sqlx::test_support::{
     AcquisitionFailure, BodyFailure, ConnectionPlan, FixtureError, FixtureScope, FixtureSuite,
-    PlannedPool, template_spec,
+    FixtureTemplate, PlannedPool, template_spec,
 };
-use postgres_test_harness::{
-    DatabaseTemplate, HarnessConfig, PostgresHarness, cleanup_stale_databases,
-};
+use postgres_test_harness::{HarnessConfig, PostgresHarness, cleanup_stale_databases};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::oneshot;
 
@@ -50,7 +48,7 @@ async fn inventory(observer: &PgPool) -> Result<Vec<String>, sqlx::Error> {
 async fn create(
     scope: &mut FixtureScope,
     mode: Creation,
-    template: Option<DatabaseTemplate>,
+    template: Option<FixtureTemplate>,
 ) -> Result<(), FixtureError> {
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
     match mode {
@@ -105,10 +103,7 @@ async fn cancelled(mode: Creation) -> ProbeResult {
     // Reclaim only tagged, inactive resources through upstream ownership checks.
     // Stable inputs are reused; no random template identity is introduced.
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&url)
-        .await?;
+    let observer = super::admin_pool(&harness, 2).await?;
     let (suite, template) = prepare_suite(harness.clone(), mode).await?;
     let before = inventory(&observer).await?;
     let (lock, blocker) = catalog_lock(&observer).await?;
@@ -157,7 +152,7 @@ async fn catalog_lock(
 async fn prepare_suite(
     harness: PostgresHarness,
     mode: Creation,
-) -> Result<(FixtureSuite, Option<DatabaseTemplate>), FixtureError> {
+) -> Result<(FixtureSuite, Option<FixtureTemplate>), FixtureError> {
     let mut suite = FixtureSuite::new(harness);
     let template = if matches!(mode, Creation::Clone) {
         Some(
@@ -174,7 +169,7 @@ async fn prepare_suite(
 fn start_creation(
     suite: FixtureSuite,
     mode: Creation,
-    template: Option<DatabaseTemplate>,
+    template: Option<FixtureTemplate>,
     cancel_receiver: oneshot::Receiver<()>,
     body_sender: oneshot::Sender<()>,
 ) -> batter::sqlx::test_support::FixtureRun<(), FixtureError> {
@@ -230,10 +225,7 @@ async fn failed_template(panic_choice: FixtureFailure) -> ProbeResult {
     let harness = harness(8).await?;
     let url = harness.admin_database_url().to_owned();
     cleanup_stale_databases(&url, PROJECT, Duration::ZERO).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let (ready_sender, ready_receiver) = oneshot::channel();
     let (release_sender, release_receiver) = oneshot::channel();
     let (cancel_sender, cancel_receiver) = oneshot::channel();
@@ -312,10 +304,7 @@ pub async fn shared_admission() -> ProbeResult {
     let suite = FixtureSuite::new(harness.clone());
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
     let held = suite.empty(&plan).await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
     let (started_sender, started_receiver) = oneshot::channel();

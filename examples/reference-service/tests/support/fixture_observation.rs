@@ -12,10 +12,11 @@ pub const BOUND: Duration = Duration::from_secs(10);
 pub type Run = FixtureRun<(), FixtureError>;
 
 pub async fn admin() -> Result<PgPool, Box<dyn std::error::Error + Send + Sync>> {
-    let (url, _) = super::live_endpoint::from_process()?;
+    // The preflight's own setter-built options, not a second parse of its URL.
+    let (_, options) = super::live_endpoint::from_process()?;
     Ok(PgPoolOptions::new()
         .max_connections(2)
-        .connect(url.expose_secret())
+        .connect_with(options)
         .await?)
 }
 
@@ -34,11 +35,11 @@ pub async fn empty(
 }
 
 pub async fn wrong_server_retains_lease() -> ProbeResult {
-    let (url, _) = super::live_endpoint::from_named_process("POSTGRES_TEST_OBSERVER_URL")?;
+    let (_, options) = super::live_endpoint::from_named_process("POSTGRES_TEST_OBSERVER_URL")?;
     let catalog = admin().await?;
     let wrong = PgPoolOptions::new()
         .max_connections(1)
-        .connect(url.expose_secret())
+        .connect_with(options)
         .await?;
     let control = SessionObserver::new(wrong.clone(), BOUND)?;
     let mut run = empty(control.clone()).await?;

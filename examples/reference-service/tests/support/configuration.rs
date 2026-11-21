@@ -12,6 +12,7 @@ use batter::{
     startup::{Startup, StartupError},
 };
 use batter_example_reference_service::config::{MaintenanceSettings, PoolSettings};
+use sqlx::postgres::PgConnectOptions;
 use std::time::Duration;
 
 pub async fn one_slot_pool() -> ProbeResult {
@@ -52,11 +53,23 @@ pub async fn failed_startup_closes_pool_before_lease() -> ProbeResult {
     let harness = super::harness().await?;
     let lease = harness.empty_database().await?;
     let name = lease.database_name().to_owned();
-    let body = observe_failed_startup(lease.database_url()).await;
+    // This probe covers configured startup, so the lease URL goes through the
+    // application's own DATABASE_URL settings boundary (which refuses ambient
+    // PG* variables), not through a fixture helper. The options it yields must
+    // reach the endpoint the harness parse names for this lease, so a parser
+    // difference fails the probe instead of testing another server.
+    let expected = batter::sqlx::test_support::harness_connect_options(&harness, &lease);
+    let body = match expected {
+        Ok(expected) => observe_failed_startup(lease.database_url(), &expected).await,
+        Err(error) => Err(error.into()),
+    };
     // Native lease remains owned until awaited startup/pool closure is inspected.
     let cleanup = lease.cleanup().await;
     let drain = harness.drain_deferred_cleanup().await;
-    let observer = super::pool(harness.admin_database_url()).await;
+    let observer = super::pool(batter::sqlx::test_support::harness_admin_connect_options(
+        &harness,
+    ))
+    .await;
     let absence = match observer {
         Ok(observer) => {
             let result = fixture_run::absent(&observer, &name).await;
@@ -90,9 +103,37 @@ fn startup_settings(database_url: &str) -> Result<MaintenanceSettings, batter::B
     )?)
 }
 
-async fn observe_failed_startup(database_url: &str) -> ProbeResult {
+/// The server, login and database a set of options reaches.
+fn endpoint(
+    options: &PgConnectOptions,
+) -> (
+    String,
+    u16,
+    Option<std::path::PathBuf>,
+    String,
+    Option<String>,
+) {
+    (
+        options.get_host().to_owned(),
+        options.get_port(),
+        options.get_socket().cloned(),
+        options.get_username().to_owned(),
+        options.get_database().map(str::to_owned),
+    )
+}
+
+async fn observe_failed_startup(database_url: &str, expected: &PgConnectOptions) -> ProbeResult {
     let settings = startup_settings(database_url)?;
     let connect_options = settings.prepare()?.into_connect_options();
+    if endpoint(&connect_options) != endpoint(expected) {
+        return Err("configured startup options must reach the leased database".into());
+    }
+    // Both must use the plaintext transport the harness provisions over.
+    for options in [&connect_options, expected] {
+        if !matches!(options.get_ssl_mode(), sqlx::postgres::PgSslMode::Disable) {
+            return Err("configured startup and fixture options must disable TLS".into());
+        }
+    }
     let pool_options = PoolSettings::new(1, 0, Duration::from_secs(3))?.pool_options();
     let cleanup = CleanupBudget::new(
         Duration::from_secs(2),

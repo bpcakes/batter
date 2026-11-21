@@ -2,7 +2,7 @@
 
 These describe the implemented contract and its limits. All workspace packages
 declare Rust 1.100.0, the pinned development toolchain, as their minimum.
-SQLx 0.9.0 belongs to the optional PostgreSQL adapter and unpublished example
+SQLx 0.9.1 belongs to the optional PostgreSQL adapter and unpublished example
 packages, not the foundation or generic test support. Passing tests do not establish guarantees beyond their scope.
 
 The workspace's platform scope is Unix-only. Windows is unsupported and not
@@ -1933,6 +1933,15 @@ Rust's default panic hook can still print payloads. No native error contents are
 added to adapter diagnostics, but trusted source inspection and upstream logging
 remain application-owned. `run_atomic` is the canonical acknowledged-disposition
 path; `low_level::PgAtomicTransaction` is the exceptional explicit owner.
+Outside a server transaction, SQLx 0.9.1 itself sends a statement again when
+its first response is SQLSTATE `26000` or a stale cached-plan `0A000`, so a
+statement with an earlier non-transactional effect can repeat it through the
+low-level session or pooled execution. Batter does not authorize or prevent
+this upstream replay; owned atomic and snapshot scopes run inside a
+transaction, where SQLx returns the error. With the statement cache disabled,
+SQLx 0.9.1 also fails a transaction's first query that returns an uncached
+custom type. See the
+[SQLx 0.9.1 record](references/ecosystem.md#sqlx-091-upgrade-2026-11-18).
 The low-level session has no typed transaction lifecycle, and raw transaction-control
 SQL carries no typed atomic-result guarantee. If the return-time cleanup reports
 failure, `with_connection` preserves the application `Ok` but retires its
@@ -3083,9 +3092,11 @@ owned `FixtureScope` acquisition waiter, leaves all of them closed before lease
 cleanup. Cancelling low-level `empty`/`from_template` can still drop pools
 unclosed and invoke destructive lease Drop. `PoolKey` lookup refuses keys from
 another plan. `PlannedPool::password_login` replaces only the
-username and password of the lease's native options; a lease URL selecting
-another database is refused before any pool exists and retained on both paths
-(live probe `fixture_lease_database_mismatch_retained`). Live probes prove distinct
+username and password of the options built from the harness admin URL's parse; an admin URL whose
+`dbname` parameter would retarget every lease is refused before provisioning on every path (live probe
+`fixture_database_parameter_refused_before_provisioning`), and a lease URL still selecting another
+database is refused before any pool exists (offline unit tests only, since harness-derived leases
+no longer reach it; its retention shares the code that the live pool-failure probes exercise). Live probes prove distinct
 `session_user` and `system_user` for a lease-login and a restricted-login pool,
 42501 owner-only denials beside a granted read through the reference profile,
 28P01 and session-policy failures retained by identity, both cancellation points
@@ -3360,9 +3371,10 @@ Returned native options and their Debug/URL conversion are trusted exposures;
 upstream runtime diagnostics remain outside this projection. The selected graph
 has no SQLx TLS backend: requested TLS modes are retained, not downgraded, but
 TLS connections require the application to enable a native TLS feature. TLS
-negotiation is unverified. SQLx's native URL formatter cannot round-trip a bare
-setter-provided IPv6 host; the reference passes the bare host required by Tokio
-and separately tests its native startup/password wire exchange.
+negotiation is unverified. The reference passes a bare IPv6 host to the native
+setter; SQLx 0.9.1's URL formatter brackets it, the offline mapping test checks
+that round trip, and a separate test covers the native startup/password wire
+exchange.
 
 Focused offline tests prove source policy, native field mapping, changed HTTP
 response deadlines, independent admission capacities and retained startup/cleanup
@@ -3441,8 +3453,9 @@ the durable timing authority; no cross-system clock or remote-effect fencing is
 claimed.
 
 The private live endpoint handoff accepts `localhost` or `127.0.0.1` with
-sslmode=disable. It rejects IPv6 literals before acquisition because SQLx 0.9
-retains their URL brackets during TCP lookup. Direct root construction still
+sslmode=disable. It rejects IPv6 literals before acquisition. SQLx 0.9.0 kept
+their URL brackets during TCP lookup; 0.9.1 strips them, but no live IPv6
+fixture run has been executed, so the rejection remains. Direct root construction still
 supports bare native IPv6 options. The handoff serializes the validated host and
 database, canonical TLS mode and explicit password choice, including empty
 passwords; fixture URL parsing must not select an ambient passfile. Query spaces

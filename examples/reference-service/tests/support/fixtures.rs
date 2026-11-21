@@ -9,7 +9,8 @@ use std::{
 
 use batter::sqlx::test_support::{
     BodyFailure, ConnectionPlan, FixtureDatabase, FixtureError, FixtureScope, FixtureSuite,
-    MigrationBundle, MigrationInput, observe_blocked, template_spec,
+    FixtureTemplate, MigrationBundle, MigrationInput, TemplateTarget, observe_blocked,
+    template_spec,
 };
 use sqlx::{
     PgPool,
@@ -41,11 +42,15 @@ fn spec(sql: &str) -> postgres_test_harness::TemplateSpec {
     )
 }
 
-async fn initialize(url: String, sql: &'static str, count: Arc<AtomicUsize>) -> ProbeResult {
+async fn initialize(
+    target: TemplateTarget,
+    sql: &'static str,
+    count: Arc<AtomicUsize>,
+) -> ProbeResult {
     count.fetch_add(1, Ordering::SeqCst);
     let pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&url)
+        .connect_with(target.connect_options())
         .await?;
     let migrator = Migrator {
         migrations: Cow::Owned(vec![Migration::new(
@@ -117,38 +122,66 @@ pub async fn templates() -> ProbeResult {
                 .fetch_one(&clone.pools()[0])
                 .await?;
             assert_eq!(value, 20);
-            Ok(())
+            derived_template(scope, &changed, &plan).await
         })
     })
     .await
 }
 
+const SEED_SQL: &str = "INSERT INTO fixture_probe(id, value) VALUES (5, 99)";
+
+/// A child derived through the scope inherits the parent's schema, adds its
+/// own step, and is retained for cloning like any scope template.
+async fn derived_template(
+    scope: &mut FixtureScope,
+    parent: &FixtureTemplate,
+    plan: &ConnectionPlan,
+) -> ProbeResult {
+    let parent_name = parent.database_name().to_owned();
+    let child = scope
+        .derive(parent, spec(SEED_SQL), move |target| async move {
+            assert_ne!(target.database_name(), parent_name);
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect_with(target.connect_options())
+                .await?;
+            let result = sqlx::query(SEED_SQL).execute(&pool).await;
+            pool.close().await;
+            result?;
+            Ok(())
+        })
+        .await?;
+    assert_ne!(child.database_name(), parent.database_name());
+    assert_ne!(child.fingerprint(), parent.fingerprint());
+    let clone = scope.from_template(&child, plan).await?;
+    let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT id, value FROM fixture_probe ORDER BY id")
+        .fetch_all(&clone.pools()[0])
+        .await?;
+    assert_eq!(rows, [(5, 99)]);
+    Ok(())
+}
+
 async fn retained_templates(
     scope: &mut FixtureScope,
-) -> Result<
-    (
-        postgres_test_harness::DatabaseTemplate,
-        postgres_test_harness::DatabaseTemplate,
-        postgres_test_harness::DatabaseTemplate,
-    ),
-    FixtureError,
-> {
+) -> Result<(FixtureTemplate, FixtureTemplate, FixtureTemplate), FixtureError> {
     let count = Arc::new(AtomicUsize::new(0));
     let calls = count.clone();
     let template = scope
-        .template(spec(SQL), |url| initialize(url, SQL, calls))
+        .template(spec(SQL), |target| initialize(target, SQL, calls))
         .await?;
     let first_calls = count.load(Ordering::SeqCst);
     assert!(first_calls <= 1); // Zero is a persisted cache hit, one is cold initialization.
     let calls = count.clone();
     let reused = scope
-        .template(spec(SQL), |url| initialize(url, SQL, calls))
+        .template(spec(SQL), |target| initialize(target, SQL, calls))
         .await?;
     assert_eq!(template.database_name(), reused.database_name());
     assert_eq!(count.load(Ordering::SeqCst), first_calls);
     let calls = count.clone();
     let changed = scope
-        .template(spec(CHANGED_SQL), |url| initialize(url, CHANGED_SQL, calls))
+        .template(spec(CHANGED_SQL), |target| {
+            initialize(target, CHANGED_SQL, calls)
+        })
         .await?;
     assert_ne!(template.database_name(), changed.database_name());
     assert!(count.load(Ordering::SeqCst) - first_calls <= 1);
@@ -267,10 +300,7 @@ pub async fn lock_operation() -> ProbeResult {
 
 pub async fn returned_body_failure() -> ProbeResult {
     let harness = super::harness().await?;
-    let observer = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(harness.admin_database_url())
-        .await?;
+    let observer = super::admin_pool(&harness, 1).await?;
     let report = FixtureSuite::new(harness)
         .start(|scope| {
             Box::pin(async move {

@@ -35,7 +35,7 @@ IDENTITIES = ("batter", "batter-core", "batter-sqlx", "batter-runledger", "batte
 HARNESS_IDENTITIES = ("batter", "batter-runledger", "runledger-test-support", "batter-test-support")
 # Ordinary registry crates. These are not native-workspace side pins.
 ECOSYSTEM = ('tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }',
-             'sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }',
+             'sqlx = { version = "0.9.1", features = ["runtime-tokio", "postgres"] }',
              'serde_json = "1"')
 MARKERS = ("facade consumer: runledger and runlimit migrations applied",
            "facade consumer: durable intent and atomic enqueue committed",

@@ -13,8 +13,9 @@ postgres-test-harness revision `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` and
 PostgreSQL 18.6.
 
 - SQLx [`PoolOptions::connect_lazy`](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/pool/options.rs)
-  is `connect_lazy_with(url.parse()?)`, so parsing the lease URL once and cloning
-  the result preserves plain lease-login pools. Lazy construction
+  is `connect_lazy_with(url.parse()?)`, so building options once and cloning them
+  preserves plain lease-login pools (fixture pools now build those options from
+  the harness admin URL's tokio-postgres parse, not from the lease URL). Lazy construction
   ([`PoolInner::new_arc`](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/pool/inner.rs))
   opens no connection unless `min_connections > 0` with both idle timeout and
   maximum lifetime disabled; then a spawned task connects at once with a
@@ -65,14 +66,23 @@ PostgreSQL 18.6.
 
 ## Native live URL compatibility, 2026-09-10
 
-The same pinned SQLx URL parser retains IPv6 authority brackets. Its PostgreSQL
-connection stream passes that host to
-[`sqlx-core` 0.9.0 TCP connection](https://docs.rs/crate/sqlx-core/0.9.0/source/src/net/socket/mod.rs),
-which uses Tokio's `(host, port)` address form. A native reproduction confirmed
-that `[::1]` fails lookup there while bare `::1` resolves. The private live
-fixture policy now rejects IPv6 literals before connection work; the root's
-native-options IPv6 wire test remains supported. This avoids applying a private
-live-runner workaround throughout the generic adapter's native URL consumers.
+The SQLx URL parser retains IPv6 authority brackets. In SQLx 0.9.0 the
+PostgreSQL connection stream passed that host unchanged to Tokio's `(host, port)`
+address form, and a native reproduction confirmed that `[::1]` failed lookup
+while bare `::1` resolved. The private live fixture policy therefore rejects
+IPv6 literals before connection work; the root's native-options IPv6 wire test
+remains supported. This avoids applying a private live-runner workaround
+throughout the generic adapter's native URL consumers.
+
+Rechecked 2026-11-18 for `batter-c5ci` against the locked SQLx 0.9.1 registry
+source ([#4529](https://github.com/transact-rs/sqlx/pull/4529)):
+[`sqlx-core` 0.9.1 `net/mod.rs`](https://docs.rs/crate/sqlx-core/0.9.1/source/src/net/mod.rs)
+adds `UrlHost`, whose `SocketHost::try_as_ip` strips the brackets before
+[TCP connection](https://docs.rs/crate/sqlx-core/0.9.1/source/src/net/socket/mod.rs),
+and its `Display` brackets a bare setter-provided IPv6 host when
+`PgConnectOptions` formats a URL. The native-options test now round-trips
+`[::1]`. The live rejection is retained: no live IPv6 fixture run has been
+executed, and the external harness URL consumer was not rechecked.
 
 Related comparisons of the locked native parsers found two further scalar
 differences: SQLx accepts case-insensitive TLS modes, while tokio-postgres 0.7.18

@@ -140,13 +140,49 @@ bash scripts/test_reference_live.sh
 
 The runners fail closed on missing prerequisites or inventory mismatches. SQLx
 requires `DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL` and
-`BATTER_SQLX_ADMIN_URL`; the reference runner checks independent cluster identity
+`BATTER_SQLX_ADMIN_URL`. The template cache test additionally requires the
+native harness’s `POSTGRES_TEST_ADMIN_URL` to select its disposable provisioning
+cluster. Other SQLx targets use SQLx’s interpretation of `BATTER_SQLX_ADMIN_URL`.
+The reference runner checks independent cluster identity
 and its selected schema/authority policy. Never point these commands at a
 non-disposable database. Provisioning remains external to Batter.
 
 Native Runledger's PostgreSQL 18 Docker tests are different: they run in ordinary
 workspace verification through its own test-support package. Do not infer an
 external Batter live-suite result from those native tests or from a runner-control test.
+
+Run fixture-backed tests from a shell without `PG*` client environment
+variables: every `PG` name except the server's `PGDATA` and `PG_`-prefixed
+names such as `PG_COLOR`, which no client reads. SQLx fixture endpoints,
+Runledger's test support and the metadata refresh refuse the rest, including
+names a later SQLx release might start reading, so every client reads only the URL; offline fixture
+endpoint tests say so in one assertion, because SQLx reads those variables
+in-process and tests may not change the environment. Where the settings go
+depends on the mode:
+
+- SQLx fixtures use the harness connector's plaintext transport and carry
+  `application_name` and `-c key=value` options. Clients inheriting the harness
+  login use its password, or none for a passwordless (trust or peer) URL; no
+  passfile is read.
+- An external `RUNLEDGER_TEST_ADMIN_DATABASE_URL`: credentials only, a DNS or
+  IPv4 host and exactly one database path segment. Any query is refused,
+  except `sslmode=disable` and a `hostaddr` repeating its own IP literal host,
+  because lease URLs carry only `sslmode=disable`. Every external connection uses `sslmode=disable`, the
+  native test proxies' transport; such a fixture cannot use TLS yet.
+- The metadata refresh: credentials, `application_name` and `options`. A
+  TLS-required refresh is unsupported, and both clients connect without TLS.
+  An omitted or empty userinfo password (`user:@host`) lets both psql and
+  SQLx look up `~/.pgpass` only for a DNS or IPv4 host, where both key the
+  entry by the same host text. For a Unix socket or IPv6 host they would key it
+  differently, so neither reads a passfile there: put the password in
+  `DATABASE_URL`. psql never prompts for one. A passfile the clients still read
+  differently (SQLx checks its permissions only on Linux) fails one client's
+  authentication and stops the refresh before it writes.
+  Run live preparation with native rustc and no Cargo compiler wrappers.
+  Each compilation checks its effective endpoint before starting rustc.
+  Refresh requires evidence that both query libraries compiled. The temporary
+  source copy uses the system temp directory. Executable probes, compiler
+  guards and compilation output use the original workspace’s Cargo build directory.
 
 For the reference suite, set `POSTGRES_TEST_ADMIN_URL` and
 `POSTGRES_TEST_OBSERVER_URL` to two dedicated disposable local PostgreSQL 18
