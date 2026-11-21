@@ -279,7 +279,8 @@ one documented list in `InProcessClient::request`'s rustdoc (other documents
 refer to that list rather than repeating it), and never add a public type to
 it: a public value is a caller's choice. No test proves the list complete:
 the fixture test covers only listed types, so check every new request
-extension a layer inserts against the list in review. Keep refusing a live
+extension a layer inserts against the list in review (`batter-o47m` tracks an
+enforced insertion path). Keep refusing a live
 request that an outer Axum router or one of the four record-writing
 `low_level` wrappers forwards whole; it carries that dispatch's records.
 `request_admission` alone writes only public values, so its forwarded request

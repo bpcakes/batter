@@ -892,8 +892,10 @@ Decisions recorded with it:
   refused. A test shows the boundary generates its own identity.
 - Request settings an Axum layer outside the client writes are not routing
   records and stay accepted. A test forwards a request whole from behind
-  `DefaultBodyLimit::max(4)`; the destination applies that limit, and a
-  rebuilt request gets the default. Axum keeps that record's type private, so
+  `DefaultBodyLimit::max(4)` to a route with no limit of its own; the
+  destination applies that limit, and a rebuilt request gets Axum's default.
+  A limit set inside the boundary replaces the outer one, since each layer
+  overwrites the record. Axum keeps that record's type private, so
   the client could not detect it by type in any case.
 - The refusal stays a sanitized internal-failure response identified only by
   its marker. A `Result`-returning signature remains rejected for the reasons
@@ -930,8 +932,10 @@ Decisions recorded with it:
   inherited values in their request metadata, and a caller-composed router
   behind `RouterClient` that does not admit the request again hands them to
   handlers that extract them directly. The context is cancelled once the
-  earlier request has finished; a map reused while it runs carries a live
-  one. A characterization test replays a map from a finished request and
+  earlier request has finished; a request forwarded whole while it runs
+  carries a live one, which the same test shows by forwarding from behind
+  `request_admission` alone to a bare `RouterClient` router. A
+  characterization test replays a map from a finished request and
   finds the cancelled context and the responder in a rendered probe, the
   fallback renderer and admission's failure renderer on a boundary that is
   still starting, where an arriving request carries neither, and the

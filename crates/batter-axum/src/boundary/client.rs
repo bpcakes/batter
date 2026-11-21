@@ -191,7 +191,10 @@ impl InProcessClient {
     /// settings that an Axum layer outside the client wrote, which are not
     /// routing records: a request handed on whole from behind
     /// [`DefaultBodyLimit`](axum::extract::DefaultBodyLimit) keeps that
-    /// layer's body limit, while a rebuilt request gets the default.
+    /// layer's body limit wherever no layer inside the boundary sets its own,
+    /// so an outer `DefaultBodyLimit::disable()` removes Axum's default limit
+    /// for the boundary's extractors. A rebuilt request carries no such
+    /// setting.
     ///
     /// The check runs at entry, before the router, any layer or any
     /// application code is polled, and costs a few type-map lookups.

@@ -659,8 +659,10 @@ request never entered the boundary, so it has no completion event and no
 failure, so only the marker identifies a refusal.
 Application extensions are accepted and reach handlers untouched, and so are
 request settings an Axum layer outside the client wrote: a request handed on
-whole from behind `DefaultBodyLimit` keeps that layer's body limit, while a
-rebuilt request gets the default.
+whole from behind `DefaultBodyLimit` keeps that layer's body limit wherever no
+layer inside the boundary sets its own, so an outer `disable()` removes Axum's
+default limit for the boundary's extractors. A rebuilt request carries no such
+setting.
 
 ```rust,ignore
 // Before: the destination inherits the source's captures, matched path and

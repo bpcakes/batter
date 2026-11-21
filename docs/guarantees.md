@@ -2485,8 +2485,9 @@ extensions are accepted and reach handlers untouched; the supported way to
 redispatch is a fresh request with each application extension copied by type.
 Request settings that an Axum layer outside the client wrote are not routing
 records and are accepted too: a request handed on whole from behind
-`DefaultBodyLimit` keeps that layer's body limit, while a rebuilt request gets
-the default.
+`DefaultBodyLimit` keeps that layer's body limit wherever no layer inside the
+boundary sets its own, so an outer `disable()` removes Axum's default limit for
+the boundary's extractors. A rebuilt request carries no such setting.
 
 Without the check, Axum treats inherited records as outer-router state: path
 parameters are appended, an inherited invalid UTF-8 record rejects a valid

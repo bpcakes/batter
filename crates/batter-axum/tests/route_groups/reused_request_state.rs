@@ -50,7 +50,7 @@ async fn a_map_with_only_batter_records_is_refused() {
         .body(Body::empty())
         .unwrap();
     let mut captured = fixture.captured(asterisk).await;
-    captured.remove::<OriginalUri>();
+    assert!(captured.remove::<OriginalUri>().is_some());
     assert_no_routing_record(&captured).await;
     // What remains is the boundary's own state for the earlier request.
     assert!(captured.get::<CorrelationId>().is_some());
@@ -407,6 +407,21 @@ async fn an_inherited_public_context_reaches_code_outside_admission() {
         .await;
     assert!(reused.extensions().get::<InProcessRefusal>().is_none());
     assert_eq!(body_text(reused).await, "cancelled");
+
+    // A live request forwarded whole from behind `request_admission` alone is
+    // accepted too, and while that request runs its context is still live.
+    let forward = tower::service_fn(move |request: Request| {
+        let composed = composed.clone();
+        async move { Ok::<_, Infallible>(composed.request(request).await) }
+    });
+    let admitted = from_fn_with_state(
+        request_policy(&ready_handle(), SECOND),
+        low_level::request_admission,
+    )
+    .layer(forward);
+    let forwarded = through(admitted, get_request("/context")).await;
+    assert!(forwarded.extensions().get::<InProcessRefusal>().is_none());
+    assert_eq!(body_text(forwarded).await, "live");
 
     // Admission's own failure renderer receives the arriving parts too: a
     // boundary that is still starting refuses admission and renders them.
