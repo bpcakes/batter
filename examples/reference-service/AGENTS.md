@@ -58,7 +58,8 @@ Unix-only application is not a reusable database framework.
   `src/http.rs` assembles them through `HttpBoundary`; `src/http/tests.rs`,
   `src/http/tests/admission_order.rs` and `src/http/tests/reused_request.rs`
   cover the boundary without PostgreSQL, the last one the request client's
-  inherited refusal of a reused extension map.
+  inherited refusal of a reused extension map and of a map holding only the
+  adapter's own records.
 - `src/request.rs` owns direct-socket peer trust and combines it with the shared
   adapter correlation without owning application authority or request lifetime.
 - `src/schema.rs` owns repeated migration/compatibility/producer-definition startup.

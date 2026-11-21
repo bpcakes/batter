@@ -133,10 +133,10 @@ pub struct RequestPolicy {
 /// cancellation or deadline expiry before the outer admission operation is
 /// polled again; Batter's nested adapters read the same value from the request
 /// extensions. The application cannot construct one with a different request
-/// or policy. The captured metadata excludes Batter's private quota writer,
-/// shared observation state, operational ownership marker and admission record.
-/// Public correlation and application extensions remain available; redispatch
-/// cannot mutate the original observer or admit the new request.
+/// or policy. Its metadata excludes every private request record that
+/// [`InProcessClient::request`] lists, so redispatch cannot mutate the original
+/// observer, admit the new request or present cookies under its decision.
+/// Public correlation and application extensions remain available.
 ///
 /// ```
 /// use axum::response::Response;

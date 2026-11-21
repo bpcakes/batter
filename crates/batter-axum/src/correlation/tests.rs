@@ -1,8 +1,10 @@
-//! Every record of the one private-record list has a fixture, the renderer
-//! filter removes it, and the in-process client refuses it alone.
+//! Every record of the one private-record list has a fixture holding it and
+//! no other listed record. The in-process client refuses each alone, and the
+//! renderer filter removes each while keeping public values.
 
 use super::{
-    CorrelationId, OperationalScope, carries_private_record, private_record_names, renderer_parts,
+    CorrelationId, OperationalScope, carries_private_record, private_record_names,
+    private_records_present, renderer_parts,
 };
 use crate::{
     InProcessRefusal, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
@@ -82,9 +84,15 @@ fn each_alone() -> Vec<(&'static str, Extensions)> {
 }
 
 #[test]
-fn every_listed_private_record_has_a_fixture() {
+fn every_listed_private_record_has_a_fixture_holding_only_it() {
     let mut listed = private_record_names();
-    let mut fixtures: Vec<_> = each_alone().into_iter().map(|(name, _)| name).collect();
+    let mut fixtures = Vec::new();
+    for (name, extensions) in each_alone() {
+        // A fixture that also held another listed record would let that
+        // record's detection stand in for this one's.
+        assert_eq!(private_records_present(&extensions), [name]);
+        fixtures.push(name);
+    }
     listed.sort_unstable();
     fixtures.sort_unstable();
     assert_eq!(listed, fixtures);
@@ -122,14 +130,29 @@ async fn each_private_record_alone_is_detected_and_refused_before_the_router_run
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test]
-async fn the_renderer_filter_removes_each_private_record() {
+/// An application extension the renderer filter must keep.
+#[derive(Clone, Debug, PartialEq)]
+struct Label(&'static str);
+
+#[test]
+fn the_renderer_filter_removes_each_private_record_and_keeps_public_values() {
+    let public = scope().0;
     for (name, extensions) in each_alone() {
         let mut request = Request::new(());
         *request.extensions_mut() = extensions;
+        request.extensions_mut().insert(public.clone());
+        request.extensions_mut().insert(Label("kept"));
         let (parts, ()) = request.into_parts();
-        assert!(carries_private_record(&parts.extensions), "{name}");
         let filtered = renderer_parts(parts);
-        assert!(!carries_private_record(&filtered.extensions), "{name}");
+        assert!(
+            private_records_present(&filtered.extensions).is_empty(),
+            "{name}"
+        );
+        let correlation = filtered.extensions.get::<CorrelationId>();
+        assert_eq!(
+            correlation.map(CorrelationId::as_str),
+            Some(public.as_str())
+        );
+        assert_eq!(filtered.extensions.get::<Label>(), Some(&Label("kept")));
     }
 }

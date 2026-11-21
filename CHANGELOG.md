@@ -8,10 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
-- Refuse in-process requests that carry the adapter's own request records
-  (`batter-nff2`, `batter-28kb`;
+- **Breaking:** refuse in-process requests that carry the adapter's own
+  request records (`batter-nff2`, `batter-28kb`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)).
-  The entry check of `batter_axum::low_level::RouterClient::request`, which
+  This is a runtime break: nothing stops compiling, but two request shapes
+  that were served now get the sanitized 500 carrying `InProcessRefusal` on
+  every call. The entry check of
+  `batter_axum::low_level::RouterClient::request`, which
   `InProcessClient::request` and `batter_runlimit::http::TestClient::request`
   delegate to, looked only for Axum routing records. A map that kept Batter's
   own records with no Axum record left was accepted and lost the
@@ -23,35 +26,26 @@ contracts, capability facts and validation history.
   `x-request-id`; one captured behind `low_level::observe_http` alone got a
   fresh correlation. Through `TestClient` such a map was authenticated and
   charged. The check now also refuses a request carrying any of the adapter's
-  five private request records (quota record, observation state, operational
-  marker, admission record, browser credential record), with the same
-  `InProcessRefusal` response, before the router or any application code is
-  polled. The filter that strips those records for renderers and the new
-  check are generated from one type list, so they cannot diverge. Public
-  values copied by type, such as `CorrelationId`, are not refused, and a map
-  captured behind `low_level::request_admission` alone, which carries only
-  the public `OperationContext` and `RequestInterruptionResponder`, stays
-  accepted. The contract documents now state what the earlier entries left
-  open: a live request that an outer Axum router, or a service behind
-  `low_level::observe_http`, `operational_http`, `operational_http_with_quota`
-  or `request_scope`, hands to the client whole is refused and must be
-  rebuilt; rebuilding is in-process
-  composition, not serving; a hand-inserted `OriginalUri` is refused like an
-  inherited one; and detection of Axum's records is verified for Axum 0.8.9
-  only, although the dependency requirement admits later 0.8 releases. The
-  reference service's request client now has a test for the refusal it
-  inherits. No public signature changed. Behavior changes: a request whose
-  extensions carry one of those private records is now refused, including a
-  live request handed on from inside one of those `low_level` wrappers with
-  no router involved, which was served before; and the refusal's single
-  ERROR event, for every refusal, now reads
-  `in-process request refused: the request is not arrival-shaped` instead of
-  `in-process request refused: its extensions carry routing state from an
-  earlier dispatch`, so a log filter or alert on the old text must change.
+  private request records (at this change the quota record, observation
+  state, operational marker, admission record and browser credential record;
+  the rustdoc of `InProcessClient::request` keeps the list), before the
+  router or any application code is polled. The filter that strips those
+  records for renderers and the new check are generated from one type list,
+  so they cannot diverge. Public values copied by type, such as
+  `CorrelationId`, are not refused, and a map captured behind
+  `low_level::request_admission` alone, which carries only the public
+  `OperationContext` and `RequestInterruptionResponder`, stays accepted; the
+  rendered probes, fallback renderer and caller-composed routers that
+  receive its earlier, possibly cancelled, context are tracked as
+  `batter-nff2.1`. No public signature changed.
+
+  Newly refused, each with its replacement:
 
   ```rust,ignore
-  // Before: a handler of another router passes its request to the client whole.
-  let response = client.request(arrival).await; // refused: InProcessRefusal
+  // Before: a service behind one of `observe_http`, `operational_http`,
+  // `operational_http_with_quota` or `request_scope` passed its live request
+  // to the client whole, with no router involved. It was served; now refused.
+  let response = client.request(arrival).await;
 
   // After: a fresh request from the arrival's own parts, with each
   // application extension copied by type. Under `nest` or `nest_service`,
@@ -69,6 +63,33 @@ contracts, capability facts and validation history.
   let response = client.request(next).await;
   ```
 
+  ```rust,ignore
+  // Before: a map with Batter's records and no Axum record left, such as an
+  // `OPTIONS *` capture with its `OriginalUri` removed or a capture behind a
+  // `low_level` wrapper around a non-Router service. It was served; now refused.
+  earlier.remove::<OriginalUri>();
+  *next.extensions_mut() = earlier;
+
+  // After: copy each application extension by type.
+  if let Some(label) = earlier.get::<Label>() {
+      next.extensions_mut().insert(label.clone());
+  }
+  ```
+
+  Unchanged, and now documented: a live request that an outer Axum router
+  dispatched and a route, fallback or `nest_service` closure hands on whole
+  was already refused for its routing records and takes the same rebuild;
+  rebuilding is in-process composition, not serving; a hand-inserted
+  `OriginalUri` is refused like an inherited one; and detection of Axum's
+  records is verified for Axum 0.8.9 only, although the dependency
+  requirement admits later 0.8 releases. The refusal's single ERROR event,
+  for every refusal, now reads
+  `in-process request refused: the request is not arrival-shaped` instead of
+  `in-process request refused: its extensions carry routing state from an
+  earlier dispatch`, so a log filter or alert on the old text must change.
+  The reference service's request client has tests for both refusals it
+  inherits.
+
 - **Breaking:** rename the in-process refusal marker from
   `batter_axum::ReusedRoutingState` (and `batter::axum::ReusedRoutingState`)
   to `InProcessRefusal` (`batter-nff2`). The old name stated one cause and no
@@ -76,9 +97,10 @@ contracts, capability facts and validation history.
   hand-inserted `OriginalUri`; the new one states the outcome. The old name
   was added on master by the `batter-oj37` entry below and never released, so
   this cut affects only code written against unreleased master, which stops
-  compiling. No deprecated alias is kept, as for every hard cut; the
-  marker's rustdoc carries a `Migration:` sentence naming the old type. A public-API surface diff against master finds that removal, the
-  matching addition and no other change
+  compiling. No deprecated alias is kept: the name was never released, and
+  the hard-cut rule keeps none in any case. The marker's rustdoc carries a
+  `Migration:` sentence naming the old type. A public-API surface diff
+  against master finds that removal, the matching addition and no other change
   ([output](docs/evidence/public-api-diff-2026-10-09/in-process-refusal-2026-11-20.txt)).
   The entries below use the new name.
 

@@ -183,30 +183,34 @@ impl RouterClient {
     /// router untouched. The marker is removed from every dispatched response.
     ///
     /// A request is refused the same way when its extensions carry one of
-    /// the private request records that only this crate's layers write: the
-    /// observation state, the operational wrapper's marker, the admission
-    /// record, the browser credential record or the quota record. None of
-    /// those types can be named or built outside this crate, so one is
-    /// present only in a request a Batter layer already processed, or in a
-    /// map copied from one. That covers a map with no Axum record left, for
-    /// example the map of a dispatch no pattern matched, such as `OPTIONS *`,
-    /// after the caller removed its `OriginalUri`, or one captured behind
-    /// [`observe_http`](super::observe_http),
+    /// the private request records that only this crate's layers write,
+    /// which [`InProcessClient::request`](crate::InProcessClient::request)
+    /// lists. None of those types can be named or built outside this crate,
+    /// so one is present only in a request a Batter layer already processed,
+    /// or in a map copied from one. That covers a map with no Axum record
+    /// left, for example the map of a dispatch no pattern matched, such as
+    /// `OPTIONS *`, after the caller removed its `OriginalUri`, or one
+    /// captured behind [`observe_http`](super::observe_http),
     /// [`operational_http`](super::operational_http),
-    /// [`operational_http_with_quota`](super::operational_http_with_quota) or
-    /// [`request_scope`](super::request_scope) around a service that is not a
-    /// `Router`. It also covers a live request that a service behind one of
-    /// those wrappers hands to this client whole, although no router ran. A
-    /// map captured behind [`request_admission`](super::request_admission)
+    /// [`operational_http_with_quota`](super::operational_http_with_quota)
+    /// or [`request_scope`](super::request_scope) around a service that is
+    /// not a `Router`. It also covers a live request that a service behind
+    /// one of those wrappers hands to this client whole, although no router
+    /// ran.
+    ///
+    /// A map captured behind [`request_admission`](super::request_admission)
     /// alone carries none: outside `operational_http` that layer inserts only
     /// its public `OperationContext` and
     /// [`RequestInterruptionResponder`](crate::RequestInterruptionResponder),
     /// which are accepted like any application extension. The protected
-    /// boundary's admission gives its admitted routes fresh values, but its
-    /// probes and its metadata-only fallback renderer run outside admission
-    /// and see the inherited ones in the request metadata they receive, and a
-    /// caller-composed router that does not admit the request again hands
-    /// that earlier, possibly cancelled, context to its handlers. The refusal precedes everything inside the router, including
+    /// boundary's admission gives its admitted routes fresh values. Its
+    /// rendered probes and its metadata-only fallback renderer run outside
+    /// admission and receive the earlier request's context and responder in
+    /// their request metadata, and a caller-composed router that does not
+    /// admit the request again hands that context to its handlers. The
+    /// context is cancelled once the earlier request has finished.
+    ///
+    /// The refusal precedes everything inside the router, including
     /// authentication or a quota check it composes.
     pub async fn request(&self, request: Request<Body>) -> Response {
         let (mut parts, body) = request.into_parts();

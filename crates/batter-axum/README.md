@@ -602,45 +602,57 @@ inherited one and refuses both.
 
 The client accepts only an arrival-shaped request, whose extensions carry no
 record that Axum routing writes and none of the adapter's own private request
-records. Before the router, any layer or any handler is
-polled, it checks four public records: the path-parameter record that
-`RawPathParams` reads (any result except its missing-parameters rejection,
-including an empty or invalid UTF-8 capture list), `MatchedPath`, `NestedPath`
-and `OriginalUri`. Every request a `Router` dispatches gains `OriginalUri`, and
-every request it routes to a route, a path fallback or a `nest_service` service
-also gains the path-parameter record, so a request built from a whole extension
-map cloned inside an earlier dispatch is refused whole. So is a live request
+records. Nothing is stripped or repaired.
+
+Before the router, any layer or any handler is polled, it checks four public
+Axum records: the path-parameter record that `RawPathParams` reads (any result
+except its missing-parameters rejection, including an empty or invalid UTF-8
+capture list), `MatchedPath`, `NestedPath` and `OriginalUri`. Every request a
+`Router` dispatches gains `OriginalUri`, and every request it routes to a
+route, a path fallback or a `nest_service` service also gains the
+path-parameter record. These facts about the records Axum writes are verified
+against Axum 0.8.9 only; later 0.8 releases, which the dependency requirement
+admits, are unverified. A request built from a whole extension map cloned
+inside an earlier dispatch is therefore refused whole. So is a live request
 that another Axum router dispatched and a route, fallback or `nest_service`
-closure hands on whole: it carries that router's records, and the client cannot
-tell it from a reused map. Rebuilding it, as below, is in-process composition
-and does not make the client a server: a router that rebuilds requests into
-the client and is itself served still serves the boundary outside protected
-registration, which is the supported serving path. These facts are verified against Axum 0.8.9 only; later 0.8
-releases, which the dependency requirement admits, are unverified. The client
-also checks the adapter's five private request records (the observation state,
-the operational wrapper's marker, the admission record, the browser credential
-record and the quota record). Only the adapter's layers write them and no other
-crate can name them, so a request that carries one was already processed by a
-Batter layer, or its map was copied from one, even when no routing record is
-left on it. That includes a live request a service behind `low_level::observe_http`,
-`operational_http`, `operational_http_with_quota` or `request_scope` hands to
-the client whole. A map captured behind `low_level::request_admission` alone
-carries none of them: outside `operational_http` that layer inserts only its
-public `OperationContext` and `RequestInterruptionResponder`, which are
-accepted like any application extension. The boundary's admission gives
-admitted routes fresh values; probes and the metadata-only fallback renderer,
-which run outside admission, see the inherited ones. A public
-`CorrelationId` copied by type is not refused; the boundary generates its own
-identity. Nothing is
-stripped or repaired. The refusal is the sanitized `HttpFailure::Internal` response of
+closure hands on whole: it carries that router's records, and the client
+cannot tell it from a reused map.
+
+The client also checks every private request record the adapter's layers
+write, which the rustdoc of `InProcessClient::request` lists. No other crate
+can name them, so a request that carries one was already processed by a Batter
+layer, or its map was copied from one, even when no routing record is left on
+it. That includes a live request that a service behind
+`low_level::observe_http`, `operational_http`, `operational_http_with_quota`
+or `request_scope` hands to the client whole.
+
+Rebuilding a request, as below, is in-process composition and does not make
+the client a server: a router that rebuilds requests into the client and is
+itself served still serves the boundary outside protected registration, which
+is the supported serving path.
+
+Public values are not refused. A `CorrelationId` copied by type is accepted,
+and the boundary generates its own identity. A map captured behind
+`low_level::request_admission` alone carries no private record: outside
+`operational_http` that layer inserts only its public `OperationContext` and
+`RequestInterruptionResponder`, which are accepted like any application
+extension. The boundary's admission gives admitted routes fresh values, but
+rendered probes and the metadata-only fallback renderer, which run outside
+admission, receive the earlier request's context and responder, and a
+caller-composed router without admission hands that context to its handlers.
+The context is cancelled once the earlier request has finished (tracked as
+`batter-nff2.1`).
+
+The refusal is the sanitized `HttpFailure::Internal` response of
 `render_infrastructure_failure` with no correlation identifier, carrying the
 `InProcessRefusal` response extension, which has no public constructor, plus
 one ERROR event with a fixed message and no request field. The marker is
 `Copy`, so a handler can put one it read from an earlier refusal on its own
 response; the client removes it from every response it dispatched, so a
-returned response carries it only when that call refused the request. The request never entered the boundary, so it has
-no completion event and no `x-request-id` header. Its status and body are those
-of any sanitized internal failure, so only the marker identifies a refusal.
+returned response carries it only when that call refused the request. The
+request never entered the boundary, so it has no completion event and no
+`x-request-id` header. Its status and body are those of any sanitized internal
+failure, so only the marker identifies a refusal.
 Application extensions are accepted and reach handlers untouched.
 
 ```rust,ignore

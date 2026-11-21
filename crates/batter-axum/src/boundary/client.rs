@@ -171,8 +171,9 @@ impl InProcessClient {
     /// serves the boundary outside protected registration, the supported
     /// serving path.
     ///
-    /// Five private records are detected as well: the observation state, the
-    /// operational wrapper's marker, the admission record, the browser
+    /// Every private request record that only this crate's layers write is
+    /// detected as well. This is the one list of them: the observation state,
+    /// the operational wrapper's marker, the admission record, the browser
     /// credential record and the quota record. Their types cannot be named or
     /// built outside this crate, so one is present only in a request that a
     /// Batter layer already processed, or in a map copied from one, including

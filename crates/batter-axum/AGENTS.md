@@ -48,8 +48,8 @@ Windows support and non-Unix fallbacks are out of scope.
   composition, sealed so assembly is consumed only into protected registration
   or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
   `InProcessClient`, which delegates preparation and every request to the
-  `RouterClient` in its private field, the `InProcessRefusal` response marker that
-  `RouterClient`'s entry check attaches to a refusal, and the compile-fail
+  `RouterClient` in its private field, the `InProcessRefusal` response marker
+  that `RouterClient`'s entry check attaches to a refusal, and the compile-fail
   controls that reject recovering, mutating or serving the client or forging
   the marker.
   `src/boundary/guarded.rs` owns the `GuardedRouter` builder. Probe
@@ -86,11 +86,10 @@ Windows support and non-Unix fallbacks are out of scope.
   `low_level`), generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
   Its private operational marker carries the generated identity that admission
-  records. Its private `renderer_parts` filter removes quota, observation and
-  operational ownership state, the admission record and the browser credential
-  record at every application renderer boundary, retaining public metadata.
-  Its `carries_private_record` predicate, for the in-process entry check, is
-  generated from the same `private_records!` type list, so the two cannot
+  records. Its private `renderer_parts` filter removes every record in the
+  `private_records!` type list at every application renderer boundary,
+  retaining public metadata. Its `carries_private_record` predicate, for the
+  in-process entry check, is generated from the same list, so the two cannot
   diverge.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
   `low_level::operational_http_with_quota`; its consuming start/finish states prevent terminal
@@ -148,15 +147,18 @@ Windows support and non-Unix fallbacks are out of scope.
   refusal marker removed from a dispatched response, the copy-by-type
   migration and nested captures accumulating inside one dispatch.
   `reused_request_state.rs` covers the refusal of a map that keeps only the
-  boundary's own records, of maps captured behind `low_level` wrappers around
-  a service that is not a `Router`, of a live request an outer router or a
-  `low_level` wrapper forwards whole, the rebuilt request they must send
-  instead (method, version, target, headers, body and a copied extension,
-  also under `nest_service`), the accepted public values a
-  `request_admission`-only map carries, replaced by a live context for an
-  admitted route, and a copied public `CorrelationId`
-  that is not refused; `src/correlation/tests.rs` requires one fixture per
-  listed private record and refuses each alone.
+  boundary's own records, of maps captured behind each of the four
+  record-writing `low_level` wrappers around a service that is not a
+  `Router`, of a live request an outer router or a `low_level` wrapper
+  forwards whole, the rebuilt request they must send instead (method,
+  version, target, headers, body and a copied extension, also under `nest`
+  and `nest_service`), the accepted public values a `request_admission`-only
+  map carries, replaced by a live context for an admitted route, the
+  inherited context that rendered probes, the fallback renderer and a
+  router without admission receive (`batter-nff2.1`), and a copied public
+  `CorrelationId` that is not refused; `src/correlation/tests.rs` requires one
+  fixture per listed private record, holding only that record, refuses each
+  alone, and checks that the renderer filter keeps public values.
   The pattern unit tests also compare the parser with Axum's own route
   registration, and the declared-pattern index with native routing.
 - `benches/declared_dispatch.rs` measures in-process request cost through
@@ -267,12 +269,12 @@ except `MissingPathParams`, so a new rejection fails closed), `MatchedPath`,
 check: no private-layout tricks, no length heuristics, no stripping or repair,
 and no second entry point or `Result` variant. Refuse the same way a request
 carrying one of the crate's own private request records, through
-`correlation::carries_private_record`: the quota record, the observation state,
-the operational wrapper's marker, the admission record and the browser
-credential record. Both functions are generated from the one
-`private_records!` list in `src/correlation.rs`; add a new private request
-record there, with its fixture in `src/correlation/tests.rs`, and never add a
-public type to it: a public value is a caller's choice. Keep refusing a live
+`correlation::carries_private_record`. Both functions are generated from the
+one `private_records!` list in `src/correlation.rs`; add a new private request
+record there, with its fixture in `src/correlation/tests.rs`, name it in the
+one documented list in `InProcessClient::request`'s rustdoc (other documents
+refer to that list rather than repeating it), and never add a public type to
+it: a public value is a caller's choice. Keep refusing a live
 request that an outer Axum router or a `low_level` wrapper forwards whole; it
 carries that dispatch's records. Do not describe the rebuild migration as
 preventing serving: a router that rebuilds into the client can still be
@@ -289,10 +291,11 @@ Application extensions such as
 still carries a detected record, and that Axum's private nested matched-path
 record is still written only with the path-parameter record, whenever the
 Axum or `http` pin changes; they are verified for Axum 0.8.9 only, and the
-dependency requirement admits later 0.8 releases. The check, the refusal and the marker removal
-live once, in `low_level::RouterClient::request`; `InProcessClient::request`
-delegates to it, and so does every other in-process transport in this
-workspace, including `batter_runlimit::http::TestClient`. Wrappers that hold an
+dependency requirement admits later 0.8 releases. The check, the refusal and
+the marker removal live once, in `low_level::RouterClient::request`;
+`InProcessClient::request` delegates to it, and so does every other in-process
+transport in this workspace, including
+`batter_runlimit::http::TestClient`. Wrappers that hold an
 `InProcessClient` or a `RouterClient` inherit the check by delegating; do not
 duplicate it there or give the marker a second constructor. `RouterClient`
 establishes nothing about its router's composition, so keep it out of the

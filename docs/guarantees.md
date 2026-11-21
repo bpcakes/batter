@@ -2428,71 +2428,82 @@ dispatch and observation ownership, with nothing spawned, so dropping a
 request may carry explicitly inserted synthetic extensions, such as a chosen
 `ConnectInfo`; choosing them and their meaning belongs to the caller, and the
 sealed conversions constrain direct API conversions, not remote peer
-authenticity or what an application's own wrapper puts around the client. A
-wrapper is still bound by the entry check below: one that hands the client a
-live request another Axum router dispatched, from a route, fallback or
-`nest_service` closure, is refused on every request, because that request
-carries the outer router's records; so is one that a service behind
-`low_level::observe_http`, `operational_http`, `operational_http_with_quota`
-or `request_scope` hands on whole, because it carries that wrapper's private record. Such a wrapper must
-build a fresh request from the arrival's method, version, target, headers and
-body and copy application extensions by type; under `nest` or `nest_service`
-that target is the path below the mount. Rebuilding is in-process composition,
-not serving: a router that rebuilds requests into the client and is itself
-served still serves the boundary outside protected registration. Axum's routing records are the exception to caller-chosen extensions:
-the client cannot tell a hand-inserted `OriginalUri` from an inherited one and
-refuses both. The client accepts only an arrival-shaped request:
-at entry, before the router, any layer or any application code is polled, it
-refuses the whole request when its extensions carry any public Axum routing
-record, namely the path-parameter record that `RawPathParams` reads (any
-result except its missing-parameters rejection, so an empty capture list, an
-invalid UTF-8 capture and any future rejection all count), `MatchedPath`,
-`NestedPath` or `OriginalUri`. Pinned Axum 0.8.9 writes `OriginalUri` on every
-`Router` dispatch, writes the path-parameter record whenever it routes to a
-route, a path fallback or a `nest_service` service (a path no pattern matches,
-such as `*`, reaches the catch-all fallback with `OriginalUri` alone), and
-writes its private nested matched-path record only in the same routing step as
-the path-parameter record, so a whole extension map cloned from a dispatched
-request always carries a detected record. These facts are verified against
-Axum 0.8.9 only; the crate's dependency requirement also admits later 0.8
-releases, for which detection is unverified. The same refusal applies when the
-extensions carry one of the adapter's own private request records, which only
-its layers write and no other crate can name or build: the observation state,
-the operational wrapper's marker, the admission record, the browser credential
-record or the quota record. Nothing is stripped or repaired. A refusal returns
+authenticity or what an application's own wrapper puts around the client.
+Axum's routing records are the exception to caller-chosen extensions: the
+client cannot tell a hand-inserted `OriginalUri` from an inherited one and
+refuses both.
+
+The client accepts only an arrival-shaped request. At entry, before the router,
+any layer or any application code is polled, it refuses the whole request when
+its extensions carry any public Axum routing record, namely the path-parameter
+record that `RawPathParams` reads (any result except its missing-parameters
+rejection, so an empty capture list, an invalid UTF-8 capture and any future
+rejection all count), `MatchedPath`, `NestedPath` or `OriginalUri`. Pinned Axum
+0.8.9 writes `OriginalUri` on every `Router` dispatch, writes the
+path-parameter record whenever it routes to a route, a path fallback or a
+`nest_service` service (a path no pattern matches, such as `*`, reaches the
+catch-all fallback with `OriginalUri` alone), and writes its private nested
+matched-path record only in the same routing step as the path-parameter
+record, so a whole extension map cloned from a dispatched request always
+carries a detected record. These facts are verified against Axum 0.8.9 only;
+the crate's dependency requirement also admits later 0.8 releases, for which
+detection is unverified.
+
+The same refusal applies when the extensions carry one of the adapter's own
+private request records, which only its layers write and no other crate can
+name or build; `InProcessClient::request` lists them. That covers a map with no
+Axum record left, such as one captured behind `low_level::observe_http`,
+`operational_http`, `operational_http_with_quota` or `request_scope` around a
+service that is not a `Router`, or the map of a dispatch no pattern matched
+after the application removed its `OriginalUri`.
+
+An application's wrapper around the client is bound by the same check. One
+that hands the client a live request another Axum router dispatched, from a
+route, fallback or `nest_service` closure, is refused on every request,
+because that request carries the outer router's records. So is one that a
+service behind one of those four `low_level` wrappers hands on whole, because
+it carries that wrapper's private record. Such a wrapper must build a fresh
+request from the arrival's method, version, target, headers and body and copy
+application extensions by type; under `nest` or `nest_service` that target is
+the path below the mount. Rebuilding is in-process composition, not serving: a
+router that rebuilds requests into the client and is itself served still
+serves the boundary outside protected registration.
+
+Nothing is stripped or repaired. A refusal returns
 `render_infrastructure_failure(HttpFailure::Internal, None)` carrying the
 `InProcessRefusal` response extension, which has no public constructor or
 field, and emits one ERROR event with a fixed message and no request-derived
-field on the caller's dispatch.
-The marker is `Copy`, so application code can put one it read from an earlier
-refusal on a response of its own; the client removes it from every response it
-dispatched and keeps the other response extensions, so a returned response
-carries it only when that call refused the request;
-the request never entered the boundary, so it has no request span, completion
-event or `x-request-id` header. Caller-inserted application extensions are
-accepted and reach handlers untouched; the supported way to redispatch is a
-fresh request with each application extension copied by type. Without the
-check, Axum treats inherited records as outer-router state: path parameters are
-appended, an inherited invalid UTF-8 record rejects a valid path, `MatchedPath`
-and the completion `route` gain the earlier pattern as a prefix, and inherited
-Batter observation and operational state suppress the destination's request
-span and completion event. Axum keeps the path-parameter and nested
-matched-path records private and `http` 1.5.0 `Extensions` has no iteration or
-retain, so individual records cannot be reset while keeping unknown application
-extensions. A map that carries Batter's private records with no Axum record
-left, such as one captured behind `low_level::observe_http`,
-`operational_http`, `operational_http_with_quota` or `request_scope` around a
-service that is not a `Router`, or the map of a dispatch no pattern matched
-after the application removed its `OriginalUri`, is refused by the
-private-record check. A map captured behind `low_level::request_admission`
-alone carries none: outside `operational_http` that layer inserts only its
-public `OperationContext` and `RequestInterruptionResponder`, which are
-accepted. The boundary's admission gives admitted routes fresh values, but its
-probes and metadata-only fallback renderer, outside admission, see the
-inherited ones in their request metadata, and a caller-composed router without
-admission hands the earlier, possibly cancelled, context to its handlers. Public values a caller
-copies by type, such as a `CorrelationId`, are not refused; the boundary
-generates its own identity. The status and body of a
+field on the caller's dispatch. The marker is `Copy`, so application code can
+put one it read from an earlier refusal on a response of its own; the client
+removes it from every response it dispatched and keeps the other response
+extensions, so a returned response carries it only when that call refused the
+request. The request never entered the boundary, so it has no request span,
+completion event or `x-request-id` header. Caller-inserted application
+extensions are accepted and reach handlers untouched; the supported way to
+redispatch is a fresh request with each application extension copied by type.
+
+Without the check, Axum treats inherited records as outer-router state: path
+parameters are appended, an inherited invalid UTF-8 record rejects a valid
+path, `MatchedPath` and the completion `route` gain the earlier pattern as a
+prefix, and inherited Batter observation and operational state suppress the
+destination's request span and completion event. Axum keeps the
+path-parameter and nested matched-path records private and `http` 1.5.0
+`Extensions` has no iteration or retain, so individual records cannot be reset
+while keeping unknown application extensions.
+
+Public values are not refused. A `CorrelationId` copied by type is accepted,
+and the boundary generates its own identity. A map captured behind
+`low_level::request_admission` alone carries no private record: outside
+`operational_http` that layer inserts only its public `OperationContext` and
+`RequestInterruptionResponder`, which are accepted. The boundary's admission
+gives admitted routes fresh values. Rendered probes and the metadata-only
+fallback renderer run outside admission and receive the earlier request's
+context and responder in their request metadata, and a caller-composed router
+without admission hands that context to its handlers. The context is cancelled
+once the earlier request has finished. This residual is tracked as
+`batter-nff2.1`.
+
+The status and body of a
 refusal are those of any sanitized internal failure, so only the marker
 identifies one. The check, the refusal and the marker removal are
 implemented once, in `low_level::RouterClient::request`, which

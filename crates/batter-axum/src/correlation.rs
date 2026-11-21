@@ -25,7 +25,10 @@ struct OperationalScope(CorrelationId);
 
 /// Generate [`renderer_parts`] and [`carries_private_record`] from one list,
 /// so the filter and the in-process entry check cannot name different
-/// records. Tests read `private_record_names` to require a fixture per record.
+/// records. Tests read `private_record_names` to require a fixture per record
+/// and `private_records_present` to check that each fixture holds only its
+/// own. Adding a record here changes the documented refusal: also add it to
+/// the list in `InProcessClient::request`'s rustdoc.
 macro_rules! private_records {
     ($($record:ty),+ $(,)?) => {
         /// Pass data to application renderers without delegating the original
@@ -60,6 +63,19 @@ macro_rules! private_records {
         #[cfg(test)]
         pub(crate) fn private_record_names() -> Vec<&'static str> {
             vec![$(std::any::type_name::<$record>()),+]
+        }
+
+        /// The type names of the listed records present in `extensions`,
+        /// for tests that need to know which record a map holds.
+        #[cfg(test)]
+        pub(crate) fn private_records_present(extensions: &Extensions) -> Vec<&'static str> {
+            let mut present = Vec::new();
+            $(
+                if extensions.get::<$record>().is_some() {
+                    present.push(std::any::type_name::<$record>());
+                }
+            )+
+            present
         }
     };
 }
