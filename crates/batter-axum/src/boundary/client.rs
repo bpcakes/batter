@@ -194,7 +194,8 @@ impl InProcessClient {
     /// layer's body limit wherever no layer inside the boundary sets its own,
     /// so an outer `DefaultBodyLimit::disable()` removes Axum's default limit
     /// for the boundary's extractors. A rebuilt request carries no such
-    /// setting.
+    /// setting. An in-process result under an outer limit is therefore not
+    /// evidence of how a served request is limited.
     ///
     /// The check runs at entry, before the router, any layer or any
     /// application code is polled, and costs a few type-map lookups.
@@ -274,6 +275,10 @@ impl InProcessClient {
     /// the mount, so the rebuilt request targets that path; Axum's
     /// [`OriginalUri`] on the arrival keeps the full one. Without
     /// `.version(parts.version)` the builder's default, HTTP/1.1, is used.
+    /// Copy every extension the destination reads, not only the example's
+    /// `Label`: a served outer router's
+    /// [`ConnectInfo`](axum::extract::ConnectInfo) peer, for instance, is
+    /// dropped unless it is copied too.
     ///
     /// The detection is a run-time check because the records cannot be reset
     /// individually: Axum keeps its path-parameter record and its nested

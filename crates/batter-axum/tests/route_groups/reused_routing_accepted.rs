@@ -210,42 +210,74 @@ fn nested_routing_inside_one_dispatch_keeps_every_capture() {
     assert!(!text.contains("ERROR"), "{text}");
 }
 
-/// Axum settings that a layer outside the client writes into the request are
-/// not routing records. They reach the router like application extensions,
-/// and the documented rebuild drops them.
-#[tokio::test]
-async fn a_body_limit_chosen_outside_the_client_reaches_the_router() {
-    let client = HttpBoundary::new(request_policy(&ready_handle(), SECOND))
-        .assemble(GuardedRouter::new().route(
-            "/size",
-            axum::routing::post(|body: axum::body::Bytes| async move { body.len().to_string() }),
-        ))
-        .await
-        .unwrap()
-        .in_process();
-    let payload = || {
-        axum::extract::Request::builder()
-            .method("POST")
-            .uri("/size")
-            .body(axum::body::Body::from("ten bytes!"))
-            .unwrap()
-    };
-    let forwarding = client.clone();
+/// Send `body` to `path` through a service behind `limit` that hands each
+/// request to `client` whole.
+async fn forwarded_behind(
+    limit: axum::extract::DefaultBodyLimit,
+    client: &batter_axum::InProcessClient,
+    path: &str,
+    body: Vec<u8>,
+) -> axum::response::Response {
+    let client = client.clone();
     let limited = tower::Layer::layer(
-        &axum::extract::DefaultBodyLimit::max(4),
+        &limit,
         tower::service_fn(move |request: axum::extract::Request| {
-            let client = forwarding.clone();
+            let client = client.clone();
             async move { Ok::<_, std::convert::Infallible>(client.request(request).await) }
         }),
     );
-    let forwarded = tower::ServiceExt::oneshot(limited, payload())
+    tower::ServiceExt::oneshot(limited, sized(path, body))
         .await
-        .unwrap();
-    assert_eq!(forwarded.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    assert!(forwarded.extensions().get::<InProcessRefusal>().is_none());
+        .unwrap()
+}
+
+fn sized(path: &str, body: Vec<u8>) -> axum::extract::Request {
+    axum::extract::Request::builder()
+        .method("POST")
+        .uri(path)
+        .body(axum::body::Body::from(body))
+        .unwrap()
+}
+
+/// Axum settings that a layer outside the client writes into the request are
+/// not routing records. They reach the router like application extensions,
+/// a limit set inside the boundary replaces them, and the documented rebuild
+/// drops them.
+#[tokio::test]
+async fn a_body_limit_chosen_outside_the_client_reaches_the_router() {
+    use axum::extract::DefaultBodyLimit;
+    let size =
+        || axum::routing::post(|body: axum::body::Bytes| async move { body.len().to_string() });
+    let client = HttpBoundary::new(request_policy(&ready_handle(), SECOND))
+        .assemble(
+            GuardedRouter::new()
+                .route("/size", size())
+                .route("/own-limit", size().layer(DefaultBodyLimit::max(1_000))),
+        )
+        .await
+        .unwrap()
+        .in_process();
+    let ten = || b"ten bytes!".to_vec();
+    // Axum's default limit is 2 MiB.
+    let large = || vec![b'x'; 2 * 1024 * 1024 + 1];
+
+    let outer = forwarded_behind(DefaultBodyLimit::max(4), &client, "/size", ten()).await;
+    assert_eq!(outer.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(outer.extensions().get::<InProcessRefusal>().is_none());
+    // A limit set inside the boundary overwrites the outer one.
+    let inner = forwarded_behind(DefaultBodyLimit::max(4), &client, "/own-limit", ten()).await;
+    assert_eq!(body_text(inner).await, "10");
+    // An outer `disable()` removes Axum's default limit for the boundary's
+    // extractors, which a served request would hit.
+    let disabled = forwarded_behind(DefaultBodyLimit::disable(), &client, "/size", large()).await;
+    assert_eq!(body_text(disabled).await, (2 * 1024 * 1024 + 1).to_string());
 
     // A request built fresh, as the rebuild migration does, carries no such
     // setting and gets the default limit.
-    let fresh = client.request(payload()).await;
-    assert_eq!(body_text(fresh).await, "10");
+    assert_eq!(
+        body_text(client.request(sized("/size", ten())).await).await,
+        "10"
+    );
+    let fresh = client.request(sized("/size", large())).await;
+    assert_eq!(fresh.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }

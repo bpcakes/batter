@@ -61,6 +61,8 @@ contracts, capability facts and validation history.
   if let Some(label) = parts.extensions.get::<Label>() {
       next.extensions_mut().insert(label.clone());
   }
+  // Copy every other extension the destination reads, such as a served
+  // outer router's `ConnectInfo<SocketAddr>` peer, the same way.
   let response = client.request(next).await;
   ```
 

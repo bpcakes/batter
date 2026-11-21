@@ -44,7 +44,10 @@ guards every supplied route. It rejects empty and mixed-mode policy sets at
 construction. Call `.with_public_probes(PublicProbes::new().get("/live", handler)?)`
 before `prepare` to deliberately add a public GET/HEAD probe. Probes bypass
 lifecycle/deadline admission, authentication and quota, and receive no protected
-`OperationContext`. The builder accepts only literal GET paths and
+`OperationContext` from the assembly; an in-process request built from a map
+captured behind `request_admission` alone still carries the earlier request's
+context into them (`batter-nff2.1`; tested in `batter-axum`, not through
+Runlimit). The builder accepts only literal GET paths and
 returns a typed error for capture or wildcard patterns. It cannot accept an
 arbitrary Router or fallback. A public and protected GET at the same path
 panic during `prepare`, before serving. Use distinct GET paths.

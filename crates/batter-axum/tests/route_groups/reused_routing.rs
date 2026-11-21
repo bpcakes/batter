@@ -67,11 +67,6 @@ impl Fixture {
         let layer = entered.clone();
         let routes = GuardedRouter::new()
             .route("/source/{source_id}", capturing(&slot))
-            .route("/source", capturing(&slot))
-            .nest(
-                "/outer/{outer_id}",
-                GuardedRouter::new().route("/source/{source_id}", capturing(&slot)),
-            )
             .route(
                 "/view/{id}",
                 get(

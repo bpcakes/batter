@@ -662,7 +662,8 @@ request settings an Axum layer outside the client wrote: a request handed on
 whole from behind `DefaultBodyLimit` keeps that layer's body limit wherever no
 layer inside the boundary sets its own, so an outer `disable()` removes Axum's
 default limit for the boundary's extractors. A rebuilt request carries no such
-setting.
+setting, so an in-process result under an outer limit says nothing about how a
+served request is limited.
 
 ```rust,ignore
 // Before: the destination inherits the source's captures, matched path and
@@ -689,6 +690,8 @@ let mut next = Request::builder()
 if let Some(label) = parts.extensions.get::<Label>() {
     next.extensions_mut().insert(label.clone());
 }
+// Copy every other extension the destination reads, such as a served outer
+// router's `ConnectInfo<SocketAddr>` peer, the same way.
 ```
 
 Without the refusal, pinned Axum 0.8.9 would treat inherited records as outer
