@@ -328,7 +328,7 @@ reintroduce Markdown backlog lists. Historical execution plans remain in Git
 history; new work does not require a Jig plan.
 New public APIs need rustdoc and an example. New claims need executable tests
 or an explicit unverified label. Every public hard cut, meaning a removed or renamed
-public item, a moved path without an alias, or a signature change that stops
+public item, a moved path, or a signature change that stops
 existing callers compiling, ships in the same change with two things: a
 `Breaking:` CHANGELOG entry with before/after code for each affected call
 shape, and the removed name in the replacement item's rustdoc, in a sentence
