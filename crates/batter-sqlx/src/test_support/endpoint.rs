@@ -123,8 +123,9 @@ pub fn harness_admin_connect_options(
 
 /// A suite's harness endpoint, parsed once when the suite adopts its harness.
 ///
-/// Every acquisition and template call checks the process environment again
-/// and then uses this parse, before the harness provisions anything. The
+/// Every acquisition and template call reports this parse's refusal, if any,
+/// then checks the process environment again, before the harness provisions
+/// anything. The
 /// environment is checked once more after provisioning, before pools are built
 /// or a template initializer runs, since provisioning can take a while.
 #[derive(Clone)]
@@ -258,8 +259,11 @@ impl HarnessEndpoint {
         admin_url: &str,
         environment: Environment,
     ) -> Result<Self, sqlx::Error> {
+        // As for suites: a refused admin URL is reported first, since
+        // unsetting a variable would not make it usable.
+        let endpoint = Self::parse(admin_url).map_err(configuration)?;
         environment.validate()?;
-        Self::parse(admin_url).map_err(configuration)
+        Ok(endpoint)
     }
 
     /// Parse `admin_url` alone; the caller checks the environment.

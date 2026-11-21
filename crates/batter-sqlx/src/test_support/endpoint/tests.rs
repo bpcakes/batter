@@ -20,17 +20,32 @@ fn endpoint(admin_url: &str) -> HarnessEndpoint {
 }
 
 #[test]
-fn any_pg_variable_is_refused_before_parsing() {
-    let error = HarnessEndpoint::from_admin_url("not a url", Environment::AMBIENT).unwrap_err();
-    let sqlx::Error::Configuration(source) = &error else {
-        panic!("configuration error expected");
-    };
-    assert_eq!(
-        source
-            .downcast_ref::<UnsupportedHarnessEndpoint>()
-            .map(UnsupportedHarnessEndpoint::reason),
-        Some(HarnessEndpointReason::AmbientEnvironment)
-    );
+fn an_unusable_admin_url_is_reported_before_the_environment() {
+    // Unsetting a variable would not make a refused URL usable, so the URL's
+    // own reason wins; a usable URL then meets the environment refusal.
+    for (url, expected) in [
+        ("not a url", HarnessEndpointReason::Unparseable),
+        (
+            "postgres://u@127.0.0.1/postgres?dbname=postgres",
+            HarnessEndpointReason::DatabaseParameter,
+        ),
+        (
+            "postgres://u@127.0.0.1/postgres",
+            HarnessEndpointReason::AmbientEnvironment,
+        ),
+    ] {
+        let error = HarnessEndpoint::from_admin_url(url, Environment::AMBIENT).unwrap_err();
+        let sqlx::Error::Configuration(source) = &error else {
+            panic!("configuration error expected");
+        };
+        assert_eq!(
+            source
+                .downcast_ref::<UnsupportedHarnessEndpoint>()
+                .map(UnsupportedHarnessEndpoint::reason),
+            Some(expected),
+            "{url}"
+        );
+    }
 }
 
 #[test]

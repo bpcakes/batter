@@ -3036,7 +3036,7 @@ username and password of the options built from the harness admin URL's parse; a
 `dbname` parameter would retarget every lease is refused before provisioning on every path (live probe
 `fixture_database_parameter_refused_before_provisioning`), and a lease URL still selecting another
 database is refused before any pool exists (offline unit tests only, since harness-derived leases
-no longer reach it). Live probes prove distinct
+no longer reach it; its retention shares the code that the live pool-failure probes exercise). Live probes prove distinct
 `session_user` and `system_user` for a lease-login and a restricted-login pool,
 42501 owner-only denials beside a granted read through the reference profile,
 28P01 and session-policy failures retained by identity, both cancellation points

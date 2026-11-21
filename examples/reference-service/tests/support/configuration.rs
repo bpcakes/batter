@@ -128,6 +128,12 @@ async fn observe_failed_startup(database_url: &str, expected: &PgConnectOptions)
     if endpoint(&connect_options) != endpoint(expected) {
         return Err("configured startup options must reach the leased database".into());
     }
+    // Both must use the plaintext transport the harness provisions over.
+    for options in [&connect_options, expected] {
+        if !matches!(options.get_ssl_mode(), sqlx::postgres::PgSslMode::Disable) {
+            return Err("configured startup and fixture options must disable TLS".into());
+        }
+    }
     let pool_options = PoolSettings::new(1, 0, Duration::from_secs(3))?.pool_options();
     let cleanup = CleanupBudget::new(
         Duration::from_secs(2),

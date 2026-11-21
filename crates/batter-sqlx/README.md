@@ -1089,7 +1089,10 @@ and the environment recheck made just before pools are built, travel inside
 `sqlx::Error::Configuration` before any pool exists. Harness-derived leases can
 no longer fail the two lease checks, so offline unit tests, not a live probe,
 cover them and the endpoint mapping; the environment recheck still applies to
-every lease.
+every lease. Any of these refusals is retained by the same code as a failed
+connectivity check, which live pool-failure probes such as
+`fixture_handled_pool_error_retained` exercise; the refusal triggers
+themselves have offline cover only.
 
 The pinned harness opens connections with `NoTls`. An omitted TLS mode,
 `sslmode=prefer` and `sslmode=disable` all yield plaintext for the harness,
