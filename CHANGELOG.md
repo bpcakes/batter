@@ -14,6 +14,11 @@ contracts, capability facts and validation history.
   repository-wide explicit state-machine policy (`batter-j79l`, extracted from
   `batter-jkw6.3`).
 
+- Fix `scripts/ci_plan.py` missing out-of-directory Rust sources loaded by
+  `#[path = "..."]` or `include!`-family macros, and stop `push` runs from
+  reusing an earlier verified-tree marker when package-closure discovery fails
+  (`batter-yp77`, extracted from `batter-jkw6.59`).
+
 - **Breaking:** refuse in-process requests that carry the adapter's own
   request records (`batter-nff2`, `batter-28kb`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)).
@@ -121,11 +126,17 @@ contracts, capability facts and validation history.
   response.extensions().get::<batter::axum::InProcessRefusal>()
   ```
 
-- Stop two non-yielding fixture tests from counting child startup against their
-  five-second bounds (`batter-hiuu`). Parent-unwind cleanup is now timed from
-  startup evidence, with a separate spawn-to-cleanup bound below the ten-second
-  child emergency exit; the parent-pipe-closure exit window starts at closure,
-  and its exact exit code still separates it from the emergency exit.
+- Stop non-yielding fixture tests from counting child startup against bounds
+  that measure something else (`batter-hiuu`, `batter-hiuu.1`). Parent-unwind
+  cleanup is now timed from observed startup evidence, with a separate
+  spawn-to-cleanup bound below the ten-second child emergency exit; the
+  parent-pipe-closure exit window starts at closure, and its exact exit code
+  still separates it from the emergency exit. The early-kill control's deadline
+  now follows its recorded kill request, which must lie between independent
+  clock samples taken around the kill. The emergency-exit hang guard follows
+  the blocked child's captured startup evidence, which follows spawning the
+  emergency thread; only the unlaunched child, which emits none, adds the
+  startup allowance.
 
 - Upgrade the pinned Rust toolchain and every package minimum to 1.100.0
   (`batter-08il`), including CI, generated consumers and the at-rest portability gate.
