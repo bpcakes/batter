@@ -90,7 +90,8 @@ fn parent_unwind_kills_reaps_and_joins_capture_reader() {
     let pid = child.child.id();
     let started = child.started;
     child.wait_for_event("fixture-entered");
-    // Child startup is bounded by wait_for_event and is not unwind cleanup.
+    // wait_for_event bounds when startup evidence was captured; unwind timing
+    // starts once the parent observes it.
     let unwind_started = Instant::now();
     let failure = std::thread::spawn(move || {
         let _child = child;
@@ -123,9 +124,10 @@ fn parent_pipe_closure_ends_blocked_runtime_without_cleanup() {
     let mut child = FixtureChild::spawn("non-yielding").unwrap();
     child.wait_for_event("runtime-drop-started");
     drop(child.parent_pipe.take());
-    // Time the exit from closure, not spawn: startup and drain are bounded by
-    // wait_for_event. The exit code, not this window, separates PARENT_GONE
-    // from a later EMERGENCY_DEADLINE exit.
+    // Start the hang guard after closure, not at spawn: startup and drain are
+    // bounded by wait_for_event, and sampling after the drop gives the child
+    // the whole window. The guard polls, so the exit code, not this window,
+    // separates PARENT_GONE from a later EMERGENCY_DEADLINE exit.
     let limit = child.started.elapsed() + EXIT_LIMIT;
     child
         .wait(limit)
@@ -144,8 +146,22 @@ fn emergency_deadline_covers_blocked_work_and_incomplete_launch() {
     let mut blocked = FixtureChild::spawn("stuck-before-runtime").unwrap();
     let mut unlaunched = unlaunched_child();
     blocked.wait_for_event("fixture-entered");
-    for child in [&mut blocked, &mut unlaunched] {
-        let run = child.wait(launch::EMERGENCY_LIMIT + EXIT_LIMIT).unwrap();
+    // Each child spawns its emergency thread before reading the launch record.
+    // The blocked child's captured fixture-entered therefore follows that
+    // spawn, so its guard still catches a late emergency exit. The unlaunched child
+    // emits no evidence, so only the startup allowance can bound its arming.
+    let entered = blocked
+        .capture
+        .snapshot()
+        .observed("fixture-entered")
+        .unwrap();
+    let exit_after_arming = launch::EMERGENCY_LIMIT + EXIT_LIMIT;
+    let guards = [
+        entered.duration_since(blocked.started) + exit_after_arming,
+        super::super::timing::STARTUP_LIMIT + exit_after_arming,
+    ];
+    for (child, guard) in [&mut blocked, &mut unlaunched].into_iter().zip(guards) {
+        let run = child.wait(guard).unwrap();
         run.validate(ExpectedExit::Code(launch::EMERGENCY_DEADLINE), &[], &[])
             .unwrap();
         assert!(run.elapsed >= launch::EMERGENCY_LIMIT, "{run:?}");
@@ -227,10 +243,22 @@ fn natural_exits_remain_distinct_after_a_later_kill_request() {
 fn watchdog_rejects_a_kill_before_its_deadline() {
     let mut child = FixtureChild::spawn("stuck-before-runtime").unwrap();
     child.wait_for_event("fixture-entered");
+    let before_kill = child.started.elapsed();
     child.kill_and_reap().unwrap();
-    let run = child.wait(EXIT_LIMIT).unwrap();
+    let after_kill = child.started.elapsed();
+    // The recorded request must match an independent clock, or anchoring the
+    // deadline to it would hide a wrong timestamp.
+    let requested = child.kill_requested_at.unwrap();
     assert!(
-        killed_status(run.status) && run.elapsed < EXIT_LIMIT,
+        before_kill <= requested && requested <= after_kill,
+        "{requested:?}"
+    );
+    // Anchor the deadline to that request, so neither slow startup nor parent
+    // scheduling can turn this early kill into a timely one.
+    let deadline = requested + EXIT_LIMIT;
+    let run = child.wait(deadline).unwrap();
+    assert!(
+        killed_status(run.status) && run.elapsed < deadline,
         "{run:?}"
     );
     assert!(run.validate(ExpectedExit::WatchdogKill, &[], &[]).is_err());

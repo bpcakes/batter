@@ -967,12 +967,25 @@ flooding output beyond each limit, proving that overflow does not stop draining.
 The Linux parent-death probe must reject incorrect termination and forbidden
 cleanup evidence even when Python optimization is enabled; its checks do not
 depend on Python's removable `assert` statements.
-The fixture-owner unwind control must finish cleanup within five seconds of
-startup evidence and within ten seconds of spawn. The child arms its ten-second
-emergency exit only after spawn, so the second bound excludes waiting for that
-fallback, which does not establish prompt kill/reap behavior. The parent-pipe
-closure control allows five seconds from closure and requires the distinct
-parent-gone exit code rather than the emergency code.
+The fixture-owner unwind control must finish cleanup within five seconds of the
+parent observing startup evidence and within ten seconds of spawn. The child
+arms its ten-second emergency exit only after spawn, so the second bound
+excludes waiting for that fallback, which does not establish prompt kill/reap
+behavior. The parent-pipe closure control kills a child still running five
+seconds after the parent closes the pipe, and requires the distinct parent-gone
+exit code rather than the emergency code; like the emergency-exit guard below,
+this guard polls and is not a strict upper bound on a late exit.
+The early-kill control places its watchdog deadline five seconds after its
+recorded kill request, so neither slow startup nor parent scheduling can make
+that kill look timely; the recorded request must lie between independent clock
+samples taken around the kill. The emergency-exit control's hang guard kills a
+blocked child still running five seconds past the emergency limit after the
+parent captured its startup evidence, which follows spawning the emergency
+thread; only the unlaunched child, which emits no evidence, adds the startup
+allowance. The guard polls, so it is not a strict upper bound on a late exit.
+Controls that bound a child's whole life from spawn, such as the natural-exit
+and launch-rejection checks, still count child startup against their single
+five-second bound.
 
 A direct task join says nothing about descendants it detached. Component authors
 must preserve ownership themselves. After any requested abort, observed panic,
