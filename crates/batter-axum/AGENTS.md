@@ -140,12 +140,14 @@ Windows support and non-Unix fallbacks are out of scope.
   client's refusal of whole extension maps captured from routed, nested,
   invalid UTF-8, fallback and native `nest_service` dispatches and of each
   routing record alone, before any layer or handler runs, with one static
-  ERROR event and no completion. Its refused maps are captured from a bare
-  `Router`, so no private record masks the routing check;
+  ERROR event and no completion. Its refused maps, apart from the logging
+  test's, are captured from a bare `Router`, so no private record masks the
+  routing check;
   `reused_routing_accepted.rs` covers
   arrival-shaped requests with application extensions, a copied or forwarded
   refusal marker removed from a dispatched response, the copy-by-type
-  migration and nested captures accumulating inside one dispatch.
+  migration, nested captures accumulating inside one dispatch and an outer
+  `DefaultBodyLimit` reaching the router of a request forwarded whole.
   `reused_request_state.rs` covers the refusal of a map that keeps only the
   boundary's own records, of maps captured behind each of the four
   record-writing `low_level` wrappers around a service that is not a
@@ -154,7 +156,8 @@ Windows support and non-Unix fallbacks are out of scope.
   version, target, headers, body and a copied extension, also under `nest`
   and `nest_service`), the accepted public values a `request_admission`-only
   map carries, replaced by a live context for an admitted route, the
-  inherited context that rendered probes, the fallback renderer and a
+  inherited context that rendered probes, the fallback renderer, admission's
+  failure renderer and a
   router without admission receive (`batter-nff2.1`), and a copied public
   `CorrelationId` that is not refused; `src/correlation/tests.rs` requires one
   fixture per listed private record, holding only that record, refuses each
@@ -274,7 +277,9 @@ one `private_records!` list in `src/correlation.rs`; add a new private request
 record there, with its fixture in `src/correlation/tests.rs`, name it in the
 one documented list in `InProcessClient::request`'s rustdoc (other documents
 refer to that list rather than repeating it), and never add a public type to
-it: a public value is a caller's choice. Keep refusing a live
+it: a public value is a caller's choice. No test proves the list complete:
+the fixture test covers only listed types, so check every new request
+extension a layer inserts against the list in review. Keep refusing a live
 request that an outer Axum router or one of the four record-writing
 `low_level` wrappers forwards whole; it carries that dispatch's records.
 `request_admission` alone writes only public values, so its forwarded request

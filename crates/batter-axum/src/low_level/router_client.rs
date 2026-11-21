@@ -203,12 +203,15 @@ impl RouterClient {
     /// its public `OperationContext` and
     /// [`RequestInterruptionResponder`](crate::RequestInterruptionResponder),
     /// which are accepted like any application extension. The protected
-    /// boundary's admission gives its admitted routes fresh values. Its
-    /// rendered probes and its metadata-only fallback renderer run outside
-    /// admission and receive the earlier request's context and responder in
-    /// their request metadata, and a caller-composed router that does not
-    /// admit the request again hands that context to its handlers. The
-    /// context is cancelled once the earlier request has finished.
+    /// boundary's admission gives its admitted routes fresh values, but
+    /// renderers still receive the arriving metadata: its rendered probes
+    /// and metadata-only fallback renderer, which run outside admission, and
+    /// admission's own failure and interruption renderers receive the
+    /// earlier request's context and responder (the interruption case is
+    /// read from the code, not tested). A caller-composed router
+    /// that does not admit the request again hands that context to its
+    /// handlers. The context is cancelled once the earlier request has
+    /// finished.
     ///
     /// The refusal precedes everything inside the router, including
     /// authentication or a quota check it composes.

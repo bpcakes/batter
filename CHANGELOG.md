@@ -35,7 +35,8 @@ contracts, capability facts and validation history.
   `CorrelationId`, are not refused, and a map captured behind
   `low_level::request_admission` alone, which carries only the public
   `OperationContext` and `RequestInterruptionResponder`, stays accepted; the
-  rendered probes, fallback renderer and caller-composed routers that
+  rendered probes, fallback renderer, admission's failure and interruption
+  renderers and caller-composed routers that
   receive its earlier, possibly cancelled, context are tracked as
   `batter-nff2.1`. No public signature changed.
 

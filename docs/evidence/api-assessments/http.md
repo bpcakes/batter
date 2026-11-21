@@ -890,6 +890,11 @@ Decisions recorded with it:
   Axum keeps an inherited one, and the client cannot tell the two apart.
 - Public values a caller copies by type, such as `CorrelationId`, are not
   refused. A test shows the boundary generates its own identity.
+- Request settings an Axum layer outside the client writes are not routing
+  records and stay accepted. A test forwards a request whole from behind
+  `DefaultBodyLimit::max(4)`; the destination applies that limit, and a
+  rebuilt request gets the default. Axum keeps that record's type private, so
+  the client could not detect it by type in any case.
 - The refusal stays a sanitized internal-failure response identified only by
   its marker. A `Result`-returning signature remains rejected for the reasons
   recorded under `batter-oj37`; the documents now say that status and body do
@@ -927,11 +932,16 @@ Decisions recorded with it:
   handlers that extract them directly. The context is cancelled once the
   earlier request has finished; a map reused while it runs carries a live
   one. A characterization test replays a map from a finished request and
-  finds the cancelled context and the responder in a rendered probe and the
-  fallback renderer, where an arriving request carries neither, and the
-  cancelled context in the handler of a bare `RouterClient` router. That is left
-  as a residual, tracked as `batter-nff2.1`, not refused here: both are public
-  types a caller may insert deliberately, and
+  finds the cancelled context and the responder in a rendered probe, the
+  fallback renderer and admission's failure renderer on a boundary that is
+  still starting, where an arriving request carries neither, and the
+  cancelled context in the handler of a bare `RouterClient` router. Admission
+  builds its interruption responder from the same arriving parts, so the
+  interruption renderer sees them too; that case is read from the code, not
+  tested. The third review round found the admission renderers, which the
+  earlier text omitted. That is left as a residual, tracked as
+  `batter-nff2.1`, not refused here: both are public types a caller may insert
+  deliberately, and
   refusing them would make the check name caller-visible values, which the
   `CorrelationId` decision above rejects. Guarded handlers read
   `AdmittedRequest`, which is not affected.

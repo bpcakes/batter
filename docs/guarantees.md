@@ -2483,6 +2483,10 @@ request. The request never entered the boundary, so it has no request span,
 completion event or `x-request-id` header. Caller-inserted application
 extensions are accepted and reach handlers untouched; the supported way to
 redispatch is a fresh request with each application extension copied by type.
+Request settings that an Axum layer outside the client wrote are not routing
+records and are accepted too: a request handed on whole from behind
+`DefaultBodyLimit` keeps that layer's body limit, while a rebuilt request gets
+the default.
 
 Without the check, Axum treats inherited records as outer-router state: path
 parameters are appended, an inherited invalid UTF-8 record rejects a valid
@@ -2498,10 +2502,12 @@ and the boundary generates its own identity. A map captured behind
 `low_level::request_admission` alone carries no private record: outside
 `operational_http` that layer inserts only its public `OperationContext` and
 `RequestInterruptionResponder`, which are accepted. The boundary's admission
-gives admitted routes fresh values. Rendered probes and the metadata-only
-fallback renderer run outside admission and receive the earlier request's
-context and responder in their request metadata, and a caller-composed router
-without admission hands that context to its handlers. The context is cancelled
+gives admitted routes fresh values, but renderers still receive the arriving
+metadata: rendered probes and the metadata-only fallback renderer, which run
+outside admission, and admission's own failure and interruption renderers
+receive the earlier request's context and responder (the interruption case is
+read from the code, not tested), and a caller-composed router without
+admission hands that context to its handlers. The context is cancelled
 once the earlier request has finished. This residual is tracked as
 `batter-nff2.1`.
 

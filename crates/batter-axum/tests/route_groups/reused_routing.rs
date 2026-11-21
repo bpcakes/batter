@@ -1,9 +1,10 @@
 //! A whole extension map from an earlier dispatch is refused at client entry,
-//! before the router, any layer or any handler runs. The maps these tests
-//! replay come from a bare Axum router, so they carry Axum's routing records
-//! and none of Batter's private ones: only the routing check can refuse them.
-//! Maps that also carry Batter's records are covered in
-//! `reused_request_state.rs`.
+//! before the router, any layer or any handler runs. The maps the refusal
+//! tests replay come from a bare Axum router, so they carry Axum's routing
+//! records and none of Batter's private ones: only the routing check can
+//! refuse them. The logging test is the exception: it replays a map from the
+//! boundary, so it can also show the source dispatch's own completion. Maps
+//! that carry Batter's records are covered in `reused_request_state.rs`.
 
 use super::{
     capture::Capture,

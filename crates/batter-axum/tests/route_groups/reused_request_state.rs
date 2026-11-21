@@ -19,7 +19,7 @@ use batter_axum::{
     CorrelationId, GuardedRouter, HttpBoundary, InProcessRefusal, ProbePath,
     RequestInterruptionResponder, low_level,
 };
-use batter_core::operation::OperationContext;
+use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
 use std::{
     convert::Infallible,
     future::{Ready, ready},
@@ -352,9 +352,9 @@ fn inherited(parts: &Parts) -> Response {
 }
 
 /// Characterizes the residual `batter-nff2.1` tracks: the public values are
-/// not refused, and the renderers that run outside admission, like a
-/// caller-composed router that does not admit again, receive the earlier
-/// request's.
+/// not refused, and the renderers that run outside admission, admission's
+/// own failure renderer and a caller-composed router that does not admit
+/// again all receive the earlier request's.
 #[tokio::test]
 async fn an_inherited_public_context_reaches_code_outside_admission() {
     let client = HttpBoundary::new(request_policy(&ready_handle(), SECOND))
@@ -407,4 +407,21 @@ async fn an_inherited_public_context_reaches_code_outside_admission() {
         .await;
     assert!(reused.extensions().get::<InProcessRefusal>().is_none());
     assert_eq!(body_text(reused).await, "cancelled");
+
+    // Admission's own failure renderer receives the arriving parts too: a
+    // boundary that is still starting refuses admission and renders them.
+    let (starting, _approval) = ShutdownHandle::new_with_readiness_approval();
+    let policy =
+        request_policy(&starting, SECOND).with_failure_renderer(|_, parts| inherited(parts));
+    let refusing = HttpBoundary::new(policy)
+        .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+        .await
+        .unwrap()
+        .in_process();
+    let fresh = refusing.request(get_request("/work")).await;
+    assert_eq!(body_text(fresh).await, "context=none responder=false");
+    let reused = refusing
+        .request(reusing("/work", admitted_alone().await))
+        .await;
+    assert_eq!(body_text(reused).await, "context=cancelled responder=true");
 }

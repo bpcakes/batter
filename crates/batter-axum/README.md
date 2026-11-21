@@ -638,9 +638,12 @@ and the boundary generates its own identity. A map captured behind
 `operational_http` that layer inserts only its public `OperationContext` and
 `RequestInterruptionResponder`, which are accepted like any application
 extension. The boundary's admission gives admitted routes fresh values, but
-rendered probes and the metadata-only fallback renderer, which run outside
-admission, receive the earlier request's context and responder, and a
-caller-composed router without admission hands that context to its handlers.
+renderers still receive the arriving metadata: rendered probes and the
+metadata-only fallback renderer, which run outside admission, and admission's
+own failure and interruption renderers receive the earlier request's context
+and responder (the interruption case is read from the code, not tested), and
+a caller-composed router without admission hands that
+context to its handlers.
 The context is cancelled once the earlier request has finished (tracked as
 `batter-nff2.1`).
 
@@ -654,7 +657,10 @@ returned response carries it only when that call refused the request. The
 request never entered the boundary, so it has no completion event and no
 `x-request-id` header. Its status and body are those of any sanitized internal
 failure, so only the marker identifies a refusal.
-Application extensions are accepted and reach handlers untouched.
+Application extensions are accepted and reach handlers untouched, and so are
+request settings an Axum layer outside the client wrote: a request handed on
+whole from behind `DefaultBodyLimit` keeps that layer's body limit, while a
+rebuilt request gets the default.
 
 ```rust,ignore
 // Before: the destination inherits the source's captures, matched path and

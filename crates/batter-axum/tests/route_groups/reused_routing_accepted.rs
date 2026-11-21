@@ -209,3 +209,43 @@ fn nested_routing_inside_one_dispatch_keeps_every_capture() {
     );
     assert!(!text.contains("ERROR"), "{text}");
 }
+
+/// Axum settings that a layer outside the client writes into the request are
+/// not routing records. They reach the router like application extensions,
+/// and the documented rebuild drops them.
+#[tokio::test]
+async fn a_body_limit_chosen_outside_the_client_reaches_the_router() {
+    let client = HttpBoundary::new(request_policy(&ready_handle(), SECOND))
+        .assemble(GuardedRouter::new().route(
+            "/size",
+            axum::routing::post(|body: axum::body::Bytes| async move { body.len().to_string() }),
+        ))
+        .await
+        .unwrap()
+        .in_process();
+    let payload = || {
+        axum::extract::Request::builder()
+            .method("POST")
+            .uri("/size")
+            .body(axum::body::Body::from("ten bytes!"))
+            .unwrap()
+    };
+    let forwarding = client.clone();
+    let limited = tower::Layer::layer(
+        &axum::extract::DefaultBodyLimit::max(4),
+        tower::service_fn(move |request: axum::extract::Request| {
+            let client = forwarding.clone();
+            async move { Ok::<_, std::convert::Infallible>(client.request(request).await) }
+        }),
+    );
+    let forwarded = tower::ServiceExt::oneshot(limited, payload())
+        .await
+        .unwrap();
+    assert_eq!(forwarded.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(forwarded.extensions().get::<InProcessRefusal>().is_none());
+
+    // A request built fresh, as the rebuild migration does, carries no such
+    // setting and gets the default limit.
+    let fresh = client.request(payload()).await;
+    assert_eq!(body_text(fresh).await, "10");
+}

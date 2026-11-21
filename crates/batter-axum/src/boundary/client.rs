@@ -187,7 +187,11 @@ impl InProcessClient {
     ///
     /// Application extensions, such as a chosen
     /// [`ConnectInfo`](axum::extract::ConnectInfo) or an application's own
-    /// types, are accepted and reach handlers untouched.
+    /// types, are accepted and reach handlers untouched. So are request
+    /// settings that an Axum layer outside the client wrote, which are not
+    /// routing records: a request handed on whole from behind
+    /// [`DefaultBodyLimit`](axum::extract::DefaultBodyLimit) keeps that
+    /// layer's body limit, while a rebuilt request gets the default.
     ///
     /// The check runs at entry, before the router, any layer or any
     /// application code is polled, and costs a few type-map lookups.
