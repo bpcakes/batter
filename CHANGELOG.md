@@ -8,6 +8,11 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Fix `scripts/ci_plan.py` missing out-of-directory Rust sources loaded by
+  `#[path = "..."]` or `include!`-family macros, and stop `push` runs from
+  reusing an earlier verified-tree marker when package-closure discovery fails
+  (`batter-yp77`, extracted from `batter-jkw6.59`).
+
 - **Breaking:** refuse in-process requests that carry the adapter's own
   request records (`batter-nff2`, `batter-28kb`;
   [ADR-010 assessment](docs/evidence/api-assessments/http.md#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)).

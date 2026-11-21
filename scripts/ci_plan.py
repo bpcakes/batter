@@ -11,15 +11,18 @@
 - `verified_run`: the URL of that earlier run, when there is one.
 - `runlimit_postgres`: `true` when the change can affect the native Runlimit
   PostgreSQL tests, meaning a file in the local package closure of
-  `runlimit-postgres` or a workspace-wide build input.
+  `runlimit-postgres`, a source file outside it that the closure's Rust
+  sources load by path, or a workspace-wide build input.
 
-Whenever the planner cannot prove a skip, it selects the full work. The
+Whenever the planner cannot prove a skip, it selects the full work: if a job's
+inputs are unknown, every job runs and no earlier verification is reused. The
 workflow also runs every test job when this planner fails.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -37,6 +40,12 @@ GLOBAL_INPUTS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/",
 DIFF_EVENTS = ("pull_request", "merge_group", "push")
 RECORDING_EVENTS = ("pull_request", "merge_group")
 NULL_SHA = "0" * 40
+# A `#[path]` module or an `include!`, `include_str!` or `include_bytes!` of a
+# string literal. Both resolve against the directory of the file that holds them.
+PATH_REFERENCE = re.compile(
+    r'#\[path\s*=\s*"([^"]+)"\s*\]|\binclude(?:_str|_bytes)?!\(\s*"([^"]+)"\s*\)')
+# An include whose argument is not a plain string literal, such as `concat!`.
+COMPUTED_INCLUDE = re.compile(r'\binclude(?:_str|_bytes)?!\(\s*[^"\s]')
 
 
 def local_closure(metadata, package):
@@ -62,6 +71,51 @@ def local_closure(metadata, package):
             if dependency.get("path") and (is_root or dependency.get("kind") in (None, "build")):
                 pending.append((by_dir[Path(dependency["path"])], False))
     return sorted(directory.relative_to(root).as_posix() + "/" for directory in seen)
+
+
+def referenced_sources(root, directories):
+    """Return repository-relative files outside `directories` that their Rust sources load.
+
+    Every `.rs` file below `directories`, and every Rust file it loads in turn,
+    is scanned for `#[path]` modules and literal `include!`-family macros, which
+    resolve against the holding file's directory. A computed include, a
+    reference that leaves the repository or one that names no existing file
+    raises, which makes the caller select the full work.
+    """
+    root = Path(root).resolve()
+
+    def inside(relative):
+        return any(relative.startswith(directory) for directory in directories)
+
+    pending = [source for directory in directories for source in (root / directory).rglob("*.rs")]
+    seen, outside = set(), set()
+    while pending:
+        source = pending.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        text = source.read_text(encoding="utf-8")
+        if COMPUTED_INCLUDE.search(text):
+            raise ValueError(f"{source.relative_to(root)} includes a computed path")
+        for match in PATH_REFERENCE.finditer(text):
+            target = (source.parent / (match.group(1) or match.group(2))).resolve()
+            relative = target.relative_to(root).as_posix()
+            if not target.is_file():
+                raise FileNotFoundError(f"{source.relative_to(root)} loads missing {relative}")
+            if not inside(relative):
+                outside.add(relative)
+                if target.suffix == ".rs":
+                    pending.append(target)
+    return sorted(outside)
+
+
+def package_inputs(metadata, packages):
+    """Return the local closures of `packages` and the outside sources they load."""
+    directories = set()
+    for package in packages:
+        directories.update(local_closure(metadata, package))
+    directories = sorted(directories)
+    return [*directories, *referenced_sources(metadata["workspace_root"], directories)]
 
 
 def touches(paths, inputs):
@@ -105,7 +159,9 @@ def plan(event, paths, tree, find_run, closure):
     """Return the step outputs and the notes that explain them.
 
     `find_run` maps a tree to a verifying run URL and `closure` returns the
-    Runlimit PostgreSQL input directories; either may raise.
+    Runlimit PostgreSQL inputs; either may raise. A closure failure returns the
+    full-run outputs at once, so no skip or earlier verification rests on a
+    partial plan.
     """
     outputs = {"tree": tree, "tree_verified": "false", "verified_run": "",
                "runlimit_postgres": "true"}
@@ -119,13 +175,13 @@ def plan(event, paths, tree, find_run, closure):
         try:
             inputs = (*closure(), *GLOBAL_INPUTS)
         except Exception as error:  # noqa: BLE001 - any failure selects the full run
-            notes.append(f"The Runlimit PostgreSQL inputs are unknown ({error!r}), so it runs.")
+            notes.append(f"The Runlimit PostgreSQL inputs are unknown ({error!r}), so every job runs.")
+            return outputs, notes
+        if touches(paths, inputs):
+            notes.append("The change touches Runlimit PostgreSQL inputs.")
         else:
-            if touches(paths, inputs):
-                notes.append("The change touches Runlimit PostgreSQL inputs.")
-            else:
-                outputs["runlimit_postgres"] = "false"
-                notes.append("The change leaves Runlimit PostgreSQL inputs untouched; it is skipped.")
+            outputs["runlimit_postgres"] = "false"
+            notes.append("The change leaves Runlimit PostgreSQL inputs untouched; it is skipped.")
     if event == "push":
         try:
             url = find_run(tree)
@@ -183,7 +239,7 @@ def main(environ=os.environ):
     get = github_getter(environ.get("GITHUB_API_URL", "https://api.github.com"),
                         environ["GITHUB_REPOSITORY"], environ.get("GITHUB_TOKEN", ""))
     outputs, notes = plan(event, paths, tree, lambda value: verifying_run(value, get),
-                          lambda: local_closure(cargo_metadata(), RUNLIMIT_PACKAGE))
+                          lambda: package_inputs(cargo_metadata(), (RUNLIMIT_PACKAGE,)))
     write_outputs(outputs, notes, environ)
     return 0
 
