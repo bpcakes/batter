@@ -36,7 +36,7 @@ fn targets_select_the_recorded_database_on_the_harness_endpoint() {
             "postgres://owner@%2Ftmp%2Fpg%20socket:5432/pgh_template_1",
         ),
     ] {
-        let target = TemplateTarget::new(endpoint(admin), harness_url, Environment::CLEAN)
+        let target = TemplateTarget::new(&endpoint(admin), harness_url, Environment::CLEAN)
             .expect(harness_url);
         assert_eq!(target.database_name(), "pgh_template_1");
         let options = target.connect_options();
@@ -48,7 +48,7 @@ fn targets_select_the_recorded_database_on_the_harness_endpoint() {
         ));
     }
     let tcp = TemplateTarget::new(
-        endpoint("postgres://owner:p@db%2Bblue.example/postgres"),
+        &endpoint("postgres://owner:p@db%2Bblue.example/postgres"),
         "postgres://owner:p@db%2Bblue.example/pgh_template_1",
         Environment::CLEAN,
     )
@@ -68,7 +68,7 @@ fn targets_refuse_urls_the_harness_would_not_write_for_this_endpoint() {
         "postgres://u@127.0.0.1:5432/",
         "postgres://u@127.0.0.1:5432/Jobs%20x",
     ] {
-        let error = TemplateTarget::new(admin.clone(), url, Environment::CLEAN).unwrap_err();
+        let error = TemplateTarget::new(&admin, url, Environment::CLEAN).unwrap_err();
         assert!(
             matches!(&error, sqlx::Error::Configuration(source)
                 if source.is::<crate::test_support::LeaseDatabaseMismatch>()),
@@ -76,7 +76,7 @@ fn targets_refuse_urls_the_harness_would_not_write_for_this_endpoint() {
         );
     }
     let foreign = TemplateTarget::new(
-        admin.clone(),
+        &admin,
         "postgres://u@127.0.0.1:6543/pgh_template_1",
         Environment::CLEAN,
     )
@@ -86,7 +86,7 @@ fn targets_refuse_urls_the_harness_would_not_write_for_this_endpoint() {
         Some(HarnessEndpointReason::LeaseEndpointMismatch)
     );
     let ambient = TemplateTarget::new(
-        admin,
+        &admin,
         "postgres://u@127.0.0.1:5432/pgh_template_1",
         Environment::AMBIENT,
     )
@@ -100,7 +100,7 @@ fn targets_refuse_urls_the_harness_would_not_write_for_this_endpoint() {
 #[test]
 fn debug_output_names_only_the_database() {
     let target = TemplateTarget::new(
-        endpoint("postgres://owner:secret-marker@127.0.0.1:5432/postgres"),
+        &endpoint("postgres://owner:secret-marker@127.0.0.1:5432/postgres"),
         "postgres://owner:secret-marker@127.0.0.1:5432/pgh_template_1",
         Environment::CLEAN,
     )

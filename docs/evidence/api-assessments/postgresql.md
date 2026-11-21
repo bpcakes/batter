@@ -219,7 +219,10 @@ the harness keeps the admin URL's query, and SQLx lets `dbname` override the
 path. Each lease's URL must select `lease.database_name()`; otherwise
 `LeaseDatabaseMismatch` is retained like any pool failure, before any pool
 exists; the `fixture_lease_database_mismatch_retained` live probe proves this on
-both the owned and low-level paths. It travels in `sqlx::Error::Configuration`, following the repository's
+both the owned and low-level paths. (Superseded by `batter-c5ci`: the admin URL's `dbname`
+parameter is now refused before provisioning, proven by
+`fixture_database_parameter_refused_before_provisioning`, so harness-derived leases no longer reach this
+runtime rejection.) It travels in `sqlx::Error::Configuration`, following the repository's
 existing configuration-wrapping precedent, because a new `FixtureError` variant
 or `DatabaseCleanup` field would break exhaustive matches and struct literals.
 Server-owned outcomes (unknown role, expired or wrong password, connection

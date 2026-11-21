@@ -43,7 +43,26 @@ impl UnsupportedHarnessEndpoint {
 }
 
 /// Why a harness endpoint was refused.
+///
+/// Non-exhaustive: later releases may refuse further endpoint shapes, so
+/// matches need a wildcard arm.
+///
+/// ```
+/// use batter_sqlx::test_support::{FixtureError, HarnessEndpointReason};
+/// fn advice(error: &FixtureError) -> &'static str {
+///     match error {
+///         FixtureError::Endpoint(refusal) => match refusal.reason() {
+///             HarnessEndpointReason::AmbientEnvironment => "unset client PG* variables",
+///             HarnessEndpointReason::DatabaseParameter => "drop dbname from the admin URL",
+///             _ => "fix the harness admin URL",
+///         },
+///         _ => "not an endpoint refusal",
+///     }
+/// }
+/// # let _ = advice;
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HarnessEndpointReason {
     /// A `PG*` environment variable a PostgreSQL client could read is set
     /// (every `PG` name except `PGDATA` and `PG_`-prefixed ones). SQLx fills
@@ -64,6 +83,11 @@ pub enum HarnessEndpointReason {
     /// The admin URL declares `hostaddr`, which SQLx can replace with a Unix
     /// socket.
     HostAddress,
+    /// The admin URL sets a `dbname` query parameter. The harness keeps the
+    /// query in every lease and template URL it derives, so the parameter
+    /// would override each one's database; name the admin database in the
+    /// URL path instead.
+    DatabaseParameter,
     /// The admin URL selects a setting SQLx options cannot carry faithfully:
     /// `options` other than `-c key=value` pairs, a non-default
     /// `target_session_attrs`, `sslnegotiation` or `load_balance_hosts`,
@@ -103,6 +127,9 @@ impl fmt::Display for UnsupportedHarnessEndpoint {
                 "the fixture admin URL names several ports for its host"
             }
             HarnessEndpointReason::HostAddress => "the fixture admin URL declares hostaddr",
+            HarnessEndpointReason::DatabaseParameter => {
+                "the fixture admin URL sets dbname, which would override every lease database"
+            }
             HarnessEndpointReason::UnsupportedSetting => {
                 "the fixture admin URL selects a setting fixture pools cannot carry"
             }

@@ -88,8 +88,9 @@ contracts cite:
   with tokio-postgres, map its typed `Config` field by field into SQLx options,
   and take the database from the name the harness recorded, refusing any
   ambient client `PG*` variable (every `PG` name except `PGDATA` and
-  `PG_`-prefixed ones), `hostaddr`, no host, several hosts or ports, and
-  settings SQLx cannot carry. Suites parse once and refuse before provisioning or template lookup. Template initializers receive a typed
+  `PG_`-prefixed ones), `hostaddr`, no host, several hosts or ports, a
+  `dbname` parameter (the harness keeps the admin query in every lease URL)
+  and settings SQLx cannot carry. Suites parse once and refuse before provisioning or template lookup. Template initializers receive a typed
   target whose SQLx options come from that parse, not a URL.
   The pinned [harness connector](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
   uses `NoTls`, so fixture clients use plaintext. A passwordless admin URL

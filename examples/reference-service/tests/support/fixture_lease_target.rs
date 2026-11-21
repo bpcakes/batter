@@ -1,5 +1,5 @@
-//! A lease URL that selects another database is refused before any pool
-//! exists, and both fixture paths retain that refusal.
+//! An admin URL whose `dbname` parameter would retarget every lease is
+//! refused on every fixture path before the harness provisions anything.
 use std::{
     error::Error,
     sync::{
@@ -10,12 +10,12 @@ use std::{
 };
 
 use batter::sqlx::test_support::{
-    ConnectionPlan, FixtureError, FixtureReport, FixtureSuite, LeaseDatabaseMismatch, PlannedPool,
+    ConnectionPlan, FixtureError, FixtureSuite, HarnessEndpointReason, PlannedPool, template_spec,
 };
 use postgres_test_harness::{HarnessConfig, PostgresHarness, cleanup_stale_databases};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-use super::{ProbeResult, fixture_run};
+use super::ProbeResult;
 
 type BoxError = Box<dyn Error + Send + Sync>;
 
@@ -24,7 +24,7 @@ const PROJECT: &str = "batter_retarget";
 
 /// A harness whose admin URL also names the admin database in a `dbname`
 /// query parameter. Harness administration honours that parameter, but the
-/// harness keeps the query in every lease URL, where SQLx applies it over the
+/// harness keeps the query in every lease URL, where it would override the
 /// lease path. Returns the harness and the unmodified admin URL.
 async fn retargeting_harness() -> Result<(PostgresHarness, String), BoxError> {
     let (url, options) = super::live_endpoint::from_process()?;
@@ -80,11 +80,12 @@ async fn inventory(observer: &PgPool) -> Result<Vec<String>, sqlx::Error> {
     .await
 }
 
-fn is_mismatch(error: &sqlx::Error) -> bool {
-    matches!(error, sqlx::Error::Configuration(source) if source.is::<LeaseDatabaseMismatch>())
+fn is_database_parameter(error: &FixtureError) -> bool {
+    matches!(error, FixtureError::Endpoint(refusal)
+        if refusal.reason() == HarnessEndpointReason::DatabaseParameter)
 }
 
-pub async fn mismatch_retained() -> ProbeResult {
+pub async fn database_parameter_refused() -> ProbeResult {
     let (harness, admin) = retargeting_harness().await?;
     // Reclaim only tagged, inactive residue of this probe's own project.
     cleanup_stale_databases(&admin, PROJECT, Duration::ZERO).await?;
@@ -92,104 +93,106 @@ pub async fn mismatch_retained() -> ProbeResult {
         .max_connections(1)
         .connect(&admin)
         .await?;
-    let owned_connections = Arc::new(AtomicUsize::new(0));
-    let owned = owned_refusal(harness.clone(), &owned_connections).await;
-    let owned_present = match &owned {
-        Ok((report, _)) => match report.databases.first() {
-            Some(database) => Some(fixture_run::present(&observer, &database.database_name).await),
-            None => None,
-        },
-        Err(_) => None,
-    };
-    let low_level_connections = Arc::new(AtomicUsize::new(0));
-    let low_level = low_level_refusal(harness.clone(), &low_level_connections).await;
+    let connections = Arc::new(AtomicUsize::new(0));
+    // Both paths return what they saw; assertions wait until every lease,
+    // template, observer and the harness itself have been released.
+    let owned = owned_refusals(harness.clone(), &connections).await;
+    let low_level = low_level_refusals(harness.clone(), &connections).await;
     let residue = inventory(&observer).await;
     observer.close().await;
     let shutdown = harness.shutdown().await;
-    let (report, delivered) = owned?;
-    let (result, drained) = low_level?;
+    let owned = owned?;
+    let low_level = low_level?;
     shutdown?;
-    assert_owned(&report, &delivered);
-    assert!(
-        !owned_present.ok_or("owned report names its database")??,
-        "the refused owned lease must be cleaned"
+    assert_eq!(
+        owned.refusals,
+        [true, true],
+        "owned acquisition and template"
     );
-    assert!(
-        matches!(&result, Err(FixtureError::Connect { source, cleanup: None }) if is_mismatch(source)),
-        "low-level acquisition must report the refusal after awaited cleanup"
+    assert!(owned.body_and_drain_ok);
+    assert_eq!(owned.acquisitions, 0, "a refused call starts no producer");
+    assert_eq!(owned.databases, 0, "nothing was provisioned");
+    assert_eq!(
+        low_level,
+        [true, true],
+        "low-level acquisition and template"
     );
-    drained?;
-    // An eager pool connects as soon as it exists, so neither path built one.
-    assert_eq!(owned_connections.load(Ordering::SeqCst), 0);
-    assert_eq!(low_level_connections.load(Ordering::SeqCst), 0);
+    // An eager pool connects as soon as it exists, so no path built one.
+    assert_eq!(connections.load(Ordering::SeqCst), 0);
     assert_eq!(residue?, Vec::<String>::new());
     Ok(())
 }
 
-type OwnedOutcome = (FixtureReport<(), FixtureError>, Arc<sqlx::Error>);
+struct OwnedOutcome {
+    refusals: Vec<bool>,
+    body_and_drain_ok: bool,
+    acquisitions: usize,
+    databases: usize,
+}
 
-/// The body handles the delivered refusal; the report must still retain it.
-async fn owned_refusal(
+/// The owned run's acquisition and template calls; both must be refused
+/// before a producer starts, so the report holds no database or acquisition.
+async fn owned_refusals(
     harness: PostgresHarness,
     connections: &Arc<AtomicUsize>,
 ) -> Result<OwnedOutcome, BoxError> {
     let plan = counted_plan(connections)?;
-    let delivered = Arc::new(Mutex::new(None));
-    let body_delivered = Arc::clone(&delivered);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let body_seen = Arc::clone(&seen);
     let run = FixtureSuite::new(harness).start(move |scope| {
         Box::pin(async move {
-            let Err(FixtureError::PoolAcquire(error)) = scope.empty(&plan).await else {
-                panic!("a lease URL selecting another database must be refused");
-            };
-            *body_delivered.lock().expect("delivery slot") = Some(error);
+            let acquired = scope.empty(&plan).await;
+            let templated = scope
+                .template(template_spec(&[], "retarget-owned-v1"), |_| async {
+                    Err("initializer ran for a refused endpoint".into())
+                })
+                .await;
+            let mut seen = body_seen.lock().expect("refusal slot");
+            seen.push(
+                acquired
+                    .err()
+                    .is_some_and(|error| is_database_parameter(&error)),
+            );
+            seen.push(
+                templated
+                    .err()
+                    .is_some_and(|error| is_database_parameter(&error)),
+            );
             Ok::<_, FixtureError>(())
         })
     });
     let report = tokio::time::timeout(Duration::from_secs(30), run.into_report()).await??;
-    let delivered = delivered
-        .lock()
-        .expect("delivery slot")
-        .take()
-        .ok_or("the body must observe the refusal")?;
-    Ok((report, delivered))
+    let refusals = seen.lock().expect("refusal slot").clone();
+    Ok(OwnedOutcome {
+        refusals,
+        body_and_drain_ok: report.body.is_ok() && report.drain.is_ok(),
+        acquisitions: report.acquisitions.len(),
+        databases: report.databases.len(),
+    })
 }
 
-fn assert_owned(report: &FixtureReport<(), FixtureError>, delivered: &Arc<sqlx::Error>) {
-    assert!(is_mismatch(delivered));
-    assert!(report.body.is_ok() && !report.is_ok());
-    assert!(report.acquisitions.iter().all(Result::is_ok) && report.drain.is_ok());
-    assert_eq!(report.databases.len(), 1);
-    let database = &report.databases[0];
-    assert!(database.result.is_ok() && database.observation_failures.is_empty());
-    assert_eq!(database.pool_failures.len(), 1);
-    assert!(Arc::ptr_eq(delivered, &database.pool_failures[0]));
-    assert!(
-        report
-            .to_string()
-            .contains("database_failures=0, pool_failures=1")
-    );
-}
-
-type LowLevelOutcome = (
-    Result<batter::sqlx::test_support::DatabaseFixture, FixtureError>,
-    Result<(), FixtureError>,
-);
-
-async fn low_level_refusal(
+/// The low-level acquisition and template calls. A regression that acquired
+/// or initialized anyway still releases what it got before returning.
+async fn low_level_refusals(
     harness: PostgresHarness,
     connections: &Arc<AtomicUsize>,
-) -> Result<LowLevelOutcome, BoxError> {
+) -> Result<[bool; 2], BoxError> {
     let plan = counted_plan(connections)?;
-    let suite = FixtureSuite::new(harness);
-    let result = suite.empty(&plan).await;
-    let result = match result {
-        // A regression that acquired anyway still releases its lease here.
+    let mut suite = FixtureSuite::new(harness);
+    let acquired = match suite.empty(&plan).await {
         Ok(fixture) => {
             fixture.finish(Ok::<(), FixtureError>(())).await?;
-            return Err("low-level acquisition must refuse the retargeted lease".into());
+            false
         }
-        Err(error) => Err(error),
+        Err(error) => is_database_parameter(&error),
     };
-    let drained = suite.drain().await;
-    Ok((result, drained))
+    let templated = suite
+        .template(template_spec(&[], "retarget-low-level-v1"), |_| async {
+            Err("initializer ran for a refused endpoint".into())
+        })
+        .await
+        .err()
+        .is_some_and(|error| is_database_parameter(&error));
+    suite.drain().await?;
+    Ok([acquired, templated])
 }

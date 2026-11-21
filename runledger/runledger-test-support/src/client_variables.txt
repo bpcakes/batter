@@ -1,10 +1,12 @@
 # Environment variable names and whether PostgreSQL fixture code refuses them
 # as client PG* variables. One "refuse NAME" or "allow NAME" per line.
 # The same rule is implemented three times, since the dependency direction
-# allows no shared crate, and each copy's tests read this file:
-# crates/batter-sqlx/src/test_support/endpoint/tests.rs,
-# runledger/runledger-test-support/src/postgres_container.rs and
-# scripts/test_runledger_tools.py (scripts/runledger_compiler_endpoint.py).
+# allows no shared crate. Each package keeps an identical copy of this file
+# inside the package so its tests also build from the published crate:
+# crates/batter-sqlx/src/test_support/endpoint/client_variables.txt and
+# runledger/runledger-test-support/src/client_variables.txt.
+# scripts/test_runledger_tools.py checks the copies are identical and tests
+# scripts/runledger_compiler_endpoint.py against them.
 refuse PG
 refuse PGHOST
 refuse PGHOSTADDR

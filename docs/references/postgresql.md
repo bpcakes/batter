@@ -510,7 +510,7 @@ publication guarantee, not a transaction or external-effect proof.
 
 ## Fail-fast transaction recovery: reviewed 2026-09-22
 
-For `batter-wobk`, SQLx remains 0.9.0. PostgreSQL 18
+For `batter-wobk`, SQLx was still 0.9.0. PostgreSQL 18
 [ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/18/sql-rollback-to.html)
 allows recovery from failed SQL; [RELEASE SAVEPOINT](https://www.postgresql.org/docs/18/sql-release-savepoint.html)
 removes the named and later savepoints. The

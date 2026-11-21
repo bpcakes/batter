@@ -1077,16 +1077,19 @@ with `FixtureError::Endpoint(UnsupportedHarnessEndpoint)`, whose
 database or looks up a template, when a `PG*` variable a PostgreSQL client
 could read is set (every `PG` name except `PGDATA` and `PG_`-prefixed ones
 such as `PG_COLOR`; put every setting in the admin URL instead), when the admin
-URL declares `hostaddr`, no host, or several hosts or ports, or
-when it selects a setting SQLx options cannot carry. A lease URL whose database
-differs from the recorded name as tokio-postgres reads it, as a `dbname` query
-parameter would cause, is refused with `LeaseDatabaseMismatch`, and one that
-reaches another endpoint with `UnsupportedHarnessEndpoint`; these lease checks,
-and an environment recheck, travel inside `sqlx::Error::Configuration` before
-any pool exists. The
-`fixture_lease_database_mismatch_retained` live probe proves that refusal and
-its retention on both the owned and low-level paths; offline unit tests cover
-the endpoint mapping and refusals.
+URL declares `hostaddr`, no host, or several hosts or ports, or a `dbname`
+parameter (which the harness would copy into every lease URL, overriding its
+database), or when it selects a setting SQLx options cannot carry. The
+`fixture_database_parameter_refused_before_provisioning` live probe proves the
+`dbname` refusal on the owned, low-level and template paths with nothing
+provisioned. A lease URL whose database still differs from the recorded name as
+tokio-postgres reads it is refused with `LeaseDatabaseMismatch`, and one that
+reaches another endpoint with `UnsupportedHarnessEndpoint`. These lease checks,
+and the environment recheck made just before pools are built, travel inside
+`sqlx::Error::Configuration` before any pool exists. Harness-derived leases can
+no longer fail the two lease checks, so offline unit tests, not a live probe,
+cover them and the endpoint mapping; the environment recheck still applies to
+every lease.
 
 The pinned harness opens connections with `NoTls`. An omitted TLS mode,
 `sslmode=prefer` and `sslmode=disable` all yield plaintext for the harness,

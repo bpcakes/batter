@@ -67,7 +67,8 @@ impl fmt::Debug for FixtureTemplate {
 /// Built from the suite's one parse of the harness admin URL and the name the
 /// harness recorded, exactly as fixture pools are, so the initializer never
 /// handles URL text that SQLx could read differently from the harness. The
-/// process environment is checked again just before the initializer runs.
+/// process environment is checked again, and the options built, just before
+/// the initializer runs; later calls return clones of those options.
 ///
 /// Migration: 0.0.1 initializers took the harness URL as a `String`. Replace
 /// `|url| async move { PgPoolOptions::new().connect(&url).await? .. }` with
@@ -95,15 +96,17 @@ impl fmt::Debug for FixtureTemplate {
 /// # Ok(()) }
 /// ```
 pub struct TemplateTarget {
-    endpoint: Arc<HarnessEndpoint>,
     database: String,
+    /// Built when the target is, right after the environment check, so caller
+    /// code never runs SQLx's environment-reading constructor.
+    options: PgConnectOptions,
 }
 
 impl TemplateTarget {
     /// Bind `harness_url`, the URL the harness hands its initializer, to the
     /// suite's endpoint and the database name the harness recorded in it.
     fn new(
-        endpoint: Arc<HarnessEndpoint>,
+        endpoint: &HarnessEndpoint,
         harness_url: &str,
         environment: Environment,
     ) -> Result<Self, sqlx::Error> {
@@ -111,7 +114,8 @@ impl TemplateTarget {
         let database = HarnessEndpoint::recorded_database(harness_url)
             .ok_or_else(|| sqlx::Error::Configuration(Box::new(super::LeaseDatabaseMismatch)))?;
         endpoint.bind(harness_url, &database)?;
-        Ok(Self { endpoint, database })
+        let options = endpoint.options(&database)?;
+        Ok(Self { database, options })
     }
 
     /// The template database being initialized.
@@ -125,7 +129,7 @@ impl TemplateTarget {
     /// `options`. A caller that changes the host or database afterwards
     /// leaves the template.
     pub fn connect_options(&self) -> PgConnectOptions {
-        self.endpoint.options(&self.database)
+        self.options.clone()
     }
 }
 
@@ -135,6 +139,30 @@ impl fmt::Debug for TemplateTarget {
             .field("database_name", &self.database)
             .finish_non_exhaustive()
     }
+}
+
+/// The template `retained` holds under `template`'s name: suites and scopes
+/// clone and derive only from templates they retain.
+pub(super) fn find_retained<'a>(
+    retained: &'a [DatabaseTemplate],
+    template: &FixtureTemplate,
+) -> Result<&'a DatabaseTemplate, super::FixtureError> {
+    retained
+        .iter()
+        .find(|candidate| candidate.database_name() == template.database_name())
+        .ok_or(super::FixtureError::UnknownTemplate)
+}
+
+/// Retain `template` once under its name and hand out its fixture handle.
+pub(super) fn retain(
+    retained: &mut Vec<DatabaseTemplate>,
+    template: DatabaseTemplate,
+) -> FixtureTemplate {
+    let handle = FixtureTemplate { inner: template };
+    if find_retained(retained, &handle).is_err() {
+        retained.push(handle.inner.clone());
+    }
+    handle
 }
 
 /// Run `initializer` on the target the harness URL selects. A refusal is the
@@ -148,7 +176,7 @@ where
     F: FnOnce(TemplateTarget) -> Fut,
     Fut: Future<Output = Result<(), BoxError>>,
 {
-    let target = TemplateTarget::new(endpoint, &harness_url, Environment::process())?;
+    let target = TemplateTarget::new(&endpoint, &harness_url, Environment::process())?;
     initializer(target).await
 }
 

@@ -121,8 +121,11 @@ fn a_lease_url_selecting_another_database_is_refused_before_construction() {
         PlannedPool::lease_login(one()),
         PlannedPool::password_login(one(), "restricted", secret("loginsecret")),
     ] {
+        // The admin URL itself may not carry `dbname`; a lease that adds one
+        // did not come from this harness's derivation.
+        let admin = harness("postgres://owner:ownersecret@127.0.0.1:5439/postgres");
         let error = plan(vec![pool])
-            .resolve(&harness(url), url, "pgh_probe_3", Environment::CLEAN)
+            .resolve(&admin, url, "pgh_probe_3", Environment::CLEAN)
             .expect_err("query parameter retargets the database");
         let sqlx::Error::Configuration(source) = &error else {
             panic!("configuration error required");

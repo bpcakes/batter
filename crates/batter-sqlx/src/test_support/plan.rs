@@ -131,19 +131,20 @@ impl ConnectionPlan {
     ) -> Result<Vec<(PgPoolOptions, PgConnectOptions)>, sqlx::Error> {
         environment.validate()?;
         endpoint.bind(lease_url, lease_name)?;
-        Ok(self
-            .pools
+        self.pools
             .iter()
             .map(|pool| {
                 let options = match &pool.login {
-                    Login::Lease => endpoint.options(lease_name),
-                    Login::Password { username, password } => {
-                        endpoint.options_for_login(lease_name, username, password.expose_secret())
-                    }
+                    Login::Lease => endpoint.options(lease_name)?,
+                    Login::Password { username, password } => endpoint.options_for_login(
+                        lease_name,
+                        username,
+                        password.expose_secret(),
+                    )?,
                 };
-                (pool.options.clone(), options)
+                Ok((pool.options.clone(), options))
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -298,9 +299,11 @@ impl PlannedPool {
 /// `DatabaseCleanup::pool_failures`. It is raised before any pool is
 /// constructed. With `PoolAcquire` the lease stays registered for driver
 /// cleanup and the final report records the outcome; with `Connect` lease
-/// cleanup was already awaited and its outcome is in `cleanup`. SQLx applies a
-/// `dbname` query parameter over the URL path, so a harness admin URL carrying
-/// one causes this. Formatting names no database.
+/// cleanup was already awaited and its outcome is in `cleanup`. A lease URL
+/// whose `dbname` query parameter overrides its path causes this; a harness
+/// admin URL carrying one, which the harness would copy into every lease, is
+/// refused earlier with [`super::HarnessEndpointReason::DatabaseParameter`].
+/// Formatting names no database.
 ///
 /// ```
 /// # fn example(error: &sqlx::Error) -> bool {

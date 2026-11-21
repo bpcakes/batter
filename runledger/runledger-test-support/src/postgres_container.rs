@@ -294,10 +294,7 @@ mod tests {
     fn only_client_postgres_variables_are_refused() {
         // Shared with batter-sqlx and the metadata refresh, which implement
         // the same rule.
-        let vector = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/postgres-client-variables.txt"
-        ));
+        let vector = include_str!("client_variables.txt");
         let mut checked = 0;
         for line in vector.lines().filter(|line| !line.starts_with('#')) {
             let (verdict, name) = line.split_once(' ').expect("verdict and name");

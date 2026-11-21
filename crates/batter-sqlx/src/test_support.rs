@@ -327,21 +327,11 @@ impl FixtureSuite {
     }
 
     fn retained(&self, template: &FixtureTemplate) -> Result<&DatabaseTemplate, FixtureError> {
-        self.templates
-            .iter()
-            .find(|retained| retained.database_name() == template.database_name())
-            .ok_or(FixtureError::UnknownTemplate)
+        template::find_retained(&self.templates, template)
     }
 
     fn retain(&mut self, template: DatabaseTemplate) -> FixtureTemplate {
-        if !self
-            .templates
-            .iter()
-            .any(|retained| retained.database_name() == template.database_name())
-        {
-            self.templates.push(template.clone());
-        }
-        FixtureTemplate { inner: template }
+        template::retain(&mut self.templates, template)
     }
 
     /// Low-level acquisition: the caller owns finish and suite drain on every path.

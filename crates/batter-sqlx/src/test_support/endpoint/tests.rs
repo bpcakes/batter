@@ -38,7 +38,7 @@ fn endpoint_fields_come_from_the_harness_parser() {
     let tcp = endpoint(
         "postgres://owner:p%40ss@127.0.0.1:6543/postgres?sslmode=disable&application_name=fixture",
     );
-    let options = tcp.options("pgh_lease_1");
+    let options = tcp.options("pgh_lease_1").unwrap();
     assert_eq!(options.get_host(), "127.0.0.1");
     assert_eq!(options.get_port(), 6543);
     assert_eq!(options.get_username(), "owner");
@@ -48,11 +48,15 @@ fn endpoint_fields_come_from_the_harness_parser() {
     assert_eq!(tcp.admin_database, "postgres");
 
     // tokio-postgres defaults the port and decodes the host; both are carried.
-    let decoded = endpoint("postgres://owner:p@local%68ost/postgres").options("db");
+    let decoded = endpoint("postgres://owner:p@local%68ost/postgres")
+        .options("db")
+        .unwrap();
     assert_eq!(decoded.get_host(), "localhost");
     assert_eq!(decoded.get_port(), DEFAULT_PORT);
 
-    let socket = endpoint("postgres://owner:p@%2Ftmp%2Fpg+socket:5432/postgres").options("db");
+    let socket = endpoint("postgres://owner:p@%2Ftmp%2Fpg+socket:5432/postgres")
+        .options("db")
+        .unwrap();
     assert_eq!(socket.get_socket(), Some(&PathBuf::from("/tmp/pg+socket")));
 }
 
@@ -69,6 +73,19 @@ fn unsupported_endpoints_are_refused_with_their_reason() {
             Some(HostAddress),
         ),
         ("postgres://u@db-a,db-b:5432/postgres", Some(MultipleHosts)),
+        // Even naming the path's own database: derived lease URLs keep it.
+        (
+            "postgres://u@db-a/postgres?dbname=postgres",
+            Some(DatabaseParameter),
+        ),
+        (
+            "postgres://u@db-a/postgres?sslmode=disable&dbname=other",
+            Some(DatabaseParameter),
+        ),
+        (
+            "postgres://u@db-a/postgres?%64bname=other",
+            Some(DatabaseParameter),
+        ),
         ("postgres://u@/postgres", Some(MissingHost)),
         (
             "postgres://u@db-a:5432/postgres?port=5433",
@@ -179,7 +196,10 @@ fn omitted_and_empty_passwords_are_one_login_in_both_clients() {
     ] {
         let endpoint = endpoint(admin);
         assert_eq!(endpoint.password, "", "{admin}");
-        assert_eq!(endpoint.options("pgh_lease_1").get_username(), "owner");
+        assert_eq!(
+            endpoint.options("pgh_lease_1").unwrap().get_username(),
+            "owner"
+        );
         // A passwordless lease URL from the same harness binds to it.
         let lease = admin.replace("/postgres", "/pgh_lease_1");
         assert!(endpoint.bind(&lease, "pgh_lease_1").is_ok(), "{lease}");
@@ -268,10 +288,7 @@ fn diagnostic_options_are_bound_to_the_lease_and_its_harness() {
 
 #[test]
 fn only_client_pg_variables_are_refused() {
-    let vector = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../test-support/postgres-client-variables.txt"
-    ));
+    let vector = include_str!("client_variables.txt");
     let mut checked = 0;
     for line in vector.lines().filter(|line| !line.starts_with('#')) {
         let (verdict, name) = line.split_once(' ').expect("verdict and name");

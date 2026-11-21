@@ -372,8 +372,8 @@ login, rather than relying on a session-authorization statement to succeed. Both
 profile constructors must reject that declaration before protected work even
 when role, schema and setting permissions are valid.
 
-The lockfile still resolves SQLx 0.9.0; live regression execution uses PostgreSQL
-18.6. PostgreSQL 18's [role inquiry](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
+When this record was written the lockfile resolved SQLx 0.9.0; live regression
+execution used PostgreSQL 18.6. PostgreSQL 18's [role inquiry](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
 defines `pg_has_role(user, role, 'SET')` as permission to assume the role, unlike
 plain membership or immediately inherited privileges. [REVOKE](https://www.postgresql.org/docs/18/sql-revoke.html)
 can clear only SET OPTION while retaining membership. The

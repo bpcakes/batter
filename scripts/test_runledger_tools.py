@@ -217,9 +217,14 @@ class RefreshTests(unittest.TestCase):
 
     def test_client_variable_rule_matches_the_shared_vector(self):
         # batter-sqlx and Runledger's test support implement the same rule.
-        vector = Path(__file__).resolve().parent.parent / "test-support/postgres-client-variables.txt"
-        cases = [line.split(" ", 1) for line in vector.read_text(encoding="utf-8").splitlines()
-                 if not line.startswith("#")]
+        root = Path(__file__).resolve().parent.parent
+        sqlx, runledger = (
+            (root / path).read_text(encoding="utf-8") for path in (
+                "crates/batter-sqlx/src/test_support/endpoint/client_variables.txt",
+                "runledger/runledger-test-support/src/client_variables.txt"))
+        # Each package keeps its own copy so its tests build from the crate.
+        self.assertEqual(sqlx, runledger)
+        cases = [line.split(" ", 1) for line in sqlx.splitlines() if not line.startswith("#")]
         self.assertTrue(cases)
         for verdict, name in cases:
             self.assertEqual(is_client_variable(name), verdict == "refuse", name)

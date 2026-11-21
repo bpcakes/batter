@@ -9,11 +9,7 @@
 //! take their endpoint from the harness's own parse of its admin URL, set every
 //! field explicitly, and take the database from the name the harness recorded.
 
-use std::{
-    path::PathBuf,
-    str::FromStr,
-    sync::{Arc, LazyLock},
-};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use postgres_test_harness::{DatabaseLease, PostgresHarness};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -88,19 +84,41 @@ fn lease_options(
 ) -> Result<PgConnectOptions, sqlx::Error> {
     let endpoint = HarnessEndpoint::from_admin_url(admin_url, environment)?;
     endpoint.bind(lease_url, name)?;
-    Ok(endpoint.options(name))
+    endpoint.options(name)
 }
 
 /// Native options for the harness's own administrative database.
 ///
 /// The same per-call parse as [`harness_connect_options`], for the database
-/// the admin URL itself selects.
+/// the admin URL itself selects, with the same refusals: a client `PG*`
+/// variable, or an admin URL these options cannot carry (including a `dbname`
+/// parameter, which would retarget every lease; see
+/// [`HarnessEndpointReason::DatabaseParameter`]). Use it for observer pools
+/// that inspect the catalog beside a fixture.
+///
+/// ```no_run
+/// # async fn example(
+/// #     harness: &postgres_test_harness::PostgresHarness,
+/// # ) -> Result<(), sqlx::Error> {
+/// let options = batter_sqlx::test_support::harness_admin_connect_options(harness)?;
+/// let observer = sqlx::postgres::PgPoolOptions::new()
+///     .max_connections(1)
+///     .connect_with(options)
+///     .await?;
+/// let databases: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_database")
+///     .fetch_one(&observer)
+///     .await?;
+/// # let _ = databases;
+/// observer.close().await;
+/// # Ok(())
+/// # }
+/// ```
 pub fn harness_admin_connect_options(
     harness: &PostgresHarness,
 ) -> Result<PgConnectOptions, sqlx::Error> {
     let endpoint =
         HarnessEndpoint::from_admin_url(harness.admin_database_url(), Environment::process())?;
-    Ok(endpoint.options(&endpoint.admin_database))
+    endpoint.options(&endpoint.admin_database)
 }
 
 /// A suite's harness endpoint, parsed once when the suite adopts its harness.
@@ -249,6 +267,16 @@ impl HarnessEndpoint {
         if !config.get_hostaddrs().is_empty() {
             return Err(refusal(HostAddress));
         }
+        // The harness derives every lease and template URL by replacing only
+        // the path of this URL as `url::Url` reads it, keeping the query, so a
+        // `dbname` key there would override every derived database. Reading
+        // the query with the harness's own derivation parser, not checking two
+        // parsers agree, refuses it before anything is provisioned.
+        if url::Url::parse(admin_url)
+            .is_ok_and(|url| url.query_pairs().any(|(key, _)| key == "dbname"))
+        {
+            return Err(refusal(DatabaseParameter));
+        }
         let (address, port) = match (config.get_hosts(), config.get_ports()) {
             ([host], [] | [_]) => {
                 let address = match host {
@@ -328,14 +356,15 @@ impl HarnessEndpoint {
     }
 
     /// SQLx options for `database`, every endpoint field set explicitly.
-    pub(super) fn options(&self, database: &str) -> PgConnectOptions {
+    pub(super) fn options(&self, database: &str) -> Result<PgConnectOptions, sqlx::Error> {
         self.options_for_login(database, &self.user, &self.password)
     }
 
     /// Check that `url`, a harness-derived lease or template URL, selects
     /// `name` on this endpoint. The harness builds such a URL from its admin
-    /// URL, replacing only the path and keeping any `dbname` parameter that
-    /// would override it; any other difference reaches another endpoint.
+    /// URL, replacing only the path and keeping the query (which `parse`
+    /// refuses to contain `dbname`); any other difference reaches another
+    /// endpoint.
     pub(super) fn bind(&self, url: &str, name: &str) -> Result<(), sqlx::Error> {
         if !Self::names_database(url, name) {
             return Err(sqlx::Error::Configuration(Box::new(
@@ -355,13 +384,22 @@ impl HarnessEndpoint {
         Ok(())
     }
 
+    /// The only place fixture code runs SQLx's option constructor, which
+    /// fills unset settings from `PG*` variables. A fresh process scan runs
+    /// immediately before it, whatever environment the caller injected, so a
+    /// variable set since an earlier check is refused rather than read; only
+    /// a concurrent change in the instant between the scan and the
+    /// constructor can still be read. Nothing built here is cached. The
+    /// constructor's socket-directory probe and user lookup run per call,
+    /// as they did when fixture pools parsed lease URLs with SQLx.
     pub(super) fn options_for_login(
         &self,
         database: &str,
         user: &str,
         password: &str,
-    ) -> PgConnectOptions {
-        let options = base_options();
+    ) -> Result<PgConnectOptions, sqlx::Error> {
+        Environment::process().validate()?;
+        let options = PgConnectOptions::new_without_pgpass();
         let options = match &self.address {
             Address::Tcp(name) => options.host(name),
             Address::Unix(path) => options.socket(path),
@@ -378,7 +416,7 @@ impl HarnessEndpoint {
         if let Some(pairs) = &self.options {
             options = options.options(pairs.iter().cloned());
         }
-        options
+        Ok(options)
     }
 
     /// Whether `other` reaches the same server with the same login and session
@@ -409,21 +447,12 @@ impl HarnessEndpoint {
 
     /// Whether `url` (a harness-derived lease or template URL) names `database`
     /// as tokio-postgres reads it. The harness derives such URLs from its admin
-    /// URL, keeping any `dbname` parameter that would override the path.
+    /// URL, which `parse` refuses to carry `dbname`, so a mismatch means the
+    /// URL was not derived from this harness's admin URL.
     pub(super) fn names_database(url: &str, database: &str) -> bool {
         tokio_postgres::Config::from_str(url)
             .is_ok_and(|config| config.get_dbname() == Some(database))
     }
-}
-
-/// SQLx's default options, built once per process. The constructor probes
-/// socket directories and looks up the operating-system user, and every field
-/// it fills from those is overwritten here. It also reads `PG*` variables, so
-/// it runs only on the first call, which, like every later one, follows a
-/// refusal of every client `PG*` variable; it therefore reads none.
-fn base_options() -> PgConnectOptions {
-    static BASE: LazyLock<PgConnectOptions> = LazyLock::new(PgConnectOptions::new_without_pgpass);
-    BASE.clone()
 }
 
 /// The raw startup `options` text SQLx 0.9.1's `PgConnectOptions::options`

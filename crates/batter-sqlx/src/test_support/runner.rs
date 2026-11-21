@@ -11,7 +11,7 @@ use super::acquisition::{Registered, Resources, join_producers, produce};
 use super::endpoint::{HarnessEndpoint, SuiteEndpoint};
 use super::plan::{PoolKey, check, construct, lookup};
 use super::report::{BodyFailure, FixtureReport, FixtureReportRef};
-use super::template::{FixtureTemplate, TemplateTarget, initialize};
+use super::template::{FixtureTemplate, TemplateTarget, find_retained, initialize, retain};
 use super::{ConnectionPlan, DatabaseFixture, FixtureError, FixtureSuite};
 
 /// Run a template initializer in its own task. Native template Drop can retain
@@ -195,14 +195,11 @@ impl FixtureScope {
     }
 
     fn retained(&self, template: &FixtureTemplate) -> Result<DatabaseTemplate, FixtureError> {
-        self.resources
+        let registered = self
+            .resources
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .templates
-            .iter()
-            .find(|retained| retained.database_name() == template.database_name())
-            .cloned()
-            .ok_or(FixtureError::UnknownTemplate)
+            .unwrap_or_else(|error| error.into_inner());
+        find_retained(&registered.templates, template).cloned()
     }
 
     /// Run a template lookup as an owned producer and retain its result.
@@ -214,14 +211,7 @@ impl FixtureScope {
         produce(&self.resources, async move {
             let template = lookup.await?;
             let mut registered = resources.lock().unwrap_or_else(|error| error.into_inner());
-            if !registered
-                .templates
-                .iter()
-                .any(|retained| retained.database_name() == template.database_name())
-            {
-                registered.templates.push(template.clone());
-            }
-            Ok(FixtureTemplate { inner: template })
+            Ok(retain(&mut registered.templates, template))
         })
         .await
     }
