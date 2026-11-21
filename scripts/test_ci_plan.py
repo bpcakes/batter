@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from ci_plan import (
+    FLAGS_PACKAGES,
     GLOBAL_INPUTS,
     MARKER_PREFIX,
     RUNLIMIT_PACKAGE,
@@ -25,6 +26,8 @@ from ci_plan import (
 
 TREE = "a" * 40
 CLOSURE = ["runlimit/runlimit-core/", "runlimit/runlimit-postgres/"]
+FLAGS_CLOSURE = ["crates/batter-core/", "crates/batter-sqlx/", "crates/batter-flags-core/",
+                 "crates/batter-flags-postgres/", "crates/batter-flags/", "crates/batter-flags-cli/"]
 
 
 def fail(*_args):
@@ -67,8 +70,8 @@ class ClosureTests(unittest.TestCase):
         self.assertTrue(all((root / entry).is_dir() for entry in closure), closure)
 
     @unittest.skipUnless(shutil.which("cargo"), "cargo is required for workspace metadata")
-    def test_package_inputs_include_shared_process_sources_loaded_outside_closure(self):
-        inputs = package_inputs(cargo_metadata(), ("batter-axum",))
+    def test_flags_inputs_include_the_shared_process_sources_the_cli_tests_load(self):
+        inputs = package_inputs(cargo_metadata(), FLAGS_PACKAGES)
         self.assertIn("test-support/process/launch.rs", inputs)
         self.assertTrue(touches(["test-support/process/watchdog.rs"], inputs))
         self.assertFalse(touches(["test-support/README.md"], inputs))
@@ -190,14 +193,16 @@ class VerifyingRunTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
-    def plan(self, event, paths, find_run=lambda _tree: None, closure=lambda: CLOSURE):
-        return plan(event, paths, TREE, find_run, closure)
+    def plan(self, event, paths, find_run=lambda _tree: None, closure=lambda: CLOSURE,
+             flags_closure=lambda: FLAGS_CLOSURE):
+        return plan(event, paths, TREE, find_run, closure, flags_closure)
 
     def test_events_without_a_diff_run_everything_without_lookup(self):
         for event in ("schedule", "workflow_dispatch"):
-            outputs, _ = self.plan(event, ["docs/testing.md"], find_run=fail, closure=fail)
+            outputs, _ = self.plan(event, ["docs/testing.md"], find_run=fail, closure=fail,
+                                   flags_closure=fail)
             self.assertEqual(outputs, dict(tree=TREE, tree_verified="false", verified_run="",
-                                           runlimit_postgres="true"))
+                                           runlimit_postgres="true", flags_postgres="true"))
 
     def test_runlimit_runs_only_for_its_inputs(self):
         cases = [(["docs/testing.md", "crates/batter/src/lib.rs"], "false"),
@@ -209,15 +214,27 @@ class PlanTests(unittest.TestCase):
                 outputs, _ = self.plan(event, paths)
                 self.assertEqual(outputs["runlimit_postgres"], expected, (event, paths))
 
-    def test_unknown_closure_runs_everything_without_reuse(self):
+    def test_flags_runs_only_for_its_inputs(self):
+        cases = [(["docs/testing.md", "runlimit/runlimit-core/src/lib.rs"], "false"),
+                 (["crates/batter-flags-core/src/snapshot.rs"], "true"),
+                 (["crates/batter-sqlx/src/lib.rs"], "true"),
+                 (["Cargo.lock"], "true"), (None, "true")]
+        for event in ("pull_request", "merge_group", "push"):
+            for paths, expected in cases:
+                outputs, _ = self.plan(event, paths)
+                self.assertEqual(outputs["flags_postgres"], expected, (event, paths))
+
+    def test_either_unknown_closure_runs_everything_without_reuse(self):
         found = lambda tree: f"https://example.invalid/{tree}"
         full = dict(tree=TREE, tree_verified="false", verified_run="",
-                    runlimit_postgres="true")
+                    runlimit_postgres="true", flags_postgres="true")
         for event in ("pull_request", "merge_group", "push"):
-            outputs, notes = self.plan(event, ["docs/testing.md"], find_run=found, closure=fail)
-            self.assertEqual(outputs, full, event)
-            self.assertIn("Runlimit PostgreSQL inputs are unknown", " ".join(notes))
-            self.assertIn("unavailable", " ".join(notes))
+            for label, closures in (("flags PostgreSQL", dict(flags_closure=fail)),
+                                    ("Runlimit PostgreSQL", dict(closure=fail))):
+                outputs, notes = self.plan(event, ["docs/testing.md"], find_run=found, **closures)
+                self.assertEqual(outputs, full, (event, label))
+                self.assertIn(f"{label} inputs are unknown", " ".join(notes))
+                self.assertIn("unavailable", " ".join(notes))
 
     def test_only_pushes_reuse_a_recorded_tree(self):
         found = lambda tree: f"https://example.invalid/{tree}"

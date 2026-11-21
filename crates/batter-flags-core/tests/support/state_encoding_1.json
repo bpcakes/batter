@@ -1,0 +1,537 @@
+{
+  "description": "Encoding 1 of a flag row's state: what a writer emits for each state, and what a reader does with each text it may meet. A flag row is read against a declaration with variants `on` and `off`; a switch row against a kill switch. `reads` is either the published outcome or the cause the row is held for.",
+  "encoding": 1,
+  "writer": [
+    {
+      "shape": "flag",
+      "variant": "on",
+      "text": "{\"encoding\":1,\"variant\":\"on\"}"
+    },
+    {
+      "shape": "flag",
+      "variant": "off",
+      "text": "{\"encoding\":1,\"variant\":\"off\"}"
+    },
+    {
+      "shape": "flag",
+      "variant": "express",
+      "text": "{\"encoding\":1,\"variant\":\"express\"}"
+    },
+    {
+      "shape": "switch",
+      "state": "engaged",
+      "text": "{\"encoding\":1,\"switch\":\"engaged\"}"
+    },
+    {
+      "shape": "switch",
+      "state": "released",
+      "text": "{\"encoding\":1,\"switch\":\"released\"}"
+    }
+  ],
+  "reader": [
+    {
+      "name": "canonical",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\"}",
+      "reads": {
+        "variant": "on"
+      }
+    },
+    {
+      "name": "members in the other order",
+      "shape": "flag",
+      "text": "{\"variant\":\"on\",\"encoding\":1}",
+      "reads": {
+        "variant": "on"
+      }
+    },
+    {
+      "name": "jsonb spacing",
+      "shape": "flag",
+      "text": "{\"variant\": \"on\", \"encoding\": 1}",
+      "reads": {
+        "variant": "on"
+      }
+    },
+    {
+      "name": "surrounding whitespace of every kind",
+      "shape": "flag",
+      "text": "  {\n\t\"encoding\" :\r\n 1 ,\n\"variant\"\t:\t\"on\"\n}  \n",
+      "reads": {
+        "variant": "on"
+      }
+    },
+    {
+      "name": "an escaped variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\u006fn\"}",
+      "reads": {
+        "variant": "on"
+      }
+    },
+    {
+      "name": "an escaped member name",
+      "shape": "flag",
+      "text": "{\"\\u0065ncoding\":1,\"variant\":\"on\"}",
+      "reads": {
+        "variant": "on"
+      }
+    },
+    {
+      "name": "the other variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"off\"}",
+      "reads": {
+        "variant": "off"
+      }
+    },
+    {
+      "name": "engaged",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"switch\":\"engaged\"}",
+      "reads": {
+        "state": "engaged"
+      }
+    },
+    {
+      "name": "released, other order",
+      "shape": "switch",
+      "text": "{\"switch\":\"released\",\"encoding\":1}",
+      "reads": {
+        "state": "released"
+      }
+    },
+    {
+      "name": "engaged, jsonb spacing",
+      "shape": "switch",
+      "text": "{\"switch\": \"engaged\", \"encoding\": 1}",
+      "reads": {
+        "state": "engaged"
+      }
+    },
+    {
+      "name": "empty text",
+      "shape": "flag",
+      "text": "",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "whitespace only",
+      "shape": "flag",
+      "text": " ",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "null",
+      "shape": "flag",
+      "text": "null",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an array",
+      "shape": "flag",
+      "text": "[]",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an empty object",
+      "shape": "flag",
+      "text": "{}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "no variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "no encoding",
+      "shape": "flag",
+      "text": "{\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a higher encoding",
+      "shape": "flag",
+      "text": "{\"encoding\":2,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding zero",
+      "shape": "flag",
+      "text": "{\"encoding\":0,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding as text",
+      "shape": "flag",
+      "text": "{\"encoding\":\"1\",\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding as a float",
+      "shape": "flag",
+      "text": "{\"encoding\":1.0,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding with a leading zero",
+      "shape": "flag",
+      "text": "{\"encoding\":01,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding with an exponent",
+      "shape": "flag",
+      "text": "{\"encoding\":1e0,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding as a boolean",
+      "shape": "flag",
+      "text": "{\"encoding\":true,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "encoding as null",
+      "shape": "flag",
+      "text": "{\"encoding\":null,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a negative encoding",
+      "shape": "flag",
+      "text": "{\"encoding\":-1,\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an extra field",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\",\"note\":\"x\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a repeated encoding",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\",\"encoding\":1}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a repeated variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\",\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a numeric variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":1}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a null variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":null}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an array variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":[\"on\"]}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a switch state for a flag",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"switch\":\"engaged\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "text after the object",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\"} x",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a second object",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\"}{",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a trailing comma",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\",}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a missing comma",
+      "shape": "flag",
+      "text": "{\"encoding\":1 \"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an unterminated object",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on\"",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an unterminated string",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an unescaped quote",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"o\"n\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a raw newline in a string",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"o\nn\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an unknown escape",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"o\\qn\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a short unicode escape",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\u00\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a non-hex unicode escape",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\u00zz\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a lone high surrogate",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\ud83d\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a high surrogate and text",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\ud83dx\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a high surrogate and a non-surrogate escape",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\ud83d\\u0041\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a lone low surrogate",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\ude00\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "single quotes",
+      "shape": "flag",
+      "text": "{'encoding':1,'variant':'on'}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "bare member names",
+      "shape": "flag",
+      "text": "{encoding:1,variant:\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an unknown state",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"switch\":\"tripped\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a state in another case",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"switch\":\"Engaged\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "an empty state",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"switch\":\"\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a boolean state",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"switch\":true}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a variant for a switch",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"variant\":\"engaged\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a switch with a variant field too",
+      "shape": "switch",
+      "text": "{\"encoding\":1,\"switch\":\"engaged\",\"variant\":\"on\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a higher encoding",
+      "shape": "switch",
+      "text": "{\"encoding\":2,\"switch\":\"engaged\"}",
+      "reads": {
+        "held": "unknown_row_encoding"
+      }
+    },
+    {
+      "name": "a variant no declaration lists",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"turbo\"}",
+      "reads": {
+        "held": "undeclared_variant"
+      }
+    },
+    {
+      "name": "a variant in another case",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"On\"}",
+      "reads": {
+        "held": "undeclared_variant"
+      }
+    },
+    {
+      "name": "an escaped variant in another case",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\\u004fn\"}",
+      "reads": {
+        "held": "undeclared_variant"
+      }
+    },
+    {
+      "name": "a variant with a non-ASCII letter",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"caf\\u00e9\"}",
+      "reads": {
+        "held": "undeclared_variant"
+      }
+    },
+    {
+      "name": "an empty variant",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"\"}",
+      "reads": {
+        "held": "undeclared_variant"
+      }
+    },
+    {
+      "name": "a variant with a trailing space",
+      "shape": "flag",
+      "text": "{\"encoding\":1,\"variant\":\"on \"}",
+      "reads": {
+        "held": "undeclared_variant"
+      }
+    }
+  ]
+}

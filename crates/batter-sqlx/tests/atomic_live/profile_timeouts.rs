@@ -55,6 +55,16 @@ async fn transaction_profiles_distinguish_startup_defaults_session_settings_and_
         )?;
         legacy.reset_and_apply(&mut connection).await?;
         assert_eq!(values(&mut connection).await?, (10_000, 15_000));
+        // A cap resolves against this connection's RESET value. Re-capping
+        // can tighten the bound and cannot widen an earlier cap.
+        for (first, second, expected) in [(20, 30, 10_000), (5, 8, 5_000), (20, 3, 3_000)] {
+            let cap = |seconds| Duration::from_secs(seconds);
+            let profile = legacy
+                .with_timeout_caps(cap(30), cap(30), cap(first))?
+                .with_timeout_caps(cap(30), cap(30), cap(second))?;
+            profile.reset_and_apply(&mut connection).await?;
+            assert_eq!(values(&mut connection).await?, (expected, 15_000));
+        }
         for (idle, total) in [(11_000, 22_000), (0, 22_000), (11_000, 0), (0, 0)] {
             complete(
                 &login,

@@ -1,3 +1,6 @@
+mod bounded;
+mod commit;
+pub use commit::PgCommitError;
 mod error;
 pub(crate) mod fast;
 pub(crate) mod scope;
@@ -209,6 +212,10 @@ impl PgAtomicTransaction {
     /// Dropping this future may lose acknowledgement even if PostgreSQL commits.
     pub async fn commit(mut self) -> Result<PgCommitConfirmed, CommitUnconfirmed> {
         self.validate().await.map_err(CommitUnconfirmed)?;
+        self.send_commit().await
+    }
+
+    async fn send_commit(mut self) -> Result<PgCommitConfirmed, CommitUnconfirmed> {
         command(self.lease.connection_mut(), "COMMIT")
             .await
             .map_err(CommitUnconfirmed)?;

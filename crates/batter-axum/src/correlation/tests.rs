@@ -9,6 +9,7 @@ use super::{
 use crate::{
     InProcessRefusal, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
     admitted,
+    boundary::gate::GateRecord,
     browser::{CredentialAccess, record_credential_access},
     low_level::RouterClient,
     observation::ObservationState,
@@ -74,6 +75,7 @@ fn each_alone() -> Vec<(&'static str, Extensions)> {
     vec![
         alone(QuotaObservation::default()),
         alone(ObservationState::default()),
+        alone(GateRecord(Arc::new(7_u64))),
         alone(scope()),
         (std::any::type_name::<CredentialAccess>(), credential),
         (

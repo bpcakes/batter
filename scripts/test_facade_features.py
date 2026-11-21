@@ -160,5 +160,25 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
         self.assertLessEqual({"gzip", "http2"}, set(next(iter(own.values()))))
 
 
+class CaseLabelTests(unittest.TestCase):
+    """Case directories stay one valid path component as the feature set grows."""
+
+    def test_every_selection_names_a_directory_within_name_max(self):
+        everything = tuple(sorted(facade.EXPECTED_FEATURES))
+        for selected in [*facade.feature_cases(), everything]:
+            label = facade.case_label(selected)
+            for prefix in ("consumer-", "identity-", "negative-"):
+                self.assertLessEqual(len((prefix + label).encode()), 255, selected)
+            self.assertNotIn("/", label)
+        # The all-features label is the one that outgrew the readable form.
+        self.assertGreater(len("-".join(everything)), facade.MAX_READABLE_LABEL)
+        self.assertNotEqual(facade.case_label(everything), facade.case_label(everything[:-1]))
+
+    def test_short_selections_keep_their_readable_label(self):
+        self.assertEqual(facade.case_label(()), "default")
+        self.assertEqual(facade.case_label(("axum", "sqlx")), "axum-sqlx")
+        self.assertEqual(facade.case_label(("runlimit-native-axum",)), "runlimit-native-axum")
+
+
 if __name__ == "__main__":
     unittest.main()

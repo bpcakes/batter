@@ -145,7 +145,10 @@ pub(crate) fn record(extensions: &mut Extensions, access: CredentialAccess) {
 /// ```
 ///
 /// Copying a whole extension map from one request into another carries the
-/// group's record too, like every other value in the map. A handler can still
+/// group's record too, like every other value in the map. Entry into another
+/// boundary group clears it before that group's browser policy decides anew.
+/// Application layers that replace extensions after admission remain
+/// application-controlled. A handler can still
 /// parse the raw `Cookie` field itself, and
 /// [`crate::low_level::read_unchecked_cookie`]
 /// reads one without the group's decision; both leave the mutation check with

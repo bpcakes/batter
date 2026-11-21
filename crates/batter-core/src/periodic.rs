@@ -60,7 +60,8 @@ mod history;
 mod policy;
 mod schedule;
 
-pub use failure::{PeriodicFailure, PeriodicInitializationExpired, PeriodicRun};
+pub(crate) use failure::PeriodicSuccess;
+pub use failure::{PeriodicFailure, PeriodicInitializationExpired, PeriodicOutcome, PeriodicRun};
 pub use history::{
     PeriodicCompletion, PeriodicFailureSample, PeriodicReader, PeriodicRecord, PeriodicSummary,
 };
@@ -144,12 +145,69 @@ where
     Fut: Future<Output = Result<(), PeriodicFailure<E>>> + Send + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
-    target.registration().register_periodic(name, policy, work)
+    target
+        .registration()
+        .register_periodic(Registration::new(name, policy, work))
+}
+
+/// Register a serial periodic component whose runs may decline their work.
+///
+/// The same protected execution path as [`register_periodic_in`], except that
+/// each run's success is a [`PeriodicOutcome`]. A run that returns
+/// `Ok(PeriodicOutcome::Skipped)`, such as one a tripped gate keeps out, is
+/// admitted and counted in [`PeriodicSummary::invocations`] and
+/// [`PeriodicSummary::skipped`], is not a success, and never acknowledges
+/// startup. Skips are part of the completion report's periodic records.
+///
+/// ```
+/// use batter_core::{
+///     cleanup::CleanupBudget,
+///     lifecycle::{ShutdownBudget, Supervisor},
+///     periodic::{PeriodicFailure, PeriodicOutcome, PeriodicPolicy, PeriodicShutdown,
+///         PeriodicStartup, register_skippable_in},
+/// };
+/// use std::{convert::Infallible, time::Duration};
+/// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+/// # async fn main() -> Result<(), batter_core::BoxError> {
+/// let second = Duration::from_secs(1);
+/// let mut supervisor = Supervisor::new(ShutdownBudget::new(
+///     second, second, second, CleanupBudget::new(second, second, second)?,
+/// )?);
+/// let policy = PeriodicPolicy::new(
+///     second, second, PeriodicStartup::immediate(), PeriodicShutdown::StopAtDrain,
+/// )?;
+/// let reader = register_skippable_in(&mut supervisor, "storage.gated", policy, |_| async {
+///     Ok::<_, PeriodicFailure<Infallible>>(PeriodicOutcome::Skipped)
+/// })?;
+/// let running = supervisor.start();
+/// running.status().wait_ready().await.unwrap();
+/// let success = running.shutdown_checked().await?;
+/// let summary = &success.report().periodic[0].summary;
+/// assert!(summary.skipped >= 1);
+/// assert_eq!(summary.succeeded, 0);
+/// assert_eq!(reader.snapshot().skipped, summary.skipped);
+/// # Ok(()) }
+/// ```
+pub fn register_skippable_in<T, F, Fut, E>(
+    target: &mut T,
+    name: &'static str,
+    policy: PeriodicPolicy,
+    work: F,
+) -> Result<PeriodicReader, RegistrationError>
+where
+    T: RegistrationTarget + ?Sized,
+    F: FnMut(OperationContext) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<PeriodicOutcome, PeriodicFailure<E>>> + Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    target
+        .registration()
+        .register_periodic(Registration::new(name, policy, work))
 }
 
 /// A validated periodic component awaiting its first live poll.
 pub(crate) struct Registration<F> {
-    name: &'static str,
+    pub(crate) name: &'static str,
     policy: PeriodicPolicy,
     work: F,
     history: Arc<History>,
@@ -181,7 +239,7 @@ impl<F> Registration<F> {
     }
 
     /// Drive the component's one serial loop.
-    pub(crate) fn run<Fut, E>(
+    pub(crate) fn run<Fut, S, E>(
         self,
         startup: ComponentStartup,
         admission: PeriodicAdmission,
@@ -189,15 +247,10 @@ impl<F> Registration<F> {
     ) -> impl Future<Output = Result<ComponentExit, BoxError>> + Send
     where
         F: FnMut(OperationContext) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), PeriodicFailure<E>>> + Send + 'static,
+        Fut: Future<Output = Result<S, PeriodicFailure<E>>> + Send + 'static,
+        S: crate::periodic::PeriodicSuccess,
         E: std::error::Error + Send + Sync + 'static,
     {
-        let Self {
-            name,
-            policy,
-            work,
-            history,
-        } = self;
-        driver::drive(name, policy, work, history, startup, admission, obligation)
+        driver::drive(self, startup, admission, obligation)
     }
 }

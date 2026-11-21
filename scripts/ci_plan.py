@@ -13,10 +13,14 @@
   PostgreSQL tests, meaning a file in the local package closure of
   `runlimit-postgres`, a source file outside it that the closure's Rust
   sources load by path, or a workspace-wide build input.
+- `flags_postgres`: `true` when the change can affect the flags PostgreSQL
+  suites, meaning a file in the local package closure of `batter-flags-postgres`,
+  `batter-flags` or `batter-flags-cli`, a source file outside it that the
+  closure's Rust sources load by path, or a workspace-wide build input.
 
-Whenever the planner cannot prove a skip, it selects the full work: if a job's
-inputs are unknown, every job runs and no earlier verification is reused. The
-workflow also runs every test job when this planner fails.
+Whenever the planner cannot prove a skip, it selects the full work: if either
+job's inputs are unknown, every job runs and no earlier verification is reused.
+The workflow also runs every test job when this planner fails.
 """
 from __future__ import annotations
 
@@ -33,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = ".github/workflows/ci.yml"
 MARKER_PREFIX = "verified-tree-"
 RUNLIMIT_PACKAGE = "runlimit-postgres"
+FLAGS_PACKAGES = ("batter-flags-postgres", "batter-flags", "batter-flags-cli")
 # Files and directories outside package directories that can change any Rust
 # job's outcome. Directory entries end with "/".
 GLOBAL_INPUTS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/",
@@ -155,16 +160,16 @@ def verifying_run(tree, get):
     return None
 
 
-def plan(event, paths, tree, find_run, closure):
+def plan(event, paths, tree, find_run, closure, flags_closure):
     """Return the step outputs and the notes that explain them.
 
-    `find_run` maps a tree to a verifying run URL and `closure` returns the
-    Runlimit PostgreSQL inputs; either may raise. A closure failure returns the
-    full-run outputs at once, so no skip or earlier verification rests on a
-    partial plan.
+    `find_run` maps a tree to a verifying run URL, `closure` returns the
+    Runlimit PostgreSQL inputs and `flags_closure` the flags PostgreSQL ones;
+    any of them may raise. A closure failure returns the full-run outputs at
+    once, so no skip or earlier verification rests on a partial plan.
     """
     outputs = {"tree": tree, "tree_verified": "false", "verified_run": "",
-               "runlimit_postgres": "true"}
+               "runlimit_postgres": "true", "flags_postgres": "true"}
     notes = []
     if event not in DIFF_EVENTS:
         notes.append(f"{event} runs every job.")
@@ -172,16 +177,20 @@ def plan(event, paths, tree, find_run, closure):
     if paths is None:
         notes.append("The changed files are unknown, so every job runs.")
     else:
-        try:
-            inputs = (*closure(), *GLOBAL_INPUTS)
-        except Exception as error:  # noqa: BLE001 - any failure selects the full run
-            notes.append(f"The Runlimit PostgreSQL inputs are unknown ({error!r}), so every job runs.")
-            return outputs, notes
-        if touches(paths, inputs):
-            notes.append("The change touches Runlimit PostgreSQL inputs.")
-        else:
-            outputs["runlimit_postgres"] = "false"
-            notes.append("The change leaves Runlimit PostgreSQL inputs untouched; it is skipped.")
+        jobs = []
+        for key, label, inputs_of in (("runlimit_postgres", "Runlimit PostgreSQL", closure),
+                                      ("flags_postgres", "flags PostgreSQL", flags_closure)):
+            try:
+                jobs.append((key, label, (*inputs_of(), *GLOBAL_INPUTS)))
+            except Exception as error:  # noqa: BLE001 - any failure selects the full run
+                notes.append(f"The {label} inputs are unknown ({error!r}), so every job runs.")
+                return outputs, notes
+        for key, label, inputs in jobs:
+            if touches(paths, inputs):
+                notes.append(f"The change touches {label} inputs.")
+            else:
+                outputs[key] = "false"
+                notes.append(f"The change leaves {label} inputs untouched; it is skipped.")
     if event == "push":
         try:
             url = find_run(tree)
@@ -239,7 +248,8 @@ def main(environ=os.environ):
     get = github_getter(environ.get("GITHUB_API_URL", "https://api.github.com"),
                         environ["GITHUB_REPOSITORY"], environ.get("GITHUB_TOKEN", ""))
     outputs, notes = plan(event, paths, tree, lambda value: verifying_run(value, get),
-                          lambda: package_inputs(cargo_metadata(), (RUNLIMIT_PACKAGE,)))
+                          lambda: package_inputs(cargo_metadata(), (RUNLIMIT_PACKAGE,)),
+                          lambda: package_inputs(cargo_metadata(), FLAGS_PACKAGES))
     write_outputs(outputs, notes, environ)
     return 0
 

@@ -70,18 +70,17 @@ impl<'a> Registration<'a> {
     /// Register one library-owned serial periodic component through the
     /// supervisor's validated and inert registration path. See
     /// [`crate::periodic::register_periodic_in`] for the public entry point.
-    pub(crate) fn register_periodic<F, Fut, E>(
+    pub(crate) fn register_periodic<F, Fut, S, E>(
         &mut self,
-        name: &'static str,
-        policy: crate::periodic::PeriodicPolicy,
-        work: F,
+        registration: crate::periodic::Registration<F>,
     ) -> Result<crate::periodic::PeriodicReader, RegistrationError>
     where
         F: FnMut(OperationContext) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), crate::periodic::PeriodicFailure<E>>> + Send + 'static,
+        Fut: Future<Output = Result<S, crate::periodic::PeriodicFailure<E>>> + Send + 'static,
+        S: crate::periodic::PeriodicSuccess,
         E: std::error::Error + Send + Sync + 'static,
     {
-        self.supervisor.register_periodic(name, policy, work)
+        self.supervisor.register_periodic(registration)
     }
 
     /// Reserve a validated finalizer name before acquiring a dependency.
@@ -92,6 +91,42 @@ impl<'a> Registration<'a> {
         name: &'static str,
     ) -> Result<CleanupSlot<'_>, RegistrationError> {
         self.supervisor.reserve_cleanup(name)
+    }
+
+    /// Refuses, before anything is registered, every component name in
+    /// `components` and finalizer name in `cleanups` that is invalid, already
+    /// registered or reserved, or listed twice.
+    ///
+    /// A helper that registers several components and finalizers checks them
+    /// all first, while it holds this exclusive authority, so its registration
+    /// either installs every piece or, refused here, none: nothing else can
+    /// register between the check and the registrations.
+    ///
+    /// ```
+    /// # use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}, registration::RegistrationTarget, RegistrationError};
+    /// # let second = std::time::Duration::from_secs(1);
+    /// # let cleanup = CleanupBudget::new(second, second, second).unwrap();
+    /// # let mut owner = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
+    /// let registration = owner.registration();
+    /// assert!(registration.check_names(&["store.refresh", "store.prune"], &["store.stopped"]).is_ok());
+    /// assert_eq!(
+    ///     registration.check_names(&["store.refresh", "store.refresh"], &[]),
+    ///     Err(RegistrationError::Duplicate("store.refresh")),
+    /// );
+    /// ```
+    pub fn check_names(
+        &self,
+        components: &[&'static str],
+        cleanups: &[&'static str],
+    ) -> Result<(), RegistrationError> {
+        self.supervisor.check_names(components, cleanups)
+    }
+
+    /// Whether this target still owns the finalizer's original cleanup stack.
+    /// This does not prove finalizer execution or remote resource liveness.
+    /// See [`crate::cleanup::CleanupSlot::register_tracked`] for an example.
+    pub fn owns_cleanup(&self, registration: &crate::cleanup::CleanupRegistration) -> bool {
+        self.supervisor.owns_cleanup(registration)
     }
 
     /// Reborrow this authority for another helper call.

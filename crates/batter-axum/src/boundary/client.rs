@@ -173,7 +173,8 @@ impl InProcessClient {
     ///
     /// Every private request record that only this crate's layers write is
     /// detected as well. This is the one list of them: the observation state,
-    /// the operational wrapper's marker, the admission record, the browser
+    /// the operational wrapper's marker, the admission record, the route-group
+    /// gate record, the browser
     /// credential record and the quota record. Their types cannot be named or
     /// built outside this crate, so one is present only in a request that a
     /// Batter layer already processed, or in a map copied from one, including

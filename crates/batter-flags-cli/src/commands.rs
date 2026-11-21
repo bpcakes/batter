@@ -1,0 +1,426 @@
+//! The commands: what each reads or writes, and the report it ends with.
+
+use batter_flags_core::{FlagKey, Version};
+use batter_flags_postgres::{
+    Actor, Change, ChangeReason, Continuation, Coordination, Declaration, Earlier, Expiry,
+    FlipPolicy, HistoryEntry, InvariantPolicy, KeyListing, PooledStore, Precondition, ProcessState,
+    Reference, SnapshotReport, StoreError, Stored, WriteInterrupt, WritePolicy,
+};
+use serde_json::{Value, json};
+use tokio::{sync::oneshot, time::Instant};
+
+use crate::{
+    exit::Exit,
+    output::Report,
+    plan::{AfterWrite, HistoryWindow, Plan},
+};
+
+/// A command.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum Command {
+    /// Lists every stored or declared key.
+    List {
+        #[command(flatten)]
+        filter: ListFilter,
+    },
+    /// Shows one key; `revision` is the value `--if-revision` takes.
+    Show { key: String },
+    /// Sets a release or mode flag to a variant.
+    Set {
+        key: String,
+        variant: String,
+        #[command(flatten)]
+        guard: Guard,
+    },
+    /// Engages or releases a kill switch.
+    Kill {
+        switch: String,
+        state: KillState,
+        #[command(flatten)]
+        guard: Guard,
+    },
+    /// Archives a key no Live or Silent process declares.
+    Archive {
+        key: String,
+        #[command(flatten)]
+        guard: Guard,
+    },
+    /// Restores an archived key.
+    Restore {
+        key: String,
+        #[command(flatten)]
+        guard: Guard,
+    },
+    /// Shows a key's newest audited events, or one page after a version.
+    History {
+        key: String,
+        /// Read the page of events after this version instead of the newest
+        /// page; `0` starts from the first event.
+        #[arg(long)]
+        after: Option<u64>,
+    },
+    /// Shows the fleet, or whether a version reached every Live process.
+    Fleet {
+        #[arg(long, conflicts_with = "flag")]
+        /// Check the VERSION/UUID from a write report or audit history.
+        write: Option<batter_flags_postgres::WriteId>,
+        #[arg(long)]
+        flag: Option<String>,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+#[group(id = "filter", multiple = false)]
+pub(crate) struct ListFilter {
+    /// Only declared release flags past their expiry on the server's date.
+    #[arg(long)]
+    expired: bool,
+    /// Only keys whose declaring catalogs no process row references.
+    #[arg(long)]
+    orphaned: bool,
+    /// Only declared keys with no stored row.
+    #[arg(long)]
+    declared_only: bool,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub(crate) enum KillState {
+    Engage,
+    Release,
+}
+
+/// What every write requires: an actor, a reason, and exactly one of
+/// `--if-revision N` or `--yes`, which [`Guard::change`] checks.
+#[derive(Debug, clap::Args)]
+pub(crate) struct Guard {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    reason: String,
+    /// Store-version watermark. Change the key only if its revision is at or
+    /// below N and N is at or below the store head.
+    #[arg(long)]
+    #[arg(value_name = "N")]
+    if_revision: Option<u64>,
+    /// Write whatever the key's revision is.
+    #[arg(long)]
+    yes: bool,
+    /// Accept a poll-by-poll rollout of a flip the catalog marks coordinated.
+    #[arg(long)]
+    accept_rolling_flip: bool,
+    /// Accept a write that leaves a cross-flag invariant unmet: processes
+    /// hold a flag of the pair at its declared base until it is met.
+    #[arg(long)]
+    accept_invariant_hold: bool,
+}
+
+impl Command {
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::List { .. } => "list",
+            Self::Show { .. } => "show",
+            Self::Set { .. } => "set",
+            Self::Kill { .. } => "kill",
+            Self::Archive { .. } => "archive",
+            Self::Restore { .. } => "restore",
+            Self::History { .. } => "history",
+            Self::Fleet { .. } => "fleet",
+        }
+    }
+}
+
+/// Refuses a standby or an older schema, then runs `plan` against `store`
+/// within `deadline`. `interrupt` ends the preflight or a read at once and
+/// stops a write before its COMMIT; once COMMIT is sent the write reports
+/// its real outcome.
+pub(crate) async fn run(
+    plan: Plan,
+    store: &PooledStore,
+    deadline: Instant,
+    interrupt: oneshot::Receiver<()>,
+) -> Report {
+    let mut interrupt = WriteInterrupt::new(interrupt);
+    let name = plan.name();
+    let preflight = async { Ok(store.preflight(deadline).await?) };
+    let outcome = match interruptible(&mut interrupt, preflight).await {
+        Ok(()) => execute(plan, store, deadline, &mut interrupt).await,
+        Err(failure) => Err(failure),
+    };
+    match outcome {
+        Ok(report) => report,
+        Err(Failure::Store(error)) => crate::writes::failed(name, &error),
+        Err(Failure::Interrupted) => Report::new(
+            name,
+            Exit::Failed,
+            "interrupted",
+            "interrupted before any write; nothing written",
+        ),
+    }
+}
+
+/// Why a command ended without its report.
+pub(crate) enum Failure {
+    /// The store refused or failed an operation.
+    Store(StoreError),
+    /// SIGINT or SIGTERM arrived during the preflight or a read.
+    Interrupted,
+}
+
+/// Runs `work` until it ends or `interrupt` fires, whichever is first. A
+/// closed sender never counts as an interrupt.
+async fn interruptible<T>(
+    interrupt: &mut WriteInterrupt,
+    work: impl Future<Output = Result<T, Failure>>,
+) -> Result<T, Failure> {
+    tokio::select! {
+        biased;
+        () = interrupt.wait() => Err(Failure::Interrupted),
+        outcome = work => outcome,
+    }
+}
+
+impl From<StoreError> for Failure {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
+async fn execute(
+    plan: Plan,
+    store: &PooledStore,
+    deadline: Instant,
+    interrupt: &mut WriteInterrupt,
+) -> Result<Report, Failure> {
+    match plan {
+        Plan::List(filter) => interruptible(interrupt, list(store, deadline, &filter)).await,
+        Plan::Show(key) => {
+            interruptible(interrupt, async {
+                let listing = store.key(&key, deadline).await?;
+                Ok(Report::new(
+                    "show",
+                    Exit::Ok,
+                    "ok",
+                    format!("revision {}", listing.revision.get()),
+                )
+                .with_data(listed(&listing)))
+            })
+            .await
+        }
+        Plan::History(key, window) => {
+            interruptible(interrupt, history(store, deadline, &key, window)).await
+        }
+        Plan::Fleet(query) => {
+            let fleet = crate::fleet::report::<Failure>(store, deadline, query);
+            interruptible(interrupt, fleet).await
+        }
+        Plan::Write {
+            name,
+            key,
+            request,
+            policy,
+            after,
+        } => {
+            let report =
+                crate::writes::write(name, store, deadline, interrupt, policy, &key, request)
+                    .await?;
+            Ok(match (after, report.outcome) {
+                // An unchanged release says nothing about the floors: a switch
+                // already released in the store can still be held engaged.
+                (AfterWrite::FloorWarning, "written" | "written_undeclared" | "unchanged") => {
+                    crate::fleet::floor_warning(store, deadline, &key, report, interrupt).await
+                }
+                _ => report,
+            })
+        }
+    }
+}
+
+async fn list(
+    store: &PooledStore,
+    deadline: Instant,
+    filter: &ListFilter,
+) -> Result<Report, Failure> {
+    let keys: Vec<Value> = store
+        .keys(deadline)
+        .await?
+        .iter()
+        .filter(|listing| filter.admits(listing))
+        .map(listed)
+        .collect();
+    Ok(
+        Report::new("list", Exit::Ok, "ok", format!("{} keys", keys.len()))
+            .with_data(Value::Array(keys)),
+    )
+}
+
+/// One bounded read: the newest page by default, so the event an uncertain
+/// write points the operator to is shown however long the history is, or the
+/// page after a version, to walk older events forward.
+async fn history(
+    store: &PooledStore,
+    deadline: Instant,
+    key: &FlagKey,
+    window: HistoryWindow,
+) -> Result<Report, Failure> {
+    let (events, more) = match window {
+        HistoryWindow::Newest => {
+            let recent = store.recent_history(key, deadline).await?;
+            let more = match recent.earlier {
+                Earlier::None => None,
+                Earlier::Retained => Some(
+                    "older events are retained; read them from the start with --after 0".to_owned(),
+                ),
+            };
+            (recent.entries, more)
+        }
+        HistoryWindow::After(after) => {
+            let page = store.history(Some(key), after, deadline).await?;
+            let more = match page.next {
+                Continuation::Complete => None,
+                Continuation::After(last) => Some(format!(
+                    "more events follow; re-run with --after {}",
+                    last.get()
+                )),
+            };
+            (page.entries, more)
+        }
+    };
+    let entries: Vec<Value> = events.iter().map(event).collect();
+    let report = Report::new(
+        "history",
+        Exit::Ok,
+        "ok",
+        format!("{} entries", entries.len()),
+    )
+    .with_data(Value::Array(entries));
+    Ok(match more {
+        Some(warning) => report.warn(warning),
+        None => report,
+    })
+}
+
+fn event(entry: &HistoryEntry) -> Value {
+    json!({
+        "version": entry.write_id.version().get(), "write_id": entry.write_id.to_string(),
+        "operation": entry.operation,
+        "actor": entry.actor,
+        "reason": entry.reason,
+        "guard": entry.guard,
+        "recorded_by": entry.recorded_by,
+        "recorded_at": entry.recorded_at.to_rfc3339(),
+        "after": entry.after.value(),
+    })
+}
+
+impl Guard {
+    pub(crate) fn policy(&self) -> WritePolicy {
+        WritePolicy {
+            flip: if self.accept_rolling_flip {
+                FlipPolicy::AcceptRolling
+            } else {
+                FlipPolicy::RefuseCoordinated
+            },
+            invariants: if self.accept_invariant_hold {
+                InvariantPolicy::AcceptHeld
+            } else {
+                InvariantPolicy::RefuseUnmet
+            },
+        }
+    }
+
+    pub(crate) fn change(&self) -> Result<Change, String> {
+        let actor = Actor::new(&self.actor)
+            .map_err(|_| "--actor must be 1 to 128 bytes without control characters".to_owned())?;
+        let reason = ChangeReason::new(&self.reason).map_err(|_| {
+            "--reason must be 1 to 1024 bytes without control characters".to_owned()
+        })?;
+        let precondition = match (self.if_revision, self.yes) {
+            (Some(revision), false) => Precondition::UnchangedSince(Version::new(revision)),
+            (None, true) => Precondition::Unconditional,
+            _ => {
+                return Err("pass exactly one of --if-revision N or --yes".to_owned());
+            }
+        };
+        Ok(Change::new(actor, reason, precondition))
+    }
+}
+
+impl ListFilter {
+    fn admits(&self, listing: &KeyListing) -> bool {
+        match (
+            &listing.declaration,
+            self.expired,
+            self.orphaned,
+            self.declared_only,
+        ) {
+            (_, false, false, false) => true,
+            (
+                Declaration::Retained {
+                    expiry: Expiry::Passed(_),
+                    ..
+                },
+                true,
+                _,
+                _,
+            ) => true,
+            (
+                Declaration::Retained {
+                    reference: Reference::Orphaned,
+                    ..
+                },
+                _,
+                true,
+                _,
+            ) => true,
+            (Declaration::Retained { .. }, _, _, true) => listing.stored == Stored::Absent,
+            _ => false,
+        }
+    }
+}
+
+fn listed(listing: &KeyListing) -> Value {
+    let (state, stored) = match &listing.stored {
+        Stored::Absent => (Value::Null, "absent"),
+        Stored::Active(state) => (state.value().clone(), "active"),
+        Stored::Archived(state) => (state.value().clone(), "archived"),
+    };
+    let declaration = match &listing.declaration {
+        Declaration::Undeclared => json!({"declared": false}),
+        Declaration::Retained {
+            coordinated,
+            expiry,
+            reference,
+        } => json!({
+            "declared": true,
+            "coordinated": *coordinated == Coordination::Coordinated,
+            "expiry": match expiry { Expiry::None => Value::Null, Expiry::On(d) | Expiry::Passed(d) => json!(d) },
+            "expired": matches!(expiry, Expiry::Passed(_)),
+            "orphaned": *reference == Reference::Orphaned,
+        }),
+    };
+    json!({
+        "key": listing.key,
+        "kind": listing.kind,
+        "value_type": listing.value_type,
+        "revision": listing.revision.get(),
+        "stored": stored,
+        "state": state,
+        "declaration": declaration,
+    })
+}
+
+pub(crate) fn snapshot_text(report: SnapshotReport) -> (&'static str, Option<u64>) {
+    match report {
+        SnapshotReport::NotLoaded => ("not_loaded", None),
+        SnapshotReport::PersistedFile(version) => ("persisted_file", Some(version.get())),
+        SnapshotReport::ControlPlane(version) => ("control_plane", Some(version.get())),
+    }
+}
+
+pub(crate) fn state_text(state: ProcessState) -> &'static str {
+    match state {
+        ProcessState::Live => "live",
+        ProcessState::Silent => "silent",
+        ProcessState::Stopped => "stopped",
+    }
+}

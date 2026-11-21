@@ -45,6 +45,17 @@ class SqlxLiveControls(unittest.TestCase):
                                           f"test {second} ... ok".encode())
         self.assertFalse(sqlx_live.complete_execution(output, cases))
 
+    def test_the_flags_facade_targets_are_scheduled_with_their_features(self):
+        for target in ("grants_live", "flags_live"):
+            with self.subTest(target=target):
+                self.assertIn(target, sqlx_live.TARGETS)
+                built = sqlx_live.command(target)
+                self.assertEqual(built[built.index("-p") + 1], "batter")
+                self.assertIn("flags-postgres", built[built.index("--features") + 1])
+                self.assertEqual(built[built.index("--test") + 1], target)
+        self.assertIn("a_write_after_a_restore_below_the_fleet_is_numbered_above_it_and_the_process_converges",
+                      sqlx_live.TARGETS["flags_live"])
+
     def test_missing_environment_fails_before_invocation(self):
         for environment in ({}, {"DATABASE_URL": "ordinary"},
                             {"BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"},

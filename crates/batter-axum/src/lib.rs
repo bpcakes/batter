@@ -44,9 +44,10 @@ pub mod browser;
 
 pub use admitted::{AdmittedRequest, AdmittedRequestRejection};
 pub use boundary::{
-    AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
-    InProcessClient, InProcessRefusal, MutationCheckWaiver, ProbePath, ProbePathError,
-    ProbeRegistrationError, RouteGroup, RouteGroupError, RouteInventory, RouteInventoryError,
+    AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GateView, Gated, GroupGate, GroupPolicy,
+    GuardedRouter, HttpBoundary, InProcessClient, InProcessRefusal, MutationCheckWaiver, ProbePath,
+    ProbePathError, ProbeRegistrationError, RouteGroup, RouteGroupError, RouteInventory,
+    RouteInventoryError,
 };
 pub use correlation::{CorrelationId, render_infrastructure_failure};
 pub use readiness::{
@@ -73,7 +74,9 @@ type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> PolicyResponse + Send + Sy
 /// their inner middleware. Without it, 5xx responses emit WARN and other responses
 /// emit INFO. A future dropped before a response still emits WARN. This changes
 /// only event severity: actual status, HTTP outcome, sanitized fields and the
-/// number of events stay unchanged. The `batter.http` span remains at INFO.
+/// number of events stay unchanged. A disabled group gate replaces a renderer's
+/// override with its own configured level (INFO by default; see [`GroupGate`]).
+/// The `batter.http` span remains at INFO.
 /// Completion events carry their own sanitized HTTP fields even if that span is
 /// disabled. Correlation supplied by application spans still depends on those spans.
 /// Subscriber filtering still controls delivery, including DEBUG/TRACE visibility.
@@ -135,7 +138,8 @@ pub struct RequestPolicy {
 /// extensions. The application cannot construct one with a different request
 /// or policy. Its metadata excludes every private request record that
 /// [`InProcessClient::request`] lists, so redispatch cannot mutate the original
-/// observer, admit the new request or present cookies under its decision.
+/// observer, admit the new request or present gate or cookie decisions under
+/// the original request's policy.
 /// Public correlation and application extensions remain available.
 ///
 /// ```
@@ -343,6 +347,17 @@ pub enum HttpFailure {
     DeadlineExceeded,
     /// A concurrency/admission boundary rejected this request.
     Overloaded,
+    /// A route group's gate disabled this request.
+    ///
+    /// This is a permanent, unconditional batter-axum contract. It survives
+    /// withdrawal of the gate seam that first produces it. The default is 503
+    /// with code `disabled`; application renderers still own the actual status.
+    ///
+    /// Migration: exhaustive `HttpFailure` matches must add `HttpFailure::Disabled`;
+    /// wildcard matches should handle it explicitly when intentional disablement
+    /// differs from other infrastructure failures. No deprecated shim can make
+    /// the former variant set represent this new state.
+    Disabled,
     /// An unexpected internal problem with no safe client detail.
     Internal,
 }
@@ -352,7 +367,10 @@ impl HttpFailure {
     pub const fn status(self) -> StatusCode {
         match self {
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-            _ => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable | Self::Cancelled | Self::DeadlineExceeded | Self::Overloaded => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            Self::Disabled => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -364,6 +382,7 @@ impl HttpFailure {
             Self::DeadlineExceeded => "deadline_exceeded",
             Self::Overloaded => "overloaded",
             Self::Internal => "internal_error",
+            Self::Disabled => "disabled",
         }
     }
 }

@@ -19,6 +19,7 @@
 //! this workspace. `consumers/single_facade_harness.rs` owns the database.
 
 mod single_facade_completion;
+mod single_facade_flags;
 mod single_facade_quota;
 
 use batter::cleanup::CleanupBudget;
@@ -499,7 +500,9 @@ async fn main() -> Outcome {
     let url = std::env::var("DATABASE_URL")?;
     let subject = std::env::var("FACADE_CONSUMER_SUBJECT")?;
     let payload = json!({"name": "facade"});
-    run_worker(url, &payload, &subject).await?;
+    run_worker(url.clone(), &payload, &subject).await?;
     println!("single batter dependency reached runledger and runlimit");
+    single_facade_flags::run(url.parse()?).await?;
+    println!("single batter dependency reached the flags control plane");
     Ok(())
 }

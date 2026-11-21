@@ -87,10 +87,17 @@ the native layer needs, but never `batter-axum` or `batter::runlimit::http`.
 | `batter::runlimit::postgres` | `runlimit-postgres` | `runlimit-postgres` |
 | `batter::runlimit::native_transport::http` | `runlimit-http` | `runlimit-native-http` |
 | `batter::runlimit::native_transport::axum` | `runlimit-axum` | `runlimit-native-axum` |
+| `batter::flags::core` | `batter-flags-core` | `flags` |
+| `batter::flags::postgres` | `batter-flags-postgres` | `flags-postgres` |
 
 Each namespace is the native package itself, so a type reached through the
 facade and the same type reached through a direct dependency are one identity.
-`runledger-tui` is a binary-only package and has no namespace. The same
+`runledger-tui` is a binary-only package and has no namespace, and so is
+`batter-flags-cli`, the `batter-flags` operator command.
+`batter::flags::control_plane::register_in` is the protected path for the
+flags store: `flags-postgres` selects `sqlx`, so `batter::sqlx::pool_in` owns
+the pool whose `ControlPlaneStore` it takes, and the pool's close is registered
+before the flags stop marker. The same
 `runledger-test-support` feature also selects `batter::runledger::test_support`,
 which is not a native namespace: it is the Runledger adapter's own worker-free
 handler drive, `batter_runledger::test_support`, with the same identity through

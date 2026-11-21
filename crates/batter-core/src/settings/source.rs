@@ -8,8 +8,39 @@ use std::{
 };
 
 /// An explicit source whose formatting hides both keys and values.
+///
+/// A source remembers whether any layer of it was narrowed by
+/// [`select_dedicated`](Self::select_dedicated) or
+/// [`select_environment`](Self::select_environment), so a reader that needs
+/// every name the process was given, such as a flag catalog's resolution, can
+/// refuse a narrowed one instead of reading absent names as defaults.
 #[derive(Clone, Default)]
-pub struct SettingsSource(BTreeMap<OsString, OsString>);
+pub struct SettingsSource {
+    values: BTreeMap<OsString, OsString>,
+    selection: SettingsSelection,
+}
+
+/// Whether a [`SettingsSource`] holds every name it was given.
+///
+/// ```
+/// use batter_core::settings::{SettingsSelection, SettingsSource};
+/// let captured = SettingsSource::from_pairs([("APP_LIMIT".into(), "4".into())])?;
+/// assert_eq!(captured.selection(), SettingsSelection::Captured);
+/// let narrowed = captured.select_environment(&["APP_LIMIT"], &["APP_"])?;
+/// assert_eq!(narrowed.selection(), SettingsSelection::Selected);
+/// let mut merged = SettingsSource::default();
+/// merged.overlay(narrowed);
+/// assert_eq!(merged.selection(), SettingsSelection::Selected);
+/// # Ok::<(), batter_core::settings::SettingsError>(())
+/// ```
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SettingsSelection {
+    /// Every layer holds every name its input had: pairs, a file or a literal.
+    #[default]
+    Captured,
+    /// At least one layer kept only the names a selection allowed.
+    Selected,
+}
 impl fmt::Debug for SettingsSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SettingsSource([REDACTED])")
@@ -31,7 +62,15 @@ impl SettingsSource {
                 return Err(SettingsError::new("source", "duplicate key"));
             }
         }
-        Ok(Self(values))
+        Ok(Self {
+            values,
+            selection: SettingsSelection::Captured,
+        })
+    }
+
+    /// Whether any layer of this source was narrowed by a selection.
+    pub fn selection(&self) -> SettingsSelection {
+        self.selection
     }
     /// Select only declared names, rejecting every unknown name in a dedicated source.
     ///
@@ -65,7 +104,7 @@ impl SettingsSource {
         reserved: &[&str],
     ) -> Result<Self, SettingsError> {
         let mut selected = BTreeMap::new();
-        for (key, value) in &self.0 {
+        for (key, value) in &self.values {
             if allowed.iter().any(|name| key == OsStr::new(name)) {
                 selected.insert(key.clone(), value.clone());
             } else if reserved
@@ -75,15 +114,22 @@ impl SettingsSource {
                 return Err(SettingsError::new("source", "unknown key"));
             }
         }
-        Ok(Self(selected))
+        Ok(Self {
+            values: selected,
+            selection: SettingsSelection::Selected,
+        })
     }
     /// Overlay a higher-precedence, already structurally validated source.
+    /// The result is [`SettingsSelection::Selected`] if either layer is.
     pub fn overlay(&mut self, higher: Self) {
-        self.0.extend(higher.0);
+        self.values.extend(higher.values);
+        if higher.selection == SettingsSelection::Selected {
+            self.selection = SettingsSelection::Selected;
+        }
     }
     /// Deliberate raw access, retaining missing/empty/non-Unicode distinctions.
     pub fn get(&self, name: &str) -> Option<&OsStr> {
-        self.0.get(OsStr::new(name)).map(OsString::as_os_str)
+        self.values.get(OsStr::new(name)).map(OsString::as_os_str)
     }
     /// Read an optional Unicode value, retaining non-Unicode data as a typed cause.
     pub fn text(&self, name: &'static str) -> Result<Option<&str>, SettingsError> {
@@ -179,5 +225,8 @@ pub fn read_literal(reader: impl Read, limit: usize) -> Result<SettingsSource, S
             return Err(fail("duplicate key"));
         }
     }
-    Ok(SettingsSource(values))
+    Ok(SettingsSource {
+        values,
+        selection: SettingsSelection::Captured,
+    })
 }

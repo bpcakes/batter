@@ -65,8 +65,8 @@ pub enum PeriodicCompletion {
 ///
 /// Counters saturate instead of wrapping, and saturation is reported rather
 /// than hidden. A recorded nonfatal outcome contributes to one of `succeeded`,
-/// `recoverable_failures`, `deadline_exceeded` or `stop_interrupted`; fatal run
-/// evidence is retained separately. Later success never erases earlier
+/// `skipped`, `recoverable_failures`, `deadline_exceeded` or
+/// `stop_interrupted`; fatal run evidence is retained separately. Later success never erases earlier
 /// evidence. Only the library-owned sample count is bounded here: application
 /// error payload size and caller-retained clones remain the caller's own.
 ///
@@ -81,8 +81,15 @@ pub enum PeriodicCompletion {
 pub struct PeriodicSummary {
     /// Admitted runs, including the run that ended the loop.
     pub invocations: u64,
-    /// Runs that returned success.
+    /// Runs that returned success after doing their work.
     pub succeeded: u64,
+    /// Runs that returned [`PeriodicOutcome::Skipped`](super::PeriodicOutcome::Skipped):
+    /// admitted and counted in [`invocations`](Self::invocations), but they did
+    /// not do their work, so they are not successes.
+    ///
+    /// Migration: a struct literal or exhaustive pattern of `PeriodicSummary`
+    /// adds `skipped`, or ends in `..`.
+    pub skipped: u64,
     /// Runs that returned a recoverable application failure.
     pub recoverable_failures: u64,
     /// Runs whose own deadline expired before they returned.
@@ -110,8 +117,8 @@ pub struct PeriodicSummary {
     /// destroyed. It carries an escalated run's original error or the library's
     /// own initialization-expiry error.
     /// For initialization expiry, `invocation` counts admitted runs before the
-    /// expiry, including successful or recoverably failed runs; it is zero when
-    /// expiry precedes the first admission. It does not identify a failing run.
+    /// expiry, including successful, skipped or recoverably failed runs; it is
+    /// zero when expiry precedes the first admission. It does not identify a failing run.
     pub terminal_failure: Option<PeriodicFailureSample>,
     /// Whether this component acknowledged its registered startup.
     pub acknowledged: bool,
@@ -286,6 +293,12 @@ impl History {
         let mut guard = self.lock();
         let state = &mut *guard;
         bump(&mut state.succeeded, &mut state.saturated);
+    }
+
+    pub(super) fn skipped(&self) {
+        let mut guard = self.lock();
+        let state = &mut *guard;
+        bump(&mut state.skipped, &mut state.saturated);
     }
 
     pub(super) fn deadline_exceeded(&self) {

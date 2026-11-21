@@ -28,8 +28,9 @@ Windows support and non-Unix fallbacks are out of scope.
   its private snapshot writer requires the admission mutex guard.
 - `src/periodic.rs` and `periodic/` own the one serial schedule, per-run budget,
   startup acknowledgement policy, two library-owned stopping classes and
-  bounded recoverable-failure evidence. The operation remains application- or
-  native-owned.
+  bounded recoverable-failure evidence, including skips from
+  `register_skippable_in`, which are never successes and never acknowledge
+  startup. The operation remains application- or native-owned.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
   mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
@@ -107,6 +108,10 @@ belong in `crates/batter/examples` and use the public facade.
 Update the root contracts and implemented status, then record executed checks in the owning Bead.
 
 ## Invariants
+
+`cleanup/registration.rs` owns opaque stack-registration evidence. It moves
+with the actual cleanup stack; extracting cleanup must not leave evidence
+valid for the emptied supervisor. Evidence proves registration, not execution.
 
 Preserve child deadline clamping, downward cancellation, inert factories,
 explicit replay permission, bounded process admission, and retained failures.

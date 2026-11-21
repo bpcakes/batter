@@ -38,10 +38,11 @@ macro_rules! private_records {
         /// shared observation mutation reachable, and a kept admission record
         /// would admit the new request. A kept browser credential record
         /// would let the new request present cookies under the original
-        /// request's decision; no current renderer runs after a group's gate
-        /// records one, so its removal guards future layer orders.
-        /// Keep public correlation and application extensions available for
-        /// rendering.
+        /// request's decision; no current renderer runs after a group's
+        /// browser gate records one, so its removal guards future layer
+        /// orders. The group gate record is also removed, independent of its
+        /// captured value type. Keep public correlation and application
+        /// extensions available for rendering.
         pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
             $(parts.extensions.remove::<$record>();)+
             parts
@@ -83,6 +84,7 @@ macro_rules! private_records {
 private_records!(
     crate::quota_observation::QuotaObservation,
     ObservationState,
+    crate::boundary::gate::GateRecord,
     OperationalScope,
     crate::admitted::Admission,
     crate::browser::CredentialAccess,
@@ -280,6 +282,7 @@ pub fn render_infrastructure_failure(failure: HttpFailure, id: Option<&Correlati
         HttpFailure::DeadlineExceeded => "The operation exceeded its time budget",
         HttpFailure::Overloaded => "The service is at capacity",
         HttpFailure::Internal => "An internal error occurred",
+        HttpFailure::Disabled => "The service is temporarily disabled",
     };
     (
         failure.status(),

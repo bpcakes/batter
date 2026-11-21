@@ -125,6 +125,23 @@ The links below retain this ADR's existing assessment anchors.
 - <a id="owned-phase-and-acquisition-handoff-assessment-batter-jxj2"></a>[Owned phase and acquisition handoff assessment (batter-jxj2)](../evidence/api-assessments/operations.md#owned-phase-and-acquisition-handoff-assessment-batter-jxj2)
 - <a id="protected-service-readiness-and-typed-output-batter-m9rp"></a>[Protected service readiness and typed output (batter-m9rp)](../evidence/api-assessments/lifecycle.md#protected-service-readiness-and-typed-output-batter-m9rp)
 - <a id="intent-reconciliation-assessment-batter-hw3k"></a>[Intent reconciliation assessment (batter-hw3k)](../evidence/api-assessments/postgresql.md#intent-reconciliation-assessment-batter-hw3k)
+- <a id="flags-store-assessment-t-12-batter-jkw612"></a>[Flags store assessment (T-12, batter-jkw6.12)](../evidence/api-assessments/flags.md#flags-store-assessment-t-12-batter-jkw612)
+- <a id="flags-catalog-and-declarations-assessment-t-04-batter-jkw64"></a>[Flags catalog and declarations assessment (T-04, batter-jkw6.4)](../evidence/api-assessments/flags.md#flags-catalog-and-declarations-assessment-t-04-batter-jkw64)
+- <a id="flags-snapshots-evaluation-and-pins-assessment-t-05-batter-jkw65"></a>[Flags snapshots, evaluation and pins assessment (T-05, batter-jkw6.5)](../evidence/api-assessments/flags.md#flags-snapshots-evaluation-and-pins-assessment-t-05-batter-jkw65)
+- <a id="declared-mode-reader-and-test-flags-assessment-t-06-batter-jkw66"></a>[Declared mode, reader and test flags assessment (T-06, batter-jkw6.6)](../evidence/api-assessments/flags.md#declared-mode-reader-and-test-flags-assessment-t-06-batter-jkw66)
+- <a id="route-group-gate-seam-assessment-t-07-batter-jkw67"></a>[Route-group gate seam assessment (T-07, batter-jkw6.7)](../evidence/api-assessments/flags.md#route-group-gate-seam-assessment-t-07-batter-jkw67)
+- <a id="http-flags-assessment-t-08-batter-jkw68"></a>[HTTP flags assessment (T-08, batter-jkw6.8)](../evidence/api-assessments/flags.md#http-flags-assessment-t-08-batter-jkw68)
+- <a id="job-flags-assessment-t-09-batter-jkw69"></a>[Job flags assessment (T-09, batter-jkw6.9)](../evidence/api-assessments/flags.md#job-flags-assessment-t-09-batter-jkw69)
+- <a id="periodic-flags-assessment-t-10-batter-jkw610"></a>[Periodic flags assessment (T-10, batter-jkw6.10)](../evidence/api-assessments/flags.md#periodic-flags-assessment-t-10-batter-jkw610)
+- <a id="flags-presence-prune-and-fleet-assessment-t-13-batter-jkw613"></a>[Flags presence, prune and fleet assessment (T-13, batter-jkw6.13)](../evidence/api-assessments/flags.md#flags-presence-prune-and-fleet-assessment-t-13-batter-jkw613)
+- <a id="control-plane-loader-assessment-t-14-batter-jkw614"></a>[Control-plane loader assessment (T-14, batter-jkw6.14)](../evidence/api-assessments/flags.md#control-plane-loader-assessment-t-14-batter-jkw614)
+- <a id="last-good-file-assessment-t-15-batter-jkw615"></a>[Last-good file assessment (T-15, batter-jkw6.15)](../evidence/api-assessments/flags.md#last-good-file-assessment-t-15-batter-jkw615)
+- <a id="operator-command-assessment-t-16-batter-jkw616"></a>[Operator command assessment (T-16, batter-jkw6.16)](../evidence/api-assessments/flags.md#operator-command-assessment-t-16-batter-jkw616)
+- <a id="flags-facade-and-consumer-assessment-t-17-batter-jkw617"></a>[Flags facade and consumer assessment (T-17, batter-jkw6.17)](../evidence/api-assessments/flags.md#flags-facade-and-consumer-assessment-t-17-batter-jkw617)
+- <a id="control-plane-invariants-assessment-t-21-batter-jkw621"></a>[Control-plane invariants assessment (T-21, batter-jkw6.21)](../evidence/api-assessments/flags.md#control-plane-invariants-assessment-t-21-batter-jkw621)
+- <a id="flags-control-plane-fresh-agent-evaluation-t-24-batter-jkw624"></a>[Flags control-plane fresh-agent evaluation (T-24, batter-jkw6.24)](../evidence/api-assessments/flags.md#flags-control-plane-fresh-agent-evaluation-t-24-batter-jkw624)
+- <a id="branch-state-protocol-repairs-batter-jkw636"></a>[Branch state-protocol repairs (batter-jkw6.36)](../evidence/api-assessments/flags.md#branch-state-protocol-repairs-batter-jkw636)
+- <a id="search-path-refusal-batter-jkw634"></a>[Search-path refusal (batter-jkw6.34)](../evidence/api-assessments/flags.md#search-path-refusal-batter-jkw634)
 
 ## Recurring example review defects
 

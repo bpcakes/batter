@@ -37,8 +37,32 @@ pub struct PgSessionProfile {
     search_path: String,
     statement_timeout_ms: u32,
     lock_timeout_ms: u32,
-    transaction_timeouts_ms: Option<(u32, u32)>,
+    idle_timeout: IdleTimeout,
+    transaction_timeout_ms: Option<u32>,
     settings: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy)]
+enum IdleTimeout {
+    Inherit,
+    Exact(u32),
+    CapReset(u32),
+}
+
+impl IdleTimeout {
+    async fn milliseconds(self, connection: &mut PgConnection) -> Result<Option<u32>, sqlx::Error> {
+        match self {
+            Self::Inherit => Ok(None),
+            Self::Exact(ms) => Ok(Some(ms)),
+            Self::CapReset(cap) => {
+                // reset_val is the session's RESET value, in this GUC's native milliseconds.
+                let reset: i32 = sqlx::query_scalar("SELECT reset_val::int FROM pg_catalog.pg_settings WHERE name = 'idle_in_transaction_session_timeout' AND unit = 'ms'")
+                    .fetch_one(connection).await?;
+                let reset = u32::try_from(reset).map_err(|_| mismatch())?;
+                Ok(Some(if reset == 0 { cap } else { cap.min(reset) }))
+            }
+        }
+    }
 }
 
 /// Redacted invalid declaration or effective-session mismatch.
@@ -92,10 +116,8 @@ impl PgSessionProfile {
             statement_timeout,
             lock_timeout,
         )?;
-        profile.transaction_timeouts_ms = Some((
-            timeout_ms(idle_in_transaction_session_timeout)?,
-            timeout_ms(transaction_timeout)?,
-        ));
+        profile.idle_timeout = IdleTimeout::Exact(timeout_ms(idle_in_transaction_session_timeout)?);
+        profile.transaction_timeout_ms = Some(timeout_ms(transaction_timeout)?);
         Ok(profile)
     }
 
@@ -146,7 +168,8 @@ impl PgSessionProfile {
             search_path,
             statement_timeout_ms: timeout_ms(statement_timeout)?,
             lock_timeout_ms: timeout_ms(lock_timeout)?,
-            transaction_timeouts_ms: None,
+            idle_timeout: IdleTimeout::Inherit,
+            transaction_timeout_ms: None,
             settings: BTreeMap::new(),
         })
     }
@@ -177,6 +200,43 @@ impl PgSessionProfile {
             return Err(PgProfileError("duplicate PostgreSQL profile setting"));
         }
         Ok(self)
+    }
+
+    /// Derive an operation profile with bounded statement, lock and idle waits.
+    /// Each cap is a positive whole number of milliseconds. A shorter declared
+    /// limit wins and the total transaction timeout retains its original policy.
+    ///
+    /// ```
+    /// # use batter_sqlx::PgSessionProfile;
+    /// # use std::time::Duration;
+    /// # fn example(profile: &PgSessionProfile) -> Result<(), batter_sqlx::PgProfileError> {
+    /// let cap = Duration::from_secs(1);
+    /// let scoped = profile.with_timeout_caps(cap, cap, cap)?;
+    /// assert_eq!(scoped.trusted_schemas(), profile.trusted_schemas());
+    /// # Ok(()) }
+    /// ```
+    pub fn with_timeout_caps(
+        &self,
+        statement: Duration,
+        lock: Duration,
+        idle: Duration,
+    ) -> Result<Self, PgProfileError> {
+        fn capped(current: u32, cap: Duration) -> Result<u32, PgProfileError> {
+            let cap = timeout_ms(cap)?;
+            if cap == 0 {
+                return Err(PgProfileError("timeout cap must be positive"));
+            }
+            Ok(if current == 0 { cap } else { current.min(cap) })
+        }
+        let mut profile = self.clone();
+        profile.statement_timeout_ms = capped(self.statement_timeout_ms, statement)?;
+        profile.lock_timeout_ms = capped(self.lock_timeout_ms, lock)?;
+        profile.idle_timeout = match self.idle_timeout {
+            IdleTimeout::Inherit => IdleTimeout::CapReset(capped(0, idle)?),
+            IdleTimeout::CapReset(ms) => IdleTimeout::CapReset(capped(ms, idle)?),
+            IdleTimeout::Exact(ms) => IdleTimeout::Exact(capped(ms, idle)?),
+        };
+        Ok(profile)
     }
 
     /// First trusted schema, used for unqualified DDL placement.
@@ -249,7 +309,7 @@ impl PgSessionProfile {
         // Verification checks the complete session, login included, before work.
         let mut assignments: Vec<(&str, String)> = Vec::with_capacity(9 + self.settings.len());
         assignments.push(("search_path", self.search_path.clone()));
-        for (key, value) in self.timeouts() {
+        for (key, value) in self.timeouts(self.idle_timeout.milliseconds(connection).await?) {
             assignments.push((key, format!("{value}ms")));
         }
         for (key, value) in [
@@ -272,21 +332,16 @@ impl PgSessionProfile {
         self.verify(connection).await
     }
 
-    fn timeouts(&self) -> impl Iterator<Item = (&'static str, u32)> {
+    fn timeouts(&self, idle_ms: Option<u32>) -> impl Iterator<Item = (&'static str, u32)> {
         [
             ("statement_timeout", self.statement_timeout_ms),
             ("lock_timeout", self.lock_timeout_ms),
         ]
         .into_iter()
+        .chain(idle_ms.map(|ms| ("idle_in_transaction_session_timeout", ms)))
         .chain(
-            self.transaction_timeouts_ms
-                .into_iter()
-                .flat_map(|(idle, total)| {
-                    [
-                        ("idle_in_transaction_session_timeout", idle),
-                        ("transaction_timeout", total),
-                    ]
-                }),
+            self.transaction_timeout_ms
+                .map(|ms| ("transaction_timeout", ms)),
         )
     }
 }
