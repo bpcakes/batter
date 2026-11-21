@@ -329,13 +329,14 @@ history; new work does not require a Jig plan.
 New public APIs need rustdoc and an example. New claims need executable tests
 or an explicit unverified label. Every public hard cut, meaning a removed or renamed
 public item, a moved path without an alias, or a signature change that stops
-existing callers compiling, ships in the same change with three things: a
+existing callers compiling, ships in the same change with two things: a
 `Breaking:` CHANGELOG entry with before/after code for each affected call
-shape; the removed name in the replacement item's rustdoc, in a sentence that
-starts with `Migration:`, so a search for the old name finds the fix; and a
-recorded decision on a `#[deprecated]` shim, kept for one release only where
-the old form cannot restore an invalid state and omitted with the reason
-otherwise. Check the cut against a public-API surface diff; the method and the
+shape, and the removed name in the replacement item's rustdoc, in a sentence
+that starts with `Migration:`, so a search for the old name finds the fix.
+Prefer the break to compatibility: do not keep `#[deprecated]` shims, aliases
+or old call shapes beside the replacement. Batter moves forward at all times,
+and its agent consumers upgrade, hit the compile error and apply the
+`Migration:` fix. Check the cut against a public-API surface diff; the method and the
 diff since 0.0.1 are in `docs/evidence/public-api-diff-2026-10-09`. Record external semantics against primary
 sources in `docs/references.md`; re-check the actual upstream version before
 implementing an integration. Research Effect v4, not v3 tutorials.
