@@ -45,6 +45,10 @@ pub enum Behavior {
     WrongContentType,
     /// 200 with an empty body and a non-protobuf content type.
     EmptyWrongContentType,
+    /// VictoriaMetrics' empty success without a Content-Type.
+    EmptyUntyped,
+    /// An untyped body must never be treated as the empty success.
+    NonemptyUntyped,
     /// 200 with a protobuf-prefix lookalike content type.
     PrefixContentType,
     /// 200 with a valid protobuf content type parameter.
@@ -98,6 +102,8 @@ impl Collector {
         });
         let app = Router::new()
             .route("/v1/metrics", post(export))
+            .route("/opentelemetry/v1/metrics", post(export))
+            .route("/insert/12:34/opentelemetry/v1/metrics", post(export))
             .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
             .with_state(shared.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -238,6 +244,8 @@ async fn export(State(shared): State<Arc<Shared>>, body: Bytes) -> Response {
         Behavior::Malformed => typed_response("application/x-protobuf", vec![0xff; 16]),
         Behavior::WrongContentType => typed_response("text/plain", BODY_MARKER),
         Behavior::EmptyWrongContentType => typed_response("text/plain", Vec::<u8>::new()),
+        Behavior::EmptyUntyped => Response::new(Body::empty()),
+        Behavior::NonemptyUntyped => Response::new(Body::from(BODY_MARKER)),
         Behavior::PrefixContentType => typed_response(
             "application/x-protobuf-extra",
             ExportMetricsServiceResponse {

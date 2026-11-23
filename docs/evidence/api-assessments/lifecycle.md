@@ -507,3 +507,116 @@ The deadline does not bound shutdown/diagnostics or preempt non-yielding work.
 Application approval policy, remote effects and runtime survival remain outside
 this local protocol. A typed output transferred to the caller has normal Rust
 ownership; holding it cannot be claimed to prove resource cleanup or quiescence.
+
+
+## Direct VictoriaMetrics metrics export (batter-cw5f)
+
+`prepare_victoriametrics` is an additive, explicit backend profile. It validates
+endpoint scheme/path/credential exclusions, service identity and a required
+nonempty bounded instance identity before native construction. It returns the
+same inert non-cloneable `Prepared` owner, so the service lifecycle still owns
+installation, periodic work, final collection and closure. There are no new
+paired calls, arbitrary future runners or independently selectable response
+relaxations. The profile's missing-Content-Type exception accepts only an empty
+HTTP 200; nonempty/untyped and wrong-type bodies, malformed Protobuf, partial
+rejection, timeouts and oversized responses retain typed failures.
+
+Local syntax cannot establish that two processes chose distinct IDs, that a
+proxy preserves resource labels, or that an acknowledged request reached durable
+storage. Those remain deployment policy and remote effects, explicitly stated in
+rustdoc. The profile supplies `service.name` and `service.instance.id` itself;
+it does not ask consumers to rebuild the SDK resource or coordinate flushing.
+The existing `prepare` remains valid for standard collectors and has unchanged
+public signatures and strict response semantics. No compatibility shim is
+needed: no public name or call shape is removed.
+
+Executed evidence: dual-profile failure matrix and two isolated processes whose
+cumulative metrics and final lifecycle observations are queried from pinned
+Docker-hosted VictoriaMetrics. See [the evidence record](../victoriametrics-2026-11-09.md).
+Fresh independent agent implementation/modification evaluations are unexecuted;
+no agent-usability claim follows from these tests alone.
+
+## Export-attempt state representation (batter-kwfa)
+
+The assessment at branch head `04766294` identified constructible internal
+invalid states; implementation is now owned by `batter-fzw1`. This updates O02
+in the [state-machine audit](../implicit-state-machines-2026-11-05.md). Public
+preparation, service completion and diagnostic call shapes remain unchanged.
+
+### Removed representations
+
+The former `Option<Attempt>` combined independent phase and optional outcome
+fields. `Evidence { phase, outcome }` could claim acknowledgement before dispatch;
+`begin` could overwrite an active slot; `finish` could be called without an owner;
+and `deadline()` observed send permission without consuming it. The canonical
+serial caller avoided these cases, but its private helpers did not enforce them.
+
+`pipeline/exporter.rs::Exporter` now groups the native SDK exporter and its
+exclusive attempt owner. Its `export(&mut self, snapshot, deadline)` owns
+arming, SDK execution, timeout evidence and revocation. The old crate-visible
+`AttemptSlot`, `Evidence`, generic phase setter and paired `begin`/`finish` calls
+are removed. `Resources` owns this one exporter and consumes it on shutdown.
+No public hard cut or compatibility shim is involved.
+
+### Enforced transitions
+
+`pipeline/attempt.rs` keeps the observation private in one exhaustive enum:
+encoding, preparing, sending, receiving, completed outcome, or closed. Terminal
+outcomes carry no independently selectable phase. The SDK-facing gate is closed
+or armed; an atomic claim consumes its sole authorization. Duplicate, concurrent,
+unarmed and completed-attempt callback calls cannot obtain another dispatch.
+
+The non-cloneable preparing, sending and receiving capabilities have private
+constructors. Advancing consumes the previous capability. Sending checks the
+absolute deadline before network I/O; only receiving can publish an acknowledgement
+witness from the bounded response validator. No general writable evidence or
+success setter is available to ordinary crate callers.
+
+The owner method borrows exclusively, so overlapping runs cannot compile. It
+arms and invokes the SDK factory only when polled. Its synchronous guard revokes
+unclaimed authorization and closes that attempt's observation when the future
+returns, is dropped or unwinds. Every invocation has a distinct observation;
+old preparing/sending/receiving capabilities fail closed and cannot update a
+later invocation. This is local revocation, not asynchronous cleanup, remote
+rollback or proof that detached upstream work stopped.
+
+The native exporter and encoding remain unchanged. Typed completion evidence
+still wins an outer deadline race; missing completion retains the distinction
+between encoding, headers timeout and body timeout. Collector statuses, response
+bounds, ordinary OTLP strictness and the explicit VictoriaMetrics exception remain
+in the transport validator, not in the state machine.
+
+### Upstream boundary and limits
+
+Rechecked `Cargo.lock` and the published implementation of `opentelemetry-otlp`
+0.31.1 and `opentelemetry-http` 0.31.0: the SDK encodes then directly awaits one
+shared-reference `send_bytes` callback. The callback carries no invocation token,
+so admission is necessarily a checked atomic transition. The protected owner and
+consuming capabilities enforce the surrounding local protocol. An arbitrarily
+changed SDK that detaches callbacks would need a separate integration assessment;
+our types do not prove such external behavior. See the
+[immutable primary sources](../../references/runtime.md#otlp-attempt-callback-boundary-rechecked-2026-11-09).
+Non-yielding SDK collection/encoding/closure and runtime death retain their
+existing limits; pending-before-callback tests do not claim CPU preemption.
+
+### Executable evidence
+
+The runtime controls exercise simultaneous claims from OS threads, concurrent
+actual HTTP callbacks, no dispatch outside an attempt or for oversized input,
+expired authorization, cancellation and fresh exports after stalled headers/body,
+stale handles in every phase, factory panic, unpolled factories, and typed outcome
+versus outer deadline races. A test-only witness reports when polling the actual bounded body reader returns
+pending; body-cancellation waits for that witness rather than server request
+receipt. The original dual-profile response and protected service completion
+suites remain in place.
+
+`scripts/check_otlp_attempt_types.py` compiles the actual private attempt module
+with positive controls (including a non-ASCII/escaped source path) and expected
+compiler errors for reused/cloned phase
+handles, premature acknowledgement, fabricated state, overlapping owner borrows
+and the removed paired-call protocol. Its clock/diagnostic shims supply names for
+compilation only; runtime semantics use actual Tokio and HTTP in the Rust tests.
+The compiler controls are included in the scripts matrix. Final full verification
+and actual Docker ingestion/read-back outcomes are recorded in `batter-fzw1`.
+Independent agent implementation/modification usability evaluations remain
+unexecuted; passing these controls is not a general agent-usability claim.

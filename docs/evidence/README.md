@@ -19,6 +19,7 @@ Owning Beads retain delivery decisions and verification outcomes.
 
 | Record | Scope |
 | --- | --- |
+| [VictoriaMetrics, 2026-11-09](victoriametrics-2026-11-09.md) | Direct OTLP profile, API comparison and pinned Docker ingestion/read-back. |
 | [Public API diff since 0.0.1](public-api-diff-2026-10-09/README.md) | Extraction method, package surfaces and later operation/readiness comparisons. |
 | [Managed objects, 2026-10-15](managed-objects-api-diff-2026-10-15/README.md) | Managed-object API surface. |
 | [Constraint triggers, 2026-10-16](managed-constraint-triggers-api-diff-2026-10-16/README.md) | Constraint-trigger API surface. |

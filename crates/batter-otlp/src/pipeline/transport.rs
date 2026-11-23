@@ -6,8 +6,13 @@
 //! a collector body back upstream. The export owner reads the typed outcome;
 //! it never inspects upstream error text.
 
+#[path = "attempt.rs"]
+mod attempt;
+#[path = "exporter.rs"]
+mod exporter;
 #[path = "tls.rs"]
 mod tls;
+pub(crate) use exporter::Exporter;
 
 use crate::diagnostics::ExportFailure;
 use async_trait::async_trait;
@@ -16,11 +21,8 @@ use opentelemetry_http::{HttpClient, HttpError};
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse;
 use prost::Message;
 use reqwest::{Response, redirect::Policy};
-use std::{
-    fmt,
-    sync::{Arc, Mutex, PoisonError},
-};
-use tokio::time::{Instant, timeout_at};
+use std::{fmt, sync::Arc};
+use tokio::time::timeout_at;
 
 /// Largest encoded request sent to the collector. Larger requests are refused
 /// before dispatch. The complete foundation catalog with maximum-length names
@@ -30,79 +32,15 @@ pub(crate) const PAYLOAD_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const RESPONSE_MAX_BYTES: usize = 64 * 1024;
 const PROTOBUF: &str = "application/x-protobuf";
 
+/// Chosen by preparation, never inferred from a response or hostname.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Phase {
-    /// The owner selected the deadline; the transport has not been invoked.
-    Prepared,
-    /// Connecting, writing the request or waiting for response headers.
-    Sending,
-    /// Reading the response body.
-    Receiving,
+pub(crate) enum ResponseProfile {
+    Otlp,
+    VictoriaMetrics,
 }
 
-struct Attempt {
-    deadline: Instant,
-    phase: Phase,
-    outcome: Option<Result<(), ExportFailure>>,
-}
-
-/// Typed evidence for the single in-flight attempt. Exports are serial, so one
-/// slot is the whole transport history.
-#[derive(Default)]
-pub(crate) struct AttemptSlot(Mutex<Option<Attempt>>);
-
-/// What the transport observed for one attempt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Evidence {
-    pub(crate) phase: Phase,
-    pub(crate) outcome: Option<Result<(), ExportFailure>>,
-}
-
-impl AttemptSlot {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Attempt>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub(crate) fn begin(&self, deadline: Instant) {
-        *self.lock() = Some(Attempt {
-            deadline,
-            phase: Phase::Prepared,
-            outcome: None,
-        });
-    }
-
-    pub(crate) fn finish(&self) -> Evidence {
-        match self.lock().take() {
-            Some(attempt) => Evidence {
-                phase: attempt.phase,
-                outcome: attempt.outcome,
-            },
-            None => Evidence {
-                phase: Phase::Prepared,
-                outcome: None,
-            },
-        }
-    }
-
-    fn deadline(&self) -> Option<Instant> {
-        self.lock()
-            .as_ref()
-            .filter(|attempt| attempt.outcome.is_none())
-            .map(|attempt| attempt.deadline)
-    }
-
-    fn enter(&self, phase: Phase) {
-        if let Some(attempt) = self.lock().as_mut() {
-            attempt.phase = phase;
-        }
-    }
-
-    fn record(&self, outcome: Result<(), ExportFailure>) {
-        if let Some(attempt) = self.lock().as_mut() {
-            attempt.outcome = Some(outcome);
-        }
-    }
-}
+/// Constructed only after bounded body reading and backend response validation.
+struct Acknowledged;
 
 /// Fixed error returned upstream; its formatting contains no collector data.
 #[derive(Debug, thiserror::Error)]
@@ -110,9 +48,12 @@ impl AttemptSlot {
 struct Unacknowledged;
 
 /// The OpenTelemetry HTTP client used by the protected OTLP adapter.
-pub(crate) struct BoundedClient {
+struct BoundedClient {
     client: reqwest::Client,
-    slot: Arc<AttemptSlot>,
+    gate: Arc<attempt::Gate>,
+    profile: ResponseProfile,
+    #[cfg(test)]
+    body_pending: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl fmt::Debug for BoundedClient {
@@ -123,47 +64,101 @@ impl fmt::Debug for BoundedClient {
 
 impl BoundedClient {
     /// Build an inert client: no redirects, no proxy discovery, no connection.
-    pub(crate) fn new(slot: Arc<AttemptSlot>) -> Result<Self, reqwest::Error> {
+    fn new(gate: Arc<attempt::Gate>, profile: ResponseProfile) -> Result<Self, reqwest::Error> {
         let client = client_builder().build()?;
-        Ok(Self { client, slot })
+        Ok(Self {
+            client,
+            gate,
+            profile,
+            #[cfg(test)]
+            body_pending: None,
+        })
     }
 
     async fn exchange(
         &self,
         request: http::Request<Bytes>,
-        deadline: Instant,
-    ) -> Result<(), ExportFailure> {
+        preparing: attempt::Preparing,
+    ) -> Result<(), Unacknowledged> {
         if request.body().len() > PAYLOAD_MAX_BYTES {
-            return Err(ExportFailure::PayloadTooLarge);
+            preparing.fail(ExportFailure::PayloadTooLarge);
+            return Err(Unacknowledged);
         }
-        let request = reqwest::Request::try_from(request).map_err(|_| ExportFailure::Encoding)?;
-        self.slot.enter(Phase::Sending);
+        let request = match reqwest::Request::try_from(request) {
+            Ok(request) => request,
+            Err(_) => {
+                preparing.fail(ExportFailure::Encoding);
+                return Err(Unacknowledged);
+            }
+        };
+        let sending = preparing.send().ok_or(Unacknowledged)?;
+        let deadline = sending.deadline();
         let response = match timeout_at(deadline, self.client.execute(request)).await {
-            Err(_) => return Err(ExportFailure::HeadersTimedOut),
-            Ok(Err(error)) if error.is_connect() => return Err(ExportFailure::Refused),
-            Ok(Err(_)) => return Err(ExportFailure::Transport),
             Ok(Ok(response)) => response,
+            result => {
+                let failure = match result {
+                    Err(_) => ExportFailure::HeadersTimedOut,
+                    Ok(Err(error)) if error.is_connect() => ExportFailure::Refused,
+                    _ => ExportFailure::Transport,
+                };
+                sending.fail(failure);
+                return Err(Unacknowledged);
+            }
         };
         let status = response.status();
         if status != reqwest::StatusCode::OK {
             // The status is the whole retained evidence; the body is not read.
-            return Err(ExportFailure::Status(status.as_u16()));
+            sending.fail(ExportFailure::Status(status.as_u16()));
+            return Err(Unacknowledged);
         }
-        let protobuf = response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
+        let receiving = sending.receive().ok_or(Unacknowledged)?;
+        let validated = match timeout_at(deadline, self.validate(response)).await {
+            Err(_) => Err(ExportFailure::BodyTimedOut),
+            Ok(result) => result,
+        };
+        if receiving.complete(validated) {
+            Ok(())
+        } else {
+            Err(Unacknowledged)
+        }
+    }
+
+    async fn validate(&self, response: Response) -> Result<Acknowledged, ExportFailure> {
+        let content_type = response.headers().get(http::header::CONTENT_TYPE);
+        let missing_content_type = content_type.is_none();
+        let protobuf = content_type
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<mime::Mime>().ok())
             .is_some_and(|value| value.essence_str() == PROTOBUF);
-        self.slot.enter(Phase::Receiving);
-        let body = match timeout_at(deadline, bounded_body(response)).await {
-            Err(_) => return Err(ExportFailure::BodyTimedOut),
-            Ok(body) => body?,
+        let body = bounded_body(response);
+        #[cfg(not(test))]
+        let body = body.await?;
+        #[cfg(test)]
+        let body = {
+            let mut body = std::pin::pin!(body);
+            std::future::poll_fn(|context| {
+                let result = body.as_mut().poll(context);
+                if result.is_pending()
+                    && let Some(pending) = &self.body_pending
+                {
+                    pending.notify_one();
+                }
+                result
+            })
+            .await?
         };
+        // Only this explicit profile accepts the backend's empty untyped 200.
+        if self.profile == ResponseProfile::VictoriaMetrics
+            && missing_content_type
+            && body.is_empty()
+        {
+            return Ok(Acknowledged);
+        }
         if !protobuf {
             return Err(ExportFailure::MalformedResponse);
         }
-        classify_response(&body)
+        classify_response(&body)?;
+        Ok(Acknowledged)
     }
 }
 
@@ -226,19 +221,16 @@ impl HttpClient for BoundedClient {
         &self,
         request: http::Request<Bytes>,
     ) -> Result<http::Response<Bytes>, HttpError> {
-        let Some(deadline) = self.slot.deadline() else {
-            // Only the export owner opens an attempt; nothing else may send.
-            return Err(Box::new(Unacknowledged));
-        };
-        let outcome = self.exchange(request, deadline).await;
-        self.slot.record(outcome);
-        match outcome {
-            // A fixed empty success response: upstream never sees the body.
-            Ok(()) => Ok(http::Response::new(Bytes::new())),
-            Err(_) => Err(Box::new(Unacknowledged)),
-        }
+        let preparing = self.gate.claim().ok_or(Unacknowledged)?;
+        self.exchange(request, preparing).await?;
+        // A fixed empty success response: upstream never sees the collector body.
+        Ok(http::Response::new(Bytes::new()))
     }
 }
+
+#[cfg(test)]
+#[path = "tests/attempt_transport.rs"]
+mod attempt_transport;
 
 #[cfg(test)]
 #[path = "tests/http2.rs"]

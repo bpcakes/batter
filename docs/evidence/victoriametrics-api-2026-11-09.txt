@@ -1,0 +1,5 @@
+## batter-otlp: 106 -> 110 entries; 0 removed, 4 added
++ ADDED   function batter_otlp::prepare_victoriametrics
++ ADDED   use batter_otlp::prepare <- preparation::prepare
++ ADDED   use batter_otlp::prepare_victoriametrics <- preparation::prepare_victoriametrics
++ ADDED   use batter_otlp::reject_ambient_environment <- preparation::reject_ambient_environment

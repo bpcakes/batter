@@ -59,7 +59,7 @@ pub struct ExportReport {
 pub struct ExportHistory {
     /// Periodic collection and export attempts.
     pub attempts: u64,
-    /// Attempts whose collector response was decoded without rejected points.
+    /// Attempts acknowledged according to the explicitly selected backend profile.
     pub acknowledged: u64,
     /// Attempts that ended in an [`ExportFailure`].
     pub failed: u64,
@@ -76,7 +76,8 @@ pub struct ExportHistory {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportOutcome {
     /// The collector returned HTTP 200 and an OTLP response that
-    /// decoded without rejected data points.
+    /// decoded without rejected data points, or the explicitly selected
+    /// VictoriaMetrics profile received an empty 200 without a Content-Type.
     Acknowledged,
     /// The attempt did not establish acknowledgement.
     Failed(ExportFailure),

@@ -313,7 +313,7 @@ def tree_features(tree: str, name: str) -> dict[str, frozenset[str]]:
 
 def shipped_example_tree_command(cargo: list[str]) -> list[str]:
     """Return the `cargo tree` form of the matrix's shipped-feature example command."""
-    command = list(OUTBOUND_SHIPPED_EXAMPLE)
+    command = list(OUTBOUND_SHIPPED_EXAMPLE.argv)
     if command[:2] != ["cargo", "test"] or "--example" not in command:
         raise RuntimeError(f"unexpected shipped-feature example command {command!r}")
     example = command.index("--example")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from contextlib import contextmanager
 import math
 import os
 import signal
@@ -11,6 +12,53 @@ import threading
 import time
 
 from scheduling_process import Capture, ProcessOutcome, _close_resources, _settle, _unstarted
+
+
+class _ScopedStop:
+    """A signal request, never an asynchronous exception in its owner's code."""
+
+    def __init__(self):
+        self._requested = False
+
+    @property
+    def requested(self):
+        return self._requested
+
+    def __call__(self, _signal, _frame):
+        self._requested = True
+
+    def check(self):
+        """Raise only at an explicit work checkpoint, never during finalization."""
+        if self.requested:
+            raise KeyboardInterrupt
+
+
+@contextmanager
+def interrupt_scope():
+    """Own stop requests across work, nested batches and synchronous finalization.
+
+    One outer main-thread owner checks its request at controlled work boundaries.
+    Nested run_parallel batches retain the same request. No handler raises, so
+    finalization has no transition from exception-raising to ignored signals.
+    Inherited SIGINT ignore is preserved; SIGTERM is owned until scope exit.
+    Existing run_parallel callers keep their default signal behavior.
+    """
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    supported = (signal.SIG_DFL, signal.SIG_IGN, signal.default_int_handler)
+    if (threading.current_thread() is not threading.main_thread()
+            or signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL
+            or any(handler not in supported for handler in previous.values())):
+        raise ValueError("unsupported outer signal owner")
+    stop = _ScopedStop()
+    installed = []
+    try:
+        for sig, handler in previous.items():
+            signal.signal(sig, signal.SIG_IGN if sig == signal.SIGINT and handler == signal.SIG_IGN else stop)
+            installed.append(sig)
+        yield stop
+    finally:
+        for sig in reversed(installed):
+            signal.signal(sig, previous[sig])
 
 
 @dataclass
@@ -79,7 +127,8 @@ def run_parallel(commands, *, timeout, output_limit, grace=10, reap_allowance=5,
     kill/reap. An inherited ignored SIGINT stays ignored. Repeated signals never restart cleanup budgets.
     Each final reap/output observation is bounded by `reap_allowance` (at most four
     such observations). Arbitrarily detached descendants and OS process creation
-    are not bounded by this owner. Call on the main thread with standard handlers.
+    are not bounded by this owner. Call on the main thread with standard handlers
+    or inside interrupt_scope; nested batches propagate to that known owner.
     """
     if (not 1 <= len(commands) <= 4 or not all(commands)
             or any(not math.isfinite(x) or x <= 0 for x in (timeout, grace, reap_allowance))
@@ -87,15 +136,25 @@ def run_parallel(commands, *, timeout, output_limit, grace=10, reap_allowance=5,
         raise ValueError("a batch requires 1..4 commands and positive finite bounds")
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
     supported = (signal.SIG_DFL, signal.SIG_IGN, signal.default_int_handler)
+    candidate = previous[signal.SIGTERM]
+    scope = candidate if (isinstance(candidate, _ScopedStop)
+                          and (previous[signal.SIGINT] is candidate
+                               or previous[signal.SIGINT] == signal.SIG_IGN)) else None
     if (threading.current_thread() is not threading.main_thread()
             or signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL
-            or any(handler not in supported for handler in previous.values())):
+            or any(handler not in supported and not (scope is not None and handler is scope)
+                   for handler in previous.values())):
         return [_unstarted("unsupported-signal-owner") for _ in commands]
     interrupted = False
 
     def interrupt(_sig, _frame):
         nonlocal interrupted
         interrupted = True
+        if scope is not None:
+            scope(_sig, _frame)
+
+    def stopping():
+        return interrupted or (scope is not None and scope.requested)
 
     jobs = []
     installed = []
@@ -106,7 +165,7 @@ def run_parallel(commands, *, timeout, output_limit, grace=10, reap_allowance=5,
         for command in commands:
             job = _Job(time.monotonic())
             jobs.append(job)  # Retain ownership even when capture setup fails.
-            if interrupted:
+            if stopping():
                 job.errors.append("interrupted")
                 job.finish(reap_allowance)
                 continue
@@ -123,7 +182,7 @@ def run_parallel(commands, *, timeout, output_limit, grace=10, reap_allowance=5,
             for job in jobs:
                 if job.outcome is not None:
                     continue
-                if interrupted:
+                if stopping():
                     job.stop("interrupted")
                 try:
                     job.capture.observe_until(job.child, time.monotonic() + 0.01)
@@ -155,7 +214,7 @@ def run_parallel(commands, *, timeout, output_limit, grace=10, reap_allowance=5,
             for sig in reversed(installed):
                 signal.signal(sig, previous[sig])
     # Interruption at the last completion is still failed batch evidence.
-    if interrupted:
+    if stopping():
         return [replace(job.outcome, errors=(*job.outcome.errors, "batch-interrupted"))
                 for job in jobs]
     return [job.outcome for job in jobs]

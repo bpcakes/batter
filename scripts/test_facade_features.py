@@ -122,7 +122,7 @@ class ShippedOutboundSelectionTests(unittest.TestCase):
 
     def test_the_tree_command_keeps_the_batch_selection_without_its_example(self):
         command = facade.shipped_example_tree_command(["cargo", "+toolchain"])
-        selection = [part for part in facade.OUTBOUND_SHIPPED_EXAMPLE[2:]
+        selection = [part for part in facade.OUTBOUND_SHIPPED_EXAMPLE.argv[2:]
                      if part not in ("--example", "outbound_exchange")]
         self.assertEqual(command[:3], ["cargo", "+toolchain", "tree"])
         self.assertEqual(command[3:3 + len(selection)], selection)

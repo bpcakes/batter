@@ -465,6 +465,27 @@ interval nor the per-run deadline preempts a factory, poll or destructor that
 blocks its runtime thread, and dropping a run's future proves nothing about a
 remote effect it already started.
 
+### OTLP attempt callback boundary, rechecked 2026-11-09
+
+Owning Bead: `batter-kwfa`. `Cargo.lock` still resolves `opentelemetry-otlp`
+0.31.1 and `opentelemetry-http` 0.31.0. Their downloaded registry sources and
+the matching immutable upstream revisions were inspected for the export-attempt
+state assessment:
+
+- [HTTP metrics export](https://github.com/open-telemetry/opentelemetry-rust/blob/febe718fa9ad80c281a82f754e399d3ba6c40c26/opentelemetry-otlp/src/exporter/http/metrics.rs)
+  encodes/builds the request before calling the client, awaits one `send_bytes`
+  inline, and formats client errors into native error strings. A failure before
+  dispatch supplies no custom-client observation.
+- [HTTP client trait](https://github.com/open-telemetry/opentelemetry-rust/blob/285dc925f98403ff426acc70968f104dc820d4f2/opentelemetry-http/src/lib.rs)
+  receives shared `&self` and a request, without an attempt ownership token.
+  Exclusive attempt ownership must therefore remain in Batter's private driver;
+  the callback boundary requires a checked claim rather than relying on the trait
+  to enforce single dispatch.
+
+The revisions come from each published crate's `.cargo_vcs_info.json`. These exact sources were rechecked for `batter-fzw1` and support
+the [owned representation](../evidence/api-assessments/lifecycle.md#export-attempt-state-representation-batter-kwfa),
+not a substitute for the implementation validation recorded in `batter-fzw1`.
+
 ### Runledger invocation phases, 2026-10-09
 
 Cargo.lock still resolves Tokio 1.53.1. Its
@@ -653,3 +674,60 @@ the Cargo registry; no dependency version changed.
   the future and stores `JoinError::cancelled` (or a panic error if that drop
   panicked); an owner awaiting from another runtime receives that error, which
   `finish` returns as `CommandFailure::Coordinator` instead of panicking.
+
+
+## VictoriaMetrics v1.156.0: reviewed 2026-11-09
+
+Owning Bead: `batter-cw5f`. The upstream release API selected
+[v1.156.0](https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.156.0).
+Local Docker inspection pulled
+`victoriametrics/victoria-metrics:v1.156.0` at digest
+`sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970`;
+the live regression pins both tag and digest.
+
+- [OTLP integration](https://docs.victoriametrics.com/victoriametrics/integrations/opentelemetry/)
+  specifies HTTP Protobuf ingestion at `/opentelemetry/v1/metrics`, recommends
+  cumulative temporality and promotes resource attributes to labels by default.
+  Batter already uses cumulative snapshots and fixed explicit histogram bounds.
+- [Collector configuration](https://docs.victoriametrics.com/victoriametrics/data-ingestion/opentelemetry-collector/)
+  documents single-node port 8428 and the cluster path
+  `/insert/<accountID>/opentelemetry/v1/metrics` on vminsert port 8480.
+- [v1.156.0 handler](https://github.com/VictoriaMetrics/VictoriaMetrics/blob/v1.156.0/app/vminsert/main.go)
+  calls `opentelemetry.InsertHandler` and `firehose.WriteSuccessResponse`.
+  [Insertion](https://github.com/VictoriaMetrics/VictoriaMetrics/blob/v1.156.0/app/vminsert/opentelemetry/request_handler.go)
+  parses Protobuf, converts time series and flushes its insert buffer.
+  A local wire probe observed HTTP 200, zero response bytes and no Content-Type.
+  Consequently only Batter's explicit VictoriaMetrics profile accepts that
+  empty/untyped success; ordinary OTLP remains strict. This is response evidence,
+  not proof of durable storage or a claim about every VictoriaMetrics release.
+
+The live regression separately queries counters, explicit histogram buckets,
+sums/counts, cleanup and shutdown metrics for two distinct instance IDs. Cluster,
+authentication and non-Linux execution have not been exercised by this evidence.
+
+Cleanup follow-up (`batter-pdfk`, 2026-11-09):
+[Docker CLI v29.7.2 removal source](https://github.com/docker/cli/blob/v29.7.2/cli/command/container/rm.go)
+submits removal directly and ignores typed NotFound only when force is selected;
+other errors are joined and returned. A local client/server 29.7.2 probe of
+`docker rm --force --volumes` on a random absent name returned exit 0 with empty
+stdout/stderr. The fixture therefore uses checked forced removal without a
+fallible listing or string-based absence classification. Successful absence at
+that instant is not proof that an uncertain daemon operation has settled.
+
+
+For the same fixture follow-up, Python 3.14.7 is the executed interpreter.
+[Python 3.14 subprocess documentation](https://docs.python.org/3.14/library/subprocess.html#subprocess.Popen)
+specifies that `start_new_session=True` invokes `setsid()` before executing a
+POSIX child. Bounded diagnostic/removal commands use it to keep terminal/process-
+group stop signals from reaching the cleanup CLI. A real subprocess surrogate
+regression sends signals to the harness group while that child is active and
+confirms the child completes. This does not cover SIGKILL, daemon failure or
+arbitrary descendants outside the owned process boundary.
+
+
+[Python urllib timeout semantics](https://docs.python.org/3.14/library/urllib.request.html#urllib.request.urlopen)
+apply the timeout to blocking operations, not the aggregate response lifetime.
+The executed Python 3.14.7 parser can therefore keep reading progressively
+arriving headers/body without an idle timeout. The polling helper runs in a
+parent-owned child with a complete-attempt timeout and bounded stop/reap; real
+loopback progressing-response regressions verify this boundary (`batter-pdfk`).
