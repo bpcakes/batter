@@ -4,8 +4,8 @@
 use super::{
     capture::Capture,
     support::{
-        ORIGIN, SECOND, assert_not_private, assert_private, body_text, browser_group, count,
-        exact_origin, from_origin, ready_handle, request, request_policy,
+        ORIGIN, SECOND, assert_not_private, assert_private, body_text, browser_group, completions,
+        count, exact_origin, from_origin, ready_handle, request, request_policy,
     },
 };
 use axum::{
@@ -322,12 +322,6 @@ async fn served_requests_reuse_layers_built_before_serving() {
         }
         assert_eq!(count(&builds), built, "admitted={admitted}");
     }
-}
-
-fn completions(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter(|line| line.contains("HTTP response boundary finished"))
-        .collect()
 }
 
 #[test]

@@ -15,7 +15,9 @@ from ci_plan import (
     cargo_metadata,
     changed_paths,
     local_closure,
+    package_inputs,
     plan,
+    referenced_sources,
     touches,
     verifying_run,
     write_outputs,
@@ -63,6 +65,45 @@ class ClosureTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.assertIn("runlimit/runlimit-postgres/", closure)
         self.assertTrue(all((root / entry).is_dir() for entry in closure), closure)
+
+    @unittest.skipUnless(shutil.which("cargo"), "cargo is required for workspace metadata")
+    def test_package_inputs_include_shared_process_sources_loaded_outside_closure(self):
+        inputs = package_inputs(cargo_metadata(), ("batter-axum",))
+        self.assertIn("test-support/process/launch.rs", inputs)
+        self.assertTrue(touches(["test-support/process/watchdog.rs"], inputs))
+        self.assertFalse(touches(["test-support/README.md"], inputs))
+
+
+class ReferenceTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="batter-ci-plan-refs-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def write(self, relative, text=""):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_outside_sources_and_their_own_references_are_inputs(self):
+        self.write("pkg/src/tests.rs", '#[path = "../../shared/a.rs"]\nmod a;\n'
+                   'const LOCAL: &str = include_str!("local.txt");\n')
+        self.write("pkg/src/local.txt")
+        self.write("shared/a.rs", '#[path = "b.rs"]\nmod b;\n'
+                   'const DATA: &[u8] = include_bytes!(\n    "data.bin"\n);\n')
+        self.write("shared/b.rs")
+        self.write("shared/data.bin")
+        self.write("shared/unused.rs")
+        self.assertEqual(referenced_sources(self.root, ["pkg/"]),
+                         ["shared/a.rs", "shared/b.rs", "shared/data.bin"])
+
+    def test_unprovable_references_raise(self):
+        for text, error in (('#[path = "missing.rs"]\nmod m;\n', FileNotFoundError),
+                            ('#[path = "../../../outside.rs"]\nmod m;\n', ValueError),
+                            ('include!(concat!(env!("OUT_DIR"), "/x.rs"));\n', ValueError)):
+            self.write("pkg/src/lib.rs", text)
+            with self.assertRaises(error, msg=text):
+                referenced_sources(self.root, ["pkg/"])
 
 
 class TouchTests(unittest.TestCase):
@@ -168,10 +209,15 @@ class PlanTests(unittest.TestCase):
                 outputs, _ = self.plan(event, paths)
                 self.assertEqual(outputs["runlimit_postgres"], expected, (event, paths))
 
-    def test_unknown_runlimit_inputs_run_it(self):
-        outputs, notes = self.plan("pull_request", ["docs/testing.md"], closure=fail)
-        self.assertEqual(outputs["runlimit_postgres"], "true")
-        self.assertIn("unavailable", " ".join(notes))
+    def test_unknown_closure_runs_everything_without_reuse(self):
+        found = lambda tree: f"https://example.invalid/{tree}"
+        full = dict(tree=TREE, tree_verified="false", verified_run="",
+                    runlimit_postgres="true")
+        for event in ("pull_request", "merge_group", "push"):
+            outputs, notes = self.plan(event, ["docs/testing.md"], find_run=found, closure=fail)
+            self.assertEqual(outputs, full, event)
+            self.assertIn("Runlimit PostgreSQL inputs are unknown", " ".join(notes))
+            self.assertIn("unavailable", " ".join(notes))
 
     def test_only_pushes_reuse_a_recorded_tree(self):
         found = lambda tree: f"https://example.invalid/{tree}"

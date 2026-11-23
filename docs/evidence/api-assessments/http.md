@@ -633,7 +633,7 @@ and nothing is stripped or repaired. Any `RawPathParams` result except
 `MissingPathParams` counts as present, so a rejection Axum adds later fails
 closed. The refusal is the existing sanitized `HttpFailure::Internal`
 infrastructure response with no correlation identifier, carrying the new
-`ReusedRoutingState` response extension, which has no public constructor or
+`InProcessRefusal` response extension, which has no public constructor or
 field, so a caller or test can tell the refusal from a 500 the boundary built;
 one ERROR event with a fixed message and no request-derived field records it.
 The marker is `Copy`, and a handler can return an inner client's refused
@@ -685,14 +685,22 @@ response has no marker and keeps its other extension. Negative controls were
 run once by hand and are not part of the suite: with the entry check disabled
 every refusal test fails; with marker removal disabled the copied-marker test
 fails; with only an `Ok` extractor result counted as a record the isolated
-invalid UTF-8 case fails.
+invalid UTF-8 case fails. Once `batter-28kb` added the private-record check,
+the isolated maps, captured inside the boundary, also carried Batter's records,
+and that check refused them whatever the routing check decided, so the last
+control no longer failed. They are now captured from a bare `Router`, and the
+routing controls were run again on 2026-11-20 in a separate build directory:
+with only an `Ok` result counted the invalid UTF-8 test fails, and with the
+path-parameter check removed the invalid UTF-8, each-record-alone and native
+`nest_service` tests fail.
 
-Residual: a map can carry Batter's private observation, operational or
-admission records with no detected Axum record. One source is a `low_level`
-wrapper around a service that is not a `Router`. Another is the map of a
-dispatch no pattern matched, such as `OPTIONS *`: its only Axum record is the
-public `OriginalUri`, which an application can remove. Clearing Batter's
-private records stays outside this change, so neither is addressed.
+Residual at delivery, closed by the
+[entry-check follow-up](#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb):
+a map could carry Batter's private observation, operational or admission
+records with no detected Axum record. One source is a `low_level` wrapper
+around a service that is not a `Router`. Another is the map of a dispatch no
+pattern matched, such as `OPTIONS *`: its only Axum record is the public
+`OriginalUri`, which an application can remove.
 Fresh-agent usability evaluation of the refusal and migration remains proposed
 and unexecuted.
 
@@ -713,14 +721,14 @@ the shape ADR-010 names as design debt.
 
 The contract is the one `batter-oj37` decided: arrival-shaped requests only,
 refused whole at entry, nothing stripped, with the sanitized
-`HttpFailure::Internal` response carrying `ReusedRoutingState`. The check, the
+`HttpFailure::Internal` response carrying `InProcessRefusal`. The check, the
 refusal and the dispatched-response marker removal moved, unchanged, into one
 lower-level type, `batter_axum::low_level::RouterClient`, which also owns the
 one-time `Router::with_state(())` preparation. `InProcessClient` holds one in
 its private field and delegates to it; `TestClient` holds one, inserts the
 caller's synthetic peer and delegates. The refusal therefore precedes lifecycle
 admission, authentication, the native quota check, public probes and handlers.
-`ReusedRoutingState` gains only a crate-private constructor whose one caller is
+`InProcessRefusal` gains only a crate-private constructor whose one caller is
 that refusal, so it still has no public constructor (field and constructor
 compile-fail controls).
 
@@ -760,25 +768,26 @@ Invalid-state review of `RouterClient`:
 4. The canonical path is unchanged: `AssembledHttp::in_process` still returns
    the protected client. `RouterClient` is reachable only under `low_level`,
    with a crate-root import control.
-5. The `batter-oj37` residual is unchanged and costs more here. Batter's
-   private records with no detected Axum record are neither refused nor
-   cleared. Reproduced through `TestClient`, first by hand and now by the
-   characterization test
-   `residual_a_map_with_only_inherited_batter_records_is_authenticated_and_charged`:
-   a map captured in a
+5. At this delivery the `batter-oj37` residual was unchanged and cost more
+   here; the
+   [entry-check follow-up](#in-process-entry-check-follow-up-assessment-batter-nff2-batter-28kb)
+   now refuses it. Batter's private records with no detected Axum record were
+   neither refused nor cleared. Reproduced through `TestClient`, first by hand
+   and then by a characterization test that the follow-up inverted: a map
+   captured in a
    protected custom root fallback for `OPTIONS *` carries `OriginalUri` as its
    only detected record, and is refused whole. With `OriginalUri` removed by
-   the caller it is accepted, authenticated (1 to 2) and charged one native
-   check (1 to 2), and answers 200 with no `x-request-id`, while the handler
-   sees the client's unreplaced inbound `x-request-id` and no completion event
-   is emitted, because the inherited operational and observation records stay
-   in place. The residual takes two deliberate caller steps and is stated on
-   `RouterClient::request`, `TestClient::request` and in the contracts. The
-   test fails if the entry check starts refusing the inherited observation
-   record (checked by hand by adding that check temporarily), so closing
-   `batter-28kb` must invert it together with those statements.
+   the caller it was accepted, authenticated (1 to 2) and charged one native
+   check (1 to 2), and answered 200 with no `x-request-id`, while the handler
+   saw the client's unreplaced inbound `x-request-id` and no completion event
+   was emitted, because the inherited operational and observation records
+   stayed in place. The residual took two deliberate caller steps and was stated
+   on `RouterClient::request`, `TestClient::request` and in the contracts at
+   this delivery. The characterization test failed once the entry check
+   refused the inherited records, and closing `batter-28kb` inverted it
+   together with those statements.
    `RouterClient` lives in `batter-axum` and could detect those private
-   records itself; that would widen the `batter-oj37` contract and is left to
+   records itself; that widened the `batter-oj37` contract and was done in
    follow-up `batter-28kb`. Making Runlimit's quota stage expressible by
    `HttpBoundary`, so its client could be a real `InProcessClient`, is
    follow-up `batter-uskw`.
@@ -818,6 +827,174 @@ copied-marker tests fail while the accepted test passes; with marker removal
 disabled, the copied-marker test fails. Compile-fail error codes were checked with nightly rustdoc, because
 stable rustdoc does not compare them. Fresh-agent usability evaluation remains
 proposed and unexecuted.
+
+## In-process entry-check follow-up assessment (`batter-nff2`, `batter-28kb`)
+
+A post-merge review of `batter-oj37` and the `batter-gp93` reproduction showed
+the entry check left a known-invalid input reaching execution: a request whose
+extensions carry Batter's own request records and no Axum routing record. The
+map of a dispatch no pattern matched, such as `OPTIONS *`, with its public
+`OriginalUri` removed, was accepted: the destination answered 200 with the
+earlier request's correlation, no `x-request-id` and no completion event, and
+through Runlimit's `TestClient` it was authenticated and charged.
+
+The invariant is that an in-process request is arrival-shaped. The adapter can
+express more of it than `batter-oj37` enforced, because the records in question
+are its own private types. `low_level::RouterClient::request`, which
+`InProcessClient::request` and Runlimit's `TestClient` delegate to, now also
+refuses a request carrying any of the private request records that
+`renderer_parts` removes; at this change they are the quota record, the
+observation state, the operational wrapper's marker, the admission record and
+the browser credential record, and `InProcessClient::request`'s rustdoc keeps
+the current list. No other crate can name or build those types, so one is
+present only
+in a map copied from a request a Batter layer already processed. The predicate
+`correlation::carries_private_record` and the renderer filter are both
+generated by one `private_records!` macro from a single type list, so neither
+can name a record the other omits, and an in-crate test requires one fixture
+per listed type, holding that record and no other. The documents name the
+records once, in the rustdoc of `InProcessClient::request`, and refer to that
+list elsewhere, so a record added to the macro has one documented place to
+update. The refusal response is unchanged, nothing is stripped, and
+no signature changed. Two things a caller can observe did change: the marker
+is renamed (below), and the fixed text of the single ERROR event, which every
+refusal emits, changes from `in-process request refused: its extensions carry
+routing state from an earlier dispatch` to `in-process request refused: the
+request is not arrival-shaped`. The old text named a cause the client cannot
+know, since a hand-inserted routing record and a forwarded live request are
+refused the same way; the new text states the outcome. This is refusal, not
+the clearing `batter-oj37` listed as a non-goal: clearing would accept a
+request the caller built from another request's map.
+
+Decisions recorded with it:
+
+- A live request that an outer Axum router dispatched and a route, fallback or
+  `nest_service` closure forwards into the client whole is refused on every
+  request. That is kept deliberately: such a request carries the outer
+  router's records, and the client cannot tell it from a reused map. The same
+  holds, with no router involved, for a live request that a service behind
+  `low_level::observe_http`, `operational_http`, `operational_http_with_quota`
+  or `request_scope` hands to the client whole: it carries that wrapper's
+  private record. That shape was served before this change and is refused
+  now; a hand-run check with master's entry check restored served all four. The
+  supported shape rebuilds a fresh request from the arrival's method, version, target, headers and body
+  and copies application extensions by type. Under `nest` or `nest_service`
+  the arrival's target is the path below the mount, so the rebuilt request is
+  dispatched there, and the builder's default version would replace the
+  arrival's without `.version(parts.version)`. The refusal does not keep the
+  boundary from being served outside protected registration: an outer router
+  whose handler rebuilds requests into the client is an ordinary servable
+  `Router`. Rebuilding is in-process composition; serving belongs to
+  protected registration, and nothing here enforces that. The earlier contract
+  sentence that the client does not constrain an application's own transport
+  wrapper is corrected.
+- A hand-inserted `OriginalUri` on a never-dispatched request stays refused.
+  Axum keeps an inherited one, and the client cannot tell the two apart.
+- Public values a caller copies by type, such as `CorrelationId`, are not
+  refused. A test shows the boundary generates its own identity.
+- Request settings an Axum layer outside the client writes are not routing
+  records and stay accepted. A test forwards a request whole from behind
+  `DefaultBodyLimit::max(4)` to a route with no limit of its own; the
+  destination applies that limit, and a rebuilt request gets Axum's default.
+  A limit set inside the boundary replaces the outer one, since each layer
+  overwrites the record. Axum keeps that record's type private, so
+  the client could not detect it by type in any case.
+- The refusal stays a sanitized internal-failure response identified only by
+  its marker. A `Result`-returning signature remains rejected for the reasons
+  recorded under `batter-oj37`; the documents now say that status and body do
+  not identify a refusal.
+- The marker is renamed from `ReusedRoutingState` to `InProcessRefusal`. The
+  old name stated a cause, and went stale twice within days: it never fitted a
+  hand-inserted `OriginalUri` on a request that was never dispatched, and it
+  stopped fitting once the client also refused Batter's own records, which are
+  not routing state. The new name states the outcome, a refusal by the
+  in-process client before its router ran, which stays true whatever the
+  client refuses. The old name was introduced under `batter-oj37` and never
+  released, so this is not a cut against a released surface. No deprecated
+  alias is kept, which the hard-cut rule now requires of every cut; the
+  marker's rustdoc carries a `Migration:` sentence naming
+  the old name, and the changelog shows the replacement. Earlier assessment
+  sections on this page use the new name for the same marker. Because code on
+  master since 2026-11-14 could name the old type, the changelog carries a
+  `Breaking:` entry for it. A rustdoc JSON comparison with
+  [`surface.py`](../public-api-diff-2026-10-09/surface.py) against master
+  `56d37608` (`nightly-2026-10-01`, all features) for `batter-axum`,
+  `batter-runlimit` and `batter` finds one removal, the old marker with its
+  `Clone`, `Copy` and `Debug` impls and crate-root re-export, matched by the
+  same entries for `InProcessRefusal`, and no other change
+  ([output](../public-api-diff-2026-10-09/in-process-refusal-2026-11-20.txt)).
+- A map captured behind `low_level::request_admission` alone, outside
+  `operational_http`, carries no private record: that layer records an
+  admission only beside the operational marker, and otherwise inserts its
+  public `OperationContext` and `RequestInterruptionResponder`. Such a map is
+  accepted. The protected boundary's admission gives its admitted routes a
+  fresh context; a test sends such a map, whose context is already cancelled,
+  and an admitted route sees a live one. The boundary's rendered probes and
+  metadata-only fallback renderer run outside admission and receive the
+  inherited values in their request metadata, and a caller-composed router
+  behind `RouterClient` that does not admit the request again hands them to
+  handlers that extract them directly. The context is cancelled once the
+  earlier request has finished; a request forwarded whole while it runs
+  carries a live one, which the same test shows by forwarding from behind
+  `request_admission` alone to a bare `RouterClient` router. A
+  characterization test replays a map from a finished request and
+  finds the cancelled context and the responder in a rendered probe, the
+  fallback renderer and admission's failure renderer on a boundary that is
+  still starting, where an arriving request carries neither, and the
+  cancelled context in the handler of a bare `RouterClient` router. Admission
+  builds its interruption responder from the same arriving parts, so the
+  interruption renderer sees them too; that case is read from the code, not
+  tested. The third review round found the admission renderers, which the
+  earlier text omitted. That is left as a residual, tracked as
+  `batter-nff2.1`, not refused here: both are public types a caller may insert
+  deliberately, and
+  refusing them would make the check name caller-visible values, which the
+  `CorrelationId` decision above rejects. Guarded handlers read
+  `AdmittedRequest`, which is not affected.
+
+Evidence: in-crate tests require one fixture per type in the shared list,
+each holding exactly its named record; refuse each through `RouterClient`
+before the router runs; and check that the renderer filter removes each while
+keeping a public `CorrelationId` and an application extension. Route-group
+tests refuse the `OPTIONS *` map with `OriginalUri` removed and maps captured
+behind each of `observe_http`, `operational_http`,
+`operational_http_with_quota` and `request_scope` around a service that is
+not a `Router`, each first checked to hold no Axum record; refuse a live
+request forwarded whole by an outer router and by a service behind each of
+those wrappers; serve the documented rebuild, asserting the destination saw
+the arrival's method, version, target, header, body and copied extension,
+also through `nest` and `nest_service`, where the target is the path below
+the mount; accept a `request_admission`-only map and give its admitted route
+a live context; characterize the inherited context a rendered probe and the
+fallback renderer receive; and accept a copied public `CorrelationId`.
+Runlimit's test first asserts that no Axum record is left, then refuses the
+same map with no authentication, quota check, handler or probe run. The
+reference service's request client has two tests. One replays the map of a
+routed dispatch through its own boundary, which holds both kinds of record,
+and the map of a bare Axum `Router`, which holds only routing records, so only
+the routing check can refuse it. The other replays a map captured behind
+`operational_http` that holds no Axum record, which only the private-record
+check refuses. The `batter-axum` routing tests and one Runlimit test likewise
+replay bare-`Router` maps. Hand-run negative controls, not part of the suite,
+run on 2026-11-20 in a separate build directory: with the private-record check
+disabled, the in-crate refusal test, the route-group tests for the
+`OPTIONS *` map, the `low_level` captures and the request forwarded from
+inside a `low_level` wrapper, and Runlimit's test fail; with Runlimit's
+`OriginalUri` removal commented out, its no-routing-record assertion fails.
+Controls run on 2026-11-21 after the review follow-up: with the private-record
+check disabled, the reference service's Batter-records-only test fails; with
+a second listed record inserted into one fixture, the one-record-per-fixture
+test fails. With the routing check disabled, the six `batter-axum` routing
+tests that replay bare-`Router` maps, the outer-router forwarding test, the
+reference service's routed-dispatch test and Runlimit's bare-`Router` test
+fail; before the second review round several of the routing tests replayed
+maps captured inside the boundary, whose private records refused them
+anyway.
+
+Unverified: detection of Axum's routing records is checked against Axum 0.8.9
+only, while the dependency requirement admits later 0.8 releases. Fresh-agent
+usability evaluation of the refusal and both migrations remains proposed and
+unexecuted.
 
 ## Public-origin invalid-state review (`batter-321j`)
 

@@ -86,7 +86,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Commands, signals, cleanup and dispatch destruction | [Command](../crates/batter-core/tests/command.rs), [command signals](../crates/batter-core/tests/command_signals.rs), core `cleanup` and `scoped_dispatch` targets. |
 | Serial maintenance, health and freshness | [Periodic](../crates/batter-core/tests/periodic.rs), core health/readiness targets. |
 | Panic-hook ownership and redacted reports | [Hook ownership](../crates/batter/tests/panic_hook_ownership.rs), core `panic_hook` and `report_redaction` targets. |
-| Settings and diagnostic exclusion | Core settings tests, reference `configuration`, SQLx example diagnostics. |
+| Settings and diagnostic exclusion | Core settings tests, [environment ownership](../crates/batter/tests/process_environment_ownership.rs), reference `configuration`, SQLx example diagnostics. |
 | Browser transport and HTTP composition | [Browser](../crates/batter-axum/tests/browser.rs), [route groups](../crates/batter-axum/tests/route_groups.rs), [operational](../crates/batter-axum/tests/operational.rs), and adapter rustdoc. |
 | HTTP/1.1 traffic, streaming and disconnect limits | [HTTP transport tests](../crates/batter-axum/tests/), [ADR-008](adr/008-http-transport-ownership.md) and [ADR-009](adr/009-http-lifetime-observations.md). |
 | Send bounds, future size and composed consumers | Core `send_futures`, [SQLx future sizes](../crates/batter-sqlx/tests/future_size.rs), Runlimit future sizes and facade consumer targets. |
@@ -227,10 +227,16 @@ and [Runlimit's reused-routing tests](../crates/batter-runlimit/tests/http/reuse
 prove its test transport shares that refusal before lifecycle admission,
 authentication, the quota check, a public probe or a handler runs, accepts a
 fresh request's application extensions and strips a forwarded refusal marker.
-A characterization test in the same file pins the documented residual: a map
-whose only detected record, an `OPTIONS *` dispatch's `OriginalUri`, was
-removed is authenticated and charged without fresh correlation or a completion
-event, until `batter-28kb` closes it.
+Two tests in the same file exercise each check without the other. One covers a
+map that keeps only the adapter's own request records: once the only Axum
+record of an `OPTIONS *` dispatch, its `OriginalUri`, is removed, and the test
+has asserted that no Axum record is left, the request is still refused, with no
+authentication, no quota consumed and no completion event. The other replays a
+map from a bare Axum `Router`, which holds routing records and no Batter
+record. The `batter-axum` routing-record maps and one of the reference
+service's maps also come from a bare `Router`, so a private record cannot mask
+the routing check, and the in-crate tests require one fixture per entry of the
+shared private-record list, holding only that record.
 
 ## Probe response policy
 
