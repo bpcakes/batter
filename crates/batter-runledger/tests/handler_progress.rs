@@ -4,7 +4,7 @@
 //! bounds a resumed attempt's writes, a budget is accepted like any root
 //! budget, and a claimed context reaches the handler unchanged once its run
 //! and attempt are positive. Exit and dispatch contracts are in
-//! `handler_invocation.rs`.
+//! `src/test_support/invocation_tests.rs`.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
 

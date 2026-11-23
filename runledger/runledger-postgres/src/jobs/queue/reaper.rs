@@ -22,6 +22,8 @@ use super::release::{
     TryReleaseUnstartedClaimResult, UnstartedClaimIdentity, try_release_unstarted_job_claim_tx,
 };
 
+mod batch;
+
 pub async fn reap_expired_leases(
     pool: &DbPool,
     limit: i64,
@@ -108,7 +110,7 @@ async fn reap_expired_lease_batch(
     .await
     .map_err(|error| Error::from_query_sqlx_with_context("reap expired lease lookup", error))?;
 
-    let mut outcome = ReapExpiredLeaseBatchOutcome::default();
+    let mut batch_rows = Vec::with_capacity(rows.len());
     for db_row in rows {
         let row = ReapExpiredLeaseRow {
             job_id: db_row.id,
@@ -126,14 +128,9 @@ async fn reap_expired_lease_batch(
             execution_started_persisted_at: db_row.execution_started_persisted_at,
             legacy_execution_started_persisted_at: db_row.legacy_execution_started_persisted_at,
         };
-        reap_expired_lease_row_with_savepoint_tx(
-            &mut tx,
-            &row,
-            default_retry_delay_ms,
-            &mut outcome,
-        )
-        .await?;
+        batch_rows.push(row);
     }
+    let outcome = batch::reap_rows(&mut tx, batch_rows, default_retry_delay_ms).await?;
 
     tx.commit()
         .await
@@ -156,40 +153,23 @@ async fn reap_expired_lease_row_with_savepoint_tx(
     let disposition = match reap_expired_lease_row_tx(tx, row, default_retry_delay_ms).await {
         Ok(disposition) => disposition,
         Err(error) => {
-            log_sanitized_deferred_row_error(row, &error);
-
-            sqlx::query!("ROLLBACK TO SAVEPOINT reaper_row")
-                .execute(&mut **tx)
-                .await
-                .map_err(|error| {
-                    Error::from_query_sqlx_with_context("reap rollback row savepoint", error)
-                })?;
-            sqlx::query!("RELEASE SAVEPOINT reaper_row")
-                .execute(&mut **tx)
-                .await
-                .map_err(|error| {
-                    Error::from_query_sqlx_with_context("reap release row savepoint", error)
-                })?;
-
-            // Push failed rows out of the immediate expired-lease window so one
-            // poison row does not starve otherwise healthy work in subsequent batches.
-            sqlx::query!(
-                "UPDATE job_queue
-                     SET lease_expires_at = now() + ($3::bigint * interval '1 millisecond'),
-                         updated_at = now()
-                     WHERE id = $1
-                       AND run_number = $2
-                       AND status = 'LEASED'",
-                row.job_id,
-                row.run_number,
-                i64::from(default_retry_delay_ms),
-            )
-            .execute(&mut **tx)
-            .await
-            .map_err(|error| Error::from_query_sqlx_with_context("reap defer failed row", error))?;
-
-            outcome.record_deferred_row_error(row, &error);
-            return Ok(());
+            let rollback = async {
+                sqlx::query!("ROLLBACK TO SAVEPOINT reaper_row")
+                    .execute(&mut **tx)
+                    .await?;
+                sqlx::query!("RELEASE SAVEPOINT reaper_row")
+                    .execute(&mut **tx)
+                    .await?;
+                Ok::<_, sqlx::Error>(())
+            }
+            .await;
+            if let Err(rollback) = rollback {
+                return Err(Error::RollbackFailure(Box::new(crate::RollbackFailure {
+                    operation: error,
+                    rollback,
+                })));
+            }
+            return defer_failed_row(tx, row, default_retry_delay_ms, outcome, &error).await;
         }
     };
 
@@ -201,6 +181,34 @@ async fn reap_expired_lease_row_with_savepoint_tx(
         })?;
 
     outcome.record_reaped_lease(row, &disposition);
+    Ok(())
+}
+
+async fn defer_failed_row(
+    tx: &mut DbTx<'_>,
+    row: &ReapExpiredLeaseRow,
+    default_retry_delay_ms: i32,
+    outcome: &mut ReapExpiredLeaseBatchOutcome,
+    error: &Error,
+) -> Result<()> {
+    log_sanitized_deferred_row_error(row, error);
+    // No workflow-step writes occur for a failed preparation. Keep the same
+    // per-row postponement and evidence as a rolled-back processing failure.
+    sqlx::query!(
+        "UPDATE job_queue
+                     SET lease_expires_at = now() + ($3::bigint * interval '1 millisecond'),
+                         updated_at = now()
+                     WHERE id = $1
+                       AND run_number = $2
+                       AND status = 'LEASED'",
+        row.job_id,
+        row.run_number,
+        i64::from(default_retry_delay_ms),
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("reap defer failed row", error))?;
+    outcome.record_deferred_row_error(row, error);
     Ok(())
 }
 

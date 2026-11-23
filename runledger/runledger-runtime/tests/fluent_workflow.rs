@@ -28,7 +28,7 @@ fn catalog() -> JobCatalog {
     JobCatalog::new().handler(EnrichHandler)
 }
 
-// OneSales buyer_enrichment/launcher.rs: account inputs retain dynamic keys and
+// A downstream enrichment launcher: account inputs retain dynamic keys and
 // payloads, each account has its own tenant, all accounts share one provider
 // resource, and each account releases the next on terminal completion.
 struct AccountInput {

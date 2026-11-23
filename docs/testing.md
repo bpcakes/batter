@@ -5,13 +5,13 @@
 
 ## Verification
 
-From the repository root, with the pinned Rust 1.98.1 toolchain:
+From the repository root, with the pinned Rust 1.100.0 toolchain:
 
 ```sh
 bash scripts/verify.sh
 ```
 
-Rust 1.98.1 is also the declared minimum; there is no separate MSRV run.
+Rust 1.100.0 is also the declared minimum; there is no separate MSRV run.
 Prerequisites include Python 3.9+, Docker for native Runledger PostgreSQL 18
 tests, loopback TCP, Unix subprocess permissions and a host certificate store.
 Initial dependency and file-budget-runtime downloads require network access.
@@ -86,7 +86,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Commands, signals, cleanup and dispatch destruction | [Command](../crates/batter-core/tests/command.rs), [command signals](../crates/batter-core/tests/command_signals.rs), core `cleanup` and `scoped_dispatch` targets. |
 | Serial maintenance, health and freshness | [Periodic](../crates/batter-core/tests/periodic.rs), core health/readiness targets. |
 | Panic-hook ownership and redacted reports | [Hook ownership](../crates/batter/tests/panic_hook_ownership.rs), core `panic_hook` and `report_redaction` targets. |
-| Settings and diagnostic exclusion | Core settings tests, reference `configuration`, SQLx example diagnostics. |
+| Settings and diagnostic exclusion | Core settings tests, [environment ownership](../crates/batter/tests/process_environment_ownership.rs), reference `configuration`, SQLx example diagnostics. |
 | Browser transport and HTTP composition | [Browser](../crates/batter-axum/tests/browser.rs), [route groups](../crates/batter-axum/tests/route_groups.rs), [operational](../crates/batter-axum/tests/operational.rs), and adapter rustdoc. |
 | HTTP/1.1 traffic, streaming and disconnect limits | [HTTP transport tests](../crates/batter-axum/tests/), [ADR-008](adr/008-http-transport-ownership.md) and [ADR-009](adr/009-http-lifetime-observations.md). |
 | Send bounds, future size and composed consumers | Core `send_futures`, [SQLx future sizes](../crates/batter-sqlx/tests/future_size.rs), Runlimit future sizes and facade consumer targets. |
@@ -95,6 +95,7 @@ Tests and the matrix own the executable inventory; contracts live in
 | Native invocation phases, settlement and handler testing | [Runledger adapter tests](../crates/batter-runledger/tests/), native [runtime tests](../runledger/runledger-runtime/tests/). |
 | Quota, authenticated attempts and maintenance | [Runlimit adapter tests](../crates/batter-runlimit/tests/) and native package tests. |
 | Outbound wire behavior and phase-owned evidence | [Outbound tests](../crates/batter-outbound-http/tests/) and facade `outbound_exchange` example tests. |
+| Outbound capacity observations (opt-in) | Run `python3 scripts/measure_outbound_http.py`; [executed scope and limits](evidence/outbound-capacity-2026-11-11.md). The scripts matrix compiles the probe with `--check`; timing is not a CI threshold. |
 | Outbound response-body wiping before deallocation | Private [buffer](../crates/batter-outbound-http/src/send/buffer/tests.rs) and [body-storage](../crates/batter-outbound-http/src/send/body_storage_tests.rs) tests, with a `cfg(test)` destructor probe. |
 | External single-dependency adoption | [Consumer sources](../consumers/README.md) and [source-copy checker](../scripts/check_single_facade_consumer.py). |
 | Verification selection and process failure behavior | [Script controls](../scripts/), especially `test_verify`, `test_parallel_process`, `test_ci_plan` and live-runner controls. |
@@ -114,7 +115,7 @@ cargo test -p batter-runledger --features test-support --locked
 ```
 
 `test_support::HandlerInvocation` drives native handler dispatch without a queue,
-worker or database. `handler_invocation` and `handler_progress` cover first-poll
+worker or database. `src/test_support/invocation_tests.rs` and `handler_progress` cover first-poll
 budgets, retained progress, returned failures, panic handling and invocation exit.
 This facility applies no durable persistence or retry policy.
 
@@ -221,6 +222,21 @@ forwarded headers cannot supply that authority.
 Compile-fail examples reject access to an assembled raw router and unregistered
 serving. In-process tests select an explicit synthetic peer through the opaque
 client. They exercise boundary assembly without claiming socket provenance.
+Route-group tests refuse a whole extension map reused from an earlier dispatch,
+and [Runlimit's reused-routing tests](../crates/batter-runlimit/tests/http/reused_routing.rs)
+prove its test transport shares that refusal before lifecycle admission,
+authentication, the quota check, a public probe or a handler runs, accepts a
+fresh request's application extensions and strips a forwarded refusal marker.
+Two tests in the same file exercise each check without the other. One covers a
+map that keeps only the adapter's own request records: once the only Axum
+record of an `OPTIONS *` dispatch, its `OriginalUri`, is removed, and the test
+has asserted that no Axum record is left, the request is still refused, with no
+authentication, no quota consumed and no completion event. The other replays a
+map from a bare Axum `Router`, which holds routing records and no Batter
+record. The `batter-axum` routing-record maps and one of the reference
+service's maps also come from a bare `Router`, so a private record cannot mask
+the routing check, and the in-crate tests require one fixture per entry of the
+shared private-record list, holding only that record.
 
 ## Probe response policy
 

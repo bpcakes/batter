@@ -144,7 +144,11 @@ holds two allocations, and for a completed body keeping at most twice its length
 until its last handle is released. Growth and the release of a large body copy or
 wipe without yielding on the current thread, so a limit near the 64 MiB maximum
 can delay that thread by tens of milliseconds. Swap, hibernation and core dumps
-can still capture live bodies, so those remain host controls.
+can still capture live bodies, so those remain host controls. Choose the smallest
+limit required by the provider protocol; a tiny retained slice can retain the
+whole backing allocation. The [capacity assessment](evidence/outbound-capacity-2026-11-11.md)
+records executed connection, DNS-queue and scheduler measurements and explicitly
+unverified deployment conditions.
 
 Batter never installs, takes or replaces the process panic hook; Rust's default
 hook prints every string payload. Each executable installs
@@ -166,8 +170,12 @@ Native Runledger separately redacts caught main-handler panics before turning
 them into failures: `job.handler_panic` / `PANICKED` uses the fixed message
 `Job handler panicked.` in queue, attempt, dead-letter and event records,
 dead-letter logs and the main-handler settlement diagnostic. Panics remain
-nonretryable. This does not redact output from the process panic hook, other
-callback diagnostics, or application-created `JobFailure` messages. Those
+nonretryable. Runledger's observer, dead-letter-hook and task-join log events
+also omit panic payloads, and its join failures keep them out of
+`Error::source()` chains. Other callbacks' payloads remain in explicit report
+fields such as `RuntimeCallbackFailure::Panicked { message, .. }`. None of this
+redacts output from the process panic hook or application-created `JobFailure`
+messages. Those
 messages are persisted verbatim and may be logged or displayed; use deliberate
 non-sensitive text, never interpolated error `Display`/`Debug` or credentials.
 

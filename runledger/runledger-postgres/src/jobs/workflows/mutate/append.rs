@@ -25,8 +25,8 @@ use super::super::errors::{
     workflow_internal_state_error, workflow_release_conflict_error,
 };
 use super::super::locking::{
-    LockedWorkflowStepState, lock_workflow_run_for_update_tx, lock_workflow_steps_for_update_tx,
-    try_lock_workflow_run_release_shared_tx,
+    LockedWorkflowStepState, WorkflowRunRowLock, lock_workflow_run_for_update_tx,
+    lock_workflow_steps_for_update_tx, try_lock_workflow_run_release_shared_tx,
 };
 use super::super::read::load_workflow_run_by_id_tx;
 use super::super::release::{
@@ -96,10 +96,10 @@ async fn append_workflow_steps_read_committed_tx(
 ) -> Result<AppendResult> {
     let tx = tx.as_tx();
 
-    let locked_steps =
-        lock_workflow_steps_for_update_tx(tx, input.workflow_run_id, input.organization_id).await?;
-    let workflow_run =
+    let (run_lock, workflow_run) =
         lock_workflow_run_for_update_tx(tx, input.workflow_run_id, input.organization_id).await?;
+    let locked_steps =
+        lock_workflow_steps_for_update_tx(tx, &run_lock, input.organization_id).await?;
     let canonical_request = canonical_append_request(
         input.append_window_step_key,
         workflow_run.organization_id,
@@ -170,7 +170,7 @@ async fn append_workflow_steps_read_committed_tx(
     )
     .await?;
 
-    resolve_appended_steps_tx(tx, workflow_run.id, &inserted_append.appended_step_ids).await?;
+    resolve_appended_steps_tx(tx, &run_lock, &inserted_append.appended_step_ids).await?;
 
     load_append_result_tx(
         tx,
@@ -267,7 +267,7 @@ async fn persist_appended_step_dependencies_and_mutation_tx(
 
 async fn resolve_appended_steps_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     appended_step_ids: &[Uuid],
 ) -> Result<()> {
     // The IDs are collected from successful INSERT ... RETURNING calls in this
@@ -275,14 +275,12 @@ async fn resolve_appended_steps_tx(
     // ready-candidate query intentionally returns only a subset: omitted rows
     // are pending and require neither decoding nor release work.
     let ready_candidates =
-        load_immediately_ready_appended_step_candidates_tx(tx, workflow_run_id, appended_step_ids)
-            .await?;
+        load_immediately_ready_appended_step_candidates_tx(tx, run_lock, appended_step_ids).await?;
     for ready_candidate in &ready_candidates {
-        resolve_immediately_ready_appended_step_candidate_tx(tx, workflow_run_id, ready_candidate)
-            .await?;
+        resolve_immediately_ready_appended_step_candidate_tx(tx, run_lock, ready_candidate).await?;
     }
 
-    recompute_workflow_run_status_tx(tx, workflow_run_id).await?;
+    recompute_workflow_run_status_tx(tx, run_lock).await?;
     Ok(())
 }
 
@@ -356,11 +354,11 @@ fn initial_dependency_counters(
 
 async fn resolve_immediately_ready_appended_step_candidate_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     ready_candidate: &ImmediatelyReadyAppendedStepCandidate,
 ) -> Result<()> {
     if ready_candidate.dependency_count_unsatisfied == 0 {
-        return release_candidate_step_tx(tx, &ready_candidate.candidate).await;
+        return release_candidate_step_tx(tx, run_lock, &ready_candidate.candidate).await;
     }
 
     let canceled = sqlx::query!(
@@ -376,7 +374,7 @@ async fn resolve_immediately_ready_appended_step_candidate_tx(
                AND status = 'BLOCKED'
              RETURNING workflow_run_id",
         ready_candidate.candidate.id(),
-        workflow_run_id,
+        run_lock.workflow_run_id(),
     )
     .fetch_optional(&mut **tx)
     .await
@@ -387,7 +385,7 @@ async fn resolve_immediately_ready_appended_step_candidate_tx(
     if canceled.is_some() {
         resolve_terminal_step_queue_tx(
             tx,
-            workflow_run_id,
+            run_lock,
             ready_candidate.candidate.id(),
             WorkflowStepStatus::Canceled,
         )
@@ -399,7 +397,7 @@ async fn resolve_immediately_ready_appended_step_candidate_tx(
 
 async fn load_immediately_ready_appended_step_candidates_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     appended_step_ids: &[Uuid],
 ) -> Result<Vec<ImmediatelyReadyAppendedStepCandidate>> {
     let rows = sqlx::query!(
@@ -422,7 +420,7 @@ async fn load_immediately_ready_appended_step_candidates_tx(
            AND dependency_count_pending = 0
          ORDER BY array_position($2::uuid[], id)
          FOR UPDATE",
-        workflow_run_id,
+        run_lock.workflow_run_id(),
         appended_step_ids,
     )
     .fetch_all(&mut **tx)
@@ -568,7 +566,7 @@ mod tests {
     use serde_json::Value as JsonValue;
     use sqlx::types::Uuid;
 
-    use crate::{DbPool, DbTx};
+    use crate::{DbPool, DbTx, jobs::workflows::locking::lock_workflow_run_row_tx};
 
     use super::{load_immediately_ready_appended_step_candidates_tx, resolve_appended_steps_tx};
 
@@ -760,10 +758,12 @@ mod tests {
             born_unsatisfied,
             ready_first,
         ];
+        let run_lock = lock_workflow_run_row_tx(&mut tx, workflow_run_id, None).await;
+        let run_lock = run_lock.expect("lock run").expect("run exists");
 
         let ready_candidates = load_immediately_ready_appended_step_candidates_tx(
             &mut tx,
-            workflow_run_id,
+            &run_lock,
             &appended_step_ids,
         )
         .await
@@ -783,7 +783,7 @@ mod tests {
         // it cannot include `missing`. Passing it here proves the deliberate
         // replacement for the old unreachable diagnostic: a non-candidate is
         // simply omitted, just like a pending appended row.
-        resolve_appended_steps_tx(&mut tx, workflow_run_id, &appended_step_ids)
+        resolve_appended_steps_tx(&mut tx, &run_lock, &appended_step_ids)
             .await
             .expect("resolve ready appended candidates while omitting missing row");
 

@@ -25,8 +25,8 @@ use super::super::errors::{
     workflow_internal_state_error, workflow_release_conflict_error,
 };
 use super::super::locking::{
-    lock_workflow_run_release_shared_tx, lock_workflow_step_rows_for_update_tx,
-    try_lock_workflow_run_release_shared_tx,
+    WorkflowRunRowLock, lock_workflow_run_release_shared_tx, lock_workflow_run_row_tx,
+    lock_workflow_step_rows_for_update_tx, try_lock_workflow_run_release_shared_tx,
 };
 use super::super::release::{
     StepReleaseCandidate, StepReleaseCandidateInit, release_candidate_step_tx,
@@ -63,7 +63,6 @@ struct WorkflowStepTerminalTransition<'reason, 'code, 'message, 'output> {
 
 struct LockedWorkflowStepTerminalState {
     id: Uuid,
-    workflow_run_id: Uuid,
     status: WorkflowStepStatus,
 }
 
@@ -150,12 +149,30 @@ async fn process_linked_workflow_step_terminal_by_job_id_read_committed_tx(
     transition: &WorkflowStepTerminalTransition<'_, '_, '_, '_>,
 ) -> Result<()> {
     let tx = tx.as_tx();
-    let Some(step) = lock_workflow_step_for_terminal_transition_tx(tx, transition.job_id).await?
-    else {
-        return Err(workflow_internal_state_error(format!(
+    let lost_relationship = || {
+        workflow_internal_state_error(format!(
             "workflow-managed job {} lost its workflow_steps.job_id relationship while locked",
             transition.job_id,
-        )));
+        ))
+    };
+    // The caller already owns the job row. Take the shared release lock, then
+    // the run row, before any step row (see WorkflowRunRowLock). Cancellation
+    // locks job rows before its exclusive release lock, so it cannot hold that
+    // lock while waiting on this job row unless the job was released after its
+    // first job pass; PostgreSQL's deadlock detector or this bounded wait then
+    // aborts one side. Waiting keeps terminal persistence atomic with dependency
+    // release; later release try-locks are reentrant on this connection.
+    let workflow_run_id = workflow_run_id_for_job_tx(tx, transition.job_id)
+        .await?
+        .ok_or_else(lost_relationship)?;
+    lock_workflow_run_release_shared_tx(tx, workflow_run_id).await?;
+    let run_lock = lock_workflow_run_row_tx(tx, workflow_run_id, None)
+        .await?
+        .ok_or_else(lost_relationship)?;
+    let Some(step) =
+        lock_workflow_step_for_terminal_transition_tx(tx, &run_lock, transition.job_id).await?
+    else {
+        return Err(lost_relationship());
     };
 
     if step.status.is_terminal() {
@@ -186,32 +203,27 @@ async fn process_linked_workflow_step_terminal_by_job_id_read_committed_tx(
     .await
     .map_err(|error| Error::from_query_sqlx_with_context("mark workflow step terminal", error))?;
 
-    // Job-backed terminal completion already owns the job row. Real cancellation
-    // locks job rows before taking the exclusive release lock, so cancellation
-    // cannot hold the exclusive lock while also waiting on this job row. If the
-    // two transactions meet in the narrow job-row/advisory-lock cycle, this
-    // bounded wait turns it into workflow.release_conflict instead of an
-    // unbounded deadlock. Waiting here keeps terminal persistence atomic with
-    // dependency release instead of stranding dependents behind a rolled-back
-    // exclusive holder.
-    // Invariant: dependency release runs later in this same transaction, on this
-    // same connection, so its pg_try_advisory_xact_lock_shared call is reentrant
-    // after this blocking shared acquire.
-    lock_workflow_run_release_shared_tx(tx, step.workflow_run_id).await?;
-    resolve_terminal_step_queue_tx(
-        tx,
-        step.workflow_run_id,
-        step.id,
-        transition.terminal_status,
-    )
-    .await?;
-    recompute_workflow_run_status_tx(tx, step.workflow_run_id).await?;
+    resolve_terminal_step_queue_tx(tx, &run_lock, step.id, transition.terminal_status).await?;
+    recompute_workflow_run_status_tx(tx, &run_lock).await?;
 
     Ok(())
 }
 
+async fn workflow_run_id_for_job_tx(tx: &mut DbTx<'_>, job_id: Uuid) -> Result<Option<Uuid>> {
+    // workflow_steps.workflow_run_id never changes, so this unlocked read only
+    // names the run row to lock before the step row; the locked read rechecks.
+    sqlx::query_scalar::<_, Uuid>("SELECT workflow_run_id FROM workflow_steps WHERE job_id = $1")
+        .bind(job_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|error| {
+            Error::from_query_sqlx_with_context("read workflow run id for terminal job", error)
+        })
+}
+
 async fn lock_workflow_step_for_terminal_transition_tx(
     tx: &mut DbTx<'_>,
+    run_lock: &WorkflowRunRowLock,
     job_id: Uuid,
 ) -> Result<Option<LockedWorkflowStepTerminalState>> {
     let row = sqlx::query!(
@@ -231,9 +243,15 @@ async fn lock_workflow_step_for_terminal_transition_tx(
     })?;
 
     row.map(|row| {
+        if row.workflow_run_id != run_lock.workflow_run_id() {
+            return Err(workflow_internal_state_error(format!(
+                "workflow-managed job {job_id} belongs to run {}, but completion holds run {}",
+                row.workflow_run_id,
+                run_lock.workflow_run_id(),
+            )));
+        }
         Ok(LockedWorkflowStepTerminalState {
             id: row.id,
-            workflow_run_id: row.workflow_run_id,
             status: parse_workflow_step_status(row.status)?,
         })
     })
@@ -278,7 +296,8 @@ async fn complete_external_workflow_step_read_committed_tx(
     let terminal_status = input.outcome.status();
     let output = input.outcome.output();
 
-    let (step, stored_output) = lock_external_workflow_step_for_completion_tx(tx, input).await?;
+    let (run_lock, step, stored_output) =
+        lock_external_workflow_step_for_completion_tx(tx, input).await?;
     if step.execution_kind != WorkflowStepExecutionKind::External {
         return Err(workflow_external_step_not_external_error(
             step.step_key.as_str(),
@@ -378,14 +397,14 @@ async fn complete_external_workflow_step_read_committed_tx(
     })?;
 
     let updated = updated.into_record()?;
-    // External completion already owns the workflow-step row locks. Do not wait
-    // on the shared release advisory lock here: cancellation may own the
-    // exclusive form while waiting on these same rows. Dependent release goes
-    // through try_lock_workflow_run_release_shared_tx, so concurrent
-    // cancellation returns workflow.release_conflict before this transaction can
-    // release new work.
-    resolve_terminal_step_queue_tx(tx, updated.workflow_run_id, updated.id, updated.status).await?;
-    recompute_workflow_run_status_tx(tx, updated.workflow_run_id).await?;
+    // External completion already owns the run row and the workflow-step row
+    // locks. Do not wait on the shared release advisory lock here: cancellation
+    // may own the exclusive form while waiting on these same rows. Dependent
+    // release goes through try_lock_workflow_run_release_shared_tx, so
+    // concurrent cancellation returns workflow.release_conflict before this
+    // transaction can release new work.
+    resolve_terminal_step_queue_tx(tx, &run_lock, updated.id, updated.status).await?;
+    recompute_workflow_run_status_tx(tx, &run_lock).await?;
 
     Ok(updated)
 }
@@ -393,8 +412,12 @@ async fn complete_external_workflow_step_read_committed_tx(
 async fn lock_external_workflow_step_for_completion_tx(
     tx: &mut DbTx<'_>,
     input: &CompleteExternalWorkflowStepInput<'_>,
-) -> Result<(WorkflowStepDbRecord, Option<Value>)> {
-    lock_workflow_step_rows_for_update_tx(tx, input.workflow_run_id, input.organization_id).await?;
+) -> Result<(WorkflowRunRowLock, WorkflowStepDbRecord, Option<Value>)> {
+    // Run row before step rows (see WorkflowRunRowLock).
+    let run_lock = lock_workflow_run_row_tx(tx, input.workflow_run_id, input.organization_id)
+        .await?
+        .ok_or_else(workflow_external_step_not_found_error)?;
+    lock_workflow_step_rows_for_update_tx(tx, &run_lock, input.organization_id).await?;
     let row = sqlx::query_as!(
         WorkflowStepRow,
         "SELECT
@@ -444,12 +467,12 @@ async fn lock_external_workflow_step_for_completion_tx(
 
     let stored_output = row.output.clone();
     let step = row.into_record()?;
-    Ok((step, stored_output))
+    Ok((run_lock, step, stored_output))
 }
 
 pub(crate) async fn resolve_terminal_step_queue_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     initial_step_id: Uuid,
     initial_terminal_status: WorkflowStepStatus,
 ) -> Result<()> {
@@ -460,7 +483,7 @@ pub(crate) async fn resolve_terminal_step_queue_tx(
     {
         apply_terminal_prerequisite(
             tx,
-            workflow_run_id,
+            run_lock,
             prerequisite_step_id,
             prerequisite_terminal_status,
             &mut terminal_queue,
@@ -473,11 +496,12 @@ pub(crate) async fn resolve_terminal_step_queue_tx(
 
 async fn apply_terminal_prerequisite(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     prerequisite_step_id: Uuid,
     prerequisite_terminal_status: WorkflowStepStatus,
     terminal_queue: &mut VecDeque<(Uuid, WorkflowStepStatus)>,
 ) -> Result<()> {
+    let workflow_run_id = run_lock.workflow_run_id();
     let direct_dependent_updates = load_direct_dependent_updates(
         tx,
         workflow_run_id,
@@ -498,7 +522,7 @@ async fn apply_terminal_prerequisite(
     .await?;
 
     for row in rows {
-        enqueue_ready_or_canceled_dependent(tx, workflow_run_id, row, terminal_queue).await?;
+        enqueue_ready_or_canceled_dependent(tx, run_lock, row, terminal_queue).await?;
     }
 
     Ok(())
@@ -685,7 +709,7 @@ struct UpdatedDependent {
 
 async fn enqueue_ready_or_canceled_dependent(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
     row: UpdatedDependent,
     terminal_queue: &mut VecDeque<(Uuid, WorkflowStepStatus)>,
 ) -> Result<()> {
@@ -694,7 +718,7 @@ async fn enqueue_ready_or_canceled_dependent(
     }
 
     if row.dependency_count_unsatisfied == 0 {
-        release_candidate_step_tx(tx, &row.candidate).await?;
+        release_candidate_step_tx(tx, run_lock, &row.candidate).await?;
         return Ok(());
     }
 
@@ -712,7 +736,7 @@ async fn enqueue_ready_or_canceled_dependent(
                    AND status = 'BLOCKED'
                  RETURNING id",
         row.candidate.id(),
-        workflow_run_id,
+        run_lock.workflow_run_id(),
     )
     .fetch_optional(&mut **tx)
     .await

@@ -210,7 +210,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if "axum" in chosen or "runlimit-axum" in chosen:
         # Supported paths only: assembly is sealed into protected serving or
         # an opaque request client, and the raw helpers live in low_level.
-        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, RequestPolicy};")
+        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, InProcessRefusal, RequestPolicy};")
     if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if chosen & RUNLEDGER_SELECTORS:
@@ -256,7 +256,7 @@ def manifest(name: str, dependencies: list[str], selected: tuple[str, ...] = ())
         f"name = {json.dumps(name)}\n"
         "version = \"0.0.0\"\n"
         "edition = \"2024\"\n"
-        "rust-version = \"1.98.1\"\n"
+        "rust-version = \"1.100.0\"\n"
         "publish = false\n\n"
         "[workspace]\nresolver = \"3\"\n\n"
         "[dependencies]\n"

@@ -11,6 +11,9 @@ use crate::config::JobsConfig;
 use crate::shutdown;
 use crate::{Result, RuntimeLoopExit, SchedulerError};
 
+mod coalescing;
+mod wait;
+
 const FAILED_SCHEDULE_RETRY_DELAY_SECONDS: i64 = 30;
 const SCHEDULE_STALE_CATCHUP_JITTER_SEARCH_LIMIT: usize =
     jobs::JOB_SCHEDULE_MAX_JITTER_SECONDS as usize + 2;
@@ -22,21 +25,34 @@ const RELEASE_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL: &str =
 
 /// Runs cron schedule materialization until shutdown is requested.
 ///
-/// The loop claims due schedules in batches using
-/// [`JobsConfig::claim_batch_size`], materializes each due schedule into a job,
-/// advances the schedule's next UTC fire cursor, then waits for either shutdown
-/// or [`JobsConfig::schedule_poll_interval`] before polling again. Individual
-/// materialization failures are logged and deferred so one bad schedule does not
-/// permanently starve other due schedules.
+/// Each pass claims up to [`JobsConfig::claim_batch_size`] due schedules in one
+/// transaction, materializes each into a job and advances its next UTC fire
+/// cursor. A committed pass that claimed a whole batch is followed by another
+/// pass after a yield and a shutdown check, so a backlog drains without waiting
+/// for the poll interval. Every schedule such a pass committed now fires after
+/// that pass's clock, so the next pass claims other rows. After a smaller pass
+/// the loop waits for shutdown or until the earliest active fire, but at least
+/// 500 ms and at most [`JobsConfig::schedule_poll_interval`]; the cap bounds how
+/// late a schedule written by another process is noticed. A failed pass, or a
+/// failed read of the earliest fire, waits the whole poll interval. Individual
+/// materialization failures are logged and deferred for 30 seconds so one bad
+/// schedule does not permanently starve other due schedules.
 ///
-/// When a schedule is stale, one missed fire is materialized with its original
+/// When the first fire after a claimed cursor is already due, the scheduler
+/// has lagged by at least one cron period: after downtime, behind a backlog, or
+/// whenever passes run late. One missed fire is materialized with its original
 /// `scheduled_for` metadata and the cursor is then coalesced to the first future
-/// fire after the scheduler's current clock. This bounds outage catch-up instead
-/// of replaying every missed cron tick.
+/// fire after the scheduler's current clock. The occurrences in between are
+/// dropped, not replayed; a warning names the schedule and counts them, capped
+/// at 1000. This bounds catch-up instead of replaying every missed cron tick.
+/// The next cursor is computed from the jittered fire time, so a
+/// `max_jitter_seconds` window at least as large as the gap between cron
+/// occurrences can also skip occurrences.
 ///
 /// Shutdown is requested by sending `true` on `shutdown` or by dropping the
-/// watch sender. This function returns [`RuntimeLoopExit::Shutdown`] after the
-/// shutdown signal is observed.
+/// watch sender. The signal is checked between passes; a pass already running
+/// is completed, not cancelled. This function returns
+/// [`RuntimeLoopExit::Shutdown`] after the shutdown signal is observed.
 ///
 /// This lower-level loop remains public for custom runtime orchestration.
 /// Prefer [`crate::Supervisor`] for ordinary worker processes so scheduler,
@@ -67,13 +83,35 @@ pub(crate) async fn run_scheduler_loop_initialized(
             return scheduler_shutdown_complete();
         }
 
-        if let Err(error) = materialize_due_schedules(&pool, config.claim_batch_size).await {
-            warn!(%error, "schedule materialization failed");
-        }
+        let wait = match materialize_pass(&pool, &config).await {
+            wait::NextPass::Immediately => {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            wait::NextPass::After(wait) => wait,
+        };
 
-        if shutdown::wait_for_request_or_timeout(&mut shutdown, config.schedule_poll_interval).await
-        {
+        if shutdown::wait_for_request_or_timeout(&mut shutdown, wait).await {
             return scheduler_shutdown_complete();
+        }
+    }
+}
+
+/// Runs one pass to completion and chooses when the next one starts.
+async fn materialize_pass(
+    pool: &runledger_postgres::DbPool,
+    config: &JobsConfig,
+) -> wait::NextPass {
+    match materialize_due_schedules(pool, config.claim_batch_size).await {
+        Ok(claimed) if wait::batch_was_full(claimed, config.claim_batch_size) => {
+            wait::NextPass::Immediately
+        }
+        Ok(_) => wait::NextPass::After(
+            wait::until_next_due_fire(pool, config.schedule_poll_interval).await,
+        ),
+        Err(error) => {
+            warn!(%error, "schedule materialization failed");
+            wait::NextPass::After(config.schedule_poll_interval)
         }
     }
 }
@@ -83,6 +121,8 @@ fn scheduler_shutdown_complete() -> RuntimeLoopExit {
     RuntimeLoopExit::Shutdown
 }
 
+/// Commits one pass and returns how many schedules it claimed, including
+/// claimed schedules whose failed materialization was deferred.
 #[allow(
     clippy::result_large_err,
     reason = "preserve concrete native scheduler errors without changing the imported runtime contract"
@@ -90,7 +130,7 @@ fn scheduler_shutdown_complete() -> RuntimeLoopExit {
 async fn materialize_due_schedules(
     pool: &runledger_postgres::DbPool,
     batch_size: i64,
-) -> Result<()> {
+) -> Result<usize> {
     let mut tx = pool
         .begin()
         .await
@@ -99,7 +139,7 @@ async fn materialize_due_schedules(
         })?;
 
     let now = Utc::now();
-    materialize_due_schedules_tx(&mut tx, now, batch_size).await?;
+    let pass = materialize_due_schedules_tx(&mut tx, now, batch_size).await?;
 
     tx.commit()
         .await
@@ -109,7 +149,18 @@ async fn materialize_due_schedules(
                 error,
             ),
         })?;
-    Ok(())
+    // Coalescing drops occurrences only once its cursor advance is durable.
+    for coalesced in &pass.coalesced {
+        coalesced.warn();
+    }
+    Ok(pass.claimed)
+}
+
+/// Schedules claimed by one pass, and those whose cursor was coalesced.
+#[derive(Debug)]
+struct MaterializationPass {
+    claimed: usize,
+    coalesced: Vec<coalescing::CoalescedSchedule>,
 }
 
 fn savepoint_error_variant(
@@ -186,7 +237,7 @@ async fn materialize_due_schedules_tx(
     tx: &mut runledger_postgres::DbTx<'_>,
     now: DateTime<Utc>,
     batch_size: i64,
-) -> Result<()> {
+) -> Result<MaterializationPass> {
     let schedules = jobs::claim_due_schedules_tx(tx, now, batch_size)
         .await
         .map_err(|source| SchedulerError::ClaimDueSchedules { source })?;
@@ -201,38 +252,50 @@ async fn materialize_claimed_schedules_tx(
     tx: &mut runledger_postgres::DbTx<'_>,
     now: DateTime<Utc>,
     schedules: Vec<jobs::JobScheduleRecord>,
-) -> Result<()> {
+) -> Result<MaterializationPass> {
+    let mut pass = MaterializationPass {
+        claimed: schedules.len(),
+        coalesced: Vec::new(),
+    };
     for schedule in schedules {
         execute_savepoint_sql_tx(tx, CREATE_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL).await?;
 
-        if let Err(error) = materialize_schedule_tx(tx, &schedule, now).await {
-            warn!(
-                %error,
-                schedule_id=%schedule.id,
-                schedule_name=%schedule.name,
-                "schedule materialization failed; skipping"
-            );
-            execute_savepoint_sql_tx(tx, ROLLBACK_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL).await?;
-            execute_savepoint_sql_tx(tx, RELEASE_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL).await?;
+        let coalesced = match materialize_schedule_tx(tx, &schedule, now).await {
+            Ok(coalesced) => coalesced,
+            Err(error) => {
+                warn!(
+                    %error,
+                    schedule_id=%schedule.id,
+                    schedule_name=%schedule.name,
+                    "schedule materialization failed; skipping"
+                );
+                execute_savepoint_sql_tx(tx, ROLLBACK_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL)
+                    .await?;
+                execute_savepoint_sql_tx(tx, RELEASE_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL)
+                    .await?;
 
-            if matches!(
-                error,
-                crate::Error::Scheduler(SchedulerError::ClaimedScheduleMissing { .. })
-            ) {
-                return Err(error);
+                if matches!(
+                    error,
+                    crate::Error::Scheduler(SchedulerError::ClaimedScheduleMissing { .. })
+                ) {
+                    return Err(error);
+                }
+
+                // Push failed schedules out of the immediate due window to avoid
+                // repeatedly selecting the same failing rows and starving valid
+                // schedules. This also keeps a full batch of failures from making
+                // the loop re-poll the same rows.
+                let retry_at = failed_schedule_retry_at(now);
+                defer_failed_schedule_tx(tx, schedule.id, retry_at).await?;
+                continue;
             }
-
-            // Push failed schedules out of the immediate due window to avoid
-            // repeatedly selecting the same failing rows and starving valid schedules.
-            let retry_at = failed_schedule_retry_at(now);
-            defer_failed_schedule_tx(tx, schedule.id, retry_at).await?;
-            continue;
-        }
+        };
 
         execute_savepoint_sql_tx(tx, RELEASE_MATERIALIZE_DUE_SCHEDULE_SAVEPOINT_SQL).await?;
+        pass.coalesced.extend(coalesced);
     }
 
-    Ok(())
+    Ok(pass)
 }
 
 #[allow(
@@ -281,10 +344,12 @@ async fn materialize_schedule_tx(
     tx: &mut runledger_postgres::DbTx<'_>,
     schedule: &jobs::JobScheduleRecord,
     now: DateTime<Utc>,
-) -> Result<()> {
+) -> Result<Option<coalescing::CoalescedSchedule>> {
     let scheduled_for = schedule.next_fire_at;
-    let next_fire_at = compute_next_fire_at_with_stale_coalescing_utc(
-        &schedule.cron_expr,
+    let cron = Schedule::from_str(&schedule.cron_expr)
+        .map_err(|_| invalid_schedule_cron_error(schedule))?;
+    let next_fire = next_fire_after_materialization(
+        &cron,
         scheduled_for,
         now,
         schedule.id,
@@ -315,7 +380,7 @@ async fn materialize_schedule_tx(
             source,
         })?;
 
-    let marked = jobs::mark_schedule_fired_tx(tx, schedule.id, now, next_fire_at)
+    let marked = jobs::mark_schedule_fired_tx(tx, schedule.id, now, next_fire.at())
         .await
         .map_err(|source| SchedulerError::MarkScheduleFired {
             schedule_id: schedule.id,
@@ -331,11 +396,54 @@ async fn materialize_schedule_tx(
         }
         .into());
     }
-    Ok(())
+    Ok(match next_fire {
+        NextFire::OnSchedule(_) => None,
+        NextFire::Coalesced(next_fire_at) => Some(coalescing::CoalescedSchedule::new(
+            schedule,
+            cron,
+            now,
+            next_fire_at,
+        )),
+    })
+}
+
+/// Cursor after one materialized fire.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NextFire {
+    /// The first fire after `scheduled_for` is still in the future.
+    OnSchedule(DateTime<Utc>),
+    /// That fire was already due, so the cursor skipped to the first future fire.
+    Coalesced(DateTime<Utc>),
+}
+
+impl NextFire {
+    const fn at(self) -> DateTime<Utc> {
+        match self {
+            Self::OnSchedule(at) | Self::Coalesced(at) => at,
+        }
+    }
 }
 
 /// Materializes at most one missed fire for a stale schedule, then coalesces the
 /// cursor to the first future fire so an outage cannot create unbounded replay.
+fn next_fire_after_materialization(
+    schedule: &Schedule,
+    scheduled_for: DateTime<Utc>,
+    now: DateTime<Utc>,
+    schedule_id: uuid::Uuid,
+    max_jitter_seconds: i32,
+) -> Option<NextFire> {
+    let next_after_scheduled =
+        next_jittered_fire_after_utc(schedule, scheduled_for, schedule_id, max_jitter_seconds)?;
+    if next_after_scheduled <= now {
+        compute_coalesced_next_fire_after_now_utc(schedule, now, schedule_id, max_jitter_seconds)
+            .map(NextFire::Coalesced)
+    } else {
+        Some(NextFire::OnSchedule(next_after_scheduled))
+    }
+}
+
+#[cfg(test)]
 fn compute_next_fire_at_with_stale_coalescing_utc(
     cron_expr: &str,
     scheduled_for: DateTime<Utc>,
@@ -344,13 +452,14 @@ fn compute_next_fire_at_with_stale_coalescing_utc(
     max_jitter_seconds: i32,
 ) -> Option<DateTime<Utc>> {
     let schedule = Schedule::from_str(cron_expr).ok()?;
-    let next_after_scheduled =
-        next_jittered_fire_after_utc(&schedule, scheduled_for, schedule_id, max_jitter_seconds)?;
-    if next_after_scheduled <= now {
-        compute_coalesced_next_fire_after_now_utc(&schedule, now, schedule_id, max_jitter_seconds)
-    } else {
-        Some(next_after_scheduled)
-    }
+    next_fire_after_materialization(
+        &schedule,
+        scheduled_for,
+        now,
+        schedule_id,
+        max_jitter_seconds,
+    )
+    .map(NextFire::at)
 }
 
 fn invalid_schedule_cron_error(schedule: &jobs::JobScheduleRecord) -> SchedulerError {

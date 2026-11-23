@@ -200,3 +200,18 @@ and verification claims require executed evidence in `batter-u387`.
 current tests and inspected upstream versions. Fresh-agent adoption remains
 proposed and unexecuted; two real application roots are still required for
 stable promotion.
+
+
+### Dial scheduling and capacity assessment (2026-11-11)
+
+The same-family fair-share timer could give each of twenty healthy addresses
+only 50 ms under a one-second setup budget. A deterministic 150 ms dial probe
+failed every candidate. Each fair share now has a one-second floor, capped by
+the existing absolute deadline. This is a bounded scheduling policy, not a
+promise to try all addresses: a stalled candidate can consume a shorter family
+budget. The other-family race and maximum of two active TCP candidates remain.
+There is no public signature change or hard cut. The library owns scheduling;
+consumers have no new ordering or cleanup obligation (ADR-010 review).
+
+Capacity and storage decisions are recorded in
+[the measured assessment](../evidence/outbound-capacity-2026-11-11.md).

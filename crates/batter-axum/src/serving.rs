@@ -32,6 +32,14 @@ use std::fmt::Debug;
 /// [`batter_core::lifecycle::RunningSupervisor::wait_checked`] to propagate an
 /// unsuccessful process report; registration alone proves no clean shutdown.
 ///
+/// The task prepares the router once when it starts serving, through Axum's
+/// make-service conversion, and every connection serves a clone of that
+/// prepared router. Axum builds a [`Router::layer`] layer separately for each
+/// route and method, so state a layer creates when built, such as a
+/// `ConcurrencyLimitLayer` semaphore, is shared by all connections for that
+/// route and method; it is neither rebuilt per connection nor one server-wide
+/// value.
+///
 /// Axum internally spawns connection and graceful-signal tasks. A graceful return
 /// waits for native connections, but abortion/panic of the direct wrapper does
 /// not prove its descendants stopped; the supervisor conservatively skips cleanup.
@@ -70,9 +78,9 @@ pub fn register_http(
 /// Register an already-bound Axum server through constrained registration authority.
 ///
 /// This is the canonical companion to [`batter_core::startup::Startup::scoped`]. It
-/// has the same runtime, listener and native descendant limits as
-/// [`register_http`], while preventing the adapter from receiving process-start
-/// or cleanup-extraction authority.
+/// has the same runtime, listener, router-preparation and native descendant
+/// limits as [`register_http`], while preventing the adapter from receiving
+/// process-start or cleanup-extraction authority.
 /// It does not install connection metadata; use [`register_http_with_connect_info_in`]
 /// for the listener's peer address.
 /// The listener type is inferred, preserving existing explicit target arguments
@@ -137,7 +145,8 @@ pub fn register_http_in<T: RegistrationTarget + ?Sized>(
 ///
 /// This opt-in companion to [`register_http_in`] installs
 /// [`axum::extract::ConnectInfo<L::Addr>`](axum::extract::ConnectInfo) using
-/// Axum's native make-service conversion. For a [`tokio::net::TcpListener`] the
+/// Axum's native make-service conversion, which prepares the router once exactly
+/// as [`register_http`] describes. For a [`tokio::net::TcpListener`] the
 /// extension stays `ConnectInfo<SocketAddr>`: middleware and handlers receive
 /// the accepted socket's remote address, including its port. For another
 /// listener it carries whatever that listener reports as the accepted peer, so
@@ -224,7 +233,10 @@ where
         let running = startup.acknowledge_started();
         let signal = running.signal();
         let draining = async move { signal.draining().await };
-        axum::serve(listener, application)
+        // Serving a bare `Router` makes pinned Axum 0.8.9 clone and re-prepare
+        // it, reapplying every lazily mapped layer, for each accepted
+        // connection. The make-service prepares it once, as the peer path does.
+        axum::serve(listener, application.into_make_service())
             .with_graceful_shutdown(draining)
             .await?;
         Ok(running.stopped())

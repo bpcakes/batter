@@ -4,7 +4,7 @@ links = "batter_core_foundation"
 description = "Native Tokio operational foundation used by the Batter facade"
 version = "0.0.1"
 edition.workspace = true
-rust-version = "1.98.1"
+rust-version = "1.100.0"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -25,12 +25,12 @@ metrics = ["dep:metrics"]
 metrics = { workspace = true, optional = true }
 pin-project-lite.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal", "net"] }
-tokio-util = { workspace = true, features = ["rt"] }
+tokio-util.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 batter-test-support.workspace = true
 tracing-core.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "signal", "net"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

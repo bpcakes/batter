@@ -407,8 +407,9 @@ impl TerminalHookFanout {
             Ok((id, DeadLetterHookOutcome::TimedOut)) => {
                 log_timed_out_hook(self.metadata.remove(&id));
             }
-            Ok((id, DeadLetterHookOutcome::Panicked(panic_message))) => {
-                log_panicked_hook(self.metadata.remove(&id), &panic_message);
+            // The payload is retained as callback evidence, never logged.
+            Ok((id, DeadLetterHookOutcome::Panicked(_))) => {
+                log_panicked_hook(self.metadata.remove(&id));
             }
             Err(error) => {
                 log_join_failed_hook(self.metadata.remove(&error.id()), &error);
@@ -464,13 +465,15 @@ fn log_timed_out_hook(meta: Option<HookMetadata>) {
     }
 }
 
-fn log_panicked_hook(meta: Option<HookMetadata>, panic_message: &str) {
+fn log_panicked_hook(meta: Option<HookMetadata>) {
     match meta {
-        Some(meta) => meta.warn_panicked(panic_message),
-        None => warn_panicked_hook_missing_metadata(panic_message),
+        Some(meta) => meta.warn_panicked(),
+        None => warn_panicked_hook_missing_metadata(),
     }
 }
 
+// `JoinError` Display and Debug include the panic payload, so these helpers log
+// only its task id and classification.
 fn log_join_failed_hook(meta: Option<HookMetadata>, error: &tokio::task::JoinError) {
     match (meta, join_error_kind(error)) {
         (Some(meta), JoinErrorKind::Panic) => meta.warn_join_panic(error),
@@ -504,13 +507,12 @@ impl HookMetadata {
         );
     }
 
-    fn warn_panicked(&self, panic_message: &str) {
+    fn warn_panicked(&self) {
         warn!(
             job_id = self.job_id,
             job_type = self.job_type,
             run_number = self.run_number,
             attempt = self.attempt,
-            panic = %panic_message,
             "terminal failure hook panicked; continuing reaper loop"
         );
     }
@@ -521,7 +523,9 @@ impl HookMetadata {
             job_type = self.job_type,
             run_number = self.run_number,
             attempt = self.attempt,
-            error = %error,
+            task_id = %error.id(),
+            is_panic = error.is_panic(),
+            is_cancelled = error.is_cancelled(),
             "terminal failure hook panicked; continuing reaper loop"
         );
     }
@@ -532,7 +536,9 @@ impl HookMetadata {
             job_type = self.job_type,
             run_number = self.run_number,
             attempt = self.attempt,
-            error = %error,
+            task_id = %error.id(),
+            is_panic = error.is_panic(),
+            is_cancelled = error.is_cancelled(),
             "terminal failure hook was cancelled; continuing reaper loop"
         );
     }
@@ -543,7 +549,9 @@ impl HookMetadata {
             job_type = self.job_type,
             run_number = self.run_number,
             attempt = self.attempt,
-            error = %error,
+            task_id = %error.id(),
+            is_panic = error.is_panic(),
+            is_cancelled = error.is_cancelled(),
             "terminal failure hook join failed; continuing reaper loop"
         );
     }
@@ -556,30 +564,33 @@ fn warn_timed_out_hook_missing_metadata() {
     );
 }
 
-fn warn_panicked_hook_missing_metadata(panic_message: &str) {
-    warn!(
-        panic = %panic_message,
-        "terminal failure hook panicked; metadata missing in reaper loop"
-    );
+fn warn_panicked_hook_missing_metadata() {
+    warn!("terminal failure hook panicked; metadata missing in reaper loop");
 }
 
 fn warn_join_panic_missing_metadata(error: &tokio::task::JoinError) {
     warn!(
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "terminal failure hook panicked; metadata missing in reaper loop"
     );
 }
 
 fn warn_join_cancelled_missing_metadata(error: &tokio::task::JoinError) {
     warn!(
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "terminal failure hook was cancelled; metadata missing in reaper loop"
     );
 }
 
 fn warn_join_failed_missing_metadata(error: &tokio::task::JoinError) {
     warn!(
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "terminal failure hook join failed; metadata missing in reaper loop"
     );
 }

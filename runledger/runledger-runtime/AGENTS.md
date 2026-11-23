@@ -29,8 +29,11 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
 - Worker completion persistence: `src/worker/completion.rs`.
 - Handler invocation exit ownership: `src/worker/invocation.rs`.
 - Reaper terminal hook fanout: `src/reaper/terminal_hooks.rs`.
-- Scheduler cadence/jitter logic: `src/scheduler.rs`.
-- Lease cleanup runtime behavior: `src/reaper.rs`.
+- Scheduler jitter and coalescing logic: `src/scheduler.rs`; pass-to-pass
+  cadence: `src/scheduler/wait.rs`; dropped-occurrence warnings:
+  `src/scheduler/coalescing.rs`.
+- Lease cleanup runtime behavior: `src/reaper.rs`; pass-to-pass cadence:
+  `src/reaper/cadence.rs`.
 - Handler registration container behavior: `src/registry.rs`.
 - Shutdown signal construction, provenance and typed evidence:
   `src/shutdown_signal.rs`; raw-future polling/destruction containment:
@@ -40,6 +43,16 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
 - Prefer direct cutovers only for internal runtime refactors within one coordinated deploy. Changes that alter runtime-config semantics or behavior relied on by persisted jobs or cross-deploy workers require backward compatibility or an explicit staged rollout; update dependents in the same change.
 - Keep runtime orchestration generic; app-specific handlers and catalogs belong outside this crate.
 - Worker/scheduler/reaper loops must remain cancellation-safe and shutdown-safe.
+- Scheduler and reaper continue without waiting only after a committed whole
+  batch that cannot be re-claimed at once: scheduler rows advance past the pass
+  clock or defer, and a reaper batch must reap at least one lease. Errors wait
+  the full interval. Check shutdown between passes; never race a pass against
+  shutdown, which could cancel a committed reaper batch's hook delivery.
+- The optional earliest-fire hint runs after a committed partial pass. Its
+  native owner caps the read statement at one second, preserves stricter caller
+  settings and awaits rollback before returning the pooled connection. A failed
+  hint uses the ordinary shutdown-aware interval wait; never make the durable
+  materialization pass cancellable to interrupt this separate read.
 - Best-effort callbacks must use the shared callback owner. A polling-only
   `catch_unwind` does not contain future destruction during timeout or task abort.
   Retain every observed interruption; containment does not prove that application

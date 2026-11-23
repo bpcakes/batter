@@ -698,6 +698,15 @@ the rest at `.build()` / `.try_build()`:
 | `.after_success(step, prereqs)` / `.after_terminal(...)` | blank target/prerequisite key, unknown target step | missing prerequisite, self-dependency, duplicate dependency, cycle |
 | `.idempotency_key(...)` | never | blank idempotency key |
 
+Steps may be declared in any order; a dependent may appear before its
+prerequisite. Concurrent completions in one run, including external completion,
+append and cancellation, take the workflow-run row before any step row, so they
+serialize per run. Reaper batches prepare all associated runs before changing
+steps, retaining successful locks across row rollback. Contended runs are deferred
+with diagnostics while other runs and direct jobs can progress. This completion
+and reaper ordering does not cover bulk claiming or older processes during a
+rolling upgrade; see the [changelog](CHANGELOG.md#workflow-completion-lock-order).
+
 ### Workflow results and handles
 
 Workflows can declare one DAG step as the durable result step. A handler
@@ -1249,10 +1258,22 @@ Active schedules require enabled job definitions. Creating, syncing, or
 activating a schedule for a missing or disabled definition returns
 `job_schedule.definition_not_found_or_disabled`; disabling a job definition that
 still has active schedules returns `job_definition.active_schedule_exists`.
-During scheduler catch-up after downtime, Runledger materializes at most one
-stale fire with its original `scheduled_for` metadata, then coalesces
-`next_fire_at` to the first future cron fire instead of replaying every missed
-tick.
+Whenever the scheduler lags by at least one cron period — after downtime, behind
+a backlog, or because a pass ran late — Runledger materializes at most one stale
+fire with its original `scheduled_for` metadata, then coalesces `next_fire_at`
+to the first future cron fire instead of replaying every missed tick. The
+skipped occurrences are dropped, not deferred; the scheduler logs a warning with
+the schedule id, name and a dropped-occurrence count capped at 1000. To keep
+lag rare, a pass that claims a whole `claim_batch_size` batch is followed at
+once by another pass, and an idle scheduler wakes for the earliest active fire
+(no sooner than 500 ms, no later than `schedule_poll_interval`) instead of
+always sleeping the full interval. The hint read caps its SQL statement at one
+second, preserving stricter caller timeouts, and rolls back before pool reuse.
+A failed hint falls back to the normal shutdown-aware polling wait. Pool
+acquisition still uses the pool's configured timeout. The next fire is computed from the jittered
+fire time, so a `max_jitter_seconds` window at least as large as the gap
+between cron occurrences can also skip occurrences; keep jitter below that gap
+when every occurrence matters.
 
 For exact sync of registered schedules, derive the owned scope from the catalog
 to avoid repeating names:
@@ -1485,8 +1506,8 @@ configuration from the environment. Worker settings come from
 | `JOBS_CLAIM_BATCH_SIZE` | Jobs claimed per poll |
 | `JOBS_LEASE_TTL_SECONDS` | Lease duration; clamped to at least `10` |
 | `JOBS_MAX_GLOBAL_CONCURRENCY` | Max concurrent handler executions |
-| `JOBS_REAPER_INTERVAL_SECONDS` | Reaper sweep interval |
-| `JOBS_SCHEDULE_POLL_INTERVAL_SECONDS` | Schedule materialization interval |
+| `JOBS_REAPER_INTERVAL_SECONDS` | Reaper sweep interval; a whole batch that reaped a lease sweeps again at once |
+| `JOBS_SCHEDULE_POLL_INTERVAL_SECONDS` | Longest idle wait between schedule passes; a whole batch polls again at once |
 | `JOBS_REAPER_RETRY_DELAY_MS` | Delay before reaped jobs become claimable |
 
 Interval and concurrency values are clamped to safe minimums.

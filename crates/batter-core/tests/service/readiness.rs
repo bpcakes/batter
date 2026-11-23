@@ -244,3 +244,32 @@ async fn rejected_output_panic_does_not_bypass_shutdown_or_diagnostics() {
     ));
     assert!(!format!("{:?}", error.completion()).contains("private rejected output"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_service_that_registers_nothing_never_reports_ready() {
+    let startup = Startup::protected(
+        supervisor(),
+        OperationOwner::new(SECOND * 20).unwrap().into_context(),
+        cleanup(),
+        async move |_scope| Ok::<_, batter_core::RegistrationError>(7_u8),
+    );
+    let starting = service::start_with_readiness(startup, NoDiagnostics, None);
+    let observer = starting.observer();
+    let error = match starting.into_ready().await {
+        Ok(_) => panic!("an empty supervisor reported readiness"),
+        Err(error) => error,
+    };
+    let stopped = Err(ServiceReadinessError::StoppedBeforeReady);
+    assert_eq!(error.completion().readiness(), stopped);
+    assert_eq!(observer.wait_ready().await, stopped);
+    assert_eq!(observer.wait().await.readiness(), stopped);
+    let ServiceOutcome::Shutdown(Err(ShutdownFailure::Report(report))) =
+        error.completion().service()
+    else {
+        panic!("the empty running service did not settle as a failed report")
+    };
+    assert_eq!(
+        report.cause,
+        batter_core::lifecycle::ShutdownCause::EmptySupervisor
+    );
+}

@@ -157,6 +157,16 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
             .outcome,
         TaskOutcome::UnexpectedExit
     );
+    // A failed ordering assertion inside the requestor would surface as a panic.
+    assert_eq!(
+        report
+            .tasks
+            .iter()
+            .find(|task| task.name == "requestor")
+            .unwrap()
+            .outcome,
+        TaskOutcome::Stopped
+    );
     assert!(!report.is_success());
 }
 

@@ -13,6 +13,7 @@ use super::errors::{
     workflow_active_key_api_required_error, workflow_active_key_required_error,
     workflow_internal_state_error,
 };
+use super::locking::lock_workflow_run_row_tx;
 use super::read::load_workflow_run_by_id_tx;
 use super::release::enqueue_root_steps_tx;
 use super::runtime::recompute_workflow_run_status_tx;
@@ -226,8 +227,13 @@ async fn enqueue_workflow_run_classified_tx_inner(
     )
     .await?;
 
-    enqueue_root_steps_tx(tx, workflow_run.id).await?;
-    recompute_workflow_run_status_tx(tx, workflow_run.id).await?;
+    // The run was inserted by this transaction; lock it like every other
+    // multi-step mutation before releasing root steps.
+    let run_lock = lock_workflow_run_row_tx(tx, workflow_run.id, None)
+        .await?
+        .ok_or_else(|| workflow_internal_state_error("enqueued workflow run disappeared"))?;
+    enqueue_root_steps_tx(tx, &run_lock).await?;
+    recompute_workflow_run_status_tx(tx, &run_lock).await?;
 
     let workflow_run = load_workflow_run_by_id_tx(
         tx,

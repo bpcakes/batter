@@ -5,6 +5,7 @@ use crate::{DbTx, Error, Result};
 
 use super::super::super::row_decode::parse_workflow_run_status;
 use super::super::active_claims::release_or_defer_workflow_active_claim_tx;
+use super::super::locking::WorkflowRunRowLock;
 
 pub(crate) const WORKFLOW_RUN_TERMINAL_CHANNEL: &str = "runledger_workflow_run_terminal";
 
@@ -34,10 +35,13 @@ pub(crate) async fn notify_workflow_run_terminal_tx(
 
 pub(crate) async fn recompute_workflow_run_status_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
 ) -> Result<()> {
-    // Serialize status recomputation per run so concurrent step completions do not
-    // leave the run stuck in RUNNING due to snapshot races.
+    let workflow_run_id = run_lock.workflow_run_id();
+    // The caller already holds this row FOR UPDATE (run_lock), which serializes
+    // status recomputation per run so concurrent step completions do not leave
+    // the run stuck in RUNNING. This re-lock is granted immediately; it reads
+    // the status without upgrading any weaker lock.
     let run_status = sqlx::query!(
         "SELECT status::text AS \"status!\"
              FROM workflow_runs

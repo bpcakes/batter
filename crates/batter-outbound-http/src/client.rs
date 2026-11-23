@@ -18,7 +18,9 @@ use std::{fmt, sync::Arc, time::Duration};
 ///
 /// Hostname setup tries the first resolved address family first and starts the
 /// other after at most 300 ms (or half the remaining setup budget when shorter).
-/// Addresses within a family share its remaining budget. At most two TCP
+/// Each address gets at least one second when the shared deadline permits;
+/// longer fair shares are retained. A stalled address can consume a shorter
+/// family budget, so not every address is guaranteed an attempt. At most two TCP
 /// attempts run together, in this future; losing sockets are dropped before TLS.
 ///
 /// TLS uses an explicit *ring* provider, TLS 1.3 and 1.2 only, ALPN `http/1.1`,

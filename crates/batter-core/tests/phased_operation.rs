@@ -231,6 +231,9 @@ async fn parent_cancellation_interrupts_both_phases() {
 #[tokio::test(start_paused = true)]
 async fn work_panic_cannot_bypass_finalization_and_finalization_panic_keeps_work() {
     let parent = parent();
+    // Finalization panics on purpose, so an assertion inside it proves nothing.
+    let saw_work_panic = Arc::new(AtomicBool::new(false));
+    let seen = saw_work_panic.clone();
     let running = PhasedOperation::new(
         parent.context(),
         reserve(),
@@ -239,11 +242,11 @@ async fn work_panic_cannot_bypass_finalization_and_finalization_panic_keeps_work
             #[expect(unreachable_code, reason = "types the panicking phase")]
             Ok::<(), Infallible>(())
         },
-        async |scope| {
-            assert!(matches!(
-                scope.work().classify().unwrap_err().returned_result(),
-                Err(CommandCause::Panicked(_))
-            ));
+        async move |scope| {
+            let panicked = scope.work().classify().is_err_and(|work| {
+                matches!(work.returned_result(), Err(CommandCause::Panicked(_)))
+            });
+            seen.store(panicked, Ordering::SeqCst);
             panic!("finalization secret");
             #[expect(unreachable_code, reason = "types the panicking phase")]
             Ok::<(), Infallible>(())
@@ -252,6 +255,10 @@ async fn work_panic_cannot_bypass_finalization_and_finalization_panic_keeps_work
     .unwrap()
     .start();
     let report = retained(running.wait().await);
+    assert!(
+        saw_work_panic.load(Ordering::SeqCst),
+        "finalization observed the work panic"
+    );
     assert!(matches!(
         report.work().classify().unwrap_err().returned_result(),
         Err(CommandCause::Panicked(_))

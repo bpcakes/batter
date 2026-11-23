@@ -21,6 +21,14 @@ impl Drop for Dropped {
 }
 
 #[test]
+fn cancellation_text_states_that_the_external_outcome_may_be_unknown() {
+    assert_eq!(
+        Interruption::Cancelled.to_string(),
+        "operation cancelled; external outcome may be unknown",
+    );
+}
+
+#[test]
 fn zero_budget_is_invalid() {
     assert!(
         batter_core::operation::OperationOwner::new(Duration::ZERO)

@@ -78,11 +78,11 @@ pub use runtime_configs::{
     list_job_runtime_configs, upsert_job_runtime_config, upsert_job_runtime_config_tx,
 };
 pub use schedules::{
-    claim_due_schedules_tx, deactivate_schedules_absent_from_names_tx, get_job_schedule_by_name,
-    mark_schedule_fired_tx, prepare_schedule_exact_sync_critical_section_tx,
-    set_job_schedule_active, set_job_schedule_active_tx, set_job_schedule_next_fire_at,
-    set_job_schedule_next_fire_at_tx, sync_catalog_job_schedules_tx, upsert_job_schedule,
-    upsert_job_schedule_tx,
+    claim_due_schedules_tx, deactivate_schedules_absent_from_names_tx,
+    earliest_active_schedule_fire_at, get_job_schedule_by_name, mark_schedule_fired_tx,
+    prepare_schedule_exact_sync_critical_section_tx, set_job_schedule_active,
+    set_job_schedule_active_tx, set_job_schedule_next_fire_at, set_job_schedule_next_fire_at_tx,
+    sync_catalog_job_schedules_tx, upsert_job_schedule, upsert_job_schedule_tx,
 };
 #[allow(
     deprecated,

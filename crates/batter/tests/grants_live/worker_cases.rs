@@ -543,8 +543,8 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
             &format!("schedule active state is {active:?}"),
         )?;
 
-        // The synchronized schedule is still due, so the same login claims it,
-        // materializes its job and records the fire.
+        // The synchronized schedule is still due, so the dispatch login claims
+        // it, materializes its job and records the fire.
         let mut transaction = dispatch_database.pool().begin().await?;
         let due = jobs::claim_due_schedules_tx(&mut transaction, now, 10).await?;
         require!(

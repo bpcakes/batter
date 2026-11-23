@@ -33,7 +33,7 @@
 //! | Work whose finalization needs its typed outcome | [`operation::PhasedOperation::new`] with a parent context and positive reserve, then `start()`; retain the running owner and await `running.wait().await`, whose `Ok` proves both phases succeeded and whose phase-failure report retains both outcomes; parent cancellation still interrupts finalization | manual `work()` / `finalization()` sequencing that can return on work error before finalization |
 //! | Job work/finalization borrowing native progress or checkpoint services | `runledger::PhasedJob::new` with a `runledger::PhasedJobHandler`; the native worker owns both callbacks | manual `job_phases` sequencing or an independently spawned coordinator capturing the invocation |
 //! | A supported native resource with registered cleanup | obtain a slot with `reserve_cleanup` in owned startup/command work, then use [`cleanup::CleanupSlot::acquire_semaphore`] or [`cleanup::CleanupSlot::bind_udp`]; use adapter-owned acquisition such as `sqlx::pool_in` for a PostgreSQL pool | acquiring first and calling `push` / `register` by hand, or [`cleanup::low_level::acquire_pair`], which leaves acquisition-to-pair construction with the caller; application hooks and unsupported resource protocols retain explicit manual ownership |
-//! | A PostgreSQL pool the service owns | `sqlx::pool_in` after `reserve_cleanup` (feature `sqlx`); `sqlx::PgProfiledPool` when a session profile is declared; `runledger::RunledgerDatabase` when Runledger runs on the same pool (feature `runledger`) | a pool built outside startup with a manual close |
+//! | A PostgreSQL pool the service owns | `sqlx::pool_in` after `reserve_cleanup` with the pool's `sqlx::PgSessionProfile`, returning the `sqlx::PgProfiledPool` (feature `sqlx`); `runledger::RunledgerDatabase` when Runledger runs on the same pool (feature `runledger`) | a pool built outside startup with a manual close |
 //! | Routines, triggers and constraint triggers a release owns | one `sqlx::managed::ManagedObjectManifest` built from in-place source files: `sqlx::PgLease::migrate_and_apply` at setup, then the same manifest in `sqlx::verification::VerificationPlan::with_managed_objects` at readiness (feature `sqlx`) | whole routine bodies restated in new migrations, a constraint trigger created in a migration (it binds the previously installed body), or objects applied by hand before or after `PgLease::migrate` |
 //! | A transaction write | `sqlx::run_atomic_in`, or `sqlx::run_atomic_with_in` for an exhaustive failure policy; use their `run_atomic_profiled_in` / `run_atomic_profiled_with_in` counterparts with a profiled pool. For a durable job in the same transaction, wrap `runledger::run_atomic` in the caller's `context.run` | `sqlx::low_level::PgAtomicTransaction`, which leaves commit confirmation to the caller |
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
@@ -151,12 +151,18 @@ pub mod outbound_http {
 ///
 /// `HttpBoundary` is the canonical composition and its assembly is sealed: it
 /// is consumed into protected serving or into an opaque request client, with
-/// one `batter` dependency and no direct adapter declaration.
+/// one `batter` dependency and no direct adapter declaration. The client
+/// accepts only arrival-shaped requests; one that carries Axum routing records
+/// or one of the adapter's own private request records, as a reused earlier
+/// dispatch's map does, is refused with the `InProcessRefusal` response marker.
 ///
 /// ```
 /// use axum::{body::Body, extract::Request, http::StatusCode, routing::get};
 /// use batter::{
-///     axum::{GuardedRouter, HttpBoundary, RequestPolicy, ResponseConstructionBudget},
+///     axum::{
+///         GuardedRouter, HttpBoundary, InProcessRefusal, RequestPolicy,
+///         ResponseConstructionBudget,
+///     },
 ///     lifecycle::ShutdownHandle,
 /// };
 /// use std::time::Duration;
@@ -169,7 +175,9 @@ pub mod outbound_http {
 ///     .await?
 ///     .in_process();
 /// let request = Request::builder().uri("/work").body(Body::empty())?;
-/// assert_eq!(client.request(request).await.status(), StatusCode::OK);
+/// let response = client.request(request).await;
+/// assert_eq!(response.status(), StatusCode::OK);
+/// assert!(response.extensions().get::<InProcessRefusal>().is_none());
 /// # Ok(()) }
 /// ```
 ///

@@ -3,7 +3,6 @@
 use crate::quota::{Checks, ConsumptionError, Quota, RunResult, observation::CheckObservation};
 use axum::{
     Json, Router,
-    body::Body,
     extract::{ConnectInfo, FromRequestParts, Request, State},
     handler::Handler,
     http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
@@ -18,7 +17,7 @@ use batter_axum::{
     // deliberately orders Batter's HTTP middleware itself: authenticated quota
     // checking has to sit between admission and body extraction, which
     // `HttpBoundary` does not express. See ADR-012 and the crate guide.
-    low_level::{operational_http_with_quota, request_admission},
+    low_level::{RouterClient, operational_http_with_quota, request_admission},
     quota_observation::QuotaRecorder,
 };
 use batter_core::{
@@ -32,7 +31,10 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
-use tower::ServiceExt;
+
+mod test_client;
+
+pub use test_client::TestClient;
 
 /// Supplied only by this boundary's native or explicit test transport.
 #[derive(Clone, Copy)]
@@ -295,7 +297,9 @@ where
     /// Explicitly add public GET probe paths (and Axum's corresponding HEAD).
     ///
     /// These handlers bypass lifecycle/deadline request admission,
-    /// authentication, and quota. They receive no protected `OperationContext`.
+    /// authentication, and quota. They receive no protected `OperationContext`
+    /// from this assembly, though a [`TestClient`] request can carry an
+    /// inherited one in (`batter-nff2.1`, tested in `batter-axum` only).
     /// Registered probe paths and their default method responses still receive
     /// the root HTTP observation and correlation ID. The default is no public
     /// probes; the builder accepts only literal paths and cannot install public
@@ -315,7 +319,8 @@ where
     /// protected fallback, unmatched requests receive the default public 404.
     /// Routes supplied through
     /// [`with_public_probes`](Self::with_public_probes) bypass those gates and
-    /// receive no protected `OperationContext`; they share the root observer.
+    /// receive no protected `OperationContext`, with the exception noted there;
+    /// they share the root observer.
     /// [`Authenticated<P>`] is installed only after successful authentication;
     /// handlers must extract it rather than a raw `Extension<P>`.
     /// A public probe and protected GET route at the same path cause Axum's
@@ -381,23 +386,15 @@ impl PreparedHttp {
         )
     }
     /// Consumes the prepared service into an explicit synthetic test transport.
+    ///
+    /// The router is prepared once by `batter_axum::low_level::RouterClient::new`,
+    /// as [`Self::register_in`] serving prepares it, so an application layer
+    /// wrapping a handler route is built here and never again per request.
     pub fn in_process(self) -> TestClient {
         TestClient {
-            router: self.router,
+            client: RouterClient::new(self.router),
         }
     }
-}
-
-/// Explicit synthetic transport; does not implement Service or expose its Router.
-///
-/// ```compile_fail
-/// async fn cannot_serve(listener: tokio::net::TcpListener, client: batter_runlimit::http::TestClient) {
-///     axum::serve(listener, client).await.unwrap();
-/// }
-/// ```
-#[derive(Clone)]
-pub struct TestClient {
-    router: Router,
 }
 
 async fn discard_probe_writer(mut request: Request, next: Next) -> Response {
@@ -442,14 +439,6 @@ impl BoundaryRejection {
             Self::QuotaStorageCapacity => "quota_storage_capacity",
             Self::QuotaBackendFailed => "quota_backend_failed",
         }
-    }
-}
-
-impl TestClient {
-    /// Dispatches with the supplied synthetic peer, replacing any request peer.
-    pub async fn request(&self, mut request: Request<Body>, peer: SocketAddr) -> Response {
-        request.extensions_mut().insert(ConnectInfo(peer));
-        self.router.clone().oneshot(request).await.unwrap()
     }
 }
 

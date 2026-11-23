@@ -30,6 +30,22 @@ PostgreSQL persistence for durable execution: queue lifecycle, workflow DAG stat
   Missing retained evidence cannot prove rollback or authorize resubmission.
 - Prefer direct cutovers only for internal persistence-layer refactors within one coordinated deploy. Changes to persisted queue, workflow, runtime-config, or log/event contracts require backward compatibility or an explicit staged rollout; update dependents in the same change.
 - Preserve audit/event writes when altering queue lifecycle.
+- The earliest schedule-fire hint owns a read transaction with a one-second
+  statement cap, preserving stricter caller settings. Await rollback on success
+  and error so pool reuse restores settings; retain both causes if rollback also
+  fails. It takes no row locks, but table-lock waits still need that bound.
+- Completion, append, step-key listing for update and cancellation take the
+  `workflow_runs` row `FOR UPDATE` before step rows (`WorkflowRunRowLock` in
+  `jobs/workflows/locking.rs`); their step-row lockers, dependency release and
+  status recompute require that proof. The reaper prepares all associated runs
+  in sorted order before any row mutation, outside row savepoints. Failed run
+  preparation defers only its rows; never retry preparation after processing
+  begins. Job rows precede run rows; blocking release advisory locks precede
+  run rows, while external completion and append retain nonblocking try-locks.
+  Bulk claiming still updates steps without taking run locks; this is not a
+  universal deadlock-freedom guarantee. Step ids follow insertion order, not dependency order, so
+  never rely on step-id order alone to prevent cycles, and never take the run
+  row `FOR SHARE` first and upgrade it later in the same transaction.
 - Keep app/domain logic out of this crate.
 - Scoped cancellation preserves original SQLx begin/commit errors. Explicit
   rollback failure retains the operation error and rollback error together;

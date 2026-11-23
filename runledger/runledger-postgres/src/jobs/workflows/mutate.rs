@@ -18,10 +18,9 @@ pub async fn list_workflow_step_keys_for_update_tx(
     workflow_run_id: Uuid,
     organization_id: Option<Uuid>,
 ) -> Result<Vec<StepKeyName>> {
-    let locked_steps =
-        lock_workflow_steps_for_update_tx(tx, workflow_run_id, organization_id).await?;
-    let _workflow_run =
+    let (run_lock, _workflow_run) =
         lock_workflow_run_for_update_tx(tx, workflow_run_id, organization_id).await?;
+    let locked_steps = lock_workflow_steps_for_update_tx(tx, &run_lock, organization_id).await?;
     Ok(locked_steps.into_iter().map(|step| step.step_key).collect())
 }
 

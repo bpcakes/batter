@@ -25,12 +25,13 @@ The default feature set is empty. The available feature/module pairs are:
 | `runledger-test-support` | `batter::runledger::test_support`: drive one job handler without a worker, queue or database; and `batter::runledger::native::test_support`: test-only reachability for Runledger's own PostgreSQL support |
 | `runlimit` | `batter::runlimit` and `batter::runlimit::native` |
 | `runlimit-memory` | native memory error bridge plus `batter::runlimit::memory` |
-| `runlimit-postgres` | native PostgreSQL error bridge plus `batter::runlimit::postgres` |
+| `runlimit-postgres` | native PostgreSQL error bridge plus `batter::runlimit::postgres`, `batter::runlimit::attempts`, `batter::runlimit::grants` and `batter::runlimit::maintenance` |
 | `runlimit-axum` | `batter::runlimit::http` and `batter::axum` |
 | `runlimit-native-http` | `batter::runlimit::native_transport::http`: native response metadata, no transport framework |
 | `runlimit-native-axum` | `batter::runlimit::native_transport::axum`: the native caller-controlled layer, without `batter::axum` |
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
+| `otlp` | `batter::otlp`: explicit bounded metrics export through `batter::service::start` |
 
 For example:
 
@@ -78,7 +79,7 @@ cargo run -p batter --example finite_command
 cargo run -p batter --features outbound-http --example outbound_exchange
 ```
 
-Version 0.0.1; Rust 1.98.1 minimum; the manifest targets crates.io. MIT licensed,
+Version 0.0.1; Rust 1.100.0 minimum; the manifest targets crates.io. MIT licensed,
 including the optional `batter-at-rest` dependency.
 
 Select `otlp` for `batter::otlp`: explicit bounded metrics export through

@@ -23,7 +23,7 @@
 
 ## Invariants
 
-- `Cargo.toml` must remain explicit and standalone: no workspace inheritance, `../` path, Batter/application dependency, database client, serializer, network client, or async runtime. Keep version 0.0.1, Rust 1.98.1 (the workspace pin), publication restricted to crates.io, `license = "MIT"`, and the crate-local copy of Batter's MIT `LICENSE` so the detached package carries its license.
+- `Cargo.toml` must remain explicit and standalone: no workspace inheritance, `../` path, Batter/application dependency, database client, serializer, network client, or async runtime. Keep version 0.0.1, Rust 1.100.0 (the workspace pin), publication restricted to crates.io, `license = "MIT"`, and the crate-local copy of Batter's MIT `LICENSE` so the detached package carries its license.
 - Version 1 is one fixed AES-256-GCM/HKDF-SHA256 suite. Do not add an algorithm flag, direct-encryption mode, compatibility shim, or second envelope path.
 - A caller cannot construct an absent or raw context. Row contexts bind owner, resource, and payload schema; tenant-token contexts bind tenant and payload schema without an invented row ID.
 - Payload AAD excludes physical storage location and wrapping-key ID. Wrapper AAD includes its key ID and the payload nonce. The two roles are domain-separated.
@@ -34,9 +34,9 @@
 
 ## Common commands
 
-- Local checks use the repository's pinned toolchain. CI installs Python 3.11 or newer, Node.js, `jq`, and exact Rust 1.98.1 for `scripts/check-batter-at-rest-portability.sh`, the complete detached-source, verified-package, unpacked-artifact, and public-consumer gate. The gate uses the pinned toolchain, so it can also run locally.
+- Local checks use the repository's pinned toolchain. CI installs exact Rust 1.100.0 and relies on its runner image for Python 3.11 or newer, Node.js and `jq`, which the script checks for, to run `scripts/check-batter-at-rest-portability.sh`, the complete detached-source, verified-package, unpacked-artifact, and public-consumer gate. The gate uses the pinned toolchain, so it can also run locally.
 - `cargo test -p batter-at-rest`
 - `cargo check -p batter-at-rest --all-targets`
 - `cargo clippy -p batter-at-rest --all-targets --locked -- -D warnings`
 - `node crates/batter-at-rest/tests/fixtures/generate-envelope-v1.mjs --check`
-- For local detached checks, explicitly select the repository's pinned compiler; the detached copy does not inherit its toolchain file. The portability script selects exact Rust 1.98.1.
+- For local detached checks, explicitly select the repository's pinned compiler; the detached copy does not inherit its toolchain file. The portability script selects exact Rust 1.100.0.

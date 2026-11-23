@@ -210,3 +210,98 @@ async fn all_stalled_candidates_end_at_the_shared_deadline() {
         "setup retained a stalled candidate"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn many_healthy_addresses_do_not_shorten_a_viable_connection() {
+    for count in [1, 10, 20] {
+        for latency in [Duration::from_millis(150), Duration::from_millis(800)] {
+            let candidates = (1..=count)
+                .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+                .collect();
+            let start = Instant::now();
+            let result = connect(
+                &crate::Origin::https("https://provider.example").unwrap(),
+                candidates,
+                start + Duration::from_secs(1),
+                |address| async move {
+                    sleep(latency).await;
+                    Ok(address)
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.port(), 1, "healthy first candidate was discarded");
+            assert!(
+                Instant::now() - start < Duration::from_secs(1),
+                "answer count consumed the setup budget"
+            );
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn healthy_connections_can_use_fair_shares_longer_than_one_second() {
+    for count in [1, 2] {
+        let candidates = (1..=count)
+            .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+            .collect();
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let result = connect(
+            &crate::Origin::https("https://provider.example").unwrap(),
+            candidates,
+            deadline,
+            |address| async move {
+                sleep(Duration::from_millis(1500)).await;
+                Ok(address)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.port(), 1, "a viable longer attempt was discarded");
+        assert!(Instant::now() < deadline, "the shared budget was exceeded");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn candidate_floor_leaves_remaining_time_for_fallback() {
+    let start = Instant::now();
+    let candidates = (1..=20)
+        .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+        .collect();
+    let result = connect(
+        &crate::Origin::https("https://provider.example").unwrap(),
+        candidates,
+        start + Duration::from_millis(1500),
+        |address| async move {
+            if address.port() == 1 {
+                pending::<()>().await;
+            }
+            sleep(Duration::from_millis(150)).await;
+            Ok(address)
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.port(), 2, "healthy fallback was discarded");
+    assert!(
+        Instant::now() - start < Duration::from_millis(1500),
+        "candidate floor extended the shared deadline"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn candidate_floor_cannot_extend_a_short_shared_deadline() {
+    let start = Instant::now();
+    let candidates = (1..=20)
+        .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+        .collect();
+    let result = connect(
+        &crate::Origin::https("https://provider.example").unwrap(),
+        candidates,
+        start + Duration::from_millis(200),
+        |_| pending::<io::Result<SocketAddr>>(),
+    )
+    .await;
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(Instant::now() - start, Duration::from_millis(200));
+}

@@ -28,7 +28,7 @@ Re-check the resolved dependency before changing an integration.
 - Rust's [1.98.1 release notes](https://github.com/rust-lang/rust/blob/stable/RELEASES.md#version-1981-2026-09-03)
   list one fix, a rustc vtable miscompilation
   ([rust-lang/rust#161441](https://github.com/rust-lang/rust/issues/161441)).
-  Packages therefore declare `rust-version = "1.98.1"`, the exact pinned and
+  At that revision, packages declared `rust-version = "1.98.1"`, the exact pinned and
   CI-tested release, rather than `1.98`. Cargo accepted the three-component
   value for all four Clippy configurations and the complete verification.
 
@@ -78,7 +78,7 @@ documented package/dependency boundaries:
   incompatible copies of library types. Keep generic test support independent.
 - [Rust-version resolution](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version):
   mixed-minimum workspaces use resolution heuristics, not a guarantee of each
-  member's compatibility. Batter pins and verifies its declared Rust 1.98.1 minimum.
+  member's compatibility. Batter pins and verifies its declared Rust 1.100.0 minimum.
 
 These rules do not supply execution evidence. Database provisioning remains external.
 

@@ -10,7 +10,7 @@ Fast jump index for agent-facing guidance in this repository.
 
 - [Batter facade](./crates/batter/AGENTS.md): public re-exports, feature namespaces, and foundation examples.
 - [OTLP metrics](./crates/batter-otlp/AGENTS.md): explicit bounded export through protected service completion.
-- [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.98.1 portability, and detached MIT license metadata.
+- [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.100.0 portability, and detached MIT license metadata.
 - [Outbound exchange](./crates/batter-outbound-http/AGENTS.md): standalone send-once
   provider HTTP exchange, the fixed client profile with its own *ring* rustls
   configuration, owned TCP/TLS and low-level HTTP/1 driver with handoff/write
@@ -59,7 +59,8 @@ Fast jump index for agent-facing guidance in this repository.
 ## Private shared test sources
 
 - [Repository process machinery](./test-support/README.md): std-only Unix launch,
-  capture and watchdog sources included by foundation and Axum tests. This is
+  capture and watchdog sources included by foundation and Axum tests, the facade
+  HTTP example and the reference service's tests. This is
   not the `batter-test-support` Cargo crate; preserve the documented relative layout.
 
 ## Suggested usage pattern
@@ -67,6 +68,3 @@ Fast jump index for agent-facing guidance in this repository.
 1. Start with the root [AGENTS.md](./AGENTS.md).
 2. Open the nearest guide for the area you will change.
 3. Follow that guide's entrypoint map before editing.
-
-Owned initialization: `crates/batter-core/src/startup.rs` and `startup/` retain the
-supervisor through failure cleanup or running handoff.

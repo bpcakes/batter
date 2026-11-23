@@ -2,7 +2,7 @@
 
 use super::support::*;
 use batter_core::{
-    operation::{Interruption, OperationContext},
+    operation::OperationContext,
     periodic::{PeriodicShutdown, register_periodic_in},
 };
 use std::{
@@ -345,10 +345,6 @@ async fn a_destroyed_run_is_recorded_once_as_a_stop_interruption() {
     assert_eq!(summary.stop_interrupted, 1);
     assert_eq!(summary.succeeded, 0);
     assert_eq!(summary.deadline_exceeded, 0);
-    assert_eq!(
-        Interruption::Cancelled.to_string(),
-        "operation cancelled; external outcome may be unknown",
-    );
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

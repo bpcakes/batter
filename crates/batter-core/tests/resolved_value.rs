@@ -188,6 +188,9 @@ async fn work_and_resolver_panics_propagate_and_do_not_publish_a_resolved_value(
         let capture = Capture::new();
         let child = std::sync::Arc::new(std::sync::Mutex::new(None));
         let saved = child.clone();
+        // The task panics in both phases, so an assertion inside it proves nothing.
+        let resolver_ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resolving = resolver_ran.clone();
         let task = tokio::spawn(
             async move {
                 let owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
@@ -201,11 +204,8 @@ async fn work_and_resolver_panics_propagate_and_do_not_publish_a_resolved_value(
                         }
                         Ok::<_, Infallible>(())
                     },
-                    |_| -> ResolvedOutcome<()> {
-                        assert!(
-                            matches!(phase, PanicAt::Resolver),
-                            "work panic must not invoke resolver"
-                        );
+                    move |_| -> ResolvedOutcome<()> {
+                        resolving.store(true, std::sync::atomic::Ordering::SeqCst);
                         panic!("resolver panicked");
                     },
                 )
@@ -214,6 +214,11 @@ async fn work_and_resolver_panics_propagate_and_do_not_publish_a_resolved_value(
             .with_subscriber(capture.dispatch.clone()),
         );
         assert!(task.await.unwrap_err().is_panic());
+        assert_eq!(
+            resolver_ran.load(std::sync::atomic::Ordering::SeqCst),
+            matches!(phase, PanicAt::Resolver),
+            "a work panic must not invoke the resolver"
+        );
         assert_eq!(
             child.lock().unwrap().as_ref().unwrap().check(),
             Err(Interruption::Cancelled)

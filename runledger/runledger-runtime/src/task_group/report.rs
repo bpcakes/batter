@@ -306,6 +306,8 @@ impl TaskGroup {
 }
 
 #[cfg(test)]
+mod redaction_tests;
+#[cfg(test)]
 mod tests;
 
 fn record(
@@ -331,6 +333,7 @@ fn record_result(
             // so this is the only place the join cause is recorded.
             debug!(
                 task = name,
+                task_id = %source.id(),
                 is_cancelled = source.is_cancelled(),
                 is_panic = source.is_panic(),
                 "supervised runtime loop join failed"

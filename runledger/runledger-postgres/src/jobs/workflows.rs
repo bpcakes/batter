@@ -9,6 +9,7 @@ pub use self::handles::{
 pub(crate) use self::hooks::{
     on_claim_released, on_claimed, on_handler_continuation, on_retry_scheduled, on_terminal,
 };
+pub(crate) use self::locking::{WorkflowRunRowLock, lock_workflow_run_for_reaper_tx};
 pub use self::mutate::{
     append_workflow_steps, append_workflow_steps_tx, cancel_workflow_run_tx,
     list_workflow_step_keys_for_update_tx, update_workflow_step_and_pending_job_payload_tx,

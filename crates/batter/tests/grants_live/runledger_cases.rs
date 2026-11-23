@@ -68,8 +68,8 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
                     intent
                 }
             };
-            // A first recording, then an exact duplicate inside one application
-            // transaction that also writes an application relation.
+            // A first recording, then an exact duplicate, each inside its own
+            // transaction. These transactions write no application relation.
             let first = run_atomic(&database, async |mut scope| {
                 let intent = build();
                 scope.record_required_job_enqueue_intent(&intent).await
@@ -118,7 +118,7 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
                 ),
             )?;
 
-            // A rejected scope rolls back both the application write and the intent.
+            // A rejected scope rolls back the intent it recorded.
             let rolled_back_key = format!("{key}-rolled-back");
             let rolled_back = run_atomic(&database, async |mut scope| {
                 let intent = JobEnqueueIntent::new(

@@ -1,7 +1,7 @@
 # Guarantees, preconditions, and non-guarantees
 
 These describe the implemented contract and its limits. All workspace packages
-declare Rust 1.98.1, the pinned development toolchain, as their minimum.
+declare Rust 1.100.0, the pinned development toolchain, as their minimum.
 SQLx 0.9.0 belongs to the optional PostgreSQL adapter and unpublished example
 packages, not the foundation or generic test support. Passing tests do not establish guarantees beyond their scope.
 
@@ -51,7 +51,7 @@ rejected decision is made inside the transaction. Rejected authentication commit
 its audit and consecutive-failure increment; infrastructure failure rolls back.
 A stale claim never invokes application writes. The native row lock protects a
 valid claim through commit even if the original verification lease expires.
-One original operation budget covers every phase. `batter-sqlx::run_atomic_in`
+One original operation budget covers every phase. `batter_sqlx::run_atomic_profiled_in`
 retains the full acknowledged or uncertain outcome before boundary telemetry;
 an interruption without acknowledgement cannot establish rollback. Native
 attempt algorithms, lease fencing, storage, and migrations remain Runlimit-owned.
@@ -80,7 +80,24 @@ handler extractor only after authentication. Applications must extract that
 type for authority; raw `Extension<P>` remains unrelated application metadata.
 It uses the transport peer, never forwarding headers. The opaque prepared service
 installs native peer metadata and exactly one observer across assembled business
-routes, public probes and fallback. Retained bounded quota facts survive outer
+routes, public probes and fallback. Its explicit `in_process` test transport
+supplies a caller-chosen synthetic peer and dispatches through the Axum
+adapter's `low_level::RouterClient`, so it accepts only an arrival-shaped
+request: one whose extensions carry an Axum routing record from an earlier
+dispatch is refused whole at entry, before lifecycle admission,
+authentication, the native quota check, a public probe or a handler runs, so
+it consumes no quota and has no completion event. The refusal and its
+`InProcessRefusal` marker are the [HTTP boundary](#http-boundary) client's.
+Without the check, a whole extension map cloned inside an earlier protected
+handler would be authenticated and charged one quota unit before `Path`
+extraction failed with the inherited captures, and the inherited observation
+state would suppress the completion event. The check also detects the
+adapter's own private request records: a map captured in a protected custom
+fallback for a request no pattern matched, such as `OPTIONS *`, carries only
+`OriginalUri` among the Axum records, and with that removed by the caller it
+is still refused, before authentication and with no quota consumed, because it
+carries the earlier request's observation and operational records. Retained
+bounded quota facts survive outer
 timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.
@@ -419,7 +436,9 @@ Hostname setup uses bounded address fallback (`batter-4p4a`). It preserves the
 first resolved family preference, starts the other family after at most 300 ms
 or half the remaining setup budget, and starts it immediately if the first
 family fails. Within each family, remaining time is shared across its remaining
-addresses. At most two TCP candidates are active, driven in the exchange future;
+addresses with a one-second minimum per candidate capped by the shared deadline
+(`batter-wznf.1`). A stalled address can consume a shorter family budget; not
+every answer is guaranteed an attempt. At most two TCP candidates are active, driven in the exchange future;
 losing candidates are dropped before TLS or HTTP handoff. The single absolute
 setup/exchange deadline bounds all of them. This does not replay an HTTP request.
 
@@ -499,7 +518,8 @@ production handoff and driver with controlled I/O and a paused Tokio clock:
   checks queued and partially written requests for both deadline and cancellation.
 - `deadline_expiring_while_connecting_is_not_started` checks stalled TLS setup.
 - The private `transport/dial/tests.rs` covers stalled preferred families,
-  same-family address stalls, immediate family failure, short shared budgets,
+  same-family address stalls, long lists of healthy delayed candidates, immediate
+  family failure, short shared budgets,
   either family winning and losing candidates being dropped before return.
 - `tls_error_reads_cannot_flush_buffered_http_after_deadline_or_cancellation`
   uses the production TLS assembly and HTTP driver over controlled raw I/O.
@@ -965,9 +985,25 @@ flooding output beyond each limit, proving that overflow does not stop draining.
 The Linux parent-death probe must reject incorrect termination and forbidden
 cleanup evidence even when Python optimization is enabled; its checks do not
 depend on Python's removable `assert` statements.
-The fixture-owner unwind control must finish within its five-second startup
-budget, before the child's ten-second emergency exit; waiting for that fallback
-does not establish prompt kill/reap behavior.
+The fixture-owner unwind control must finish cleanup within five seconds of the
+parent observing startup evidence and within ten seconds of spawn. The child
+arms its ten-second emergency exit only after spawn, so the second bound
+excludes waiting for that fallback, which does not establish prompt kill/reap
+behavior. The parent-pipe closure control kills a child still running five
+seconds after the parent closes the pipe, and requires the distinct parent-gone
+exit code rather than the emergency code; like the emergency-exit guard below,
+this guard polls and is not a strict upper bound on a late exit.
+The early-kill control places its watchdog deadline five seconds after its
+recorded kill request, so neither slow startup nor parent scheduling can make
+that kill look timely; the recorded request must lie between independent clock
+samples taken around the kill. The emergency-exit control's hang guard kills a
+blocked child still running five seconds past the emergency limit after the
+parent captured its startup evidence, which follows spawning the emergency
+thread; only the unlaunched child, which emits no evidence, adds the startup
+allowance. The guard polls, so it is not a strict upper bound on a late exit.
+Controls that bound a child's whole life from spawn, such as the natural-exit
+and launch-rejection checks, still count child startup against their single
+five-second bound.
 
 A direct task join says nothing about descendants it detached. Component authors
 must preserve ownership themselves. After any requested abort, observed panic,
@@ -1198,7 +1234,9 @@ exercises native UDP and real signals at its executable root.
 After successful initialization, no critical components **and** no configured
 finite-work capacity produce `ShutdownCause::EmptySupervisor`. The initializer
 can succeed and every finalizer can succeed while the shutdown report remains
-unsuccessful. Configured finite capacity permits a component-free running
+unsuccessful. Such a supervisor closes admission before its driver starts, so it
+never publishes `Ready`; `service::start_with_readiness` reports
+`StoppedBeforeReady` for it. Configured finite capacity permits a component-free running
 supervisor; root work still requires readiness, submission and explicit shutdown.
 The executable startup rustdocs and `startup_composition` tests cover these
 distinct outcomes without changing the empty-supervisor contract.
@@ -2333,8 +2371,8 @@ root/nested guarded fallback return `BoundaryAssemblyError::ConflictingFallback`
 The renderer chooses status, body and headers in every lifecycle state. Group
 browser policies do not apply to it: application prefix policy may use
 `PrivateResponsePolicy::apply` on its response headers. Metadata retains public
-correlation but excludes the body and private admission, quota, observation and
-operational ownership state. Assembly never calls the renderer. Like probe
+correlation but excludes the body and every private request record that
+`InProcessClient::request` lists. Assembly never calls the renderer. Like probe
 renderers it must not block or perform business work, and carries no request
 deadline or body-lifetime guarantee. Existing guarded fallback behavior is
 unchanged when no renderer is selected.
@@ -2346,9 +2384,11 @@ the same assembly check against every group's routes, and the probe is mounted
 outside every group's admission, inside correlation and the single observer.
 The application renderer runs synchronously for each probe request with the
 request metadata, including the generated `CorrelationId`, but without the
-body or Batter's private quota writer, observation state or operational ownership
-marker; a probe is never admitted, so no
-`OperationContext` or `RequestInterruptionResponder` is present. The renderer
+body or any private request record that `InProcessClient::request` lists. A
+probe is never admitted, so an arriving probe request carries no
+`OperationContext` or `RequestInterruptionResponder`; an in-process request
+built from a map captured behind `low_level::request_admission` carries the
+earlier request's (`batter-nff2.1`). The renderer
 returns the response body and headers, for example an OpenAPI-documented JSON
 document, but not the probe's outcome. The boundary then sets liveness to 200
 and removes any `HttpObservationLevel` override from it, so its completion
@@ -2419,9 +2459,101 @@ future destroyed, inside the caller's task under the boundary's existing
 dispatch and observation ownership, with nothing spawned, so dropping a
 `request` future drops the boundary's future as a dropped connection would. A
 request may carry explicitly inserted synthetic extensions, such as a chosen
-`ConnectInfo`; choosing them and their meaning belongs to the caller, and this
-constrains direct API conversions, not an application's own transport wrapper or
-remote peer authenticity. An in-process response establishes response
+`ConnectInfo`; choosing them and their meaning belongs to the caller, and the
+sealed conversions constrain direct API conversions, not remote peer
+authenticity or what an application's own wrapper puts around the client.
+Axum's routing records are the exception to caller-chosen extensions: the
+client cannot tell a hand-inserted `OriginalUri` from an inherited one and
+refuses both.
+
+The client accepts only an arrival-shaped request. At entry, before the router,
+any layer or any application code is polled, it refuses the whole request when
+its extensions carry any public Axum routing record, namely the path-parameter
+record that `RawPathParams` reads (any result except its missing-parameters
+rejection, so an empty capture list, an invalid UTF-8 capture and any future
+rejection all count), `MatchedPath`, `NestedPath` or `OriginalUri`. Pinned Axum
+0.8.9 writes `OriginalUri` on every `Router` dispatch, writes the
+path-parameter record whenever it routes to a route, a path fallback or a
+`nest_service` service (a path no pattern matches, such as `*`, reaches the
+catch-all fallback with `OriginalUri` alone), and writes its private nested
+matched-path record only in the same routing step as the path-parameter
+record, so a whole extension map cloned from a dispatched request always
+carries a detected record. These facts are verified against Axum 0.8.9 only;
+the crate's dependency requirement also admits later 0.8 releases, for which
+detection is unverified.
+
+The same refusal applies when the extensions carry one of the adapter's own
+private request records, which only its layers write and no other crate can
+name or build; `InProcessClient::request` lists them. That covers a map with no
+Axum record left, such as one captured behind `low_level::observe_http`,
+`operational_http`, `operational_http_with_quota` or `request_scope` around a
+service that is not a `Router`, or the map of a dispatch no pattern matched
+after the application removed its `OriginalUri`.
+
+An application's wrapper around the client is bound by the same check. One
+that hands the client a live request another Axum router dispatched, from a
+route, fallback or `nest_service` closure, is refused on every request,
+because that request carries the outer router's records. So is one that a
+service behind one of those four `low_level` wrappers hands on whole, because
+it carries that wrapper's private record. Such a wrapper must build a fresh
+request from the arrival's method, version, target, headers and body and copy
+application extensions by type; under `nest` or `nest_service` that target is
+the path below the mount. Rebuilding is in-process composition, not serving: a
+router that rebuilds requests into the client and is itself served still
+serves the boundary outside protected registration.
+
+Nothing is stripped or repaired. A refusal returns
+`render_infrastructure_failure(HttpFailure::Internal, None)` carrying the
+`InProcessRefusal` response extension, which has no public constructor or
+field, and emits one ERROR event with a fixed message and no request-derived
+field on the caller's dispatch. The marker is `Copy`, so application code can
+put one it read from an earlier refusal on a response of its own; the client
+removes it from every response it dispatched and keeps the other response
+extensions, so a returned response carries it only when that call refused the
+request. The request never entered the boundary, so it has no request span,
+completion event or `x-request-id` header. Caller-inserted application
+extensions are accepted and reach handlers untouched; the supported way to
+redispatch is a fresh request with each application extension copied by type.
+Request settings that an Axum layer outside the client wrote are not routing
+records and are accepted too: a request handed on whole from behind
+`DefaultBodyLimit` keeps that layer's body limit wherever no layer inside the
+boundary sets its own, so an outer `disable()` removes Axum's default limit for
+the boundary's extractors. A rebuilt request carries no such setting.
+
+Without the check, Axum treats inherited records as outer-router state: path
+parameters are appended, an inherited invalid UTF-8 record rejects a valid
+path, `MatchedPath` and the completion `route` gain the earlier pattern as a
+prefix, and inherited Batter observation and operational state suppress the
+destination's request span and completion event. Axum keeps the
+path-parameter and nested matched-path records private and `http` 1.5.0
+`Extensions` has no iteration or retain, so individual records cannot be reset
+while keeping unknown application extensions.
+
+Public values are not refused. A `CorrelationId` copied by type is accepted,
+and the boundary generates its own identity. A map captured behind
+`low_level::request_admission` alone carries no private record: outside
+`operational_http` that layer inserts only its public `OperationContext` and
+`RequestInterruptionResponder`, which are accepted. The boundary's admission
+gives admitted routes fresh values, but renderers still receive the arriving
+metadata: rendered probes and the metadata-only fallback renderer, which run
+outside admission, and admission's own failure and interruption renderers
+receive the earlier request's context and responder (the interruption case is
+read from the code, not tested), and a caller-composed router without
+admission hands that context to its handlers. The context is cancelled
+once the earlier request has finished. This residual is tracked as
+`batter-nff2.1`.
+
+The status and body of a
+refusal are those of any sanitized internal failure, so only the marker
+identifies one. The check, the refusal and the marker removal are
+implemented once, in `low_level::RouterClient::request`, which
+`InProcessClient::request` delegates to. `RouterClient` is the lower-level
+in-process transport over a caller-composed router: it adds the same one-time
+preparation and entry contract and establishes nothing about the router's
+composition, has no crate-root alias, and has no conversion into an
+`InProcessClient` (compile-fail controls). Wrappers that hold either client,
+such as the reference service's request client and
+`batter_runlimit::http::TestClient`, inherit the refusal by delegating to it. An in-process response establishes response
 construction only: it is not evidence of serving, an accepted connection, a
 listener, a TLS handshake, a remote peer, body streaming or a stopped detached
 descendant. Because the boundary's own observer is outermost and the plain
@@ -3060,8 +3192,17 @@ failure and the `job_handler` settlement diagnostic. The persisted outcome is
 still `PANICKED` and nonretryable, even when attempts remain. Deadline and lease
 fencing retain precedence over durable outcome classification. The worker can
 continue to subsequent jobs. Application-created `JobFailure` messages remain
-verbatim; this conversion does not sanitize other callback diagnostics or
-process panic-hook output.
+verbatim; this conversion does not sanitize them, other callbacks' retained
+`RuntimeCallbackFailure::Panicked` messages, or process panic-hook output.
+Separately, Runledger's observer, dead-letter-hook and task-join log events omit
+panic payloads, and `RuntimeShutdownFailure::LoopJoin` and `DescendantJoin`
+return `None` from `Error::source()`. Join-failure events, including supervised
+runtime loops, carry the Tokio task ID and panic/cancellation flags without
+formatting the join error. Log-capture tests in `runledger-runtime`
+(`*_logs_omit_the_payload` and
+`supervised_loop_join_logs_identity_without_payloads`, plus
+`join_failures_keep_panic_payloads_out_of_the_source_chain`) check a sentinel
+payload against each such event and the source chain.
 
 The PostgreSQL-backed `process_claimed_job_catches_main_handler_panic` regression
 checks a formatted synthetic secret against queue, attempt, dead-letter and

@@ -1,10 +1,16 @@
 //! Native acquisition has no caller-owned Ready-to-registration interval.
 use batter_core::{
-    cleanup::{CleanupBudget, CleanupStack},
-    command::Command,
+    cleanup::{CleanupBudget, CleanupOutcome, CleanupStack},
+    command::{Command, CommandCause, CommandFailure},
     operation::OperationOwner,
 };
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 use tokio::sync::Semaphore;
 
 fn budget() -> CleanupBudget {
@@ -16,6 +22,9 @@ fn budget() -> CleanupBudget {
 async fn semaphore_is_registered_before_caller_can_await_or_fail() {
     let capacity = Arc::new(Semaphore::new(1));
     let acquired = capacity.clone();
+    // A failed assertion inside the work would only turn one error into another.
+    let held = Arc::new(AtomicUsize::new(usize::MAX));
+    let observed = held.clone();
     let command = Command::new(
         OperationOwner::new(Duration::from_secs(2))
             .unwrap()
@@ -29,7 +38,7 @@ async fn semaphore_is_registered_before_caller_can_await_or_fail() {
                     .acquire_semaphore(acquired.clone())
                     .await
                     .unwrap();
-                assert_eq!(acquired.available_permits(), 0);
+                observed.store(acquired.available_permits(), Ordering::SeqCst);
                 tokio::task::yield_now().await;
                 Err::<(), _>("caller failed")
             })
@@ -38,10 +47,23 @@ async fn semaphore_is_registered_before_caller_can_await_or_fail() {
     .start_without_signals();
     let failure = command.finish().await.unwrap_err();
     assert_eq!(
-        capacity.available_permits(),
-        1,
-        "cleanup still ran: {failure:?}"
+        held.load(Ordering::SeqCst),
+        0,
+        "the permit was held while the caller ran"
     );
+    let CommandFailure::Report(report) = &failure else {
+        panic!("the command coordinator produced no report: {failure:?}")
+    };
+    assert!(
+        matches!(report.work, Err(CommandCause::Failed("caller failed"))),
+        "the caller's own failure is retained: {failure:?}"
+    );
+    let cleanup = report.cleanup.as_ref().expect("cleanup coordinator ran");
+    assert!(cleanup.skipped.is_empty(), "{failure:?}");
+    assert_eq!(cleanup.records.len(), 1, "{failure:?}");
+    assert_eq!(cleanup.records[0].name, "capacity");
+    assert_eq!(cleanup.records[0].outcome, CleanupOutcome::Succeeded);
+    assert_eq!(capacity.available_permits(), 1, "{failure:?}");
 }
 
 #[tokio::test]

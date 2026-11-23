@@ -6,6 +6,58 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Workflow completion lock order
+
+Workflow job completion, external completion, append, step-key listing for
+update and cancellation now take the workflow-run row `FOR UPDATE` before any
+workflow-step row (`batter-70qx.2`). Two deadlocks are fixed:
+
+- Two branches of one run completing together each took the run row
+  `FOR SHARE` while releasing a dependent and then both requested
+  `FOR UPDATE` for status recompute. PostgreSQL aborted one completion; the
+  worker left its lease for the reaper, which re-ran or dead-lettered a job
+  whose handler had already succeeded.
+- A dependent declared before its prerequisite has the smaller step id. Job
+  completion held the prerequisite step and waited on the dependent while
+  external completion, append or cancellation held the dependent in step-id
+  order and waited on the prerequisite.
+
+Completions in one run now serialize at the run row. Job completion takes the
+shared release lock before it locks the step, so completing a job whose step is
+already terminal can wait behind an in-progress cancellation, bounded by the
+existing five-second release-lock cap. No public API, schema or persisted data
+changes. During a rolling upgrade, old processes lock a step before its run and
+new ones lock the run first, so the two versions can still deadlock each other
+on one run. PostgreSQL aborts one transaction and the old consequences apply
+until every workflow writer runs this version; upgrade workers and API
+processes together where that matters.
+
+The lease reaper also prepares every associated workflow run before mutating
+any batch row (`batter-70qx.11`). Otherwise an early retry or unstarted release
+could retain a step lock before a later terminal row requested the run lock.
+Preparation uses sorted runs and per-run savepoints; successful locks survive
+later row rollback. A busy run defers only its own rows with retained diagnostics,
+while other runs and direct jobs can commit in the same batch. Run-row acquisition
+uses `NOWAIT`; advisory and table-lock waits retain the five-second cap or a
+stricter caller timeout. Direct-only reaping requires no new workflow-run grants.
+Bulk claiming is outside this completion/reaper lock-order guarantee.
+
+Regression tests observe identified PostgreSQL waiters instead of assuming
+that a delay establishes an interleaving. A real scheduler-loop test moves a
+future fire near due during a partial pass and verifies that its next wake
+materializes it once, before the ordinary polling interval.
+
+### Operator TUI status line
+
+`runledger-tui` shows the current fetch error in its status line even after an
+earlier notice. A notice is never cleared, so it previously hid every later
+database failure while cached rows stayed on screen.
+
+### Scheduling workspace hygiene
+
+Remove two SQLx offline metadata files whose queries no longer exist, from all
+three caches. Crate-level rustdoc links now point at this repository.
+
 ### Native PostgreSQL test dependencies
 
 `runledger-test-support` now calls Bollard directly, removing Testcontainers and
@@ -34,6 +86,77 @@ let db = RunledgerDatabase::from_profiled(shared.clone())?;
 let db = runledger_postgres::low_level::connect_database(options, profile, 4).await?;
 let db = runledger_postgres::low_level::connect_database_lazy(options, profile, pool_options)?;
 ```
+
+### Scheduler and reaper backlog drain
+
+The scheduler ran one `claim_batch_size` pass per `schedule_poll_interval`
+(defaults 16 and 30 s), so more than 32 due schedules a minute per instance, or
+any cron firing more often than the poll interval, lagged; catch-up coalescing
+then silently dropped the intermediate occurrences (`batter-70qx.3`).
+
+- A committed scheduler pass that claimed a whole batch, counting claimed rows
+  whose failed materialization was deferred, is followed by another pass after
+  a yield and a shutdown check. Every committed row then fires after the pass
+  clock and failed rows are deferred 30 s, so the next pass claims other rows.
+- After a smaller pass the scheduler waits until the earliest active fire, but
+  at least 500 ms and at most `schedule_poll_interval`. A failed pass, or a
+  failed read of the earliest fire, still waits the whole poll interval. The
+  post-commit hint owns a read transaction with a one-second statement cap,
+  preserving stricter caller settings and awaiting rollback before pool reuse.
+  This bounds its table-lock wait without cancelling durable materialization;
+  pool acquisition retains the pool's configured timeout (`batter-70qx.11`).
+- The reaper sweeps again at once only when a batch filled its limit, reaped at
+  least one lease, and the reaped-lease observer owner is below its cap. A batch
+  of only deferred rows waits for `reaper_interval`, even with a 1 ms
+  `reaper_retry_delay_ms`.
+- Both loops check shutdown between passes and never cancel a pass in progress,
+  so a committed reaper batch still reaches terminal-hook delivery with its
+  existing bounded shutdown window.
+- Coalescing semantics are unchanged but now documented as applying whenever
+  the scheduler lags by at least one cron period, not only after downtime. Each
+  coalesced commit logs a warning with the schedule id, name and dropped
+  occurrence count, capped at 1000 (`dropped_occurrences_capped`). Not fixed:
+  the next fire is computed from the jittered fire time, so a
+  `max_jitter_seconds` window at least as large as the cron gap skips
+  occurrences.
+- Added `runledger_postgres::jobs::earliest_active_schedule_fire_at`, a read without row locks
+  read of the earliest active `next_fire_at` through the existing partial index.
+  It reads only columns the `ScheduledDispatch` grant group already covers.
+
+No public signature, `JobsConfig` field, validation rule or persisted schema
+changes. Each scheduler pass that does not fill its batch adds one indexed
+earliest-fire read; otherwise passes become more frequent only while a backlog
+exists or a fire is due sooner than the poll interval.
+
+### Callback panic diagnostics
+
+Runtime log events no longer print panic payloads. Dead-letter hook, lifecycle
+observer, reaper terminal-hook and reaped-observer panic warnings drop their
+`panic` field. Job-task, observer-task, terminal-hook and reaped-observer
+join-failure events replace the formatted `error` field with `task_id`,
+`is_panic` and `is_cancelled`, because a Tokio `JoinError`'s Display and Debug
+include the payload. Event messages and the other fields are unchanged, so
+alerts keyed on the message text still match; queries that read the removed
+`panic` or `error` fields need updating.
+
+Supervised runtime-loop join failures also include the Tokio `task_id` alongside
+their existing loop name and panic/cancellation flags (`batter-70qx.12`).
+Regression coverage exercises real panic and cancellation joins, gates scheduler
+and reaper shutdown at an identified pass, checks the wait after a failed hint,
+captures coalescing warnings across commit success/rejection, and retains both
+hint-read and rollback errors after backend termination.
+
+`RuntimeShutdownFailure::LoopJoin` and `DescendantJoin` now return `None` from
+`Error::source()`, so chain-walking reporters such as `anyhow` and `eyre` no
+longer print the payload. Read the join through the variant's `source` field
+instead. `Signal` and `LoopInvalidConfig` keep their sources, and Display and
+Debug output are unchanged. This is a behavior change, not a compile-breaking
+cut: the variants, field names and types are the same.
+
+Retained evidence keeps the payload: `RuntimeCallbackFailure::Panicked { message }`,
+`report.signal_panic()`, `RuntimeTaskRecord::error` and `RuntimeLoopRecord::result`.
+The process panic hook still prints payloads unless the application installs
+a redacting hook such as Batter's `redacting_panic_hook`.
 
 ### Added
 

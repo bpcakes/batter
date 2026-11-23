@@ -115,9 +115,9 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
 
 /// Record one required intent through the native entrypoint under this login.
 ///
-/// The error is flattened to a string because these controls only distinguish
-/// acceptance from refusal; which privilege PostgreSQL named is established by
-/// the raw statement beside each revocation.
+/// The typed error and its source chain are kept. These controls only
+/// distinguish acceptance from refusal; which privilege PostgreSQL named is
+/// established by the raw statement beside each revocation.
 async fn record_intent(
     database: &batter::runledger::RunledgerDatabase,
     payload: &serde_json::Value,

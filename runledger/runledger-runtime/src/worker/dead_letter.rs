@@ -44,13 +44,13 @@ pub(super) async fn notify_handler_of_dead_letter(
     .await;
     match &outcome {
         DeadLetterHookOutcome::Completed => {}
-        DeadLetterHookOutcome::Panicked(panic_message) => {
+        // The payload is retained as callback evidence, never logged.
+        DeadLetterHookOutcome::Panicked(_) => {
             warn!(
                 job_id = %job.id,
                 job_type = %job.job_type,
                 run_number = job.run_number,
                 attempt = job.attempt,
-                panic = %panic_message,
                 "dead-letter hook panicked; continuing worker job task"
             );
         }

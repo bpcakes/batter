@@ -7,8 +7,8 @@
 //! - [`Client::new`] is the only way to build a client. Every client follows no
 //!   redirects, offers HTTP/1.1 only, ignores proxy environment variables,
 //!   requires a [`ConnectTimeout`] and sends only to its one validated
-//!   [`Origin`]; [`Client`] marks which of its settings tests execute and
-//!   which are defence in depth.
+//!   [`Origin`]. The package owns its transport, so these are properties of
+//!   that transport rather than settings of a general-purpose client.
 //! - [`RequestDraft::prepare`] reports every construction failure before an
 //!   exchange exists. Header values are marked sensitive, framing headers are
 //!   refused, and path segments cannot leave the origin.
@@ -80,7 +80,8 @@
 //!
 //! Hostname setup retains bounded address fallback inside this future: the
 //! other address family starts after at most 300 ms or half the remaining setup
-//! budget, and addresses within each family share its remaining time. At most
+//! budget. Each address receives its fair share with a one-second minimum,
+//! capped by the shared deadline; not every address is guaranteed an attempt. At most
 //! two TCP candidates run together; losers drop before TLS or HTTP handoff.
 //! Preparation keeps the default `Accept: */*` when callers omit `Accept`, and
 //! preserves their explicit values and sensitivity.

@@ -465,7 +465,7 @@ async fn skipped_cleanup_and_failed_shutdown_are_distinct_outcomes() {
 }
 
 #[tokio::test]
-async fn results_are_identical_without_any_recorder() {
+async fn an_operation_returns_its_value_without_any_recorder() {
     let context = owner().into_context();
     let result = context
         .run("example.read", |_| async { Ok::<_, Infallible>(3) })

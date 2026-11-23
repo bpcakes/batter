@@ -12,6 +12,9 @@ use uuid::Uuid;
 use crate::panic_payload::panic_payload_message;
 
 #[cfg(test)]
+mod tests;
+
+#[cfg(test)]
 const OBSERVER_TIMEOUT: Duration = Duration::from_millis(100);
 #[cfg(not(test))]
 const OBSERVER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -510,6 +513,7 @@ where
     {
         Ok(Ok(())) => None,
         Ok(Err(panic_payload)) => {
+            // The payload is retained only as explicit callback evidence.
             let panic_message = panic_payload_message(&*panic_payload);
             warn!(
                 callback_name,
@@ -520,7 +524,6 @@ where
                 attempt = job.attempt,
                 max_attempts = job.max_attempts,
                 worker_id = %job.worker_id,
-                panic = %panic_message,
                 "job lifecycle observer panicked"
             );
             Some(crate::RuntimeCallbackFailure::Panicked {

@@ -113,6 +113,11 @@ impl ReapedObserverTasks {
         abort_reaped_observer_fanout(&mut self.in_flight).await;
     }
 
+    /// Whether the next reaped lease's callback would be dropped at the cap.
+    pub(super) fn is_saturated(&self) -> bool {
+        self.in_flight.len() >= self.max_in_flight
+    }
+
     #[cfg(test)]
     pub(super) fn in_flight_count(&self) -> usize {
         self.in_flight.len()
@@ -258,16 +263,17 @@ fn handle_reaped_observer_join_result(result: ReapedObserverJoinResult) {
             outcome: ReapedObserverTaskOutcome::Completed,
             ..
         }) => {}
+        // The payload is retained as callback evidence, never logged.
         Ok(ReapedObserverTaskResult {
             metadata,
-            outcome: ReapedObserverTaskOutcome::Panicked(panic_message),
-        }) => log_reaped_observer_panic(&metadata, &panic_message),
+            outcome: ReapedObserverTaskOutcome::Panicked(_),
+        }) => log_reaped_observer_panic(&metadata),
         Err(error) if error.is_cancelled() => log_reaped_observer_cancelled_join(&error),
         Err(error) => log_reaped_observer_join_failure(&error),
     }
 }
 
-fn log_reaped_observer_panic(metadata: &ReapedObserverMetadata, panic_message: &str) {
+fn log_reaped_observer_panic(metadata: &ReapedObserverMetadata) {
     warn!(
         job_id = metadata.job_id,
         job_type = metadata.job_type,
@@ -276,20 +282,28 @@ fn log_reaped_observer_panic(metadata: &ReapedObserverMetadata, panic_message: &
         attempt = metadata.attempt,
         max_attempts = metadata.max_attempts,
         worker_id = metadata.worker_id,
-        panic = %panic_message,
         "reaped lease observer task panicked after observer-level panic handling"
     );
 }
 
+// `JoinError` Display and Debug include the panic payload, so these helpers log
+// only its task id and classification.
 fn log_reaped_observer_cancelled_join(error: &tokio::task::JoinError) {
     warn!(
-        error = %error,
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
         "reaped lease observer task was cancelled outside shutdown abort handling"
     );
 }
 
 fn log_reaped_observer_join_failure(error: &tokio::task::JoinError) {
-    warn!(error = %error, "reaped lease observer task join failed");
+    warn!(
+        task_id = %error.id(),
+        is_panic = error.is_panic(),
+        is_cancelled = error.is_cancelled(),
+        "reaped lease observer task join failed"
+    );
 }
 
 async fn run_reaped_observer_task<F>(
@@ -496,6 +510,44 @@ mod tests {
                 assert_eq!(report.prior_callback_interruptions(), 2);
             }
             assert!(!format!("{report:?}").contains("reaped callback destruction failure"));
+        }
+    }
+
+    #[tokio::test]
+    async fn reaped_observer_logs_omit_the_payload() {
+        use crate::test_logs::{
+            LogBuffer, PANIC_SENTINEL, SentinelPayload, capture_logs, panicked_join_error,
+        };
+
+        for payload in SentinelPayload::ALL {
+            let log = LogBuffer::default();
+            let capture = capture_logs(&log);
+            handle_reaped_observer_join_result(Ok(ReapedObserverTaskResult {
+                metadata: test_metadata(),
+                outcome: ReapedObserverTaskOutcome::Panicked(PANIC_SENTINEL.to_owned()),
+            }));
+            log.assert_redacted_event(
+                "reaped lease observer task panicked after observer-level panic handling",
+            );
+            drop(capture);
+
+            let error = panicked_join_error(payload).await;
+            let log = LogBuffer::default();
+            let capture = capture_logs(&log);
+            // Direct use proves the helper is safe even for an unexpected join kind.
+            log_reaped_observer_cancelled_join(&error);
+            log.assert_redacted_event(
+                "reaped lease observer task was cancelled outside shutdown abort handling",
+            );
+            drop(capture);
+
+            let log = LogBuffer::default();
+            let _capture = capture_logs(&log);
+            handle_reaped_observer_join_result(Err(std::sync::Arc::new(error)));
+            log.assert_redacted_event("reaped lease observer task join failed");
+            let text = log.text();
+            assert!(text.contains("task_id="), "{text}");
+            assert!(text.contains("is_panic=true"), "{text}");
         }
     }
 }

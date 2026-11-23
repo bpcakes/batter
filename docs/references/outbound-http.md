@@ -189,7 +189,25 @@ matching tests, and all passed once restored.
 In one release-build measurement on Linux x86-64, `zeroize` took 0.26 ms for
 1 MiB, 2.1 ms for 8 MiB and 18 ms for 64 MiB, against 0.36 ms, 4.2 ms and 38 ms for
 copying the same sizes into fresh zeroed memory. One growth step pays both for
-its old allocation, so the largest steps approach `RESERVE`. A protected final
+its old allocation, so the largest steps can exceed `RESERVE`. A protected final
 shrink would have paid both again in the exchange's last poll, which is why a
 completed body keeps the allocation it grew into. Execution details and platform
 limits are recorded in `batter-53nf`.
+
+
+## Capacity and blocking work (2026-11-11)
+
+- [AWS NAT gateway basics](https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-basics.html)
+  documents 55,000 simultaneous connections per unique destination per NAT IPv4
+  address; this is not a 64–1,024 port per-destination quota.
+- [Google Cloud NAT ports and addresses](https://docs.cloud.google.com/nat/docs/ports-and-addresses)
+  distinguishes minimum per-VM allocation from maximum allocation and describes
+  mapping reuse/TIME_WAIT. Defaults are not universal capacity limits.
+- [Tokio blocking tasks](https://docs.rs/tokio/1.54.1/tokio/task/fn.spawn_blocking.html)
+  cannot be aborted once started. Resolved Tokio 1.54.1 source
+  `src/net/addr.rs:219` submits hostname resolution through `spawn_blocking`.
+  The exchange timeout bounds waiting, not completion of a started resolver.
+
+These sources were checked during the investigation; the exact Tokio source was
+inspected locally. The [measurement assessment](../evidence/outbound-capacity-2026-11-11.md)
+separates executed local evidence from deployment-specific unknowns.

@@ -86,14 +86,14 @@ WITH sample AS MATERIALIZED (
 SELECT capacity.capacity_shard FROM runlimit_gcra_shards AS capacity
 WHERE capacity.capacity_shard IN (SELECT capacity_shard FROM candidates)
 ORDER BY capacity.capacity_shard FOR UPDATE OF capacity SKIP LOCKED";
+// Each shard advances on its own clock. Sharing the most advanced candidate's
+// watermark would expire still-active counters in the other candidates.
 const CLEANUP_ADVANCE_TIME: &str = r"
 WITH sample AS MATERIALIZED (
     SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
-), clamped AS MATERIALIZED (
-    SELECT greatest((SELECT now_ms FROM sample), coalesce(max(observed_at_ms), 0)) AS now_ms
-    FROM runlimit_gcra_shards WHERE capacity_shard = ANY($1)
 )
-UPDATE runlimit_gcra_shards SET observed_at_ms = (SELECT now_ms FROM clamped)
+UPDATE runlimit_gcra_shards
+SET observed_at_ms = greatest((SELECT now_ms FROM sample), observed_at_ms)
 WHERE capacity_shard = ANY($1)";
 const CLEANUP_DELETE: &str = r"
 WITH expired AS MATERIALIZED (

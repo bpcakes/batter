@@ -4,6 +4,7 @@ use std::{future::Future, io, net::SocketAddr, time::Duration};
 use tokio::time::{Instant, sleep, timeout_at};
 
 const FAMILY_DELAY: Duration = Duration::from_millis(300);
+const MINIMUM_CANDIDATE: Duration = Duration::from_secs(1);
 
 pub(super) async fn connect<T, D, F>(
     origin: &crate::Origin,
@@ -73,7 +74,11 @@ where
             return Err(io::ErrorKind::TimedOut.into());
         }
         let remaining = u32::try_from(count - index).unwrap_or(u32::MAX);
-        let attempt_deadline = now + (deadline - now) / remaining;
+        // DNS answer count must not squeeze a healthy connection into tens of
+        // milliseconds. A short total budget still wins; not every address is
+        // guaranteed an attempt when earlier candidates stall.
+        let allowance = ((deadline - now) / remaining).max(MINIMUM_CANDIDATE);
+        let attempt_deadline = now + allowance.min(deadline - now);
         match timeout_at(attempt_deadline, dial(address)).await {
             Ok(Ok(stream)) => {
                 // timeout_at polls its inner future first. A setup poll may

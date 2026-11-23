@@ -13,6 +13,8 @@ use tokio::sync::watch;
 use super::{TerminalHookFanoutResult, notify_handlers_of_terminal_lease_expirations};
 use crate::registry::{JobHandler, JobRegistry};
 
+mod redaction;
+
 const HOOK_JOB_TYPE: &str = "jobs.test.reaper.hook.identity";
 const RUN_NUMBER: i32 = 2;
 const ATTEMPT: i32 = 3;

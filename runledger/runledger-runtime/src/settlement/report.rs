@@ -42,11 +42,12 @@ impl std::fmt::Debug for RuntimeCallbackFailure {
         }
     }
 }
-use crate::config::JobsConfigValidationError;
 use crate::{RuntimeError, RuntimeLoopExit, RuntimeShutdownSignalError};
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
-use thiserror::Error;
 use tokio::{task::JoinError, time::Instant};
+
+mod failure;
+pub use failure::RuntimeShutdownFailure;
 
 /// Validated graceful and abort/join intervals. Both consume one first-stop clock.
 #[derive(Clone, Copy, Debug)]
@@ -159,124 +160,6 @@ impl RuntimeLoopRecord {
                 task: self.task,
                 source: Arc::clone(source),
             }),
-        }
-    }
-}
-
-/// The primary retained reason a [`RuntimeShutdownReport`] is not a success.
-///
-/// This is classification for logs, alerts and process exit codes. It is not an
-/// authorization: [`RuntimeShutdownReport::classify`] can allow cleanup
-/// while this is present, and only that typed decision decides whether dependency
-/// cleanup may run. The originating report retains every other
-/// observed reason; this names one. Automatic debug formatting retains the
-/// classification and safe metadata but redacts join sources, whose panic
-/// payloads remain available only through explicit variant matching.
-#[derive(Clone, Error)]
-pub enum RuntimeShutdownFailure {
-    /// The external stop input returned an error retained by the report.
-    #[error("jobs runtime shutdown signal failed")]
-    Signal {
-        #[source]
-        source: RuntimeShutdownSignalError,
-    },
-    /// The external stop input panicked while it was polled or destroyed.
-    /// Detailed, redacted-by-default evidence remains on the report.
-    #[error("jobs runtime shutdown signal panicked")]
-    SignalPanicked,
-    /// A supervised loop returned `Completed` instead of the expected shutdown exit.
-    #[error("jobs runtime loop `{task}` completed unexpectedly")]
-    LoopExitedUnexpectedly { task: &'static str },
-    /// A supervised loop rejected its configuration after build validation.
-    #[error("jobs runtime loop `{task}` rejected invalid configuration")]
-    LoopInvalidConfig {
-        task: &'static str,
-        #[source]
-        source: JobsConfigValidationError,
-    },
-    /// A supervised loop panicked or failed to join.
-    #[error("failed joining jobs runtime loop `{task}`")]
-    LoopJoin {
-        task: &'static str,
-        #[source]
-        source: Arc<JoinError>,
-    },
-    /// A native-owned descendant panicked or was cancelled unexpectedly.
-    #[error("failed joining jobs runtime descendant `{task}`")]
-    DescendantJoin {
-        task: &'static str,
-        #[source]
-        source: Arc<JoinError>,
-    },
-    /// A handler, observer or hook was interrupted while stopping, so
-    /// descendants it may have created cannot be accounted for.
-    #[error("jobs runtime callback `{callback}` was interrupted while stopping")]
-    CallbackInterrupted { callback: &'static str },
-    /// Callbacks were interrupted before stopping began. This count never
-    /// expires and permanently disqualifies cooperative cleanup.
-    #[error("jobs runtime observed {count} callback interruption(s) before stopping began")]
-    EarlierCallbackInterruptions { count: u64 },
-    /// Native work had not settled when the graceful allowance elapsed.
-    #[error("jobs runtime native work did not settle within the graceful allowance")]
-    GracefulTimeout,
-    /// Tasks did not settle within the total allowance after aborting.
-    #[error(
-        "jobs runtime tasks did not settle within the abort allowance ({unjoined} task(s) unjoined)"
-    )]
-    AbortTimeout { unjoined: NonZeroUsize },
-    /// The budget could not be represented as a deadline, so no settlement time
-    /// was allowed. [`RuntimeShutdownReport::deadline_error`] retains the
-    /// rejected allowance. Validation at construction cannot prove that the
-    /// same duration fits a stop instant reached much later.
-    #[error("jobs runtime shutdown budget could not be represented as a deadline")]
-    UnrepresentableDeadline,
-    /// The settlement owner ended before establishing a final join boundary.
-    /// Retained evidence is partial and never authorizes dependency cleanup.
-    #[error("jobs runtime settlement owner ended before completing observation")]
-    SettlementInterrupted,
-}
-
-impl std::fmt::Debug for RuntimeShutdownFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Signal { source } => f.debug_struct("Signal").field("source", source).finish(),
-            Self::SignalPanicked => f.write_str("SignalPanicked"),
-            Self::LoopExitedUnexpectedly { task } => f
-                .debug_struct("LoopExitedUnexpectedly")
-                .field("task", task)
-                .finish(),
-            Self::LoopInvalidConfig { task, source } => f
-                .debug_struct("LoopInvalidConfig")
-                .field("task", task)
-                .field("source", source)
-                .finish(),
-            Self::LoopJoin { task, source } => f
-                .debug_struct("LoopJoin")
-                .field("task", task)
-                .field("cancelled", &source.is_cancelled())
-                .field("panicked", &source.is_panic())
-                .finish(),
-            Self::DescendantJoin { task, source } => f
-                .debug_struct("DescendantJoin")
-                .field("task", task)
-                .field("cancelled", &source.is_cancelled())
-                .field("panicked", &source.is_panic())
-                .finish(),
-            Self::CallbackInterrupted { callback } => f
-                .debug_struct("CallbackInterrupted")
-                .field("callback", callback)
-                .finish(),
-            Self::EarlierCallbackInterruptions { count } => f
-                .debug_struct("EarlierCallbackInterruptions")
-                .field("count", count)
-                .finish(),
-            Self::GracefulTimeout => f.write_str("GracefulTimeout"),
-            Self::AbortTimeout { unjoined } => f
-                .debug_struct("AbortTimeout")
-                .field("unjoined", unjoined)
-                .finish(),
-            Self::UnrepresentableDeadline => f.write_str("UnrepresentableDeadline"),
-            Self::SettlementInterrupted => f.write_str("SettlementInterrupted"),
         }
     }
 }

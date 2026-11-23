@@ -18,8 +18,8 @@ from runledger_source import copy_source, run, validate_consumer
 class SourceTests(unittest.TestCase):
     def test_standalone_toolchain_comes_from_source_or_explicit_override(self):
         with patch.dict(os.environ, {}, clear=True), \
-             patch('check_runledger_consumer.run', return_value='1.98.1-host (overridden by source)') as command:
-            self.assertEqual(selected_cargo(Path('/source')), ['cargo', '+1.98.1-host'])
+             patch('check_runledger_consumer.run', return_value='1.100.0-host (overridden by source)') as command:
+            self.assertEqual(selected_cargo(Path('/source')), ['cargo', '+1.100.0-host'])
             command.assert_called_once_with(['rustup', 'show', 'active-toolchain'], Path('/source'))
         with patch.dict(os.environ, RUSTUP_TOOLCHAIN='1.94.0'), \
              patch('check_runledger_consumer.run') as command:
@@ -62,10 +62,13 @@ class SourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
             root = parent / "original"
-            keep = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml",
+            keep = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", ".agent/jig-contract.json",
+                    "docs/.beads/retained.md",
                     "runledger/runledger-postgres/src/claim.sql",
                     "runledger/.sqlx/query-fixture.json", "runledger/migrations/001.sql"]
-            omit = [".git", ".env", "runledger/.env", "target/generated.rs", ".agent/.cache/data.json"]
+            omit = [".git", ".env", "runledger/.env", "target/generated.rs", ".agent/.cache/data.json",
+                    "crates/nested/target/generated.rs", ".beads/issues.jsonl",
+                    ".claude/settings.local.json"]
             for name in keep + omit:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

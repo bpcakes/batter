@@ -79,6 +79,7 @@ VICTORIAMETRICS = Command([sys.executable, "scripts/check_victoriametrics.py"], 
 VICTORIAMETRICS_CONTROLS = Command([sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_victoriametrics*.py", "-v"])
 OTLP_ATTEMPT_TYPES = Command([sys.executable, "scripts/check_otlp_attempt_types.py"])
+OUTBOUND_MEASUREMENTS = Command([sys.executable, "scripts/measure_outbound_http.py", "--check"])
 
 # Cargo uplifts one debug executable per binary target, and reference-service
 # integration tests spawn it through CARGO_BIN_EXE_*. Cargo releases the build
@@ -165,7 +166,7 @@ def parts():
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
                     (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls", "victoriametrics-controls"],
                      [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS, VICTORIAMETRICS_CONTROLS]),
-                    (["otlp-attempt-types"], [OTLP_ATTEMPT_TYPES])],
+                    (["otlp-attempt-types", "outbound-measurement-build"], [OTLP_ATTEMPT_TYPES, OUTBOUND_MEASUREMENTS])],
     })
 
 

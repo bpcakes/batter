@@ -7,7 +7,7 @@ use super::super::row_decode::{
     parse_job_stage, parse_job_type_name, parse_workflow_step_execution_kind,
 };
 use super::errors::{workflow_internal_state_error, workflow_release_conflict_error};
-use super::locking::try_lock_workflow_run_release_shared_tx;
+use super::locking::{WorkflowRunRowLock, try_lock_workflow_run_release_shared_tx};
 
 #[derive(Clone, Debug)]
 pub(in crate::jobs::workflows) struct StepReleaseCandidate {
@@ -173,7 +173,11 @@ impl<'candidate> JobReleaseSpec<'candidate> {
     }
 }
 
-pub(crate) async fn enqueue_root_steps_tx(tx: &mut DbTx<'_>, workflow_run_id: Uuid) -> Result<()> {
+pub(crate) async fn enqueue_root_steps_tx(
+    tx: &mut DbTx<'_>,
+    run_lock: &WorkflowRunRowLock,
+) -> Result<()> {
+    let workflow_run_id = run_lock.workflow_run_id();
     let rows = sqlx::query!(
         "SELECT
             id,
@@ -215,7 +219,7 @@ pub(crate) async fn enqueue_root_steps_tx(tx: &mut DbTx<'_>, workflow_run_id: Uu
             stage: row.stage.map(parse_job_stage).transpose()?,
             execution_resource_key: row.execution_resource_key,
         });
-        release_candidate_step_tx(tx, &candidate).await?;
+        release_candidate_step_tx(tx, run_lock, &candidate).await?;
     }
 
     Ok(())
@@ -223,11 +227,19 @@ pub(crate) async fn enqueue_root_steps_tx(tx: &mut DbTx<'_>, workflow_run_id: Uu
 
 pub(in crate::jobs::workflows) async fn release_candidate_step_tx(
     tx: &mut DbTx<'_>,
+    run_lock: &WorkflowRunRowLock,
     candidate: &StepReleaseCandidate,
 ) -> Result<()> {
-    // Callers reach step release with the candidate workflow-step rows locked
-    // FOR UPDATE. append_workflow_steps_tx also holds the workflow-run row lock
-    // before inserting and releasing appended steps. If cancel already owns the
+    if candidate.workflow_run_id != run_lock.workflow_run_id() {
+        return Err(workflow_internal_state_error(format!(
+            "workflow step {} belongs to run {}, but release holds run {}",
+            candidate.id,
+            candidate.workflow_run_id,
+            run_lock.workflow_run_id(),
+        )));
+    }
+    // Callers hold the workflow-run row FOR UPDATE (run_lock) and then the
+    // candidate workflow-step rows FOR UPDATE. If cancel already owns the
     // exclusive advisory lock, append/external callers must roll back rather
     // than committing consumed dependency counters without a matching
     // release/cancel sweep. Job terminal completion waits on the blocking
@@ -239,7 +251,7 @@ pub(in crate::jobs::workflows) async fn release_candidate_step_tx(
         return Err(workflow_release_conflict_error(candidate.workflow_run_id));
     }
 
-    if !workflow_run_allows_step_release_tx(tx, candidate.workflow_run_id).await? {
+    if !workflow_run_allows_step_release_tx(tx, run_lock).await? {
         // This also covers reentrant calls from cancellation: PostgreSQL
         // advisory locks are reentrant for a backend, then the canceled run
         // status rejects release here.
@@ -401,13 +413,14 @@ async fn release_external_step_tx(
 
 async fn workflow_run_allows_step_release_tx(
     tx: &mut DbTx<'_>,
-    workflow_run_id: Uuid,
+    run_lock: &WorkflowRunRowLock,
 ) -> Result<bool> {
-    // The shared row lock makes the releasable-status check stable until this
-    // transaction either releases the step or exits. Release callers already
-    // hold workflow-step row locks before taking this workflow-run row lock;
-    // cancel takes the release advisory lock before it takes workflow-step row
-    // locks, and release never blocks on that advisory lock.
+    let workflow_run_id = run_lock.workflow_run_id();
+    // Release callers already hold this row FOR UPDATE (WorkflowRunRowLock), so
+    // this FOR SHARE re-lock is granted immediately and the status read is
+    // stable until the transaction ends. Never reach release without the run
+    // row: two completions that each held only FOR SHARE here deadlocked when
+    // both later upgraded to FOR UPDATE in status recompute.
     sqlx::query_scalar!(
         "SELECT status IN (
             'RUNNING'::workflow_run_status,

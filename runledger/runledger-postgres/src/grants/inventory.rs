@@ -134,9 +134,11 @@ pub enum RunledgerOperation {
     /// Scheduled dispatch of due direct jobs, including recording the fire and
     /// deferring a schedule whose cron expression cannot be advanced.
     ///
-    /// Covers `claim_due_schedules_tx`, `mark_schedule_fired_tx` and the
-    /// `enqueue_job_tx` the dispatcher performs for the job it materializes,
-    /// which is why this group carries `INSERT` on `job_queue`. Excludes
+    /// Covers `claim_due_schedules_tx`, `mark_schedule_fired_tx`,
+    /// `earliest_active_schedule_fire_at` (which reads only `is_active` and
+    /// `next_fire_at`) and the `enqueue_job_tx` the dispatcher performs for the
+    /// job it materializes, which is why this group carries `INSERT` on
+    /// `job_queue`. Excludes
     /// `get_job_schedule_by_name` and the catalog-synchronization entrypoints,
     /// which are [`Self::CatalogSync`].
     ScheduledDispatch,

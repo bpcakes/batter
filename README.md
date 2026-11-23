@@ -49,7 +49,7 @@ The Batter packages are version 0.0.1 publication candidates. Their manifests
 target crates.io, but the source tree alone does not claim that an upload or
 registry-name reservation has completed.
 Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
-Hosted Linux verification and focused macOS jobs passed on both supported
+Hosted Linux verification and focused macOS jobs passed on both then-supported
 toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 for commit `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. The documentation,
 package-description, and rustdoc refresh in this checkout postdates that run.
@@ -184,7 +184,7 @@ beside the consumer:
 batter = { path = "../batter/crates/batter" }
 # Select optional toolkit namespaces explicitly, for example:
 # batter = { path = "../batter/crates/batter", features = ["axum"] }
-# Standalone Rust 1.98.1 encryption/MAC leaf, also available through feature
+# Standalone Rust 1.100.0 encryption/MAC leaf, also available through feature
 # `at-rest` as `batter::at_rest` with identical types.
 batter-at-rest = { path = "../batter/crates/batter-at-rest" }
 # Standalone outbound provider HTTP exchange, also available through feature
@@ -221,8 +221,8 @@ and Runlimit library package through explicitly native namespaces, so one
 [single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
 records the executed evidence and the caller obligations those namespaces carry. Each package declares its own version and Rust minimum.
 The ten Batter packages are 0.0.1, native Runledger is 0.13.0, and native
-Runlimit is 0.4.0. All declare Rust 1.98.1, the pinned default toolchain, as
-their minimum; 1.98.1 fixes a 1.98.0 vtable miscompilation. The standalone
+Runlimit is 0.4.0. All declare Rust 1.100.0, the pinned default toolchain, as
+their minimum. The standalone
 `batter-at-rest` leaf verifies that minimum independently.
 
 | Package | Location | Job |
@@ -262,7 +262,7 @@ exactly-once or arbitrary provider guarantee. `batter-runlimit` preserves native
 quota decisions and consumption certainty under an operation budget; optional
 HTTP assembly owns auth/quota/body ordering. Its `memory`, `postgres`, and `axum`
 features are independent and off by default. It does not own PostgreSQL
-initialization or maintenance.
+initialization; `maintenance::register_in` registers native expiry cleanup.
 Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The

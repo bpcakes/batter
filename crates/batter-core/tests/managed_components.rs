@@ -107,6 +107,10 @@ async fn native_ack_requires_approval_and_cleanup_follows_actual_descendant_join
     entering.await.unwrap();
     assert_eq!(pending.status().readiness(), Readiness::Starting);
     initialize.send(()).unwrap();
+    // Let the component observe initialization before reading readiness again.
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
     // Approval is independent of the initialization acknowledgement.
     assert_eq!(pending.status().readiness(), Readiness::Starting);
     let running = pending.approve_readiness();

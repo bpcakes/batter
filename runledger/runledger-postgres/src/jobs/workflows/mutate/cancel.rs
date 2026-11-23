@@ -11,7 +11,8 @@ use crate::{DbTx, Error, Result};
 use super::super::active_claims::release_or_defer_workflow_active_claim_tx;
 use super::super::errors::workflow_internal_state_error;
 use super::super::locking::{
-    CancelWorkflowLockPhase, LockedWorkflowStepState, acquire_cancel_workflow_lock_phase_tx,
+    CancelWorkflowLockPhase, LockedWorkflowStepState, WorkflowRunRowLock,
+    acquire_cancel_workflow_lock_phase_tx,
 };
 use super::super::read::load_workflow_run_by_id_tx;
 use super::super::runtime::{
@@ -27,6 +28,7 @@ struct CancellationMetadata<'a> {
 }
 
 struct WorkflowCancellationSweep<'a> {
+    run_lock: WorkflowRunRowLock,
     workflow_run: WorkflowRunDbRecord,
     scope_organization_id: Option<Uuid>,
     metadata: CancellationMetadata<'a>,
@@ -56,7 +58,7 @@ async fn cancel_workflow_run_after_lock_phase_tx(
     organization_id: Option<Uuid>,
     metadata: CancellationMetadata<'_>,
 ) -> Result<WorkflowRunDbRecord> {
-    let (mut read_committed_tx, locked_steps, workflow_run) = lock_phase.into_parts();
+    let (mut read_committed_tx, locked_steps, run_lock, workflow_run) = lock_phase.into_parts();
     let tx = read_committed_tx.as_tx();
 
     if workflow_run.status.is_terminal() {
@@ -85,10 +87,11 @@ async fn cancel_workflow_run_after_lock_phase_tx(
     .map_err(|error| Error::from_query_sqlx_with_context("mark workflow run canceled", error))?;
     notify_workflow_run_terminal_tx(tx, workflow_run.id, WorkflowRunStatus::Canceled).await?;
 
-    let mut sweep = WorkflowCancellationSweep::new(workflow_run, organization_id, metadata);
+    let mut sweep =
+        WorkflowCancellationSweep::new(run_lock, workflow_run, organization_id, metadata);
     sweep.sweep_tx(tx, locked_steps).await?;
 
-    recompute_workflow_run_status_tx(tx, sweep.workflow_run_id()).await?;
+    recompute_workflow_run_status_tx(tx, &sweep.run_lock).await?;
     // Cancellation marks the run terminal before recompute, so recompute does
     // not observe a nonterminal-to-terminal transition for this run. Release
     // (or defer) its active claim explicitly after all jobs are canceled.
@@ -103,11 +106,13 @@ async fn cancel_workflow_run_after_lock_phase_tx(
 
 impl<'a> WorkflowCancellationSweep<'a> {
     fn new(
+        run_lock: WorkflowRunRowLock,
         workflow_run: WorkflowRunDbRecord,
         scope_organization_id: Option<Uuid>,
         metadata: CancellationMetadata<'a>,
     ) -> Self {
         Self {
+            run_lock,
             workflow_run,
             scope_organization_id,
             metadata,
@@ -297,7 +302,7 @@ impl<'a> WorkflowCancellationSweep<'a> {
         if canceled.is_some() {
             resolve_terminal_step_queue_tx(
                 tx,
-                self.workflow_run.id,
+                &self.run_lock,
                 step_id,
                 WorkflowStepStatus::Canceled,
             )
