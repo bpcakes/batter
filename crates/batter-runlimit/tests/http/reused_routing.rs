@@ -1,16 +1,21 @@
 //! The test transport accepts only arrival-shaped requests, exactly as the
 //! Axum adapter's in-process client does: a whole extension map from an
 //! earlier dispatch is refused at entry, before lifecycle admission,
-//! authentication, the native quota check or any handler runs. The last test
-//! characterizes the residual that check does not cover.
+//! authentication, the native quota check or any handler runs. The last two
+//! tests replay a map that keeps only the adapter's own request records and
+//! one that keeps only Axum's routing records, so each check is exercised
+//! without the other.
 
 use super::*;
 use axum::{
-    extract::{ConnectInfo, MatchedPath, OriginalUri, Path},
+    extract::{
+        ConnectInfo, FromRequestParts, MatchedPath, NestedPath, OriginalUri, Path, RawPathParams,
+        rejection::RawPathParamsRejection,
+    },
     http::{Extensions, HeaderValue, Uri},
     response::{IntoResponse, Response},
 };
-use batter_axum::ReusedRoutingState;
+use batter_axum::InProcessRefusal;
 use batter_runlimit::http::TestClient;
 
 const REFUSAL_BODY: &str =
@@ -27,7 +32,7 @@ type Counts = (usize, usize, usize, usize);
 struct Fixture {
     client: TestClient,
     captured: Arc<Mutex<Option<Extensions>>>,
-    forwarded: Arc<Mutex<Option<ReusedRoutingState>>>,
+    forwarded: Arc<Mutex<Option<InProcessRefusal>>>,
     authentications: Arc<AtomicUsize>,
     backend: Backend,
     views: Arc<AtomicUsize>,
@@ -37,7 +42,7 @@ struct Fixture {
 impl Fixture {
     fn new(running: &batter_core::lifecycle::RunningSupervisor) -> Self {
         let captured = Arc::new(Mutex::new(None));
-        let forwarded = Arc::new(Mutex::new(None::<ReusedRoutingState>));
+        let forwarded = Arc::new(Mutex::new(None::<InProcessRefusal>));
         let authentications = Arc::new(AtomicUsize::new(0));
         let backend = Backend::new(Mode::Return(allowed()));
         let views = Arc::new(AtomicUsize::new(0));
@@ -93,7 +98,7 @@ impl Fixture {
                     }
                 }),
             );
-        let routes = with_residual_routes(routes, &captured);
+        let routes = with_unmatched_routes(routes, &captured);
         let hasher = KeyHasher::new([9; 32]).unwrap();
         let client = HttpQuota::new(
             Quota::new(backend.clone()),
@@ -172,10 +177,12 @@ impl Fixture {
     }
 }
 
-/// Add the routes the residual characterization uses: one that echoes the
-/// request identity its handler sees, and a protected custom root fallback,
-/// which also receives a request no pattern matches, such as `OPTIONS *`.
-fn with_residual_routes(routes: Router, captured: &Arc<Mutex<Option<Extensions>>>) -> Router {
+/// Add the routes that
+/// `a_map_with_only_inherited_batter_records_is_refused_before_authentication`
+/// uses: one that echoes the request identity its handler sees, and a
+/// protected custom root fallback, which also receives a request no pattern
+/// matches, such as `OPTIONS *`.
+fn with_unmatched_routes(routes: Router, captured: &Arc<Mutex<Option<Extensions>>>) -> Router {
     let unmatched = captured.clone();
     routes
         .route(
@@ -216,7 +223,7 @@ async fn a_reused_captured_route_map_is_refused_before_the_protected_assembly() 
     let refused = capture.run(fixture.client.request(reused, peer())).await;
 
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert!(refused.headers().get("x-request-id").is_none());
     assert_eq!(refused.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(text(refused).await, REFUSAL_BODY);
@@ -266,7 +273,7 @@ async fn a_fresh_request_with_application_extensions_reaches_the_assembly_untouc
     let response = capture.run(fixture.client.request(fresh, peer())).await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert!(response.headers().contains_key("x-request-id"));
     assert_eq!(
         text(response).await,
@@ -296,7 +303,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         .extensions_mut()
         .insert(OriginalUri(Uri::from_static("/earlier")));
     let refused = fixture.client.request(alone, peer()).await;
-    let marker = refused.extensions().get::<ReusedRoutingState>().copied();
+    let marker = refused.extensions().get::<InProcessRefusal>().copied();
     assert!(marker.is_some());
     *fixture.forwarded.lock().unwrap() = marker;
 
@@ -306,7 +313,7 @@ async fn a_dispatched_response_drops_a_refusal_marker_the_application_attached()
         .await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(response.extensions().get::<InProcessRefusal>().is_none());
     assert_eq!(
         response.extensions().get::<Label>().map(|label| label.0),
         Some("kept")
@@ -331,7 +338,7 @@ async fn a_reused_map_is_refused_before_a_public_probe_runs() {
 
     let refused = fixture.client.request(probe(Some(captured)), peer()).await;
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(fixture.counts(), before, "the public probe ran");
 
@@ -360,27 +367,40 @@ async fn a_reused_map_is_refused_before_lifecycle_admission() {
         .request(request("/view/9", "Bearer secret-a"), peer())
         .await;
     assert_eq!(fresh.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(fresh.extensions().get::<ReusedRoutingState>().is_none());
+    assert!(fresh.extensions().get::<InProcessRefusal>().is_none());
 
     // A reused map is refused at entry instead, with the marker and not 503.
     let mut reused = request("/view/9", "Bearer secret-a");
     *reused.extensions_mut() = captured;
     let refused = fixture.client.request(reused, peer()).await;
     assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
     assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(fixture.counts(), before);
     finish(running).await;
 }
 
-/// Characterizes the documented residual that the entry check does not
-/// cover: Batter's own observation and operational records with no detected
-/// Axum record. `batter-28kb` owns closing it; when such a map is refused,
-/// invert this test together with the residual statements on
-/// `RouterClient::request`, `TestClient::request`, the guarantees and the
-/// integration contract.
+/// No record that Axum routing writes is left in the map, so only the
+/// adapter's own records can refuse it.
+async fn assert_no_routing_record(extensions: &Extensions) {
+    assert!(extensions.get::<MatchedPath>().is_none());
+    assert!(extensions.get::<NestedPath>().is_none());
+    assert!(extensions.get::<OriginalUri>().is_none());
+    let mut probe = Request::new(());
+    *probe.extensions_mut() = extensions.clone();
+    let (mut parts, ()) = probe.into_parts();
+    assert!(matches!(
+        RawPathParams::from_request_parts(&mut parts, &()).await,
+        Err(RawPathParamsRejection::MissingPathParams(_))
+    ));
+}
+
+/// A map that keeps the adapter's own observation and operational records
+/// with no Axum record left is refused like any other reused map, before
+/// authentication and the quota check. Until `batter-28kb` this was accepted,
+/// authenticated and charged, and answered without fresh correlation.
 #[tokio::test]
-async fn residual_a_map_with_only_inherited_batter_records_is_authenticated_and_charged() {
+async fn a_map_with_only_inherited_batter_records_is_refused_before_authentication() {
     let running = running().await;
     let fixture = Fixture::new(&running);
 
@@ -401,28 +421,69 @@ async fn residual_a_map_with_only_inherited_batter_records_is_authenticated_and_
     let mut whole = request("/inbound", "Bearer secret-a");
     *whole.extensions_mut() = unmatched.clone();
     let refused = fixture.client.request(whole, peer()).await;
-    assert!(refused.extensions().get::<ReusedRoutingState>().is_some());
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
 
-    // Once the caller removes it, the inherited Batter records pass the check.
+    // Once the caller removes it, no Axum record is left, and the inherited
+    // Batter records are what the check refuses.
     unmatched.remove::<OriginalUri>();
+    assert_no_routing_record(&unmatched).await;
     let before = fixture.counts();
     let capture = Capture::new("info");
     let mut reused = request("/inbound", "Bearer secret-a");
     *reused.extensions_mut() = unmatched;
-    let response = capture.run(fixture.client.request(reused, peer())).await;
+    let refused = capture.run(fixture.client.request(reused, peer())).await;
 
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.extensions().get::<ReusedRoutingState>().is_none());
-    assert!(response.headers().get("x-request-id").is_none());
-    // The handler sees the client's own identity, not a generated one.
-    assert_eq!(text(response).await, "secret-client-id");
-    // Authenticated and charged like a fresh request.
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
+    assert!(refused.headers().get("x-request-id").is_none());
+    assert_eq!(text(refused).await, REFUSAL_BODY);
     assert_eq!(
         fixture.counts(),
-        (before.0 + 1, before.1 + 1, before.2, before.3)
+        before,
+        "authentication, the quota check, a handler or a probe ran"
     );
     let output = capture.text();
+    assert_eq!(
+        output.matches("in-process request refused").count(),
+        1,
+        "{output}"
+    );
     assert!(capture.events().is_empty(), "{output}");
-    assert!(!output.contains("in-process request refused"), "{output}");
+    finish(running).await;
+}
+
+#[tokio::test]
+async fn a_map_with_only_axum_routing_records_is_refused_before_the_protected_assembly() {
+    let running = running().await;
+    let fixture = Fixture::new(&running);
+    // A bare Axum router writes its routing records and none of Batter's,
+    // so only the routing check can refuse what it captured.
+    let slot = Arc::new(Mutex::new(None));
+    let inner = slot.clone();
+    let bare = Router::new().route(
+        "/source/{source_id}",
+        axum::routing::any(move |request: Request| {
+            *inner.lock().unwrap() = Some(request.extensions().clone());
+            async { "captured" }
+        }),
+    );
+    batter_axum::low_level::RouterClient::new(bare)
+        .request(request("/source/7", "Bearer secret-a"))
+        .await;
+    let captured = slot.lock().unwrap().take().unwrap();
+    assert!(captured.get::<MatchedPath>().is_some());
+    assert!(captured.get::<Authenticated<Principal>>().is_none());
+    let before = fixture.counts();
+
+    let mut reused = request("/view/9", "Bearer secret-a");
+    *reused.extensions_mut() = captured;
+    let refused = fixture.client.request(reused, peer()).await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(refused.extensions().get::<InProcessRefusal>().is_some());
+    assert_eq!(
+        fixture.counts(),
+        before,
+        "authentication, the quota check, a handler or a probe ran"
+    );
     finish(running).await;
 }

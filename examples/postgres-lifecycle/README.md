@@ -111,5 +111,5 @@ expected in `public`, the first schema of a default search path. The login in
 both ledgers; production roots usually split the migration login from the
 serving login, and Batter does not transfer ownership or grant anything.
 
-Version 0.1.0; Rust 1.98.1 minimum, the workspace's pinned toolchain; publishing disabled.
+Version 0.1.0; Rust 1.100.0 minimum, the workspace's pinned toolchain; publishing disabled.
 MIT licensed.

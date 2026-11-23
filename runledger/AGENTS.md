@@ -13,8 +13,10 @@ behind an opt-in feature. That is reachability for consumers, not a dependency o
 the facade and not a transfer of ownership: durable job policy, persistence,
 scheduling, descendant supervision and Docker provisioning stay here. Renaming or
 removing a public native item still changes the facade's surface, so treat these
-packages' public APIs as consumer-facing. `runledger-tui` is binary-only and has
-no namespace.
+packages' public APIs as consumer-facing. Public cuts follow the root guide's
+hard-cut rule: break the API without a `#[deprecated]` shim or alias. The
+deprecated items that remain predate that rule and are tracked for removal as
+`batter-cmuo`. `runledger-tui` is binary-only and has no namespace.
 
 PostgreSQL 18 is the authoritative database baseline. Native database tests use
 `runledger-test-support` and Docker's `postgres:18` image by default. Record exact

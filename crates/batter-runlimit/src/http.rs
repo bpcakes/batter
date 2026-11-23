@@ -297,7 +297,9 @@ where
     /// Explicitly add public GET probe paths (and Axum's corresponding HEAD).
     ///
     /// These handlers bypass lifecycle/deadline request admission,
-    /// authentication, and quota. They receive no protected `OperationContext`.
+    /// authentication, and quota. They receive no protected `OperationContext`
+    /// from this assembly, though a [`TestClient`] request can carry an
+    /// inherited one in (`batter-nff2.1`, tested in `batter-axum` only).
     /// Registered probe paths and their default method responses still receive
     /// the root HTTP observation and correlation ID. The default is no public
     /// probes; the builder accepts only literal paths and cannot install public
@@ -317,7 +319,8 @@ where
     /// protected fallback, unmatched requests receive the default public 404.
     /// Routes supplied through
     /// [`with_public_probes`](Self::with_public_probes) bypass those gates and
-    /// receive no protected `OperationContext`; they share the root observer.
+    /// receive no protected `OperationContext`, with the exception noted there;
+    /// they share the root observer.
     /// [`Authenticated<P>`] is installed only after successful authentication;
     /// handlers must extract it rather than a raw `Extension<P>`.
     /// A public probe and protected GET route at the same path cause Axum's
