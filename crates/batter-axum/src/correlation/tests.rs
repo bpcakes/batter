@@ -20,7 +20,10 @@ use axum::{
     extract::Request,
     http::{Extensions, HeaderValue, StatusCode},
 };
-use batter_core::{lifecycle::ShutdownHandle, operation::RootDeadline};
+use batter_core::{
+    lifecycle::{ShutdownHandle, low_level::admit_root_with_continuation},
+    operation::RootDeadline,
+};
 use std::{
     sync::{
         Arc,
@@ -46,16 +49,24 @@ fn admission_alone() -> Extensions {
         handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     );
-    let context = policy
-        .admission
-        .admit_root(RootDeadline::at(Instant::now() + policy.budget))
-        .unwrap()
-        .into_context();
+    let (owner, continuation) = admit_root_with_continuation(
+        &policy.admission,
+        RootDeadline::at(Instant::now() + policy.budget),
+    )
+    .unwrap();
+    let context = owner.into_context();
     let (parts, ()) = Request::new(()).into_parts();
     let interruption = RequestInterruptionResponder::from_policy(&policy, &parts);
-    let mut extensions = Extensions::new();
-    extensions.insert(scope());
-    admitted::record(&mut extensions, context, interruption);
+    let mut request = Request::new(Body::empty());
+    request.extensions_mut().insert(scope());
+    let correlation = admitted::recorded_under(request.extensions()).unwrap();
+    admitted::record(
+        &mut request,
+        context,
+        interruption,
+        Some((correlation, continuation)),
+    );
+    let mut extensions = std::mem::take(request.extensions_mut());
     extensions.remove::<OperationalScope>();
     assert!(extensions.get::<admitted::Admission>().is_some());
     extensions
