@@ -36,7 +36,7 @@ use inventory::{executable_roots, members, production_sources, workspace_root};
 /// The one seam, and how many reads it holds: the OpenTelemetry adapter
 /// refuses ambient `OTEL_*` settings, which its upstream builders would
 /// otherwise read, by checking that none is set. It never reads a value.
-const DECLARED_SEAMS: [(&str, usize); 1] = [("crates/batter-otlp/src/lib.rs", 1)];
+const DECLARED_SEAMS: [(&str, usize); 1] = [("crates/batter-otlp/src/preparation.rs", 1)];
 
 #[test]
 fn every_spelling_of_an_environment_read_is_counted_and_types_and_comments_are_not() {
