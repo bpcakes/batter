@@ -129,6 +129,11 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.
   `SubjectKey::from_digest` exists for tests and already-opaque digests only.
+- Both observer families use the core's private `observer_panic::isolate` helper.
+  Release caught strings, but never run opaque panic-payload destructors after
+  a backend transition: retain their allocations without destruction. Do not
+  discard a raw `catch_unwind` result or introduce a second disposal policy.
+  Blocking callbacks and process panic hooks remain application responsibilities.
 - PostgreSQL 0.1 storage is not hard-cardinality-bounded. Deploy it behind a
   bounded local gate, schedule expired-row cleanup, and monitor table growth.
 - PostgreSQL 0.2 storage is hard-bounded per persistent capacity shard. Keep

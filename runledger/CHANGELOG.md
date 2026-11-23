@@ -6,6 +6,76 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Native consumer pattern repairs
+
+**Breaking:** all three environment readers now return `Result<_, JobsEnvironmentError>`
+(`batter-bwc7`). Absent variables retain the existing defaults. Supplied blank,
+malformed, non-Unicode, overflowing or out-of-range values fail instead of being
+silently defaulted or clamped. The error retains only the setting name.
+`Supervisor::builder_from_env` propagates `RuntimeError::InvalidEnvironment`.
+The former environment minima remain enforced: lease TTL 10 seconds, retry delay
+1000 ms, all other numeric minima one, and batches at most 1000.
+
+```rust,ignore
+// Before (each independent call shape):
+let jobs = JobsConfig::from_env();
+let promoter = IntentPromoterConfig::from_env();
+let inherited = IntentPromoterConfig::from_env_with_jobs_config_defaults(&jobs);
+
+// After: propagate or explicitly handle invalid operator input.
+let jobs = JobsConfig::from_env()?;
+let promoter = IntentPromoterConfig::from_env()?;
+let inherited = IntentPromoterConfig::from_env_with_jobs_config_defaults(&jobs)?;
+```
+
+No infallible deprecated shim is retained: it would restore silent configuration
+replacement. Direct config construction and validation remain available.
+
+**Breaking:** remove `JobProgressUpdate`, `update_job_progress` and
+`update_job_progress_for_lease`, including their public reexports (`batter-hixn`).
+They accepted arbitrary stages and could bypass running/completion bookkeeping.
+Their replacements have been available since 0.11.0. Migrate both positional
+and lease-identity call shapes according to the actual transition:
+
+```rust,ignore
+// Before: enter Running through an arbitrary stage field.
+let update = JobProgressUpdate {
+    stage: Some(JobStage::Running), progress_done, progress_total, checkpoint,
+};
+update_job_progress(pool, id, run, attempt, worker, &update).await?;
+update_job_progress_for_lease(pool, identity, &update).await?;
+
+// After: only the Running transition, with running bookkeeping.
+let update = JobRunningUpdate { progress_done, progress_total, checkpoint };
+mark_job_running(pool, id, run, attempt, worker, &update).await?;
+mark_job_running_for_lease(pool, identity, &update).await?;
+
+// Before: preserve stage with None.
+let update = JobProgressUpdate { stage: None, progress_done, progress_total, checkpoint };
+update_job_progress(pool, id, run, attempt, worker, &update).await?;
+update_job_progress_for_lease(pool, identity, &update).await?;
+
+// After: ordinary progress has no stage input.
+let update = JobOrdinaryProgressUpdate { progress_done, progress_total, checkpoint };
+update_job_ordinary_progress(pool, id, run, attempt, worker, &update).await?;
+update_job_ordinary_progress_for_lease(pool, identity, &update).await?;
+```
+
+Other stages have no progress replacement: invoke the corresponding completion,
+failure or continuation operation. No deprecated shim is retained because its
+stage argument restores the invalid composition. SQL, migrations and persisted
+formats are unchanged; this is a source API cut. See the
+[public surface and signature review](../docs/evidence/native-consumer-weeding-2026-11-16/README.md).
+
+The native worker examples now install `RuntimeShutdownSignal::unix_termination()?`
+before application startup, handling both SIGINT and SIGTERM with runtime-owned
+settlement accounting (`batter-ad1e`). Installation errors return immediately.
+Tokio keeps process-wide signal handlers after listener drop; startup signals
+remain observable on submission but do not interrupt arbitrary startup work.
+Both examples announce readiness only after local loop initialization, while
+retaining and awaiting the native shutdown driver (`batter-f1j7`). This local
+initialization observation is not a database health or job-success guarantee.
+
 ### Workflow completion lock order
 
 Workflow job completion, external completion, append, step-key listing for

@@ -8,6 +8,17 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Repair native consumer patterns (`batter-6p9u`, `batter-bwc7`, `batter-ad1e`,
+  `batter-hixn`, `batter-f1j7`). Runlimit observation discards string panic payloads
+  and retains opaque payloads without invoking arbitrary destructors; repeated
+  opaque panics can retain unbounded resources. Native workers handle SIGINT and
+  SIGTERM and announce readiness after local loop initialization.
+  **Breaking:** Runledger environment readers return `Result` and reject invalid
+  supplied settings; remove the deprecated arbitrary-stage progress API in favor
+  of running and ordinary-progress operations. The [native changelog](runledger/CHANGELOG.md#native-consumer-pattern-repairs)
+  records every before/after call shape and why no deprecated shim is retained.
+  [ADR-010 assessment](docs/evidence/api-assessments/native-runtime.md#native-consumer-pattern-repairs-2026-11-16).
+
 - Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
   library read of the process environment outside the one declared seam, share
   the executable-root inventory with the panic-hook scan, and record the

@@ -21,7 +21,8 @@ different same-depth crate. Cargo fmt follows the HTTP module paths; Cargo
 workspace tests compile every consumer, including these sources. The consumers
 are the `batter-core` and `batter-axum` tests, the facade HTTP example under
 `crates/batter/examples/http_service/`, the `batter-runlimit` HTTP tests and the
-`examples/reference-service` tests; list them again with
+`examples/reference-service` tests, plus native `runledger-runtime` entrypoint
+tests; list them again with
 `git grep -l 'test-support/' -- '*.rs'` before moving this directory. The
 foundation controls continue to test the same included implementation.
 

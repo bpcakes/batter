@@ -42,10 +42,6 @@ pub use admin::{
     list_job_summaries, list_jobs, list_jobs_with_scope, update_job_payload_uuid_array_field,
 };
 pub use logs::{insert_job_log, list_job_logs, list_job_logs_with_scope};
-#[allow(
-    deprecated,
-    reason = "deprecated stage-bearing progress APIs remain re-exported for semver compatibility"
-)]
 pub use queue::{
     JobDefinitionCatalogSyncError, JobDefinitionCatalogSyncMode, JobDefinitionCatalogSyncReport,
     claim_jobs, claim_jobs_for_types, claim_prestart_jobs, claim_prestart_jobs_for_types,
@@ -65,8 +61,7 @@ pub use queue::{
     reap_expired_leases_with_diagnostics, reap_expired_leases_with_terminal_records,
     record_job_enqueue_intent, record_job_enqueue_intent_tx, release_unstarted_job_claim,
     sync_catalog_job_definitions_exact_tx, sync_catalog_job_definitions_tx, update_job_definition,
-    update_job_ordinary_progress, update_job_ordinary_progress_for_lease, update_job_progress,
-    update_job_progress_for_lease, upsert_job_definition_tx,
+    update_job_ordinary_progress, update_job_ordinary_progress_for_lease, upsert_job_definition_tx,
 };
 pub use replay::{
     CompareAndReplaySucceededJob, CompareAndReplaySucceededJobOutcome,
@@ -84,10 +79,6 @@ pub use schedules::{
     set_job_schedule_active_tx, set_job_schedule_next_fire_at, set_job_schedule_next_fire_at_tx,
     sync_catalog_job_schedules_tx, upsert_job_schedule, upsert_job_schedule_tx,
 };
-#[allow(
-    deprecated,
-    reason = "the deprecated stage-bearing progress input remains re-exported during migration"
-)]
 pub use types::{
     CompareAndRequeueJob, CompareAndRequeueJobOutcome, DecodedJobEventPayload,
     DecodedRequeuedEventPayload, JOB_LIST_PAGE_LIMIT_MAX, JOB_SCHEDULE_MAX_JITTER_SECONDS,
@@ -101,7 +92,7 @@ pub use types::{
     JobEnqueueIntentState, JobEnqueueIntentStatus, JobEnqueueOutcome, JobEventRecord,
     JobFailureCompletionDisposition, JobFailureCompletionOutcome, JobFailureUpdate,
     JobLeaseIdentity, JobListFilter, JobLogRecord, JobLogRecordInput, JobMetricsRecord,
-    JobOrdinaryProgressUpdate, JobProgressUpdate, JobQueueRecord, JobReadListFilter, JobReadScope,
+    JobOrdinaryProgressUpdate, JobQueueRecord, JobReadListFilter, JobReadScope,
     JobRequeueStatePolicy, JobRunningUpdate, JobRuntimeConfigListFilter, JobRuntimeConfigRecord,
     JobRuntimeConfigUpsert, JobScheduleCatalogSyncEntry, JobScheduleCatalogSyncReport,
     JobScheduleJobTypeReference, JobScheduleRecord, JobScheduleUpsert, JobScope, JobStatusRecord,

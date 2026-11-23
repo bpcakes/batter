@@ -1,17 +1,9 @@
-use std::str::FromStr;
 use std::time::Duration;
 
 use thiserror::Error;
 
-const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
-const DEFAULT_CLAIM_BATCH_SIZE: i64 = 16;
-const DEFAULT_INTENT_PROMOTER_POLL_INTERVAL_MS: u64 = 500;
-const DEFAULT_INTENT_PROMOTER_BATCH_SIZE: i64 = 16;
-const DEFAULT_LEASE_TTL_SECONDS: i32 = 60;
-const DEFAULT_MAX_GLOBAL_CONCURRENCY: usize = 32;
-const DEFAULT_REAPER_INTERVAL_SECONDS: u64 = 15;
-const DEFAULT_SCHEDULE_POLL_INTERVAL_SECONDS: u64 = 30;
-const DEFAULT_REAPER_RETRY_DELAY_MS: i32 = 30_000;
+mod environment;
+pub use environment::JobsEnvironmentError;
 
 /// Maximum batch size accepted by runtime worker, intent promoter, scheduler,
 /// and reaper loops.
@@ -47,62 +39,6 @@ impl IntentPromoterConfig {
             poll_interval,
             batch_size,
         }
-    }
-
-    /// Reads intent-specific settings from the environment.
-    ///
-    /// `JOBS_INTENT_PROMOTER_POLL_INTERVAL_MS` defaults to 500 milliseconds and
-    /// `JOBS_INTENT_PROMOTER_BATCH_SIZE` defaults to 16.
-    #[must_use]
-    pub fn from_env() -> Self {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
-        Self {
-            poll_interval: Duration::from_millis(
-                parse_value(
-                    &mut lookup,
-                    "JOBS_INTENT_PROMOTER_POLL_INTERVAL_MS",
-                    DEFAULT_INTENT_PROMOTER_POLL_INTERVAL_MS,
-                )
-                .max(1),
-            ),
-            batch_size: parse_value(
-                &mut lookup,
-                "JOBS_INTENT_PROMOTER_BATCH_SIZE",
-                DEFAULT_INTENT_PROMOTER_BATCH_SIZE,
-            )
-            .clamp(1, JOBS_CLAIM_BATCH_SIZE_MAX),
-        }
-    }
-
-    /// Reads intent-specific settings from the environment, inheriting worker
-    /// settings for variables that are absent or invalid.
-    ///
-    /// This is the environment-composition policy used by
-    /// [`crate::Supervisor::builder_from_env`]. It preserves the default
-    /// coupling between worker claiming and intent promotion while allowing
-    /// either promoter control to be overridden independently.
-    #[must_use]
-    pub fn from_env_with_jobs_config_defaults(config: &JobsConfig) -> Self {
-        Self::from_lookup_with_jobs_config_defaults(config, |name| std::env::var(name).ok())
-    }
-
-    fn from_lookup_with_jobs_config_defaults(
-        config: &JobsConfig,
-        mut lookup: impl FnMut(&str) -> Option<String>,
-    ) -> Self {
-        let poll_interval =
-            parse_value_if_present::<u64>(&mut lookup, "JOBS_INTENT_PROMOTER_POLL_INTERVAL_MS")
-                .map(|milliseconds| Duration::from_millis(milliseconds.max(1)))
-                .unwrap_or(config.poll_interval);
-        let batch_size =
-            parse_value_if_present::<i64>(&mut lookup, "JOBS_INTENT_PROMOTER_BATCH_SIZE")
-                .map(|batch_size| batch_size.clamp(1, JOBS_CLAIM_BATCH_SIZE_MAX))
-                .unwrap_or(config.claim_batch_size);
-
-        Self::new(poll_interval, batch_size)
     }
 
     #[must_use]
@@ -150,67 +86,6 @@ pub enum JobsConfigValidationError {
 }
 
 impl JobsConfig {
-    #[must_use]
-    pub fn from_env() -> Self {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
-        Self {
-            worker_id: lookup("JOBS_WORKER_ID")
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| format!("worker-{}", uuid::Uuid::now_v7())),
-            poll_interval: Duration::from_millis(
-                parse_value(
-                    &mut lookup,
-                    "JOBS_POLL_INTERVAL_MS",
-                    DEFAULT_POLL_INTERVAL_MS,
-                )
-                .max(1),
-            ),
-            claim_batch_size: parse_value(
-                &mut lookup,
-                "JOBS_CLAIM_BATCH_SIZE",
-                DEFAULT_CLAIM_BATCH_SIZE,
-            )
-            .clamp(1, JOBS_CLAIM_BATCH_SIZE_MAX),
-            lease_ttl_seconds: parse_value(
-                &mut lookup,
-                "JOBS_LEASE_TTL_SECONDS",
-                DEFAULT_LEASE_TTL_SECONDS,
-            )
-            .max(10),
-            max_global_concurrency: parse_value(
-                &mut lookup,
-                "JOBS_MAX_GLOBAL_CONCURRENCY",
-                DEFAULT_MAX_GLOBAL_CONCURRENCY,
-            )
-            .max(1),
-            reaper_interval: Duration::from_secs(
-                parse_value(
-                    &mut lookup,
-                    "JOBS_REAPER_INTERVAL_SECONDS",
-                    DEFAULT_REAPER_INTERVAL_SECONDS,
-                )
-                .max(1),
-            ),
-            schedule_poll_interval: Duration::from_secs(
-                parse_value(
-                    &mut lookup,
-                    "JOBS_SCHEDULE_POLL_INTERVAL_SECONDS",
-                    DEFAULT_SCHEDULE_POLL_INTERVAL_SECONDS,
-                )
-                .max(1),
-            ),
-            reaper_retry_delay_ms: parse_value(
-                &mut lookup,
-                "JOBS_REAPER_RETRY_DELAY_MS",
-                DEFAULT_REAPER_RETRY_DELAY_MS,
-            )
-            .max(1_000),
-        }
-    }
-
     pub fn validate(&self) -> Result<(), JobsConfigValidationError> {
         if self.worker_id.trim().is_empty() {
             return Err(JobsConfigValidationError::EmptyWorkerId);
@@ -296,37 +171,9 @@ fn validate_claim_batch_size(claim_batch_size: i64) -> Result<(), JobsConfigVali
     })
 }
 
-fn parse_value<T>(lookup: &mut impl FnMut(&str) -> Option<String>, name: &str, default: T) -> T
-where
-    T: FromStr,
-{
-    parse_value_if_present(lookup, name).unwrap_or(default)
-}
-
-fn parse_value_if_present<T>(
-    lookup: &mut impl FnMut(&str) -> Option<String>,
-    name: &str,
-) -> Option<T>
-where
-    T: FromStr,
-{
-    lookup(name).and_then(|value| value.parse::<T>().ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_lookup<'a>(
-        values: &'a [(&'a str, Option<&'a str>)],
-    ) -> impl FnMut(&str) -> Option<String> + 'a {
-        move |name| {
-            values
-                .iter()
-                .find(|(key, _)| *key == name)
-                .and_then(|(_, value)| value.map(str::to_owned))
-        }
-    }
 
     fn test_config() -> JobsConfig {
         JobsConfig {
@@ -435,67 +282,5 @@ mod tests {
         for (config, expected) in cases {
             assert_eq!(config.validate(), Err(expected));
         }
-    }
-
-    #[test]
-    fn from_env_clamps_zero_intervals_to_non_zero_minimum() {
-        let values = [
-            ("JOBS_POLL_INTERVAL_MS", Some("0")),
-            ("JOBS_REAPER_INTERVAL_SECONDS", Some("0")),
-            ("JOBS_SCHEDULE_POLL_INTERVAL_SECONDS", Some("0")),
-        ];
-
-        let config = JobsConfig::from_lookup(test_lookup(&values));
-        assert_eq!(config.poll_interval, Duration::from_millis(1));
-        assert_eq!(config.reaper_interval, Duration::from_secs(1));
-        assert_eq!(config.schedule_poll_interval, Duration::from_secs(1));
-    }
-
-    #[test]
-    fn intent_promoter_from_env_uses_independent_controls() {
-        let values = [
-            ("JOBS_INTENT_PROMOTER_POLL_INTERVAL_MS", Some("37")),
-            ("JOBS_INTENT_PROMOTER_BATCH_SIZE", Some("9")),
-        ];
-
-        let config = IntentPromoterConfig::from_lookup(test_lookup(&values));
-        assert_eq!(config.poll_interval(), Duration::from_millis(37));
-        assert_eq!(config.batch_size(), 9);
-    }
-
-    #[test]
-    fn intent_promoter_env_overrides_fall_back_to_jobs_config_independently() {
-        let values = [
-            ("JOBS_INTENT_PROMOTER_POLL_INTERVAL_MS", Some("37")),
-            ("JOBS_INTENT_PROMOTER_BATCH_SIZE", None),
-        ];
-        let mut jobs_config = test_config();
-        jobs_config.poll_interval = Duration::from_millis(83);
-        jobs_config.claim_batch_size = 7;
-
-        let config = IntentPromoterConfig::from_lookup_with_jobs_config_defaults(
-            &jobs_config,
-            test_lookup(&values),
-        );
-        assert_eq!(config.poll_interval(), Duration::from_millis(37));
-        assert_eq!(config.batch_size(), 7);
-    }
-
-    #[test]
-    fn from_env_clamps_non_interval_limits_and_falls_back_worker_id() {
-        let values = [
-            ("JOBS_CLAIM_BATCH_SIZE", Some("1001")),
-            ("JOBS_LEASE_TTL_SECONDS", Some("1")),
-            ("JOBS_MAX_GLOBAL_CONCURRENCY", Some("0")),
-            ("JOBS_REAPER_RETRY_DELAY_MS", Some("1")),
-            ("JOBS_WORKER_ID", Some("   ")),
-        ];
-
-        let config = JobsConfig::from_lookup(test_lookup(&values));
-        assert_eq!(config.claim_batch_size, JOBS_CLAIM_BATCH_SIZE_MAX);
-        assert_eq!(config.lease_ttl_seconds, 10);
-        assert_eq!(config.max_global_concurrency, 1);
-        assert_eq!(config.reaper_retry_delay_ms, 1_000);
-        assert!(config.worker_id.starts_with("worker-"));
     }
 }

@@ -368,10 +368,6 @@ pub use migrations::{ensure_schema_compatible, migrate};
 /// `runledger-core` contracts, so it can be glob-imported alongside
 /// `runledger_core::prelude::*` and `runledger_runtime::prelude::*`.
 pub mod prelude {
-    #[allow(
-        deprecated,
-        reason = "the prelude retains deprecated exports for semver compatibility"
-    )]
     pub use crate::jobs::{
         AppendWorkflowStepsInput, AppendWorkflowStepsOutcome, AppendWorkflowStepsResult,
         CompareAndReplaySucceededJob, CompareAndReplaySucceededJobOutcome, CompareAndRequeueJob,
@@ -389,8 +385,8 @@ pub mod prelude {
         JobEnqueueIntentStatus, JobEnqueueOutcome, JobEventRecord, JobFailureCompletionDisposition,
         JobFailureCompletionOutcome, JobFailureUpdate, JobLeaseIdentity, JobListFilter,
         JobLogRecord, JobLogRecordInput, JobMetricsRecord, JobOrdinaryProgressUpdate,
-        JobPayloadUuidArrayFieldUpdate, JobPayloadUuidArrayFieldUpdateRejection, JobProgressUpdate,
-        JobQueueRecord, JobReadListFilter, JobReadScope, JobRequeueStatePolicy, JobRunningUpdate,
+        JobPayloadUuidArrayFieldUpdate, JobPayloadUuidArrayFieldUpdateRejection, JobQueueRecord,
+        JobReadListFilter, JobReadScope, JobRequeueStatePolicy, JobRunningUpdate,
         JobRuntimeConfigListFilter, JobRuntimeConfigRecord, JobRuntimeConfigUpsert,
         JobScheduleRecord, JobScheduleUpsert, JobScope, JobStatusRecord,
         JobSuccessCompletionOutcome, JobSummary, JobSummaryCursor, JobSummaryFilter,
@@ -447,9 +443,9 @@ pub mod prelude {
         set_job_schedule_next_fire_at, set_job_schedule_next_fire_at_tx,
         sync_catalog_job_schedules_tx, update_job_definition,
         update_job_ordinary_progress_for_lease, update_job_payload_uuid_array_field,
-        update_job_progress_for_lease, update_workflow_step_and_pending_job_payload_tx,
-        upsert_job_definition_tx, upsert_job_runtime_config, upsert_job_runtime_config_tx,
-        upsert_job_schedule, upsert_job_schedule_tx, workflow_run_handle,
+        update_workflow_step_and_pending_job_payload_tx, upsert_job_definition_tx,
+        upsert_job_runtime_config, upsert_job_runtime_config_tx, upsert_job_schedule,
+        upsert_job_schedule_tx, workflow_run_handle,
     };
     pub use crate::jobs::{
         JobScheduleCatalogSyncEntry, JobScheduleCatalogSyncReport,

@@ -3656,3 +3656,34 @@ to retry remain application-owned. Evidence is a point-in-time observation, not
 a reservation against future promotion or retention. The new reconciliation
 grant reads only selected metadata; adding other operation grants can expose more
 columns, including canonical submitted requests for intent submission.
+
+## Native consumer configuration, progress and observation
+
+Runledger environment readers default only absent variables. Supplied invalid
+settings return `JobsEnvironmentError` with the setting name and no supplied
+value or parser source. The environment-aware builder propagates failure before
+runtime startup. Direct config structs retain their existing validation boundary.
+Ordinary progress updates cannot select a stage; running transitions use
+`JobRunningUpdate`, while terminal transitions use their completion operations.
+Removing the deprecated stage-bearing API closes a local bypass, not arbitrary
+SQL writes or remote protocol misuse.
+
+`RuntimeShutdownSignal::unix_termination` installs SIGINT/SIGTERM listeners on the
+current I/O-enabled Tokio runtime before returning. Native example roots install
+it before application startup. Their shared driver helper observes local loop
+initialization and awaits native settlement independently of that observation;
+stopped initialization emits no ready message. Initialization does not prove
+remote database health or job success. Signals arriving before submission remain
+observable, but do not cancel arbitrary startup work. Tokio's installed OS
+handlers persist after listener drop; the runtime must stay alive and driven.
+
+Runlimit quota and attempt observer boundaries dispose known string panic
+payloads and deliberately forget opaque payloads, including their captured
+resources, so payload destruction cannot unwind after a committed decision.
+Repeated opaque panics can leak unbounded resources. Observation does not roll
+back quota/attempt mutations. Aborting panic hooks, panic=abort, internal double
+panics and blocking callback code remain outside unwind containment. Libraries
+install no panic hook and cannot suppress application hook output.
+
+Focused evidence and public API review are recorded in
+[native consumer repairs](evidence/native-consumer-weeding-2026-11-16/README.md).

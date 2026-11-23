@@ -1,5 +1,7 @@
 #[path = "support/database.rs"]
 mod database;
+#[path = "support/worker.rs"]
+mod worker;
 
 use std::time::Duration;
 
@@ -31,6 +33,8 @@ impl JobHandler for SendEmail {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let signal = RuntimeShutdownSignal::unix_termination()?;
+    let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
     // Copied worker binaries need tracing-subscriber or another subscriber setup.
     tracing_subscriber::fmt::init();
 
@@ -68,10 +72,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Graceful time for the loops to stop on their own, then a shorter allowance
     // to abort and join whatever did not. Both share one clock that starts at the
     // first stop request, whichever source raised it.
-    let budget = RuntimeShutdownBudget::new(Duration::from_secs(30), Duration::from_secs(5))?;
-    let report = supervisor
-        .run_until_shutdown_report(RuntimeShutdownSignal::ctrl_c(), budget)
-        .await;
+    let report = worker::run(supervisor, signal, budget, || {
+        println!("worker ready; local runtime loops initialized");
+    })
+    .await;
 
     match report.classify() {
         RuntimeSettlement::Clean(clean) => {

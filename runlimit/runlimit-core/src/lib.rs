@@ -24,6 +24,7 @@ mod identifier;
 mod key;
 mod limiter;
 mod observation;
+mod observer_panic;
 mod policy;
 
 pub use batch::{BatchError, validate_batch};

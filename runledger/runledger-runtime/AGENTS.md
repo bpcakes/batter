@@ -40,6 +40,12 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
   `src/shutdown_signal/owner.rs`.
 
 ## Invariants
+
+- Environment readers return typed errors for invalid supplied values; only absent
+  variables select defaults. Keep rejected values out of retained diagnostics.
+- Native executable examples install `unix_termination` before startup and announce
+  readiness only after observing local loop initialization; retain the shutdown
+  driver through that observation and consume settlement before pool closure.
 - Prefer direct cutovers only for internal runtime refactors within one coordinated deploy. Changes that alter runtime-config semantics or behavior relied on by persisted jobs or cross-deploy workers require backward compatibility or an explicit staged rollout; update dependents in the same change.
 - Keep runtime orchestration generic; app-specific handlers and catalogs belong outside this crate.
 - Worker/scheduler/reaper loops must remain cancellation-safe and shutdown-safe.
@@ -78,7 +84,7 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
   while native settlement continues. Retain returned typed errors separately
   through `signal_error()`, `SignalFailed`, and `Signal { source }`. A normally
   destroyed and joined returned error denies success but not cleanup. If the
-  registry cancels a runtime-authored `ctrl_c` or `pending` signal after another
+  registry cancels a runtime-authored `unix_termination`, `ctrl_c` or `pending` signal after another
   shutdown cause, a completed cancellation join is accounted because it proves
   guarded destruction. Cancellation of an application-supplied `fallible` or
   `infallible` signal remains unexpected and denies cleanup; panic, unjoined and
