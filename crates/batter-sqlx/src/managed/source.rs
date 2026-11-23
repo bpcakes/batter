@@ -21,11 +21,12 @@ pub(super) enum Token<'a> {
     Literal,
 }
 
+/// Validate one statement and return the byte offset of its first token.
 pub(super) fn validate(
     kind: ManagedObjectKind,
     identity: &Identity,
     source: &str,
-) -> Result<(), ManagedObjectError> {
+) -> Result<usize, ManagedObjectError> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(ManagedObjectError::SourceTooLarge);
     }
@@ -41,24 +42,21 @@ pub(super) fn validate(
         } else {
             StatementKind::Trigger
         },
-    )
+    )?;
+    statement_start(source)
 }
 
 pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
+    loop {
+        index = trivia(bytes, index)?;
+        let Some(&byte) = bytes.get(index) else {
+            break;
+        };
         let next = bytes.get(index + 1).copied();
         match byte {
-            b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c => index += 1,
-            b'-' if next == Some(b'-') => {
-                index = bytes[index..]
-                    .iter()
-                    .position(|byte| matches!(byte, b'\n' | b'\r'))
-                    .map_or(bytes.len(), |offset| index + offset);
-            }
-            b'/' if next == Some(b'*') => index = block_comment(bytes, index)?,
             b'\'' => {
                 index = string(bytes, index, StringSyntax::Literal)?;
                 tokens.push(Token::Literal);
@@ -117,6 +115,39 @@ pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
         }
     }
     Ok(tokens)
+}
+
+/// Skip every whitespace byte and comment from `index` on, and return the
+/// index of the first token there, or the length of the source when none is.
+///
+/// This is the one definition of what precedes and separates tokens: [`scan`]
+/// and [`statement_start`] both skip through it, so the text that
+/// [`SourceChecksum::FromStatementStart`](super::SourceChecksum::FromStatementStart)
+/// leaves out is exactly the text the header check skips.
+fn trivia(bytes: &[u8], mut index: usize) -> Result<usize, ManagedObjectError> {
+    loop {
+        let next = bytes.get(index + 1).copied();
+        index = match bytes.get(index) {
+            Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) => index + 1,
+            Some(b'-') if next == Some(b'-') => bytes[index..]
+                .iter()
+                .position(|byte| matches!(byte, b'\n' | b'\r'))
+                .map_or(bytes.len(), |offset| index + offset),
+            Some(b'/') if next == Some(b'*') => block_comment(bytes, index)?,
+            _ => return Ok(index),
+        };
+    }
+}
+
+/// Return the byte offset of the first token in `source`, or its length when
+/// it holds none.
+///
+/// Every skipped item ends after an ASCII byte, before a line terminator or at
+/// the end of the source, so the offset is a character boundary. This must
+/// keep returning the same offset for the same source: ledgers record
+/// checksums of the text from it on.
+pub(super) fn statement_start(source: &str) -> Result<usize, ManagedObjectError> {
+    trivia(source.as_bytes(), 0)
 }
 
 const fn identifier_start(byte: u8) -> bool {

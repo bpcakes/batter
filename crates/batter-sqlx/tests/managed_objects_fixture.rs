@@ -5,7 +5,7 @@ use batter_core::operation::{OperationContext, OperationOwner};
 use batter_sqlx::PgLease;
 use batter_sqlx::managed::{
     AppliedManagedObjects, ManagedApplyError, ManagedObject, ManagedObjectManifest,
-    ManagedRevision, PublicExecute, Retirement,
+    ManagedRevision, PublicExecute, Retirement, SourceChecksum,
 };
 use batter_sqlx::verification::{
     Identifier, MigrationExpectation, QualifiedName, RoutineSignature, RoutineType, SqlxLedgerMode,
@@ -295,6 +295,16 @@ impl Fixture {
         objects: impl IntoIterator<Item = ManagedObject>,
         retirements: impl IntoIterator<Item = Retirement>,
     ) -> Result<Objects> {
+        self.objects_under(policy, SourceChecksum::WholeSource, objects, retirements)
+    }
+
+    pub(crate) fn objects_under(
+        &self,
+        policy: PublicExecute,
+        rule: SourceChecksum,
+        objects: impl IntoIterator<Item = ManagedObject>,
+        retirements: impl IntoIterator<Item = Retirement>,
+    ) -> Result<Objects> {
         Ok(Objects {
             manifest: ManagedObjectManifest::new(
                 ManagedRevision::new(
@@ -304,6 +314,7 @@ impl Fixture {
                 .expect("valid fixture revision"),
                 QualifiedName::new(&self.schema, "managed_objects")?,
                 policy,
+                rule,
                 objects,
                 retirements,
             )?,
@@ -321,6 +332,7 @@ impl Fixture {
                 .expect("fixture revision"),
                 manifest.ledger().clone(),
                 manifest.public_execute(),
+                manifest.source_checksum(),
                 manifest.objects().iter().cloned(),
                 manifest.retirements().iter().cloned(),
             )?,
@@ -337,6 +349,7 @@ impl Fixture {
                 .expect("valid fixture revision"),
                 QualifiedName::new(&self.schema, ledger)?,
                 policy,
+                SourceChecksum::WholeSource,
                 self.standard_objects(),
                 [],
             )?,

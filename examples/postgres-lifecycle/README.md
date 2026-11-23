@@ -96,11 +96,14 @@ only the previously installed routine body. A deferred check receives the row
 as of its event, so the trigger fires on every insert and update and
 `require_note` reads the row's current state.
 `src/schema.rs` declares them in one `ManagedObjectManifest` with
-`PublicExecute::Revoke` and the ledger `lifecycle.managed_objects`, and derives
+`PublicExecute::Revoke`, `SourceChecksum::FromStatementStart` and the ledger
+`lifecycle.managed_objects`, and derives
 the expected SQLx history from the same embedded migrator. Startup passes that
 one manifest value to both setup and the readiness gate, so the applied set and
 the verified set cannot diverge. A repeated startup with unchanged files
-executes no DDL; a release that edits a file replaces only that object. A
+executes no DDL. A release that edits a file's statement changes the set, so it
+needs a higher `ManagedRevision`, and apply replaces only that object; rewording
+a file's leading comment changes nothing. A
 verification failure keeps the complete report in `schema::SchemaMismatch` for
 a trusted sink and prints only the fixed process diagnostic. The SQLx ledger is
 expected in `public`, the first schema of a default search path. The login in

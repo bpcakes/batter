@@ -746,7 +746,8 @@ versions and of the content digest. Apply rejects a lower revision and rejects
 the same revision with different content before managed DDL or application SQL.
 The same revision/content can repair drift; a higher revision can install new
 content or explicitly restore older source. Verification requires the expected
-revision as well as the expected content.
+revision as well as the expected content. Batter checks the number but does
+not choose it; see [Choosing a revision](#choosing-a-revision).
 
 Existing five-column ledgers require a baseline rollout: first deploy this
 library with the **currently recorded manifest**, unchanged, and its declared
@@ -769,7 +770,7 @@ Migrations keep tables, columns, constraints, policies and data changes. See
 
 ```rust,no_run
 use batter_core::operation::OperationContext;
-use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute}};
+use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, ManagedRevision, PublicExecute, SourceChecksum}};
 use batter_sqlx::verification::{
     Identifier, QualifiedName, RoutineSignature, SqlxMigrationManifest, VerificationPlan,
     VerificationStatus, verify,
@@ -781,6 +782,7 @@ let objects = ManagedObjectManifest::new(
     ManagedRevision::new(1).expect("positive release revision"),
     QualifiedName::new("app", "managed_objects")?,
     PublicExecute::Revoke,
+    SourceChecksum::FromStatementStart,
     [
         ManagedObject::function(
             RoutineSignature::new("app", "touch_updated_at", [])?,
@@ -855,7 +857,37 @@ cannot overlap an entry. The ledger `kind` names are `function`, `procedure`,
 routine and verification checks it, while `Unmanaged` leaves it to the
 application. The ledger is an application-named relation, never
 `_sqlx_migrations`. `digest()` is a SHA-256 set digest over the policy, entries
-and retirements, suitable for release evidence.
+and retirements, suitable for release evidence. Its scheme is fixed across
+Batter releases, because every ledger stores it: `ManagedObjectDigest`'s rustdoc
+states the byte layout and a golden value, and a change of scheme would be a
+`Breaking:` change that ships at a higher revision.
+
+`SourceChecksum` has no default either. It is one rule for the whole set:
+the manifest computes every object's source checksum, which its ledger row
+records, and the set digest from it, so no object can be checksummed
+differently from the others. Apply always executes the whole source.
+
+- `WholeSource` checksums every byte. Every ledger written before the rule
+  existed holds these checksums, so an existing set keeps its digest. An edit
+  to a comment above the statement is then a set change: it needs a higher
+  revision and makes apply execute that object again.
+- `FromStatementStart` checksums each source from its first token on, skipping
+  leading whitespace and comments exactly as the header check does.
+  PostgreSQL 18 stores nothing that precedes a statement, so header comments
+  stay free to edit. Only leading text is left out: comments and whitespace
+  inside the statement and anything after it, such as a final newline, stay in
+  the checksum even where PostgreSQL does not store them. A PostgreSQL 18 case
+  switches one entry of each kind between the rules and finds the deparsed
+  definitions and rendered checksums unchanged.
+- Switching an existing set's rule is a set change when any source has
+  leading text. Every such object gets a new checksum, so that release needs a
+  higher revision and apply executes all of them again in its one
+  transaction. A constraint trigger is dropped and re-created under
+  `ACCESS EXCLUSIVE`, and each plain trigger takes its table lock, until that
+  transaction commits. With no leading text the two rules agree.
+
+The manifest's `object_checksums()` returns each object with the checksum its
+ledger row records; an object has no checksum of its own.
 
 `PgLease::migrate_and_apply` and its `migrate_and_apply_with` form are the only
 apply path. A session advisory lock
@@ -1008,6 +1040,93 @@ lock. A PostgreSQL upgrade that changes deparsed text reports drift until the
 next apply. Lexical validation does not
 prove a body correct. The runnable consumer is
 [`examples/postgres-lifecycle`](../../examples/postgres-lifecycle/src/schema.rs).
+
+### Choosing a revision
+
+For the manifests applied to one ledger, the fence needs two things: the
+revision never decreases, and two manifests with the same revision have the
+same digest. Apply enforces both and refuses a release that breaks either. Any
+numbering that a correct release process never trips is valid.
+
+A single hand-written constant is valid for one line of work and awkward for
+several. Every branch that changes a routine or trigger rewrites the same line.
+Branches that pick different numbers conflict there, and taking either side is
+wrong. Branches that each raise it to the same next number make identical
+edits, which Git merges, rebases and squashes without a conflict. Either way
+the merged tree holds a third set, and the number it keeps from a parent then
+names more than one set. After a clean merge nothing shows this until apply
+refuses that revision with `ManagedReleaseError::RevisionConflict` on a ledger
+that already holds a parent's set.
+
+One numbering that merges without a shared line is a frozen base plus a count
+of append-only records:
+
+```rust
+use batter_sqlx::managed::ManagedRevision;
+
+/// The last revision chosen by hand, or zero for a new ledger. Never changes.
+const BASE: u64 = 41;
+/// The number of record files in a records directory, generated by the build script.
+const RECORDS: usize = 3;
+const REVISION: ManagedRevision = ManagedRevision::new(BASE + RECORDS as u64)
+    .expect("a positive bigint revision");
+```
+
+Each change to the set (a source, a retirement or the `PUBLIC` policy) adds
+one new uniquely named file to the directory, no record is added without a set
+change, and no record is ever edited, renamed or deleted. A merge then holds
+both parents' records, so its revision is above both and no line is shared.
+The same rule covers restoring earlier source: add a record, never remove one.
+With a base of zero the first record gives revision 1.
+
+Batter does not read the directory or check the rule. The application's build
+lists the records, and its review or CI must refuse a set change that adds no
+record, a record added without a set change, and any edit to or removal of an
+existing record or the base. Two build details decide whether the count is
+right:
+
+- Count only files that match the record naming, not every directory entry.
+  An untracked file such as `.DS_Store` otherwise raises the revision of one
+  local build, and applying that build publishes a revision the releasing line
+  will reach later with other content. A committed placeholder such as
+  `.gitkeep` raises every build's count instead, so adding or deleting it
+  moves the revision without a set change.
+- Declare the records directory as a build-script input
+  (`cargo::rerun-if-changed=<records directory>`). Once a build script prints
+  any `rerun-if-changed` or `rerun-if-env-changed` line, even one naming only
+  `build.rs`, Cargo reruns it only when a declared input changes, so without
+  the directory an incremental build keeps the old count and ships a changed
+  set at the old revision. A script that prints none is rerun when a file in
+  the package is added or modified, which misses a records directory outside
+  the package and a deleted record.
+
+This recipe comes from one downstream application; a library-owned form is
+tracked as `batter-ulfs`.
+
+Beyond the record rules and build details above, the recipe assumes **one
+releasing line per ledger**. Its limits follow. Each fence outcome below
+assumes the build holds every migration the database has recorded: otherwise
+the SQLx migrator refuses first with `MigrateError::VersionMissing`, unless
+the application's migrator ignores missing migrations, before any migration
+or managed DDL runs.
+
+- Two unmerged branches that each add one record to the same parent commit
+  build the same revision, one above that parent's, with different digests.
+  Applying both to one database, such as a shared development
+  database, is refused with `ManagedReleaseError::RevisionConflict` before any
+  managed DDL, but after that branch's migrations have committed.
+- A stale branch that holds more records than the releasing line is a higher
+  revision and is applied. The fence compares two numbers and knows nothing of
+  ancestry; a larger hand-written constant behaves the same.
+- Two releasing lines, such as a maintenance branch beside the main line,
+  cannot share a ledger: their counts interleave. Land the fix on the releasing
+  line.
+- Removing a record, for example by reverting a commit, lowers the revision.
+  A ledger that already holds the higher one refuses it with
+  `ManagedReleaseError::Downgrade`.
+- A record added without a set change is a higher revision with identical
+  content. It applies without DDL, but processes built at the previous revision
+  then fail verification, so do not add spare records.
 
 ## Optional fixture support
 

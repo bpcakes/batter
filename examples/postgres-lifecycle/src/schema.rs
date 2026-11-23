@@ -12,7 +12,7 @@ use batter::{
         PgLease,
         managed::{
             AppliedManagedObjects, ManagedObject, ManagedObjectManifest, ManagedRevision,
-            PublicExecute,
+            PublicExecute, SourceChecksum,
         },
         verification::{
             Identifier, MigrationExpectation, QualifiedName, RoutineSignature, SqlxLedgerMode,
@@ -28,12 +28,15 @@ use std::fmt;
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// The managed routines, the trigger that keeps `updated_at` current and the
-/// deferred constraint trigger that requires a note at commit.
+/// deferred constraint trigger that requires a note at commit. Each file opens
+/// with a comment; `FromStatementStart` keeps those comments out of the set, so
+/// rewording one is no release.
 pub fn managed_objects() -> Result<ManagedObjectManifest, BoxError> {
     Ok(ManagedObjectManifest::new(
         ManagedRevision::new(1).expect("valid revision"),
         QualifiedName::new("lifecycle", "managed_objects")?,
         PublicExecute::Revoke,
+        SourceChecksum::FromStatementStart,
         [
             ManagedObject::function(
                 RoutineSignature::new("lifecycle", "touch_updated_at", [])?,
