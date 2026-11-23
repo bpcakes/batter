@@ -48,8 +48,8 @@ pub mod browser;
 pub use admitted::{AdmittedRequest, AdmittedRequestRejection};
 pub use boundary::{
     AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
-    InProcessClient, MutationCheckWaiver, ProbePath, ProbePathError, ProbeRegistrationError,
-    ReusedRoutingState, RouteGroup, RouteGroupError, RouteInventory, RouteInventoryError,
+    InProcessClient, InProcessRefusal, MutationCheckWaiver, ProbePath, ProbePathError,
+    ProbeRegistrationError, RouteGroup, RouteGroupError, RouteInventory, RouteInventoryError,
 };
 pub use correlation::{CorrelationId, render_infrastructure_failure};
 pub use readiness::{
@@ -146,10 +146,10 @@ pub struct RequestPolicy {
 /// cancellation or deadline expiry before the outer admission operation is
 /// polled again; Batter's nested adapters read the same value from the request
 /// extensions. The application cannot construct one with a different request
-/// or policy. The captured metadata excludes Batter's private quota writer,
-/// shared observation state, operational ownership marker and admission record.
-/// Public correlation and application extensions remain available; redispatch
-/// cannot mutate the original observer or admit the new request.
+/// or policy. Its metadata excludes every private request record that
+/// [`InProcessClient::request`] lists, so redispatch cannot mutate the original
+/// observer, admit the new request or present cookies under its decision.
+/// Public correlation and application extensions remain available.
 ///
 /// ```
 /// use axum::response::Response;
@@ -207,8 +207,8 @@ impl RequestInterruptionResponder {
     /// Render cancellation or deadline expiry with the admission policy's envelope.
     ///
     /// The custom renderer receives the original request metadata captured
-    /// before inner adapter extensions were inserted, without private quota,
-    /// observation or operational ownership state.
+    /// before inner adapter extensions were inserted, without any private
+    /// request record that [`InProcessClient::request`] lists.
     /// Returning this response through admission also records `reason` as the
     /// response-construction operation's outcome, preserving the rendered body,
     /// headers and status. Rendering and discarding it changes no outcome.
@@ -308,8 +308,8 @@ impl RequestPolicy {
     ///
     /// The callback receives a snapshot of the original request parts at entry
     /// to this middleware, including application extensions but excluding
-    /// Batter's private quota writer, shared observation state, operational
-    /// ownership marker and admission record. Redispatching cloned metadata
+    /// every private request record that [`InProcessClient::request`] lists.
+    /// Redispatching cloned metadata
     /// creates independent observation and correlation under an operational
     /// wrapper and is admitted only by admission of its own. Install trusted
     /// correlation/identity extensions in an outer layer before this boundary;

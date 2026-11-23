@@ -280,13 +280,15 @@ then clones it per request, and polls each request inside the caller's task
 under the boundary's existing dispatch and observation ownership, spawning
 nothing. It accepts only an arrival-shaped request: a request whose extensions
 carry an Axum routing record from an earlier dispatch (the path-parameter record
-that `RawPathParams` reads, `MatchedPath`, `NestedPath` or `OriginalUri`) is
+that `RawPathParams` reads, `MatchedPath`, `NestedPath` or `OriginalUri`), or
+one of the adapter's own private request records, is
 refused whole at entry, before any layer or handler runs, with the sanitized
 `HttpFailure::Internal` infrastructure response carrying the
-`ReusedRoutingState` response extension and one static ERROR event, and no
+`InProcessRefusal` response extension and one static ERROR event, and no
 completion event; the client removes that extension from every response it
 dispatched. Copy application extensions by type into a fresh request
-instead of cloning a whole extension map. The check lives in
+instead of cloning a whole extension map, and rebuild a request another Axum
+router dispatched instead of forwarding it whole. The check lives in
 `low_level::RouterClient`, the lower-level in-process transport over a
 caller-composed router, which the protected client delegates to; Runlimit's
 test transport holds one too. `RouterClient` establishes nothing about its
@@ -415,7 +417,8 @@ with `AssembledHttp::in_process` and wraps the adapter's opaque
 `InProcessClient` in a non-service type that requires a synthetic peer for every
 request; it owns insertion of the exact `ConnectInfo<SocketAddr>` and exposes
 neither the adapter client nor a router. It delegates every request to the
-adapter client, so it inherits that client's refusal of reused routing records.
+adapter client, so it inherits that client's refusal of requests carrying Axum
+routing records or one of the adapter's own private request records.
 A synthetic peer is not evidence of a remote client, and an in-process response
 is not evidence of serving.
 `MockConnectInfo` affects extractor
@@ -1015,9 +1018,9 @@ commit-outcome-loss and commit-timeout are `PossiblyConsumed`; pre-commit failur
 are `NotConsumed`. The native exhaustive errors no longer contain a
 post-commit malformed-response variant. Native decisions are built before commit.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
-quota rejection. `low_level::request_admission` captures the original request metadata without the
-private quota writer, shared observation state and operational ownership marker,
-and installs an opaque interruption responder for the inner
+quota rejection. `low_level::request_admission` captures the original request
+metadata without any private request record that `InProcessClient::request`
+lists, and installs an opaque interruption responder for the inner
 adapter; it uses
 the same `RequestPolicy` renderer as an outer cancellation or deadline. A
 custom renderer, including `with_infrastructure_json`, owns that response's
@@ -1034,15 +1037,14 @@ a request whose extensions carry an Axum routing record from an earlier
 dispatch is refused whole at entry, before lifecycle admission,
 authentication, the native quota check, a public probe or any handler runs,
 with the sanitized `HttpFailure::Internal` response carrying
-`ReusedRoutingState`, one static ERROR event, no completion event and no
+`InProcessRefusal`, one static ERROR event, no completion event and no
 consumed quota. The marker is removed from every dispatched response.
 Application extensions reach the assembly untouched, and the synthetic peer
-still replaces any `ConnectInfo` the request carried. The check detects Axum
-routing records only: a map captured in a protected custom fallback for an
-`OPTIONS *` request, with its `OriginalUri` removed by the caller, is
-authenticated and charged like a fresh request but keeps the earlier
-observation and operational records, so it gets no fresh correlation and no
-completion event ([residual](guarantees.md#native-quota-execution)). Probe routes
+still replaces any `ConnectInfo` the request carried. The check also detects
+the adapter's own private request records: a map captured in a protected custom
+fallback for an `OPTIONS *` request, with its `OriginalUri` removed by the
+caller, is refused before authentication and with no quota consumed, because it
+keeps the earlier observation and operational records. Probe routes
 are explicitly unguarded. All routes, probes and fallback are covered by one root
 observer with fresh server correlation. Opt-in
 `low_level::operational_http_with_quota` retains
