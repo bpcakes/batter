@@ -6,6 +6,11 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+**Breaking:** `runledger-tui` now overrides inherited PostgreSQL transaction
+timeouts with a 10s idle limit and a 60s total limit. The latter also bounds
+the startup schema check. See the [workspace changelog](../CHANGELOG.md#unreleased)
+for the before/after invocation and server log messages.
+
 ### Workflow completion lock order
 
 Workflow job completion, external completion, append, step-key listing for

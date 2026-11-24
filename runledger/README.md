@@ -1482,6 +1482,14 @@ cargo run -p runledger-tui -- --org 00000000-0000-0000-0000-000000000001
 migrated. The binary runs `ensure_schema_compatible_after_idempotency_cutover`
 on startup unless `--skip-schema-check` is set.
 
+TUI sessions set a 30s statement timeout, a 5s lock timeout, a 10s idle-in-transaction
+timeout and a 60s total transaction timeout. Earlier TUI versions inherited the
+last two values from connection startup, role or database settings. Upgrading
+overrides those values, including stricter limits. The startup schema check runs
+in one transaction, so its statements share the 60s total budget. PostgreSQL
+terminates the session when that limit expires or when a transaction sits idle
+for 10s.
+
 Keys: `1`–`4` or `Tab` switch screens · `Shift+Tab` moves backward · `j`/`k`
 or Up/Down move selection · `g`/`G` jump to first/last row · `PgUp`/`PgDn` page
 selection · `Enter`/`l` open job/workflow detail · `h`/`Esc` go back · `[`/`]`

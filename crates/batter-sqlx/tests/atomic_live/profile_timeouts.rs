@@ -3,7 +3,7 @@ use super::{
     support::{Result, bounded},
 };
 use batter_sqlx::{PgReadOnlySnapshot, PgSessionProfile, PgSessionTimeouts, run_atomic_profiled};
-use sqlx::{PgConnection, postgres::PgPoolOptions};
+use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
 use std::time::Duration;
 
 pub(super) const VALUES: &str = "SELECT \
@@ -23,6 +23,13 @@ pub(super) fn complete(login: &str, idle: Duration, total: Duration) -> PgSessio
 
 async fn values(connection: &mut PgConnection) -> Result<(i64, i64)> {
     Ok(sqlx::query_as(VALUES).fetch_one(connection).await?)
+}
+
+async fn discard_all(connection: &mut PgConnection) -> Result {
+    // DISCARD ALL also deallocates the server's prepared statements.
+    connection.clear_cached_statements().await?;
+    sqlx::raw_sql("DISCARD ALL").execute(connection).await?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -45,9 +52,7 @@ async fn transaction_profiles_distinguish_startup_defaults_session_settings_and_
         let mut connection = bounded(fixture.pool.acquire()).await??;
         assert_eq!(values(&mut connection).await?, (20_000, 30_000));
         // DISCARD ALL alone clears session SET values and restores startup defaults.
-        sqlx::raw_sql("DISCARD ALL")
-            .execute(&mut *connection)
-            .await?;
+        discard_all(&mut connection).await?;
         assert_eq!(values(&mut connection).await?, (10_000, 15_000));
         for (idle, total) in [(11_000, 22_000), (0, 22_000), (11_000, 0), (0, 0)] {
             complete(
@@ -60,9 +65,7 @@ async fn transaction_profiles_distinguish_startup_defaults_session_settings_and_
             assert_eq!(values(&mut connection).await?, (idle as i64, total as i64));
         }
         // Startup options still survive a subsequent DISCARD ALL.
-        sqlx::raw_sql("DISCARD ALL")
-            .execute(&mut *connection)
-            .await?;
+        discard_all(&mut connection).await?;
         assert_eq!(values(&mut connection).await?, (10_000, 15_000));
         Ok(())
     }

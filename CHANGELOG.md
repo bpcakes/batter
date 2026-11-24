@@ -24,6 +24,23 @@ contracts, capability facts and validation history.
   and `PgSessionTimeouts` are exposed identically through `batter_sqlx`,
   `batter::sqlx`, `batter::runledger`, and `runledger_postgres`.
 
+  **Breaking:** upgrading the `runledger-tui` binary also changes its database
+  sessions. Earlier versions inherited the idle-in-transaction and total
+  transaction limits from PostgreSQL startup, role or database settings. The
+  TUI now sets them to 10s and 60s, respectively, overriding tighter limits
+  as well as longer or disabled ones. For example, with both defaults disabled:
+
+  ```sh
+  # Before: a startup schema check could take over 60s across several statements.
+  runledger-tui --database-url "$DATABASE_URL"
+  # After: the same invocation can fail when its transaction reaches 60s.
+  runledger-tui --database-url "$DATABASE_URL"
+  ```
+
+  PostgreSQL's English server log reports `terminating connection due to
+  transaction timeout` or `terminating connection due to idle-in-transaction
+  timeout`. See the [operator guide](runledger/README.md#operator-tui).
+
   ```rust,ignore
   // Before: five-argument `new` left both transaction timeouts undeclared.
   let profile = PgSessionProfile::new(
