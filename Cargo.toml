@@ -57,9 +57,10 @@ runledger-core = { path = "runledger/runledger-core", version = "0.13.0" }
 runledger-test-support = { path = "runledger/runledger-test-support", version = "0.13.0" }
 cron = "0.17"
 
+atomic-waker = "1.1.2"
 pin-project-lite = "0.2.17"
 tokio = { version = "1.54.1", default-features = false }
-tokio-util = { version = "0.7.19", default-features = false }
+tokio-util = { version = "0.7.20", default-features = false }
 tracing = "0.1.44"
 metrics = { version = "0.24.6", default-features = false }
 tracing-core = "0.1.36"

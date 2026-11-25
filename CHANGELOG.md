@@ -8,6 +8,183 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `AdmittedRequest::into_streaming_response`, with `BodyBudget` and
+  `BodyScope`, in `batter-axum`: a library-owned lifetime for a response body
+  that outlives its handler. The body gets a context that starts from the
+  request's admission and survives response construction, required total and
+  idle bounds (the idle bound shorter than the total, the total at most one
+  year) enforced without the stream's cooperation, polling and
+  destruction under the handler's tracing dispatcher and request span (which
+  then closes when the body ends, so span-close timing includes the body), and
+  one `HTTP response body finished` event with `request_id`, `bytes`,
+  `duration_ms` and `body_outcome`. A bound or forced cancellation ends the
+  body with an error at a poll. In the HTTP/1.1 cases exercised Hyper then
+  ended the connection without completing the message; an HTTP/1.0 peer
+  receiving a response without a `Content-Length` cannot tell, because Hyper
+  delimits that response by closing the connection; both bounds
+  are checked before a frame is accepted, including after a poll that
+  outlasted them, so a frame ready or returned only after its wait expired
+  does not extend the body, and an error such a poll returned is reported as
+  that bound; an empty data frame is no progress, so a source of nothing but
+  empty frames still ends at the idle bound, and its task yields meanwhile,
+  and a final empty frame ends the message only if destroying it and asking
+  the source for its end stayed inside both bounds; a
+  wait starts with the poll that first asks for the next frame, so a source's
+  synchronous work inside that poll counts against the idle bound. The
+  outcome describes the body, not the transport: it follows the length the
+  response the builder returns declares, read once at the hand-over (its
+  `Content-Length` as plain digits, repeated only with one value, else its
+  body's exact size, and none for a response without content: answering HEAD,
+  a 2xx answer to CONNECT, or a 1xx, 204 or 304 status), and what the source
+  then does. A source that reaches its end, including by trailers, which end
+  the body as it yields them, or a body destroyed once it yielded its declared
+  length, is `completed`; a source that reaches its end short of that length
+  is `failed`; a body its holder destroyed before either is `dropped`, or
+  carries the reason its scope was already cancelled or expired for. The
+  rule is the same in-process and on any server; the outcome also depends on
+  whether and when the body's holder stops polling and destroys it, so an
+  in-process outcome is not evidence of a served one, and it is not a
+  delivery receipt: a length added after the hand-over by a handler's tuple
+  or a layer, a size the body reports only later and a head Hyper refuses to
+  write are not seen, so, in the HTTP/1 cases exercised, `completed` stands
+  beside a message Hyper aborted or never wrote and `dropped` beside one it
+  delivered whole. Declare the length inside the builder for
+  the outcome to follow it. An earlier, unreleased form mirrored Hyper's
+  HTTP/1 encoder and tracked which message carried each body; it was removed
+  after five review rounds each found another wrong case (`batter-9wig.11`).
+  A
+  body whose answer about its end or size panics is `panicked`,
+  including at the hand-over, and is ended before it is destroyed; so is one
+  whose swallowed empty frame panics when the library destroys it, even if the
+  caller catches that unwind before dropping the response; those
+  answers, like its polls, run under the handler's dispatcher and span; its
+  completion event and the request span's release stay with the request's
+  subscriber even if the handler switched subscribers: the one that owns the
+  span the request's observer published or, where there is none, the one the
+  request was admitted under. A
+  request starts at most one owned body, and only while its response is being
+  constructed; a start refused after the response still reports to the
+  request's subscriber, without its span, while that subscriber still
+  exists: the library's own request records hold none strongly, in an
+  admitted request or in extensions kept or copied beyond a response, and an
+  ended body holds no dispatcher. A request admitted under another request's copied observation record
+  reports its body to the subscriber it was admitted under once that
+  record's observer has finished. The existing completion event and every
+  existing signature are unchanged, and an unowned streaming body still
+  compiles. Not covered: a peer that stops reading (ended only by the forced
+  connection close), upgraded connections, and admission permits held for a
+  body's lifetime. `batter-axum` now depends on `http-body`, `tokio-util`
+  (with `rt`, for `TaskTracker`) and `atomic-waker` directly, all already in
+  the dependency graph (`batter-9wig.6`).
+- Add the lower-level `lifecycle::low_level::admit_root_with_continuation` and
+  `lifecycle::low_level::OperationContinuation` in `batter-core`: proof of an
+  admission from which an adapter starts work that continues the admitted
+  operation under its own deadline, without a second readiness read. The proof
+  is not `Clone` and `start` consumes it, so one admission continues into at
+  most one root, and a start after the admitted operation was cancelled or
+  passed its deadline is already cancelled. Additive (`batter-9wig.6`).
+- The `http_service` example gains an `/events` route that streams server-sent
+  events through `into_streaming_response` and ends at drain.
+
+- Fix `batter-axum` served connections that outlast drain forcing an abort of
+  the server wrapper, which skipped every dependent finalizer. A response body
+  that stays pending, a peer that stops reading a large fixed response and a
+  request head that never completes each held Axum's graceful wait past the
+  cancel allowance, at any client's choice. `AssembledHttp::register_in`,
+  `register_with_connect_info_in` and the three `low_level::register_http*`
+  helpers now wrap the listener: every accepted connection's reads and writes
+  fail halfway between forced cancellation and the supervisor's abort
+  deadline, Hyper ends the connection, and the wrapper returns joined once
+  every accepted connection's service, handler future and response body is
+  destroyed, which Axum's graceful return alone does not establish; a
+  destructor still running at the abort deadline aborts the wrapper and skips
+  cleanup, including when Axum's serving future returns an error. Each
+  response body gains one wrapper allocation, and each request costs a few
+  atomic updates of one server-wide `TaskTracker`.
+  Existing signatures are unchanged; the concrete I/O type inside an HTTP/1
+  upgrade changes, as the `Breaking:` entry below records. Behavior change: such a shutdown now reports
+  success with `forced_cancellation` set and runs cleanup, where it reported
+  `abort_requested` and `SkipReason::UnsafeTaskExit`; the peer sees a truncated
+  message or a closed connection in the second half of the cancel allowance
+  instead of after process exit, though an HTTP/1.0 peer receiving a
+  response without a `Content-Length` cannot tell that close from the
+  message's end.
+  Cancelled handlers still deliver their 503
+  `operation_cancelled` first. With a zero cancel allowance, once a deadline
+  moved earlier has already passed, or with no known abort deadline, the gate
+  never closes, so the
+  earlier abort-and-skip outcome holds on any runtime flavour,
+  as it does for a connection task that never yields. The close also reaches a connection that never
+  waited in transport I/O, such as one whose first read returned a request head
+  with bytes of a following request, after which Hyper waits on the response
+  body alone; and its instant is recomputed when a component moves the abort
+  deadline earlier. Upgraded connections, HTTP/2 and servers that call
+  `axum::serve` themselves are not covered. Each connection adds one registry
+  entry, and each I/O poll one atomic waker registration (`batter-9wig.1`).
+- Breaking: the I/O inside an HTTP/1 upgrade served through
+  `AssembledHttp::register_in`, `register_with_connect_info_in` or the three
+  `low_level::register_http*` helpers is now the listener's I/O wrapped in the
+  forced-close gate, on every connection, whether or not shutdown starts. A
+  downcast of the upgraded connection to the listener's own type still
+  compiles and now always returns `Err`. Add `low_level::ForcedCloseIo<I>`,
+  with `get_ref` and `into_inner`, as the supported recovery: name it in the
+  downcast and unwrap it, keeping the downcast's `read_buf` beside the socket:
+  it holds any bytes Hyper read past the upgrade request, which the protocol
+  starts with. `into_inner` also takes the connection out of the
+  forced connection close, and an operation done on the inner I/O through
+  `get_ref` bypasses the close for that operation while the connection stays
+  registered; either way the application must then end the connection from
+  its own shutdown observation; an upgraded connection's task was never joined.
+  `Upgraded` used as a byte stream, as Axum's WebSocket extractor uses it,
+  needs no change, and nothing changes for servers that call `axum::serve`
+  themselves. No `#[deprecated]` shim is possible: no Batter item was removed
+  or renamed, and the old downcast target is a type the application names
+  from `tokio` and `hyper-util` (`batter-9wig.14`).
+
+  ```rust,ignore
+  use hyper_util::{rt::TokioIo, server::conn::auto::upgrade::downcast};
+  use tokio::net::TcpStream;
+
+  // Before: matched for a server registered over a `TcpListener`.
+  let parts = downcast::<TokioIo<TcpStream>>(upgraded).map_err(|_| "not TCP")?;
+  let (socket, buffered): (TcpStream, Bytes) = (parts.io.into_inner(), parts.read_buf);
+
+  // After: name the wrapper, then recover the listener's own I/O.
+  use batter_axum::low_level::ForcedCloseIo;
+
+  let parts = downcast::<TokioIo<ForcedCloseIo<TcpStream>>>(upgraded).map_err(|_| "not TCP")?;
+  let (socket, buffered): (TcpStream, Bytes) =
+      (parts.io.into_inner().into_inner(), parts.read_buf);
+  // Consume `buffered` before reading from `socket`.
+  ```
+- Document that a skipped `CleanupSlot::acquire_semaphore` or `bind_udp`
+  finalizer has still released its permit or socket reference: the hook only
+  drops its capture, and skipping drops it too. `SkippedCleanup` now says so.
+  No type or behavior changes (`batter-9wig.4`).
+- Document what a skipped `batter_sqlx::pool_in` close leaves on the server:
+  sessions dropped with the last pool handle, or at process exit, end when
+  their sockets close, without a Terminate message, and PostgreSQL rolls back
+  open transactions; a surviving handle's pool still closes idle or expired
+  connections gracefully. Source reading against PostgreSQL 18
+  and SQLx 0.9.0, not a live observation (`batter-9wig.5`).
+- Add `ShutdownSignal::abort_deadline` and `RunningComponent::abort_deadline`:
+  the stop time plus the supervisor's drain and cancel allowances, `None`
+  before drain and for a standalone handle. A component that owns descendants
+  can use the remaining interval to end them itself and return joined rather
+  than aborted. `ShutdownSignal::abort_deadline_before` waits, read-only, until
+  that deadline is earlier than one the caller holds, so such work can follow
+  a component that reveals an earlier stop. `ShutdownSignal::forced_cancellation_at`
+  reports when forced cancellation was first requested, so work sharing the
+  cancel allowance measures from that instant rather than from a late
+  observation. Additive; no existing caller changes (`batter-9wig.1`).
+
+- Require `tokio-util` 0.7.20 (from 0.7.19) across the workspace. Its
+  `CancellationToken` notifies descendants after releasing its locks, so a
+  task waker that panics when woken no longer poisons the parent token. The
+  waiters after such a waker are still not woken, and a waker that panics
+  stays outside `batter-axum`'s owned-body contract. tokio-util 0.7.20
+  needs Rust 1.85, below the workspace minimum.
+
 - Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
   library read of the process environment outside the one declared seam, share
   the executable-root inventory with the panic-hook scan, and record the

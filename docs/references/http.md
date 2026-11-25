@@ -444,3 +444,244 @@ one ordered array batch, then verifies the whole policy in a separate command.
 This preserves permission/check-hook semantics and detects value drift without
 repeating reset or clearing the statement cache. Native fast paths and already
 held leases retain their documented limits.
+
+## Forced connection close at shutdown (2026-11-11)
+
+Rechecked for `batter-9wig.1` against the resolved Axum 0.8.9 and Hyper 1.11.1
+sources in the locked registry.
+
+- Axum `src/serve/mod.rs`: `WithGracefulShutdown` stops accepting when the
+  signal fires, drops the listener, and returns only after
+  `close_tx.closed()`, that is after every spawned connection task has dropped
+  its receiver. Each connection task selects the Hyper connection future
+  against the signal and calls `graceful_shutdown` once. The builder is
+  `hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())` with no
+  timer, so Hyper's 30 second `header_read_timeout` default, which
+  [requires a timer](https://docs.rs/hyper/1.11.1/hyper/server/conn/http1/struct.Builder.html#method.header_read_timeout),
+  never applies. Axum offers no handle that ends an accepted connection.
+- Hyper `src/proto/h1/conn.rs` and `dispatch.rs`: `disable_keep_alive` closes a
+  connection only when it is idle or `has_initial_read_write_state`, which
+  requires an empty read buffer. A partly received request head therefore keeps
+  the connection open after graceful shutdown. While a response is being
+  written and the request was read, `poll_read_keep_alive` calls
+  `mid_message_detect_eof`, which reads from the transport (`force_io_read`)
+  only while half-close is not allowed and its read buffer is empty
+  (`conn.rs:487-493`). Bytes of a following request already buffered, or a read
+  side Hyper has closed (`conn.rs:434-435`), leave it waiting with no transport
+  interest, so a connection whose reads and writes were all ready can then wait
+  on its response body alone. Every dispatcher pass still flushes
+  (`dispatch.rs:172-175`), and with an empty write buffer `Buffered::poll_flush`
+  calls the transport's `poll_flush` (`io.rs:271-275`) unless `pipeline_flush`
+  is enabled, which Axum's builder leaves off. An I/O error from a read, write
+  or flush ends the connection future with an error; Axum's task then logs at
+  trace level and drops its receiver. Checked against Hyper 1.11.1 for the
+  `batter-9wig` follow-up review.
+- Axum `src/serve/mod.rs:388-414` calls `drop(close_rx)` before the pinned
+  connection future leaves scope, so its graceful wait can return while that
+  future is still being destroyed. Hyper `src/proto/h1/dispatch.rs:123-141`
+  (`poll_catch`) does not clear the pending response body or the in-flight
+  service future on a connection error, and `Dispatcher` drops its fields in
+  order I/O, dispatch (in-flight future, then service), request-body sender,
+  response body (`dispatch.rs:22-28`, `48-51`). Destroying the response body is
+  therefore the last application-visible step, after Axum counted the
+  connection finished. A task woken from a Tokio 1.54.1 worker goes to that
+  worker's LIFO slot, which other workers cannot steal
+  (`runtime/scheduler/multi_thread/worker.rs:1393-1407`), which usually hides
+  the gap behind a blocking destructor; `block_in_place` moves that slot to the
+  stealable queue (`worker.rs:479-485`), and the regression uses it. Checked on
+  2026-11-13.
+- Hyper has no write timeout. A peer that stops reading leaves the connection
+  future pending in `poll_flush` for as long as TCP keeps the connection.
+- The completion tokens are those of a Tokio `tokio-util` 0.7.20
+  `TaskTracker` (`task/task_tracker.rs`): `token` counts a holder until it is
+  dropped, and `wait` resolves once the tracker is closed and no token or task
+  remains, so the server closes it after Axum's graceful return and waits.
+  The gate records each I/O poll's task in an `atomic-waker` 1.1.2
+  `AtomicWaker`, whose `register` and `wake` are read-modify-writes of one
+  atomic state: a wake that follows a registration sees its waker, and a
+  registration that follows a wake is ordered after the store of the closed
+  flag that preceded that wake, so the poll's later read of the flag sees it.
+  Checked on 2026-11-14.
+- `serve_connection_with_upgrades` resolves its connection future when the
+  upgrade is handed over, so an upgraded connection no longer holds Axum's
+  graceful wait. At that point Hyper's `UpgradeableConnection` takes the
+  connection and calls `into_inner`, keeping only the I/O and read buffer and
+  discarding the dispatcher with its service, in-flight future and response
+  body (`server/conn/http1.rs:555-562`, `proto/h1/dispatch.rs:102-105`), so
+  every completion token an upgraded connection held is released at the
+  upgrade. Source reading against Hyper 1.11.1 on 2026-11-14; no upgrade is
+  exercised.
+- Hyper `src/proto/h1/dispatch.rs` `poll_write`: a response body frame error
+  becomes `Error::new_user_body` and ends the connection future, so a chunked
+  message whose body errors receives no final chunk. It polls the body only
+  while `can_write_body` holds and the write buffer accepts more, so a body is
+  not polled while its peer is not reading. Checked for `batter-9wig.6`; a
+  real-socket test asserts the missing final chunk.
+- Hyper `poll_write` stops polling a body without asking for its end in three
+  cases: once `is_end_stream` reports the end after a data frame
+  (`dispatch.rs:408-417`), once `can_write_body` is false because the
+  advertised length has been written (`dispatch.rs:391-397`), and after a
+  trailers frame (`dispatch.rs:426-430`). A body that yields its end with a
+  `Content-Length` still outstanding makes `end_body` fail:
+  `Encoder::end` returns `NotEof` for `Kind::Length(n)` (`encode.rs:124`) and
+  `end_body` maps it to a body-write-aborted error and closes writing
+  (`conn.rs:807-809`). A short final chunk after `is_end_stream` is written by
+  `write_body_and_end`, which closes writing because `encode_and_end` returns
+  false for a chunk shorter than the remaining length (`conn.rs:764-781`,
+  `encode.rs:248-251`). Either way the peer receives a truncated
+  message, so the owned body reports such an end as `failed`. Checked against
+  Hyper 1.11.1 on 2026-11-12; real-socket tests assert both short ends.
+- A body that already reports `is_end_stream` when Hyper writes the head is
+  treated as no body at all (`dispatch.rs:366-368`): a declared non-zero
+  `Content-Length` is skipped with a warning (`role.rs:785-795`) and the head
+  carries `content-length: 0` (`role.rs:942`), so the peer receives a complete
+  empty response. The owned body still produced none of the declared length
+  and reports `failed`. Checked on 2026-11-14; a real-socket test asserts the
+  empty framing and the event.
+- Hyper writes no response body, whatever length is declared, to a HEAD
+  request, for a 2xx answer to CONNECT and for 1xx, 204 and 304 statuses
+  (`role.rs:515-527`, `can_have_body`, forcing the body to zero at
+  `role.rs:965`). Axum 0.8.9 also replaces a HEAD response's body with an empty
+  one after setting its length (`routing/route.rs:166-171`). The owned body
+  therefore takes no advertised length from such a response. Checked on
+  2026-11-12 and 2026-11-14; in-process tests cover a 304, a 204, a HEAD
+  response and a 2xx answer to CONNECT. A final 1xx other than 101 is never
+  written at all: Hyper replaces it with a 500, drops the body and reports
+  `unsupported_status_code` (`role.rs:403-408`), and Axum 0.8.9's
+  `RouteFuture` passes such a status through, rewriting only a 2xx answer to
+  CONNECT and top-level heads (`routing/route.rs:146-175`), so the registered
+  server records that head as refused. Checked on 2026-11-15; a real-socket
+  test returns a 103 over a pending body and observes `failed`.
+- Hyper frames a body whose size it does not know by the `Content-Length`
+  header present when it encodes the head (`role.rs:746-766`), and Axum 0.8.9
+  applies a tuple's headers after the inner response is built
+  (`axum-core` `response/into_response.rs:396-416`,
+  `response/into_response_parts.rs:149-157`). A length declared after
+  `into_streaming_response` returns therefore frames the message, so the owned
+  body takes its advertised length from the response request admission
+  returns. `http` 1.x `Response::into_body` discards the response's parts,
+  extensions included, so the started body hands its framing over through a
+  private per-request record rather than the response. Checked on
+  2026-11-12 and 2026-11-13; real-socket tests cover a length declared through
+  a tuple and on a response rebuilt around the body, both short and met.
+- On the registered server the message that carries the body decides
+  instead. Hyper 1.11.1's dispatcher makes every call into a response body
+  synchronously on the connection task: `is_end_stream` and `size_hint` before
+  it writes the head, `poll_frame` while it writes the body, and the body's
+  destruction once it stops (`dispatch.rs:356-447`). Each response future
+  therefore computes the framing and refusal from the request head and the
+  response it hands Hyper, after every layer, and that response's body makes
+  them current in a thread-local around each such call, so an owned body
+  reached by one, through whatever layers wrap it, adopts the framing of the
+  message that actually carries it. That reaches admission polled on a task a
+  layer spawned with `tokio::spawn(next.run(request))`, a nested admission and
+  an in-process response a served handler returns, and misses a body a layer
+  polls on another task than the connection's. Application code also runs
+  inside such a call, so an owned body runs its source with no framing
+  current, and a body started while one is current, such as by a stream that
+  dispatches in-process, never adopts. Checked on 2026-11-15 and 2026-11-16;
+  real-socket tests cover the spawned, nested and returned in-process cases,
+  an in-process body the handler keeps, one a polled stream starts and one an
+  owned source forwards. Dispatch asks `is_end_stream` before anything else
+  and writes an ended body as none (`dispatch.rs:367-379`); `Server::encode`
+  then skips each `Content-Length` unparsed, except answering HEAD, where it
+  writes the value and sets the length as written (`role.rs:784-804`), so a
+  later length header is refused. Checked on 2026-11-16 against an HTTP/1.0
+  `Content-Length: 0` before `Transfer-Encoding: chunked`, written as a
+  complete empty response. Hyper encodes that
+  response's headers: `Server::encode` (`role.rs:653-940`) frames a body of
+  unknown size by a `Content-Length` it parses with `from_digits`
+  (`headers.rs:66-68`, `101-123`: plain digits, no sign, whitespace or
+  overflow), requires repeated values to match (`role.rs:756-781`), refuses
+  an unparsable one, and chunk-encodes under any `Transfer-Encoding` unless
+  the answer is HTTP/1.0 or bodyless, where it drops that header
+  (`role.rs:806-830`). With both headers, a `Content-Length` written before
+  `Transfer-Encoding` refuses the message in every answer (`role.rs:806-810`),
+  while one written after it refuses the message only in an answer that may be
+  chunked, because an HTTP/1.0 or bodyless answer drops the leading
+  `Transfer-Encoding` (`role.rs:706-710`). The answer's version is the
+  response's own (`dispatch.rs:600-610`) except that `enforce_version` forces
+  HTTP/1.0 for an HTTP/1.0 request (`conn.rs:692-704`). A body of exact size is
+  framed by that size whatever `Content-Length` says, which is written
+  unchanged and checked only by a debug assertion (`role.rs:712-744`); the
+  owned body judges such a misdeclared response by the declared length, which
+  is what the peer reads. Axum 0.8.9's `Route` adds a
+  `Content-Length` for a body of exact size unless one is present
+  (`routing/route.rs:167`, `190-207`), and `Router::layer` wraps each route in
+  another `Route`, so it does so after every router layer, even beside
+  `Transfer-Encoding`; Hyper then refuses the message and the body is dropped
+  unpolled, which the owned body reports `failed` from the refusal the
+  registered server records from that head. Hyper parses the headers before
+  its no-body rule (`role.rs:965`), so a 204 or 304 refuses an unparsable
+  length too, and a 2xx answer to CONNECT starts with its length counted as
+  written (`role.rs:396-401`), so any length header there is refused. Hyper also discards an empty data chunk and polls the body again at
+  once without yielding (`dispatch.rs:420-423`), so the owned body treats one as
+  no progress, but ends a message whose final data frame is empty at once
+  (`dispatch.rs:410-415`), as the owned body does. Checked on 2026-11-14; unit tests cover the parsing rules, and
+  real-socket tests cover a length a layer outside admission declares and the
+  refused `Transfer-Encoding`.
+- Hyper answers an HTTP/1.0 request in HTTP/1.0 (`conn.rs:692-699`,
+  `enforce_version`), as it does a response built as HTTP/1.0, and, with no
+  declared length, delimits the body by
+  closing the connection (`role.rs:921-925`, `Encoder::close_delimited`). A
+  body error still closes the connection (`dispatch.rs:401-405`), so such a
+  peer receives an orderly end of stream after the data already written and
+  cannot tell an interrupted body from a complete one; a declared length keeps
+  the shortfall visible. Checked on 2026-11-12 and 2026-11-14; real-socket
+  HTTP/1.0 tests observe the clean close without a declared length and, with a
+  declared `Content-Length`, a message framed by it that reaches the peer
+  shorter than declared.
+
+Batter therefore fails the accepted connection's own `AsyncRead`/`AsyncWrite`
+operations instead of owning the accept loop. A connection need not be waiting
+in the transport when the gate closes, so the gate records the task of every
+I/O poll, not only a pending one, and wakes it; that task's next pass flushes
+and fails. Local real-socket tests observed the pending body, the stalled
+reader and the half-sent head each holding the wrapper until abort without the
+close and ending inside the cancel allowance with it; a pending body after
+pipelined request bytes did the same when only pending polls were recorded.
+HTTP/2 was not exercised; of an upgraded connection only its I/O type and the
+recovery of its socket were (below). Axum 0.8.9's `serve`
+uses hyper-util's automatic builder without `http1_only`
+(`serve/mod.rs:391-394`), so it serves HTTP/2 whenever `hyper-util`'s `http2`
+feature is unified into the build. Hyper's HTTP/1 server parses only
+HTTP/1.0 and HTTP/1.1 requests and writes a response built as HTTP/2 as
+HTTP/1.1 (`role.rs:428-435`), so the owned body's framing mirror applies only
+to those request versions. Checked on 2026-11-16.
+
+Rechecked on 2026-11-18 for `batter-9wig.14`, against the same locked sources:
+
+- The owned response body no longer depends on the Hyper encoder and refusal
+  rules recorded above, nor on Hyper calling into a body synchronously on the
+  connection task. Those notes stay as the dated record of what was read; the
+  adapter stopped mirroring them (`batter-9wig.11`). The outcome now follows
+  the length the builder's own response declares, by HTTP's rules rather than
+  one implementation's: `Content-Length = 1*DIGIT`
+  ([RFC 9110, section 8.6](https://www.rfc-editor.org/rfc/rfc9110#section-8.6)),
+  and no content in a response to HEAD, a 2xx response to CONNECT, or a 1xx,
+  204 or 304 response
+  ([section 6.4.1](https://www.rfc-editor.org/rfc/rfc9110#section-6.4.1)). The
+  outcome rule still relies on one Hyper fact, the reason a declared length
+  completes a body at all (the owner's handling of empty frames, trailers and
+  body errors relies on the facts recorded in the bullets above): its HTTP/1
+  dispatcher asks `is_end_stream` once before writing the head and, only if
+  the body is not at its end, `size_hint` once (`dispatch.rs:367-379`; a body
+  already at its end is written as no body and never asked its size), and
+  stops polling
+  once a known length is written. Real-socket tests observe a body whose size
+  turns exact only after the hand-over written with `content-length: 5` and
+  reported `dropped`, and a stream that produced the length its builder
+  declared reported `completed`.
+- Axum 0.8.9 wraps each accepted connection's I/O in `TokioIo` and serves it
+  with `serve_connection_with_upgrades` (`serve/mod.rs:367`, `396`), and
+  `TapIo` keeps its listener's `Io` type (`serve/listener.rs:121-127`). The
+  I/O inside an HTTP/1 upgrade is therefore `TokioIo<L::Io>` for the listener handed
+  to `serve`, which hyper-util 0.1.20's
+  `server::conn::auto::upgrade::downcast::<T>` recovers by exact type from its
+  private `Rewind<T>` (`server/conn/auto/upgrade.rs:22-47`). Wrapping the
+  listener for the forced close makes that type
+  `TokioIo<ForcedCloseIo<L::Io>>` through both registrations, so a downcast to
+  the listener's bare type returns `Err`. A real-socket test observes both
+  downcasts, the wrapped socket's peer address read through `get_ref`, and a
+  write on the recovered socket after the
+  server shut down joined.

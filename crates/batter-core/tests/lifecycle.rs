@@ -511,3 +511,40 @@ pub(crate) enum ReadinessDecision {
     Unapproved,
     Approved,
 }
+
+/// Forced cancellation begins when the drain phase ends: when the drain
+/// allowance runs out if a component outlasts it, and as soon as every direct
+/// task has finished otherwise, so `forced_cancellation_at` can precede the
+/// allowance.
+#[tokio::test(start_paused = true)]
+async fn forced_cancellation_begins_when_the_drain_phase_ends() {
+    let drain = Duration::from_millis(10);
+    for outlasts_drain in [true, false] {
+        let mut supervisor = Supervisor::new(budget());
+        let handle = supervisor.handle();
+        let signal = handle.signal();
+        supervisor
+            .register("worker", move |startup| async move {
+                let running = startup.acknowledge_started();
+                if outlasts_drain {
+                    running.cancelled().await;
+                } else {
+                    running.draining().await;
+                }
+                Ok(running.stopped())
+            })
+            .unwrap();
+        let process = supervisor.start();
+        handle.status().wait_ready().await.unwrap();
+        assert_eq!(signal.forced_cancellation_at(), None);
+        let stop = tokio::time::Instant::now();
+        handle.request();
+        assert!(process.wait().await.unwrap().is_success());
+        let forced = signal.forced_cancellation_at().unwrap();
+        if outlasts_drain {
+            assert_eq!(forced, stop + drain);
+        } else {
+            assert_eq!(forced, stop);
+        }
+    }
+}

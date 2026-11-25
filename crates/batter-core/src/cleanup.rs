@@ -115,6 +115,13 @@ impl CleanupRecord {
 }
 
 /// A cleanup hook intentionally not invoked.
+///
+/// Not invoked does not mean retained: a skipped hook's captured values are
+/// still dropped. For the library's drop-only finalizers,
+/// [`CleanupSlot::acquire_semaphore`] and [`CleanupSlot::bind_udp`], that drop
+/// is the whole release. An entry naming one of them therefore describes a
+/// permit or socket reference that has been released, in the same LIFO order,
+/// but without evidence that its dependents had stopped first.
 #[derive(Debug)]
 pub struct SkippedCleanup {
     /// Developer-controlled name.

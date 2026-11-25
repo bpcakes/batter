@@ -16,19 +16,26 @@ autoexamples = false
 workspace = true
 
 [dependencies]
+atomic-waker.workspace = true
 batter-core.workspace = true
 axum.workspace = true
 cookie.workspace = true
+http-body.workspace = true
 pin-project-lite.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["time", "net"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 tower = { workspace = true, features = ["util"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["request-id"] }
 url.workspace = true
 
 [dev-dependencies]
-http-body.workspace = true
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+# Test-only: name an upgraded connection's concrete I/O type, as an application
+# recovering its socket does. The adapter itself declares neither.
+hyper = { version = "1.11.1", default-features = false }
+hyper-util = { version = "0.1.20", default-features = false, features = ["http1", "server", "tokio"] }
 # Test-only TLS material and transport. Batter owns no certificate, provider or
 # handshake policy; these prove the generic listener contract end to end.
 rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }

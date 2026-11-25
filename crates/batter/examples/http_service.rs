@@ -1,6 +1,8 @@
 //! A runnable Axum composition root with probes and bounded operations.
 #[path = "http_service/config.rs"]
 mod config;
+#[path = "http_service/events.rs"]
+mod events;
 #[path = "http_service/logging.rs"]
 mod logging;
 #[path = "http_service/service.rs"]
@@ -109,6 +111,8 @@ async fn router(
     let application = GuardedRouter::new()
         .route("/work", get(work))
         .route("/fail", get(fail))
+        // A body that outlives its handler gets a lifetime of its own.
+        .route("/events", get(events::events))
         .with_state(AppState {
             outbound: Bulkhead::new(bulkhead_capacity),
         });

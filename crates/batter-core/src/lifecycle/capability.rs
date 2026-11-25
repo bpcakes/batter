@@ -4,6 +4,8 @@ use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+mod stop_clock;
+
 /// Process admission state, not an automatic dependency-health assessment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Readiness {
@@ -123,9 +125,7 @@ impl ShutdownHandle {
     /// component must obtain its running observer by consuming the
     /// [`ComponentStartup`] supplied to its factory.
     pub fn signal(&self) -> ShutdownSignal {
-        ShutdownSignal {
-            shared: self.shared.clone(),
-        }
+        ShutdownSignal::observing(self.shared.clone())
     }
 }
 
@@ -257,6 +257,22 @@ impl OperationAdmission {
         &self,
         deadline: crate::operation::RootDeadline,
     ) -> Result<crate::operation::OperationOwner, Readiness> {
+        self.admit(deadline)
+    }
+
+    /// Admit as [`Self::admit_root`] does, with the lifecycle state that
+    /// [`super::low_level::admit_root_with_continuation`] continues under.
+    pub(super) fn admit_with_state(
+        &self,
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<(crate::operation::OperationOwner, Arc<Shared>), Readiness> {
+        Ok((self.admit(deadline)?, self.shared.clone()))
+    }
+
+    fn admit(
+        &self,
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<crate::operation::OperationOwner, Readiness> {
         let readiness = self.shared.readiness();
         let admitted = if readiness == Readiness::Ready {
             let parent = self.shared.operation_token();
@@ -309,6 +325,11 @@ pub struct ShutdownSignal {
 }
 
 impl ShutdownSignal {
+    /// The one constructor: read-only observation of `shared`.
+    pub(super) fn observing(shared: Arc<Shared>) -> Self {
+        Self { shared }
+    }
+
     /// Wait until admission closes and draining begins.
     pub async fn draining(&self) {
         self.shared.draining().await;
@@ -357,9 +378,7 @@ impl LifecycleCoordinator {
     }
 
     pub(super) fn signal(&self) -> ShutdownSignal {
-        ShutdownSignal {
-            shared: self.shared.clone(),
-        }
+        ShutdownSignal::observing(self.shared.clone())
     }
 
     pub(super) fn is_draining(&self) -> bool {
@@ -562,6 +581,34 @@ impl RunningComponent {
     /// Whether forced cooperative cancellation has already been requested.
     pub fn is_cancelled(&self) -> bool {
         self.shutdown.is_cancelled()
+    }
+
+    /// When the owning supervisor requests abort of unfinished direct tasks;
+    /// see [`ShutdownSignal::abort_deadline`] for its limits.
+    ///
+    /// ```
+    /// use batter_core::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}};
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter_core::BoxError> {
+    /// let second = std::time::Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let mut supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// supervisor.register("worker", |startup| async move {
+    ///     let running = startup.acknowledge_started();
+    ///     assert!(running.abort_deadline().is_none());
+    ///     running.draining().await;
+    ///     // Descendants ended before this instant leave the component joined.
+    ///     assert!(running.abort_deadline().expect("drained") > tokio::time::Instant::now());
+    ///     Ok(running.stopped())
+    /// })?;
+    /// let (handle, process) = (supervisor.handle(), supervisor.start());
+    /// handle.status().wait_ready().await.expect("the worker acknowledged");
+    /// handle.request();
+    /// assert!(process.wait().await.expect("the report is published").is_success());
+    /// # Ok(()) }
+    /// ```
+    pub fn abort_deadline(&self) -> Option<tokio::time::Instant> {
+        self.shutdown.abort_deadline()
     }
 
     /// Produce the exit proof once the component's running work has finished.

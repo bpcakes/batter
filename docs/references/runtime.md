@@ -409,12 +409,41 @@ construction, so the serial owner clamps an extreme allowance at each use.
   panic/cancellation observations at the task boundary.
 - [Task cancellation](https://docs.rs/tokio/latest/tokio/task/): abortion requires
   runtime progress; blocking/non-yielding behavior is a separate concern.
-- [CancellationToken 0.7.19](https://docs.rs/tokio-util/0.7.19/tokio_util/sync/struct.CancellationToken.html):
+- [CancellationToken 0.7.20](https://docs.rs/tokio-util/0.7.20/tokio_util/sync/struct.CancellationToken.html):
   downward child cancellation and drop guards; not transitive child-task joining.
 - [TaskTracker](https://docs.rs/tokio-util/latest/tokio_util/task/task_tracker/struct.TaskTracker.html):
   task lifetime tracking is not an application failure supervisor.
 - [Paused time](https://docs.rs/tokio/latest/tokio/time/fn.pause.html): a runtime
   testing facility, not control of database time.
+
+### Tokio-util 0.7.20 and a waker that panics, 2026-11-18
+
+The workspace requirement moved from tokio-util 0.7.19 to 0.7.20 and
+Cargo.lock resolves 0.7.20, whose minimum Rust is 1.85. Its
+[changelog](https://github.com/tokio-rs/tokio/blob/master/tokio-util/CHANGELOG.md)
+lists "sync: notify `CancellationToken` descendants after releasing locks"
+(tokio-rs/tokio#8556). Compared in the cached sources: only
+`sync/cancellation_token/tree_node.rs` differs among the files Batter's
+notes cite; `sync/cancellation_token.rs`, its `guard.rs` and
+`task/task_tracker.rs` are identical, so the `child_token`, `drop_guard`
+and `TaskTracker` statements recorded against 0.7.19 below and in the HTTP
+notes hold unchanged.
+
+A probe run once by hand against each version, in a scratch crate outside
+the workspace: a parent token with two children, one child waited on with a
+waker that panics when woken, the other child and the parent each with a
+counting waker, then `cancel` on the parent under `catch_unwind`.
+
+- 0.7.19: `cancel` unwinds and the parent's lock is poisoned, so a later
+  `child_token`, `cancel` or `is_cancelled` on it panics.
+- 0.7.20: `cancel` unwinds, every token reports cancelled and the parent
+  stays usable. The waiters after the panicking one are not woken: the
+  parent's own waiter in both orders, and the other child's when the
+  panicking child is notified first.
+
+So the upgrade removes the poisoning and not the lost wakeups. A waker that
+panics remains outside `batter-axum`'s owned-body contract (ADR-008, fourth
+assessment). The probe is not part of `scripts/verify.sh`.
 
 ### Periodic maintenance scheduling semantics, 2026-10-08
 

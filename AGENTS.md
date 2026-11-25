@@ -172,6 +172,10 @@ read-only freshness snapshots and writer lifetime.
 including the dependency-first/lifecycle-last read order, application conditions
 that can only narrow readiness and unrepresentable healthy-as-failure states.
 `crates/batter-core/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
+`crates/batter-core/src/lifecycle/continuation.rs` owns `OperationContinuation`,
+published with its admission entry point under `lifecycle::low_level`, the
+adapter-facing proof of an admission from which continued work starts
+without a second readiness read.
 `crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries,
 typed failures, and pre-telemetry resolution of application-retained outcomes.
 `crates/batter-core/src/retry.rs` owns replay policy, bounded attempts, and backoff.
@@ -205,6 +209,23 @@ alias, and to `low_level/router_client.rs`'s `RouterClient`, the in-process
 transport over a caller-composed router that owns the arrival-shaped entry
 check `InProcessClient` and Runlimit's `TestClient` delegate to; `admitted.rs` owns the privately recorded
 `AdmittedRequest` that guarded handlers extract instead of raw extensions;
+`crates/batter-axum/src/serving.rs` registers the native server, and
+`serving/forced_close.rs` fails accepted connections' I/O halfway through the
+cancel allowance so a connection that outlasts drain ends before wrapper abort,
+and owns the wrapping `low_level::ForcedCloseIo` an upgraded connection is
+recovered through,
+and `serving/completion.rs` holds the server until every accepted connection's
+service and response bodies are destroyed;
+`streaming.rs` owns `AdmittedRequest::into_streaming_response`, the
+`BodyScope` and the private owned body that gives a response
+body outliving its handler its own context, bounds, protected dispatch and
+completion event; `streaming/budget.rs` owns the validated `BodyBudget`,
+`streaming/scope.rs` the `BodyScope`, `streaming/poll.rs` one poll of the
+source and `streaming/end.rs` the outcome labels, the wait of a pending body
+and the unwind-safe ending guard;
+`streaming/start.rs` owns its per-request start record and the rule for the
+length a built response declares, the only length an owned body's outcome
+follows;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics, and the
 `BrowserCredentials` extractor that presents cookies only where the route

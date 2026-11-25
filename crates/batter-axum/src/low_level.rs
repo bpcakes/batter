@@ -10,8 +10,8 @@
 //!
 //! Choosing this module is choosing those obligations. A composition assembled
 //! here can put a probe inside an admission gate, add a second observer, place
-//! correlation inside admission so rejections lose their generated identity, or
-//! append routes that bypass every layer. None of that is reachable through
+//! correlation inside admission so rejections lose their generated identity,
+//! or append routes that bypass every layer. None of that is reachable through
 //! [`HttpBoundary`](crate::HttpBoundary).
 //!
 //! Supported value and policy types are *not* here: they stay at the crate
@@ -26,6 +26,11 @@
 //! one-time router preparation that the protected
 //! [`InProcessClient`](crate::InProcessClient) delegates to, and establishes
 //! nothing about the router's composition.
+//!
+//! [`ForcedCloseIo`] is the one I/O type here: what every registered server
+//! gives Hyper for an accepted connection. It is named only to recover the
+//! listener's own I/O from an upgraded connection, which also takes that
+//! connection out of the forced connection close.
 //!
 //! Migration: before assembly was sealed, every helper in this module was
 //! exported at the crate root. A `use batter_axum::<helper>` or
@@ -90,6 +95,10 @@
 //! use batter_axum::RouterClient;
 //! ```
 //!
+//! ```compile_fail,E0432
+//! use batter_axum::ForcedCloseIo;
+//! ```
+//!
 //! The unchecked cookie reader stays out of both canonical namespaces:
 //!
 //! ```compile_fail,E0432
@@ -123,7 +132,9 @@ mod router_client;
 
 pub use crate::correlation::{operational_http, operational_http_with_quota};
 pub use crate::readiness::dependency_readiness;
-pub use crate::serving::{register_http, register_http_in, register_http_with_connect_info_in};
+pub use crate::serving::{
+    ForcedCloseIo, register_http, register_http_in, register_http_with_connect_info_in,
+};
 pub use router_client::RouterClient;
 
 /// Observe response construction independently of admission or deadlines.
@@ -237,7 +248,8 @@ pub async fn request_admission(
 ///
 /// Use with `axum::middleware::from_fn_with_state(policy, request_scope)`.
 /// Retains [`request_admission`]'s policy/context/rendering behavior and
-/// [`observe_http`]'s sanitized response-construction events. Keep probes outside
+/// owned-body obligations, and [`observe_http`]'s sanitized
+/// response-construction events. Keep probes outside
 /// this middleware's readiness gate. Inside an outer observer this entry point
 /// performs admission only; the outer observer emits the single HTTP event.
 /// When combined with [`operational_http`], install `operational_http` as the
@@ -275,10 +287,17 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let Some(deadline) = Instant::now().checked_add(policy.budget) else {
         return policy.render_failure(HttpFailure::Internal, &parts);
     };
-    let Ok(owner) = policy
-        .admission
-        .admit_root(batter_core::operation::RootDeadline::at(deadline))
-    else {
+    let root = batter_core::operation::RootDeadline::at(deadline);
+    // Only a recorded request can start an owned body, so only it takes the
+    // continuation that body starts from.
+    let admitted = match admitted::recorded_under(&parts.extensions) {
+        Some(correlation_id) => {
+            batter_core::lifecycle::low_level::admit_root_with_continuation(&policy.admission, root)
+                .map(|(owner, continuation)| (owner, Some((correlation_id, continuation))))
+        }
+        None => policy.admission.admit_root(root).map(|owner| (owner, None)),
+    };
+    let Ok((owner, recorded)) = admitted else {
         return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
     let context = owner.into_context();
@@ -291,7 +310,7 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
         &context,
         "http.response_construction",
         |scope| async move {
-            admitted::record(request.extensions_mut(), scope.clone(), interruption);
+            admitted::record(&mut request, scope.clone(), interruption, recorded);
             request.extensions_mut().insert(scope);
             Ok::<_, Infallible>(next.run(request).await)
         },

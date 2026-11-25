@@ -61,3 +61,30 @@ control handles, abandoned startup and caller-owned drivers have no completion
 publisher. This deliberate source API change makes those invalid waits
 unrepresentable without inventing a shutdown report or coordinator error.
 Observer cloning and waiter cancellation still confer no process ownership.
+
+Skip granularity assessment, 2026-11-11 (`batter-9wig.3`): no change. An audit
+asked whether one joined panic or one requested abort should still skip every
+finalizer. Three options were weighed against failure scenarios.
+
+- *A registration class that runs own-handle finalizers after an unsafe exit.*
+  It is sound only when the application classifies correctly: a finalizer that
+  releases exclusivity (a lease, a lockfile, a socket path) must stay skipped
+  while hidden work may continue, and the stack cannot tell the two apart. The
+  only finalizer the in-repository consumers register is a pool close, and a
+  skipped close loses a Terminate message, not data
+  ([guarantees](../guarantees.md#cleanup-contract)). The class would add a
+  caller obligation to buy nothing measured. Rejected until a consumer
+  finalizer is shown to lose data or block a restart when skipped.
+- *Treating a joined finite-task panic like a returned error.* A panic's
+  future is destroyed like an error's, so the hidden-descendant argument alone
+  does not separate them. The panic is still unclassified failure of
+  application code that may have left shared state mid-update, and running
+  finalizers over that state is the "call it clean" this ADR rejects. Kept.
+- *Removing the common trigger instead.* A connection that outlasted drain was
+  the one unsafe exit any client could cause. The serving adapter now closes
+  such connections before abort ([ADR-008](008-http-transport-ownership.md)),
+  which leaves panics, non-cooperating components and a zero cancel allowance.
+  Done under `batter-9wig.1`.
+
+Reopen with a consumer finalizer whose skip loses data or blocks restart, or
+with an unsafe exit that correct application code cannot avoid.
