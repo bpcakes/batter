@@ -280,12 +280,17 @@ pub(crate) fn is_server_timeout(error: &Error) -> bool {
     matches!(database_error.code().as_deref(), Some("57014" | "55P03"))
 }
 
-/// Returns the statement and lock timeouts that fit the remaining budget, or
-/// `None` when no budget remains.
+/// Returns the server statement and lock timeouts to set for the remaining
+/// budget, or `None` when no budget remains.
 ///
 /// A deadline that has been reached leaves nothing to spend, exactly like one
-/// that has passed: the caller must fail before sending SQL instead of
-/// starting a statement that can only time out and retire its connection.
+/// that has passed: the caller must fail before sending SQL.
+///
+/// The statement timeout is the remaining budget less
+/// [`SERVER_TIMEOUT_GRACE`], and the lock timeout is 1 ms shorter. Both have a
+/// 1 ms floor, because `PostgreSQL` reads zero as no timeout. With less than
+/// the grace plus 1 ms remaining, the server settings therefore exceed the
+/// remaining budget, and the client deadline is the bound that holds.
 pub(crate) fn remaining_server_timeout_settings(deadline: Instant) -> Option<(String, String)> {
     let remaining = deadline
         .checked_duration_since(Instant::now())
@@ -333,11 +338,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_remaining_budget_sets_timeouts_inside_it() {
+    async fn a_remaining_budget_sets_server_timeouts_with_a_one_millisecond_floor() {
         let now = Instant::now();
         let timeouts = |budget| remaining_server_timeout_settings(now + budget);
 
-        // Any budget, however small, still sets the smallest timeouts.
+        // At or below the grace the settings stay at the floor, which is
+        // longer than a budget this small: the client deadline bounds it.
         assert_eq!(
             timeouts(Duration::from_nanos(1)),
             Some(("1ms".to_owned(), "1ms".to_owned()))
