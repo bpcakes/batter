@@ -42,6 +42,12 @@ The format is based on [Keep a Changelog], and this project adheres to
   - `PostgresGcraLimiter`'s `Debug` output ends with `..`, as
     `PostgresLimiter`'s does, because the observer is reported only as
     `has_observer`.
+- A check, attempt or cleanup whose deadline is reached exactly when a
+  statement or commit is about to start now fails before sending SQL, as it
+  already did once the deadline had passed. It previously treated a zero
+  remaining budget as budget, sent the timeout refresh with 1 ms timeouts and
+  could retire a reusable connection when that refresh timed out. The error
+  type and consumption certainty are unchanged (`batter-2oht`).
 - **Breaking:** `PostgresLimiter::cleanup_expired` and
   `PostgresGcraLimiter::cleanup_expired` commit the way a check does: refresh
   the server timeouts, confirm that budget remains, then attempt the commit
@@ -49,9 +55,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   the commit after the refresh without looking at the clock again. This is a
   runtime break: nothing stops compiling, but one cleanup that could succeed
   now fails. Three cases at the deadline are affected differently:
-  - The deadline has already passed on reaching commit, so no refresh is
-    sent. The error is still `TimedOutBeforeCommit` and no rows are removed,
-    but its phase is `CleanupPhase::PreparingCommit` instead of
+  - The deadline has been reached or passed on arriving at commit, so no
+    refresh is sent. The error is still `TimedOutBeforeCommit` and no rows are
+    removed, but its phase is `CleanupPhase::PreparingCommit` instead of
     `CleanupPhase::StartingCommit`.
   - The refresh itself reports a timeout, from the client deadline or from
     the server. Unchanged: `TimedOutBeforeCommit` with
