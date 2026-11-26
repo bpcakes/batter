@@ -135,10 +135,14 @@ All five native package manifests restrict publication to crates.io. Shared
 workspace adoption does not itself prove publication or change transaction ownership.
 
 Use `run_atomic(&database, async |mut scope| ...)`. The `RunledgerDatabase` owns
-mandatory acquisition/release hooks and an immutable `PgSessionProfile`. It declares
-the authenticated and effective roles, one authoritative Runledger schema, server
-statement/lock timeouts and optional custom settings. The trusted path is that
-schema, with PostgreSQL's implicit catalog first and temporary objects last.
+mandatory acquisition/release hooks and an immutable `PgSessionProfile`. The profile
+declares the authenticated and effective roles, one authoritative Runledger schema
+and optional custom settings. Its required `PgSessionTimeouts` declares
+`statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`
+and `transaction_timeout`. Each value overrides the PostgreSQL startup, role or
+database setting. A zero duration explicitly disables that timeout.
+The trusted path is the declared schema, with PostgreSQL's implicit catalog
+first and temporary objects last.
 Fallback schemas are rejected so missing Runledger tables cannot silently resolve
 elsewhere; application objects in other schemas must be explicitly qualified.
 Roles and schemas must already exist. Ordinary APIs and workers receive

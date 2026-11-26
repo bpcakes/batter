@@ -3,8 +3,10 @@
 An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
 0.0.1, Rust 1.100.0 minimum, Unix-only, and targeting crates.io. The foundation
 does not depend on this package.
-PostgreSQL 18 is the minimum supported server for every adapter path, including
-both session-profile constructors; older servers are unsupported.
+Every adapter path requires PostgreSQL 18 or later. `PgSessionProfile::new`
+requires a `PgSessionTimeouts` value that declares all four server timeouts.
+Use `PgSessionTimeouts::disabled()` only when all four should be `0ms`, since
+the profile overrides PostgreSQL startup, role and database settings.
 
 ## Owned transactions and snapshots
 

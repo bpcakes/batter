@@ -24,17 +24,24 @@ contracts, capability facts and validation history.
   and `PgSessionTimeouts` are exposed identically through `batter_sqlx`,
   `batter::sqlx`, `batter::runledger`, and `runledger_postgres`.
 
-  **Breaking:** upgrading the `runledger-tui` binary also changes its database
-  sessions. Earlier versions inherited the idle-in-transaction and total
-  transaction limits from PostgreSQL startup, role or database settings. The
-  TUI now sets them to 10s and 60s, respectively, overriding tighter limits
-  as well as longer or disabled ones. For example, with both defaults disabled:
+  **Breaking:** `runledger-tui` and the database-backed examples in
+  `runledger-postgres` and `runledger-runtime` now set a 10s idle-in-transaction
+  limit and a 60s total transaction limit. Earlier versions inherited both
+  limits from PostgreSQL startup, role or database settings. The new values
+  override tighter limits as well as longer or disabled ones.
 
   ```sh
-  # Before: a startup schema check could take over 60s across several statements.
+  # Before, with both limits disabled, the startup schema check could succeed
+  # even when its statements took more than 60s in total.
   runledger-tui --database-url "$DATABASE_URL"
-  # After: the same invocation can fail when its transaction reaches 60s.
+  cargo run -p runledger-postgres --example enqueue_job
+  cargo run -p runledger-runtime --example worker_binary
+
+  # After, the same check can time out at 60s, before the TUI opens,
+  # the example enqueues a job or the worker starts.
   runledger-tui --database-url "$DATABASE_URL"
+  cargo run -p runledger-postgres --example enqueue_job
+  cargo run -p runledger-runtime --example worker_binary
   ```
 
   PostgreSQL's English server log reports `terminating connection due to

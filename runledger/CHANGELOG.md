@@ -6,10 +6,67 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
-**Breaking:** `runledger-tui` now overrides inherited PostgreSQL transaction
-timeouts with a 10s idle limit and a 60s total limit. The latter also bounds
-the startup schema check. See the [workspace changelog](../CHANGELOG.md#unreleased)
-for the before/after invocation and server log messages.
+### PostgreSQL session timeouts
+
+**Breaking:** `runledger_postgres::PgSessionProfile::new` now takes a validated
+`PgSessionTimeouts` as its fourth argument. Both types are available at the
+crate root and in `runledger_postgres::prelude`.
+
+The five-argument constructor used to inherit the idle-in-transaction and total
+transaction limits from PostgreSQL. Pass the values you want to keep. For
+example, if both inherited limits were disabled, keep the statement and lock
+limits and set only the two transaction limits to zero.
+
+```rust,ignore
+// Before
+let profile = PgSessionProfile::new(login, role, vec![schema], statement, lock)?;
+
+// After
+use runledger_postgres::PgSessionTimeouts;
+use std::time::Duration;
+let timeouts = PgSessionTimeouts::new(statement, lock, Duration::ZERO, Duration::ZERO)?;
+let profile = PgSessionProfile::new(login, role, vec![schema], timeouts)?;
+```
+
+For the removed seven-argument `PgSessionProfile::with_timeouts`, pass the
+same four durations to `PgSessionTimeouts::new` in the same order.
+
+```rust,ignore
+// Before
+let profile = PgSessionProfile::with_timeouts(
+    login, role, vec![schema], statement, lock, idle, total,
+)?;
+
+// After
+let timeouts = PgSessionTimeouts::new(statement, lock, idle, total)?;
+let profile = PgSessionProfile::new(login, role, vec![schema], timeouts)?;
+```
+
+Use `PgSessionTimeouts::disabled()` only to override **all four** settings with
+`0ms`, including the statement and lock limits.
+
+**Breaking:** `runledger-tui` and the database-backed examples in
+`runledger-postgres` and `runledger-runtime` now set a 10s idle-in-transaction
+limit and a 60s total transaction limit. These replace the PostgreSQL startup,
+role or database values, including stricter limits.
+
+```sh
+# Before, with both limits disabled, a multi-statement startup schema check
+# could succeed even if its transaction took longer than 60s.
+runledger-tui --database-url "$DATABASE_URL"
+cargo run -p runledger-postgres --example enqueue_job
+cargo run -p runledger-runtime --example worker_binary
+
+# After, PostgreSQL can end the same transaction at 60s, before the TUI opens,
+# the example enqueues a job or the worker starts.
+runledger-tui --database-url "$DATABASE_URL"
+cargo run -p runledger-postgres --example enqueue_job
+cargo run -p runledger-runtime --example worker_binary
+```
+
+PostgreSQL's English server log reports `terminating connection due to
+idle-in-transaction timeout` or `terminating connection due to transaction
+timeout`, depending on which limit ended the session.
 
 ### Workflow completion lock order
 

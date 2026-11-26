@@ -9,8 +9,11 @@ Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
 APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.md).
 
-PostgreSQL integrations require PostgreSQL 18 or later. Legacy session-profile
-construction preserves timeout-declaration compatibility, not older-server support.
+PostgreSQL integrations require PostgreSQL 18 or later. Pass a validated
+`PgSessionTimeouts` to `PgSessionProfile::new` to declare the statement, lock,
+idle-in-transaction and total transaction limits. To keep a limit previously
+inherited from PostgreSQL, pass its value explicitly. `PgSessionTimeouts::disabled()`
+overrides all four settings with `0ms`.
 
 ## Facade feature selection
 
