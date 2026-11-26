@@ -2,8 +2,8 @@ use std::{sync::MutexGuard, time::Instant};
 
 use runlimit_core::{
     AdmissionObservation, Allowance, BatchDecision, CapacityObservation, Check, CleanupObservation,
-    CleanupOutcome, ConsumptionStatus, CounterKey, Decision, Observation, Observer, QuotaDenial,
-    QuotaMode, RateLimitPolicy, observe_safely,
+    CleanupOutcome, ConsumptionStatus, CounterKey, Decision, Denial, Observation, Observer,
+    QuotaDenial, QuotaMode, RateLimitPolicy, observe_safely,
 };
 
 use super::{BoundedShards, CleanupEffect, Shard, ShardEffect, usize_to_u64};
@@ -144,7 +144,10 @@ fn run_single_session<A: QuotaAlgorithm, C: Clock>(
     let session = evaluated.advance_and_prune(observe);
     Ok(match session.preflight() {
         SinglePreflight::Preflighted(preflighted) => preflighted.commit(),
-        SinglePreflight::Denied { decision, effect } => (decision, effect),
+        SinglePreflight::Denied { denial, effect } => (Decision::denied(denial), effect),
+        SinglePreflight::ShadowDenied { denial, effect } => {
+            (Decision::shadow_denied(denial), effect)
+        }
     })
 }
 
@@ -220,7 +223,11 @@ struct ShardSession<'a, A: QuotaAlgorithm> {
 enum SinglePreflight<'a, A: QuotaAlgorithm> {
     Preflighted(PreflightedSingle<'a, A>),
     Denied {
-        decision: Decision,
+        denial: Denial,
+        effect: ShardEffect,
+    },
+    ShadowDenied {
+        denial: QuotaDenial,
         effect: ShardEffect,
     },
 }
@@ -229,14 +236,14 @@ impl<'a, A: QuotaAlgorithm> ShardSession<'a, A> {
     fn preflight(self) -> SinglePreflight<'a, A> {
         match self.outcome {
             QuotaEvaluation::Denied(denial) => {
-                let decision = if self.locked.check.policy().quota_mode() == QuotaMode::Shadow {
-                    Decision::shadow_denied(denial)
-                } else {
-                    Decision::denied(denial)
-                };
-                SinglePreflight::Denied {
-                    decision,
-                    effect: self.locked.effect(self.cleanup),
+                let mode = self.locked.check.policy().quota_mode();
+                let effect = self.locked.effect(self.cleanup);
+                match mode {
+                    QuotaMode::Enforce => SinglePreflight::Denied {
+                        denial: denial.into(),
+                        effect,
+                    },
+                    QuotaMode::Shadow => SinglePreflight::ShadowDenied { denial, effect },
                 }
             }
             QuotaEvaluation::Allowed(token) => {
@@ -246,7 +253,7 @@ impl<'a, A: QuotaAlgorithm> ShardSession<'a, A> {
                 {
                     let denial = guard.storage_capacity_denial(self.locked.now_millis);
                     return SinglePreflight::Denied {
-                        decision: Decision::denied(denial),
+                        denial,
                         effect: self.locked.effect(self.cleanup),
                     };
                 }

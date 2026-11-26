@@ -86,7 +86,10 @@ fn assert_single_preflight_denied<A>(
         .preflight();
     assert!(matches!(
         preflight,
-        SinglePreflight::Denied { decision, .. } if !decision.permits_request()
+        SinglePreflight::Denied {
+            denial: Denial::QuotaExceeded(_),
+            ..
+        }
     ));
     assert_eq!(capture_snapshot(shards), *baseline);
 }

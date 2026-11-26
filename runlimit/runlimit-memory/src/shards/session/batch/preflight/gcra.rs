@@ -1,4 +1,4 @@
-use runlimit_core::{BatchDecision, Denial, gcra::ArithmeticOverflow};
+use runlimit_core::{BatchDecision, QuotaDenial, gcra::ArithmeticOverflow};
 
 use super::{
     BatchAlgorithm, BatchEffects, BatchSession, CapacityPreflight, LockedBatch, PreflightedBatch,
@@ -18,7 +18,7 @@ pub(crate) enum GcraPreflight {
     AllAllowed(Vec<TargetedToken>),
     Denied {
         prefix: Vec<TargetedToken>,
-        denial: Denial,
+        denial: QuotaDenial,
     },
 }
 
@@ -54,10 +54,7 @@ impl BatchAlgorithm for GcraAlgorithm {
                     for remaining in evaluations {
                         remaining?;
                     }
-                    return Ok(GcraPreflight::Denied {
-                        prefix,
-                        denial: denial.into(),
-                    });
+                    return Ok(GcraPreflight::Denied { prefix, denial });
                 }
             }
         }
@@ -85,7 +82,7 @@ impl BatchAlgorithm for GcraAlgorithm {
         match session.arithmetic {
             GcraPreflight::Denied { ref prefix, denial } => {
                 let index = prefix.len();
-                Ok(session.denied(index, denial))
+                Ok(session.denied(index, denial.into()))
             }
             GcraPreflight::AllAllowed(writes) => PreflightedBatch {
                 locked: session.locked,
