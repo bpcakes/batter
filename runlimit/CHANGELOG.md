@@ -26,8 +26,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - `MemoryStore` and `GcraStore` now bind each check or batch to the shards it
   locks. Fixed-window batches stop at the first quota or capacity denial. GCRA
   checks the remaining members for arithmetic errors before cleanup. Both
-  stores check capacity for the allowed prefix and consume single-use tokens
-  only after the whole batch passes. The session adds no allocation to single
+  stores check capacity for the allowed prefix. Fixed-window batches charge
+  the validated keys in a second pass under the same locks. GCRA applies its
+  saved updates after preflight succeeds. The session adds no allocation to single
   checks. The two-check batches measured in `batter-ctk7.10` used fewer
   allocations.
 - PostgreSQL GCRA retry and replenishment delays now subtract database-measured

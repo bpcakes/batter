@@ -1,13 +1,13 @@
-use std::{cell::Cell, convert::Infallible, time::Duration};
+use std::{cell::Cell, time::Duration};
 
 use runlimit_core::{
     BatchDecisionView, Check, Denial, FixedWindowPolicy, PolicyId, ScopeId, SubjectKey,
 };
 
-use super::{BoundedShards, QuotaAlgorithm, QuotaEvaluation};
+use super::BoundedShards;
 use crate::{
     Clock, MemoryStoreConfig,
-    shards::{Shard, execute_batch, execute_check},
+    shards::{execute_batch, execute_check},
     store::FixedWindowAlgorithm,
 };
 
@@ -21,23 +21,8 @@ impl Clock for FrozenClock {
     }
 }
 
-struct CountedFixedWindow;
-
-impl QuotaAlgorithm for CountedFixedWindow {
-    type Policy = FixedWindowPolicy;
-    type Entry = <FixedWindowAlgorithm as QuotaAlgorithm>::Entry;
-    type Token = <FixedWindowAlgorithm as QuotaAlgorithm>::Token;
-    type EvalError = Infallible;
-    const INFALLIBLE: Option<fn(Infallible) -> Infallible> = FixedWindowAlgorithm::INFALLIBLE;
-
-    fn evaluate(
-        shard: &Shard<Self::Entry>,
-        check: &Check<'_, Self::Policy>,
-        now: u128,
-    ) -> Result<QuotaEvaluation<Self::Token>, Self::EvalError> {
-        EVALUATIONS.update(|count| count + 1);
-        FixedWindowAlgorithm::evaluate(shard, check, now)
-    }
+pub(super) fn count_evaluation() {
+    EVALUATIONS.update(|count| count + 1);
 }
 
 #[test]
@@ -63,7 +48,7 @@ fn fixed_window_stops_quota_lookups_on_both_quota_and_capacity_denials() {
     }
     for (first, capacity_denied) in [(exhausted, false), (new_key, true)] {
         EVALUATIONS.set(0);
-        let decision = execute_batch::<CountedFixedWindow, _>(
+        let decision = execute_batch::<FixedWindowAlgorithm, _>(
             &shards,
             &clock,
             None,

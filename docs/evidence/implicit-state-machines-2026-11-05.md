@@ -55,8 +55,10 @@ are addressed by `batter-ctk7.10` and `batter-ctk7.10.1`. Both memory stores
 carry the checks and their shard routing through a consuming session. GCRA
 arithmetic succeeds before bounded pruning. Fixed-window batches perform
 bounded pruning before checking quota and capacity together in input order.
-The algorithms return proposed entry updates. Applying them requires a
-preflighted single or batch owner. This removes the fixed-window consumption
+Single checks and GCRA batches retain their proposed entry updates. A
+preflighted fixed-window batch owns the validated checks, their shard routing
+and guards, and the sampled time. It computes allowances during its consuming
+commit (`batter-ctk7.10.3`). This removes the fixed-window consumption
 `debug_assert!` and the empty-batch `expect` guards. Entry-state
 predicates and dual-index alignment remain in `batter-ctk7.9`, and core GCRA
 commit records remain in `batter-ctk7.2`.

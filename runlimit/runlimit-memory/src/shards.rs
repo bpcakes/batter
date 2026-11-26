@@ -412,7 +412,7 @@ struct CleanupEffect {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ShardEffect {
+pub(crate) struct ShardEffect {
     shard_index: usize,
     cleanup: CleanupEffect,
     used: usize,

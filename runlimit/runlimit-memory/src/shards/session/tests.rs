@@ -9,14 +9,14 @@ use std::{
 };
 
 use runlimit_core::{
-    BatchDecision, BatchDecisionView, Check, Decision, Denial, FixedWindowPolicy, GcraPolicy,
-    PolicyId, QuotaMode, ScopeId, SubjectKey,
+    BatchDecisionView, Check, Denial, FixedWindowPolicy, GcraPolicy, PolicyId, QuotaMode, ScopeId,
+    SubjectKey,
 };
 
 use super::{
-    BoundedShards, LockedShard, PreflightedSingle, QuotaAlgorithm, QuotaEvaluation, ShardEffect,
+    BoundedShards, LockedShard, PreflightedSingle, QuotaAlgorithm, QuotaEvaluation,
     SinglePreflight,
-    batch::{BatchEffects, BatchPreflight, LockedBatch, PreflightedBatch},
+    batch::{BatchAlgorithm, PreflightedBatch},
     execute_batch, execute_check,
 };
 use crate::{Clock, MemoryStoreConfig, gcra::GcraAlgorithm, store::FixedWindowAlgorithm};
@@ -68,39 +68,6 @@ fn capture_snapshot<E: Copy>(shards: &BoundedShards<E>) -> StoreSnapshot<E> {
     StoreSnapshot { shards: snapshots }
 }
 
-fn assert_batch_preflight_denied<A>(
-    shards: &BoundedShards<A::Entry>,
-    clock: &ManualClock,
-    checks: &[Check<'_, A::Policy>],
-    baseline: &StoreSnapshot<A::Entry>,
-    expected_index: usize,
-) where
-    A: QuotaAlgorithm,
-    A::Entry: Copy + Debug + Eq,
-    A::EvalError: Debug,
-{
-    let preflight = LockedBatch::<A>::lock(shards, checks, clock)
-        .unwrap()
-        .prepare()
-        .unwrap()
-        .advance_and_prune(true)
-        .preflight()
-        .unwrap();
-    assert!(matches!(
-        preflight,
-        BatchPreflight::Denied { decision, .. }
-            if matches!(
-                decision.view(),
-                BatchDecisionView::Denied {
-                    index,
-                    denial: Denial::QuotaExceeded(_),
-                    ..
-                } if index == expected_index
-            )
-    ));
-    assert_eq!(capture_snapshot(shards), *baseline);
-}
-
 fn assert_single_preflight_denied<A>(
     shards: &BoundedShards<A::Entry>,
     clock: &ManualClock,
@@ -130,7 +97,7 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
     shadow_multi: &A::Policy,
     shadow_single: &A::Policy,
 ) where
-    A: QuotaAlgorithm,
+    A: BatchAlgorithm,
     A::Entry: Copy + Debug + Eq,
     A::EvalError: Debug,
 {
@@ -163,7 +130,16 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
     // 1. Enforced quota denial after an earlier allowed member yields no
     //    PreflightedBatch and leaves every stored entry unchanged.
     let quota_denied_checks = [active_with_room, exhausted];
-    assert_batch_preflight_denied::<A>(&shards, &clock, &quota_denied_checks, &baseline, 1);
+    let denied = execute_batch::<A, _>(&shards, &clock, None, &quota_denied_checks).unwrap();
+    assert!(matches!(
+        denied.view(),
+        BatchDecisionView::Denied {
+            index: 1,
+            denial: Denial::QuotaExceeded(_),
+            ..
+        }
+    ));
+    assert_eq!(capture_snapshot(&shards), baseline);
 
     // 2. Shadow quota denial after an earlier allowed member leaves every
     //    stored entry unchanged.
@@ -267,15 +243,7 @@ fn denied_preflight_leaves_used_and_all_stored_values_unchanged_across_both_stor
     );
 }
 
-fn assert_commit_single<'a, A: QuotaAlgorithm>(
-    _: fn(PreflightedSingle<'a, A>) -> (Decision, ShardEffect),
-) {
-}
-
-fn assert_commit_batch<'a, A: QuotaAlgorithm>(
-    _: fn(PreflightedBatch<'a, A>) -> (BatchDecision, BatchEffects),
-) {
-}
+fn assert_consumes<Owner, Output>(_: fn(Owner) -> Output) {}
 
 #[test]
 fn commit_consumes_the_preflighted_owner_and_tokens_are_single_use() {
@@ -315,10 +283,18 @@ fn commit_consumes_the_preflighted_owner_and_tokens_are_single_use() {
     PhantomData::<PreflightedBatch<'_, GcraAlgorithm>>::assert_not_clone();
 
     // Both terminal write paths require a whole preflighted owner by value.
-    assert_commit_single::<FixedWindowAlgorithm>(PreflightedSingle::commit);
-    assert_commit_single::<GcraAlgorithm>(PreflightedSingle::commit);
-    assert_commit_batch::<FixedWindowAlgorithm>(PreflightedBatch::commit);
-    assert_commit_batch::<GcraAlgorithm>(PreflightedBatch::commit);
+    assert_consumes::<PreflightedSingle<'_, FixedWindowAlgorithm>, _>(
+        PreflightedSingle::<FixedWindowAlgorithm>::commit,
+    );
+    assert_consumes::<PreflightedSingle<'_, GcraAlgorithm>, _>(
+        PreflightedSingle::<GcraAlgorithm>::commit,
+    );
+    assert_consumes::<PreflightedBatch<'_, FixedWindowAlgorithm>, _>(
+        PreflightedBatch::<FixedWindowAlgorithm>::commit,
+    );
+    assert_consumes::<PreflightedBatch<'_, GcraAlgorithm>, _>(
+        PreflightedBatch::<GcraAlgorithm>::commit,
+    );
 
     // Also verify a denied evaluation produces no token for either algorithm.
     let config = MemoryStoreConfig::new(1).unwrap();

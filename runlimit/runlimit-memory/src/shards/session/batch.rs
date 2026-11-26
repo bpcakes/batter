@@ -2,42 +2,36 @@ use runlimit_core::{
     BatchDecision, BatchError, Check, Denial, QuotaMode, RateLimitPolicy, validate_batch,
 };
 
-use super::{BatchSessionError, PendingToken, QuotaAlgorithm, QuotaEvaluation};
+use super::{BatchSessionError, QuotaAlgorithm};
 use crate::{
     Clock, MemoryBatchError,
     shards::{BatchTopology, BoundedShards, LockedShards, ShardEffect},
 };
 
-mod commit;
 mod preflight;
 #[cfg(test)]
+pub(super) use preflight::PreflightedBatch;
+#[cfg(test)]
 mod tests;
-use preflight::{ArithmeticPreflight, CapacityPreflight, QuotaPreflight, TargetedToken};
 
-pub(super) enum BatchEffects {
+pub(crate) enum BatchEffects {
     Disabled,
     Recorded(Vec<ShardEffect>),
 }
 
-pub(super) fn run_batch_session<A: QuotaAlgorithm, C: Clock>(
-    shards: &BoundedShards<A::Entry>,
-    clock: &C,
-    observe: bool,
-    checks: &[Check<'_, A::Policy>],
-) -> Result<(BatchDecision, BatchEffects), BatchSessionError<A::EvalError>> {
-    let locked = LockedBatch::<A>::lock(shards, checks, clock)?;
-    let prepared = locked.prepare().map_err(BatchSessionError::Evaluation)?;
-    let session = prepared.advance_and_prune(observe);
-    Ok(match session.preflight()? {
-        BatchPreflight::Preflighted(preflighted) => preflighted.commit(),
-        BatchPreflight::Denied { decision, effects } => (decision, effects),
-    })
-}
+// Arithmetic must succeed before the clock watermark or expiration index changes.
+pub(crate) trait BatchAlgorithm: QuotaAlgorithm + Sized {
+    type Arithmetic;
+    type Writes;
 
-// ---------------------------------------------------------------------------
-// Multi-shard consuming batch session:
-// ValidatedBatch -> LockedBatch -> PreparedBatch -> BatchSession -> PreflightedBatch -> commit
-// ---------------------------------------------------------------------------
+    fn check_arithmetic(
+        locked: &LockedBatch<'_, Self>,
+    ) -> Result<Self::Arithmetic, Self::EvalError>;
+
+    fn preflight_and_commit(
+        session: BatchSession<'_, Self>,
+    ) -> Result<(BatchDecision, BatchEffects), MemoryBatchError>;
+}
 
 struct ValidatedBatch<'a, P: RateLimitPolicy> {
     checks: &'a [Check<'a, P>],
@@ -68,7 +62,7 @@ impl<'a, P: RateLimitPolicy> ValidatedBatch<'a, P> {
     }
 }
 
-pub(super) struct LockedBatch<'a, A: QuotaAlgorithm> {
+pub(crate) struct LockedBatch<'a, A: QuotaAlgorithm> {
     batch: ValidatedBatch<'a, A::Policy>,
     topology: BatchTopology,
     shards: LockedShards<'a, A::Entry>,
@@ -97,60 +91,24 @@ impl<'a, A: QuotaAlgorithm> LockedBatch<'a, A> {
             cleanup_per_check: shards.config().max_expired_removals_per_check(),
         })
     }
-
-    pub(super) fn prepare(self) -> Result<PreparedBatch<'a, A>, A::EvalError> {
-        let quota = if let Some(never) = A::INFALLIBLE {
-            ArithmeticPreflight::Infallible(never)
-        } else {
-            let mut evaluations = self.evaluations();
-            let prefix = QuotaPreflight::collect(&mut evaluations, |_| None)?;
-            // A later arithmetic error takes precedence over a quota denial.
-            for remaining in evaluations {
-                remaining?;
-            }
-            ArithmeticPreflight::Evaluated(prefix)
-        };
-        Ok(PreparedBatch {
-            locked: self,
-            quota,
-        })
-    }
-
-    fn evaluations(
-        &self,
-    ) -> impl ExactSizeIterator<Item = Result<(usize, QuotaEvaluation<A::Token>), A::EvalError>>
-    {
-        self.batch
-            .checks
-            .iter()
-            .enumerate()
-            .map(|(input_index, check)| {
-                let position = self.topology.shard_position(input_index);
-                let outcome = A::evaluate(&self.shards[position].1, check, self.now_millis)?;
-                Ok((position, outcome))
-            })
-    }
 }
 
-pub(super) struct PreparedBatch<'a, A: QuotaAlgorithm> {
-    locked: LockedBatch<'a, A>,
-    quota: ArithmeticPreflight<A::Token, A::EvalError>,
-}
-
-impl<'a, A: QuotaAlgorithm> PreparedBatch<'a, A> {
-    pub(super) fn advance_and_prune(mut self, record_effects: bool) -> BatchSession<'a, A> {
-        let locked = &mut self.locked;
+impl<A: BatchAlgorithm> LockedBatch<'_, A> {
+    pub(super) fn run(
+        mut self,
+        record_effects: bool,
+    ) -> Result<(BatchDecision, BatchEffects), BatchSessionError<A::EvalError>> {
+        let arithmetic = A::check_arithmetic(&self).map_err(BatchSessionError::Evaluation)?;
         let mut effects = if record_effects {
-            BatchEffects::Recorded(Vec::with_capacity(locked.shards.len()))
+            BatchEffects::Recorded(Vec::with_capacity(self.shards.len()))
         } else {
             BatchEffects::Disabled
         };
-
-        for ((shard_index, shard), check_count) in
-            locked.shards.iter_mut().zip(locked.topology.check_counts())
+        for ((shard_index, shard), count) in
+            self.shards.iter_mut().zip(self.topology.check_counts())
         {
-            let cleanup_limit = locked.cleanup_per_check.saturating_mul(check_count);
-            let cleanup = shard.advance_and_prune(locked.now_millis, cleanup_limit, record_effects);
+            let limit = self.cleanup_per_check.saturating_mul(count);
+            let cleanup = shard.advance_and_prune(self.now_millis, limit, record_effects);
             if let BatchEffects::Recorded(recorded) = &mut effects {
                 recorded.push(ShardEffect {
                     shard_index: *shard_index,
@@ -160,85 +118,51 @@ impl<'a, A: QuotaAlgorithm> PreparedBatch<'a, A> {
                 });
             }
         }
-
-        BatchSession {
-            locked: self.locked,
+        A::preflight_and_commit(BatchSession {
+            locked: self,
             effects,
-            quota: self.quota,
-        }
+            arithmetic,
+        })
+        .map_err(BatchSessionError::Store)
     }
 }
 
-pub(super) struct BatchSession<'a, A: QuotaAlgorithm> {
+pub(crate) struct BatchSession<'a, A: BatchAlgorithm> {
     locked: LockedBatch<'a, A>,
     effects: BatchEffects,
-    quota: ArithmeticPreflight<A::Token, A::EvalError>,
+    arithmetic: A::Arithmetic,
 }
 
-pub(super) enum BatchPreflight<'a, A: QuotaAlgorithm> {
-    Preflighted(PreflightedBatch<'a, A>),
-    Denied {
-        decision: BatchDecision,
-        effects: BatchEffects,
-    },
-}
-
-impl<'a, A: QuotaAlgorithm> BatchSession<'a, A> {
-    pub(super) fn preflight(self) -> Result<BatchPreflight<'a, A>, MemoryBatchError> {
-        let Self {
-            locked,
-            effects,
-            quota,
-        } = self;
-        let mut capacity = CapacityPreflight::new(&locked);
-        let prefix = match quota {
-            ArithmeticPreflight::Infallible(never) => {
-                match QuotaPreflight::collect(&mut locked.evaluations(), |target| {
-                    capacity.denial(target)
-                }) {
-                    Ok(prefix) => prefix,
-                    Err(error) => match never(error) {},
-                }
-            }
-            ArithmeticPreflight::Evaluated(prefix) => {
-                for (index, target) in prefix.allowed_prefix().iter().enumerate() {
-                    if let Some(denial) = capacity.denial(target) {
-                        let decision = locked.batch.denied(index, denial);
-                        return Ok(BatchPreflight::Denied { decision, effects });
-                    }
-                }
-                prefix
-            }
-        };
-        match prefix {
-            QuotaPreflight::Denied {
-                allowed_prefix,
-                denial,
-            } => {
-                let decision = locked.batch.denied(allowed_prefix.len(), denial);
-                Ok(BatchPreflight::Denied { decision, effects })
-            }
-            QuotaPreflight::AllAllowed(tokens) => {
-                let allowances = tokens
-                    .iter()
-                    .map(|targeted| targeted.token.allowance())
-                    .collect::<Vec<_>>();
-                let decision = BatchDecision::allowed(allowances)
-                    .map_err(|_| MemoryBatchError::InvalidBatch(BatchError::EmptyBatch))?;
-                Ok(BatchPreflight::Preflighted(PreflightedBatch {
-                    shards: locked.shards,
-                    effects,
-                    tokens,
-                    decision,
-                }))
-            }
-        }
+impl<A: BatchAlgorithm> BatchSession<'_, A> {
+    fn denied(self, index: usize, denial: Denial) -> (BatchDecision, BatchEffects) {
+        (self.locked.batch.denied(index, denial), self.effects)
     }
 }
 
-pub(super) struct PreflightedBatch<'a, A: QuotaAlgorithm> {
-    shards: LockedShards<'a, A::Entry>,
-    effects: BatchEffects,
-    tokens: Vec<TargetedToken<A::Token>>,
-    decision: BatchDecision,
+/// Counts only genuinely vacant keys. An expired entry still in the map occupies its slot.
+struct CapacityPreflight<'a, 'shard, A: QuotaAlgorithm> {
+    locked: &'a LockedBatch<'shard, A>,
+    pending: Vec<usize>,
+}
+
+impl<'a, 'shard, A: QuotaAlgorithm> CapacityPreflight<'a, 'shard, A> {
+    fn new(locked: &'a LockedBatch<'shard, A>) -> Self {
+        Self {
+            locked,
+            pending: Vec::new(),
+        }
+    }
+
+    fn reserve_vacant(&mut self, position: usize) -> Option<Denial> {
+        let shard = &self.locked.shards[position].1;
+        if self.pending.is_empty() {
+            self.pending.resize(self.locked.shards.len(), 0);
+        }
+        let pending = &mut self.pending[position];
+        if shard.used_entries().saturating_add(*pending) >= shard.capacity() {
+            return Some(shard.storage_capacity_denial(self.locked.now_millis));
+        }
+        *pending += 1;
+        None
+    }
 }

@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::MutexGuard, time::Instant};
+use std::{sync::MutexGuard, time::Instant};
 
 use runlimit_core::{
     AdmissionObservation, Allowance, BatchDecision, CapacityObservation, Check, CleanupObservation,
@@ -13,7 +13,7 @@ mod batch;
 #[cfg(test)]
 mod tests;
 
-use batch::{BatchEffects, run_batch_session};
+use batch::{BatchAlgorithm, BatchEffects, LockedBatch};
 
 /// Outcome of read-only quota evaluation for one check.
 pub(crate) enum QuotaEvaluation<T> {
@@ -41,9 +41,6 @@ pub(crate) trait QuotaAlgorithm {
     type Entry;
     type Token: PendingToken<Entry = Self::Entry>;
     type EvalError;
-
-    /// Only an uninhabited error permits lazy evaluation after cleanup.
-    const INFALLIBLE: Option<fn(Self::EvalError) -> Infallible> = None;
 
     /// Evaluates one check without mutating shard state.
     fn evaluate(
@@ -102,14 +99,16 @@ pub(crate) fn execute_check<A: QuotaAlgorithm, C: Clock>(
 
 /// Runs one atomic batch through the consuming batch session and emits
 /// observations after every shard lock releases.
-pub(crate) fn execute_batch<A: QuotaAlgorithm, C: Clock>(
+pub(crate) fn execute_batch<A: BatchAlgorithm, C: Clock>(
     shards: &BoundedShards<A::Entry>,
     clock: &C,
     observer: Option<&dyn Observer>,
     checks: &[Check<'_, A::Policy>],
 ) -> Result<BatchDecision, BatchSessionError<A::EvalError>> {
     let started = observer.map(|_| Instant::now());
-    let result = run_batch_session::<A, C>(shards, clock, observer.is_some(), checks);
+    let result = LockedBatch::<A>::lock(shards, checks, clock)
+        .map_err(BatchSessionError::Store)
+        .and_then(|locked| locked.run(observer.is_some()));
     let elapsed = started.map_or_default(|start| start.elapsed());
 
     if let Some(observer) = observer {

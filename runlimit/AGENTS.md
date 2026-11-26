@@ -41,10 +41,11 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   recovery. All fallible quota arithmetic precedes recording the
   monotonic clock and pruning. Batch cleanup uses the full per-shard check
   count. Fixed-window batches then evaluate quota and capacity in input order
-  through the first denial. GCRA checks the allowed prefix for capacity after
-  its arithmetic preflight succeeds. The algorithms produce single-use tokens
-  describing proposed entry updates. Only the consuming commit methods on a
-  fully preflighted single or batch session can apply those updates. Observers run after shard locks drop.
+  through the first denial. On success the same guards, timestamp, checks and
+  routing pass to commit. Fixed-window batches build the output allowances as
+  they charge each unique key. GCRA retains its evaluated updates through
+  cleanup and capacity preflight. Only a preflighted single or batch session
+  can commit. Observers run after shard locks drop.
 - A policy configuration fingerprint is part of every storage key. Changing
   any storage-relevant configuration never reinterprets an existing counter.
 - Numbers are validated once, where they enter. `Capacity` is nonzero and at

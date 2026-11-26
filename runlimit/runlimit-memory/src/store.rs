@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use runlimit_core::{
-    Allowance, BatchDecision, BatchError, Capacity, Check, Decision, Limiter, Observer,
+    Allowance, BatchDecision, BatchError, Capacity, Check, Decision, Limiter, Observer, QuotaDenial,
 };
 use thiserror::Error;
 
@@ -15,12 +15,46 @@ pub(crate) struct Entry {
     used: u64,
 }
 
+impl Entry {
+    pub(crate) fn denial(self, check: &Check<'_>, expires: u128, now: u128) -> Option<QuotaDenial> {
+        let limit = check.policy().limit();
+        (remaining_quota(limit, self.used) < check.cost())
+            .then(|| QuotaDenial::new(limit, duration_from_millis(expires - now)))
+    }
+
+    pub(crate) fn charge(self, check: &Check<'_>, expires: u128, now: u128) -> (Self, Allowance) {
+        let entry = Self {
+            used: self.used + check.cost(),
+        };
+        let limit = check.policy().limit();
+        (
+            entry,
+            allowance(
+                limit,
+                remaining_quota(limit, entry.used),
+                duration_from_millis(expires - now),
+            ),
+        )
+    }
+
+    pub(crate) fn open(check: &Check<'_>, now: u128) -> (Self, Allowance, u128) {
+        let window = check.policy().window();
+        let limit = check.policy().limit();
+        let entry = Self { used: check.cost() };
+        (
+            entry,
+            allowance(limit, remaining_quota(limit, entry.used), window.duration()),
+            now + u128::from(window.millis()),
+        )
+    }
+}
+
 mod fixed_window {
     use std::convert::Infallible;
 
-    use runlimit_core::{Allowance, Check, CounterKey, FixedWindowPolicy, QuotaDenial};
+    use runlimit_core::{Allowance, Check, CounterKey, FixedWindowPolicy};
 
-    use super::{Entry, allowance, duration_from_millis, remaining_quota};
+    use super::Entry;
     use crate::shards::{EntryWrite, PendingToken, QuotaAlgorithm, QuotaEvaluation, Shard};
 
     pub(crate) struct FixedWindowAlgorithm;
@@ -53,7 +87,6 @@ mod fixed_window {
         type Entry = Entry;
         type Token = PendingConsumption;
         type EvalError = Infallible;
-        const INFALLIBLE: Option<fn(Infallible) -> Infallible> = Some(std::convert::identity);
 
         fn evaluate(
             shard: &Shard<Self::Entry>,
@@ -61,38 +94,24 @@ mod fixed_window {
             now_millis: u128,
         ) -> Result<QuotaEvaluation<Self::Token>, Self::EvalError> {
             let counter_key = check.counter_key();
-            let limit = check.policy().limit();
-            let cost = check.cost();
-
-            if let Some((entry, active_expires_at_millis)) =
-                shard.active_entry(counter_key, now_millis)
-            {
-                let remaining = remaining_quota(limit, entry.used);
-                let replenishes_after =
-                    duration_from_millis(active_expires_at_millis.saturating_sub(now_millis));
-                let Some(available) = remaining.checked_sub(cost) else {
-                    return Ok(QuotaEvaluation::Denied(QuotaDenial::new(
-                        limit,
-                        replenishes_after,
-                    )));
-                };
-                let new_used = entry.used + cost;
+            if let Some((active, expires)) = shard.active_entry(counter_key, now_millis) {
+                if let Some(denial) = active.denial(check, expires, now_millis) {
+                    return Ok(QuotaEvaluation::Denied(denial));
+                }
+                let (entry, allowance) = active.charge(check, expires, now_millis);
                 return Ok(QuotaEvaluation::Allowed(PendingConsumption {
                     counter_key,
-                    allowance: allowance(limit, available, replenishes_after),
-                    write: EntryWrite::UpdateActive(Entry { used: new_used }),
+                    allowance,
+                    write: EntryWrite::UpdateActive(entry),
                 }));
             }
 
-            let window_millis = check.policy().window().millis();
-            let expires_at_millis = now_millis + u128::from(window_millis);
-            let available = remaining_quota(limit, cost);
-            let replenishes_after = check.policy().window().duration();
+            let (entry, allowance, expires_at_millis) = Entry::open(check, now_millis);
             Ok(QuotaEvaluation::Allowed(PendingConsumption {
                 counter_key,
-                allowance: allowance(limit, available, replenishes_after),
+                allowance,
                 write: EntryWrite::Replace {
-                    entry: Entry { used: cost },
+                    entry,
                     expires_at_millis,
                 },
             }))
@@ -799,16 +818,35 @@ mod tests {
         let policy = policy("auth.login", "client", 3, Duration::from_secs(60));
         let check = Check::new(subject(1).bind(&policy));
         let key = check.counter_key();
-        let store = with_clock(MemoryStoreConfig::new(1).unwrap(), ManualClock::default());
-        {
-            let mut shard = store.shards.shard(0).lock().unwrap();
-            assert!(shard.replace(key, Entry { used: 4 }, 60_000).is_none());
-        }
+        for used in [4, u64::MAX] {
+            let store = with_clock(MemoryStoreConfig::new(2).unwrap(), ManualClock::default());
+            {
+                let mut shard = store.shards.shard(0).lock().unwrap();
+                assert!(shard.replace(key, Entry { used }, 60_000).is_none());
+            }
 
-        assert_eq!(
-            store.check(&check),
-            Ok(Decision::denied(quota(3, Duration::from_secs(60))))
-        );
+            let prefix = Check::new(subject(2).bind(&policy));
+            let result = store.check_all(&[prefix, check]).unwrap();
+            assert!(matches!(
+                result.view(),
+                BatchDecisionView::Denied {
+                    index: 1,
+                    denial: Denial::QuotaExceeded(_),
+                    ..
+                }
+            ));
+            assert_eq!(store.stats().unwrap().entries(), 1);
+            assert!(
+                store
+                    .check(&prefix.with_cost(3).unwrap())
+                    .unwrap()
+                    .permits_request()
+            );
+            assert_eq!(
+                store.check(&check),
+                Ok(Decision::denied(quota(3, Duration::from_secs(60))))
+            );
+        }
     }
 
     #[test]
