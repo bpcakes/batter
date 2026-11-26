@@ -32,8 +32,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - The three PostgreSQL limiters now share one private shell for their pool,
   bounds, observer, migration, bounded connections and transactions, and both
   quota limiters share one response finisher. No public item is removed,
-  renamed or re-typed; SQL, lock order and persisted state are unchanged. Three
-  observable differences follow (`batter-2oht`):
+  renamed or re-typed; SQL, lock order and persisted state are unchanged. Two
+  observable differences follow here, and the next entry records a third
+  (`batter-2oht`):
   - `PostgresAttemptLimiter::migrate` returns its connection to the pool after
     a successful run and unlock, as the other two limiters do. It previously
     closed the connection on every outcome. An error or cancellation still
@@ -41,24 +42,53 @@ The format is based on [Keep a Changelog], and this project adheres to
   - `PostgresGcraLimiter`'s `Debug` output ends with `..`, as
     `PostgresLimiter`'s does, because the observer is reported only as
     `has_observer`.
-  - `PostgresLimiter::cleanup_expired` and
-    `PostgresGcraLimiter::cleanup_expired` commit the way a check does:
-    refresh the server timeouts, then confirm the remaining budget, then
-    commit. Two outcomes at the deadline change, and one does not:
-    - The deadline has already passed on reaching commit. The error is still
-      `TimedOutBeforeCommit` and no rows are removed, but its phase is
-      `CleanupPhase::PreparingCommit` instead of `CleanupPhase::StartingCommit`,
-      so the message reads "timed out while preparing cleanup commit" instead
-      of "timed out while starting expired-window cleanup commit".
-    - The deadline passes while the timeout refresh is in flight. Unchanged:
-      `TimedOutBeforeCommit` with `CleanupPhase::PreparingCommit`.
-    - The refresh completes and the deadline is then found to have passed.
-      Cleanup now stops with `TimedOutBeforeCommit` and
-      `CleanupPhase::StartingCommit`, and no rows are removed. It previously
-      attempted the commit and reported `CommitTimedOut`, an uncertain outcome
-      in which rows may have been removed.
+- **Breaking:** `PostgresLimiter::cleanup_expired` and
+  `PostgresGcraLimiter::cleanup_expired` commit the way a check does: refresh
+  the server timeouts, confirm that budget remains, then attempt the commit
+  (`batter-2oht`). Cleanup previously confirmed the budget first and attempted
+  the commit after the refresh without looking at the clock again. This is a
+  runtime break: nothing stops compiling, but one cleanup that could succeed
+  now fails. Three cases at the deadline are affected differently:
+  - The deadline has already passed on reaching commit. The error is still
+    `TimedOutBeforeCommit` and no rows are removed, but its phase is
+    `CleanupPhase::PreparingCommit` instead of `CleanupPhase::StartingCommit`.
+  - The deadline passes while the timeout refresh is in flight. Unchanged:
+    `TimedOutBeforeCommit` with `CleanupPhase::PreparingCommit`.
+  - The refresh completes and the deadline has passed by then. Cleanup used to
+    attempt the commit anyway. It returned `Ok(removed)` when the server
+    acknowledged before the client timer fired, and `CommitTimedOut`, an
+    uncertain outcome, otherwise. It now stops before the attempt with
+    `TimedOutBeforeCommit` and `CleanupPhase::StartingCommit`, and removes no
+    rows.
 
-    These deadline races have no deterministic test.
+  Newly failing, with its handling:
+
+  ```rust,ignore
+  // Before: the commit's timeout refresh finished just past the operation
+  // deadline and the server acknowledged the commit in time. This returned
+  // the number of removed rows.
+  let removed = limiter.cleanup_expired(1_000).await?;
+
+  // After: the same run stops before commit and removes nothing. Expired rows
+  // stay eligible, so the next scheduled pass repeats the work. Raise
+  // `PostgresConfig::with_operation_timeout` if it recurs.
+  match limiter.cleanup_expired(1_000).await {
+      Ok(removed) => record(removed),
+      Err(MaintenanceError::TimedOutBeforeCommit {
+          phase: CleanupPhase::StartingCommit,
+      }) => retry_on_the_next_pass(),
+      Err(error) if error.may_have_removed_rows() => treat_as_unknown(error),
+      Err(error) => treat_as_no_effect(error),
+  }
+  ```
+
+  Log text an operator may match. A run that ended as "PostgreSQL
+  expired-window cleanup commit timed out; rows may have been removed" can now
+  end as "PostgreSQL expired-window cleanup timed out while starting
+  expired-window cleanup commit; no rows were removed". A run that reached
+  commit after its deadline reported "timed out while starting expired-window
+  cleanup commit" and now reports "timed out while preparing cleanup commit".
+  These deadline races have no deterministic test.
 - `MemoryStore` and `GcraStore` now bind each check or batch to the shards it
   locks. Fixed-window batches stop at the first quota or capacity denial. GCRA
   checks the remaining members for arithmetic errors before cleanup. Both

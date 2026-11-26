@@ -291,8 +291,12 @@ impl<F: Family> BoundedTransaction<'_, F> {
         before_commit::<F, _>(self.deadline, phase, query.fetch_one(&mut *self.inner)).await
     }
 
-    /// Commits within the remaining budget. A commit is never started after
-    /// the deadline, so only a commit that was actually sent can be uncertain.
+    /// Commits within the remaining budget.
+    ///
+    /// The commit is attempted only when budget remains immediately before
+    /// handing it to `SQLx`. From that attempt on, a deadline or an error is
+    /// reported as an uncertain outcome, whether or not `COMMIT` reached the
+    /// server: the client cannot tell the two apart.
     pub(crate) async fn commit(mut self) -> Result<(), ConnectionOutcome<F::Error>> {
         self.refresh_timeouts(F::PREPARING_COMMIT).await?;
         if Instant::now() >= self.deadline {
@@ -439,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_started_commit_is_uncertain() {
+    fn only_an_attempted_commit_is_uncertain() {
         assert!(
             !Maintenance::timed_out_before_commit(Maintenance::STARTING_COMMIT)
                 .may_have_removed_rows()
