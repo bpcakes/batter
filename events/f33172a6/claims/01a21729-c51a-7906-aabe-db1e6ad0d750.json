@@ -1,0 +1,1 @@
+{"v":1,"id":"01a21729-c51a-7906-aabe-db1e6ad0d750","replica":"f33172a6","deps":["01a21702-156a-7871-93d2-759280bd37d4"],"actor":{"agent":"human"},"op":"claim","issue":"01a1baa2-251c-72eb-b1c6-e4bd2af3d442","data":{"mode":"online","generation":1},"where":{"branch":"worktree/calm-harbor-06e1","commit":"29ac92d5a3eae892564ed845d213eaa367f1386e"}}
