@@ -288,9 +288,10 @@ pub(crate) fn is_server_timeout(error: &Error) -> bool {
 ///
 /// The statement timeout is the remaining budget less
 /// [`SERVER_TIMEOUT_GRACE`], and the lock timeout is 1 ms shorter. Both have a
-/// 1 ms floor, because `PostgreSQL` reads zero as no timeout. With less than
-/// the grace plus 1 ms remaining, the server settings therefore exceed the
-/// remaining budget, and the client deadline is the bound that holds.
+/// 1 ms floor, because `PostgreSQL` reads zero as no timeout. With no more
+/// than the grace plus 1 ms remaining, both settings sit at that floor. The
+/// floor is longer than the remaining budget only when less than 1 ms remains,
+/// and then the client deadline is the bound that holds.
 pub(crate) fn remaining_server_timeout_settings(deadline: Instant) -> Option<(String, String)> {
     let remaining = deadline
         .checked_duration_since(Instant::now())
@@ -342,12 +343,14 @@ mod tests {
         let now = Instant::now();
         let timeouts = |budget| remaining_server_timeout_settings(now + budget);
 
-        // At or below the grace the settings stay at the floor, which is
-        // longer than a budget this small: the client deadline bounds it.
+        // The floor is longer than a budget below 1 ms, which only the
+        // client deadline bounds.
         assert_eq!(
             timeouts(Duration::from_nanos(1)),
             Some(("1ms".to_owned(), "1ms".to_owned()))
         );
+        // A budget equal to the grace is still at the floor, now shorter than
+        // the budget.
         assert_eq!(
             timeouts(SERVER_TIMEOUT_GRACE),
             Some(("1ms".to_owned(), "1ms".to_owned()))
