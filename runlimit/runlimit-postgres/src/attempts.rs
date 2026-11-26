@@ -102,6 +102,28 @@ impl PostgresAttemptLimiter {
         self.base.pool()
     }
     /// Returns the runtime configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use runlimit_postgres::{PostgresConfig, attempts::PostgresAttemptLimiter};
+    /// use sqlx::postgres::PgPoolOptions;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // A lazy pool opens no connection until the limiter is used.
+    /// let pool = PgPoolOptions::new().connect_lazy("postgresql://localhost/app")?;
+    /// let config = PostgresConfig::new().with_operation_timeout(Duration::from_secs(1))?;
+    ///
+    /// let limiter = PostgresAttemptLimiter::new(pool).with_config(config);
+    ///
+    /// assert_eq!(limiter.config(), config);
+    /// assert_eq!(limiter.config().operation_timeout(), Duration::from_secs(1));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub const fn config(&self) -> PostgresConfig {
         self.base.config()
     }

@@ -42,12 +42,49 @@ The format is based on [Keep a Changelog], and this project adheres to
   - `PostgresGcraLimiter`'s `Debug` output ends with `..`, as
     `PostgresLimiter`'s does, because the observer is reported only as
     `has_observer`.
-- A check, attempt or cleanup whose deadline is reached exactly when a
-  statement or commit is about to start now fails before sending SQL, as it
-  already did once the deadline had passed. It previously treated a zero
-  remaining budget as budget, sent the timeout refresh with 1 ms timeouts and
-  could retire a reusable connection when that refresh timed out. The error
-  type and consumption certainty are unchanged (`batter-2oht`).
+- **Breaking:** a deadline reached exactly now counts as exhausted when the
+  timeout refresh before a statement or a commit is computed, as a deadline
+  already passed does (`batter-2oht`). A zero remaining budget was previously
+  treated as budget: the refresh was sent with 1 ms server timeouts and could
+  retire a reusable connection when it timed out. The operation now fails
+  before sending that refresh and its connection stays reusable. This is a
+  runtime break: nothing stops compiling, but an admission that could return a
+  denial now fails. If the deadline was reached at the refresh before a later
+  statement, and that refresh and every remaining statement finished before
+  the client timer fired, `PostgresLimiter::check` and `check_all`,
+  `PostgresGcraLimiter::check` and `check_all`, and
+  `PostgresAttemptLimiter::admit` returned their denial. That includes a
+  shadow denial, which permits the request, and the attempt limiter's busy,
+  backoff and storage-capacity denials. They now return
+  `CheckError::TimedOutBeforeCommit` with the phase of the statement that was
+  about to run. Allowances, attempt admissions and completions, and cleanup
+  need a commit, which already failed once the deadline was reached. Quota
+  consumption certainty is unchanged: nothing was consumed either way. The
+  window is a single clock reading wide.
+
+  Newly failing, with its handling:
+
+  ```rust,ignore
+  // Before: the operation deadline was reached exactly as the last
+  // statement's timeout refresh was computed, and that statement finished
+  // before the client timer fired. The check returned its denial; a shadow
+  // denial permitted the request.
+  let decision = limiter.check(&check).await?;
+
+  // After: the same check fails before sending the refresh. Nothing was
+  // consumed, so fail closed as for any other pre-commit timeout.
+  match limiter.check(&check).await {
+      Ok(decision) => apply(decision),
+      Err(CheckError::TimedOutBeforeCommit { phase }) => fail_closed(phase),
+      Err(error) => fail_closed_for(error),
+  }
+  ```
+
+  Log text an operator may match. A check that returned a denial and logged
+  no error can now end as "PostgreSQL rate-limit check timed out while
+  preflighting counter batch; quota was not consumed", or with another phase
+  in place of "preflighting counter batch". A statement that follows a refresh
+  which itself used up the budget is still sent, as before (`batter-pp9j`).
 - **Breaking:** `PostgresLimiter::cleanup_expired` and
   `PostgresGcraLimiter::cleanup_expired` commit the way a check does: refresh
   the server timeouts, confirm that budget remains, then attempt the commit

@@ -239,6 +239,11 @@ impl<F: Family> BoundedConnection<F> {
 /// timeouts are per statement/lock, so a value set once at BEGIN is stale after
 /// an earlier phase waits. Every statement and the commit therefore refresh
 /// them first, and no method exposes the underlying transaction.
+///
+/// The budget is confirmed when each refresh is computed and once more before
+/// a commit is attempted. It is not confirmed again between a refresh and the
+/// statement that follows it: a statement whose refresh used up the budget is
+/// still sent and then times out (`batter-pp9j`).
 pub(crate) struct BoundedTransaction<'c, F> {
     inner: Transaction<'c, Postgres>,
     deadline: Instant,
