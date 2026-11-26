@@ -67,24 +67,43 @@ The format is based on [Keep a Changelog], and this project adheres to
   ```rust,ignore
   // Before: the operation deadline was reached exactly as the last
   // statement's timeout refresh was computed, and that statement finished
-  // before the client timer fired. The check returned its denial; a shadow
+  // before the client timer fired. Each call returned its denial; a shadow
   // denial permitted the request.
   let decision = limiter.check(&check).await?;
+  let batch = limiter.check_all(&checks).await?;
+  let admission = attempts.admit(subject).await?;
 
-  // After: the same check fails before sending the refresh. Nothing was
-  // consumed, so fail closed as for any other pre-commit timeout.
+  // After: the same calls fail before sending the refresh. Nothing was
+  // consumed and no lease was taken, so fail closed as for any other
+  // pre-commit timeout. A single check and an attempt admission report
+  // `CheckError` directly:
   match limiter.check(&check).await {
       Ok(decision) => apply(decision),
       Err(CheckError::TimedOutBeforeCommit { phase }) => fail_closed(phase),
       Err(error) => fail_closed_for(error),
   }
+  match attempts.admit(subject).await {
+      Ok(admission) => apply_admission(admission),
+      Err(CheckError::TimedOutBeforeCommit { phase }) => fail_closed(phase),
+      Err(error) => fail_closed_for(error),
+  }
+  // A batch wraps the same error in `BatchCheckError::Check`:
+  match limiter.check_all(&checks).await {
+      Ok(batch) => apply_batch(batch),
+      Err(BatchCheckError::Check(CheckError::TimedOutBeforeCommit { phase })) => {
+          fail_closed(phase)
+      }
+      Err(error) => fail_closed_for_batch(error),
+  }
   ```
 
-  Log text an operator may match. A check that returned a denial and logged
-  no error can now end as "PostgreSQL rate-limit check timed out while
+  Log text an operator may match. A call that returned a denial and logged no
+  error can now end as "PostgreSQL rate-limit check timed out while
   preflighting counter batch; quota was not consumed", or with another phase
-  in place of "preflighting counter batch". A statement that follows a refresh
-  which itself used up the budget is still sent, as before (`batter-pp9j`).
+  in place of "preflighting counter batch"; an attempt admission reports
+  "acquiring counter row lock" there, and a batch prints the same text. A
+  statement that follows a refresh which itself used up the budget is still
+  attempted, as before (`batter-pp9j`).
 - **Breaking:** `PostgresLimiter::cleanup_expired` and
   `PostgresGcraLimiter::cleanup_expired` commit the way a check does: refresh
   the server timeouts, confirm that budget remains, then attempt the commit

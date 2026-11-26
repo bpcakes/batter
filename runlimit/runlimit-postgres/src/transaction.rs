@@ -243,7 +243,7 @@ impl<F: Family> BoundedConnection<F> {
 /// The budget is confirmed when each refresh is computed and once more before
 /// a commit is attempted. It is not confirmed again between a refresh and the
 /// statement that follows it: a statement whose refresh used up the budget is
-/// still sent and then times out (`batter-pp9j`).
+/// still attempted, and it either completes or times out (`batter-pp9j`).
 pub(crate) struct BoundedTransaction<'c, F> {
     inner: Transaction<'c, Postgres>,
     deadline: Instant,
