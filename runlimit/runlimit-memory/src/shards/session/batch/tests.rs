@@ -4,9 +4,9 @@ use runlimit_core::{
     BatchDecisionView, Check, Denial, FixedWindowPolicy, PolicyId, ScopeId, SubjectKey,
 };
 
-use super::{BoundedShards, MemoryStoreConfig, QuotaAlgorithm, QuotaEvaluation};
+use super::{BoundedShards, QuotaAlgorithm, QuotaEvaluation};
 use crate::{
-    Clock,
+    Clock, MemoryStoreConfig,
     shards::{Shard, execute_batch, execute_check},
     store::FixedWindowAlgorithm,
 };
@@ -44,7 +44,7 @@ impl QuotaAlgorithm for CountedFixedWindow {
 fn fixed_window_stops_quota_lookups_on_both_quota_and_capacity_denials() {
     let clock = FrozenClock;
     let config = MemoryStoreConfig::new(3).unwrap();
-    let shards = BoundedShards::new(&config);
+    let shards = BoundedShards::new(config);
     let policy = FixedWindowPolicy::new(
         PolicyId::new("batch.denial").unwrap(),
         ScopeId::new("client").unwrap(),
@@ -56,7 +56,7 @@ fn fixed_window_stops_quota_lookups_on_both_quota_and_capacity_denials() {
         [1, 2, 3, 4].map(|n| Check::new(SubjectKey::from_digest([n; 32]).bind(&policy)));
     for check in [available, exhausted, exhausted, occupied] {
         assert!(
-            execute_check::<FixedWindowAlgorithm, _>(&shards, &config, &clock, None, &check)
+            execute_check::<FixedWindowAlgorithm, _>(&shards, &clock, None, &check)
                 .unwrap()
                 .permits_request()
         );
@@ -65,7 +65,6 @@ fn fixed_window_stops_quota_lookups_on_both_quota_and_capacity_denials() {
         EVALUATIONS.set(0);
         let decision = execute_batch::<CountedFixedWindow, _>(
             &shards,
-            &config,
             &clock,
             None,
             &[available, first, occupied],

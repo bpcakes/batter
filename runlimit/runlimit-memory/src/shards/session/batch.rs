@@ -4,7 +4,7 @@ use runlimit_core::{
 
 use super::{BatchSessionError, PendingToken, QuotaAlgorithm, QuotaEvaluation};
 use crate::{
-    Clock, MemoryBatchError, MemoryStoreConfig,
+    Clock, MemoryBatchError,
     shards::{BatchTopology, BoundedShards, LockedShards, ShardEffect},
 };
 
@@ -21,14 +21,13 @@ pub(super) enum BatchEffects {
 
 pub(super) fn run_batch_session<A: QuotaAlgorithm, C: Clock>(
     shards: &BoundedShards<A::Entry>,
-    config: &MemoryStoreConfig,
     clock: &C,
     observe: bool,
     checks: &[Check<'_, A::Policy>],
 ) -> Result<(BatchDecision, BatchEffects), BatchSessionError<A::EvalError>> {
-    let locked = LockedBatch::<A>::lock(shards, checks, config, clock)?;
+    let locked = LockedBatch::<A>::lock(shards, checks, clock)?;
     let prepared = locked.prepare().map_err(BatchSessionError::Evaluation)?;
-    let session = prepared.advance_and_prune(config.max_expired_removals_per_check(), observe);
+    let session = prepared.advance_and_prune(observe);
     Ok(match session.preflight()? {
         BatchPreflight::Preflighted(preflighted) => preflighted.commit(),
         BatchPreflight::Denied { decision, effects } => (decision, effects),
@@ -74,24 +73,17 @@ pub(super) struct LockedBatch<'a, A: QuotaAlgorithm> {
     topology: BatchTopology,
     shards: LockedShards<'a, A::Entry>,
     now_millis: u128,
+    cleanup_per_check: usize,
 }
 
 impl<'a, A: QuotaAlgorithm> LockedBatch<'a, A> {
     pub(super) fn lock<C: Clock>(
         shards: &'a BoundedShards<A::Entry>,
         checks: &'a [Check<'a, A::Policy>],
-        config: &MemoryStoreConfig,
         clock: &C,
     ) -> Result<Self, MemoryBatchError> {
-        let batch = ValidatedBatch::new(checks, config.max_batch_size())?;
-        let topology = BatchTopology::new(
-            batch
-                .checks
-                .iter()
-                .map(|check| shards.shard_index(&check.counter_key())),
-            config,
-        )?;
-        let locked = shards.lock_topology(&topology)?;
+        let batch = ValidatedBatch::new(checks, shards.config().max_batch_size())?;
+        let (topology, locked) = shards.lock_batch(batch.checks.iter().map(Check::counter_key))?;
         let observed_millis = clock.now().as_millis();
         let now_millis = locked
             .iter()
@@ -102,6 +94,7 @@ impl<'a, A: QuotaAlgorithm> LockedBatch<'a, A> {
             topology,
             shards: locked,
             now_millis,
+            cleanup_per_check: shards.config().max_expired_removals_per_check(),
         })
     }
 
@@ -145,11 +138,7 @@ pub(super) struct PreparedBatch<'a, A: QuotaAlgorithm> {
 }
 
 impl<'a, A: QuotaAlgorithm> PreparedBatch<'a, A> {
-    pub(super) fn advance_and_prune(
-        mut self,
-        cleanup_per_check: usize,
-        record_effects: bool,
-    ) -> BatchSession<'a, A> {
+    pub(super) fn advance_and_prune(mut self, record_effects: bool) -> BatchSession<'a, A> {
         let locked = &mut self.locked;
         let mut effects = if record_effects {
             BatchEffects::Recorded(Vec::with_capacity(locked.shards.len()))
@@ -160,7 +149,7 @@ impl<'a, A: QuotaAlgorithm> PreparedBatch<'a, A> {
         for ((shard_index, shard), check_count) in
             locked.shards.iter_mut().zip(locked.topology.check_counts())
         {
-            let cleanup_limit = cleanup_per_check.saturating_mul(check_count);
+            let cleanup_limit = locked.cleanup_per_check.saturating_mul(check_count);
             let cleanup = shard.advance_and_prune(locked.now_millis, cleanup_limit, record_effects);
             if let BatchEffects::Recorded(recorded) = &mut effects {
                 recorded.push(ShardEffect {

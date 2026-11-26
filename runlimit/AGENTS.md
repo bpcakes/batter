@@ -36,7 +36,9 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   in-memory stores share one private consuming shard/batch session
   (`runlimit-memory/src/shards/session.rs` and its `batch` module). The session
   retains the check or validated batch and its routing from lock acquisition
-  through preflight. All fallible quota arithmetic precedes recording the
+  through preflight. The shard owner retains the configuration used at
+  construction for batch validation, cleanup budgets, statistics, and poison
+  recovery. All fallible quota arithmetic precedes recording the
   monotonic clock and pruning. Batch cleanup uses the full per-shard check
   count. Fixed-window batches then evaluate quota and capacity in input order
   through the first denial. GCRA checks the allowed prefix for capacity after

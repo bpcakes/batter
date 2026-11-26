@@ -7,7 +7,7 @@ use runlimit_core::{
 };
 
 use super::{BoundedShards, CleanupEffect, Shard, ShardEffect, usize_to_u64};
-use crate::{Clock, MemoryBatchError, MemoryStoreConfig, PoisonedShardError};
+use crate::{Clock, MemoryBatchError, PoisonedShardError};
 
 mod batch;
 #[cfg(test)]
@@ -75,13 +75,12 @@ impl<E> From<MemoryBatchError> for BatchSessionError<E> {
 /// after the shard lock releases.
 pub(crate) fn execute_check<A: QuotaAlgorithm, C: Clock>(
     shards: &BoundedShards<A::Entry>,
-    config: &MemoryStoreConfig,
     clock: &C,
     observer: Option<&dyn Observer>,
     check: &Check<'_, A::Policy>,
 ) -> Result<Decision, CheckSessionError<A::EvalError>> {
     let started = observer.map(|_| Instant::now());
-    let result = run_single_session::<A, C>(shards, config, clock, observer.is_some(), check);
+    let result = run_single_session::<A, C>(shards, clock, observer.is_some(), check);
     let elapsed = started.map_or_default(|start| start.elapsed());
 
     if let Some(observer) = observer {
@@ -105,13 +104,12 @@ pub(crate) fn execute_check<A: QuotaAlgorithm, C: Clock>(
 /// observations after every shard lock releases.
 pub(crate) fn execute_batch<A: QuotaAlgorithm, C: Clock>(
     shards: &BoundedShards<A::Entry>,
-    config: &MemoryStoreConfig,
     clock: &C,
     observer: Option<&dyn Observer>,
     checks: &[Check<'_, A::Policy>],
 ) -> Result<BatchDecision, BatchSessionError<A::EvalError>> {
     let started = observer.map(|_| Instant::now());
-    let result = run_batch_session::<A, C>(shards, config, clock, observer.is_some(), checks);
+    let result = run_batch_session::<A, C>(shards, clock, observer.is_some(), checks);
     let elapsed = started.map_or_default(|start| start.elapsed());
 
     if let Some(observer) = observer {
@@ -137,7 +135,6 @@ pub(crate) fn execute_batch<A: QuotaAlgorithm, C: Clock>(
 
 fn run_single_session<A: QuotaAlgorithm, C: Clock>(
     shards: &BoundedShards<A::Entry>,
-    config: &MemoryStoreConfig,
     clock: &C,
     observe: bool,
     check: &Check<'_, A::Policy>,
@@ -145,7 +142,7 @@ fn run_single_session<A: QuotaAlgorithm, C: Clock>(
     let locked =
         LockedShard::<A>::lock(shards, check, clock).map_err(CheckSessionError::PoisonedShard)?;
     let evaluated = locked.evaluate().map_err(CheckSessionError::Evaluation)?;
-    let session = evaluated.advance_and_prune(config.max_expired_removals_per_check(), observe);
+    let session = evaluated.advance_and_prune(observe);
     Ok(match session.preflight() {
         SinglePreflight::Preflighted(preflighted) => preflighted.commit(),
         SinglePreflight::Denied { decision, effect } => (decision, effect),
@@ -162,6 +159,7 @@ struct LockedShard<'a, A: QuotaAlgorithm> {
     guard: MutexGuard<'a, Shard<A::Entry>>,
     check: &'a Check<'a, A::Policy>,
     now_millis: u128,
+    cleanup_limit: usize,
 }
 
 impl<'a, A: QuotaAlgorithm> LockedShard<'a, A> {
@@ -179,6 +177,7 @@ impl<'a, A: QuotaAlgorithm> LockedShard<'a, A> {
             guard,
             check,
             now_millis,
+            cleanup_limit: shards.config().max_expired_removals_per_check(),
         })
     }
 
@@ -199,14 +198,10 @@ struct EvaluatedShard<'a, A: QuotaAlgorithm> {
 }
 
 impl<'a, A: QuotaAlgorithm> EvaluatedShard<'a, A> {
-    fn advance_and_prune(
-        mut self,
-        cleanup_limit: usize,
-        time_cleanup: bool,
-    ) -> ShardSession<'a, A> {
+    fn advance_and_prune(mut self, time_cleanup: bool) -> ShardSession<'a, A> {
         let cleanup = self.locked.guard.advance_and_prune(
             self.locked.now_millis,
-            cleanup_limit,
+            self.locked.cleanup_limit,
             time_cleanup,
         );
         ShardSession {

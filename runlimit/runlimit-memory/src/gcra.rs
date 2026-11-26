@@ -118,7 +118,6 @@ impl From<PoisonedShardError> for GcraBatchError {
 /// active entries, performs bounded cleanup per check, and preserves atomic
 /// all-or-nothing batches in caller order.
 pub struct GcraStore<C = SystemClock> {
-    config: MemoryStoreConfig,
     clock: C,
     shards: BoundedShards<Entry>,
     observer: Option<Arc<dyn Observer>>,
@@ -155,7 +154,7 @@ impl<C> fmt::Debug for GcraStore<C> {
         let poisoned_shards = self.shards.poisoned_count();
         formatter
             .debug_struct("GcraStore")
-            .field("config", &self.config)
+            .field("config", self.shards.config())
             .field("has_observer", &self.observer.is_some())
             .field("poisoned_shards", &poisoned_shards)
             .field("shard_state", &"[REDACTED]")
@@ -196,11 +195,9 @@ impl<C> GcraStoreBuilder<C> {
 impl<C: Clock> GcraStoreBuilder<C> {
     /// Builds an empty store whose timestamps use the selected clock.
     pub fn build(self) -> GcraStore<C> {
-        let shards = BoundedShards::new(&self.config);
         GcraStore {
-            config: self.config,
             clock: self.clock,
-            shards,
+            shards: BoundedShards::new(self.config),
             observer: None,
         }
     }
@@ -225,7 +222,6 @@ impl<C: Clock> GcraStore<C> {
     pub fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, GcraCheckError> {
         execute_check::<GcraAlgorithm, _>(
             &self.shards,
-            &self.config,
             &self.clock,
             self.observer.as_deref(),
             check,
@@ -251,7 +247,6 @@ impl<C: Clock> GcraStore<C> {
     ) -> Result<BatchDecision, GcraBatchError> {
         execute_batch::<GcraAlgorithm, _>(
             &self.shards,
-            &self.config,
             &self.clock,
             self.observer.as_deref(),
             checks,
@@ -268,7 +263,7 @@ impl<C: Clock> GcraStore<C> {
     ///
     /// Returns an error if any shard is poisoned.
     pub fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
-        self.shards.stats(&self.config)
+        self.shards.stats()
     }
 
     /// Removes every stored counter.
@@ -282,7 +277,7 @@ impl<C: Clock> GcraStore<C> {
 
     /// Rebuilds poisoned shards by discarding their untrusted counter state.
     pub fn recover_poisoned(&self) -> usize {
-        self.shards.recover_poisoned(&self.config)
+        self.shards.recover_poisoned()
     }
 }
 

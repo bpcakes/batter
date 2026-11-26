@@ -70,7 +70,6 @@ fn capture_snapshot<E: Copy>(shards: &BoundedShards<E>) -> StoreSnapshot<E> {
 
 fn assert_batch_preflight_denied<A>(
     shards: &BoundedShards<A::Entry>,
-    config: &MemoryStoreConfig,
     clock: &ManualClock,
     checks: &[Check<'_, A::Policy>],
     baseline: &StoreSnapshot<A::Entry>,
@@ -80,11 +79,11 @@ fn assert_batch_preflight_denied<A>(
     A::Entry: Copy + Debug + Eq,
     A::EvalError: Debug,
 {
-    let preflight = LockedBatch::<A>::lock(shards, checks, config, clock)
+    let preflight = LockedBatch::<A>::lock(shards, checks, clock)
         .unwrap()
         .prepare()
         .unwrap()
-        .advance_and_prune(config.max_expired_removals_per_check(), true)
+        .advance_and_prune(true)
         .preflight()
         .unwrap();
     assert!(matches!(
@@ -104,7 +103,6 @@ fn assert_batch_preflight_denied<A>(
 
 fn assert_single_preflight_denied<A>(
     shards: &BoundedShards<A::Entry>,
-    config: &MemoryStoreConfig,
     clock: &ManualClock,
     check: &Check<'_, A::Policy>,
     baseline: &StoreSnapshot<A::Entry>,
@@ -117,7 +115,7 @@ fn assert_single_preflight_denied<A>(
         .unwrap()
         .evaluate()
         .unwrap()
-        .advance_and_prune(config.max_expired_removals_per_check(), true)
+        .advance_and_prune(true)
         .preflight();
     assert!(matches!(
         preflight,
@@ -141,19 +139,19 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
         .unwrap()
         .with_shard_count(1)
         .unwrap();
-    let shards = BoundedShards::<A::Entry>::new(&config);
+    let shards = BoundedShards::<A::Entry>::new(config);
 
     // Seed two active entries: one with remaining quota and one exhausted.
     let active_with_room = Check::new(subject(1).bind(enforced_multi));
     let exhausted = Check::new(subject(2).bind(enforced_single));
     let new_key = Check::new(subject(3).bind(enforced_multi));
     assert!(
-        execute_check::<A, _>(&shards, &config, &clock, None, &active_with_room)
+        execute_check::<A, _>(&shards, &clock, None, &active_with_room)
             .unwrap()
             .permits_request()
     );
     assert!(
-        execute_check::<A, _>(&shards, &config, &clock, None, &exhausted)
+        execute_check::<A, _>(&shards, &clock, None, &exhausted)
             .unwrap()
             .permits_request()
     );
@@ -165,14 +163,7 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
     // 1. Enforced quota denial after an earlier allowed member yields no
     //    PreflightedBatch and leaves every stored entry unchanged.
     let quota_denied_checks = [active_with_room, exhausted];
-    assert_batch_preflight_denied::<A>(
-        &shards,
-        &config,
-        &clock,
-        &quota_denied_checks,
-        &baseline,
-        1,
-    );
+    assert_batch_preflight_denied::<A>(&shards, &clock, &quota_denied_checks, &baseline, 1);
 
     // 2. Shadow quota denial after an earlier allowed member leaves every
     //    stored entry unchanged.
@@ -180,8 +171,7 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
         Check::new(subject(1).bind(shadow_multi)),
         Check::new(subject(2).bind(shadow_single)),
     ];
-    let shadow_decision =
-        execute_batch::<A, _>(&shards, &config, &clock, None, &shadow_checks).unwrap();
+    let shadow_decision = execute_batch::<A, _>(&shards, &clock, None, &shadow_checks).unwrap();
     assert!(matches!(
         shadow_decision.view(),
         BatchDecisionView::ShadowDenied { index: 1, .. }
@@ -191,8 +181,7 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
     // 3. Storage-capacity denial after an earlier allowed member leaves every
     //    stored entry unchanged.
     let capacity_decision =
-        execute_batch::<A, _>(&shards, &config, &clock, None, &[active_with_room, new_key])
-            .unwrap();
+        execute_batch::<A, _>(&shards, &clock, None, &[active_with_room, new_key]).unwrap();
     assert!(matches!(
         capacity_decision.view(),
         BatchDecisionView::Denied {
@@ -206,7 +195,7 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
     // 4. Storage-capacity denial at an earlier index supersedes a later quota
     //    denial and leaves every stored entry unchanged.
     let precedence_decision =
-        execute_batch::<A, _>(&shards, &config, &clock, None, &[new_key, exhausted]).unwrap();
+        execute_batch::<A, _>(&shards, &clock, None, &[new_key, exhausted]).unwrap();
     assert!(matches!(
         precedence_decision.view(),
         BatchDecisionView::Denied {
@@ -219,11 +208,11 @@ fn assert_denied_preflight_preserves_every_shard_and_entry<A>(
 
     // 5. Single-check denied preflight yields no PreflightedSingle and leaves
     //    every stored entry unchanged.
-    assert_single_preflight_denied::<A>(&shards, &config, &clock, &exhausted, &baseline);
+    assert_single_preflight_denied::<A>(&shards, &clock, &exhausted, &baseline);
 
     // 6. Advancing time within the window still leaves denied entries untouched.
     clock.advance(Duration::from_millis(10));
-    let _ = execute_batch::<A, _>(&shards, &config, &clock, None, &quota_denied_checks).unwrap();
+    let _ = execute_batch::<A, _>(&shards, &clock, None, &quota_denied_checks).unwrap();
     assert_eq!(capture_snapshot(&shards), baseline);
 }
 
@@ -333,7 +322,7 @@ fn commit_consumes_the_preflighted_owner_and_tokens_are_single_use() {
 
     // Also verify a denied evaluation produces no token for either algorithm.
     let config = MemoryStoreConfig::new(1).unwrap();
-    let fw_shards = BoundedShards::<<FixedWindowAlgorithm as QuotaAlgorithm>::Entry>::new(&config);
+    let fw_shards = BoundedShards::<<FixedWindowAlgorithm as QuotaAlgorithm>::Entry>::new(config);
     let fw_policy = FixedWindowPolicy::new(
         PolicyId::new("token.fw").unwrap(),
         ScopeId::new("client").unwrap(),
@@ -342,14 +331,8 @@ fn commit_consumes_the_preflighted_owner_and_tokens_are_single_use() {
     )
     .unwrap();
     let fw_check = Check::new(subject(1).bind(&fw_policy));
-    execute_check::<FixedWindowAlgorithm, _>(
-        &fw_shards,
-        &config,
-        &ManualClock::default(),
-        None,
-        &fw_check,
-    )
-    .unwrap();
+    execute_check::<FixedWindowAlgorithm, _>(&fw_shards, &ManualClock::default(), None, &fw_check)
+        .unwrap();
     let fw_guard = fw_shards.shard(0).lock().unwrap();
     assert!(matches!(
         FixedWindowAlgorithm::evaluate(&fw_guard, &fw_check, 0),

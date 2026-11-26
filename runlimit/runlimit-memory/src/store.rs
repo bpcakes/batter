@@ -121,7 +121,6 @@ fn allowance(limit: Capacity, available: u64, replenishes_after: Duration) -> Al
 /// availability tradeoff: it restores poisoned shards by discarding their
 /// counters rather than trusting state whose consistency is unknown.
 pub struct MemoryStore<C = SystemClock> {
-    config: MemoryStoreConfig,
     clock: C,
     shards: BoundedShards<Entry>,
     observer: Option<Arc<dyn Observer>>,
@@ -159,7 +158,7 @@ impl<C> fmt::Debug for MemoryStore<C> {
 
         formatter
             .debug_struct("MemoryStore")
-            .field("config", &self.config)
+            .field("config", self.shards.config())
             .field("has_observer", &self.observer.is_some())
             .field("poisoned_shards", &poisoned_shards)
             .field("shard_state", &Redacted)
@@ -208,11 +207,9 @@ impl<C> MemoryStoreBuilder<C> {
 impl<C: Clock> MemoryStoreBuilder<C> {
     /// Builds an empty store whose timestamps use the selected clock.
     pub fn build(self) -> MemoryStore<C> {
-        let shards = BoundedShards::new(&self.config);
         MemoryStore {
-            config: self.config,
             clock: self.clock,
-            shards,
+            shards: BoundedShards::new(self.config),
             observer: None,
         }
     }
@@ -240,7 +237,6 @@ impl<C: Clock> MemoryStore<C> {
     pub fn check(&self, check: &Check<'_>) -> Result<Decision, PoisonedShardError> {
         execute_check::<FixedWindowAlgorithm, _>(
             &self.shards,
-            &self.config,
             &self.clock,
             self.observer.as_deref(),
             check,
@@ -265,7 +261,6 @@ impl<C: Clock> MemoryStore<C> {
     pub fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, MemoryBatchError> {
         execute_batch::<FixedWindowAlgorithm, _>(
             &self.shards,
-            &self.config,
             &self.clock,
             self.observer.as_deref(),
             checks,
@@ -282,7 +277,7 @@ impl<C: Clock> MemoryStore<C> {
     ///
     /// Returns an error if a shard is poisoned.
     pub fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
-        self.shards.stats(&self.config)
+        self.shards.stats()
     }
 
     /// Removes every stored counter.
@@ -308,7 +303,7 @@ impl<C: Clock> MemoryStore<C> {
     /// observe either the pre-recovery poisoned store or the complete recovered
     /// state, never a partially reopened multi-shard store.
     pub fn recover_poisoned(&self) -> usize {
-        self.shards.recover_poisoned(&self.config)
+        self.shards.recover_poisoned()
     }
 }
 
