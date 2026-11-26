@@ -44,14 +44,21 @@ The format is based on [Keep a Changelog], and this project adheres to
   - `PostgresLimiter::cleanup_expired` and
     `PostgresGcraLimiter::cleanup_expired` commit the way a check does:
     refresh the server timeouts, then confirm the remaining budget, then
-    commit. A cleanup that reaches commit after its deadline now reports
-    `TimedOutBeforeCommit { phase: CleanupPhase::PreparingCommit }` instead of
-    `CleanupPhase::StartingCommit`, so its message reads "timed out while
-    preparing cleanup commit" instead of "timed out while starting
-    expired-window cleanup commit". A deadline that passes during that refresh
-    now stops before commit with `CleanupPhase::StartingCommit`; the commit
-    used to be sent and reported `CommitTimedOut`. Neither case removes rows.
-    This deadline race has no deterministic test.
+    commit. Two outcomes at the deadline change, and one does not:
+    - The deadline has already passed on reaching commit. The error is still
+      `TimedOutBeforeCommit` and no rows are removed, but its phase is
+      `CleanupPhase::PreparingCommit` instead of `CleanupPhase::StartingCommit`,
+      so the message reads "timed out while preparing cleanup commit" instead
+      of "timed out while starting expired-window cleanup commit".
+    - The deadline passes while the timeout refresh is in flight. Unchanged:
+      `TimedOutBeforeCommit` with `CleanupPhase::PreparingCommit`.
+    - The refresh completes and the deadline is then found to have passed.
+      Cleanup now stops with `TimedOutBeforeCommit` and
+      `CleanupPhase::StartingCommit`, and no rows are removed. It previously
+      attempted the commit and reported `CommitTimedOut`, an uncertain outcome
+      in which rows may have been removed.
+
+    These deadline races have no deterministic test.
 - `MemoryStore` and `GcraStore` now bind each check or batch to the shards it
   locks. Fixed-window batches stop at the first quota or capacity denial. GCRA
   checks the remaining members for arithmetic errors before cleanup. Both

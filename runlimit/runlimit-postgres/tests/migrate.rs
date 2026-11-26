@@ -35,6 +35,18 @@ async fn backend(pool: &PgPool) -> i32 {
     .expect("the pooled connection is usable")
 }
 
+/// Counts the advisory locks `session` holds, read from another session.
+async fn advisory_locks_held(admin_pool: &PgPool, session: i32) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_catalog.pg_locks \
+         WHERE pid = $1 AND locktype = 'advisory' AND granted",
+    )
+    .bind(session)
+    .fetch_one(admin_pool)
+    .await
+    .expect("read the migration session's advisory locks")
+}
+
 #[tokio::test]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn every_migration_returns_its_session_only_after_success() {
@@ -50,7 +62,14 @@ async fn every_migration_returns_its_session_only_after_success() {
         assert_eq!(
             backend(&fixture.pool).await,
             session,
-            "{storage:?} returns its unlocked session after a successful migration"
+            "{storage:?} returns its session after a successful migration"
+        );
+        // Advisory locks are reentrant within a session, so a repeated
+        // migration on this session would succeed even with a leaked lock.
+        assert_eq!(
+            advisory_locks_held(&fixture.admin_pool, session).await,
+            0,
+            "{storage:?} must unlock the session it returns to the pool"
         );
         storage
             .migrate(&fixture.pool)

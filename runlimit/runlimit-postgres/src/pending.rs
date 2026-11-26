@@ -107,8 +107,10 @@ impl<A: SampledAllowance> Pending<A> {
     pub(crate) fn finish(self, authoritative_elapsed: Duration) -> Admission {
         match self {
             Self::Allowed(allowances) => Admission::Allowed(
+                // Consuming the evaluated allowances lets a fixed-window
+                // response reuse their buffer instead of allocating another.
                 allowances
-                    .iter()
+                    .into_iter()
                     .map(|allowance| {
                         let sampled = allowance.sampled();
                         Allowance::new(
