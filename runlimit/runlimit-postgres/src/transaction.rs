@@ -291,24 +291,39 @@ impl<F: Family> BoundedTransaction<'_, F> {
         before_commit::<F, _>(self.deadline, phase, query.fetch_one(&mut *self.inner)).await
     }
 
-    /// Commits within the remaining budget.
-    ///
-    /// The commit is attempted only when budget remains immediately before
-    /// handing it to `SQLx`. From that attempt on, a deadline or an error is
-    /// reported as an uncertain outcome, whether or not `COMMIT` reached the
-    /// server: the client cannot tell the two apart.
+    /// Commits within the remaining budget: refreshes the server timeouts,
+    /// then hands the commit to [`attempt_commit`], which confirms that budget
+    /// remains before it polls the commit at all.
     pub(crate) async fn commit(mut self) -> Result<(), ConnectionOutcome<F::Error>> {
         self.refresh_timeouts(F::PREPARING_COMMIT).await?;
-        if Instant::now() >= self.deadline {
-            return Err(ConnectionOutcome::Reusable(F::timed_out_before_commit(
-                F::STARTING_COMMIT,
-            )));
-        }
-        timeout_at(self.deadline, self.inner.commit())
-            .await
-            .map_err(|_| ConnectionOutcome::MustClose(F::commit_timed_out()))?
-            .map_err(|error| ConnectionOutcome::Reusable(F::commit_outcome_unknown(error)))
+        // `Transaction::commit` does nothing until polled, and dropping it
+        // unpolled rolls the transaction back like dropping the transaction.
+        attempt_commit::<F>(self.deadline, self.inner.commit()).await
     }
+}
+
+/// Attempts `commit` only when budget remains at this instant.
+///
+/// With the deadline already passed, `commit` is dropped without being polled
+/// and the failure is a definite pre-commit timeout. From the first poll on, a
+/// deadline or an error is reported as an uncertain outcome, whether or not
+/// `COMMIT` reached the server: the client cannot tell the two apart.
+async fn attempt_commit<F>(
+    deadline: Instant,
+    commit: impl Future<Output = Result<(), sqlx::Error>>,
+) -> Result<(), ConnectionOutcome<F::Error>>
+where
+    F: Family,
+{
+    if Instant::now() >= deadline {
+        return Err(ConnectionOutcome::Reusable(F::timed_out_before_commit(
+            F::STARTING_COMMIT,
+        )));
+    }
+    timeout_at(deadline, commit)
+        .await
+        .map_err(|_| ConnectionOutcome::MustClose(F::commit_timed_out()))?
+        .map_err(|error| ConnectionOutcome::Reusable(F::commit_outcome_unknown(error)))
 }
 
 impl BoundedTransaction<'_, Check> {
@@ -362,7 +377,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{future, time::Duration};
+    use std::{
+        future,
+        sync::atomic::{AtomicBool, Ordering},
+        task::Poll,
+        time::Duration,
+    };
 
     use super::*;
 
@@ -428,6 +448,116 @@ mod tests {
                 sqlx::Error::RowNotFound
             )))
         ));
+    }
+
+    /// A commit stand-in that records whether it was ever polled.
+    fn recorded_commit(
+        polled: &AtomicBool,
+        outcome: Poll<Result<(), sqlx::Error>>,
+    ) -> impl Future<Output = Result<(), sqlx::Error>> {
+        let mut outcome = Some(outcome);
+        future::poll_fn(move |_| {
+            polled.store(true, Ordering::Relaxed);
+            match outcome.take() {
+                Some(Poll::Ready(result)) => Poll::Ready(result),
+                Some(Poll::Pending) | None => Poll::Pending,
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn an_exhausted_budget_never_polls_the_commit_in_either_family() {
+        // Even a commit that would succeed at once must not be attempted.
+        let polled = AtomicBool::new(false);
+        let outcome = attempt_commit::<Maintenance>(
+            Instant::now(),
+            recorded_commit(&polled, Poll::Ready(Ok(()))),
+        )
+        .await;
+        let Err(ConnectionOutcome::Reusable(error)) = outcome else {
+            panic!("an exhausted cleanup budget is a definite pre-commit timeout")
+        };
+        assert!(matches!(
+            error,
+            MaintenanceError::TimedOutBeforeCommit {
+                phase: CleanupPhase::StartingCommit
+            }
+        ));
+        assert!(!error.may_have_removed_rows());
+        assert!(!polled.load(Ordering::Relaxed));
+
+        let polled = AtomicBool::new(false);
+        let outcome = attempt_commit::<Check>(
+            Instant::now(),
+            recorded_commit(&polled, Poll::Ready(Ok(()))),
+        )
+        .await;
+        let Err(ConnectionOutcome::Reusable(error)) = outcome else {
+            panic!("an exhausted check budget is a definite pre-commit timeout")
+        };
+        assert!(matches!(
+            error,
+            CheckError::TimedOutBeforeCommit {
+                phase: CheckPhase::StartingCommit
+            }
+        ));
+        assert_eq!(
+            error.consumption(),
+            runlimit_core::ConsumptionStatus::NotConsumed
+        );
+        assert!(!polled.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn an_attempted_commit_reports_every_unconfirmed_outcome_as_uncertain() {
+        let budget = || Instant::now() + Duration::from_secs(5);
+
+        let polled = AtomicBool::new(false);
+        attempt_commit::<Maintenance>(budget(), recorded_commit(&polled, Poll::Ready(Ok(()))))
+            .await
+            .unwrap_or_else(|_| panic!("an acknowledged commit succeeds"));
+        assert!(polled.load(Ordering::Relaxed));
+
+        let polled = AtomicBool::new(false);
+        let outcome = attempt_commit::<Maintenance>(
+            budget(),
+            recorded_commit(&polled, Poll::Ready(Err(sqlx::Error::PoolClosed))),
+        )
+        .await;
+        let Err(ConnectionOutcome::Reusable(error)) = outcome else {
+            panic!("a commit error leaves an idle connection")
+        };
+        assert!(matches!(error, MaintenanceError::CommitOutcomeUnknown(_)));
+        assert!(error.may_have_removed_rows());
+
+        // The deadline passes while the attempted commit is still pending.
+        let polled = AtomicBool::new(false);
+        let outcome = attempt_commit::<Maintenance>(
+            Instant::now() + Duration::from_millis(20),
+            recorded_commit(&polled, Poll::Pending),
+        )
+        .await;
+        let Err(ConnectionOutcome::MustClose(error)) = outcome else {
+            panic!("a commit that outlives the deadline leaves a busy connection")
+        };
+        assert!(matches!(error, MaintenanceError::CommitTimedOut));
+        assert!(error.may_have_removed_rows());
+        assert!(polled.load(Ordering::Relaxed));
+
+        let polled = AtomicBool::new(false);
+        let outcome = attempt_commit::<Check>(
+            Instant::now() + Duration::from_millis(20),
+            recorded_commit(&polled, Poll::Pending),
+        )
+        .await;
+        let Err(ConnectionOutcome::MustClose(error)) = outcome else {
+            panic!("a check commit that outlives the deadline leaves a busy connection")
+        };
+        assert!(matches!(error, CheckError::CommitTimedOut));
+        assert_eq!(
+            error.consumption(),
+            runlimit_core::ConsumptionStatus::PossiblyConsumed
+        );
     }
 
     #[test]

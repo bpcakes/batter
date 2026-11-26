@@ -55,9 +55,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   - The deadline passes while the timeout refresh is in flight. Unchanged:
     `TimedOutBeforeCommit` with `CleanupPhase::PreparingCommit`.
   - The refresh completes and the deadline has passed by then. Cleanup used to
-    attempt the commit anyway. It returned `Ok(removed)` when the server
-    acknowledged before the client timer fired, and `CommitTimedOut`, an
-    uncertain outcome, otherwise. It now stops before the attempt with
+    attempt the commit anyway, with three possible results: `Ok(removed)` when
+    the server acknowledged before the client timer fired,
+    `CommitOutcomeUnknown` when `SQLx` returned an error first (a connection
+    lost during commit, for example), and `CommitTimedOut` otherwise. The last
+    two are uncertain outcomes. It now stops before the attempt with
     `TimedOutBeforeCommit` and `CleanupPhase::StartingCommit`, and removes no
     rows.
 
@@ -83,12 +85,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   ```
 
   Log text an operator may match. A run that ended as "PostgreSQL
-  expired-window cleanup commit timed out; rows may have been removed" can now
-  end as "PostgreSQL expired-window cleanup timed out while starting
-  expired-window cleanup commit; no rows were removed". A run that reached
-  commit after its deadline reported "timed out while starting expired-window
-  cleanup commit" and now reports "timed out while preparing cleanup commit".
-  These deadline races have no deterministic test.
+  expired-window cleanup commit timed out; rows may have been removed" or as
+  "PostgreSQL expired-window cleanup commit outcome is unknown; rows may have
+  been removed" can now end as "PostgreSQL expired-window cleanup timed out
+  while starting expired-window cleanup commit; no rows were removed". A run
+  that reached commit after its deadline reported "timed out while starting
+  expired-window cleanup commit" and now reports "timed out while preparing
+  cleanup commit". A unit test proves that an exhausted budget never polls the
+  commit; the timing of a real refresh against the deadline is not reproduced
+  by a test.
 - `MemoryStore` and `GcraStore` now bind each check or batch to the shards it
   locks. Fixed-window batches stop at the first quota or capacity denial. GCRA
   checks the remaining members for arithmetic errors before cleanup. Both
