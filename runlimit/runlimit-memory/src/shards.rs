@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     hash::{BuildHasherDefault, Hash, Hasher},
     sync::{Mutex, MutexGuard},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use runlimit_core::{CounterKey, Delay, Denial};
@@ -10,6 +10,13 @@ use runlimit_core::{CounterKey, Delay, Denial};
 use crate::{
     MemoryStoreConfig,
     store::{MemoryBatchError, MemoryStoreStats, PoisonedShardError},
+};
+
+mod session;
+
+pub(crate) use session::{
+    BatchSessionError, CheckSessionError, EntryWrite, PendingToken, QuotaAlgorithm,
+    QuotaEvaluation, execute_batch, execute_check,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -81,23 +88,28 @@ impl<E> Shard<E> {
         self.expirations.clear();
     }
 
-    pub(crate) const fn capacity(&self) -> usize {
+    const fn capacity(&self) -> usize {
         self.capacity
     }
 
-    pub(crate) fn used(&self) -> usize {
+    fn used_entries(&self) -> usize {
         self.entries.len()
     }
 
-    pub(crate) const fn latest_observed_millis(&self) -> u128 {
+    #[cfg(test)]
+    pub(crate) fn used(&self) -> usize {
+        self.used_entries()
+    }
+
+    const fn latest_observed_millis(&self) -> u128 {
         self.latest_observed_millis
     }
 
-    pub(crate) const fn record_observed_millis(&mut self, now_millis: u128) {
+    const fn record_observed_millis(&mut self, now_millis: u128) {
         self.latest_observed_millis = now_millis;
     }
 
-    pub(crate) fn contains_key(&self, key: CounterKey) -> bool {
+    fn contains_key(&self, key: CounterKey) -> bool {
         self.entries.contains_key(&PrehashedCounterKey(key))
     }
 
@@ -106,45 +118,23 @@ impl<E> Shard<E> {
         (entry.expires_at_millis > now_millis).then_some((&entry.value, entry.expires_at_millis))
     }
 
-    pub(crate) fn update_value<R>(
+    fn advance_and_prune(
         &mut self,
-        key: CounterKey,
-        update: impl FnOnce(&mut E) -> R,
-    ) -> Option<R> {
-        self.entries
-            .get_mut(&PrehashedCounterKey(key))
-            .map(|entry| update(&mut entry.value))
-    }
-
-    pub(crate) fn replace(
-        &mut self,
-        key: CounterKey,
-        value: E,
-        expires_at_millis: u128,
-    ) -> Option<E> {
-        let previous = self.entries.insert(
-            PrehashedCounterKey(key),
-            StoredEntry {
-                value,
-                expires_at_millis,
-            },
-        );
-        if let Some(previous) = &previous {
-            let removed = self.expirations.remove(&Expiration {
-                expires_at_millis: previous.expires_at_millis,
-                key,
-            });
-            debug_assert!(removed, "a replaced entry must have one expiration");
+        now_millis: u128,
+        cleanup_limit: usize,
+        time_cleanup: bool,
+    ) -> CleanupEffect {
+        self.record_observed_millis(now_millis);
+        let started = time_cleanup.then(Instant::now);
+        let removed = self.prune_expired(now_millis, cleanup_limit);
+        CleanupEffect {
+            requested: cleanup_limit,
+            removed,
+            elapsed: started.map_or_default(|start| start.elapsed()),
         }
-        let inserted = self.expirations.insert(Expiration {
-            expires_at_millis,
-            key,
-        });
-        debug_assert!(inserted, "an inserted entry must have one expiration");
-        previous.map(|entry| entry.value)
     }
 
-    pub(crate) fn prune_expired(&mut self, now_millis: u128, maximum: usize) -> usize {
+    fn prune_expired(&mut self, now_millis: u128, maximum: usize) -> usize {
         let mut removed_count = 0;
         for _ in 0..maximum {
             let Some(expiration) = self.expirations.first() else {
@@ -169,7 +159,7 @@ impl<E> Shard<E> {
         removed_count
     }
 
-    pub(crate) fn capacity_retry_after_millis(&self, now_millis: u128) -> Option<u128> {
+    fn capacity_retry_after_millis(&self, now_millis: u128) -> Option<u128> {
         self.expirations.first().map(|expiration| {
             expiration
                 .expires_at_millis
@@ -180,7 +170,7 @@ impl<E> Shard<E> {
 
     /// Builds the denial for a new key that cannot fit in this full shard,
     /// with the delay until the earliest stored entry expires when one exists.
-    pub(crate) fn storage_capacity_denial(&self, now_millis: u128) -> Denial {
+    fn storage_capacity_denial(&self, now_millis: u128) -> Denial {
         Denial::StorageCapacity {
             retry_after: self.capacity_retry_after_millis(now_millis).map(|millis| {
                 Delay::new(Duration::from_millis(u64::try_from(millis).expect(
@@ -195,6 +185,20 @@ impl<E> Shard<E> {
         self.entries
             .get(&PrehashedCounterKey(key))
             .map(|entry| (&entry.value, entry.expires_at_millis))
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self) -> Vec<(CounterKey, E, u128)>
+    where
+        E: Copy,
+    {
+        let mut entries = self
+            .entries
+            .iter()
+            .map(|(key, stored)| (key.0, stored.value, stored.expires_at_millis))
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by_key(|(key, _, _)| *key);
+        entries
     }
 
     #[cfg(test)]
@@ -226,75 +230,39 @@ struct BatchShard {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct BatchTopology {
+struct BatchTopology {
     shards: Vec<BatchShard>,
     input_positions: Vec<usize>,
 }
 
 impl BatchTopology {
-    pub(crate) fn new(
-        shard_indexes: impl IntoIterator<Item = usize>,
-        config: &MemoryStoreConfig,
-    ) -> Result<Self, MemoryBatchError> {
-        let mut input_positions = shard_indexes.into_iter().collect::<Vec<_>>();
-        let mut shards = input_positions
-            .iter()
-            .copied()
-            .map(|index| BatchShard {
-                index,
-                check_count: 0,
-            })
-            .collect::<Vec<_>>();
-        shards.sort_unstable_by_key(|shard| shard.index);
-        shards.dedup_by_key(|shard| shard.index);
-
-        for shard_position in &mut input_positions {
-            let shard_index = *shard_position;
-            *shard_position = shards.partition_point(|shard| shard.index < shard_index);
-            let shard = &mut shards[*shard_position];
-            debug_assert_eq!(shard.index, shard_index);
-            shard.check_count += 1;
-        }
-
-        for shard in &shards {
-            let capacity = config.shard_capacity(shard.index);
-            if shard.check_count > capacity {
-                return Err(MemoryBatchError::BatchExceedsShardCapacity {
-                    shard_index: shard.index,
-                    key_count: shard.check_count,
-                    capacity,
-                });
-            }
-        }
-
-        Ok(Self {
-            shards,
-            input_positions,
-        })
-    }
-
-    pub(crate) fn shard_position(&self, input_index: usize) -> usize {
+    fn shard_position(&self, input_index: usize) -> usize {
         self.input_positions[input_index]
     }
 
-    pub(crate) fn check_counts(&self) -> impl ExactSizeIterator<Item = usize> + '_ {
+    fn check_counts(&self) -> impl ExactSizeIterator<Item = usize> + '_ {
         self.shards.iter().map(|shard| shard.check_count)
     }
 }
 
 pub(crate) struct BoundedShards<E> {
+    config: MemoryStoreConfig,
     shards: Box<[Mutex<Shard<E>>]>,
 }
 
-pub(crate) type LockedShards<'a, E> = Vec<(usize, MutexGuard<'a, Shard<E>>)>;
+type LockedShards<'a, E> = Vec<(usize, MutexGuard<'a, Shard<E>>)>;
 
 impl<E> BoundedShards<E> {
-    pub(crate) fn new(config: &MemoryStoreConfig) -> Self {
+    pub(crate) fn new(config: MemoryStoreConfig) -> Self {
         let shards = (0..config.shard_count())
             .map(|index| Mutex::new(Shard::new(config.shard_capacity(index))))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        Self { shards }
+        Self { config, shards }
+    }
+
+    pub(crate) const fn config(&self) -> &MemoryStoreConfig {
+        &self.config
     }
 
     #[cfg(test)]
@@ -315,16 +283,13 @@ impl<E> BoundedShards<E> {
         hash % self.shards.len()
     }
 
-    pub(crate) fn lock_shard(
-        &self,
-        index: usize,
-    ) -> Result<MutexGuard<'_, Shard<E>>, PoisonedShardError> {
+    fn lock_shard(&self, index: usize) -> Result<MutexGuard<'_, Shard<E>>, PoisonedShardError> {
         self.shards[index]
             .lock()
             .map_err(|_| PoisonedShardError { shard_index: index })
     }
 
-    pub(crate) fn lock_shards<'a>(
+    fn lock_shards<'a>(
         &'a self,
         indexes: &[usize],
     ) -> Result<LockedShards<'a, E>, PoisonedShardError> {
@@ -335,27 +300,66 @@ impl<E> BoundedShards<E> {
         Ok(locked)
     }
 
-    pub(crate) fn lock_topology<'a>(
-        &'a self,
-        topology: &BatchTopology,
-    ) -> Result<LockedShards<'a, E>, PoisonedShardError> {
+    fn batch_topology(
+        &self,
+        keys: impl Iterator<Item = CounterKey>,
+    ) -> Result<BatchTopology, MemoryBatchError> {
+        let mut input_positions = keys.map(|key| self.shard_index(&key)).collect::<Vec<_>>();
+        let mut shards = input_positions
+            .iter()
+            .copied()
+            .map(|index| BatchShard {
+                index,
+                check_count: 0,
+            })
+            .collect::<Vec<_>>();
+        shards.sort_unstable_by_key(|shard| shard.index);
+        shards.dedup_by_key(|shard| shard.index);
+
+        for shard_position in &mut input_positions {
+            let shard_index = *shard_position;
+            *shard_position = shards.partition_point(|shard| shard.index < shard_index);
+            let shard = &mut shards[*shard_position];
+            debug_assert_eq!(shard.index, shard_index);
+            shard.check_count += 1;
+        }
+
+        for shard in &shards {
+            let capacity = self.config.shard_capacity(shard.index);
+            if shard.check_count > capacity {
+                return Err(MemoryBatchError::BatchExceedsShardCapacity {
+                    shard_index: shard.index,
+                    key_count: shard.check_count,
+                    capacity,
+                });
+            }
+        }
+
+        Ok(BatchTopology {
+            shards,
+            input_positions,
+        })
+    }
+
+    fn lock_batch(
+        &self,
+        keys: impl Iterator<Item = CounterKey>,
+    ) -> Result<(BatchTopology, LockedShards<'_, E>), MemoryBatchError> {
+        let topology = self.batch_topology(keys)?;
         let mut locked = Vec::with_capacity(topology.shards.len());
         for shard in &topology.shards {
             locked.push((shard.index, self.lock_shard(shard.index)?));
         }
-        Ok(locked)
+        Ok((topology, locked))
     }
 
-    pub(crate) fn stats(
-        &self,
-        config: &MemoryStoreConfig,
-    ) -> Result<MemoryStoreStats, PoisonedShardError> {
+    pub(crate) fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
         let indexes = (0..self.shards.len()).collect::<Vec<_>>();
         let locked = self.lock_shards(&indexes)?;
         Ok(MemoryStoreStats::from_parts(
-            locked.iter().map(|(_, shard)| shard.used()).sum(),
-            config.max_keys(),
-            config.shard_count(),
+            locked.iter().map(|(_, shard)| shard.used_entries()).sum(),
+            self.config.max_keys(),
+            self.config.shard_count(),
         ))
     }
 
@@ -368,7 +372,7 @@ impl<E> BoundedShards<E> {
         Ok(())
     }
 
-    pub(crate) fn recover_poisoned(&self, config: &MemoryStoreConfig) -> usize {
+    pub(crate) fn recover_poisoned(&self) -> usize {
         let mut locked_shards = Vec::with_capacity(self.shards.len());
 
         for (shard_index, shard_mutex) in self.shards.iter().enumerate() {
@@ -386,7 +390,7 @@ impl<E> BoundedShards<E> {
                 continue;
             }
 
-            **shard = Shard::new(config.shard_capacity(*shard_index));
+            **shard = Shard::new(self.config.shard_capacity(*shard_index));
             shard_mutex.clear_poison();
             recovered += 1;
         }
@@ -401,38 +405,21 @@ impl<E> BoundedShards<E> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct CleanupEffect {
-    pub(crate) requested: usize,
-    pub(crate) removed: usize,
-    pub(crate) elapsed: Duration,
+struct CleanupEffect {
+    requested: usize,
+    removed: usize,
+    elapsed: Duration,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ShardEffect {
-    pub(crate) shard_index: usize,
-    pub(crate) cleanup: CleanupEffect,
-    pub(crate) used: usize,
-    pub(crate) capacity: usize,
+    shard_index: usize,
+    cleanup: CleanupEffect,
+    used: usize,
+    capacity: usize,
 }
 
-pub(crate) fn collect_shard_effects<E>(
-    locked_shards: &LockedShards<'_, E>,
-    cleanup_effects: &[CleanupEffect],
-) -> Vec<ShardEffect> {
-    debug_assert_eq!(locked_shards.len(), cleanup_effects.len());
-    locked_shards
-        .iter()
-        .zip(cleanup_effects)
-        .map(|((shard_index, shard), cleanup)| ShardEffect {
-            shard_index: *shard_index,
-            cleanup: *cleanup,
-            used: shard.used(),
-            capacity: shard.capacity(),
-        })
-        .collect()
-}
-
-pub(crate) fn usize_to_u64(value: usize) -> u64 {
+fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
@@ -463,7 +450,7 @@ mod tests {
 
     use runlimit_core::{Check, CounterKey, FixedWindowPolicy, PolicyId, ScopeId, SubjectKey};
 
-    use super::{BatchShard, BatchTopology, BoundedShards};
+    use super::{BatchShard, BoundedShards};
     use crate::{MemoryBatchError, MemoryStoreConfig, PoisonedShardError};
 
     #[derive(Clone, Copy)]
@@ -480,13 +467,27 @@ mod tests {
         Check::new(SubjectKey::from_digest([subject_byte; 32]).bind(&policy)).counter_key()
     }
 
+    fn keys_for_shards<const N: usize>(
+        shards: &BoundedShards<TestEntry>,
+        indexes: [usize; N],
+    ) -> [CounterKey; N] {
+        let mut candidates = (0..=u8::MAX).map(counter_key);
+        indexes.map(|index| {
+            candidates
+                .find(|key| shards.shard_index(key) == index)
+                .expect("test subjects cover both shards")
+        })
+    }
+
     #[test]
     fn batch_topology_resolves_sorted_routes_and_counts_once() {
         let config = MemoryStoreConfig::new(5)
             .unwrap()
             .with_shard_count(2)
             .unwrap();
-        let topology = BatchTopology::new([1, 0, 1], &config).unwrap();
+        let shards = BoundedShards::<TestEntry>::new(config);
+        let keys = keys_for_shards(&shards, [1, 0, 1]);
+        let (topology, locked) = shards.lock_batch(keys.into_iter()).unwrap();
 
         assert_eq!(
             topology.shards,
@@ -504,8 +505,6 @@ mod tests {
         assert_eq!(topology.input_positions, vec![1, 0, 1]);
         assert_eq!(topology.check_counts().collect::<Vec<_>>(), vec![1, 2]);
 
-        let shards = BoundedShards::<TestEntry>::new(&config);
-        let locked = shards.lock_topology(&topology).unwrap();
         assert_eq!(
             locked.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
             vec![0, 1]
@@ -513,20 +512,30 @@ mod tests {
     }
 
     #[test]
-    fn batch_topology_rejects_the_first_over_capacity_shard() {
+    fn batch_topology_uses_the_owners_capacity_to_reject_the_first_overfull_shard() {
         let config = MemoryStoreConfig::new(4)
             .unwrap()
             .with_shard_count(2)
             .unwrap();
 
+        let shards = BoundedShards::<TestEntry>::new(config);
+        let keys = keys_for_shards(&shards, [1, 0, 0, 0, 1, 1]);
         assert_eq!(
-            BatchTopology::new([1, 0, 0, 0, 1, 1], &config),
+            shards.batch_topology(keys.into_iter()),
             Err(MemoryBatchError::BatchExceedsShardCapacity {
                 shard_index: 0,
                 key_count: 3,
                 capacity: 2,
             })
         );
+        let larger = BoundedShards::<TestEntry>::new(
+            MemoryStoreConfig::new(6)
+                .unwrap()
+                .with_shard_count(2)
+                .unwrap(),
+        );
+        let topology = larger.batch_topology(keys.into_iter()).unwrap();
+        assert_eq!(topology.check_counts().collect::<Vec<_>>(), [3, 3]);
     }
 
     fn insert(shard: &mut super::Shard<TestEntry>, key: CounterKey, expires_at_millis: u128) {
@@ -536,7 +545,7 @@ mod tests {
     #[test]
     fn expiry_cleanup_stays_bounded_and_reports_the_next_capacity_retry() {
         let config = MemoryStoreConfig::new(2).unwrap();
-        let shards = BoundedShards::<TestEntry>::new(&config);
+        let shards = BoundedShards::<TestEntry>::new(config);
         let first = counter_key(1);
         let second = counter_key(2);
         let mut shard = shards.shard(0).lock().unwrap();
@@ -558,7 +567,7 @@ mod tests {
     #[test]
     fn replacing_an_entry_moves_its_expiration_atomically() {
         let config = MemoryStoreConfig::new(1).unwrap();
-        let shards = BoundedShards::<TestEntry>::new(&config);
+        let shards = BoundedShards::<TestEntry>::new(config);
         let key = counter_key(3);
         let mut shard = shards.shard(0).lock().unwrap();
 
@@ -576,11 +585,11 @@ mod tests {
 
     #[test]
     fn poison_recovery_rebuilds_only_the_untrusted_shard() {
-        let config = MemoryStoreConfig::new(2)
+        let config = MemoryStoreConfig::new(3)
             .unwrap()
             .with_shard_count(2)
             .unwrap();
-        let shards = BoundedShards::<TestEntry>::new(&config);
+        let shards = BoundedShards::<TestEntry>::new(config);
         let healthy_key = counter_key(7);
         {
             let mut healthy = shards.shard(1).lock().unwrap();
@@ -597,9 +606,10 @@ mod tests {
             Err(PoisonedShardError { shard_index: 0 })
         ));
 
-        assert_eq!(shards.recover_poisoned(&config), 1);
-        assert!(shards.lock_shard(0).is_ok());
+        assert_eq!(shards.recover_poisoned(), 1);
+        assert_eq!(shards.lock_shard(0).unwrap().capacity(), 2);
         let healthy = shards.lock_shard(1).unwrap();
+        assert_eq!(healthy.capacity(), 1);
         assert_eq!(healthy.used(), 1);
         assert!(healthy.contains_key(healthy_key));
     }

@@ -1,51 +1,88 @@
-use std::{fmt, sync::Arc, time::Instant};
+use std::{fmt, sync::Arc};
 
 use runlimit_core::{
-    AdmissionObservation, Allowance, BatchDecision, CapacityObservation, Check, CleanupObservation,
-    CleanupOutcome, ConsumptionStatus, CounterKey, Decision, GcraPolicy, Limiter, Observation,
-    Observer, QuotaMode,
-    gcra::{ArithmeticOverflow, Evaluation as QuotaEvaluation, PendingAllowance, evaluate},
-    observe_safely, validate_batch,
+    BatchDecision, Check, Decision, GcraPolicy, Limiter, Observer, gcra::ArithmeticOverflow,
 };
 use thiserror::Error;
 
 use crate::{
     Clock, MemoryBatchError, MemoryStoreConfig, MemoryStoreStats, PoisonedShardError, SystemClock,
-    shards::{
-        BatchTopology, BoundedShards, CleanupEffect, Shard, ShardEffect, collect_shard_effects,
-        usize_to_u64,
-    },
+    shards::{BatchSessionError, BoundedShards, CheckSessionError, execute_batch, execute_check},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Entry {
+pub(crate) struct Entry {
     tat_scaled: u128,
 }
 
-impl Shard<Entry> {
-    fn evaluate(
-        &self,
-        check: &PreparedCheck<'_>,
-        now_millis: u128,
-    ) -> Result<QuotaEvaluation, ArithmeticOverflow> {
-        let active_tat = self
-            .active_entry(check.counter_key, now_millis)
-            .map(|(entry, _)| entry.tat_scaled);
-        evaluate(&check.check, now_millis, active_tat)
+mod gcra_algorithm {
+    use runlimit_core::{
+        Allowance, Check, CounterKey, GcraPolicy,
+        gcra::{ArithmeticOverflow, Evaluation as CoreEvaluation, PendingAllowance, evaluate},
+    };
+
+    use super::Entry;
+    use crate::shards::{EntryWrite, PendingToken, QuotaAlgorithm, QuotaEvaluation, Shard};
+
+    pub(crate) struct GcraAlgorithm;
+
+    /// Single-use, non-`Copy` GCRA consumption proof constructed only by
+    /// [`GcraAlgorithm::evaluate`].
+    pub(crate) struct PendingConsumption {
+        counter_key: CounterKey,
+        pending: PendingAllowance,
     }
 
-    fn consume(&mut self, check: &PreparedCheck<'_>, allowance: PendingAllowance) -> Allowance {
-        self.replace(
-            check.counter_key,
-            Entry {
-                tat_scaled: allowance.tat_scaled,
-            },
-            allowance.expires_at_millis,
-        );
+    impl PendingToken for PendingConsumption {
+        type Entry = Entry;
 
-        allowance.allowance
+        fn into_write(self) -> EntryWrite<Entry> {
+            EntryWrite::Replace {
+                entry: Entry {
+                    tat_scaled: self.pending.tat_scaled,
+                },
+                expires_at_millis: self.pending.expires_at_millis,
+            }
+        }
+
+        fn counter_key(&self) -> CounterKey {
+            self.counter_key
+        }
+
+        fn allowance(&self) -> Allowance {
+            self.pending.allowance
+        }
+    }
+
+    impl QuotaAlgorithm for GcraAlgorithm {
+        type Policy = GcraPolicy;
+        type Entry = Entry;
+        type Token = PendingConsumption;
+        type EvalError = ArithmeticOverflow;
+
+        fn evaluate(
+            shard: &Shard<Self::Entry>,
+            check: &Check<'_, Self::Policy>,
+            now_millis: u128,
+        ) -> Result<QuotaEvaluation<Self::Token>, Self::EvalError> {
+            let counter_key = check.counter_key();
+            let active_tat = shard
+                .active_entry(counter_key, now_millis)
+                .map(|(entry, _)| entry.tat_scaled);
+            match evaluate(check, now_millis, active_tat)? {
+                CoreEvaluation::Allowed(pending) => {
+                    Ok(QuotaEvaluation::Allowed(PendingConsumption {
+                        counter_key,
+                        pending,
+                    }))
+                }
+                CoreEvaluation::Denied(denial) => Ok(QuotaEvaluation::Denied(denial)),
+            }
+        }
     }
 }
+
+pub(crate) use gcra_algorithm::GcraAlgorithm;
 
 /// Failure of a single GCRA memory-store check.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -75,40 +112,12 @@ impl From<PoisonedShardError> for GcraBatchError {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct PreparedCheck<'a> {
-    input_index: usize,
-    counter_key: CounterKey,
-    shard_position: usize,
-    check: Check<'a, GcraPolicy>,
-    quota_mode: QuotaMode,
-}
-
-impl<'a> PreparedCheck<'a> {
-    fn new(input_index: usize, check: &Check<'a, GcraPolicy>, shard_position: usize) -> Self {
-        Self {
-            input_index,
-            counter_key: check.counter_key(),
-            shard_position,
-            check: *check,
-            quota_mode: check.policy().quota_mode(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Evaluation<T, E> {
-    value: T,
-    effect: E,
-}
-
 /// A hard-bounded, process-local generic-cell-rate-algorithm store.
 ///
 /// Each key occupies one constant-size entry. The store refuses to evict
 /// active entries, performs bounded cleanup per check, and preserves atomic
 /// all-or-nothing batches in caller order.
 pub struct GcraStore<C = SystemClock> {
-    config: MemoryStoreConfig,
     clock: C,
     shards: BoundedShards<Entry>,
     observer: Option<Arc<dyn Observer>>,
@@ -145,7 +154,7 @@ impl<C> fmt::Debug for GcraStore<C> {
         let poisoned_shards = self.shards.poisoned_count();
         formatter
             .debug_struct("GcraStore")
-            .field("config", &self.config)
+            .field("config", self.shards.config())
             .field("has_observer", &self.observer.is_some())
             .field("poisoned_shards", &poisoned_shards)
             .field("shard_state", &"[REDACTED]")
@@ -186,11 +195,9 @@ impl<C> GcraStoreBuilder<C> {
 impl<C: Clock> GcraStoreBuilder<C> {
     /// Builds an empty store whose timestamps use the selected clock.
     pub fn build(self) -> GcraStore<C> {
-        let shards = BoundedShards::new(&self.config);
         GcraStore {
-            config: self.config,
             clock: self.clock,
-            shards,
+            shards: BoundedShards::new(self.config),
             observer: None,
         }
     }
@@ -213,71 +220,15 @@ impl<C: Clock> GcraStore<C> {
     /// Fails closed when the target shard is poisoned or exact arithmetic
     /// cannot represent the caller-supplied clock value.
     pub fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, GcraCheckError> {
-        let started = self.observer.as_ref().map(|_| Instant::now());
-        let result = self.check_inner(check);
-        let elapsed = started.map_or_default(|start| start.elapsed());
-        match &result {
-            Ok(evaluation) => {
-                self.observe_shard_effect(&evaluation.effect);
-                self.observe_admission(|| {
-                    AdmissionObservation::from_check(check, &evaluation.value, elapsed)
-                });
-            }
-            Err(_) => self.observe_admission(|| {
-                AdmissionObservation::failed_check(check, ConsumptionStatus::NotConsumed, elapsed)
-            }),
-        }
-        result.map(|evaluation| evaluation.value)
-    }
-
-    fn check_inner(
-        &self,
-        check: &Check<'_, GcraPolicy>,
-    ) -> Result<Evaluation<Decision, ShardEffect>, GcraCheckError> {
-        let counter_key = check.counter_key();
-        let shard_index = self.shards.shard_index(&counter_key);
-        let prepared = PreparedCheck::new(0, check, 0);
-        let mut shard = self.shards.lock_shard(shard_index)?;
-        let observed_millis = self.clock.now().as_millis();
-        let now_millis = observed_millis.max(shard.latest_observed_millis());
-        let evaluated = shard
-            .evaluate(&prepared, now_millis)
-            .map_err(|ArithmeticOverflow| GcraCheckError::ArithmeticOverflow)?;
-        shard.record_observed_millis(now_millis);
-        let cleanup_requested = self.config.max_expired_removals_per_check();
-        let started = self.observer.as_ref().map(|_| Instant::now());
-        let cleanup_removed = shard.prune_expired(now_millis, cleanup_requested);
-        let cleanup_elapsed = started.map_or_default(|start| start.elapsed());
-
-        let decision = match evaluated {
-            QuotaEvaluation::Allowed(allowance) => {
-                if !shard.contains_key(counter_key) && shard.used() >= shard.capacity() {
-                    Decision::denied(shard.storage_capacity_denial(now_millis))
-                } else {
-                    Decision::allowed(shard.consume(&prepared, allowance))
-                }
-            }
-            QuotaEvaluation::Denied(denial) => {
-                if prepared.quota_mode == QuotaMode::Shadow {
-                    Decision::shadow_denied(denial)
-                } else {
-                    Decision::denied(denial)
-                }
-            }
-        };
-
-        Ok(Evaluation {
-            value: decision,
-            effect: ShardEffect {
-                shard_index,
-                cleanup: CleanupEffect {
-                    requested: cleanup_requested,
-                    removed: cleanup_removed,
-                    elapsed: cleanup_elapsed,
-                },
-                used: shard.used(),
-                capacity: shard.capacity(),
-            },
+        execute_check::<GcraAlgorithm, _>(
+            &self.shards,
+            &self.clock,
+            self.observer.as_deref(),
+            check,
+        )
+        .map_err(|error| match error {
+            CheckSessionError::PoisonedShard(poisoned) => GcraCheckError::PoisonedShard(poisoned),
+            CheckSessionError::Evaluation(ArithmeticOverflow) => GcraCheckError::ArithmeticOverflow,
         })
     }
 
@@ -294,125 +245,15 @@ impl<C: Clock> GcraStore<C> {
         &self,
         checks: &[Check<'_, GcraPolicy>],
     ) -> Result<BatchDecision, GcraBatchError> {
-        let started = self.observer.as_ref().map(|_| Instant::now());
-        let result = self.check_all_inner(checks);
-        let elapsed = started.map_or_default(|start| start.elapsed());
-        match &result {
-            Ok(evaluation) => {
-                self.observe_shard_effects(&evaluation.effect);
-                self.observe_admission(|| {
-                    AdmissionObservation::from_batch(checks, &evaluation.value, elapsed)
-                });
-            }
-            Err(_) => self.observe_admission(|| {
-                AdmissionObservation::failed_batch(checks, ConsumptionStatus::NotConsumed, elapsed)
-            }),
-        }
-        result.map(|evaluation| evaluation.value)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn check_all_inner(
-        &self,
-        checks: &[Check<'_, GcraPolicy>],
-    ) -> Result<Evaluation<BatchDecision, Vec<ShardEffect>>, GcraBatchError> {
-        validate_batch(checks, self.config.max_batch_size()).map_err(MemoryBatchError::from)?;
-
-        let topology = BatchTopology::new(
-            checks
-                .iter()
-                .map(|check| self.shards.shard_index(&check.counter_key())),
-            &self.config,
-        )?;
-        let prepared = checks
-            .iter()
-            .enumerate()
-            .map(|(input_index, check)| {
-                PreparedCheck::new(input_index, check, topology.shard_position(input_index))
-            })
-            .collect::<Vec<_>>();
-
-        let mut locked_shards = self.shards.lock_topology(&topology)?;
-        let observed_millis = self.clock.now().as_millis();
-        let now_millis = locked_shards
-            .iter()
-            .map(|(_, shard)| shard.latest_observed_millis())
-            .fold(observed_millis, u128::max);
-        let mut evaluations = Vec::with_capacity(prepared.len());
-        for check in &prepared {
-            evaluations.push(
-                locked_shards[check.shard_position]
-                    .1
-                    .evaluate(check, now_millis)
-                    .map_err(|ArithmeticOverflow| GcraBatchError::ArithmeticOverflow)?,
-            );
-        }
-        let mut cleanup_effects = Vec::with_capacity(locked_shards.len());
-        for ((_, shard), check_count) in locked_shards.iter_mut().zip(topology.check_counts()) {
-            shard.record_observed_millis(now_millis);
-            let requested = self
-                .config
-                .max_expired_removals_per_check()
-                .saturating_mul(check_count);
-            let started = self.observer.as_ref().map(|_| Instant::now());
-            let removed = shard.prune_expired(now_millis, requested);
-            cleanup_effects.push(CleanupEffect {
-                requested,
-                removed,
-                elapsed: started.map_or_default(|start| start.elapsed()),
-            });
-        }
-
-        let mut pending_insertions = vec![0_usize; locked_shards.len()];
-        let mut allowances = Vec::with_capacity(prepared.len());
-        for (check, evaluation) in prepared.iter().zip(evaluations) {
-            let shard = &locked_shards[check.shard_position].1;
-            let allowance = match evaluation {
-                QuotaEvaluation::Allowed(allowance) => allowance,
-                QuotaEvaluation::Denied(denial) => {
-                    let value = if check.quota_mode == QuotaMode::Shadow {
-                        BatchDecision::shadow_denied(check.input_index, checks.len(), denial)
-                    } else {
-                        BatchDecision::denied(check.input_index, checks.len(), denial)
-                    }
-                    .expect("a prepared check's input index is below the batch size");
-                    return Ok(Evaluation {
-                        value,
-                        effect: collect_shard_effects(&locked_shards, &cleanup_effects),
-                    });
-                }
-            };
-
-            if !shard.contains_key(check.counter_key) {
-                let projected_len = shard.used() + pending_insertions[check.shard_position];
-                if projected_len >= shard.capacity() {
-                    return Ok(Evaluation {
-                        value: BatchDecision::denied(
-                            check.input_index,
-                            checks.len(),
-                            shard.storage_capacity_denial(now_millis),
-                        )
-                        .expect("a prepared check's input index is below the batch size"),
-                        effect: collect_shard_effects(&locked_shards, &cleanup_effects),
-                    });
-                }
-                pending_insertions[check.shard_position] += 1;
-            }
-            allowances.push(allowance);
-        }
-
-        let mut consumed = Vec::with_capacity(prepared.len());
-        for (check, allowance) in prepared.iter().zip(allowances) {
-            consumed.push(
-                locked_shards[check.shard_position]
-                    .1
-                    .consume(check, allowance),
-            );
-        }
-        Ok(Evaluation {
-            value: BatchDecision::allowed(consumed)
-                .expect("batch validation rejected the empty batch"),
-            effect: collect_shard_effects(&locked_shards, &cleanup_effects),
+        execute_batch::<GcraAlgorithm, _>(
+            &self.shards,
+            &self.clock,
+            self.observer.as_deref(),
+            checks,
+        )
+        .map_err(|error| match error {
+            BatchSessionError::Store(store) => GcraBatchError::Store(store),
+            BatchSessionError::Evaluation(ArithmeticOverflow) => GcraBatchError::ArithmeticOverflow,
         })
     }
 
@@ -422,7 +263,7 @@ impl<C: Clock> GcraStore<C> {
     ///
     /// Returns an error if any shard is poisoned.
     pub fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
-        self.shards.stats(&self.config)
+        self.shards.stats()
     }
 
     /// Removes every stored counter.
@@ -436,45 +277,7 @@ impl<C: Clock> GcraStore<C> {
 
     /// Rebuilds poisoned shards by discarding their untrusted counter state.
     pub fn recover_poisoned(&self) -> usize {
-        self.shards.recover_poisoned(&self.config)
-    }
-
-    fn observe_shard_effects(&self, effects: &[ShardEffect]) {
-        for effect in effects {
-            self.observe_shard_effect(effect);
-        }
-    }
-
-    fn observe_shard_effect(&self, effect: &ShardEffect) {
-        let Some(observer) = &self.observer else {
-            return;
-        };
-        observe_safely(
-            observer.as_ref(),
-            &Observation::Cleanup(CleanupObservation::new(
-                effect.cleanup.requested,
-                CleanupOutcome::Confirmed {
-                    removed: usize_to_u64(effect.cleanup.removed),
-                },
-                effect.cleanup.elapsed,
-            )),
-        );
-        observe_safely(
-            observer.as_ref(),
-            &Observation::Capacity(CapacityObservation::new(
-                usize_to_u64(effect.used),
-                usize_to_u64(effect.capacity),
-                effect.shard_index,
-            )),
-        );
-    }
-
-    fn observe_admission<'a>(&self, build_observation: impl FnOnce() -> AdmissionObservation<'a>) {
-        let Some(observer) = &self.observer else {
-            return;
-        };
-        let admission = build_observation();
-        observe_safely(observer.as_ref(), &Observation::Admission(admission));
+        self.shards.recover_poisoned()
     }
 }
 

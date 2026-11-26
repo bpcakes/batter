@@ -1,109 +1,131 @@
-use std::{
-    fmt,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{fmt, sync::Arc, time::Duration};
 
 use runlimit_core::{
-    AdmissionObservation, Allowance, BatchDecision, BatchError, Capacity, CapacityObservation,
-    Check, CleanupObservation, CleanupOutcome, ConsumptionStatus, CounterKey, Decision, Limiter,
-    Observation, Observer, QuotaDenial, QuotaMode, observe_safely, validate_batch,
+    Allowance, BatchDecision, BatchError, Capacity, Check, Decision, Limiter, Observer, QuotaDenial,
 };
 use thiserror::Error;
 
 use crate::{
     Clock, MemoryStoreConfig, SystemClock,
-    shards::{
-        BatchTopology, BoundedShards, CleanupEffect, Shard, ShardEffect, collect_shard_effects,
-        usize_to_u64,
-    },
+    shards::{BatchSessionError, BoundedShards, CheckSessionError, execute_batch, execute_check},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Entry {
+pub(crate) struct Entry {
     used: u64,
 }
 
-impl Shard<Entry> {
-    fn quota_denial(&self, check: &PreparedCheck, now_millis: u128) -> Option<QuotaDenial> {
-        let (entry, expires_at_millis) = self.active_entry(check.counter_key, now_millis)?;
-        let remaining = remaining_quota(check.limit, entry.used);
-        (check.cost > remaining).then(|| {
-            QuotaDenial::new(
-                check.limit,
-                duration_from_millis(expires_at_millis.saturating_sub(now_millis)),
-            )
-        })
+impl Entry {
+    pub(crate) fn denial(self, check: &Check<'_>, expires: u128, now: u128) -> Option<QuotaDenial> {
+        let limit = check.policy().limit();
+        (remaining_quota(limit, self.used) < check.cost())
+            .then(|| QuotaDenial::new(limit, duration_from_millis(expires - now)))
     }
 
-    fn consume(&mut self, check: &PreparedCheck, now_millis: u128) -> Allowance {
-        let expires_at_millis = now_millis + u128::from(check.window_millis);
-        if let Some((entry, active_expires_at_millis)) =
-            self.active_entry(check.counter_key, now_millis)
-        {
-            let remaining = remaining_quota(check.limit, entry.used);
-            debug_assert!(
-                check.cost <= remaining,
-                "quota denial must be checked before consumption"
-            );
-            self.update_value(check.counter_key, |entry| {
-                entry.used = entry.used.saturating_add(check.cost);
-            })
-            .expect("the active entry was present");
-            return allowance(
-                check.limit,
-                remaining.saturating_sub(check.cost),
-                duration_from_millis(active_expires_at_millis.saturating_sub(now_millis)),
-            );
-        }
+    pub(crate) fn charge(self, check: &Check<'_>, expires: u128, now: u128) -> (Self, Allowance) {
+        let entry = Self {
+            used: self.used + check.cost(),
+        };
+        let limit = check.policy().limit();
+        (
+            entry,
+            allowance(
+                limit,
+                remaining_quota(limit, entry.used),
+                duration_from_millis(expires - now),
+            ),
+        )
+    }
 
-        self.replace(
-            check.counter_key,
-            Entry { used: check.cost },
-            expires_at_millis,
-        );
-        allowance(
-            check.limit,
-            remaining_quota(check.limit, check.cost),
-            duration_from_millis(expires_at_millis.saturating_sub(now_millis)),
+    pub(crate) fn open(check: &Check<'_>, now: u128) -> (Self, Allowance, u128) {
+        let window = check.policy().window();
+        let limit = check.policy().limit();
+        let entry = Self { used: check.cost() };
+        (
+            entry,
+            allowance(limit, remaining_quota(limit, entry.used), window.duration()),
+            now + u128::from(window.millis()),
         )
     }
 }
+
+mod fixed_window {
+    use std::convert::Infallible;
+
+    use runlimit_core::{Allowance, Check, CounterKey, FixedWindowPolicy};
+
+    use super::Entry;
+    use crate::shards::{EntryWrite, PendingToken, QuotaAlgorithm, QuotaEvaluation, Shard};
+
+    pub(crate) struct FixedWindowAlgorithm;
+
+    /// Single-use, non-`Copy` fixed-window consumption proof constructed only
+    /// by [`FixedWindowAlgorithm::evaluate`].
+    pub(crate) struct PendingConsumption {
+        counter_key: CounterKey,
+        allowance: Allowance,
+        write: EntryWrite<Entry>,
+    }
+
+    impl PendingToken for PendingConsumption {
+        type Entry = Entry;
+
+        fn into_write(self) -> EntryWrite<Entry> {
+            self.write
+        }
+        fn counter_key(&self) -> CounterKey {
+            self.counter_key
+        }
+
+        fn allowance(&self) -> Allowance {
+            self.allowance
+        }
+    }
+
+    impl QuotaAlgorithm for FixedWindowAlgorithm {
+        type Policy = FixedWindowPolicy;
+        type Entry = Entry;
+        type Token = PendingConsumption;
+        type EvalError = Infallible;
+
+        fn evaluate(
+            shard: &Shard<Self::Entry>,
+            check: &Check<'_, Self::Policy>,
+            now_millis: u128,
+        ) -> Result<QuotaEvaluation<Self::Token>, Self::EvalError> {
+            let counter_key = check.counter_key();
+            if let Some((active, expires)) = shard.active_entry(counter_key, now_millis) {
+                if let Some(denial) = active.denial(check, expires, now_millis) {
+                    return Ok(QuotaEvaluation::Denied(denial));
+                }
+                let (entry, allowance) = active.charge(check, expires, now_millis);
+                return Ok(QuotaEvaluation::Allowed(PendingConsumption {
+                    counter_key,
+                    allowance,
+                    write: EntryWrite::UpdateActive(entry),
+                }));
+            }
+
+            let (entry, allowance, expires_at_millis) = Entry::open(check, now_millis);
+            Ok(QuotaEvaluation::Allowed(PendingConsumption {
+                counter_key,
+                allowance,
+                write: EntryWrite::Replace {
+                    entry,
+                    expires_at_millis,
+                },
+            }))
+        }
+    }
+}
+
+pub(crate) use fixed_window::FixedWindowAlgorithm;
 
 /// Builds an allowance whose `available` was derived by subtracting from
 /// `limit`, so it can never exceed the capacity.
 fn allowance(limit: Capacity, available: u64, replenishes_after: Duration) -> Allowance {
     Allowance::new(limit, available, replenishes_after)
         .expect("remaining quota is derived from the limit and cannot exceed it")
-}
-
-#[derive(Debug)]
-struct PreparedCheck {
-    input_index: usize,
-    counter_key: CounterKey,
-    shard_position: usize,
-    limit: Capacity,
-    window_millis: u64,
-    cost: u64,
-}
-
-impl PreparedCheck {
-    fn new(input_index: usize, check: &Check<'_>, shard_position: usize) -> Self {
-        Self {
-            input_index,
-            counter_key: check.counter_key(),
-            shard_position,
-            limit: check.policy().limit(),
-            window_millis: check.policy().window().millis(),
-            cost: check.cost(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Evaluation<T, E> {
-    value: T,
-    effect: E,
 }
 
 /// A sharded, hard-bounded, process-local fixed-window store.
@@ -118,7 +140,6 @@ struct Evaluation<T, E> {
 /// availability tradeoff: it restores poisoned shards by discarding their
 /// counters rather than trusting state whose consistency is unknown.
 pub struct MemoryStore<C = SystemClock> {
-    config: MemoryStoreConfig,
     clock: C,
     shards: BoundedShards<Entry>,
     observer: Option<Arc<dyn Observer>>,
@@ -156,7 +177,7 @@ impl<C> fmt::Debug for MemoryStore<C> {
 
         formatter
             .debug_struct("MemoryStore")
-            .field("config", &self.config)
+            .field("config", self.shards.config())
             .field("has_observer", &self.observer.is_some())
             .field("poisoned_shards", &poisoned_shards)
             .field("shard_state", &Redacted)
@@ -205,11 +226,9 @@ impl<C> MemoryStoreBuilder<C> {
 impl<C: Clock> MemoryStoreBuilder<C> {
     /// Builds an empty store whose timestamps use the selected clock.
     pub fn build(self) -> MemoryStore<C> {
-        let shards = BoundedShards::new(&self.config);
         MemoryStore {
-            config: self.config,
             clock: self.clock,
-            shards,
+            shards: BoundedShards::new(self.config),
             observer: None,
         }
     }
@@ -228,45 +247,6 @@ impl<C> MemoryStore<C> {
 }
 
 impl<C: Clock> MemoryStore<C> {
-    fn observe_shard_effects(&self, effects: &[ShardEffect]) {
-        for effect in effects {
-            self.observe_shard_effect(effect);
-        }
-    }
-
-    fn observe_shard_effect(&self, effect: &ShardEffect) {
-        let Some(observer) = &self.observer else {
-            return;
-        };
-
-        observe_safely(
-            observer.as_ref(),
-            &Observation::Cleanup(CleanupObservation::new(
-                effect.cleanup.requested,
-                CleanupOutcome::Confirmed {
-                    removed: usize_to_u64(effect.cleanup.removed),
-                },
-                effect.cleanup.elapsed,
-            )),
-        );
-        observe_safely(
-            observer.as_ref(),
-            &Observation::Capacity(CapacityObservation::new(
-                usize_to_u64(effect.used),
-                usize_to_u64(effect.capacity),
-                effect.shard_index,
-            )),
-        );
-    }
-
-    fn observe_admission<'a>(&self, build_observation: impl FnOnce() -> AdmissionObservation<'a>) {
-        let Some(observer) = &self.observer else {
-            return;
-        };
-        let admission = build_observation();
-        observe_safely(observer.as_ref(), &Observation::Admission(admission));
-    }
-
     /// Evaluates and, when allowed, consumes one check.
     ///
     /// # Errors
@@ -274,65 +254,15 @@ impl<C: Clock> MemoryStore<C> {
     /// Returns an error without allowing the request when the target shard is
     /// poisoned.
     pub fn check(&self, check: &Check<'_>) -> Result<Decision, PoisonedShardError> {
-        let started = self.observer.as_ref().map(|_| Instant::now());
-        let result = self.check_inner(check);
-        let elapsed = started.map_or_default(|start| start.elapsed());
-
-        match &result {
-            Ok(evaluation) => {
-                self.observe_shard_effect(&evaluation.effect);
-                self.observe_admission(|| {
-                    AdmissionObservation::from_check(check, &evaluation.value, elapsed)
-                });
-            }
-            Err(_) => self.observe_admission(|| {
-                AdmissionObservation::failed_check(check, ConsumptionStatus::NotConsumed, elapsed)
-            }),
-        }
-
-        result.map(|evaluation| evaluation.value)
-    }
-
-    fn check_inner(
-        &self,
-        check: &Check<'_>,
-    ) -> Result<Evaluation<Decision, ShardEffect>, PoisonedShardError> {
-        let counter_key = check.counter_key();
-        let shard_index = self.shards.shard_index(&counter_key);
-        let prepared = PreparedCheck::new(0, check, 0);
-        let mut shard = self.shards.lock_shard(shard_index)?;
-        let observed_millis = self.clock.now().as_millis();
-        let now_millis = observed_millis.max(shard.latest_observed_millis());
-        shard.record_observed_millis(now_millis);
-        let cleanup_requested = self.config.max_expired_removals_per_check();
-        let started = self.observer.as_ref().map(|_| Instant::now());
-        let cleanup_removed = shard.prune_expired(now_millis, cleanup_requested);
-        let cleanup_elapsed = started.map_or_default(|start| start.elapsed());
-
-        let decision = if let Some(denial) = shard.quota_denial(&prepared, now_millis) {
-            if check.policy().quota_mode() == QuotaMode::Shadow {
-                Decision::shadow_denied(denial)
-            } else {
-                Decision::denied(denial)
-            }
-        } else if !shard.contains_key(counter_key) && shard.used() >= shard.capacity() {
-            Decision::denied(shard.storage_capacity_denial(now_millis))
-        } else {
-            Decision::allowed(shard.consume(&prepared, now_millis))
-        };
-
-        Ok(Evaluation {
-            value: decision,
-            effect: ShardEffect {
-                shard_index,
-                cleanup: CleanupEffect {
-                    requested: cleanup_requested,
-                    removed: cleanup_removed,
-                    elapsed: cleanup_elapsed,
-                },
-                used: shard.used(),
-                capacity: shard.capacity(),
-            },
+        execute_check::<FixedWindowAlgorithm, _>(
+            &self.shards,
+            &self.clock,
+            self.observer.as_deref(),
+            check,
+        )
+        .map_err(|error| match error {
+            CheckSessionError::PoisonedShard(poisoned) => poisoned,
+            CheckSessionError::Evaluation(never) => match never {},
         })
     }
 
@@ -348,112 +278,15 @@ impl<C: Clock> MemoryStore<C> {
     /// key, targets more distinct keys at one shard than that shard can ever
     /// store, or a touched shard is poisoned.
     pub fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, MemoryBatchError> {
-        let started = self.observer.as_ref().map(|_| Instant::now());
-        let result = self.check_all_inner(checks);
-        let elapsed = started.map_or_default(|start| start.elapsed());
-
-        match &result {
-            Ok(evaluation) => {
-                self.observe_shard_effects(&evaluation.effect);
-                self.observe_admission(|| {
-                    AdmissionObservation::from_batch(checks, &evaluation.value, elapsed)
-                });
-            }
-            Err(_) => self.observe_admission(|| {
-                AdmissionObservation::failed_batch(checks, ConsumptionStatus::NotConsumed, elapsed)
-            }),
-        }
-
-        result.map(|evaluation| evaluation.value)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn check_all_inner(
-        &self,
-        checks: &[Check<'_>],
-    ) -> Result<Evaluation<BatchDecision, Vec<ShardEffect>>, MemoryBatchError> {
-        validate_batch(checks, self.config.max_batch_size())?;
-
-        let topology = BatchTopology::new(
-            checks
-                .iter()
-                .map(|check| self.shards.shard_index(&check.counter_key())),
-            &self.config,
-        )?;
-        let prepared = checks
-            .iter()
-            .enumerate()
-            .map(|(input_index, check)| {
-                PreparedCheck::new(input_index, check, topology.shard_position(input_index))
-            })
-            .collect::<Vec<_>>();
-
-        let mut locked_shards = self.shards.lock_topology(&topology)?;
-        let observed_millis = self.clock.now().as_millis();
-        let now_millis = locked_shards
-            .iter()
-            .map(|(_, shard)| shard.latest_observed_millis())
-            .fold(observed_millis, u128::max);
-        let mut cleanup_effects = Vec::with_capacity(locked_shards.len());
-        for ((_, shard), check_count) in locked_shards.iter_mut().zip(topology.check_counts()) {
-            shard.record_observed_millis(now_millis);
-            let cleanup_limit = self
-                .config
-                .max_expired_removals_per_check()
-                .saturating_mul(check_count);
-            let started = self.observer.as_ref().map(|_| Instant::now());
-            let removed = shard.prune_expired(now_millis, cleanup_limit);
-            cleanup_effects.push(CleanupEffect {
-                requested: cleanup_limit,
-                removed,
-                elapsed: started.map_or_default(|start| start.elapsed()),
-            });
-        }
-
-        let mut pending_insertions = vec![0_usize; locked_shards.len()];
-        for check in &prepared {
-            let shard = &locked_shards[check.shard_position].1;
-            if let Some(denial) = shard.quota_denial(check, now_millis) {
-                let value = if checks[check.input_index].policy().quota_mode() == QuotaMode::Shadow
-                {
-                    BatchDecision::shadow_denied(check.input_index, checks.len(), denial)
-                } else {
-                    BatchDecision::denied(check.input_index, checks.len(), denial)
-                }
-                .expect("a prepared check's input index is below the batch size");
-                return Ok(Evaluation {
-                    value,
-                    effect: collect_shard_effects(&locked_shards, &cleanup_effects),
-                });
-            }
-
-            if !shard.contains_key(check.counter_key) {
-                let projected_len = shard.used() + pending_insertions[check.shard_position];
-                if projected_len >= shard.capacity() {
-                    return Ok(Evaluation {
-                        value: BatchDecision::denied(
-                            check.input_index,
-                            checks.len(),
-                            shard.storage_capacity_denial(now_millis),
-                        )
-                        .expect("a prepared check's input index is below the batch size"),
-                        effect: collect_shard_effects(&locked_shards, &cleanup_effects),
-                    });
-                }
-                pending_insertions[check.shard_position] += 1;
-            }
-        }
-
-        let mut allowances = Vec::with_capacity(prepared.len());
-        for check in &prepared {
-            let shard = &mut locked_shards[check.shard_position].1;
-            allowances.push(shard.consume(check, now_millis));
-        }
-
-        Ok(Evaluation {
-            value: BatchDecision::allowed(allowances)
-                .expect("batch validation rejected the empty batch"),
-            effect: collect_shard_effects(&locked_shards, &cleanup_effects),
+        execute_batch::<FixedWindowAlgorithm, _>(
+            &self.shards,
+            &self.clock,
+            self.observer.as_deref(),
+            checks,
+        )
+        .map_err(|error| match error {
+            BatchSessionError::Store(store) => store,
+            BatchSessionError::Evaluation(never) => match never {},
         })
     }
 
@@ -463,7 +296,7 @@ impl<C: Clock> MemoryStore<C> {
     ///
     /// Returns an error if a shard is poisoned.
     pub fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
-        self.shards.stats(&self.config)
+        self.shards.stats()
     }
 
     /// Removes every stored counter.
@@ -489,7 +322,7 @@ impl<C: Clock> MemoryStore<C> {
     /// observe either the pre-recovery poisoned store or the complete recovered
     /// state, never a partially reopened multi-shard store.
     pub fn recover_poisoned(&self) -> usize {
-        self.shards.recover_poisoned(&self.config)
+        self.shards.recover_poisoned()
     }
 }
 
@@ -985,16 +818,35 @@ mod tests {
         let policy = policy("auth.login", "client", 3, Duration::from_secs(60));
         let check = Check::new(subject(1).bind(&policy));
         let key = check.counter_key();
-        let store = with_clock(MemoryStoreConfig::new(1).unwrap(), ManualClock::default());
-        {
-            let mut shard = store.shards.shard(0).lock().unwrap();
-            assert!(shard.replace(key, Entry { used: 4 }, 60_000).is_none());
-        }
+        for used in [4, u64::MAX] {
+            let store = with_clock(MemoryStoreConfig::new(2).unwrap(), ManualClock::default());
+            {
+                let mut shard = store.shards.shard(0).lock().unwrap();
+                assert!(shard.replace(key, Entry { used }, 60_000).is_none());
+            }
 
-        assert_eq!(
-            store.check(&check),
-            Ok(Decision::denied(quota(3, Duration::from_secs(60))))
-        );
+            let prefix = Check::new(subject(2).bind(&policy));
+            let result = store.check_all(&[prefix, check]).unwrap();
+            assert!(matches!(
+                result.view(),
+                BatchDecisionView::Denied {
+                    index: 1,
+                    denial: Denial::QuotaExceeded(_),
+                    ..
+                }
+            ));
+            assert_eq!(store.stats().unwrap().entries(), 1);
+            assert!(
+                store
+                    .check(&prefix.with_cost(3).unwrap())
+                    .unwrap()
+                    .permits_request()
+            );
+            assert_eq!(
+                store.check(&check),
+                Ok(Decision::denied(quota(3, Duration::from_secs(60))))
+            );
+        }
     }
 
     #[test]

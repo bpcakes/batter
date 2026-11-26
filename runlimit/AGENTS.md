@@ -32,7 +32,20 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
 ## Invariants
 
 - The memory fixed-window and PostgreSQL backends implement the same anchored
-  fixed-window semantics. `GcraStore` implements only `GcraPolicy`.
+  fixed-window semantics. `GcraStore` implements only `GcraPolicy`. Both
+  in-memory stores share one private consuming shard/batch session
+  (`runlimit-memory/src/shards/session.rs` and its `batch` module). The session
+  retains the check or validated batch and its routing from lock acquisition
+  through preflight. The shard owner retains the configuration used at
+  construction for batch validation, cleanup budgets, statistics, and poison
+  recovery. All fallible quota arithmetic precedes recording the
+  monotonic clock and pruning. Batch cleanup uses the full per-shard check
+  count. Fixed-window batches then evaluate quota and capacity in input order
+  through the first denial. On success the same guards, timestamp, checks and
+  routing pass to commit. Fixed-window batches build the output allowances as
+  they charge each unique key. GCRA retains its evaluated updates through
+  cleanup and capacity preflight. Only a preflighted single or batch session
+  can commit. Observers run after shard locks drop.
 - A policy configuration fingerprint is part of every storage key. Changing
   any storage-relevant configuration never reinterprets an existing counter.
 - Numbers are validated once, where they enter. `Capacity` is nonzero and at
