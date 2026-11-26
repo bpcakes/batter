@@ -49,26 +49,28 @@ The format is based on [Keep a Changelog], and this project adheres to
   the commit after the refresh without looking at the clock again. This is a
   runtime break: nothing stops compiling, but one cleanup that could succeed
   now fails. Three cases at the deadline are affected differently:
-  - The deadline has already passed on reaching commit. The error is still
-    `TimedOutBeforeCommit` and no rows are removed, but its phase is
-    `CleanupPhase::PreparingCommit` instead of `CleanupPhase::StartingCommit`.
-  - The deadline passes while the timeout refresh is in flight. Unchanged:
-    `TimedOutBeforeCommit` with `CleanupPhase::PreparingCommit`.
-  - The refresh completes and the deadline has passed by then. Cleanup used to
-    attempt the commit anyway, with three possible results: `Ok(removed)` when
-    the server acknowledged before the client timer fired,
-    `CommitOutcomeUnknown` when `SQLx` returned an error first (a connection
-    lost during commit, for example), and `CommitTimedOut` otherwise. The last
-    two are uncertain outcomes. It now stops before the attempt with
-    `TimedOutBeforeCommit` and `CleanupPhase::StartingCommit`, and removes no
-    rows.
+  - The deadline has already passed on reaching commit, so no refresh is
+    sent. The error is still `TimedOutBeforeCommit` and no rows are removed,
+    but its phase is `CleanupPhase::PreparingCommit` instead of
+    `CleanupPhase::StartingCommit`.
+  - The refresh itself reports a timeout, from the client deadline or from
+    the server. Unchanged: `TimedOutBeforeCommit` with
+    `CleanupPhase::PreparingCommit`.
+  - The refresh succeeds and the budget check that follows finds the deadline
+    passed. Cleanup used to attempt the commit anyway, with three possible
+    results: `Ok(removed)` when the server acknowledged before the client
+    timer fired, `CommitOutcomeUnknown` when `SQLx` returned an error first (a
+    connection lost during commit, for example), and `CommitTimedOut`
+    otherwise. The last two are uncertain outcomes. It now stops before the
+    attempt with `TimedOutBeforeCommit` and `CleanupPhase::StartingCommit`,
+    and removes no rows.
 
   Newly failing, with its handling:
 
   ```rust,ignore
-  // Before: the commit's timeout refresh finished just past the operation
-  // deadline and the server acknowledged the commit in time. This returned
-  // the number of removed rows.
+  // Before: the commit's timeout refresh succeeded with the operation
+  // deadline already passed, and the server acknowledged the commit before
+  // the client timer fired. This returned the number of removed rows.
   let removed = limiter.cleanup_expired(1_000).await?;
 
   // After: the same run stops before commit and removes nothing. Expired rows

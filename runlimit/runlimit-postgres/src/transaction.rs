@@ -509,7 +509,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_attempted_commit_reports_every_unconfirmed_outcome_as_uncertain() {
+    async fn an_attempted_commit_reports_its_acknowledgement_or_an_uncertain_error() {
         let budget = || Instant::now() + Duration::from_secs(5);
 
         let polled = AtomicBool::new(false);
@@ -529,8 +529,12 @@ mod tests {
         };
         assert!(matches!(error, MaintenanceError::CommitOutcomeUnknown(_)));
         assert!(error.may_have_removed_rows());
+    }
 
-        // The deadline passes while the attempted commit is still pending.
+    // The clock is paused, so the deadline cannot pass before the commit's
+    // first poll: it advances only once the runtime is idle on that commit.
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_during_an_attempted_commit_is_uncertain_and_closes_the_connection() {
         let polled = AtomicBool::new(false);
         let outcome = attempt_commit::<Maintenance>(
             Instant::now() + Duration::from_millis(20),
@@ -558,6 +562,7 @@ mod tests {
             error.consumption(),
             runlimit_core::ConsumptionStatus::PossiblyConsumed
         );
+        assert!(polled.load(Ordering::Relaxed));
     }
 
     #[test]
