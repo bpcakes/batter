@@ -1,6 +1,7 @@
 //! Live transaction, concurrency, capacity, and fencing tests for attempts.
 #[path = "attempts/cleanup.rs"]
 mod cleanup;
+mod support;
 
 use runlimit_core::{
     KeyHasher, PolicyId, QuotaPeriod, ScopeId,
@@ -13,76 +14,17 @@ use runlimit_postgres::{
     PostgresConfig,
     attempts::{PgAttemptClaimResult, PgAttemptReceipt, PostgresAttemptLimiter, low_level},
 };
-use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::Duration;
+use support::IsolatedSchema;
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
-struct Database {
-    pool: PgPool,
-    admin: PgPool,
-    schema: String,
-}
-impl Database {
-    async fn new() -> Self {
-        let url = std::env::var("RUNLIMIT_POSTGRES_TEST_DATABASE_URL")
-            .expect("disposable PostgreSQL URL required");
-        let admin = PgPoolOptions::new()
-            .max_connections(2)
-            .connect(&url)
-            .await
-            .unwrap();
-        let schema = format!(
-            "runlimit_attempt_{}_{}_{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        let target = schema.clone();
-        let pool = PgPoolOptions::new()
-            .max_connections(20)
-            .after_connect(move |connection, _| {
-                let query = format!("SET search_path={target},pg_catalog");
-                Box::pin(async move {
-                    sqlx::query(AssertSqlSafe(query))
-                        .execute(connection)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .connect(&url)
-            .await
-            .unwrap();
-        PostgresAttemptLimiter::new(pool.clone())
-            .migrate()
-            .await
-            .unwrap();
-        Self {
-            pool,
-            admin,
-            schema,
-        }
-    }
-    async fn close(self) {
-        self.pool.close().await;
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP SCHEMA {} CASCADE",
-            self.schema
-        )))
-        .execute(&self.admin)
+/// An isolated schema with the attempt migration installed.
+async fn database() -> IsolatedSchema {
+    let db = IsolatedSchema::create("attempt", 20).await;
+    PostgresAttemptLimiter::new(db.pool.clone())
+        .migrate()
         .await
         .unwrap();
-        self.admin.close().await;
-    }
+    db
 }
 fn period(ms: u64) -> QuotaPeriod {
     QuotaPeriod::new(Duration::from_millis(ms)).unwrap()
@@ -108,7 +50,7 @@ fn receipt(value: AttemptAdmission<PgAttemptReceipt>) -> PgAttemptReceipt {
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn failure_escalation_cap_and_success_reset() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -135,13 +77,13 @@ async fn failure_escalation_cap_and_success_reset() {
     assert!(
         matches!(limiter.complete(r,AttemptOutcome::Abandoned).await.unwrap(),AttemptCompletionResult::Applied(done) if done.consecutive_failures()==1)
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn concurrent_replicas_admit_exactly_one_verification() {
-    let db = Database::new().await;
+    let db = database().await;
     let mut tasks = Vec::new();
     for _ in 0..16 {
         let pool = db.pool.clone();
@@ -163,13 +105,13 @@ async fn concurrent_replicas_admit_exactly_one_verification() {
         }
     }
     assert_eq!(admitted, 1);
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn completion_and_application_writes_rollback_together() {
-    let db = Database::new().await;
+    let db = database().await;
     sqlx::query("CREATE TABLE app_events (id INT)")
         .execute(&db.pool)
         .await
@@ -213,13 +155,13 @@ async fn completion_and_application_writes_rollback_together() {
         limiter.admit(s).await.unwrap(),
         AttemptAdmission::Denied(AttemptDenial::Busy { .. })
     ));
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn claim_is_transaction_fenced_and_survives_lease_elapsed_while_locked() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -260,13 +202,13 @@ async fn claim_is_transaction_fenced_and_survives_lease_elapsed_while_locked() {
         limiter.admit(s).await.unwrap(),
         AttemptAdmission::Denied(AttemptDenial::Busy { .. })
     ));
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn expired_receipt_cannot_clear_newer_failures() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -284,13 +226,13 @@ async fn expired_receipt_cannot_clear_newer_failures() {
     assert!(
         matches!(limiter.complete(new,AttemptOutcome::Failure).await.unwrap(),AttemptCompletionResult::Applied(done) if done.consecutive_failures()==2)
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn capacity_is_bounded_and_quiet_expiry_reclaims_slots() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone()).with_config(
         PostgresConfig::new()
             .with_maximum_rows_per_shard(1)
@@ -326,13 +268,13 @@ async fn capacity_is_bounded_and_quiet_expiry_reclaims_slots() {
             .await
             .is_err()
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn dropped_unpolled_admission_does_no_work() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -344,13 +286,13 @@ async fn dropped_unpolled_admission_does_no_work() {
             .unwrap(),
         0
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn claim_checks_expiry_after_waiting_for_the_row_lock() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -383,7 +325,7 @@ async fn claim_checks_expiry_after_waiting_for_the_row_lock() {
             "SELECT COALESCE(wait_event_type='Lock',false) FROM pg_stat_activity WHERE pid=$1",
         )
         .bind(pid)
-        .fetch_one(&db.admin)
+        .fetch_one(&db.admin_pool)
         .await
         .unwrap();
         if waiting {
@@ -399,13 +341,13 @@ async fn claim_checks_expiry_after_waiting_for_the_row_lock() {
         .unwrap();
     blocker.commit().await.unwrap();
     assert!(matches!(task.await.unwrap(), PgAttemptClaimResult::Stale));
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn cancelled_host_transaction_does_not_reset_retry_state() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -427,13 +369,13 @@ async fn cancelled_host_transaction_does_not_reset_retry_state() {
         limiter.admit(s).await.unwrap(),
         AttemptAdmission::Denied(AttemptDenial::Busy { .. })
     ));
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn lowered_capacity_counts_live_slots_outside_the_new_allocation_interval() {
-    let db = Database::new().await;
+    let db = database().await;
     let broad = PostgresAttemptLimiter::new(db.pool.clone()).with_config(
         PostgresConfig::new()
             .with_maximum_rows_per_shard(2)
@@ -518,13 +460,13 @@ async fn lowered_capacity_counts_live_slots_outside_the_new_allocation_interval(
             .unwrap(),
         1
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn malformed_admission_state_is_a_semantic_storage_invariant() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -548,13 +490,13 @@ async fn malformed_admission_state_is_a_semantic_storage_invariant() {
             .unwrap(),
         -1
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn malformed_admission_receipt_is_a_decode_storage_invariant_and_rolls_back() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -582,13 +524,13 @@ async fn malformed_admission_receipt_is_a_decode_storage_invariant_and_rolls_bac
             .unwrap(),
         0
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn contradictory_completion_metadata_is_storage_invariant_and_rolls_back() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -622,13 +564,13 @@ async fn contradictory_completion_metadata_is_storage_invariant_and_rolls_back()
         limiter.admit(s).await.unwrap(),
         AttemptAdmission::Denied(AttemptDenial::Busy { .. })
     ));
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn malformed_completion_response_retains_decode_source_and_rolls_back() {
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -662,13 +604,13 @@ async fn malformed_completion_response_retains_decode_source_and_rolls_back() {
         limiter.admit(s).await.unwrap(),
         AttemptAdmission::Denied(AttemptDenial::Busy { .. })
     ));
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn lowered_capacity_reclaims_expired_rows_across_denied_cleanup_batches() {
-    let db = Database::new().await;
+    let db = database().await;
     let broad = PostgresAttemptLimiter::new(db.pool.clone());
     let narrow = PostgresAttemptLimiter::new(db.pool.clone()).with_config(
         PostgresConfig::new()
@@ -730,14 +672,14 @@ async fn lowered_capacity_reclaims_expired_rows_across_denied_cleanup_batches() 
             .unwrap(),
         1
     );
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn rolled_back_savepoint_invalidates_claim_even_in_same_transaction() {
     use sqlx::Acquire;
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -790,14 +732,14 @@ async fn rolled_back_savepoint_invalidates_claim_even_in_same_transaction() {
             .unwrap()
     );
     outer.rollback().await.unwrap();
-    db.close().await;
+    db.teardown().await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn released_savepoint_preserves_claim_and_lock_past_admission_expiry() {
     use sqlx::Acquire;
-    let db = Database::new().await;
+    let db = database().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let p = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
@@ -834,5 +776,5 @@ async fn released_savepoint_preserves_claim_and_lock_past_admission_expiry() {
         .await
         .unwrap()
     );
-    db.close().await;
+    db.teardown().await;
 }

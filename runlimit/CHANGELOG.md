@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `PostgresAttemptLimiter` implements `Debug` and has `config()`, and
+  `PostgresAttemptLimiter::new` is a `const fn`, matching `PostgresLimiter` and
+  `PostgresGcraLimiter` (`batter-2oht`).
+
 ### Fixed
 
 - `PostgresGcraLimiter::cleanup_expired` advanced every candidate shard to the
@@ -23,6 +29,29 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- The three PostgreSQL limiters now share one private shell for their pool,
+  bounds, observer, migration, bounded connections and transactions, and both
+  quota limiters share one response finisher. No public item is removed,
+  renamed or re-typed; SQL, lock order and persisted state are unchanged. Three
+  observable differences follow (`batter-2oht`):
+  - `PostgresAttemptLimiter::migrate` returns its connection to the pool after
+    a successful run and unlock, as the other two limiters do. It previously
+    closed the connection on every outcome. An error or cancellation still
+    closes it.
+  - `PostgresGcraLimiter`'s `Debug` output ends with `..`, as
+    `PostgresLimiter`'s does, because the observer is reported only as
+    `has_observer`.
+  - `PostgresLimiter::cleanup_expired` and
+    `PostgresGcraLimiter::cleanup_expired` commit the way a check does:
+    refresh the server timeouts, then confirm the remaining budget, then
+    commit. A cleanup that reaches commit after its deadline now reports
+    `TimedOutBeforeCommit { phase: CleanupPhase::PreparingCommit }` instead of
+    `CleanupPhase::StartingCommit`, so its message reads "timed out while
+    preparing cleanup commit" instead of "timed out while starting
+    expired-window cleanup commit". A deadline that passes during that refresh
+    now stops before commit with `CleanupPhase::StartingCommit`; the commit
+    used to be sent and reported `CommitTimedOut`. Neither case removes rows.
+    This deadline race has no deterministic test.
 - `MemoryStore` and `GcraStore` now bind each check or batch to the shards it
   locks. Fixed-window batches stop at the first quota or capacity denial. GCRA
   checks the remaining members for arithmetic errors before cleanup. Both

@@ -1,11 +1,9 @@
 //! Opt-in GCRA tests using disposable PostgreSQL schemas.
 
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    ops::Deref,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use runlimit_core::{
@@ -17,18 +15,23 @@ use runlimit_postgres::{
     BatchCheckError, CREATE_RUNLIMIT_GCRA_SQL, CheckError, GCRA_MIGRATOR,
     INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL, MIGRATOR, PostgresConfig, PostgresGcraLimiter,
 };
-use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
+use support::{IsolatedSchema, key_in_capacity_shard};
 use tokio::sync::Barrier;
 
 #[path = "gcra/clock.rs"]
 mod clock;
+mod support;
 
-static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(0);
+/// An isolated schema with the GCRA storage helpers its tests share.
+struct Database(IsolatedSchema);
 
-struct Database {
-    pool: PgPool,
-    admin: PgPool,
-    schema: String,
+impl Deref for Database {
+    type Target = IsolatedSchema;
+
+    fn deref(&self) -> &IsolatedSchema {
+        &self.0
+    }
 }
 
 impl Database {
@@ -39,46 +42,7 @@ impl Database {
     }
 
     async fn unmigrated() -> Self {
-        let url = std::env::var("RUNLIMIT_POSTGRES_TEST_DATABASE_URL")
-            .expect("disposable PostgreSQL URL required");
-        let admin = PgPoolOptions::new()
-            .max_connections(2)
-            .connect(&url)
-            .await
-            .unwrap();
-        let schema = format!(
-            "runlimit_gcra_{}_{}_{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            NEXT_SCHEMA.fetch_add(1, Ordering::Relaxed)
-        );
-        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        let target = schema.clone();
-        let pool = PgPoolOptions::new()
-            .max_connections(40)
-            .after_connect(move |connection, _| {
-                let query = format!("SET search_path = {target}, pg_catalog");
-                Box::pin(async move {
-                    sqlx::query(AssertSqlSafe(query))
-                        .execute(connection)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .connect(&url)
-            .await
-            .unwrap();
-        Self {
-            pool,
-            admin,
-            schema,
-        }
+        Self(IsolatedSchema::create("gcra", 40).await)
     }
 
     fn limiter(&self) -> PostgresGcraLimiter {
@@ -86,15 +50,7 @@ impl Database {
     }
 
     async fn teardown(self) {
-        self.pool.close().await;
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP SCHEMA {} CASCADE",
-            self.schema
-        )))
-        .execute(&self.admin)
-        .await
-        .unwrap();
-        self.admin.close().await;
+        self.0.teardown().await;
     }
 
     async fn freeze_time(&self) -> u64 {
@@ -144,9 +100,7 @@ fn policy(quota: u64, millis: u64, burst: u64) -> GcraPolicy {
 }
 
 fn subject(id: u8, shard: u8, policy: &GcraPolicy) -> SubjectKey {
-    let mut bytes = [id; 32];
-    bytes[0] = shard ^ policy.fingerprint().as_bytes()[0];
-    SubjectKey::from_digest(bytes)
+    key_in_capacity_shard(policy, shard, id)
 }
 
 #[derive(Default)]
@@ -774,7 +728,7 @@ async fn cancellation_before_admission_cannot_late_commit() {
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let waiters: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT capacity_shard, row_count, observed_at_ms FROM runlimit_gcra_shards%'")
-                .fetch_one(&db.admin).await.unwrap();
+                .fetch_one(&db.admin_pool).await.unwrap();
             if waiters > 0 { break; }
             tokio::task::yield_now().await;
         }

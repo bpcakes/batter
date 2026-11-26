@@ -1,10 +1,10 @@
-use super::Database;
+use super::database;
 use sqlx::AssertSqlSafe;
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn dense_shard_cleanup_uses_expiry_as_an_index_condition() {
-    let db = Database::new().await;
+    let db = database().await;
     // Fill one shard to the database ceiling, with both idle and leased rows.
     // Every row remains active for an hour; no wall-clock latency threshold is
     // needed to distinguish an indexed cutoff from filtering all 65,536 rows.
@@ -91,5 +91,5 @@ async fn dense_shard_cleanup_uses_expiry_as_an_index_condition() {
         assert_eq!(retained, 65536 - expired);
         tx.rollback().await.unwrap();
     }
-    db.close().await;
+    db.teardown().await;
 }

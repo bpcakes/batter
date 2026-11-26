@@ -1,27 +1,25 @@
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
-use runlimit_core::{
-    Allowance, BatchDecision, Capacity, Check, Decision, Denial, QuotaDenial, QuotaMode,
-};
+use runlimit_core::{Allowance, BatchDecision, Check, Decision, Denial, QuotaDenial};
 use sqlx::{
-    Acquire, PgPool, Postgres, Row, Transaction,
-    pool::PoolConnection,
-    postgres::{PgArguments, PgQueryResult, PgRow, types::PgInterval},
-    query::Query,
+    Row,
+    postgres::{PgRow, types::PgInterval},
     types::chrono::{DateTime, Utc},
 };
-use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::{
-    CheckError, CheckPhase, ConnectionOutcome,
+    CheckError, CheckPhase,
+    pending::{
+        Pending, PendingAllowance, PendingDenial, PendingQuotaDenial, SampledAllowance,
+        authoritative_elapsed,
+    },
     protocol::{
         BATCH_ADVISORY_LOCK_SQL, BATCH_CAPACITY_LOCK_SQL, BATCH_PREFLIGHT_SQL, BATCH_ROW_LOCK_SQL,
-        BATCH_UPSERT_SQL, CAPACITY_SHARD_COUNT, SET_LOCAL_TIMEOUTS_SQL, advisory_lock_id,
-        capacity_shard, is_server_timeout, remaining_server_timeout_settings,
+        BATCH_UPSERT_SQL, CAPACITY_SHARD_COUNT, advisory_lock_id, capacity_shard,
     },
+    transaction::{self, BoundedConnection, CheckTransaction, ConnectionOutcome},
 };
 
-const STORED_USAGE_EXCEEDS_POLICY_LIMIT: &str = "stored usage exceeds its policy limit";
 const BATCH_UPDATE_RETURNED_UNDECODABLE_USAGE: &str = "batch update returned undecodable usage";
 
 /// The finalized outcome of one transaction, before it is shaped into a
@@ -76,12 +74,6 @@ pub(crate) fn batch_decision(
         }
     }
     .map_err(|_| CheckError::storage_invariant("batch decision did not match the submitted batch"))
-}
-
-#[derive(Debug)]
-enum PendingBatchOutcome {
-    Allowed(Vec<PendingAllowance>),
-    Denied { index: usize, denial: PendingDenial },
 }
 
 #[derive(Debug)]
@@ -154,184 +146,46 @@ struct BatchPreflight {
     denial: Option<(usize, PendingDenial)>,
 }
 
-#[derive(Debug)]
-pub(crate) struct PendingAllowance {
-    allowance: Allowance,
-}
-
-impl PendingAllowance {
-    pub(crate) fn new(
-        limit: Capacity,
-        used: u64,
-        reset_from_sample: Duration,
-    ) -> Result<Self, CheckError> {
-        let remaining = limit
-            .get()
-            .checked_sub(used)
-            .ok_or(CheckError::storage_invariant(
-                STORED_USAGE_EXCEEDS_POLICY_LIMIT,
-            ))?;
-        let allowance = Allowance::new(limit, remaining, reset_from_sample)
-            .map_err(|_| CheckError::storage_invariant(STORED_USAGE_EXCEEDS_POLICY_LIMIT))?;
-        Ok(Self { allowance })
-    }
-
-    pub(crate) fn finish(self, authoritative_elapsed: Duration) -> Allowance {
-        Allowance::new(
-            self.allowance.capacity(),
-            self.allowance.available(),
-            self.allowance
-                .replenishes_after()
-                .duration()
-                .saturating_sub(authoritative_elapsed),
-        )
-        .expect("PendingAllowance stores an already-validated capacity and availability")
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct PendingQuotaDenial {
-    pub(crate) limit: Capacity,
-    pub(crate) retry_from_sample: Duration,
-}
-
-impl PendingQuotaDenial {
-    fn finish(self, authoritative_elapsed: Duration) -> QuotaDenial {
-        QuotaDenial::new(
-            self.limit,
-            self.retry_from_sample.saturating_sub(authoritative_elapsed),
-        )
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum PendingDenial {
-    Quota(PendingQuotaDenial),
-    StorageCapacity,
-}
-
-impl PendingDenial {
-    pub(crate) fn finish(self, authoritative_elapsed: Duration) -> Denial {
-        match self {
-            Self::Quota(denial) => Denial::QuotaExceeded(denial.finish(authoritative_elapsed)),
-            Self::StorageCapacity => Denial::StorageCapacity { retry_after: None },
+/// Shapes the evaluated outcome with `build`, then finalizes the transaction:
+/// an allowance commits and a denial rolls back.
+///
+/// `build` runs before the transaction is finalized, so a malformed response
+/// is reported as a pre-commit failure and never as a decision that may
+/// already have consumed quota.
+pub(crate) async fn finalize<A, D>(
+    transaction: CheckTransaction<'_>,
+    pending: Pending<A>,
+    authoritative_elapsed: Duration,
+    build: impl FnOnce(Admission) -> Result<D, CheckError>,
+) -> Result<ConnectionOutcome<D>, ConnectionOutcome<CheckError>>
+where
+    A: SampledAllowance,
+{
+    match pending {
+        allowed @ Pending::Allowed(_) => {
+            let decision = build(allowed.finish(authoritative_elapsed))
+                .map_err(ConnectionOutcome::Reusable)?;
+            transaction.commit().await?;
+            Ok(ConnectionOutcome::Reusable(decision))
+        }
+        denied @ Pending::Denied { .. } => {
+            let decision =
+                build(denied.finish(authoritative_elapsed)).map_err(ConnectionOutcome::Reusable)?;
+            Ok(transaction.deny(decision).await)
         }
     }
 }
 
-pub(crate) async fn acquire_check_connection(
-    pool: &PgPool,
-    acquire_timeout: Duration,
-) -> Result<PoolConnection<Postgres>, CheckError> {
-    timeout(acquire_timeout, pool.acquire())
-        .await
-        .map_err(|_| CheckError::TimedOutBeforeCommit {
-            phase: CheckPhase::AcquiringConnection,
-        })?
-        .map_err(CheckError::DefinitelyNotConsumed)
-}
-
-/// Runs one admission transaction and shapes its outcome with `build`.
-///
-/// `build` runs before the transaction is finalized: an allowed decision is
-/// constructed before commit and a denial before rollback, so a malformed
-/// response is reported as a pre-commit failure and never as a decision that
-/// may already have consumed quota.
+/// Runs one fixed-window admission transaction and shapes its outcome with
+/// `build`.
 pub(crate) async fn run_check_transaction<D>(
-    connection: &mut PoolConnection<Postgres>,
+    connection: &mut BoundedConnection<transaction::Check>,
     input: &BatchSqlInput,
     checks: &[Check<'_>],
     maximum_rows_per_shard: u32,
-    deadline: Instant,
-    build: impl FnOnce(Admission) -> Result<D, CheckError>,
-) -> ConnectionOutcome<Result<D, CheckError>> {
-    match run_check_transaction_inner(
-        connection,
-        input,
-        checks,
-        maximum_rows_per_shard,
-        deadline,
-        build,
-    )
-    .await
-    {
-        Ok(outcome) => outcome.map(Ok),
-        Err(outcome) => outcome.map(Err),
-    }
-}
-
-/// Keeps every SQL phase on the same remaining operation budget. `PostgreSQL`
-/// timeouts are per statement/lock, so a value set once at BEGIN is stale after
-/// an earlier phase waits. No query method exposes the underlying transaction.
-pub(crate) struct CheckTransaction<'c> {
-    inner: Transaction<'c, Postgres>,
-    deadline: Instant,
-}
-
-impl<'c> CheckTransaction<'c> {
-    pub(crate) async fn begin(
-        connection: &'c mut PoolConnection<Postgres>,
-        deadline: Instant,
-    ) -> Result<Self, ConnectionOutcome<CheckError>> {
-        let inner = check_before_commit(
-            deadline,
-            CheckPhase::BeginningTransaction,
-            connection.begin(),
-        )
-        .await?;
-        Ok(Self { inner, deadline })
-    }
-
-    async fn prepare(&mut self, phase: CheckPhase) -> Result<(), ConnectionOutcome<CheckError>> {
-        set_check_server_timeouts(&mut self.inner, self.deadline, phase).await
-    }
-
-    pub(crate) async fn execute(
-        &mut self,
-        phase: CheckPhase,
-        query: Query<'_, Postgres, PgArguments>,
-    ) -> Result<PgQueryResult, ConnectionOutcome<CheckError>> {
-        self.prepare(phase).await?;
-        check_before_commit(self.deadline, phase, query.execute(&mut *self.inner)).await
-    }
-
-    pub(crate) async fn fetch_all(
-        &mut self,
-        phase: CheckPhase,
-        query: Query<'_, Postgres, PgArguments>,
-    ) -> Result<Vec<PgRow>, ConnectionOutcome<CheckError>> {
-        self.prepare(phase).await?;
-        check_before_commit(self.deadline, phase, query.fetch_all(&mut *self.inner)).await
-    }
-
-    pub(crate) async fn fetch_one(
-        &mut self,
-        phase: CheckPhase,
-        query: Query<'_, Postgres, PgArguments>,
-    ) -> Result<PgRow, ConnectionOutcome<CheckError>> {
-        self.prepare(phase).await?;
-        check_before_commit(self.deadline, phase, query.fetch_one(&mut *self.inner)).await
-    }
-
-    pub(crate) async fn commit(mut self) -> Result<(), ConnectionOutcome<CheckError>> {
-        self.prepare(CheckPhase::PreparingCommit).await?;
-        commit_check(self.deadline, self.inner).await
-    }
-
-    pub(crate) async fn deny<D>(self, decision: D) -> ConnectionOutcome<D> {
-        finish_denied_transaction(self.deadline, decision, self.inner.rollback()).await
-    }
-}
-
-async fn run_check_transaction_inner<D>(
-    connection: &mut PoolConnection<Postgres>,
-    input: &BatchSqlInput,
-    checks: &[Check<'_>],
-    maximum_rows_per_shard: u32,
-    deadline: Instant,
     build: impl FnOnce(Admission) -> Result<D, CheckError>,
 ) -> Result<ConnectionOutcome<D>, ConnectionOutcome<CheckError>> {
-    let mut transaction = CheckTransaction::begin(connection, deadline).await?;
+    let mut transaction = connection.begin().await?;
 
     // Advisory locks cover logical keys that do not have rows yet. Their
     // stable numeric IDs are sorted independently from exact storage keys so
@@ -349,125 +203,11 @@ async fn run_check_transaction_inner<D>(
     let (pending, authoritative_elapsed) =
         execute_batch(&mut transaction, input, checks, maximum_rows_per_shard).await?;
 
-    match pending {
-        PendingBatchOutcome::Denied { index, denial } => {
-            // Batch validation rejects mixed quota modes before a connection is
-            // acquired, so the first policy owns the mode of every quota denial.
-            let admission = match (denial, checks[0].policy().quota_mode()) {
-                (PendingDenial::Quota(denial), QuotaMode::Shadow) => Admission::ShadowDenied {
-                    index,
-                    denial: denial.finish(authoritative_elapsed),
-                },
-                (denial, _) => Admission::Denied {
-                    index,
-                    denial: denial.finish(authoritative_elapsed),
-                },
-            };
-            let decision = build(admission).map_err(reusable_check_error)?;
-            Ok(finish_denied_transaction(deadline, decision, transaction.inner.rollback()).await)
-        }
-        PendingBatchOutcome::Allowed(allowances) => {
-            let allowances = allowances
-                .into_iter()
-                .map(|allowance| allowance.finish(authoritative_elapsed))
-                .collect::<Vec<_>>();
-            let decision = build(Admission::Allowed(allowances)).map_err(reusable_check_error)?;
-            transaction.commit().await?;
-            Ok(ConnectionOutcome::Reusable(decision))
-        }
-    }
-}
-
-/// Rolls back a denied transaction and reports whether the connection can be
-/// reused.
-///
-/// The denial is already a valid decision, so a rollback failure or deadline
-/// never replaces it; the connection is discarded instead so closing it rolls
-/// the non-mutating transaction back.
-pub(crate) async fn finish_denied_transaction<D, F>(
-    deadline: Instant,
-    decision: D,
-    rollback: F,
-) -> ConnectionOutcome<D>
-where
-    F: Future<Output = Result<(), sqlx::Error>>,
-{
-    if denied_rollback_succeeded(deadline, rollback).await {
-        ConnectionOutcome::Reusable(decision)
-    } else {
-        ConnectionOutcome::MustClose(decision)
-    }
-}
-
-async fn denied_rollback_succeeded<F>(deadline: Instant, rollback: F) -> bool
-where
-    F: Future<Output = Result<(), sqlx::Error>>,
-{
-    matches!(timeout_at(deadline, rollback).await, Ok(Ok(())))
-}
-
-async fn check_before_commit<T, F>(
-    deadline: Instant,
-    phase: CheckPhase,
-    future: F,
-) -> Result<T, ConnectionOutcome<CheckError>>
-where
-    F: Future<Output = Result<T, sqlx::Error>>,
-{
-    timeout_at(deadline, future)
-        .await
-        .map_err(|_| ConnectionOutcome::MustClose(CheckError::TimedOutBeforeCommit { phase }))?
-        .map_err(|error| ConnectionOutcome::Reusable(map_check_database_error(error, phase)))
-}
-
-async fn commit_check(
-    deadline: Instant,
-    transaction: Transaction<'_, Postgres>,
-) -> Result<(), ConnectionOutcome<CheckError>> {
-    if Instant::now() >= deadline {
-        return Err(ConnectionOutcome::Reusable(
-            CheckError::TimedOutBeforeCommit {
-                phase: CheckPhase::StartingCommit,
-            },
-        ));
-    }
-
-    timeout_at(deadline, transaction.commit())
-        .await
-        .map_err(|_| ConnectionOutcome::MustClose(CheckError::CommitTimedOut))?
-        .map_err(|error| ConnectionOutcome::Reusable(CheckError::CommitOutcomeUnknown(error)))
-}
-
-fn map_check_database_error(error: sqlx::Error, phase: CheckPhase) -> CheckError {
-    if is_server_timeout(&error) {
-        CheckError::TimedOutBeforeCommit { phase }
-    } else {
-        CheckError::DefinitelyNotConsumed(error)
-    }
+    finalize(transaction, pending, authoritative_elapsed, build).await
 }
 
 const fn reusable_check_error(error: CheckError) -> ConnectionOutcome<CheckError> {
     ConnectionOutcome::Reusable(error)
-}
-
-async fn set_check_server_timeouts(
-    transaction: &mut Transaction<'_, Postgres>,
-    deadline: Instant,
-    phase: CheckPhase,
-) -> Result<(), ConnectionOutcome<CheckError>> {
-    let (statement_timeout, lock_timeout) = remaining_server_timeout_settings(deadline).ok_or(
-        ConnectionOutcome::Reusable(CheckError::TimedOutBeforeCommit { phase }),
-    )?;
-    check_before_commit(
-        deadline,
-        phase,
-        sqlx::query(SET_LOCAL_TIMEOUTS_SQL)
-            .bind(statement_timeout)
-            .bind(lock_timeout)
-            .execute(&mut **transaction),
-    )
-    .await
-    .map(|_| ())
 }
 
 async fn acquire_advisory_locks(
@@ -594,18 +334,13 @@ async fn first_capacity_denial(
 
     Ok(None)
 }
-pub(crate) fn authoritative_elapsed(start: DateTime<Utc>, end: DateTime<Utc>) -> Duration {
-    end.signed_duration_since(start)
-        .to_std()
-        .unwrap_or(Duration::ZERO)
-}
 
 async fn execute_batch(
     transaction: &mut CheckTransaction<'_>,
     input: &BatchSqlInput,
     checks: &[Check<'_>],
     maximum_rows_per_shard: u32,
-) -> Result<(PendingBatchOutcome, Duration), ConnectionOutcome<CheckError>> {
+) -> Result<(Pending<PendingAllowance>, Duration), ConnectionOutcome<CheckError>> {
     let capacity_denial = first_capacity_denial(transaction, input, maximum_rows_per_shard).await?;
     let preflight = preflight_batch(transaction, input, checks).await?;
     let first_denial = match (capacity_denial, preflight.denial) {
@@ -620,14 +355,21 @@ async fn execute_batch(
     };
     if let Some((index, denial)) = first_denial {
         return Ok((
-            PendingBatchOutcome::Denied { index, denial },
+            Pending::Denied {
+                index,
+                denial,
+                // Batch validation rejects mixed quota modes before a
+                // connection is acquired, so the first policy owns the mode
+                // of every quota denial.
+                mode: checks[0].policy().quota_mode(),
+            },
             authoritative_elapsed(preflight.database_now, preflight.response_now),
         ));
     }
     let (allowances, response_now) =
         upsert_batch(transaction, input, checks, preflight.database_now).await?;
     Ok((
-        PendingBatchOutcome::Allowed(allowances),
+        Pending::Allowed(allowances),
         authoritative_elapsed(preflight.database_now, response_now),
     ))
 }
@@ -834,14 +576,10 @@ fn duration_until(
 
 #[cfg(test)]
 mod tests {
-    use super::{BATCH_UPDATE_RETURNED_UNDECODABLE_USAGE, STORED_USAGE_EXCEEDS_POLICY_LIMIT};
+    use super::BATCH_UPDATE_RETURNED_UNDECODABLE_USAGE;
 
     #[test]
-    fn stable_storage_invariant_classifications_are_pinned_without_a_database() {
-        assert_eq!(
-            STORED_USAGE_EXCEEDS_POLICY_LIMIT,
-            "stored usage exceeds its policy limit"
-        );
+    fn stable_storage_invariant_classification_is_pinned_without_a_database() {
         assert_eq!(
             BATCH_UPDATE_RETURNED_UNDECODABLE_USAGE,
             "batch update returned undecodable usage"

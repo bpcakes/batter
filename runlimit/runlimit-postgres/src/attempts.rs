@@ -3,8 +3,9 @@
 //! Standalone calls own bounded transactions. Host transactions use the explicit
 //! [`low_level`] seam and must publish results only after acknowledged commit.
 use crate::{
-    CheckError, CheckPhase, ConnectionCancellationGuard, ConnectionOutcome, PostgresConfig,
-    admission::{CheckTransaction, acquire_check_connection},
+    CheckError, CheckPhase, PostgresConfig,
+    base::PgLimiterBase,
+    transaction::{BoundedConnection, Check, CheckTransaction, ConnectionOutcome},
 };
 use runlimit_core::{
     Delay,
@@ -20,8 +21,7 @@ use sqlx::{
     postgres::{PgArguments, PgRow},
     query::Query,
 };
-use std::{sync::Arc, time::Duration};
-use tokio::time::Instant;
+use std::{fmt, sync::Arc, time::Duration};
 
 /// Isolated migration history; install only when opting into attempt policies.
 pub static ATTEMPTS_MIGRATOR: Migrator = sqlx::migrate!("./attempts-migrations");
@@ -71,54 +71,55 @@ impl std::fmt::Debug for PgAttemptReceipt {
 /// Replica-safe attempt limiter with bounded acquisition and transaction budgets.
 #[derive(Clone)]
 pub struct PostgresAttemptLimiter {
-    pool: PgPool,
-    config: PostgresConfig,
-    observer: Option<Arc<dyn AttemptObserver>>,
+    base: PgLimiterBase<dyn AttemptObserver>,
+}
+impl fmt::Debug for PostgresAttemptLimiter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.base.fmt_debug("PostgresAttemptLimiter", formatter)
+    }
 }
 impl PostgresAttemptLimiter {
     /// Creates a limiter; install its isolated migration before serving requests.
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self {
-            pool,
-            config: PostgresConfig::new(),
-            observer: None,
+            base: PgLimiterBase::new(pool),
         }
     }
     /// Sets timeouts and the operational per-shard row bound.
     #[must_use]
     pub const fn with_config(mut self, config: PostgresConfig) -> Self {
-        self.config = config;
+        self.base.set_config(config);
         self
     }
     /// Installs a panic-isolated lifecycle observer.
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<dyn AttemptObserver>) -> Self {
-        self.observer = Some(observer);
+        self.base.set_observer(observer);
         self
     }
     /// Pool that transaction-owning application adapters must use for completion.
     pub const fn pool(&self) -> &PgPool {
-        &self.pool
+        self.base.pool()
+    }
+    /// Returns the runtime configuration.
+    pub const fn config(&self) -> PostgresConfig {
+        self.base.config()
     }
     /// Installs attempt tables. Shared application migrators must also ignore
     /// missing migrations, or vendor [`CREATE_RUNLIMIT_ATTEMPTS_SQL`] instead.
     ///
+    /// Migration locking is session scoped. The connection returns to the pool
+    /// only after a successful run and unlock; an error or cancellation closes
+    /// it instead, so migration advisory locks cannot leak to the pool.
+    ///
     /// # Errors
-    /// Returns database or migration errors. The migration connection is always
-    /// retired so cancellation cannot leak migration advisory locks to the pool.
+    /// Returns database or migration errors.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        let mut connection = self.pool.acquire().await?;
-        connection.close_on_drop();
-        let mut migrator = Migrator {
-            migrations: ATTEMPTS_MIGRATOR.migrations.clone(),
-            ..Migrator::DEFAULT
-        };
-        migrator.set_ignore_missing(true);
-        migrator.run(&mut *connection).await
+        self.base.migrate(&ATTEMPTS_MIGRATOR).await
     }
     fn observe(&self, event: AttemptObservation) {
-        if let Some(observer) = &self.observer {
-            observe_attempt_safely(observer.as_ref(), event);
+        if let Some(observer) = self.base.observer() {
+            observe_attempt_safely(observer, event);
         }
     }
     /// Admits one bounded verification lease, using database time after locks.
@@ -137,21 +138,14 @@ impl PostgresAttemptLimiter {
         &self,
         subject: AttemptSubject<'_>,
     ) -> Result<AttemptAdmission<PgAttemptReceipt>, CheckError> {
-        let connection =
-            acquire_check_connection(&self.pool, self.config.pool_acquire_timeout()).await?;
-        let mut guard = ConnectionCancellationGuard::new(connection);
-        let deadline = Instant::now() + self.config.operation_timeout();
+        let mut connection = self.base.check_connection().await?;
         let result = admit_transaction(
-            guard.connection(),
+            &mut connection,
             subject,
-            self.config.maximum_rows_per_shard(),
-            deadline,
+            self.base.config().maximum_rows_per_shard(),
         )
         .await;
-        let result = guard.finish(match result {
-            Ok(value) => value.map(Ok),
-            Err(error) => error.map(Err),
-        });
+        let result = connection.finish(result);
         match &result {
             Ok(AttemptAdmission::Admitted(_)) => self.observe(AttemptObservation::Admitted),
             Ok(AttemptAdmission::Denied(denial)) => {
@@ -177,27 +171,21 @@ impl PostgresAttemptLimiter {
         receipt: PgAttemptReceipt,
         outcome: AttemptOutcome,
     ) -> Result<AttemptCompletionResult, CheckError> {
-        let connection =
-            acquire_check_connection(&self.pool, self.config.pool_acquire_timeout()).await?;
-        let mut guard = ConnectionCancellationGuard::new(connection);
-        let deadline = Instant::now() + self.config.operation_timeout();
+        let mut connection = self.base.check_connection().await?;
         let result = async {
-            let mut transaction = CheckTransaction::begin(guard.connection(), deadline).await?;
+            let mut transaction = connection.begin().await?;
             let rows = transaction
                 .fetch_all(PHASE, completion_query(&receipt, outcome, None))
                 .await?;
             let result = completion_result(&rows, outcome).map_err(ConnectionOutcome::Reusable)?;
             transaction.commit().await?;
-            Ok::<_, ConnectionOutcome<CheckError>>(match result {
+            Ok::<_, ConnectionOutcome<CheckError>>(ConnectionOutcome::Reusable(match result {
                 StagedAttemptCompletion::Applied(done) => AttemptCompletionResult::Applied(done),
                 StagedAttemptCompletion::Stale => AttemptCompletionResult::Stale,
-            })
+            }))
         }
         .await;
-        let result = guard.finish(match result {
-            Ok(value) => ConnectionOutcome::Reusable(Ok(value)),
-            Err(error) => error.map(Err),
-        });
+        let result = connection.finish(result);
         match &result {
             Ok(AttemptCompletionResult::Applied(completion)) => {
                 self.observe(AttemptObservation::Completed(*completion));
@@ -215,16 +203,15 @@ impl PostgresAttemptLimiter {
 }
 
 async fn admit_transaction(
-    connection: &mut sqlx::pool::PoolConnection<Postgres>,
+    connection: &mut BoundedConnection<Check>,
     subject: AttemptSubject<'_>,
     maximum: u32,
-    deadline: Instant,
 ) -> Result<ConnectionOutcome<AttemptAdmission<PgAttemptReceipt>>, ConnectionOutcome<CheckError>> {
     let policy = subject.policy().clone();
     let fingerprint = policy.fingerprint().into_bytes();
     let subject = subject.into_unbound_subject_key().into_bytes();
     let shard = i16::from(fingerprint[0] ^ subject[0]);
-    let mut tx = CheckTransaction::begin(connection, deadline).await?;
+    let mut tx = connection.begin().await?;
     tx.execute(
         PHASE,
         sqlx::query("SELECT pg_catalog.pg_advisory_xact_lock($1, $2)")
