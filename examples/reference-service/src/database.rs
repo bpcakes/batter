@@ -1,13 +1,13 @@
 //! Application-owned database policy. Native endpoint validation happens first.
-use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+use runledger_postgres::{PgSessionProfile, PgSessionTimeouts, RunledgerDatabase};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::time::Duration;
 
 /// Caller-owned fixture construction; the fixture must await pool closure.
 /// Production startup uses `configured`.
 /// This reference application serves as its authenticated role in public.
-/// SQL deadlines are owned by its operation contexts; both server timeouts are
-/// explicitly disabled. Other applications declare their own schema/role policy.
+/// SQL deadlines are owned by its operation contexts; all four server timeouts
+/// are explicitly disabled. Other applications declare their own schema/role
+/// policy.
 pub fn low_level_configured(
     options: PgConnectOptions,
     pool: PgPoolOptions,
@@ -17,15 +17,15 @@ pub fn low_level_configured(
 }
 
 /// The declared session policy for one authenticated login: it serves as
-/// itself, in `public`, with both server timeouts disabled. `configured` uses
-/// it for the production pool; tests reuse it for separately provisioned logins.
+/// itself, in `public`, with all four server timeouts explicitly disabled.
+/// `configured` uses it for the production pool; tests reuse it for separately
+/// provisioned logins.
 pub fn session_profile(login: &str) -> Result<PgSessionProfile, sqlx::Error> {
     PgSessionProfile::new(
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .map_err(|error| sqlx::Error::Configuration(Box::new(error)))
 }

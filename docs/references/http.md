@@ -398,7 +398,7 @@ checks function EXECUTE using the current user before evaluating any rows.
 Setup therefore uses native `SET ROLE` before the batched `set_config` query,
 preserving profiles whose login can assume the effective role without inheriting
 its function grants. A separate live target revokes PUBLIC execution of
-`set_config`, grants only the effective role, and covers both profile constructors
+`set_config`, grants only the effective role, and covers `PgSessionProfile::new`
 through direct setup and ordinary pool reuse.
 
 PostgreSQL 18's [multi-statement simple-query contract](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT)

@@ -1,10 +1,8 @@
 //! Distinct operation and advisory-unlock errors survive both entry points.
 
-use std::time::Duration;
-
 use runledger_postgres::{
-    PgSessionProfile, SchemaCompatibilityError, migrate_after_idempotency_cutover,
-    prepare_online_indexes_for_external_migrator,
+    PgSessionProfile, PgSessionTimeouts, SchemaCompatibilityError,
+    migrate_after_idempotency_cutover, prepare_online_indexes_for_external_migrator,
 };
 use sqlx::{AssertSqlSafe, migrate::MigrateError};
 
@@ -37,8 +35,7 @@ async fn both_entry_points_retain_independent_operation_and_unlock_failures() {
             options.get_username(),
             &role,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )
         .expect("restricted profile");
         let database =

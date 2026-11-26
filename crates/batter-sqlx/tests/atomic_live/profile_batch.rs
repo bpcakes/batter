@@ -3,7 +3,7 @@ use super::{
     support::{Result, bounded, combine},
     validation::counted,
 };
-use batter_sqlx::PgSessionProfile;
+use batter_sqlx::{PgSessionProfile, PgSessionTimeouts};
 use sqlx::{Row, postgres::PgPoolOptions};
 use std::time::Duration;
 
@@ -15,14 +15,11 @@ async fn idle_acquisition_statement_count_is_bounded_with_custom_settings() -> R
         let options = fixture.pool.connect_options();
         let login = options.get_username();
         for setting_count in [0, 1, 1700] {
-            let mut profile = PgSessionProfile::with_timeouts(
+            let mut profile = PgSessionProfile::new(
                 login,
                 login,
                 vec!["public".into()],
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
+                PgSessionTimeouts::disabled(),
             )?;
             for i in 0..setting_count {
                 profile = profile.with_setting(format!("batch.value_{i}"), "retained")?;
@@ -76,43 +73,31 @@ async fn batched_profiles_preserve_large_declarations_and_statement_count() -> R
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let legacy = PgSessionProfile::new(
+        let mut profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-        )?;
-        let complete = PgSessionProfile::with_timeouts(
-            &login,
-            &login,
-            vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?;
         let mut connection = fixture.pool.acquire().await?;
-        // Both modes cross the previous 1664-target limit. Every value is
-        // checked, including quotes and SQL-looking content passed as data.
-        for mut profile in [legacy, complete] {
-            let names: Vec<_> = (0..1700).map(|i| format!("batch.value_{i}")).collect();
-            let values: Vec<_> = (0..1700)
-                .map(|i| format!("value '{i}'; SELECT 1 --"))
-                .collect();
-            for (name, value) in names.iter().zip(&values) {
-                profile = profile.with_setting(name, value)?;
-            }
-            counted(5, profile.reset_and_apply(&mut connection)).await?;
-            let actual: Vec<String> = sqlx::query_scalar(
-                "SELECT current_setting(name) FROM unnest($1::text[]) \
-                 WITH ORDINALITY AS settings(name, position) ORDER BY position",
-            )
-            .bind(&names)
-            .fetch_all(&mut *connection)
-            .await?;
-            assert_eq!(actual, values);
+        // Cross the previous 1664-target limit. Every value is checked,
+        // including quotes and SQL-looking content passed as data.
+        let names: Vec<_> = (0..1700).map(|i| format!("batch.value_{i}")).collect();
+        let values: Vec<_> = (0..1700)
+            .map(|i| format!("value '{i}'; SELECT 1 --"))
+            .collect();
+        for (name, value) in names.iter().zip(&values) {
+            profile = profile.with_setting(name, value)?;
         }
+        counted(5, profile.reset_and_apply(&mut connection)).await?;
+        let actual: Vec<String> = sqlx::query_scalar(
+            "SELECT current_setting(name) FROM unnest($1::text[]) \
+             WITH ORDINALITY AS settings(name, position) ORDER BY position",
+        )
+        .bind(&names)
+        .fetch_all(&mut *connection)
+        .await?;
+        assert_eq!(actual, values);
         Ok(())
     }
     .await;
@@ -138,15 +123,9 @@ async fn profile_timeout_display_units_preserve_exact_milliseconds() -> Result {
             let duration = Duration::from_millis(millis);
             // Keep the total/idle limits disabled so this representation test
             // does not depend on completing a transaction within a tiny limit.
-            let profile = PgSessionProfile::with_timeouts(
-                &login,
-                &login,
-                vec!["public".into()],
-                Duration::ZERO,
-                duration,
-                Duration::ZERO,
-                Duration::ZERO,
-            )?;
+            let timeouts =
+                PgSessionTimeouts::new(Duration::ZERO, duration, Duration::ZERO, Duration::ZERO)?;
+            let profile = PgSessionProfile::new(&login, &login, vec!["public".into()], timeouts)?;
             profile.reset_and_apply(&mut connection).await?;
             let rendered: String = sqlx::query_scalar("SELECT current_setting('lock_timeout')")
                 .fetch_one(&mut *connection)

@@ -8,7 +8,7 @@ use batter_core::{
     startup::{ApplicationError, Startup, StartupCause, StartupError, StartupOutcome},
 };
 use batter_runledger::RunledgerDatabase;
-use batter_sqlx::{PgSessionProfile, pool_in};
+use batter_sqlx::{PgSessionProfile, PgSessionTimeouts, pool_in};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{
     sync::{
@@ -31,8 +31,7 @@ fn profile(schemas: &[&str]) -> PgSessionProfile {
         "unused",
         "unused",
         schemas.iter().map(|s| (*s).into()).collect(),
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .unwrap()
 }

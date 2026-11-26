@@ -2,7 +2,7 @@
 
 use super::policy::{APPLICATION_RELATION, APPLICATION_ROUTINE};
 use super::support::{Fixture, Result, exec, quote};
-use batter::runledger::{PgSessionProfile, RunledgerDatabase};
+use batter::runledger::{PgSessionProfile, PgSessionTimeouts, RunledgerDatabase};
 use batter::runlimit::postgres::attempts::PostgresAttemptLimiter;
 use batter::runlimit::postgres::{PostgresGcraLimiter, PostgresLimiter};
 use std::time::Duration;
@@ -86,8 +86,7 @@ pub(crate) fn runledger_database(
         role,
         role,
         vec![schema.to_owned()],
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?;
     Ok(
         batter::runledger::native::postgres::low_level::connect_database_lazy(

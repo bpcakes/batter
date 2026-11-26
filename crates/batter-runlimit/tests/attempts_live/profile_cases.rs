@@ -140,8 +140,7 @@ async fn wrong_login_profile_prevents_both_factories() {
         "not_the_login",
         &f.role,
         vec![f.schema.clone()],
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .unwrap();
     let database = batter_sqlx::low_level::connect_profiled_pool_lazy(

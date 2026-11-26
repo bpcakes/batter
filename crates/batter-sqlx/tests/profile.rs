@@ -4,7 +4,7 @@
 #[path = "profile/hook_events.rs"]
 mod hook_events;
 
-use batter_sqlx::PgSessionProfile;
+use batter_sqlx::{PgSessionProfile, PgSessionTimeouts};
 use hook_events::HookEvents;
 use std::time::Duration;
 use tracing_subscriber::prelude::*;
@@ -35,15 +35,13 @@ fn redaction_control_checks_all_pool_events() -> Result<(), batter_core::BoxErro
 }
 
 fn profile(schemas: Vec<String>) -> Result<PgSessionProfile, batter_sqlx::PgProfileError> {
-    PgSessionProfile::with_timeouts(
-        "login",
-        "serving",
-        schemas,
+    let timeouts = PgSessionTimeouts::new(
         Duration::from_secs(30),
         Duration::from_secs(1),
         Duration::from_secs(10),
         Duration::from_secs(60),
-    )
+    )?;
+    PgSessionProfile::new("login", "serving", schemas, timeouts)
 }
 
 #[test]
@@ -59,16 +57,14 @@ fn rejects_empty_reserved_and_truncated_identifiers() {
     ] {
         assert!(profile(schemas).is_err());
     }
-    assert!(
-        PgSessionProfile::new(
-            "",
-            "serving",
-            vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO
-        )
-        .is_err()
+    let result = PgSessionProfile::new(
+        "",
+        "private-serving",
+        vec!["public".into()],
+        PgSessionTimeouts::disabled(),
     );
+    assert!(result.is_err());
+    assert!(!format!("{result:?}").contains("private"));
 }
 
 #[test]
@@ -105,35 +101,39 @@ fn settings_cannot_override_owned_authority_or_transaction_parameters() {
 
 #[test]
 fn timeouts_are_exact_bounded_milliseconds() {
-    for value in [
-        Duration::from_nanos(1),
-        Duration::from_millis(i32::MAX as u64 + 1),
-    ] {
-        assert!(
-            PgSessionProfile::new(
-                "login",
-                "serving",
-                vec!["public".into()],
-                value,
-                Duration::ZERO
-            )
-            .is_err()
-        );
-    }
-    assert!(
-        PgSessionProfile::new(
-            "login",
-            "serving",
-            vec!["public".into()],
+    let disabled = PgSessionTimeouts::disabled();
+    assert_eq!(disabled.statement(), Duration::ZERO);
+    assert_eq!(disabled.lock(), Duration::ZERO);
+    assert_eq!(disabled.idle_in_transaction(), Duration::ZERO);
+    assert_eq!(disabled.transaction(), Duration::ZERO);
+    assert_eq!(
+        PgSessionTimeouts::new(
             Duration::ZERO,
-            Duration::ZERO
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
         )
-        .is_ok()
+        .unwrap(),
+        disabled
     );
-}
+    let configured = PgSessionTimeouts::new(
+        Duration::from_secs(30),
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    assert_eq!(configured.statement(), Duration::from_secs(30));
+    assert_eq!(configured.lock(), Duration::from_secs(5));
+    assert_eq!(configured.idle_in_transaction(), Duration::from_secs(10));
+    assert_eq!(configured.transaction(), Duration::from_secs(60));
+    assert_eq!(
+        PgSessionProfile::new("login", "serving", vec!["public".into()], configured)
+            .unwrap()
+            .timeouts(),
+        configured
+    );
 
-#[test]
-fn complete_timeouts_validate_each_selection_before_io() {
     for field in 0..4 {
         for (value, valid) in [
             (Duration::ZERO, true),
@@ -145,17 +145,8 @@ fn complete_timeouts_validate_each_selection_before_io() {
         ] {
             let mut timeouts = [Duration::ZERO; 4];
             timeouts[field] = value;
-            let result = PgSessionProfile::with_timeouts(
-                "private-login",
-                "private-role",
-                vec!["private-schema".into()],
-                timeouts[0],
-                timeouts[1],
-                timeouts[2],
-                timeouts[3],
-            );
+            let result = PgSessionTimeouts::new(timeouts[0], timeouts[1], timeouts[2], timeouts[3]);
             assert_eq!(result.is_ok(), valid, "field {field}, value {value:?}");
-            assert!(!format!("{result:?}").contains("private"));
         }
     }
 }

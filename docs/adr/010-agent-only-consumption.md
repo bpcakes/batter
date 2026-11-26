@@ -125,6 +125,7 @@ The links below retain this ADR's existing assessment anchors.
 - <a id="owned-phase-and-acquisition-handoff-assessment-batter-jxj2"></a>[Owned phase and acquisition handoff assessment (batter-jxj2)](../evidence/api-assessments/operations.md#owned-phase-and-acquisition-handoff-assessment-batter-jxj2)
 - <a id="protected-service-readiness-and-typed-output-batter-m9rp"></a>[Protected service readiness and typed output (batter-m9rp)](../evidence/api-assessments/lifecycle.md#protected-service-readiness-and-typed-output-batter-m9rp)
 - <a id="intent-reconciliation-assessment-batter-hw3k"></a>[Intent reconciliation assessment (batter-hw3k)](../evidence/api-assessments/postgresql.md#intent-reconciliation-assessment-batter-hw3k)
+- <a id="session-profile-timeout-requirement-assessment-batter-ndpi"></a>[Session profile timeout requirement assessment (batter-ndpi)](../evidence/api-assessments/postgresql.md#session-profile-timeout-requirement-assessment-batter-ndpi)
 
 ## Recurring example review defects
 

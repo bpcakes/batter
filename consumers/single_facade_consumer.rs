@@ -36,8 +36,8 @@ use batter::runledger::native::runtime::{
     config::{IntentPromoterConfig, JobsConfig},
 };
 use batter::runledger::{
-    IntentCorrelationState, IntentReconciliation, PgSessionProfile, RunledgerDatabase, run_atomic,
-    verify_schema,
+    IntentCorrelationState, IntentReconciliation, PgSessionProfile, PgSessionTimeouts,
+    RunledgerDatabase, run_atomic, verify_schema,
 };
 use batter::runledger::{
     JobFinalization, JobPhasesRejection, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
@@ -265,8 +265,7 @@ fn database(slot: batter::cleanup::CleanupSlot<'_>, url: &str) -> Outcome<Runled
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?;
     let pool = batter::sqlx::pool_in(
         slot,

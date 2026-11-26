@@ -1,9 +1,9 @@
 use super::policy::{Failure, Policy};
 use super::*;
 use batter_sqlx::{
-    PgSessionProfile, run_atomic_fail_fast_with, run_atomic_profiled_fail_fast_with,
+    PgSessionProfile, PgSessionTimeouts, run_atomic_fail_fast_with,
+    run_atomic_profiled_fail_fast_with,
 };
-use std::time::Duration;
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
@@ -11,14 +11,11 @@ async fn fail_fast_scopes_have_no_per_operation_savepoint() -> Result {
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
+        let profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?;
         for profiled in [false, true] {
             let work = async |mut scope: batter_sqlx::PgPolicyScope<'_, i64, Policy>| {

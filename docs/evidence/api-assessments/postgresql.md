@@ -272,3 +272,67 @@ application policy. Column grants constrain this reader's access, not all
 capabilities of a role granted additional operations. Executable evidence covers
 restricted roles, actual lost COMMIT acknowledgement and concurrent remote
 transitions; no fresh-agent usability evaluation is claimed.
+
+## Session profile timeout requirement assessment (`batter-ndpi`)
+
+`PgSessionProfile` previously stored `transaction_timeouts_ms: Option<(u32, u32)>`
+behind two constructors: the five-argument compatibility `PgSessionProfile::new`,
+which declared only statement and lock timeouts and left
+`idle_in_transaction_session_timeout` and `transaction_timeout` undeclared and
+unverified, and the seven-argument `PgSessionProfile::with_timeouts`, which
+applied and verified all four. Both constructors produced the same type, so a
+caller choosing the idiomatic `new` constructor silently omitted transaction
+timeouts while still compiling, connecting and passing ordinary tests. The
+whole-application baseline (`batter-k64t`) recorded that consumer default as
+unresolved, and almost every repository example, test and consumer still called
+the five-argument `new`.
+
+The four server timeouts now live in one opaque, `Copy`, validated
+`PgSessionTimeouts` value with two constructors and no `Default`:
+`PgSessionTimeouts::new` validates all four millisecond bounds in `0..=i32::MAX`
+before any profile or connection exists, and `PgSessionTimeouts::disabled`
+explicitly sets all four to `0ms`. `PgSessionProfile` stores `PgSessionTimeouts`
+unconditionally, exposes one four-argument `PgSessionProfile::new`, removes
+`PgSessionProfile::with_timeouts` without a deprecated shim, and applies and
+verifies all four limits through a fixed four-element array. Both removed call
+shapes (five-argument `new` and `with_timeouts`) and `PgSessionTimeouts`'s
+omitted `Default` and private fields are pinned by `compile_fail` rustdoc
+controls; `PgSessionProfile::new`'s rustdoc includes the required `Migration:`
+sentence naming both removed forms; and `CHANGELOG.md` records the `Breaking:`
+entry with before/after code for each call shape. A rustdoc JSON surface diff
+with [`surface.py`](../public-api-diff-2026-10-09/surface.py) against master
+`29ac92d5` (`nightly-2026-10-01`, all features) records the removal of
+`batter_sqlx::PgSessionProfile::with_timeouts`, the addition of
+`PgSessionTimeouts` (and its re-exports through `runledger-postgres`,
+`batter-runledger` and `batter`) and `PgSessionProfile::timeouts`, and zero
+unintended surface changes
+([output](../public-api-diff-2026-10-09/session-profile-new-2026-11-21.txt)).
+
+Against ADR-010's proactive review:
+
+1. Pure construction validates all four timeouts in `PgSessionTimeouts::new`
+   (whole milliseconds in `0..=i32::MAX`) and every identifier and schema in
+   `PgSessionProfile::new` before any database I/O; no weaker undeclared-timeout
+   state or unvalidated `PgSessionTimeouts` value can be constructed.
+2. No caller-memory rule remains to prefer a secondary constructor name over
+   `new`; disabling all four timeouts is an explicit call to
+   `PgSessionTimeouts::disabled()`, and `Default` is deliberately absent.
+3. The hidden `Option<(u32, u32)>` mode is removed in favor of one opaque
+   validated `PgSessionTimeouts` witness carried unconditionally on
+   `PgSessionProfile`.
+4. `PgSessionProfile::new` is the sole constructor across `batter-sqlx`,
+   `batter::sqlx`, `batter::runledger` and `runledger_postgres`, with one
+   `PgSessionTimeouts` identity re-exported beside it.
+5. Choosing timeout magnitudes (including explicit `PgSessionTimeouts::disabled`
+   or per-field `Duration::ZERO`), relative ordering between server timeouts and
+   cooperative `OperationContext` budgets, and server-side termination semantics
+   remain application policy and PostgreSQL 18 behavior, kept explicit rather
+   than enforced locally.
+
+Offline unit tests, compile-fail doctests, workspace examples and external
+consumer sources are migrated and verified on the pinned toolchain; live
+PostgreSQL 18 tests in `batter-sqlx` (`profile_timeouts.rs`, `profile_batch.rs`,
+`profile_login.rs`, `profile_privileges_live.rs`, `validation.rs`,
+`validation_drift.rs`) and `runledger-postgres` are updated and compile-checked,
+with live execution remaining separately selected against a PostgreSQL 18
+cluster. Fresh-agent usability evaluation remains proposed and unexecuted.

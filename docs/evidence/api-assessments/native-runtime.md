@@ -256,8 +256,9 @@ shipped in the same change. The capability follow-ups are one profiled pool
 owner shared with Runledger (`batter-nhu5`) and a handler test facility
 (`batter-3upk`, closed on 2026-10-24 by the assessment below). Shutdown budget
 sizing remains application policy; the consumer
-default between `PgSessionProfile::with_timeouts` and `new` remains unresolved
-and needs a maintainer decision. The evidence README records each disposition.
+default between `PgSessionProfile::with_timeouts` and `new` remained unresolved
+at baseline delivery (since resolved by `batter-ndpi`, which unified both into
+`PgSessionProfile::new` taking a validated `PgSessionTimeouts`). The evidence README records each disposition.
 This is one run of one agent and does not establish population reliability.
 
 ## Handler test facility assessment (`batter-3upk`)
