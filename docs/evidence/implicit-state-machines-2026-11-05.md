@@ -50,6 +50,17 @@ This addresses acquisition/cleanup publication and shared session-policy ownersh
 not all transitions in those four families. See
 [implementation evidence](owned-profiled-pool-2026-11-05.md).
 
+L01/L02/L03's in-memory shard session and batch preflight-to-commit protocols
+are addressed by `batter-ctk7.10` and `batter-ctk7.10.1`. Both memory stores
+carry the checks and their shard routing through a consuming session. GCRA
+arithmetic succeeds before bounded pruning. Fixed-window batches perform
+bounded pruning before checking quota and capacity together in input order.
+The algorithms return proposed entry updates. Applying them requires a
+preflighted single or batch owner. This removes the fixed-window consumption
+`debug_assert!` and the empty-batch `expect` guards. Entry-state
+predicates and dual-index alignment remain in `batter-ctk7.9`, and core GCRA
+commit records remain in `batter-ctk7.2`.
+
 The inventory contains 89 machine families. The largest concentrations are
 lifecycle admission and shutdown, native task settlement, database lease
 protocols, and outcome retention. Many are private
