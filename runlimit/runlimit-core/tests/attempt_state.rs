@@ -261,7 +261,25 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
     assert_eq!(completion.consecutive_failures(), u32::MAX);
     assert_eq!(completion.retry_after().duration(), ms(MAXIMUM));
 
+    // Every grant is live at its own evaluation instant, up to the last one a
+    // backend may sample.
     let end = Duration::MAX;
+    for now in [
+        ms(1_000),
+        ms(50_000),
+        end.saturating_sub(Duration::from_nanos(1)),
+    ] {
+        for state in [AttemptState::Clear, failed(3, 0, 0), leased(1, 0)] {
+            let AdmitEvaluation::Grant(pending) = state.admit(&policy, now) else {
+                panic!("an admissible subject was denied");
+            };
+            let lease = AttemptState::Leased(pending.issue(TOKEN));
+            assert!(pending.until() > now);
+            assert_eq!(lease.settle(&policy, now), lease);
+        }
+    }
+    // The backend obligations exclude the last instant itself: no later
+    // deadline is representable there, so the deadline saturates to it.
     let AdmitEvaluation::Grant(pending) = AttemptState::<u8>::Clear.admit(&policy, end) else {
         panic!("clear subject was denied");
     };

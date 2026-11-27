@@ -426,8 +426,9 @@ async fn a_delay_without_failures_is_a_storage_invariant_until_the_row_is_correc
 }
 
 /// Characterizes a limitation, not a guarantee: `batter-ctk7.22` tracks
-/// evaluating against an instant that never decreases. PostgreSQL writes
-/// nothing on a denial, so the row is re-evaluated at whatever the clock says.
+/// evaluating against an instant that never decreases. PostgreSQL leaves the
+/// row alone on a denial and on a stale completion, so on both paths the row
+/// is re-evaluated at whatever the clock says.
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn a_backwards_clock_step_revives_an_unreplaced_expired_lease() {
@@ -472,5 +473,72 @@ async fn a_backwards_clock_step_revives_an_unreplaced_expired_lease() {
         Seen::Applied(AttemptOutcome::Success, 0, 0)
     );
     assert_eq!(stored().await, (0, true));
+
+    // A stale completion is the other observer of an expiry. It leaves the
+    // stored lease alone too, so the same step makes that lease live again.
+    let receipt = admit().await.expect("cleared subject was denied");
+    db.advance(20).await;
+    assert_eq!(
+        completed(
+            limiter
+                .complete(receipt, AttemptOutcome::Success)
+                .await
+                .unwrap()
+        ),
+        Seen::Stale
+    );
+    assert_eq!(stored().await, (0, false));
+    db.advance(-1).await;
+    assert_eq!(admit().await.err(), Some(Seen::Busy(1)));
     db.close().await;
+}
+
+/// The completion statement looks its delay up by the stored count. A count no
+/// state allows must reach validation as a storage invariant, not fail the
+/// lookup inside the statement.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn completing_a_lease_with_an_invalid_failure_count_is_a_storage_invariant() {
+    for (stored, detail) in [
+        (-1, "attempt completion metadata contradicts its outcome"),
+        (-2, "invalid attempt failure count"),
+    ] {
+        let db = Database::new().await;
+        let limiter = PostgresAttemptLimiter::new(db.pool.clone());
+        let policy = policy();
+        let subject = KeyHasher::new([7; 32])
+            .unwrap()
+            .hash_attempt_for(&policy, b"user");
+        let AttemptAdmission::Admitted(receipt) = limiter.admit(subject).await.unwrap() else {
+            panic!("first admission was denied");
+        };
+        sqlx::raw_sql(
+            "ALTER TABLE runlimit_attempts DROP CONSTRAINT runlimit_attempts_failures_check",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let rows = "SELECT failures FROM runlimit_attempts WHERE lease_token IS NOT NULL";
+        sqlx::query("UPDATE runlimit_attempts SET failures=$1")
+            .bind(stored)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let error = limiter
+            .complete(receipt, AttemptOutcome::Failure)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.consumption(),
+            runlimit_core::ConsumptionStatus::NotConsumed
+        );
+        let runlimit_postgres::CheckError::StorageInvariant(error) = error else {
+            panic!("expected storage invariant, got {error:?}")
+        };
+        assert_eq!(error.detail(), detail);
+        // The refused completion rolled back: the lease and its count remain.
+        let kept: Vec<i64> = sqlx::query_scalar(rows).fetch_all(&db.pool).await.unwrap();
+        assert_eq!(kept, [stored]);
+        db.close().await;
+    }
 }

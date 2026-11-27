@@ -27,6 +27,8 @@ use crate::Delay;
 ///   backend does with its server clock. The second choice has a visible
 ///   cost wherever a denial or a stale completion left the stored state
 ///   alone: a lease reported expired is live again before its deadline.
+///   Samples stay below [`Duration::MAX`]. No later deadline is representable
+///   at that last instant, so a lease granted there is already expired.
 /// - Transitions for one subject are serialized.
 /// - A state is evaluated only with the policy whose fingerprint keys it.
 ///   Another policy would reinterpret the stored failure count and instants.
@@ -325,6 +327,9 @@ impl<T> AttemptState<T> {
     }
 
     /// Evaluates one admission at `now` without changing anything.
+    ///
+    /// A granted lease is live at `now` for every instant below
+    /// [`Duration::MAX`], which the backend obligations exclude.
     pub fn admit(self, policy: &AttemptPolicy, now: Duration) -> AdmitEvaluation<T> {
         let failures = match self.settle(policy, now) {
             Self::Clear => 0,
