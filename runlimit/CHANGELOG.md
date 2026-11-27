@@ -60,7 +60,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   of `Duration::MAX`: the retry deadline saturates there, and a failed
   completion and its `Completed` observation now report the wait that remains
   until it, as the next `Backoff` denial does, where they reported the full
-  policy delay. Two effects on stored state are new. `complete` with a receipt whose
+  policy delay. A clock at `Duration::MAX` itself is now read as the instant
+  before it: earlier releases granted a lease there that was already expired
+  and granted a second one beside it. Two effects on stored state are new. `complete` with a receipt whose
   lease has expired still returns and observes `Stale`, but now records the
   expiry as a failure at once rather than at the next admission, and removes
   the subject when its quiet period has also passed. That frees its capacity

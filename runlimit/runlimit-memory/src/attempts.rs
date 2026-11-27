@@ -30,6 +30,17 @@ struct State {
     now: Duration,
     cursor: Option<Key>,
 }
+/// The last instant an evaluation uses. `AttemptState` needs every sample
+/// below `Duration::MAX`, where no later lease deadline is representable.
+const LAST_INSTANT: Duration = Duration::MAX.saturating_sub(Duration::from_nanos(1));
+impl State {
+    /// The evaluation instant for a clock sample: it never decreases and never
+    /// passes [`LAST_INSTANT`].
+    fn advance(&mut self, sample: Duration) -> Duration {
+        self.now = self.now.max(sample).min(LAST_INSTANT);
+        self.now
+    }
+}
 
 /// A consuming reservation, bound to the creating store and exact policy key.
 pub struct MemoryAttemptReceipt {
@@ -75,7 +86,9 @@ impl MemoryAttemptLimiter {
     }
 }
 impl<C: Clock> MemoryAttemptLimiter<C> {
-    /// Creates a limiter with an injected monotonic clock.
+    /// Creates a limiter with an injected monotonic clock. A sample earlier
+    /// than one already seen is read as that one, and `Duration::MAX` as the
+    /// instant before it.
     pub fn with_clock(capacity: NonZeroUsize, clock: C) -> Self {
         Self {
             state: Arc::default(),
@@ -112,8 +125,7 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
             .state
             .lock()
             .map_err(|_| MemoryAttemptError::Poisoned)?;
-        state.now = state.now.max(self.clock.now());
-        let now = state.now;
+        let now = state.advance(self.clock.now());
         cleanup(&mut state, now);
         let full = state.entries.len() >= self.capacity.get();
         let stored = state.entries.get_mut(&key);
@@ -184,8 +196,7 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
             .lock()
             .map_err(|_| MemoryAttemptCompletionError)?;
         let state = &mut *guard;
-        state.now = state.now.max(self.clock.now());
-        let now = state.now;
+        let now = state.advance(self.clock.now());
         // A receipt from another store names no reservation here, whatever
         // generation it carries.
         let same_store = Weak::ptr_eq(&receipt.store, &Arc::downgrade(&self.state));

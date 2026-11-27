@@ -154,6 +154,31 @@ fn a_receipt_that_outlives_its_removed_subject_cannot_complete_a_later_lease() {
     ));
 }
 
+/// No later deadline is representable at `Duration::MAX`, so a lease granted
+/// there would already be expired and a second admission would be granted too.
+#[test]
+fn a_clock_at_the_end_of_representable_time_still_grants_one_live_lease() {
+    struct End;
+    impl Clock for End {
+        fn now(&self) -> Duration {
+            Duration::MAX
+        }
+    }
+    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), End);
+    let policy = policy();
+    let hasher = KeyHasher::new([7; 32]).unwrap();
+    let subject = hasher.hash_attempt_for(&policy, b"user");
+    let first = receipt(store.admit(subject).unwrap());
+    assert!(matches!(
+        store.admit(subject).unwrap(),
+        AttemptAdmission::Denied(AttemptDenial::Busy { .. })
+    ));
+    assert!(matches!(
+        store.complete(first, AttemptOutcome::Success).unwrap(),
+        AttemptCompletionResult::Applied(done) if done.consecutive_failures() == 0
+    ));
+}
+
 #[test]
 fn bounded_storage_reclaims_quiet_subjects_and_never_evicts_live_lease() {
     let clock = TestClock::default();

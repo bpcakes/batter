@@ -33,7 +33,9 @@ use crate::Delay;
 ///   cost wherever a denial or a stale completion left the stored state
 ///   alone: a lease reported expired is live again before its deadline.
 ///   Samples stay below [`Duration::MAX`]. No later deadline is representable
-///   at that last instant, so a lease granted there is already expired.
+///   at that last instant, so a lease granted there is already expired. The
+///   memory backend reads such a sample as the instant before it; the
+///   PostgreSQL backend's millisecond clock cannot reach it.
 /// - A token is never issued again for a subject while a receipt that carries
 ///   it can still be presented, including after the subject's stored state
 ///   was removed and created again. Telling a lease from the one before it is

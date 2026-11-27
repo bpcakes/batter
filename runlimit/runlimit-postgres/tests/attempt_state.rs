@@ -14,109 +14,20 @@
 //! also reached in PostgreSQL, and remaining delays are compared rounded up to
 //! the script's one-minute step.
 use runlimit_core::{
-    KeyHasher, PolicyId, QuotaPeriod, ScopeId,
-    attempts::{
-        AttemptAdmission, AttemptCompletionResult, AttemptDenial, AttemptObservation,
-        AttemptObserver, AttemptOutcome, AttemptPolicy,
-    },
+    KeyHasher,
+    attempts::{AttemptAdmission, AttemptOutcome, AttemptPolicy},
 };
-use runlimit_memory::{Clock, attempts::MemoryAttemptLimiter};
+use runlimit_memory::attempts::MemoryAttemptLimiter;
 use runlimit_postgres::attempts::PostgresAttemptLimiter;
-use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
+use sqlx::AssertSqlSafe;
 use std::{
     num::NonZeroUsize,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{Arc, atomic::Ordering},
 };
 
-const MINUTE: u64 = 60_000;
-
-#[derive(Clone, Copy)]
-enum Step {
-    /// Moves both clocks forward by this many minutes.
-    Advance(u64),
-    /// Admits; an admitted receipt takes the next receipt index.
-    Admit,
-    /// Completes the receipt with this index.
-    Complete(usize, AttemptOutcome),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Seen {
-    Admitted,
-    /// Whole minutes until the live lease expires, rounded up.
-    Busy(u64),
-    /// Whole minutes of remaining backoff, rounded up.
-    Backoff(u64),
-    StorageCapacity,
-    /// Outcome, consecutive failures and the exact delay in minutes.
-    Applied(AttemptOutcome, u32, u64),
-    Stale,
-    CommitUncertain,
-}
-
-fn minutes_up(delay: runlimit_core::Delay) -> u64 {
-    u64::try_from(delay.duration().as_millis())
-        .unwrap()
-        .div_ceil(MINUTE)
-}
-fn denied(denial: AttemptDenial) -> Seen {
-    match denial {
-        AttemptDenial::Busy { retry_after } => Seen::Busy(minutes_up(retry_after)),
-        AttemptDenial::Backoff { retry_after } => Seen::Backoff(minutes_up(retry_after)),
-        AttemptDenial::StorageCapacity => Seen::StorageCapacity,
-    }
-}
-fn completed(result: AttemptCompletionResult) -> Seen {
-    match result {
-        AttemptCompletionResult::Applied(done) => {
-            let delay = u64::try_from(done.retry_after().duration().as_millis()).unwrap();
-            assert_eq!(delay % MINUTE, 0, "completion delays are exact");
-            Seen::Applied(done.outcome(), done.consecutive_failures(), delay / MINUTE)
-        }
-        AttemptCompletionResult::Stale => Seen::Stale,
-    }
-}
-
-#[derive(Default)]
-struct Recorder(Mutex<Vec<Seen>>);
-impl AttemptObserver for Recorder {
-    fn observe(&self, observation: AttemptObservation) {
-        self.0.lock().unwrap().push(match observation {
-            AttemptObservation::Admitted => Seen::Admitted,
-            AttemptObservation::Denied(denial) => denied(denial),
-            AttemptObservation::Completed(done) => {
-                completed(AttemptCompletionResult::Applied(done))
-            }
-            AttemptObservation::Stale => Seen::Stale,
-            AttemptObservation::CommitUncertain => Seen::CommitUncertain,
-        });
-    }
-}
-
-#[derive(Clone, Default)]
-struct ScriptClock(Arc<AtomicU64>);
-impl Clock for ScriptClock {
-    fn now(&self) -> Duration {
-        Duration::from_millis(self.0.load(Ordering::SeqCst))
-    }
-}
-
-fn policy() -> AttemptPolicy {
-    let minutes = |value: u64| QuotaPeriod::new(Duration::from_millis(value * MINUTE)).unwrap();
-    AttemptPolicy::new(
-        PolicyId::new("auth").unwrap(),
-        ScopeId::new("identifier").unwrap(),
-        minutes(10),
-        minutes(40),
-        minutes(100),
-        minutes(20),
-    )
-    .unwrap()
-}
+#[path = "attempt_state/support.rs"]
+mod support;
+use support::{Database, MINUTE, Recorder, ScriptClock, Seen, Step, completed, denied, policy};
 
 /// Initial delay 10, cap 40, quiet period 100 and lease 20, in minutes.
 fn script() -> Vec<(Step, Option<Seen>)> {
@@ -210,86 +121,6 @@ fn run_memory(policy: &AttemptPolicy, recorder: Arc<Recorder>) -> Vec<Seen> {
         }
     }
     seen
-}
-
-/// Distinguishes schemas created in one process within one clock tick.
-static NEXT: AtomicU64 = AtomicU64::new(0);
-/// One disposable schema holding the attempt table.
-struct Database {
-    pool: PgPool,
-    admin: PgPool,
-    schema: String,
-}
-impl Database {
-    async fn new() -> Self {
-        let url = std::env::var("RUNLIMIT_POSTGRES_TEST_DATABASE_URL")
-            .expect("disposable PostgreSQL URL required");
-        let admin = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&url)
-            .await
-            .unwrap();
-        let schema = format!(
-            "runlimit_attempt_state_{}_{}_{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        let search_path = format!("SET search_path={schema},pg_catalog");
-        let pool = PgPoolOptions::new()
-            .max_connections(2)
-            .after_connect(move |connection, _| {
-                let query = search_path.clone();
-                Box::pin(async move {
-                    sqlx::query(AssertSqlSafe(query))
-                        .execute(connection)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .connect(&url)
-            .await
-            .unwrap();
-        PostgresAttemptLimiter::new(pool.clone())
-            .migrate()
-            .await
-            .unwrap();
-        Self {
-            pool,
-            admin,
-            schema,
-        }
-    }
-    /// Moves the server clock by `minutes` relative to every stored instant:
-    /// forward when positive, backwards when negative.
-    async fn advance(&self, minutes: i64) {
-        sqlx::query(
-            "UPDATE runlimit_attempts SET last_failure_ms=last_failure_ms-$1,\
-             retry_at_ms=retry_at_ms-$1,lease_until_ms=lease_until_ms-$1",
-        )
-        .bind(minutes * i64::try_from(MINUTE).unwrap())
-        .execute(&self.pool)
-        .await
-        .unwrap();
-    }
-    async fn close(self) {
-        self.pool.close().await;
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP SCHEMA {} CASCADE",
-            self.schema
-        )))
-        .execute(&self.admin)
-        .await
-        .unwrap();
-        self.admin.close().await;
-    }
 }
 
 async fn run_postgres(policy: &AttemptPolicy, recorder: Arc<Recorder>) -> Vec<Seen> {
