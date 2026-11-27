@@ -191,8 +191,10 @@ impl AttemptSubject<'_> {
     }
     /// The storage identity: this policy's fingerprint and the subject key.
     ///
-    /// Backends key, shard and lock attempt state by this value, exactly as
-    /// quota backends use [`Check::counter_key`](crate::Check::counter_key).
+    /// Backends identify stored attempt state by this value, as quota backends
+    /// use [`Check::counter_key`](crate::Check::counter_key). It names a
+    /// subject, not a lock: how a backend serializes admissions is its own
+    /// choice.
     pub const fn counter_key(&self) -> CounterKey {
         CounterKey::new(self.policy.fingerprint, self.subject)
     }

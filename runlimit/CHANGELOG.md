@@ -11,8 +11,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 - `AttemptSubject::counter_key` returns the attempt storage identity, the
   policy fingerprint and the subject key, as `Check::counter_key` does for
-  quota checks. The memory and PostgreSQL attempt backends key, shard and lock
-  by it instead of rebuilding it from `into_unbound_subject_key`. The attempt
+  quota checks. The memory and PostgreSQL attempt backends identify stored
+  attempt state by it instead of rebuilding it from
+  `into_unbound_subject_key`, and PostgreSQL derives the capacity shard it
+  locks from it. Memory admission still serializes on one store lock. The attempt
   policy fingerprint, the attempt subject key and the PostgreSQL attempt
   capacity shard now have golden-vector tests computed independently of the
   crate, and `hash_for` and `hash_attempt_for` share one private keyed

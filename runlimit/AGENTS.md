@@ -130,8 +130,9 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   `PolicySubject` that retains the exact policy reference;
   `KeyHasher::hash_attempt_for` is its attempt-policy counterpart, and both
   go through the one private `KeyHasher::derive` encoding. Attempt backends
-  key, shard and lock by `AttemptSubject::counter_key`, and PostgreSQL
-  derives every family's shard with `protocol::capacity_shard`. Golden
+  identify stored state by `AttemptSubject::counter_key`; PostgreSQL derives
+  every family's capacity shard, which it locks, with
+  `protocol::capacity_shard`, while memory serializes on one store lock. Golden
   vectors pin each persisted encoding; never add a derivation, fingerprint
   or shard routine without one. `Check::new`
   accepts only that bound value, so the normal derivation-to-check path has no

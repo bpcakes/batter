@@ -470,7 +470,9 @@ policy argument that can disagree with the derivation namespace. Attempt
 policies have the one counterpart, `KeyHasher::hash_attempt_for`, which shares
 the same keyed encoding behind a fixed attempt prefix and returns an
 `AttemptSubject` bound the same way; its `counter_key` is the storage identity
-attempt backends key, shard and lock by. Both encodings are persistent
+by which both attempt backends find a subject's state. PostgreSQL also derives
+the capacity shard it locks from that key; the memory backend serializes every
+admission on one store lock. Both encodings are persistent
 protocols pinned by golden vectors. Adapter and backend APIs can
 deliberately expose an unbound key: `PolicySubject::into_unbound_subject_key`,
 `Check::subject`, and `CounterKey::subject` all return a `SubjectKey` that can
