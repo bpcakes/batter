@@ -51,8 +51,12 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   the quiet-period reset, the busy and backoff denials and the failure delay
   are derived only by its `settle`, `admit` and `complete` and by
   `AttemptPolicy::delay`. A backend decodes storage into that enum and persists
-  what the evaluation returns; it keeps no loose lease, failure or retry
-  fields and no second copy of a rule. PostgreSQL completion must lock, sample
+  the lease it grants and the completion it applies; it keeps no loose lease,
+  failure or retry fields and no second copy of a rule. Memory clamps its clock
+  and stores the settled state on every evaluation. PostgreSQL samples the
+  server clock and writes nothing on a denial or a stale completion, so a
+  backwards clock step re-evaluates the stored row at the earlier instant
+  (`batter-ctk7.22`); do not store that settlement on one path only. PostgreSQL completion must lock, sample
   the clock and check its fence in one statement, so that statement applies
   the live-lease case in SQL and reads its delay from the bound
   `AttemptPolicy::delay_schedule`; never restate the formula in SQL.

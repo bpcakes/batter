@@ -17,10 +17,6 @@ impl StoredAttempt {
     /// Locks the subject's row and reads exactly the columns [`Self::read`] decodes.
     pub(super) const LOCK_SQL: &str = "SELECT failures,last_failure_ms,retry_at_ms,lease_until_ms FROM runlimit_attempts WHERE config_fingerprint=$1 AND subject_key=$2 FOR UPDATE";
 
-    /// Stores the failure of a lease that expired, releasing its token, with
-    /// the columns the completion statement writes for a failed attempt.
-    pub(super) const EXPIRE_SQL: &str = "UPDATE runlimit_attempts SET failures=$3,last_failure_ms=$4,retry_at_ms=$5,lease_until_ms=NULL,lease_token=NULL WHERE config_fingerprint=$1 AND subject_key=$2";
-
     pub(super) fn read(row: &PgRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
             failures: row.try_get("failures")?,
@@ -79,13 +75,6 @@ pub(super) fn stored_instant(instant: Duration) -> Option<i64> {
     Some((millis ^ EPOCH_SHIFT).cast_signed())
 }
 
-/// [`stored_instant`], saturating at the last `BIGINT`. Only a retry time, a
-/// stored instant plus a delay, can pass it, and the sampled clock it is
-/// compared with is itself a `BIGINT`, so the denial it expresses is kept.
-pub(super) fn saturating_stored_instant(instant: Duration) -> i64 {
-    stored_instant(instant).unwrap_or(i64::MAX)
-}
-
 /// Whole milliseconds of a duration for a `BIGINT` value, or `None` beyond it.
 fn millis(value: Duration) -> Option<i64> {
     i64::try_from(value.as_millis()).ok()
@@ -102,9 +91,7 @@ pub(super) fn delay_schedule(policy: &AttemptPolicy) -> Vec<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        StoredAttempt, delay_schedule, instant, saturating_stored_instant, stored_instant,
-    };
+    use super::{StoredAttempt, delay_schedule, instant, stored_instant};
     use runlimit_core::{
         PolicyId, QuotaPeriod, ScopeId,
         attempts::{
@@ -200,25 +187,9 @@ mod tests {
         // Expired at -20, so the first failure delays until -10 and stays
         // retained until 80.
         let state = row(0, 0, 0, Some(-20)).state().unwrap();
-        let AdmitEvaluation::Denied { settled, denial } = state.admit(&policy, instant(-15)) else {
+        let AdmitEvaluation::Denied { denial, .. } = state.admit(&policy, instant(-15)) else {
             panic!("admitted inside the delay");
         };
-        // The columns admission stores for that expiry decode to the state it
-        // settled into, so a later evaluation at any instant agrees with it.
-        let AttemptState::Failed(expired) = settled else {
-            panic!("an expired lease settles into its failure");
-        };
-        let stored = row(
-            i64::from(expired.failures().get()),
-            saturating_stored_instant(expired.last_failure()),
-            saturating_stored_instant(expired.retry_at()),
-            None,
-        );
-        assert_eq!(
-            (stored.failures, stored.last_failure_ms, stored.retry_at_ms),
-            (1, -20, -10)
-        );
-        assert_eq!(stored.state(), Ok(settled));
         assert_eq!(
             denial,
             LeaseDenial::Backoff {
@@ -230,18 +201,6 @@ mod tests {
         };
         assert_eq!(pending.failures(), 1);
         assert_eq!(stored_instant(pending.until()), Some(25));
-    }
-
-    /// A retry time past the last `BIGINT` still denies at every clock sample.
-    #[test]
-    fn a_retry_time_past_the_storage_range_saturates() {
-        assert_eq!(saturating_stored_instant(instant(i64::MAX)), i64::MAX);
-        assert_eq!(
-            saturating_stored_instant(instant(i64::MAX).saturating_add(Duration::from_millis(1))),
-            i64::MAX
-        );
-        assert_eq!(saturating_stored_instant(Duration::MAX), i64::MAX);
-        assert_eq!(saturating_stored_instant(instant(-10)), -10);
     }
 
     #[test]

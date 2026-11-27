@@ -23,7 +23,10 @@ use crate::Delay;
 /// - Time is a [`Duration`] since a backend-owned epoch, from one clock
 ///   authority. The backend chooses what a regressing clock means: clamp its
 ///   samples, as the memory backend does, or accept that an earlier sample
-///   re-evaluates the stored state at that earlier instant.
+///   re-evaluates the stored state at that earlier instant, as the PostgreSQL
+///   backend does with its server clock. The second choice has a visible
+///   cost wherever a denial or a stale completion left the stored state
+///   alone: a lease reported expired is live again before its deadline.
 /// - Transitions for one subject are serialized.
 /// - A state is evaluated only with the policy whose fingerprint keys it.
 ///   Another policy would reinterpret the stored failure count and instants.
@@ -247,11 +250,13 @@ pub enum AdmitEvaluation<T> {
     Grant(PendingLease),
     /// No reservation was made.
     Denied {
-        /// The state at the evaluation instant. Storing it is optional only
-        /// while evaluation instants never decrease: the unsettled state then
-        /// gives the same answers later. After a clock regression the two
-        /// differ, because an unsettled expired lease is live again at an
-        /// instant before its deadline and a stored failure is not.
+        /// The state at the evaluation instant. A backend may store it or
+        /// leave the stored state alone. While evaluation instants never
+        /// decrease the two give the same answers later. They differ after a
+        /// clock regression, because an unsettled expired lease is live again
+        /// at an instant before its deadline and a stored failure is not, so
+        /// a backend that leaves it has chosen re-evaluation at the earlier
+        /// instant, as [`AttemptState`]'s backend obligations describe.
         settled: AttemptState<T>,
         /// Why admission was refused.
         denial: LeaseDenial,
@@ -275,8 +280,8 @@ pub enum CompleteEvaluation<T> {
     /// replaced. The outcome was not applied.
     Stale {
         /// The state at the evaluation instant, with an expired lease already
-        /// counted as a failure. Storing it is optional on the same condition
-        /// as [`AdmitEvaluation::Denied`]'s settled state.
+        /// counted as a failure. Storing it is the same choice as for
+        /// [`AdmitEvaluation::Denied`]'s settled state.
         settled: AttemptState<T>,
     },
 }

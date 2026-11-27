@@ -68,20 +68,19 @@ The format is based on [Keep a Changelog], and this project adheres to
   `memory_and_postgres_share_attempt_transition_semantics`, holds both backends
   to one scripted lifecycle (`batter-ctk7.8`).
 
-  Replicas of both releases reach the same decisions while the server clock
-  does not step backwards. After a backwards step they can differ during a
-  rolling upgrade, in two cases:
+  For rows this library writes, replicas of both releases reach the same
+  decisions while the server clock does not step backwards. After a backwards
+  step they can differ during a rolling upgrade in one case: a row without a
+  lease and without failures is `Clear`. After a success both timestamps hold
+  the completion instant, so an earlier release denies `Backoff` until the
+  clock passes that instant again, and this release admits.
 
-  - A row without a lease and without failures is `Clear`. After a success
-    both timestamps hold the completion instant, so an earlier release denies
-    `Backoff` until the clock passes that instant again, and this release
-    admits.
-  - A denied admission that is the first to observe an expired lease now
-    stores that failure and releases the lease token in the same transaction,
-    which it commits. An earlier release rolled the denial back, so a clock
-    stepping behind the lease deadline made the lease live again and let its
-    receipt complete, erasing the failure the denial had reported. This
-    release reports that receipt `Stale`. Every other denial still rolls back.
+  One clock-step behavior is unchanged from earlier releases and is now
+  documented and pinned by the live test
+  `a_backwards_clock_step_revives_an_unreplaced_expired_lease`: a denial or a
+  stale completion writes nothing, so after a step behind a lease deadline a
+  lease already reported expired is live again until that deadline
+  (`batter-ctk7.22`).
 - **Breaking:** this is a run-time break for hand-edited attempt rows only;
   nothing stops compiling and no row this library writes is affected.
   `PostgresAttemptLimiter::admit` now fails closed with

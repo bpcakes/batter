@@ -553,7 +553,10 @@ lease expires as a failure, evaluated at the lease deadline. A late success
 cannot reset a newer reservation. PostgreSQL samples its authoritative clock
 after locks; process-local storage clamps backwards clock readings. PostgreSQL
 uses server wall time, so a server clock correction can extend or shorten
-waiting periods; deploy with disciplined database time.
+waiting periods; deploy with disciplined database time. A backwards correction
+behind a lease deadline also makes a lease that was already reported expired
+live again until that deadline: admission reports `Busy` again, and the lease's
+own outstanding receipt can complete (`batter-ctk7.22`).
 
 Both backends evaluate one lifecycle, `runlimit_core::attempts::AttemptState`:
 a subject is `Clear`, `Leased` or `Failed`, and that type's pure `settle`,

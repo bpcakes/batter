@@ -3,8 +3,9 @@
 //! The memory and PostgreSQL attempt backends answer one scripted lifecycle
 //! identically: the same admissions, denials, completions, delays and
 //! observations, in the same order. A stored row that fits no lease state is
-//! refused before commit instead of being reinterpreted, and a lease expiry
-//! that a denial reported stays expired when the server clock steps backwards.
+//! refused before commit instead of being reinterpreted. The last test pins a
+//! documented PostgreSQL limitation: a backwards server clock step re-evaluates
+//! the stored row at the earlier instant.
 //!
 //! Memory time is an injected clock. PostgreSQL time is the server clock, so
 //! the script advances it by moving every stored instant of the subject's row
@@ -424,9 +425,12 @@ async fn a_delay_without_failures_is_a_storage_invariant_until_the_row_is_correc
     db.close().await;
 }
 
+/// Characterizes a limitation, not a guarantee: `batter-ctk7.22` tracks
+/// evaluating against an instant that never decreases. PostgreSQL writes
+/// nothing on a denial, so the row is re-evaluated at whatever the clock says.
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
-async fn an_expiry_reported_by_a_denial_survives_a_backwards_clock_step() {
+async fn a_backwards_clock_step_revives_an_unreplaced_expired_lease() {
     let db = Database::new().await;
     let limiter = PostgresAttemptLimiter::new(db.pool.clone());
     let policy = policy();
@@ -447,18 +451,17 @@ async fn an_expiry_reported_by_a_denial_survives_a_backwards_clock_step() {
     };
 
     let receipt = admit().await.expect("first admission was denied");
-    // A live lease denies without changing the row.
     assert_eq!(admit().await.err(), Some(Seen::Busy(20)));
-    assert_eq!(stored().await, (0, false));
-    // At its deadline the lease has failed, and the denial that reports the
-    // backoff stores that failure and releases the token.
+    // At its deadline the lease has failed. The denial reports the backoff of
+    // that failure and leaves the stored lease alone.
     db.advance(20).await;
     assert_eq!(admit().await.err(), Some(Seen::Backoff(10)));
-    assert_eq!(stored().await, (1, true));
+    assert_eq!(stored().await, (0, false));
 
-    // The clock steps back behind the deadline. The receipt stays stale and
-    // cannot erase the failure the denial reported.
+    // The clock steps back behind the deadline: the same row is a live lease
+    // again, and its receipt completes.
     db.advance(-1).await;
+    assert_eq!(admit().await.err(), Some(Seen::Busy(1)));
     assert_eq!(
         completed(
             limiter
@@ -466,9 +469,8 @@ async fn an_expiry_reported_by_a_denial_survives_a_backwards_clock_step() {
                 .await
                 .unwrap()
         ),
-        Seen::Stale
+        Seen::Applied(AttemptOutcome::Success, 0, 0)
     );
-    assert_eq!(stored().await, (1, true));
-    assert_eq!(admit().await.err(), Some(Seen::Backoff(11)));
+    assert_eq!(stored().await, (0, true));
     db.close().await;
 }
