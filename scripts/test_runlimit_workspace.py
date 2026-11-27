@@ -12,8 +12,10 @@ from check_runlimit_workspace import (
     EXPECTED_PUBLISH,
     EXPECTED_VERSION,
     NATIVE,
+    UNEXECUTED_RECORDS,
     validate_assets,
     validate_graph,
+    validate_provenance,
     validate_published,
 )
 from package import eligible
@@ -82,14 +84,14 @@ class AssetTests(unittest.TestCase):
                 expected[name] = hashlib.sha256(path.read_bytes()).hexdigest()
                 self.assertTrue(eligible(path, root))
             (native / 'upstream-assets.json').write_text(json.dumps(expected))
-            validate_assets(root)
+            validate_assets(root, required={})
             migration = native / assets[-1]
             migration.write_text('altered published SQL')
             with self.assertRaisesRegex(ValueError, 'changed or missing'):
-                validate_assets(root)
+                validate_assets(root, required={})
             migration.unlink()
             with self.assertRaisesRegex(ValueError, 'changed or missing'):
-                validate_assets(root)
+                validate_assets(root, required={})
 
     def test_provenance_records_are_inventoried_regular_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -106,13 +108,13 @@ class AssetTests(unittest.TestCase):
             expected = {name: hashlib.sha256((native / name).read_bytes()).hexdigest()
                         for name in names}
             (native / 'upstream-assets.json').write_text(json.dumps(expected))
-            validate_assets(root)
+            validate_assets(root, required={})
             self.assertTrue(eligible(record, root))
 
             stray = record.with_name('stray.sql')
             stray.write_text('SELECT 2')
             with self.assertRaisesRegex(ValueError, 'uninventoried file: provenance/'):
-                validate_assets(root)
+                validate_assets(root, required={})
             stray.unlink()
 
             live = native / 'runlimit-postgres' / 'src' / 'superseded.sql'
@@ -121,20 +123,39 @@ class AssetTests(unittest.TestCase):
             record.unlink()
             record.symlink_to(live)
             with self.assertRaisesRegex(ValueError, 'provenance holds a symlink'):
-                validate_assets(root)
+                validate_assets(root, required={})
             record.unlink()
             record.write_bytes(live.read_bytes())
             (native / 'provenance' / 'outward').symlink_to(live.parent)
             with self.assertRaisesRegex(ValueError, 'provenance holds a symlink'):
-                validate_assets(root)
+                validate_assets(root, required={})
             (native / 'provenance' / 'outward').unlink()
-            validate_assets(root)
+            validate_assets(root, required={})
 
             moved = root / 'elsewhere'
             (native / 'provenance').rename(moved)
             (native / 'provenance').symlink_to(moved)
             with self.assertRaisesRegex(ValueError, 'provenance is a symlink'):
-                validate_assets(root)
+                validate_assets(root, required={})
+
+    def test_superseded_records_cannot_move_back_with_their_inventory(self):
+        digest, record = next(iter(UNEXECUTED_RECORDS.items()))
+        base = {'LICENSE-MIT': 'a', 'LICENSE-APACHE': 'b'}
+        others = {name: value for value, name in UNEXECUTED_RECORDS.items() if value != digest}
+        archived = {**base, **{'provenance/runlimit-postgres/' + n: v for n, v in others.items()}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = root / 'runlimit'
+            for layout, message in (
+                    ({**archived, 'runlimit-postgres/src/' + record: digest}, 'only under'),
+                    ({**archived, 'runlimit-postgres/src/' + record: digest,
+                      'provenance/runlimit-postgres/' + record: digest}, 'only under'),
+                    (archived, 'only under')):
+                with self.subTest(layout=sorted(layout)), self.assertRaisesRegex(ValueError, message):
+                    validate_provenance(root, layout, UNEXECUTED_RECORDS)
+            validate_provenance(root, {**archived, 'provenance/runlimit-postgres/' + record: digest},
+                                UNEXECUTED_RECORDS)
+            self.assertFalse(native.exists())
 
     def test_a_package_archive_cannot_carry_a_record(self):
         record = b'SELECT 1'
@@ -160,3 +181,18 @@ class AssetTests(unittest.TestCase):
                         ValueError, 'would publish provenance record provenance/'):
                     validate_published([clean, archive('copy.crate', [(member, record)])],
                                        expected)
+
+            sources = [('runlimit-postgres-0.4.0/src/lib.rs',
+                        b'const SQL: &str = include_str!("live.sql");'),
+                       ('runlimit-postgres-0.4.0/src/live.sql', b'SELECT 2'),
+                       ('runlimit-postgres-0.4.0/migrations/initial.sql', b'SELECT 0'),
+                       ('runlimit-postgres-0.4.0/tests/live.rs',
+                        b'const M: &str = include_str!("../migrations/./initial.sql");')]
+            validate_published([archive('includes.crate', sources)], expected)
+            for test in (b'include_str!("../../provenance/runlimit-postgres/superseded.sql")',
+                         b'include_bytes![r#"../src/missing.sql"#]',
+                         b'include_str! { "/etc/hosts" }'):
+                with self.subTest(test=test), self.assertRaisesRegex(ValueError, 'not in the archive'):
+                    validate_published([archive('include.crate', sources + [
+                        ('runlimit-postgres-0.4.0/tests/archived.rs', b'const S: &str = ' + test + b';')])],
+                        expected)

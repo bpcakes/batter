@@ -2,7 +2,9 @@
 """Enforce local native Runlimit identities, ownership and immutable import assets."""
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
+import re
 import subprocess
 import tarfile
 
@@ -16,6 +18,16 @@ EXPECTED_VERSION = '0.4.0'
 # outside every package; `package_archives` and `validate_published` check the
 # archives Cargo builds and verifies.
 PROVENANCE = 'provenance'
+# Digests of the superseded imported statements, which must stay inventoried
+# under provenance/, whatever path the inventory gives them.
+UNEXECUTED_RECORDS = {
+    '29c13de727bea2b67dec3a6cdaf7bfb317cd13f849ee4396fec293b55597d667': 'attempt_complete.sql',
+    'e9b9bc4cacae015fd06f14d8e6eeb6b0e10e77f17344d52598a5828598a4a49c': 'cleanup_expired.sql',
+}
+# A literal include in any delimiter, as a plain string without escapes or a
+# raw string.
+INCLUDE = re.compile(r'include_(?:str|bytes)!\s*[(\[{]\s*'
+                     r'(?:r(?P<hashes>#*)"(?P<raw>.*?)"(?P=hashes)|"(?P<plain>[^"\\]*)")')
 
 
 def validate_graph(metadata, root):
@@ -63,7 +75,7 @@ def validate_graph(metadata, root):
             raise ValueError('foundation cannot depend on native Runlimit')
 
 
-def validate_assets(root):
+def validate_assets(root, required=None):
     native = Path(root) / 'runlimit'
     expected = json.loads((native / 'upstream-assets.json').read_text())
     if not expected or not {'LICENSE-MIT', 'LICENSE-APACHE'} <= set(expected):
@@ -72,16 +84,22 @@ def validate_assets(root):
         path = native / name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('immutable imported asset changed or missing: ' + name)
-    validate_provenance(Path(root), expected)
+    validate_provenance(Path(root), expected, required)
 
 
-def validate_provenance(root, expected):
+def validate_provenance(root, expected, required=None):
     """Require every unexecuted import record to be an inventoried regular file.
 
     Files that are not source material by `package.eligible`, such as Finder
     metadata, are ignored; a symlink anywhere in the directory is rejected so
     each record's bytes really live outside every package.
     """
+    prefix = PROVENANCE + '/'
+    for digest, record in (UNEXECUTED_RECORDS if required is None else required).items():
+        names = [name for name, value in expected.items() if value == digest]
+        if not names or any(not name.startswith(prefix) for name in names):
+            raise ValueError(f'superseded record {record} must be inventoried only under '
+                             f'{prefix}, not {names}')
     native = Path(root) / 'runlimit'
     provenance = native / PROVENANCE
     if provenance.is_symlink():
@@ -99,28 +117,43 @@ def validate_provenance(root, expected):
 
 
 def record_digests(expected):
-    """Return `{digest: inventory name}` for the unexecuted import records."""
+    """Return `{digest: name}` for every unexecuted import record."""
     prefix = PROVENANCE + '/'
-    return {digest: name for name, digest in expected.items() if name.startswith(prefix)}
+    records = dict(UNEXECUTED_RECORDS)
+    records.update({digest: name for name, digest in expected.items() if name.startswith(prefix)})
+    return records
 
 
 def validate_published(archives, expected):
-    """Reject a native package archive that would publish a record's bytes.
+    """Reject a native package archive that publishes or depends on a record.
 
-    The archive is what crates.io receives, so this covers every way a file
-    can reach it: a copy under any name, a symlink, or an entry Cargo takes
-    from outside the crate directory.
+    The archive is what crates.io receives. Any member, under any name and
+    however Cargo sourced it, that carries a record's bytes is rejected. Every
+    literal `include_str!`/`include_bytes!` in any of its Rust files, tests
+    and examples included, must name a file inside the archive. Cargo's
+    verification additionally builds each library from its archive; an
+    include path assembled by another macro outside a library target is not
+    checked.
     """
     records = record_digests(expected)
     for archive in archives:
         with tarfile.open(archive, 'r:gz') as bundle:
-            for member in bundle.getmembers():
-                if not member.isfile():
-                    continue
-                digest = hashlib.sha256(bundle.extractfile(member).read()).hexdigest()
+            members = {member.name: member for member in bundle.getmembers() if member.isfile()}
+            for name, member in members.items():
+                data = bundle.extractfile(member).read()
+                digest = hashlib.sha256(data).hexdigest()
                 if digest in records:
                     raise ValueError(f'{Path(archive).name} would publish provenance record '
-                                     f'{records[digest]} as {member.name}')
+                                     f'{records[digest]} as {name}')
+                if not name.endswith('.rs'):
+                    continue
+                for match in INCLUDE.finditer(data.decode('utf-8', 'replace')):
+                    literal = match.group('raw') if match.group('raw') is not None \
+                        else match.group('plain')
+                    target = posixpath.normpath(str(PurePosixPath(name).parent / literal))
+                    if target not in members:
+                        raise ValueError(f'{Path(archive).name}: {name} includes {literal}, '
+                                         'which is not in the archive')
 
 
 def package_archives(root, target_directory):
