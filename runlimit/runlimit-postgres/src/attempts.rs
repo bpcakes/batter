@@ -26,7 +26,7 @@
 //! decreases.
 use crate::{
     CheckError, CheckPhase, PostgresConfig,
-    base::PgLimiterBase,
+    base::{BundledHistory, PgLimiterBase},
     protocol::{ATTEMPT_LOCK_NAMESPACE, capacity_shard},
     statements::attempts as sql,
     transaction::{BoundedConnection, Check, CheckTransaction, ConnectionOutcome},
@@ -169,7 +169,7 @@ impl PostgresAttemptLimiter {
     /// # Errors
     /// Returns database or migration errors.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        self.base.migrate(&ATTEMPTS_MIGRATOR).await
+        self.base.migrate(BundledHistory::Attempts).await
     }
     fn observe(&self, event: AttemptObservation) {
         if let Some(observer) = self.base.observer() {

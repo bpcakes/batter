@@ -275,10 +275,18 @@ class SqlGateTests(unittest.TestCase):
             'code': {'code': 'clippy::disallowed_macros'},
             'message': 'use of a disallowed macro `sqlx::query`',
             'spans': [{'file_name': 'probe.rs', 'is_primary': True}]}})
-        other = json.dumps({'reason': 'compiler-message', 'message': {
-            'code': {'code': 'clippy::disallowed_methods'}, 'message': 'x', 'spans': []}})
-        self.assertEqual(macro_reports('\n'.join([report, other, 'not json'])),
-                         {('probe.rs', 'sqlx::query')})
+        denied = json.dumps({'reason': 'compiler-message', 'message': {
+            'level': 'error', 'code': {'code': 'clippy::disallowed_methods'}, 'message': 'x',
+            'spans': []}})
+        aborted = json.dumps({'reason': 'compiler-message', 'message': {
+            'level': 'error', 'code': None, 'message': 'aborting due to 2 previous errors',
+            'spans': []}})
+        self.assertEqual(macro_reports('\n'.join([report, denied, aborted, 'not json'])),
+                         ({('probe.rs', 'sqlx::query')}, []))
+        broken = json.dumps({'reason': 'compiler-message', 'message': {
+            'level': 'error', 'code': None, 'message': 'no cached data for this query',
+            'spans': []}})
+        self.assertEqual(macro_reports(broken), (set(), ['no cached data for this query']))
         config = ('x = 1\nlist = [\n    { path = "a", reason = "r" },\n'
                   '    # { path = "b", reason = "r" },\n]\n')
         self.assertEqual(listed_paths(config, 'list'), ['a'])

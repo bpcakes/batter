@@ -15,7 +15,7 @@ use sqlx::{
 use crate::{
     BatchCheckError, CheckError, CheckPhase, CleanupPhase, MaintenanceError, PostgresConfig,
     admission::{Admission, batch_decision, finalize, single_decision},
-    base::PgLimiterBase,
+    base::{BundledHistory, PgLimiterBase},
     pending::{Pending, PendingDenial, PendingQuotaDenial, authoritative_elapsed},
     protocol::{CAPACITY_SHARD_COUNT, capacity_shard},
     statements::gcra as sql,
@@ -111,7 +111,7 @@ impl PostgresGcraLimiter {
     /// # Errors
     /// Returns `SQLx` migration or acquisition failures.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        self.base.migrate(&GCRA_MIGRATOR).await
+        self.base.migrate(BundledHistory::Gcra).await
     }
 
     /// Checks and consumes one GCRA quota. Denials consume nothing.

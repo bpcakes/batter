@@ -205,8 +205,9 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   every sqlx entry point that accepts SQL text or builds SQL from a name the
   crate supplies (migration tables, databases, `LISTEN` channels), and the
   advisory-lock helper whose SQL resolves through `search_path`, so SQL reaches sqlx only
-  through `Statement::query`; the three bundled migrators are the only other
-  pinned exception. Do not suppress those lints, their groups,
+  through `Statement::query`; the other pinned exceptions are the three
+  bundled `sqlx::migrate!` statics and `PgLimiterBase::migrate`, which runs
+  only a closed `BundledHistory`. Do not suppress those lints, their groups,
   `warnings` or `unfulfilled_lint_expectations` anywhere else, and re-read
   sqlx's SQL-text parameters on every sqlx upgrade; `src/catalog_guard/gate.rs`
   pins the inventory and the exceptions, and `gate/probes.rs` uses each entry

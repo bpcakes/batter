@@ -95,4 +95,6 @@ disallowed-macros = [
     { path = "sqlx::query_scalar_unchecked", reason = "run SQL only through statements::Statement::query" },
     { path = "sqlx::query_file_scalar", reason = "run SQL only through statements::Statement::query" },
     { path = "sqlx::query_file_scalar_unchecked", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::sqlx_macros::expand_query", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::test", reason = "sqlx::testing runs fixture SQL and manages databases" },
 ]

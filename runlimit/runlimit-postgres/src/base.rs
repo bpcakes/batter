@@ -74,21 +74,26 @@ impl<O: ?Sized> PgLimiterBase<O> {
             .finish_non_exhaustive()
     }
 
-    /// Applies the `bundled` migrations, ignoring unrelated versions in a
-    /// shared history.
+    /// Applies one bundled migration `history`, ignoring unrelated versions
+    /// in a shared history.
     ///
     /// Migration locking is session scoped. The connection returns to the pool
     /// only after a successful run and unlock; an error or cancellation closes
     /// it instead.
     ///
-    /// This is the one place a migrator runs. It runs a fresh migrator over
-    /// `bundled`'s migrations, so the default history table and no schema
-    /// apply whatever fields `bundled` carries.
+    /// This is the one place a migrator runs. It selects the bundled
+    /// migrator itself and runs a fresh one over its migrations, so only
+    /// published SQL runs, under the default history table and no schema.
     #[expect(
         clippy::disallowed_methods,
         reason = "the one place the bundled migrations run"
     )]
-    pub(crate) async fn migrate(&self, bundled: &Migrator) -> Result<(), MigrateError> {
+    pub(crate) async fn migrate(&self, history: BundledHistory) -> Result<(), MigrateError> {
+        let bundled = match history {
+            BundledHistory::FixedWindow => &crate::MIGRATOR,
+            BundledHistory::Gcra => &crate::GCRA_MIGRATOR,
+            BundledHistory::Attempts => &crate::attempts::ATTEMPTS_MIGRATOR,
+        };
         let mut connection = ConnectionCancellationGuard::new(self.pool.acquire().await?);
         let mut migrator = Migrator::with_migrations(bundled.iter().cloned().collect());
         migrator.set_ignore_missing(true);
@@ -112,6 +117,15 @@ impl<O: ?Sized> PgLimiterBase<O> {
     ) -> Result<BoundedConnection<transaction::Maintenance>, MaintenanceError> {
         BoundedConnection::acquire(&self.pool, self.config).await
     }
+}
+
+/// The migration histories this crate publishes, the only ones
+/// [`PgLimiterBase::migrate`] runs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum BundledHistory {
+    FixedWindow,
+    Gcra,
+    Attempts,
 }
 
 /// Quota limiters report through the backend-neutral [`Observer`]. Callbacks

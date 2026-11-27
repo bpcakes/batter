@@ -169,23 +169,34 @@ def listed_paths(config, key):
     raise ValueError(f'clippy.toml {key} is not closed')
 
 
+# The SQL gate's lints, which the probes trigger at whatever level the
+# manifest or the caller's flags give them.
+GATE_CODES = frozenset({'clippy::disallowed_macros', 'clippy::disallowed_methods',
+                        'clippy::disallowed_types'})
+
+
 def macro_reports(messages):
-    """The `(file, macro)` pairs Clippy's JSON `messages` report as disallowed macros."""
-    reports = set()
+    """Read Clippy's JSON `messages` into the `(file, macro)` pairs reported as
+    disallowed macros and the errors that are not the gate's own diagnostics."""
+    reports, unexpected = set(), []
     for line in messages.splitlines():
         try:
             message = json.loads(line)
         except ValueError:
             continue
         diagnostic = message.get('message') or {}
-        if (message.get('reason') != 'compiler-message'
-                or (diagnostic.get('code') or {}).get('code') != 'clippy::disallowed_macros'):
+        if message.get('reason') != 'compiler-message':
             continue
-        name = re.search(r'disallowed macro `([^`]+)`', diagnostic.get('message', ''))
-        for span in diagnostic.get('spans', []):
-            if span.get('is_primary') and name:
-                reports.add((span['file_name'], name.group(1)))
-    return reports
+        code = (diagnostic.get('code') or {}).get('code')
+        text = diagnostic.get('message', '')
+        name = re.search(r'disallowed macro `([^`]+)`', text)
+        if code == 'clippy::disallowed_macros' and name:
+            reports.update((span['file_name'], name.group(1))
+                           for span in diagnostic.get('spans', []) if span.get('is_primary'))
+        elif (diagnostic.get('level') == 'error' and code not in GATE_CODES
+              and not text.startswith('aborting due to')):
+            unexpected.append(text)
+    return reports, unexpected
 
 
 def validate_macro_probes(root):
@@ -193,19 +204,26 @@ def validate_macro_probes(root):
 
     `disallowed_macros` is reported outside any local lint scope, so an
     attribute cannot expect it; the probes compile only under
-    `--cfg runlimit_macro_probes`, which this check passes to Clippy.
+    `--cfg runlimit_macro_probes`, which this check passes to Clippy. They
+    expand from the committed `.sqlx` metadata, so SQLx runs offline whatever
+    the caller's environment says. The gate's own diagnostics are expected at
+    any level, so only another error, or a failure with none, fails the run.
     """
     package = Path(root) / 'runlimit' / 'runlimit-postgres'
     expected = set(listed_paths((package / 'clippy.toml').read_text(), 'disallowed-macros'))
     result = subprocess.run(
         ['cargo', 'clippy', '-p', 'runlimit-postgres', '--lib', '--tests', '--locked',
          '--message-format=json', '--', '--cfg', 'runlimit_macro_probes'],
-        cwd=root, capture_output=True, text=True)
+        cwd=root, env={**os.environ, 'SQLX_OFFLINE': 'true'}, capture_output=True, text=True)
+    reports, unexpected = macro_reports(result.stdout)
     probes = f'runlimit/runlimit-postgres/{MACRO_PROBES}'
-    reported = {name for file, name in macro_reports(result.stdout) if file == probes}
-    if result.returncode != 0 or reported != expected:
+    reported = {name for file, name in reports if file == probes}
+    if unexpected or (result.returncode != 0 and not reports):
+        raise ValueError('the macro probes failed to build:\n'
+                         + '\n'.join(unexpected or [result.stderr[-4000:]]))
+    if reported != expected:
         raise ValueError(f'Clippy must report each disallowed macro at its probe; '
-                         f'missing {sorted(expected - reported)}, exit {result.returncode}')
+                         f'missing {sorted(expected - reported)}')
 
 
 def manifest_lints(text):

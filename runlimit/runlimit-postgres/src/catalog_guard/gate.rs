@@ -117,6 +117,8 @@ const MACROS: &[&str] = &[
     "sqlx::query_scalar_unchecked",
     "sqlx::query_file_scalar",
     "sqlx::query_file_scalar_unchecked",
+    "sqlx::sqlx_macros::expand_query",
+    "sqlx::test",
 ];
 
 /// The probe module, relative to `src`.
@@ -178,12 +180,18 @@ fn exceptions() -> Vec<(&'static str, String)> {
              }"
             .to_owned(),
         ),
-        // A fresh migrator over the bundled migrations, so neither a table
-        // name nor a schema written on `bundled` reaches SQL.
+        // The one migrator run: it selects a bundled history itself and runs a
+        // fresh migrator over it, so only published SQL runs, under the
+        // default table and no schema.
         (
             "base.rs",
             "#[expect(clippy::disallowed_methods, reason = \"the one place the bundled migrations run\")]
-             pub(crate) async fn migrate(&self, bundled: &Migrator) -> Result<(), MigrateError> {
+             pub(crate) async fn migrate(&self, history: BundledHistory) -> Result<(), MigrateError> {
+                 let bundled = match history {
+                     BundledHistory::FixedWindow => &crate::MIGRATOR,
+                     BundledHistory::Gcra => &crate::GCRA_MIGRATOR,
+                     BundledHistory::Attempts => &crate::attempts::ATTEMPTS_MIGRATOR,
+                 };
                  let mut connection = ConnectionCancellationGuard::new(self.pool.acquire().await?);
                  let mut migrator = Migrator::with_migrations(bundled.iter().cloned().collect());
                  migrator.set_ignore_missing(true);
@@ -305,6 +313,77 @@ fn lint_lists(code: &str) -> Vec<(bool, Vec<&str>)> {
     lists
 }
 
+fn is_identifier(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+/// Whether normalized `code` holds `word` as a whole identifier.
+fn has_token(code: &str, word: &str) -> bool {
+    code.match_indices(word).any(|(at, _)| {
+        !code[..at].chars().next_back().is_some_and(is_identifier)
+            && !code[at + word.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_identifier)
+    })
+}
+
+/// The contents of each `#[...]` and `#![...]` attribute in normalized `code`.
+fn attributes(code: &str) -> impl Iterator<Item = &str> {
+    code.match_indices('#').filter_map(move |(at, _)| {
+        let rest = &code[at + 1..];
+        let rest = rest.strip_prefix('!').unwrap_or(rest).strip_prefix('[')?;
+        let mut depth = 1_usize;
+        let end = rest.char_indices().find_map(|(offset, c)| {
+            match c {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(offset)
+        })?;
+        Some(&rest[..end])
+    })
+}
+
+/// Whether an attribute's contents assign `key`, at any nesting.
+fn sets(attribute: &str, key: &str) -> bool {
+    attribute.match_indices(key).any(|(at, _)| {
+        !attribute[..at]
+            .chars()
+            .next_back()
+            .is_some_and(is_identifier)
+            && attribute[at + key.len()..].starts_with('=')
+    })
+}
+
+#[test]
+fn the_scan_sees_every_way_to_load_code_from_elsewhere() {
+    for loads in [
+        "#[cfg_attr(unix, path = \"../x.rs\")] mod x;",
+        "#[path = \"x.rs\"] mod x;",
+        "include! { \"x.rs\" }",
+        "use core::include as load;",
+        "core::include![\"x.rs\"];",
+    ] {
+        let code = normalize(loads);
+        assert!(
+            has_token(&code, "include") || attributes(&code).any(|a| sets(a, "path")),
+            "{loads}"
+        );
+    }
+    for harmless in [
+        "let path = 1; let _ = include_str![\"x.sql\"];",
+        "#[doc = \"path = include\"] fn included() {}",
+    ] {
+        let code = normalize(harmless);
+        assert!(
+            !has_token(&code, "include") && !attributes(&code).any(|a| sets(a, "path")),
+            "{harmless}"
+        );
+    }
+}
+
 #[test]
 fn clippy_disallows_every_sqlx_entry_point_that_accepts_sql() {
     let config = fs::read_to_string(manifest_directory().join("clippy.toml"))
@@ -348,16 +427,18 @@ fn only_the_pinned_items_suppress_the_gate() {
                 }
             }
         }
-        // Code from outside `src` would escape this scan.
-        for include in ["#[path", "include!("] {
-            if code.contains(include) {
-                problems.push(format!("{file}: uses {include}"));
-            }
+        // Code from outside `src` would escape this scan: no `include`
+        // token in any form or renaming, and no attribute that sets `path`.
+        if has_token(&code, "include") {
+            problems.push(format!("{file}: uses include"));
+        }
+        if attributes(&code).any(|attribute| sets(attribute, "path")) {
+            problems.push(format!("{file}: sets a module path"));
         }
     }
     // The probes are test code: catalog_guard compiles only under test.
     let root = normalize(&fs::read_to_string(source.join("lib.rs")).expect("lib.rs"));
-    if !root.contains("#[cfg(test)]modcatalog_guard;") {
+    if !root.contains("#[cfg(test)]mod catalog_guard;") {
         problems.push("lib.rs: catalog_guard is not test-only".to_owned());
     }
     for (file, _) in &exceptions {

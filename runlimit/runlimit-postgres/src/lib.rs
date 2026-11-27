@@ -124,7 +124,7 @@ pub use errors::{
 pub use protocol::{CAPACITY_SHARD_COUNT, HARD_MAX_ROWS_PER_SHARD};
 
 use admission::{Admission, BatchSqlInput, batch_decision, run_check_transaction, single_decision};
-use base::PgLimiterBase;
+use base::{BundledHistory, PgLimiterBase};
 use maintenance::run_cleanup_transaction;
 use transaction::ConnectionOutcome;
 
@@ -257,7 +257,7 @@ impl PostgresLimiter {
     /// Returns an error if migration metadata cannot be read or `PostgreSQL`
     /// rejects a migration.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        self.base.migrate(&MIGRATOR).await
+        self.base.migrate(BundledHistory::FixedWindow).await
     }
 
     /// Checks and, when allowed, consumes one fixed-window quota.

@@ -1,6 +1,8 @@
 //! Rust source reduced to what a lint attribute can be made of.
 //!
-//! Comments and whitespace are dropped. Each string, byte string, raw string
+//! Comments and whitespace are dropped, except that one space stays where
+//! they separated two identifier characters, so tokens keep their bounds.
+//! Each string, byte string, raw string
 //! and character literal keeps its delimiters but has its contents
 //! hex-encoded, so no literal reads as code and two literals still compare by
 //! content. Lifetimes and labels stay as they are. A lint list such as
@@ -14,9 +16,17 @@ pub(super) fn normalize(source: &str) -> String {
     let chars: Vec<char> = source.chars().collect();
     let mut code = String::with_capacity(source.len());
     let mut index = 0;
+    let mut separated = false;
     while index < chars.len() {
         let character = chars[index];
         let next = chars.get(index + 1).copied();
+        let gap = character.is_whitespace() || character == '/' && matches!(next, Some('/' | '*'));
+        if !gap {
+            if separated && is_identifier_part(character) && code.ends_with(is_identifier_part) {
+                code.push(' ');
+            }
+            separated = false;
+        }
         index = match character {
             '/' if next == Some('/') => line_comment_end(&chars, index),
             '/' if next == Some('*') => block_comment_end(&chars, index),
@@ -29,6 +39,7 @@ pub(super) fn normalize(source: &str) -> String {
                 index + 1
             }
         };
+        separated |= gap;
     }
     code
 }
@@ -151,11 +162,15 @@ fn comments_whitespace_and_literal_contents_never_read_as_code() {
         "}\n",
     );
     let code = normalize(source);
-    assert!(code.starts_with("#[allow(clippy::all,reason=\"000072\")]fnf<'q>(x:&'qstr)->char{"));
+    assert!(code.starts_with("#[allow(clippy::all,reason=\"000072\")]fn f<'q>(x:&'q str)->char{"));
     assert!(!code.contains("warnings") && !code.contains("dead_code"));
     assert!(code.contains("'label:loop{break'label;}"));
     // An escaped quote keeps both characters of its contents.
-    assert!(code.contains("{'00005c000027'}else{'000061'}"));
-    assert!(code.contains("let_=r\"000065000078"));
-    assert!(code.contains("let_=br\"000061\""));
+    assert!(code.contains("if x.is_empty(){'00005c000027'}else{'000061'}"));
+    assert!(code.contains("let _=r\"000065000078"));
+    assert!(code.contains("let _=br\"000061\""));
+    assert_eq!(
+        normalize("use core::include /* x */ as inc;"),
+        "use core::include as inc;"
+    );
 }

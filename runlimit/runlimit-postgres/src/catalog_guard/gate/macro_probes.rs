@@ -62,3 +62,10 @@ fn query_file_scalar_macro() {
 fn query_file_scalar_unchecked_macro() {
     let _ = sqlx::query_file_scalar_unchecked!("src/catalog_guard/gate/probe.sql");
 }
+
+fn expand_query_macro() {
+    let _ = sqlx::sqlx_macros::expand_query!(source = "SELECT 1 AS one");
+}
+
+#[sqlx::test]
+async fn sqlx_test_attribute(_pool: sqlx::PgPool) {}
