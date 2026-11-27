@@ -489,10 +489,16 @@ Other differences that bear on the encoder:
   (section 2.1), and makes recipients ignore unknown parameters. Both modules
   emit one String member per call; the application combines members and keeps
   their names distinct beyond ASCII case.
-- `-12` section 4 adds a `RateLimit-Partition` field whose items declare the
-  request dimensions a `pk` is built from (section 4.2). `runlimit-http`
-  emits no `pk`, and a Runlimit subject is an opaque derived key, so it does
-  not implement this field.
+- `-12` section 4 adds a `RateLimit-Partition` field whose items name a policy
+  and declare its partition dimensions. A Boolean dimension such as `user_id`
+  varies across partitions and builds `pk` when both fields are sent (section
+  4.2); a valued one such as `method=GET` means the policy "applies only to
+  requests where that dimension matches the specified value", so a client can
+  tell before sending whether it is relevant (section 4.1), with or without
+  `pk`. A Runlimit subject is an opaque derived key and a policy does not
+  record which requests the application routes to it, so `runlimit-http` does
+  not implement this field; an application that knows those dimensions can
+  send it.
 - `-12` section 5 says servers "SHOULD avoid returning RateLimit header fields
   in redirection responses"; `-11` section 6 only advised care. Response
   selection stays with the application.

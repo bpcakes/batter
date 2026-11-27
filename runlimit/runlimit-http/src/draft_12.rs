@@ -29,9 +29,13 @@
 //! - `c` (3.1.4), the request's cost in quota units: a [`QuotaState`] does not
 //!   carry the cost of the check it came from, and a separately supplied
 //!   number could describe a different check, so this module states no cost.
-//! - The `RateLimit-Partition` field (section 4): it declares the request
-//!   dimensions a `pk` is built from. Without `pk` it has nothing to declare,
-//!   and a Runlimit subject is an opaque derived key, not a request dimension.
+//! - The `RateLimit-Partition` field (section 4). Its items declare a
+//!   policy's partition dimensions, which build `pk` when both fields are
+//!   sent (4.2), and can limit a policy to matching requests, such as
+//!   `method=GET`, so a client can tell whether it applies (4.1). A Runlimit
+//!   subject is an opaque derived key and a policy does not record which
+//!   requests the application routes to it, so neither declaration is known
+//!   here; an application that knows them can send the field itself.
 //!
 //! This module emits one list member at a time. Applications remain
 //! responsible for selecting policies, combining members, and deciding which
@@ -41,12 +45,11 @@
 //! field lines with the same name combine into one field, so names an
 //! application sends together must differ by more than ASCII case.
 
-use http::HeaderName;
 use runlimit_core::RateLimitPolicy;
 
 use crate::{
     EncodingError, HeaderField, QuotaState,
-    encoding::{self, Member, ServiceLimitKeys, policy_window},
+    encoding::{self, ServiceLimitKeys},
 };
 
 /// Encodes one `-12` `RateLimit-Policy` field.
@@ -84,10 +87,7 @@ pub fn quota_policy<P: RateLimitPolicy + ?Sized>(
     name: &str,
     policy: &P,
 ) -> Result<HeaderField, EncodingError> {
-    let member = Member::policy(name)?
-        .integer("q", policy.quota().get())?
-        .integer("w", policy_window(policy.quota_period())?)?;
-    Ok(member.into_field(HeaderName::from_static("ratelimit-policy")))
+    encoding::quota_policy(name, policy)
 }
 
 /// Encodes one `-12` `RateLimit` field.

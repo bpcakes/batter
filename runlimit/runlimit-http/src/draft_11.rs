@@ -27,12 +27,11 @@
 //! Partition keys are intentionally unsupported so subject material cannot be
 //! exposed accidentally.
 
-use http::HeaderName;
 use runlimit_core::RateLimitPolicy;
 
 use crate::{
     EncodingError, HeaderField, QuotaState,
-    encoding::{self, Member, ServiceLimitKeys, policy_window},
+    encoding::{self, ServiceLimitKeys},
 };
 
 /// Encodes one `-11` `RateLimit-Policy` field.
@@ -52,10 +51,7 @@ pub fn quota_policy<P: RateLimitPolicy + ?Sized>(
     name: &str,
     policy: &P,
 ) -> Result<HeaderField, EncodingError> {
-    let member = Member::policy(name)?
-        .integer("q", policy.quota().get())?
-        .integer("w", policy_window(policy.quota_period())?)?;
-    Ok(member.into_field(HeaderName::from_static("ratelimit-policy")))
+    encoding::quota_policy(name, policy)
 }
 
 /// Encodes one `-11` `RateLimit` field.

@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use http::{HeaderName, HeaderValue};
-use runlimit_core::QuotaPeriod;
+use runlimit_core::{QuotaPeriod, RateLimitPolicy};
 use std::fmt::Write as _;
 use thiserror::Error;
 
@@ -101,6 +101,20 @@ impl Member {
             .expect("validated policy names and Structured Field literals are visible ASCII");
         (name, value)
     }
+}
+
+/// Encodes one `RateLimit-Policy` member, which both drafts spell
+/// `"name";q=N;w=S`: the name is validated first, then the quota, then the
+/// period's whole seconds, so the same invalid input fails the same way in
+/// either revision.
+pub(crate) fn quota_policy<P: RateLimitPolicy + ?Sized>(
+    name: &str,
+    policy: &P,
+) -> Result<HeaderField, EncodingError> {
+    Ok(Member::policy(name)?
+        .integer("q", policy.quota().get())?
+        .integer("w", policy_window(policy.quota_period())?)?
+        .into_field(HeaderName::from_static("ratelimit-policy")))
 }
 
 /// The parameter keys a draft revision gives a `RateLimit` member's

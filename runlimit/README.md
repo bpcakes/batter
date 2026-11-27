@@ -255,8 +255,8 @@ The helpers return typed HTTP header names and values. They do not select a
 response status or body, emit `Retry-After`, expose partition keys, or decide
 which policies an application should disclose. `draft_12` also omits the
 optional `c` (request cost) parameter, because a decision does not carry the
-cost of its check, and the `RateLimit-Partition` field, which only describes
-partition keys. Each call encodes one list member; `-12` compares policy names
+cost of its check, and the `RateLimit-Partition` field, whose partition
+dimensions and request applicability a Runlimit policy does not record. Each call encodes one list member; `-12` compares policy names
 case-insensitively, so the members of one field must differ by more than case.
 Use the same name for a policy in `RateLimit-Policy` and for its allowance in
 `RateLimit`, so a client can match them. Policy periods advertised in
