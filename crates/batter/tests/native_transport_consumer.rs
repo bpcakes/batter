@@ -24,7 +24,7 @@ use batter::runlimit::native::{
 use batter::runlimit::native_transport::axum::{
     Admissions, RateLimitLayer, RateLimitRejection, RejectionKind,
 };
-use batter::runlimit::native_transport::http::draft_11;
+use batter::runlimit::native_transport::http::{QuotaState, draft_12};
 use std::{convert::Infallible, time::Duration};
 use tower::ServiceExt;
 
@@ -64,7 +64,7 @@ fn reject(
     let (status, headers) = match rejection {
         RateLimitRejection::Key(never) => match never {},
         RateLimitRejection::Denied(Denial::QuotaExceeded(denial)) => {
-            let (name, value) = draft_11::service_limit(PUBLIC_NAME, denial)
+            let (name, value) = draft_12::service_limit(PUBLIC_NAME, denial)
                 .expect("a validated denial encodes into structured fields");
             let mut headers = HeaderMap::new();
             headers.insert(name, value);
@@ -87,7 +87,7 @@ async fn read(Extension(admissions): Extension<Admissions>) -> Response {
         1,
         "the single layer records one admission"
     );
-    let (name, value) = draft_11::quota_policy(PUBLIC_NAME, &policy())
+    let (name, value) = draft_12::quota_policy(PUBLIC_NAME, &policy())
         .expect("a validated policy encodes into structured fields");
     let mut response = Response::new(Body::empty());
     response.headers_mut().insert(name, value);
@@ -131,7 +131,7 @@ async fn facade_paths_compose_the_native_transport_packages() {
         .and_then(|value| value.to_str().ok())
         .expect("a denial carries the encoded service limit");
     assert!(
-        field.starts_with("\"reads\";r=0;t="),
+        field.starts_with("\"reads\";a=0;w="),
         "exhausted quota reports no remainder: {field}"
     );
 }
@@ -141,7 +141,7 @@ fn native_transport_types_keep_one_identity_through_the_facade() {
     fn native_policy(value: FixedWindowPolicy) -> runlimit_core::FixedWindowPolicy {
         value
     }
-    fn native_state(value: draft_11::QuotaState) -> runlimit_http::draft_11::QuotaState {
+    fn native_state(value: QuotaState) -> runlimit_http::QuotaState {
         value
     }
     fn native_kind(value: RejectionKind) -> runlimit_axum::RejectionKind {

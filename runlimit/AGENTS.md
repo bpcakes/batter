@@ -154,8 +154,15 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   `Denial`; everything else goes through `view()`. Types that can only hold a
   subset of outcomes use the narrower type: an allowed batch view is
   `&[Allowance]`, an adapter rejection carries `Denial`, an admitted request
-  carries `Admitted`, and the HTTP service-limit encoder accepts only
+  carries `Admitted`, and every HTTP service-limit encoder accepts only
   `QuotaState`, so a storage-capacity denial cannot reach it.
+- Each `draft-ietf-httpapi-ratelimit-headers` revision is its own
+  `runlimit-http` module (`draft_12`, `draft_11`) that spells only its field
+  names and parameter keys. Policy-name validation, the Structured Field integer
+  range, `QuotaState`, `HeaderField` and `EncodingError` exist once, at the
+  crate root, so every revision rejects an input with the same error. A
+  superseded revision is a wire format clients parse: its module keeps emitting
+  byte-identical fields, pinned by golden tests, until its announced removal.
 - HTTP adapters must record every stacked layer's admitted decision. A request
   that passes several `RateLimitLayer`s carries one `Admissions` extension
   with an `Admission` per layer in evaluation order; a layer must never

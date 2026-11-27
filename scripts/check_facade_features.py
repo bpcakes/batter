@@ -233,7 +233,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
         lines.insert(1, "use batter::runlimit::attempts::{AttemptRunner, Authentication};")
         lines.insert(1, "use batter::runlimit::postgres::{MIGRATOR as RUNLIMIT_MIGRATOR, PostgresLimiter};")
     if "runlimit-native-http" in chosen:
-        lines.insert(1, "use batter::runlimit::native_transport::http::draft_11::{QuotaState, quota_policy, service_limit};")
+        lines.insert(1, "use batter::runlimit::native_transport::http::{EncodingError, HeaderField, QuotaState, draft_11, draft_12};")
     if "runlimit-native-axum" in chosen:
         lines.insert(1, "use batter::runlimit::native_transport::axum::{Admissions, ExtractSubjectKey, RateLimitLayer, RateLimitRejection};")
     if "test-support" in chosen or "sqlx-test-support" in chosen:
@@ -500,8 +500,9 @@ def identity_source(selected: tuple[str, ...]) -> str:
         ]
     if "runlimit-native-http" in chosen:
         lines += [
-            "const _: fn(batter::runlimit::native_transport::http::draft_11::QuotaState) = |_: runlimit_http::draft_11::QuotaState| {};",
-            "fn native_field(name: &str, state: runlimit_core::Allowance) -> Result<batter::runlimit::native_transport::http::draft_11::HeaderField, runlimit_http::draft_11::EncodingError> { batter::runlimit::native_transport::http::draft_11::service_limit(name, state) }",
+            "const _: fn(batter::runlimit::native_transport::http::QuotaState) = |_: runlimit_http::QuotaState| {};",
+            "fn native_field(name: &str, state: runlimit_core::Allowance) -> Result<batter::runlimit::native_transport::http::HeaderField, runlimit_http::EncodingError> { batter::runlimit::native_transport::http::draft_12::service_limit(name, state) }",
+            "fn expired_field(name: &str, state: runlimit_core::Allowance) -> Result<batter::runlimit::native_transport::http::HeaderField, runlimit_http::EncodingError> { batter::runlimit::native_transport::http::draft_11::service_limit(name, state) }",
         ]
     if "runlimit-native-axum" in chosen:
         lines += [

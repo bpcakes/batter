@@ -102,7 +102,7 @@ def main():
                     source += "use batter_runlimit::postgres::PostgresLimiter;\n"
                     source += "use batter_runlimit::maintenance::MaintainedLimiter;\n"
                 if "native-http" in selected:
-                    source += "use batter_runlimit::native_transport::http::draft_11;\n"
+                    source += "use batter_runlimit::native_transport::http::{QuotaState, draft_11, draft_12};\n"
                 if "native-axum" in selected:
                     source += "use batter_runlimit::native_transport::axum::RateLimitLayer;\n"
                 (fixture / "src/main.rs").write_text("#![allow(unused_imports)]\n" + source

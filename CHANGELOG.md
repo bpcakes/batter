@@ -65,6 +65,33 @@ contracts, capability facts and validation history.
   `examples/support.rs` `complete`, and imports native types through
   `batter::runlimit::{native, memory}` only.
 
+- **Breaking:** `batter::runlimit::native_transport::http` (feature
+  `runlimit-native-http`) reexports the reorganized `runlimit-http`, so its
+  version-neutral items move out of `draft_11` to the namespace root:
+  `QuotaState`, `HeaderField`, `EncodingError`, `MAX_POLICY_NAME_LENGTH` and
+  `MAX_STRUCTURED_FIELD_INTEGER`, with no alias at the old paths. The new
+  `native_transport::http::draft_12` encodes the current
+  `draft-ietf-httpapi-ratelimit-headers-12` fields and is the recommended
+  module; `draft_11` keeps byte-identical output for clients that still parse
+  the expired `-11` revision. The facade's own documentation example, the
+  native transport consumer test and the single-facade consumer now use
+  `draft_12`. See the
+  [native changelog](runlimit/CHANGELOG.md) for every call shape
+  (`batter-39wm.9`).
+
+  ```rust,ignore
+  // Before:
+  use batter::runlimit::native_transport::http::draft_11::{EncodingError, HeaderField, QuotaState};
+  let (name, value) = batter::runlimit::native_transport::http::draft_11::service_limit("reads", denial)?;
+  // RateLimit: "reads";r=0;t=60
+
+  // After: shared items at the namespace root, the -12 wire format by module.
+  use batter::runlimit::native_transport::http::{EncodingError, HeaderField, QuotaState};
+  let (name, value) = batter::runlimit::native_transport::http::draft_12::service_limit("reads", denial)?;
+  // RateLimit: "reads";a=0;w=60
+  // Clients that still parse -11 keep `draft_11::service_limit`, unchanged.
+  ```
+
 - **Breaking:** require a validated `PgSessionTimeouts` in
   `PgSessionProfile::new` and remove `PgSessionProfile::with_timeouts`
   (`batter-ndpi`;

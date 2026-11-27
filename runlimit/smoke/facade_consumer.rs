@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     std::panic::set_hook(batter::redacting_panic_hook());
     let _ = (native_policy, native_postgres, foundation);
     assert!(runlimit_axum::Admissions::default().is_empty());
-    let _ = std::mem::size_of::<runlimit_http::draft_11::QuotaState>();
+    let _ = std::mem::size_of::<runlimit_http::QuotaState>();
     let policy = FixedWindowPolicy::new(
         PolicyId::new("source.consume")?,
         ScopeId::new("owner")?,

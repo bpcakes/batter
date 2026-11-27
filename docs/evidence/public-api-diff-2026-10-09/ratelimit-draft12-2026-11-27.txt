@@ -1,0 +1,85 @@
+batter-39wm.9 public API surface check, 2026-11-27
+
+Before: weed/runlimit-contract-breaks-39wm.6 at 04b2f6e4 (the stacked base of
+this change)
+After: weed/runlimit-ratelimit-draft12-39wm.9
+Toolchain: nightly-2026-10-01
+Method: existing surface.py over rustdoc JSON from
+`cargo +nightly-2026-10-01 rustdoc -p runlimit-http --lib --all-features --locked --
+-Zunstable-options --output-format json`, the base from an exported source copy
+and the change from its worktree, each with its own target directory.
+This is a structural inspection only; supported verification uses the
+unmodified pinned toolchain.
+Result: one hard cut, a move. `QuotaState`, `HeaderField`, `EncodingError`,
+`MAX_POLICY_NAME_LENGTH` and `MAX_STRUCTURED_FIELD_INTEGER` leave
+`runlimit_http::draft_11` for the crate root, with the same variants and trait
+implementations and no alias at the old paths. It has a `Breaking:` entry in
+runlimit/CHANGELOG.md and CHANGELOG.md, and each moved item's rustdoc has a
+`Migration:` sentence naming its old path. `draft_11::quota_policy` and
+`draft_11::service_limit` keep their names and signatures; `draft_12` and its
+two functions are additions. surface.py does not walk external crates, so the
+facade's `batter::runlimit::native_transport::http <- runlimit_http` entry is
+unchanged while the paths beneath it move as listed here.
+
+## runlimit-http: 30 -> 38 entries; 26 removed, 34 added
+- REMOVED constant runlimit_http::draft_11::MAX_POLICY_NAME_LENGTH
+- REMOVED constant runlimit_http::draft_11::MAX_STRUCTURED_FIELD_INTEGER
+- REMOVED enum runlimit_http::draft_11::EncodingError
+- REMOVED enum runlimit_http::draft_11::QuotaState
+- REMOVED impl runlimit_http::draft_11::EncodingError: Clone
+- REMOVED impl runlimit_http::draft_11::EncodingError: Debug
+- REMOVED impl runlimit_http::draft_11::EncodingError: Display
+- REMOVED impl runlimit_http::draft_11::EncodingError: Eq
+- REMOVED impl runlimit_http::draft_11::EncodingError: Error
+- REMOVED impl runlimit_http::draft_11::EncodingError: PartialEq
+- REMOVED impl runlimit_http::draft_11::EncodingError: StructuralPartialEq
+- REMOVED impl runlimit_http::draft_11::QuotaState: Clone
+- REMOVED impl runlimit_http::draft_11::QuotaState: Copy
+- REMOVED impl runlimit_http::draft_11::QuotaState: Debug
+- REMOVED impl runlimit_http::draft_11::QuotaState: Eq
+- REMOVED impl runlimit_http::draft_11::QuotaState: From
+- REMOVED impl runlimit_http::draft_11::QuotaState: PartialEq
+- REMOVED impl runlimit_http::draft_11::QuotaState: StructuralPartialEq
+- REMOVED type_alias runlimit_http::draft_11::HeaderField
+- REMOVED variant runlimit_http::draft_11::EncodingError::EmptyPolicyName
+- REMOVED variant runlimit_http::draft_11::EncodingError::InvalidPolicyNameCharacter
+- REMOVED variant runlimit_http::draft_11::EncodingError::PolicyNameTooLong
+- REMOVED variant runlimit_http::draft_11::EncodingError::QuotaPeriodNotWholeSeconds
+- REMOVED variant runlimit_http::draft_11::EncodingError::StructuredFieldIntegerTooLarge
+- REMOVED variant runlimit_http::draft_11::QuotaState::Available
+- REMOVED variant runlimit_http::draft_11::QuotaState::Exhausted
++ ADDED   constant runlimit_http::MAX_POLICY_NAME_LENGTH
++ ADDED   constant runlimit_http::MAX_STRUCTURED_FIELD_INTEGER
++ ADDED   enum runlimit_http::EncodingError
++ ADDED   enum runlimit_http::QuotaState
++ ADDED   function runlimit_http::draft_12::quota_policy
++ ADDED   function runlimit_http::draft_12::service_limit
++ ADDED   impl runlimit_http::EncodingError: Clone
++ ADDED   impl runlimit_http::EncodingError: Debug
++ ADDED   impl runlimit_http::EncodingError: Display
++ ADDED   impl runlimit_http::EncodingError: Eq
++ ADDED   impl runlimit_http::EncodingError: Error
++ ADDED   impl runlimit_http::EncodingError: PartialEq
++ ADDED   impl runlimit_http::EncodingError: StructuralPartialEq
++ ADDED   impl runlimit_http::QuotaState: Clone
++ ADDED   impl runlimit_http::QuotaState: Copy
++ ADDED   impl runlimit_http::QuotaState: Debug
++ ADDED   impl runlimit_http::QuotaState: Eq
++ ADDED   impl runlimit_http::QuotaState: From
++ ADDED   impl runlimit_http::QuotaState: PartialEq
++ ADDED   impl runlimit_http::QuotaState: StructuralPartialEq
++ ADDED   mod runlimit_http::draft_12
++ ADDED   type_alias runlimit_http::HeaderField
++ ADDED   use runlimit_http::EncodingError <- encoding::EncodingError
++ ADDED   use runlimit_http::HeaderField <- encoding::HeaderField
++ ADDED   use runlimit_http::MAX_POLICY_NAME_LENGTH <- encoding::MAX_POLICY_NAME_LENGTH
++ ADDED   use runlimit_http::MAX_STRUCTURED_FIELD_INTEGER <- encoding::MAX_STRUCTURED_FIELD_INTEGER
++ ADDED   use runlimit_http::QuotaState <- state::QuotaState
++ ADDED   variant runlimit_http::EncodingError::EmptyPolicyName
++ ADDED   variant runlimit_http::EncodingError::InvalidPolicyNameCharacter
++ ADDED   variant runlimit_http::EncodingError::PolicyNameTooLong
++ ADDED   variant runlimit_http::EncodingError::QuotaPeriodNotWholeSeconds
++ ADDED   variant runlimit_http::EncodingError::StructuredFieldIntegerTooLarge
++ ADDED   variant runlimit_http::QuotaState::Available
++ ADDED   variant runlimit_http::QuotaState::Exhausted
+

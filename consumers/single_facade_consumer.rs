@@ -43,7 +43,7 @@ use batter::runledger::{
     JobFinalization, JobPhasesRejection, JobWork, PhasedJob, PhasedJobFailure, PhasedJobHandler,
 };
 use batter::runlimit::native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
-use batter::runlimit::native_transport::http::draft_11;
+use batter::runlimit::native_transport::http::draft_12;
 use batter::runlimit::postgres::PostgresLimiter;
 use batter::runlimit::{Checks, Quota};
 use batter::startup::Startup;
@@ -479,15 +479,15 @@ async fn run_limiter(limiter: PostgresLimiter, subject: &str) -> Outcome {
     println!("facade consumer: postgres quota admitted then denied");
     // The application, not the native encoder, chooses the disclosed policy name
     // and the response status this metadata accompanies.
-    let (policy_field, _) = draft_11::quota_policy("facade-consumer", &policy)?;
-    let (limit_field, limit_value) = draft_11::service_limit("facade-consumer", exhausted)?;
+    let (policy_field, _) = draft_12::quota_policy("facade-consumer", &policy)?;
+    let (limit_field, limit_value) = draft_12::service_limit("facade-consumer", exhausted)?;
     if policy_field.as_str() != "ratelimit-policy"
         || limit_field.as_str() != "ratelimit"
-        || !limit_value.to_str()?.contains(";r=0;")
+        || !limit_value.to_str()?.contains(";a=0;")
     {
-        return Err("expected draft-11 fields with no remaining quota".into());
+        return Err("expected draft-12 fields with no remaining quota".into());
     }
-    println!("facade consumer: native draft-11 response metadata encoded");
+    println!("facade consumer: native draft-12 response metadata encoded");
     Ok(())
 }
 

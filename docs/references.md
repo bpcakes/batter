@@ -33,6 +33,7 @@ have been removed; Git retains their history.
 - <a id="sealed-assembly-and-one-time-client-preparation-2026-10-05"></a>[Sealed assembly and one-time client preparation (2026-10-05)](references/http.md#sealed-assembly-and-one-time-client-preparation-2026-10-05)
 - <a id="in-process-routing-state-reuse-2026-11-13"></a>[In-process routing state reuse (2026-11-13)](references/http.md#in-process-routing-state-reuse-2026-11-13)
 - <a id="postgresql-session-profile-batching-and-idle-authority-2026-10-06"></a>[PostgreSQL session-profile batching and idle authority (2026-10-06)](references/http.md#postgresql-session-profile-batching-and-idle-authority-2026-10-06)
+- <a id="ratelimit-header-fields-draft-revisions-11-and-12-2026-11-27"></a>[RateLimit header fields, draft revisions -11 and -12 (2026-11-27)](references/http.md#ratelimit-header-fields-draft-revisions--11-and--12-2026-11-27)
 
 ## Native Runledger and Runlimit integration
 

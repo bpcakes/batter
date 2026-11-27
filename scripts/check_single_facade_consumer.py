@@ -42,7 +42,7 @@ MARKERS = ("facade consumer: runledger and runlimit migrations applied",
            "facade consumer: adapter work cancellation observed by native exit",
            "facade consumer: worker executed both durable jobs",
            "facade consumer: postgres quota admitted then denied",
-           "facade consumer: native draft-11 response metadata encoded",
+           "facade consumer: native draft-12 response metadata encoded",
            "single batter dependency reached runledger and runlimit",
            "single-facade harness: disposable database created, consumed and dropped")
 
