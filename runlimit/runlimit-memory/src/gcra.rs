@@ -281,19 +281,25 @@ impl<C: Clock> GcraStore<C> {
     }
 }
 
-// Both async bodies contain no `.await`: they exist to defer the synchronous
-// check until the first poll, which the `Limiter` contract requires.
-// `unknown_lints` keeps Clippy releases that predate this lint quiet.
-#[allow(unknown_lints, clippy::unused_async_trait_impl)]
 impl<C: Clock> Limiter for GcraStore<C> {
     type Policy = GcraPolicy;
     type CheckError = GcraCheckError;
     type CheckAllError = GcraBatchError;
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async body defers the synchronous check to first poll, as `Limiter` \
+                  requires; `future::ready` would evaluate it eagerly"
+    )]
     async fn check(&self, check: &Check<'_, Self::Policy>) -> Result<Decision, Self::CheckError> {
         GcraStore::check(self, check)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async body defers the synchronous check to first poll, as `Limiter` \
+                  requires; `future::ready` would evaluate it eagerly"
+    )]
     async fn check_all(
         &self,
         checks: &[Check<'_, Self::Policy>],

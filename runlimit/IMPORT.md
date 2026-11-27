@@ -6,11 +6,12 @@ which was already the exact native revision selected by Batter.
 
 All five packages moved from upstream `crates/` to `runlimit/`. Native Rust and SQL
 behavior, tests, fixtures, package versions, dual licenses and strict lint settings
-are retained. Two Rust files have narrowly scoped unknown-lint allowances for a newer Clippy
-lint already waived upstream. This preserves first-poll deferral on Rust 1.94 and
-1.98.1 without changing async bodies. Native Clippy configuration recognizes the
-PostgreSQL product name on the older compiler while retaining the default valid
-identifier list and every semantic lint. Root Cargo resolves one local identity per native package and owns
+are retained. Both in-memory `Limiter` impls suppress `clippy::unused_async_trait_impl`
+per method, with a reason: each async body defers the synchronous check to first
+poll, which the `Limiter` contract requires. The import's impl-wide unknown-lint
+allowances and its `doc-valid-idents` override served Rust 1.94 and 1.98.1; both
+were removed once the pinned toolchain became the declared minimum
+(`batter-39wm.1`). Root Cargo resolves one local identity per native package and owns
 the generated lock. Manifests make inherited metadata explicit, inherit local native
 dependencies, adapt README paths and disable publishing. Native behavior, public Rust
 contracts and persisted schema are unchanged by this import.

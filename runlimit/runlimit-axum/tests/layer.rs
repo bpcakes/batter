@@ -2,12 +2,10 @@
 
 use std::{
     convert::Infallible,
-    error::Error,
-    fmt,
-    future::{Future, Ready, ready},
+    future::{Ready, ready},
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
@@ -28,94 +26,15 @@ use runlimit_axum::{
     Admission, Admissions, ExtractSubjectKey, RateLimitLayer, RateLimitRejection, RejectionKind,
 };
 use runlimit_core::{
-    Admitted, AdmittedView, Allowance, BatchDecision, Capacity, Check, Decision, Denial,
-    FixedWindowPolicy, KeyHasher, Limiter, PolicyId, QuotaDenial, QuotaMode, RateLimitPolicy,
-    ScopeId, SubjectKey,
+    Admitted, AdmittedView, Allowance, Capacity, Check, Decision, Denial, FixedWindowPolicy,
+    KeyHasher, Limiter, PolicyId, QuotaDenial, QuotaMode, ScopeId, SubjectKey,
 };
 use tower::{Layer, Service, ServiceExt, service_fn};
 
-#[derive(Clone, Copy)]
-enum StubOutcome {
-    Decision(Decision),
-    BackendError,
-    DecisionFromPolicyMode,
-}
+#[path = "layer/stub.rs"]
+mod stub;
 
-#[derive(Clone)]
-struct StubLimiter {
-    calls: Arc<AtomicUsize>,
-    subjects: Arc<Mutex<Vec<SubjectKey>>>,
-    outcome: StubOutcome,
-}
-
-impl StubLimiter {
-    fn returning(decision: Decision) -> Self {
-        Self {
-            calls: Arc::new(AtomicUsize::new(0)),
-            subjects: Arc::new(Mutex::new(Vec::new())),
-            outcome: StubOutcome::Decision(decision),
-        }
-    }
-
-    fn failing() -> Self {
-        Self {
-            calls: Arc::new(AtomicUsize::new(0)),
-            subjects: Arc::new(Mutex::new(Vec::new())),
-            outcome: StubOutcome::BackendError,
-        }
-    }
-
-    fn deciding_from_policy_mode() -> Self {
-        Self {
-            calls: Arc::new(AtomicUsize::new(0)),
-            subjects: Arc::new(Mutex::new(Vec::new())),
-            outcome: StubOutcome::DecisionFromPolicyMode,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct StubError;
-
-impl fmt::Display for StubError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("stub backend failure")
-    }
-}
-
-impl Error for StubError {}
-
-impl Limiter for StubLimiter {
-    type Policy = FixedWindowPolicy;
-    type CheckError = StubError;
-    type CheckAllError = StubError;
-
-    fn check(
-        &self,
-        check: &Check<'_, Self::Policy>,
-    ) -> impl Future<Output = Result<Decision, Self::CheckError>> + Send {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        self.subjects.lock().unwrap().push(check.subject());
-        ready(match self.outcome {
-            StubOutcome::Decision(decision) => Ok(decision),
-            StubOutcome::BackendError => Err(StubError),
-            StubOutcome::DecisionFromPolicyMode => {
-                let denial = QuotaDenial::new(check.policy().capacity(), Duration::from_secs(1));
-                Ok(match check.policy().quota_mode() {
-                    QuotaMode::Enforce => Decision::denied(denial),
-                    QuotaMode::Shadow => Decision::shadow_denied(denial),
-                })
-            }
-        })
-    }
-
-    fn check_all(
-        &self,
-        _checks: &[Check<'_, Self::Policy>],
-    ) -> impl Future<Output = Result<BatchDecision, Self::CheckAllError>> + Send {
-        ready(Err(StubError))
-    }
-}
+use stub::{StubError, StubLimiter};
 
 fn policy() -> FixedWindowPolicy {
     policy_for_scope("client", 8)
@@ -214,6 +133,26 @@ fn expect_single_admission(admissions: &Admissions, policy: &FixedWindowPolicy) 
     assert_eq!(admission.scope_id(), policy.scope());
     assert_eq!(admission.policy_fingerprint(), policy.fingerprint());
     admission.decision()
+}
+
+#[test]
+fn stub_limiter_defers_its_work_to_first_poll() {
+    let limiter = StubLimiter::returning(allowed(8, 7));
+    let policy = policy();
+    let check = Check::new(subject(1).bind(&policy));
+
+    drop(limiter.check(&check));
+    drop(limiter.check_all(std::slice::from_ref(&check)));
+
+    assert_eq!(
+        limiter.calls.load(Ordering::Relaxed),
+        0,
+        "an unpolled check records no call"
+    );
+    assert!(
+        limiter.subjects.lock().unwrap().is_empty(),
+        "an unpolled check records no subject"
+    );
 }
 
 #[tokio::test]

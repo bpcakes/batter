@@ -334,19 +334,25 @@ fn remaining_quota(limit: Capacity, used: u64) -> u64 {
     limit.get().saturating_sub(used)
 }
 
-// Both async bodies contain no `.await`: they exist to defer the synchronous
-// check until the first poll, which the `Limiter` contract requires.
-// `unknown_lints` keeps Clippy releases that predate this lint quiet.
-#[allow(unknown_lints, clippy::unused_async_trait_impl)]
 impl<C: Clock> Limiter for MemoryStore<C> {
     type Policy = runlimit_core::FixedWindowPolicy;
     type CheckError = PoisonedShardError;
     type CheckAllError = MemoryBatchError;
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async body defers the synchronous check to first poll, as `Limiter` \
+                  requires; `future::ready` would evaluate it eagerly"
+    )]
     async fn check(&self, check: &Check<'_>) -> Result<Decision, Self::CheckError> {
         MemoryStore::check(self, check)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async body defers the synchronous check to first poll, as `Limiter` \
+                  requires; `future::ready` would evaluate it eagerly"
+    )]
     async fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, Self::CheckAllError> {
         MemoryStore::check_all(self, checks)
     }
