@@ -60,6 +60,11 @@ const KEYWORD_TYPES: &[&str] = &[
     "varchar",
 ];
 
+/// Words that open a common table expression's query body.
+const QUERY_KEYWORDS: &[&str] = &[
+    "delete", "insert", "select", "table", "update", "values", "with",
+];
+
 /// Words before an identifier that make its parenthesis a column list.
 const COLUMN_LIST_OWNERS: &[&str] = &["as", "into", "recursive", "with"];
 
@@ -177,34 +182,42 @@ fn top_level_arguments(call: &str) -> usize {
     arguments
 }
 
-/// Whether `rest` starts a common table expression body:
-/// `AS [[NOT] MATERIALIZED] (`.
+/// Whether `rest` starts a common table expression body,
+/// `AS [[NOT] MATERIALIZED] (query`, rather than a record-returning call's
+/// column definition list, `AS (name type, ...)`.
 fn is_cte_body(rest: &str) -> bool {
-    let mut words = rest.split_whitespace().peekable();
-    if !words
-        .next()
-        .is_some_and(|word| word.eq_ignore_ascii_case("as"))
-    {
+    let mut rest = rest.trim_start();
+    for word in ["as", "not", "materialized"] {
+        match rest.get(..word.len()) {
+            Some(prefix)
+                if prefix.eq_ignore_ascii_case(word)
+                    && !rest[word.len()..]
+                        .bytes()
+                        .next()
+                        .is_some_and(is_identifier_part) =>
+            {
+                rest = rest[word.len()..].trim_start();
+            }
+            _ if word == "as" => return false,
+            _ => {}
+        }
+    }
+    let Some(body) = rest.strip_prefix('(') else {
         return false;
-    }
-    if words
-        .peek()
-        .is_some_and(|word| word.eq_ignore_ascii_case("not"))
-    {
-        words.next();
-    }
-    if words
-        .peek()
-        .is_some_and(|word| word.eq_ignore_ascii_case("materialized"))
-    {
-        words.next();
-    }
-    words.next().is_some_and(|word| word.starts_with('('))
+    };
+    let keyword: String = body
+        .trim_start()
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .collect();
+    QUERY_KEYWORDS.contains(&keyword.to_ascii_lowercase().as_str())
 }
 
 /// `sql` with comments and string constants blanked. A double-quoted
-/// identifier keeps its text, so `"clock_timestamp"()` still reads as a call;
-/// one that is not a plain identifier becomes `quoted`.
+/// identifier becomes `quoted_identifier`, unless it is exactly
+/// `"pg_catalog"`, so `"clock_timestamp"()` still reads as an unqualified
+/// call and `"PG_CATALOG".floor()` and `::"char"` are not mistaken for the
+/// catalog or a keyword type.
 fn strip_comments_and_quotes(sql: &str) -> String {
     let mut code = String::with_capacity(sql.len());
     let mut chars = sql.chars().peekable();
@@ -238,10 +251,14 @@ fn strip_comments_and_quotes(sql: &str) -> String {
                 code.push(' ');
             }
             '"' => {
+                // A quoted name keeps its exact case and is never a keyword,
+                // so only `"pg_catalog"` itself still reads as the catalog.
                 let identifier: String = chars.by_ref().take_while(|c| *c != '"').collect();
-                let plain = identifier.bytes().next().is_some_and(is_identifier_start)
-                    && identifier.bytes().all(is_identifier_part);
-                code.push_str(if plain { &identifier } else { "quoted" });
+                code.push_str(if identifier == "pg_catalog" {
+                    "pg_catalog"
+                } else {
+                    "quoted_identifier"
+                });
             }
             other => code.push(other),
         }

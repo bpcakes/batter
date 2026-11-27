@@ -240,40 +240,198 @@ fn statement_start(mut text: &str) -> &str {
     }
 }
 
-fn record(source: &str, start: usize, literal: &str, literals: &mut Vec<(Option<String>, String)>) {
-    let statement = literal.trim_start();
-    let keyword = statement_start(statement)
+fn record(source: &str, start: usize, value: &str, literals: &mut Vec<(Option<String>, String)>) {
+    let keyword = statement_start(value)
         .split(|c: char| !c.is_ascii_alphabetic())
         .next()
         .unwrap_or_default()
         .to_ascii_uppercase();
-    if !STATEMENT_KEYWORDS.contains(&keyword.as_str()) {
-        return;
+    if STATEMENT_KEYWORDS.contains(&keyword.as_str()) {
+        literals.push((owner_before(source, start), value.to_owned()));
     }
-    let before = source[..start].trim_end();
-    let owner = before
-        .strip_suffix('=')
-        .map(str::trim_end)
-        .and_then(|declaration| {
-            declaration
-                .strip_suffix("&str")
-                .or_else(|| declaration.strip_suffix("&'static str"))
-        })
-        .map(str::trim_end)
-        .and_then(|declaration| declaration.strip_suffix(':'))
-        .and_then(|declaration| {
-            let name = declaration
-                .trim_end()
-                .rsplit(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .next()?;
-            declaration
-                .trim_end()
-                .strip_suffix(name)?
-                .trim_end()
-                .ends_with("const")
-                .then(|| name.to_owned())
+}
+
+/// The constant whose initializer starts at `start`: `const NAME: &str =`.
+fn owner_before(source: &str, start: usize) -> Option<String> {
+    let declaration = source[..start].trim_end().strip_suffix('=')?.trim_end();
+    let declaration = declaration
+        .strip_suffix("&str")
+        .or_else(|| declaration.strip_suffix("&'static str"))
+        .or_else(|| declaration.strip_suffix("&[u8]"))?
+        .trim_end()
+        .strip_suffix(':')?
+        .trim_end();
+    let name = declaration
+        .rsplit(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .next()?;
+    declaration
+        .strip_suffix(name)?
+        .trim_end()
+        .ends_with("const")
+        .then(|| name.to_owned())
+}
+
+/// Every `include_str!`/`include_bytes!` in `source` (with `code` its blanked
+/// copy): the constant it initializes and the literal path it names.
+pub(super) fn includes(source: &str, code: &str) -> Vec<(Option<String>, String)> {
+    let mut found = Vec::new();
+    for macro_name in ["include_str!", "include_bytes!"] {
+        for (start, _) in code.match_indices(macro_name) {
+            let open = start + macro_name.len();
+            let close = code[open..]
+                .find(')')
+                .map_or(code.len(), |offset| open + offset);
+            let literal = source[open..close]
+                .trim()
+                .trim_start_matches(['(', '[', '{'])
+                .trim()
+                .trim_start_matches('r')
+                .trim_matches('#')
+                .trim_matches('"')
+                .to_owned();
+            found.push((owner_before(source, start), literal));
+        }
+    }
+    found
+}
+
+/// `(path relative to src, production text)` for `lib.rs` and every module it
+/// declares, recursively, except a module declared under `#[cfg(test)]`. An
+/// inline `#[cfg(test)] mod name { .. }` is blanked from its file's text.
+pub(super) fn production_sources(source: &Path) -> Vec<(String, String)> {
+    let mut sources = Vec::new();
+    let mut pending = vec!["lib.rs".to_owned()];
+    while let Some(file) = pending.pop() {
+        let text = fs::read_to_string(source.join(&file)).unwrap();
+        let (_, code) = sql_literals(&text);
+        let mut production = text.clone().into_bytes();
+        for declaration in module_declarations(&text, &code) {
+            match declaration {
+                Module::OutOfLine { name, path, test } if !test => {
+                    pending.push(child_file(source, &file, &name, path.as_deref()));
+                }
+                Module::InlineTest { body } => {
+                    for byte in &mut production[body] {
+                        if *byte != b'\n' {
+                            *byte = b' ';
+                        }
+                    }
+                }
+                Module::OutOfLine { .. } => {}
+            }
+        }
+        sources.push((file, String::from_utf8(production).unwrap()));
+    }
+    sources.sort();
+    sources
+}
+
+enum Module {
+    OutOfLine {
+        name: String,
+        path: Option<String>,
+        test: bool,
+    },
+    InlineTest {
+        body: std::ops::Range<usize>,
+    },
+}
+
+/// Every `mod name;` and inline `#[cfg(test)] mod name { .. }` in `text`.
+fn module_declarations(text: &str, code: &str) -> Vec<Module> {
+    let bytes = code.as_bytes();
+    let mut modules = Vec::new();
+    for (start, _) in code.match_indices("mod ") {
+        if start > 0 && is_identifier_part(bytes[start - 1]) {
+            continue;
+        }
+        let name: String = code[start + 4..]
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let after_name = start + 4 + code[start + 4..].find(&name).unwrap_or(0) + name.len();
+        let attributes = attributes_before(code, start);
+        let test_only = attributes
+            .iter()
+            .any(|range| code[range.clone()].contains("cfg(test)"));
+        let path = attributes.iter().find_map(|range| {
+            let attribute = &text[range.clone()];
+            let value = attribute.split_once("path")?.1.split_once('"')?.1;
+            Some(value.split_once('"')?.0.to_owned())
         });
-    literals.push((owner, statement.to_owned()));
+        match code[after_name..].trim_start().bytes().next() {
+            Some(b';') => modules.push(Module::OutOfLine {
+                name,
+                path,
+                test: test_only,
+            }),
+            Some(b'{') if test_only => {
+                let open = after_name + code[after_name..].find('{').unwrap_or(0);
+                let mut depth = 0_usize;
+                let mut close = open;
+                for (offset, byte) in bytes[open..].iter().enumerate() {
+                    match byte {
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = open + offset + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                modules.push(Module::InlineTest { body: start..close });
+            }
+            _ => {}
+        }
+    }
+    modules
+}
+
+/// The `#[...]` attributes, and any visibility, directly before `start`.
+fn attributes_before(code: &str, start: usize) -> Vec<std::ops::Range<usize>> {
+    let mut end = code[..start].trim_end().len();
+    let before = &code[..end];
+    if let Some(stripped) = before.strip_suffix(')').filter(|_| before.contains("pub(")) {
+        if let Some(open) = stripped.rfind("pub(") {
+            end = code[..open].trim_end().len();
+        }
+    } else if before.ends_with("pub") {
+        end = code[..end - 3].trim_end().len();
+    }
+    let mut attributes = Vec::new();
+    while code[..end].ends_with(']') {
+        let Some(open) = code[..end].rfind("#[") else {
+            break;
+        };
+        attributes.push(open..end);
+        end = code[..open].trim_end().len();
+    }
+    attributes
+}
+
+/// The file of module `name` declared in `file`, relative to `source`.
+fn child_file(source: &Path, file: &str, name: &str, path: Option<&str>) -> String {
+    let parent = Path::new(file).parent().unwrap_or_else(|| Path::new(""));
+    if let Some(path) = path {
+        return parent.join(path).to_str().unwrap().replace('\\', "/");
+    }
+    let directory = if file == "lib.rs" || file.ends_with("/mod.rs") {
+        parent.to_path_buf()
+    } else {
+        Path::new(file).with_extension("")
+    };
+    let flat = directory.join(format!("{name}.rs"));
+    let nested = directory.join(name).join("mod.rs");
+    let chosen = if source.join(&flat).exists() {
+        flat
+    } else {
+        nested
+    };
+    chosen.to_str().unwrap().replace('\\', "/")
 }
 
 /// The value of a non-raw string literal's body for the escapes SQL text uses:

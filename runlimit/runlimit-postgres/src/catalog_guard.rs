@@ -21,7 +21,7 @@ mod detector;
 mod literals;
 
 use detector::unqualified;
-use literals::{files, query_arguments, sql_literals};
+use literals::{files, includes, production_sources, query_arguments, sql_literals};
 
 use crate::{
     attempts::{row::StoredAttempt, sql as attempt},
@@ -105,39 +105,54 @@ fn every_statement_qualifies_its_catalog_functions_and_types() {
     );
 }
 
-#[test]
-fn every_production_sql_literal_and_file_is_registered() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let registered: BTreeSet<(&str, &str)> = STATEMENTS
+/// The published migration constants: immutable, executed only through the
+/// migrators, and exempt from this guard.
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("lib.rs", "CREATE_RUNLIMIT_FIXED_WINDOWS_SQL"),
+    ("lib.rs", "SET_RUNLIMIT_FIXED_WINDOWS_FILLFACTOR_SQL"),
+    ("lib.rs", "BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL"),
+    ("gcra.rs", "CREATE_RUNLIMIT_GCRA_SQL"),
+    ("gcra.rs", "INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL"),
+    ("attempts.rs", "CREATE_RUNLIMIT_ATTEMPTS_SQL"),
+];
+
+/// Whether `(file, name)` is registered with exactly `sql`.
+fn is_registered(file: &str, name: &str, sql: &str) -> bool {
+    STATEMENTS
         .iter()
-        .map(|(file, name, _)| (*file, *name))
-        .collect();
-    let mut unregistered = Vec::new();
+        .any(|entry| entry.0 == file && entry.1 == name && entry.2 == sql)
+}
+
+#[test]
+fn every_production_statement_is_registered() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let names: BTreeSet<&str> = STATEMENTS.iter().map(|(_, name, _)| *name).collect();
-    for path in files(&source, "rs") {
-        let file = path
-            .strip_prefix(&source)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .replace('\\', "/");
-        if file == "catalog_guard.rs"
-            || file.starts_with("catalog_guard/")
-            || file.ends_with("tests.rs")
-            || file.contains("/tests/")
-        {
-            continue;
+    let mut unregistered = Vec::new();
+    for (file, production) in production_sources(&source) {
+        let (literals, code) = sql_literals(&production);
+        for (owner, value) in literals {
+            if !owner
+                .as_deref()
+                .is_some_and(|name| is_registered(&file, name, &value))
+            {
+                unregistered.push(format!("{file}: {owner:?} {value:.60}"));
+            }
         }
-        let text = fs::read_to_string(&path).unwrap();
-        let production = text
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .unwrap_or_default();
-        let (literals, code) = sql_literals(production);
-        for (owner, literal) in literals {
-            match owner {
-                Some(name) if registered.contains(&(file.as_str(), name.as_str())) => {}
-                owner => unregistered.push(format!("{file}: {owner:?} {literal:.60}")),
+        for (owner, path) in includes(&production, &code) {
+            let migration = owner
+                .as_deref()
+                .is_some_and(|name| MIGRATIONS.contains(&(file.as_str(), name)));
+            let included = Path::new(&file)
+                .parent()
+                .map(|parent| source.join(parent).join(&path));
+            let registered = owner
+                .as_deref()
+                .zip(included)
+                .is_some_and(|(name, included)| {
+                    fs::read_to_string(included).is_ok_and(|sql| is_registered(&file, name, &sql))
+                });
+            if !migration && !registered {
+                unregistered.push(format!("{file}: {owner:?} includes {path}"));
             }
         }
         for argument in query_arguments(&code) {
@@ -177,6 +192,10 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT \"clock_timestamp\"()",
         "SELECT /* note */ floor(1)",
         "SELECT $1::public.text",
+        "SELECT \"PG_CATALOG\".floor(1)",
+        "SELECT $1::\"char\"",
+        "SELECT * FROM jsonb_to_record($1) AS (value integer)",
+        "SELECT * FROM pg_catalog.unnest($1::BIGINT[]), jsonb_to_record($2) AS (v integer)",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
@@ -191,6 +210,8 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
          pg_catalog.unnest(ARRAY[1, 2]::BIGINT[])) WITH ORDINALITY AS input(a, b, position)",
         "SELECT 'floor(1)::text' -- count(*)\n",
         "SELECT $1::integer, $2::SMALLINT, $3::double precision",
+        "SELECT pg_catalog.\"floor\"(1), \"pg_catalog\".count(*) FROM t AS \"input\"(a)",
+        "WITH a(x) AS NOT MATERIALIZED (VALUES (1)), b AS ( SELECT 2) TABLE a",
     ] {
         assert_eq!(
             unqualified(sql),
