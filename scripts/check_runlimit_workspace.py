@@ -2,9 +2,14 @@
 """Enforce local native Runlimit identities, ownership and immutable import assets."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
+import tempfile
+
+from package import source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -147,24 +152,44 @@ def validate_published(archives, records):
                                          f'record {name} in {member.name}')
 
 
+def detached_source(root, destination):
+    """Copy the source tree to `destination` without `runlimit/provenance/`."""
+    root = Path(root)
+    provenance = root / 'runlimit' / PROVENANCE
+    for path in source_files(root):
+        if path == provenance or provenance in path.parents:
+            continue
+        target = destination / path.relative_to(root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+
+
 def package_archives(root, target_directory):
     """Package and verify every native crate, returning the archives Cargo built.
 
-    Cargo's verification builds each library from its extracted archive,
-    where `provenance/` and every other path outside the crate are absent, so
-    a library that embeds a record fails here. It runs once with default
-    features and once with all features, so code compiled under either set
-    is built. Cargo does not build a package's test, example or bench targets
-    from the archive; that pre-existing gap is `batter-88bd` and is not
-    specific to records.
+    Packaging runs in a detached copy of the source tree that omits
+    `provenance/`, with the working directory and `PWD` pointing at the
+    copy, so the records are absent from every path a build there can name
+    relative to the checkout. Cargo's verification builds each library from
+    its extracted archive, once with default features and once with all
+    features, so a library that embeds a record fails here. Cargo does not
+    build a package's test, example or bench targets from the archive; that
+    pre-existing gap is `batter-88bd` and is not specific to records.
     """
     packages = [argument for suffix in NATIVE for argument in ('-p', 'runlimit-' + suffix)]
-    for features in ([], ['--all-features']):
-        command = ['cargo', 'package', '--allow-dirty', '--locked', *features, *packages]
-        result = subprocess.run(command, cwd=root, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise ValueError(f'native packaging or verification failed ({" ".join(features) or "default features"}):\n'
-                             + result.stderr[-4000:])
+    with tempfile.TemporaryDirectory() as scratch:
+        copy = Path(scratch) / 'source'
+        detached_source(root, copy)
+        environment = {**os.environ, 'PWD': str(copy)}
+        for features in ([], ['--all-features']):
+            command = ['cargo', 'package', '--allow-dirty', '--locked', '--target-dir',
+                       str(target_directory), *features, *packages]
+            result = subprocess.run(command, cwd=copy, env=environment, capture_output=True,
+                                    text=True)
+            if result.returncode != 0:
+                selection = ' '.join(features) or 'default features'
+                raise ValueError(f'native packaging or verification failed ({selection}):\n'
+                                 + result.stderr[-4000:])
     return [Path(target_directory) / 'package' / f'runlimit-{suffix}-{EXPECTED_VERSION}.crate'
             for suffix in NATIVE]
 

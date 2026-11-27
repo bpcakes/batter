@@ -31,11 +31,12 @@ Both records live in [`provenance/runlimit-postgres/`](provenance/README.md),
 outside every package. The workspace check requires both superseded records, by
 digest, to be inventoried only under canonical `provenance/` paths, every other
 file there except the README and OS metadata to be inventoried, and no symlink
-in or at the directory. It then packages and verifies each native crate with
-`cargo package`, with default and with all features, which builds every library
-from its own archive where the records are absent, and rejects an archive
-member, under any name, that contains a record's complete bytes, alone or within
-a larger file (`batter-39wm.2`). Cargo does not build packaged test targets from
+in or at the directory. It then copies the source tree without `provenance/`
+and, from that copy, packages and verifies each native crate with `cargo
+package`, with default and with all features, which builds every library from
+its own archive where the records are absent, and rejects an archive member,
+under any name, that contains a record's complete bytes, alone or within a
+larger file (`batter-39wm.2`). Cargo does not build packaged test targets from
 the archive; that pre-existing gap is `batter-88bd`. Source archives retain SQL
 and both license names, and mutation fixtures include this native root. Root
 verification preserves default/all-feature tests and lint, the release-mode
