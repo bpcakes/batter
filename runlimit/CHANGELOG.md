@@ -15,7 +15,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   re-validating its quota. Core checks the bounds that make them exact at
   compile time. `runlimit-postgres` now binds every policy number, window,
   cost, batch position, shard and delay through them or through infallible
-  `From` conversions; the per-call-site `expect` conversions are gone
+  `From` conversions; the per-call-site `expect` conversions are gone.
+  `runlimit-memory` narrows a stored entry's remaining lifetime to a delay in
+  one documented place, shared by quota and storage-capacity denials
   (`batter-39wm.5`).
 - `AttemptSubject::counter_key` returns the attempt storage identity, the
   policy fingerprint and the subject key, as `Check::counter_key` does for

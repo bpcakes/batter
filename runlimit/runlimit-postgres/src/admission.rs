@@ -92,11 +92,7 @@ impl BatchSqlInput {
     pub(crate) fn from_checks(checks: &[Check<'_>]) -> Self {
         let counter_keys = checks.iter().map(Check::counter_key).collect::<Vec<_>>();
         // One-based input positions, in lock (counter key) order.
-        let mut lock_order = counter_keys
-            .iter()
-            .copied()
-            .zip(1_i64..)
-            .collect::<Vec<_>>();
+        let mut lock_order = counter_keys.iter().zip(1_i64..).collect::<Vec<_>>();
         lock_order.sort_unstable_by_key(|(key, _)| *key);
 
         let mut input = Self {
