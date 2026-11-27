@@ -52,7 +52,10 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   are derived only by its `settle`, `admit` and `complete` and by
   `AttemptPolicy::delay`. A backend decodes storage into that enum and persists
   the lease it grants and the completion it applies; it keeps no loose lease,
-  failure or retry fields and no second copy of a rule. A lease token is the
+  failure or retry fields and no second copy of a rule. Only a transition
+  builds a `DeniedAdmission` or an `AppliedCompletion`, each pairing the
+  narrower state it can leave with the denial or completion that state gives;
+  keep their fields private rather than widening either to `AttemptState`. A lease token is the
   only completion fence, so a backend never issues one again for a subject
   while an older receipt can still present it, across removal and recreation
   of the stored subject included: memory numbers leases from one store-wide

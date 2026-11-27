@@ -6,12 +6,14 @@ use thiserror::Error;
 
 use crate::{Delay, PolicyFingerprint, PolicyId, QuotaPeriod, ScopeId, SubjectKey};
 
+mod evaluation;
 mod state;
 
-pub use state::{
-    AdmitEvaluation, AttemptLease, AttemptState, CompleteEvaluation, FailedAttempts, LeaseDenial,
-    PendingLease, StorageFenced,
+pub use evaluation::{
+    AdmitEvaluation, AppliedCompletion, CompleteEvaluation, DeniedAdmission, HeldAttempt,
+    LeaseDenial, PendingLease, ReleasedAttempt,
 };
+pub use state::{AttemptLease, AttemptState, FailedAttempts, StorageFenced};
 
 /// Validated exponential-backoff policy with exactly one in-flight attempt.
 /// Every failure doubles the previous delay, up to the cap. Success resets

@@ -14,8 +14,13 @@ The format is based on [Keep a Changelog], and this project adheres to
   Its pure `settle`, `admit` and `complete` own lease expiry counted as a
   failure at the deadline, the quiet-period reset, the busy and backoff denials
   and the failure delay, and return `AdmitEvaluation` (`Grant(PendingLease)` or
-  `Denied` with a `LeaseDenial`) and `CompleteEvaluation` (`Applied` or
-  `Stale`). `T` is the backend's lease token, which `complete` requires to be
+  `Denied(DeniedAdmission<T>)`) and `CompleteEvaluation`
+  (`Applied(AppliedCompletion)` or `Stale`). Only a transition builds a
+  `DeniedAdmission` or an `AppliedCompletion`, and each carries the narrower
+  state it can leave, `HeldAttempt<T>` or `ReleasedAttempt`, beside the
+  `LeaseDenial` or `AttemptCompletion` that state gives, so a backend stores
+  one and reports the other without checking them against each other. `T` is
+  the backend's lease token, which `complete` requires to be
   `Eq`; `StorageFenced` stands in for it where storage compares the token
   itself, and a state decoded with it cannot complete. `AttemptPolicy::delay` is the
   only backoff derivation, and the new `AttemptPolicy::delay_schedule`
@@ -119,8 +124,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   for that one unleased row: `SET failures = GREATEST(failures, 1),
   retry_at_ms = ...` with the same `WHERE` clause. As before, the hold ends at
   `retry_at_ms` or when the quiet period after `last_failure_ms` ends,
-  whichever comes first: the failure then clears and cleanup may delete the
-  row, so a later `retry_at_ms` cannot hold longer. The `Backoff` denial now
+  whichever comes first, and the two ends differ. At `retry_at_ms` admission
+  resumes with the stored failure count, so the next failure takes the next,
+  longer delay. Only the end of the quiet period clears the failures and lets
+  cleanup delete the row, which is why a later `retry_at_ms` cannot hold
+  longer. The `Backoff` denial now
   reports the wait until that earlier instant; earlier releases reported the
   wait until `retry_at_ms` even when the quiet period ended first, so replicas
   of the two releases report different delays for such a row and admit at the

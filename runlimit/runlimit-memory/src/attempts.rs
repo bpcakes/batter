@@ -185,9 +185,10 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
                         .state
                         .complete(&entry.policy, now, &receipt.generation, outcome)
                     {
-                        CompleteEvaluation::Applied { state, completion } => {
-                            (state, AttemptCompletionResult::Applied(completion))
-                        }
+                        CompleteEvaluation::Applied(applied) => (
+                            applied.released().into(),
+                            AttemptCompletionResult::Applied(applied.completion()),
+                        ),
                         CompleteEvaluation::Stale { settled } => {
                             (settled, AttemptCompletionResult::Stale)
                         }
@@ -212,7 +213,7 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         Ok(result)
     }
 }
-/// Evaluates one admission. A denial also carries the settled state to retain.
+/// Evaluates one admission. A denial also carries the held state to retain.
 fn evaluate(
     state: AttemptState<u64>,
     policy: &AttemptPolicy,
@@ -220,7 +221,10 @@ fn evaluate(
 ) -> Result<PendingLease, (AttemptState<u64>, AttemptDenial)> {
     match state.admit(policy, now) {
         AdmitEvaluation::Grant(pending) => Ok(pending),
-        AdmitEvaluation::Denied { settled, denial } => Err((settled, denial.into())),
+        AdmitEvaluation::Denied(denied) => {
+            let denial = denied.denial().into();
+            Err((denied.held().into(), denial))
+        }
     }
 }
 /// Keys one admission's cleanup examines, and the size of its stack scratch.

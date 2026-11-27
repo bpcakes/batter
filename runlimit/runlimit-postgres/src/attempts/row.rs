@@ -190,11 +190,11 @@ mod tests {
         // Expired at -20, so the first failure delays until -10 and stays
         // retained until 80.
         let state = row(0, 0, 0, Some(-20)).state().unwrap();
-        let AdmitEvaluation::Denied { denial, .. } = state.admit(&policy, instant(-15)) else {
+        let AdmitEvaluation::Denied(denied) = state.admit(&policy, instant(-15)) else {
             panic!("admitted inside the delay");
         };
         assert_eq!(
-            denial,
+            denied.denial(),
             LeaseDenial::Backoff {
                 retry_after: runlimit_core::Delay::new(Duration::from_millis(5)),
             }

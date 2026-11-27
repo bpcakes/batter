@@ -292,8 +292,8 @@ async fn admit_transaction(
     };
     let pending = match stored.unwrap_or(AttemptState::Clear).admit(&policy, now) {
         AdmitEvaluation::Grant(pending) => pending,
-        // The settled state is left unstored: see the module's clock note.
-        AdmitEvaluation::Denied { denial, .. } => return finish_denial(tx, denial.into()).await,
+        // The held state is left unstored: see the module's clock note.
+        AdmitEvaluation::Denied(denied) => return finish_denial(tx, denied.denial().into()).await,
     };
     let failures = i64::from(pending.failures());
     let until_ms = row::stored_instant(pending.until())

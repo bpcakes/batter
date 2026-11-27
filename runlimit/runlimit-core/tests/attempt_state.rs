@@ -3,8 +3,8 @@
 use runlimit_core::{
     Delay, PolicyId, QuotaPeriod, ScopeId,
     attempts::{
-        AdmitEvaluation, AttemptDenial, AttemptLease, AttemptOutcome, AttemptPolicy, AttemptState,
-        CompleteEvaluation, FailedAttempts, LeaseDenial,
+        AdmitEvaluation, AttemptCompletion, AttemptDenial, AttemptLease, AttemptOutcome,
+        AttemptPolicy, AttemptState, CompleteEvaluation, FailedAttempts, LeaseDenial,
     },
 };
 use std::{num::NonZeroU32, time::Duration};
@@ -49,12 +49,15 @@ fn failed(failures: u32, last_failure: u64, retry_at: u64) -> AttemptState<u8> {
 fn grant(state: AttemptState<u8>, now: u64) -> (u32, Duration) {
     match state.admit(&policy(), ms(now)) {
         AdmitEvaluation::Grant(pending) => (pending.failures(), pending.until()),
-        AdmitEvaluation::Denied { denial, .. } => panic!("unexpected denial {denial:?}"),
+        AdmitEvaluation::Denied(denied) => panic!("unexpected denial {:?}", denied.denial()),
     }
 }
 fn denial(state: AttemptState<u8>, now: u64) -> (AttemptState<u8>, LeaseDenial) {
-    match state.admit(&policy(), ms(now)) {
-        AdmitEvaluation::Denied { settled, denial } => (settled, denial),
+    denial_at(state, ms(now))
+}
+fn denial_at(state: AttemptState<u8>, now: Duration) -> (AttemptState<u8>, LeaseDenial) {
+    match state.admit(&policy(), now) {
+        AdmitEvaluation::Denied(denied) => (denied.held().into(), denied.denial()),
         AdmitEvaluation::Grant(pending) => panic!("unexpected grant {pending:?}"),
     }
 }
@@ -66,6 +69,24 @@ fn busy(remaining: u64) -> LeaseDenial {
 fn backoff(remaining: u64) -> LeaseDenial {
     LeaseDenial::Backoff {
         retry_after: Delay::new(ms(remaining)),
+    }
+}
+/// The state and metadata of a completion the holding token applies.
+fn applied(
+    state: AttemptState<u8>,
+    now: u64,
+    outcome: AttemptOutcome,
+) -> (AttemptState<u8>, AttemptCompletion) {
+    applied_at(state, ms(now), outcome)
+}
+fn applied_at(
+    state: AttemptState<u8>,
+    now: Duration,
+    outcome: AttemptOutcome,
+) -> (AttemptState<u8>, AttemptCompletion) {
+    match state.complete(&policy(), now, &TOKEN, outcome) {
+        CompleteEvaluation::Applied(applied) => (applied.released().into(), applied.completion()),
+        CompleteEvaluation::Stale { settled } => panic!("live lease was stale: {settled:?}"),
     }
 }
 fn stale(state: AttemptState<u8>, now: u64, token: u8) -> AttemptState<u8> {
@@ -106,30 +127,20 @@ fn only_the_holding_token_completes_a_live_lease() {
     let state = leased(2, 1_000);
     assert_eq!(stale(state, 999, OTHER_TOKEN), state);
     assert_eq!(
-        state.complete(&policy(), ms(999), &TOKEN, AttemptOutcome::Success),
-        CompleteEvaluation::Applied {
-            state: AttemptState::Clear,
-            completion: runlimit_core::attempts::AttemptCompletion::new(
-                AttemptOutcome::Success,
-                0,
-                Delay::new(Duration::ZERO)
-            )
-            .unwrap(),
-        }
+        applied(state, 999, AttemptOutcome::Success),
+        (
+            AttemptState::Clear,
+            AttemptCompletion::new(AttemptOutcome::Success, 0, Delay::new(Duration::ZERO)).unwrap()
+        )
     );
     for outcome in [AttemptOutcome::Failure, AttemptOutcome::Abandoned] {
         // The third consecutive failure waits the capped 40 ms from completion.
         assert_eq!(
-            state.complete(&policy(), ms(999), &TOKEN, outcome),
-            CompleteEvaluation::Applied {
-                state: failed(3, 999, 999 + MAXIMUM),
-                completion: runlimit_core::attempts::AttemptCompletion::new(
-                    outcome,
-                    3,
-                    Delay::new(ms(MAXIMUM))
-                )
-                .unwrap(),
-            }
+            applied(state, 999, outcome),
+            (
+                failed(3, 999, 999 + MAXIMUM),
+                AttemptCompletion::new(outcome, 3, Delay::new(ms(MAXIMUM))).unwrap()
+            )
         );
     }
 }
@@ -205,11 +216,11 @@ fn a_released_retry_time_admits_without_forgetting_failures() {
     let AdmitEvaluation::Grant(pending) = state.admit(&policy(), ms(1_000)) else {
         panic!("released subject was denied");
     };
-    let CompleteEvaluation::Applied { completion, .. } = AttemptState::Leased(pending.issue(TOKEN))
-        .complete(&policy(), ms(1_001), &TOKEN, AttemptOutcome::Failure)
-    else {
-        panic!("live lease was stale");
-    };
+    let (_, completion) = applied(
+        AttemptState::Leased(pending.issue(TOKEN)),
+        1_001,
+        AttemptOutcome::Failure,
+    );
     assert_eq!(completion.consecutive_failures(), 4);
 }
 
@@ -252,11 +263,7 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
         state.settle(&policy, ms(1_001)),
         failed(u32::MAX, 1_000, 1_000 + MAXIMUM)
     );
-    let CompleteEvaluation::Applied { state, completion } =
-        leased(u32::MAX - 1, 1_000).complete(&policy, ms(0), &TOKEN, AttemptOutcome::Failure)
-    else {
-        panic!("live lease was stale");
-    };
+    let (state, completion) = applied(leased(u32::MAX - 1, 1_000), 0, AttemptOutcome::Failure);
     assert_eq!(state, failed(u32::MAX, 0, MAXIMUM));
     assert_eq!(completion.consecutive_failures(), u32::MAX);
     assert_eq!(completion.retry_after().duration(), ms(MAXIMUM));
@@ -291,34 +298,30 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
     // A failure 1 ms before that instant cannot store its 10 ms delay. Its
     // completion and an admission at the same instant report the same wait.
     let before = end.saturating_sub(ms(1));
-    let CompleteEvaluation::Applied { state, completion } =
-        last.complete(&policy, before, &TOKEN, AttemptOutcome::Failure)
-    else {
-        panic!("live lease was stale");
-    };
+    let (state, completion) = applied_at(last, before, AttemptOutcome::Failure);
     let capped = AttemptState::<u8>::Failed(FailedAttempts::new(NonZeroU32::MIN, before, end));
     assert_eq!(state, capped);
     assert_eq!(completion.retry_after().duration(), ms(1));
     assert_eq!(
-        capped.admit(&policy, before),
-        AdmitEvaluation::Denied {
-            settled: capped,
-            denial: LeaseDenial::Backoff {
+        denial_at(capped, before),
+        (
+            capped,
+            LeaseDenial::Backoff {
                 retry_after: completion.retry_after(),
-            },
-        }
+            }
+        )
     );
     // A clock far behind a failure at that instant waits out the whole
     // difference: the quiet deadline saturates there too and cannot cap it.
     let late = AttemptState::<u8>::Failed(FailedAttempts::new(NonZeroU32::MIN, end, end));
     assert_eq!(
-        late.admit(&policy, ms(1_050)),
-        AdmitEvaluation::Denied {
-            settled: late,
-            denial: LeaseDenial::Backoff {
+        denial(late, 1_050),
+        (
+            late,
+            LeaseDenial::Backoff {
                 retry_after: Delay::new(end.saturating_sub(ms(1_050))),
-            },
-        }
+            }
+        )
     );
 }
 
@@ -347,9 +350,9 @@ fn settling_composes_over_time_for_every_state() {
                     "{state:?} settled at {earlier} then {later}"
                 );
                 // A denial's settled state answers later admissions identically.
-                if let AdmitEvaluation::Denied { settled, .. } = state.admit(&policy, ms(earlier)) {
+                if let AdmitEvaluation::Denied(denied) = state.admit(&policy, ms(earlier)) {
                     assert_eq!(
-                        settled.admit(&policy, ms(*later)),
+                        AttemptState::from(denied.held()).admit(&policy, ms(*later)),
                         state.admit(&policy, ms(*later))
                     );
                 }
@@ -418,13 +421,7 @@ fn completed_and_expired_failures_take_the_same_delay() {
     let policy = policy();
     for prior in [0, 1, 2, 3, 9] {
         let state = leased(prior, 1_000);
-        let CompleteEvaluation::Applied {
-            state: completed,
-            completion,
-        } = state.complete(&policy, ms(500), &TOKEN, AttemptOutcome::Failure)
-        else {
-            panic!("live lease was stale");
-        };
+        let (completed, completion) = applied(state, 500, AttemptOutcome::Failure);
         let AttemptState::Failed(completed) = completed else {
             panic!("a failure did not leave failure state");
         };

@@ -1,9 +1,13 @@
 //! The one storage-independent attempt lease transition, for backend authors.
-//! [`AttemptState`] documents the contract.
+//! [`AttemptState`] documents the contract; the sibling `evaluation` module
+//! holds what its transitions return.
 
 use std::{num::NonZeroU32, time::Duration};
 
-use super::{AttemptCompletion, AttemptDenial, AttemptOutcome, AttemptPolicy};
+use super::{
+    AdmitEvaluation, AppliedCompletion, AttemptCompletion, AttemptOutcome, AttemptPolicy,
+    CompleteEvaluation, DeniedAdmission, HeldAttempt, PendingLease, ReleasedAttempt,
+};
 use crate::Delay;
 
 /// Everything a backend retains about one subject under one attempt policy.
@@ -54,7 +58,7 @@ use crate::Delay;
 ///     PolicyId, QuotaPeriod, ScopeId,
 ///     attempts::{
 ///         AdmitEvaluation, AttemptOutcome, AttemptPolicy, AttemptState, CompleteEvaluation,
-///         LeaseDenial,
+///         LeaseDenial, ReleasedAttempt,
 ///     },
 /// };
 ///
@@ -77,20 +81,20 @@ use crate::Delay;
 /// let leased = AttemptState::Leased(pending.issue(7));
 ///
 /// // A second admission is denied and leaves the stored state alone.
-/// let AdmitEvaluation::Denied { settled, denial } = leased.admit(&policy, now) else {
+/// let AdmitEvaluation::Denied(denied) = leased.admit(&policy, now) else {
 ///     unreachable!("one lease is live");
 /// };
-/// assert_eq!(settled, leased);
-/// assert!(matches!(denial, LeaseDenial::Busy { .. }));
+/// assert!(matches!(denied.denial(), LeaseDenial::Busy { .. }));
+/// assert_eq!(AttemptState::from(denied.held()), leased);
 ///
 /// // Only the token that holds the live lease completes it.
-/// let CompleteEvaluation::Applied { state, completion } =
+/// let CompleteEvaluation::Applied(applied) =
 ///     leased.complete(&policy, now, &7, AttemptOutcome::Failure)
 /// else {
 ///     unreachable!("the token holds the live lease");
 /// };
-/// assert_eq!(completion.retry_after().duration(), Duration::from_secs(10));
-/// assert!(matches!(state, AttemptState::Failed(_)));
+/// assert_eq!(applied.completion().retry_after().duration(), Duration::from_secs(10));
+/// assert!(matches!(applied.released(), ReleasedAttempt::Failed(_)));
 /// ```
 ///
 /// The variants are the whole lifecycle. A lease has no retry time and a retry
@@ -238,106 +242,6 @@ impl FailedAttempts {
     }
 }
 
-/// An evaluated reservation that the backend has not persisted yet.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PendingLease {
-    failures: u32,
-    until: Duration,
-}
-
-impl PendingLease {
-    /// Consecutive failures the new reservation carries forward.
-    pub const fn failures(&self) -> u32 {
-        self.failures
-    }
-    /// The instant from which the new reservation is expired.
-    pub const fn until(&self) -> Duration {
-        self.until
-    }
-    /// Binds the backend's token, giving the lease to store. No receipt still
-    /// outstanding for the subject may carry that token: see the obligations
-    /// on [`AttemptState`].
-    pub const fn issue<T>(self, token: T) -> AttemptLease<T> {
-        AttemptLease::new(token, self.failures, self.until)
-    }
-}
-
-/// The denials lease state alone can produce.
-///
-/// [`AttemptDenial::StorageCapacity`] is absent because only a backend knows
-/// its capacity. Convert with `AttemptDenial::from`.
-///
-/// ```compile_fail,E0599
-/// let _ = runlimit_core::attempts::LeaseDenial::StorageCapacity;
-/// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LeaseDenial {
-    /// Another attempt holds the lease.
-    Busy {
-        /// Time until that lease expires.
-        retry_after: Delay,
-    },
-    /// Consecutive failures require waiting.
-    Backoff {
-        /// Remaining delay.
-        retry_after: Delay,
-    },
-}
-
-impl From<LeaseDenial> for AttemptDenial {
-    fn from(denial: LeaseDenial) -> Self {
-        match denial {
-            LeaseDenial::Busy { retry_after } => Self::Busy { retry_after },
-            LeaseDenial::Backoff { retry_after } => Self::Backoff { retry_after },
-        }
-    }
-}
-
-/// The provisional result of evaluating one admission.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use = "an evaluation changes nothing until the backend stores its state"]
-pub enum AdmitEvaluation<T> {
-    /// Admission is possible. Nothing is reserved until the backend stores
-    /// [`AttemptState::Leased`] with the issued lease.
-    Grant(PendingLease),
-    /// No reservation was made.
-    Denied {
-        /// The state at the evaluation instant. A backend may store it or
-        /// leave the stored state alone. While evaluation instants never
-        /// decrease the two give the same answers later. They differ after a
-        /// clock regression, because an unsettled expired lease is live again
-        /// at an instant before its deadline and a stored failure is not, so
-        /// a backend that leaves it has chosen re-evaluation at the earlier
-        /// instant, as [`AttemptState`]'s backend obligations describe.
-        settled: AttemptState<T>,
-        /// Why admission was refused.
-        denial: LeaseDenial,
-    },
-}
-
-/// The provisional result of evaluating one completion.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use = "an evaluation changes nothing until the backend stores its state"]
-pub enum CompleteEvaluation<T> {
-    /// The token held the live lease. The backend must store `state` before it
-    /// reports `completion`.
-    Applied {
-        /// [`AttemptState::Clear`] after success, otherwise
-        /// [`AttemptState::Failed`].
-        state: AttemptState<T>,
-        /// Metadata for the applied outcome.
-        completion: AttemptCompletion,
-    },
-    /// The token holds no live lease: the lease expired, was completed, or was
-    /// replaced. The outcome was not applied.
-    Stale {
-        /// The state at the evaluation instant, with an expired lease already
-        /// counted as a failure. Storing it is the same choice as for
-        /// [`AdmitEvaluation::Denied`]'s settled state.
-        settled: AttemptState<T>,
-    },
-}
-
 impl<T> AttemptState<T> {
     /// Applies every transition that the passage of time alone causes, in the
     /// one order that is correct: an expired lease first counts as a failure
@@ -369,22 +273,18 @@ impl<T> AttemptState<T> {
         let failures = match self.settle(policy, now) {
             Self::Clear => 0,
             Self::Leased(lease) => {
-                return AdmitEvaluation::Denied {
-                    denial: LeaseDenial::Busy {
-                        retry_after: Delay::new(lease.until.saturating_sub(now)),
-                    },
-                    settled: Self::Leased(lease),
-                };
+                return AdmitEvaluation::Denied(DeniedAdmission {
+                    retry_after: Delay::new(lease.until.saturating_sub(now)),
+                    held: HeldAttempt::Leased(lease),
+                });
             }
             Self::Failed(failed) if now < failed.retry_at => {
                 // A restored retry time may lie past the end of the quiet
                 // period, and admission resumes at whichever comes first.
-                return AdmitEvaluation::Denied {
-                    denial: LeaseDenial::Backoff {
-                        retry_after: failed.retry_after(policy, now),
-                    },
-                    settled: Self::Failed(failed),
-                };
+                return AdmitEvaluation::Denied(DeniedAdmission {
+                    retry_after: failed.retry_after(policy, now),
+                    held: HeldAttempt::Failed(failed),
+                });
             }
             Self::Failed(failed) => failed.failures.get(),
         };
@@ -417,18 +317,18 @@ impl<T> AttemptState<T> {
             settled => return CompleteEvaluation::Stale { settled },
         };
         match outcome {
-            AttemptOutcome::Success => CompleteEvaluation::Applied {
-                state: Self::Clear,
+            AttemptOutcome::Success => CompleteEvaluation::Applied(AppliedCompletion {
+                released: ReleasedAttempt::Clear,
                 completion: AttemptCompletion {
                     outcome,
                     consecutive_failures: 0,
                     retry_after: Delay::new(Duration::ZERO),
                 },
-            },
+            }),
             AttemptOutcome::Failure | AttemptOutcome::Abandoned => {
                 let failed = fail(policy, lease.failures, now);
-                CompleteEvaluation::Applied {
-                    state: Self::Failed(failed),
+                CompleteEvaluation::Applied(AppliedCompletion {
+                    released: ReleasedAttempt::Failed(failed),
                     completion: AttemptCompletion {
                         outcome,
                         consecutive_failures: failed.failures.get(),
@@ -436,7 +336,7 @@ impl<T> AttemptState<T> {
                         // saturated at the end of representable time.
                         retry_after: failed.retry_after(policy, now),
                     },
-                }
+                })
             }
         }
     }
