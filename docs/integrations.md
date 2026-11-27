@@ -984,7 +984,9 @@ Unavailable lifecycle admission therefore precedes a 401 only on protected
 paths. The auth factory gets owned headers, direct transport peer and the
 request context, not a body or untrusted principal extension. The subject
 selector gets only the authenticated principal, direct peer and native policy.
-It must return native opaque keys; closure signatures are checked at `new`.
+It returns normalized subject material (`impl AsRef<[u8]>`), never a key:
+`HttpQuota` derives each policy's key itself with the `KeyHasher` passed to
+`new`. Closure signatures are checked at `new`.
 Handlers extract `Authenticated<P>`, whose constructor is private; raw
 `Extension<P>` is never authentication evidence and can be overwritten by
 unrelated middleware. No forwarded-header/proxy trust is inferred. Behind a

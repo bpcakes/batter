@@ -39,8 +39,10 @@ async fn main() -> Result<(), BoxError> {
         Ok(running.stopped())
     })?;
     let running = supervisor.start();
-    // Keep the body's errors inside this block so they cannot return from main
-    // before the supervisor has shut down; both outcomes reach `complete`.
+    // Keep the body's failures inside this block as errors, never panics, so
+    // they cannot leave main before the supervisor has shut down; both
+    // outcomes reach `complete`, and the result is reported afterwards.
+    let mut statuses = Vec::new();
     let served = async {
         running
             .status()
@@ -82,12 +84,9 @@ async fn main() -> Result<(), BoxError> {
         let client = prepared.in_process();
         let peer: SocketAddr = "127.0.0.1:32100".parse()?;
         let probe = Request::builder().uri("/live").body(Body::empty())?;
-        assert_eq!(
-            client.request(probe, peer).await.status(),
-            StatusCode::OK,
-            "public probes bypass authentication and quota"
-        );
-        let mut statuses = Vec::new();
+        if client.request(probe, peer).await.status() != StatusCode::OK {
+            return Err("public probes bypass authentication and quota".into());
+        }
         for _ in 0..2 {
             let request = Request::builder()
                 .method("POST")
@@ -96,16 +95,16 @@ async fn main() -> Result<(), BoxError> {
                 .body(Body::empty())?;
             statuses.push(client.request(request, peer).await.status().as_u16());
         }
-        assert_eq!(
-            statuses,
-            [200, 429],
-            "the one-request window admits the first call and denies the second"
-        );
-        println!("protected HTTP status sequence: {statuses:?}");
+        if statuses != [200, 429] {
+            return Err(
+                "the one-request window admits the first call and denies the second".into(),
+            );
+        }
         Ok::<_, BoxError>(())
     }
     .await;
     complete(served, running.shutdown_checked().await)?;
+    println!("protected HTTP status sequence: {statuses:?}");
     Ok(())
 }
 

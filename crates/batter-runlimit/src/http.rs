@@ -272,6 +272,29 @@ where
     ///     );
     /// }
     /// ```
+    /// A selector that returns a key instead of subject material fails at
+    /// construction, so an opaque digest or a key derived for another policy
+    /// cannot reach the boundary:
+    ///
+    /// ```compile_fail,E0277
+    /// use batter_runlimit::{ConsumptionError, Quota};
+    /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
+    /// use runlimit_core::{KeyHasher, Limiter, SubjectKey};
+    ///
+    /// fn returns_a_key<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
+    /// where
+    ///     L::CheckAllError: ConsumptionError,
+    /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    ///     let _ = HttpQuota::new(
+    ///         quota, policies, hasher,
+    ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
+    ///         |_principal: &&'static str, _peer: DirectPeer, _policy: &L::Policy| {
+    ///             SubjectKey::from_digest([1; 32])
+    ///         },
+    ///     );
+    /// }
+    /// ```
     pub fn new<P, AE, AF, S>(
         quota: Quota<L>,
         policies: Vec<L::Policy>,
@@ -344,6 +367,10 @@ where
     /// router merge to panic here, before the service can be registered.
     /// Use distinct paths for public and protected GET handlers.
     /// Response-body streaming is outside the operation and observation lifetime.
+    ///
+    /// Migration: `prepare` takes the selector's material type as a fourth
+    /// type parameter; a call that named `prepare::<P, AE, AF>` now names
+    /// `prepare::<P, AE, AF, _>` or omits the turbofish.
     pub fn prepare<P, AE, AF, S>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
     where
         P: Clone + Send + Sync + 'static,

@@ -29,6 +29,21 @@ contracts, capability facts and validation history.
   })?;
   ```
 
+  `HttpQuota::prepare` takes the material type as a fourth type parameter;
+  a call that spelled `prepare::<P, AE, AF>(..)` now writes
+  `prepare::<P, AE, AF, _>(..)` or omits the turbofish.
+
+  Stored counters: a selector that returned
+  `hasher.hash_for(policy, material).into_unbound_subject_key()` and now
+  returns `material`, with the same secret and normalized input, derives the
+  same keys, so existing counters carry over. A selector that returned some
+  other `SubjectKey`, such as `SubjectKey::from_digest(bytes)`, gets a new key
+  once its bytes are hashed: its counters restart. With PostgreSQL storage,
+  replicas on the old and new code count that route separately during a
+  rolling deploy, so the route admits up to its limit on each side until the
+  last old replica is gone and the old windows expire. Deploy such a change
+  where that is acceptable, or drain the route first.
+
   The `quota_service` example now awaits the supervisor's shutdown before
   returning any body error, as `process_owned` does, through the shared
   `examples/support.rs` `complete`, and imports native types through
