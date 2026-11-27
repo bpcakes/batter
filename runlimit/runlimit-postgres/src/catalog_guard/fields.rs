@@ -179,6 +179,8 @@ struct Definition {
     name: String,
     source: Source,
     at: usize,
+    /// A row name (a `FROM` or `INTO` alias), as opposed to a CTE.
+    row: bool,
 }
 
 /// A query block: the statement itself, or a parenthesized query inside it.
@@ -186,6 +188,8 @@ struct Block {
     end: usize,
     parent: Option<usize>,
     definitions: Vec<Definition>,
+    /// The table this block's `INSERT` writes, which `EXCLUDED` names.
+    insert_target: Option<String>,
 }
 
 struct Scope<'t> {
@@ -194,45 +198,68 @@ struct Scope<'t> {
     blocks: Vec<Block>,
     /// The innermost block holding each token.
     block_of: Vec<usize>,
-    insert_target: Option<String>,
 }
 
 impl Scope<'_> {
-    /// The columns `name` has where token `at` stands, from the innermost
-    /// block outward and then the migrated tables, skipping the definition
-    /// at `skip` so an alias can name the relation it shadows.
-    fn columns(
-        &self,
-        name: &str,
-        at: usize,
-        skip: Option<usize>,
-        depth: usize,
-    ) -> Option<BTreeSet<String>> {
+    /// The columns of the row named `name` where token `at` stands: a row
+    /// alias, else a CTE, from the innermost block outward, then a table.
+    fn row(&self, name: &str, at: usize, depth: usize) -> Option<BTreeSet<String>> {
+        self.lookup(name, at, true, depth)
+    }
+
+    /// The columns of the relation `name` names where token `at` stands: a
+    /// CTE from the innermost block outward, then a table, never a row alias.
+    fn relation(&self, name: &str, at: usize, depth: usize) -> Option<BTreeSet<String>> {
+        self.lookup(name, at, false, depth)
+    }
+
+    fn lookup(&self, name: &str, at: usize, rows: bool, depth: usize) -> Option<BTreeSet<String>> {
         if depth > 32 {
             return None;
         }
         let mut block = Some(*self.block_of.get(at)?);
         while let Some(current) = block {
-            let mut found = self.blocks[current]
-                .definitions
-                .iter()
-                .filter(|definition| definition.name == name && Some(definition.at) != skip);
-            match (found.next(), found.next()) {
+            let named = |row: bool| {
+                let mut found = self.blocks[current]
+                    .definitions
+                    .iter()
+                    .filter(move |definition| definition.name == name && definition.row == row);
+                (found.next(), found.next())
+            };
+            let found = if rows {
+                match named(true) {
+                    (None, _) => named(false),
+                    found => found,
+                }
+            } else {
+                named(false)
+            };
+            match found {
                 (Some(definition), None) => {
                     return match &definition.source {
                         Source::Columns(columns) => Some(columns.clone()),
                         Source::Query(start, end) => self.output(*start, *end, depth + 1),
-                        Source::Alias(target) => {
-                            self.columns(target, definition.at, Some(definition.at), depth + 1)
-                        }
+                        Source::Alias(target) => self.relation(target, definition.at, depth + 1),
                     };
                 }
-                // Two relations of one name in one block: ambiguous.
+                // Two of one name and kind in one block: ambiguous.
                 (Some(_), Some(_)) => return None,
                 (None, _) => block = self.blocks[current].parent,
             }
         }
         self.tables.get(name).cloned()
+    }
+
+    /// The columns of the table the nearest enclosing `INSERT` writes.
+    fn excluded(&self, at: usize) -> Option<BTreeSet<String>> {
+        let mut block = Some(*self.block_of.get(at)?);
+        while let Some(current) = block {
+            if let Some(target) = &self.blocks[current].insert_target {
+                return self.relation(target, at, 0);
+            }
+            block = self.blocks[current].parent;
+        }
+        None
     }
 
     /// The output columns of the query in `tokens[start..end]`.
@@ -266,7 +293,7 @@ impl Scope<'_> {
             match &tokens[item_start..item_end] {
                 [Token::Punct('*')] if select => columns.extend(self.star(list_end, end, depth)?),
                 [Token::Word(relation), Token::Punct('.'), Token::Punct('*')] => {
-                    columns.extend(self.columns(relation, item_start, None, depth + 1)?);
+                    columns.extend(self.row(relation, item_start, depth + 1)?);
                 }
                 item => columns.extend(output_name(item)),
             }
@@ -274,7 +301,8 @@ impl Scope<'_> {
         Some(columns)
     }
 
-    /// The columns of every `FROM` item from `from` to `end`.
+    /// The columns of every `FROM` item from `from` to `end`, joined by
+    /// commas or `JOIN`s.
     fn star(&self, from: usize, end: usize, depth: usize) -> Option<BTreeSet<String>> {
         let tokens = self.tokens;
         if !is(tokens, from, "from") {
@@ -290,17 +318,60 @@ impl Scope<'_> {
                 (_, None, ItemSource::Query(start, finish)) => {
                     self.output(*start, *finish, depth + 1)?
                 }
-                (_, None, ItemSource::Relation(name)) => {
-                    self.columns(name, index, None, depth + 1)?
-                }
+                (_, None, ItemSource::Relation(name)) => self.relation(name, index, depth + 1)?,
                 (None, None, ItemSource::Function) => return None,
             });
-            if !(punct(tokens, item.end, ',') && item.end < end) {
-                return Some(columns);
+            match next_from_item(tokens, item.end, end) {
+                Some(next) => index = next,
+                None => return Some(columns),
             }
-            index = item.end + 1;
         }
     }
+}
+
+/// Words that may open a join before `JOIN`.
+const JOIN_WORDS: [&str; 7] = [
+    "natural", "inner", "left", "right", "full", "outer", "cross",
+];
+
+/// Where the `FROM` item after the one ending at `index` starts, skipping a
+/// join condition and the comma or join words, or `None` past the last one.
+fn next_from_item(tokens: &[Token], mut index: usize, end: usize) -> Option<usize> {
+    if is(tokens, index, "on") {
+        let mut depth = 0_usize;
+        index += 1;
+        while index < end {
+            match tokens[index] {
+                Token::Punct('(') => depth += 1,
+                Token::Punct(')') => depth = depth.saturating_sub(1),
+                Token::Punct(',') if depth == 0 => break,
+                _ if depth == 0
+                    && (is(tokens, index, "join")
+                        || JOIN_WORDS.iter().any(|w| is(tokens, index, w))
+                        || LIST_ENDS
+                            .iter()
+                            .chain(&["for", "returning"])
+                            .any(|w| is(tokens, index, w))) =>
+                {
+                    break;
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    } else if is(tokens, index, "using") && punct(tokens, index + 1, '(') {
+        index = closing(tokens, index + 1) + 1;
+    }
+    if index >= end {
+        return None;
+    }
+    if punct(tokens, index, ',') {
+        return Some(index + 1);
+    }
+    while JOIN_WORDS.iter().any(|w| is(tokens, index, w)) {
+        index += 1;
+    }
+    is(tokens, index, "join").then_some(index + 1)
 }
 
 /// Words that end a select list.
@@ -339,19 +410,51 @@ fn output_name(item: &[Token]) -> Option<String> {
     {
         return Some(alias.clone());
     }
-    let mut end = item.len();
-    while let Some(cast) = item[..end]
+    let cast = item
         .windows(2)
-        .rposition(|pair| pair == [Token::Punct(':'), Token::Punct(':')])
-    {
-        end = cast;
+        .position(|pair| pair == [Token::Punct(':'), Token::Punct(':')])
+        .unwrap_or(item.len());
+    // A column keeps its name through casts, and only through casts.
+    if !only_casts(&item[cast..]) {
+        return None;
     }
-    match &item[..end] {
+    match &item[..cast] {
         [Token::Word(name)] | [Token::Word(_), Token::Punct('.'), Token::Word(name)] => {
             Some(name.clone())
         }
         _ => None,
     }
+}
+
+/// Whether `tokens` is nothing but casts: `::type` each, a type being words
+/// (`double precision`), an optional schema, a parenthesized modifier and
+/// array brackets.
+fn only_casts(tokens: &[Token]) -> bool {
+    let mut index = 0;
+    while index < tokens.len() {
+        if !(punct(tokens, index, ':') && punct(tokens, index + 1, ':')) {
+            return false;
+        }
+        index += 2;
+        if word(tokens, index).is_none() {
+            return false;
+        }
+        while word(tokens, index).is_some()
+            || punct(tokens, index, '.') && word(tokens, index + 1).is_some()
+        {
+            index += 1;
+        }
+        if punct(tokens, index, '(') {
+            index = closing(tokens, index) + 1;
+        }
+        while punct(tokens, index, '[') {
+            while index < tokens.len() && !punct(tokens, index, ']') {
+                index += 1;
+            }
+            index += 1;
+        }
+    }
+    true
 }
 
 #[derive(Clone, Debug)]
@@ -442,6 +545,7 @@ fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>
         end: tokens.len(),
         parent: None,
         definitions: Vec::new(),
+        insert_target: None,
     }];
     let mut block_of = Vec::with_capacity(tokens.len());
     let mut open = vec![0_usize];
@@ -455,6 +559,7 @@ fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>
                 end: closing(tokens, index),
                 parent: open.last().copied(),
                 definitions: Vec::new(),
+                insert_target: None,
             });
             open.push(blocks.len() - 1);
         }
@@ -464,7 +569,6 @@ fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>
         tables,
         blocks,
         block_of,
-        insert_target: None,
     };
     for index in 0..tokens.len() {
         if is(tokens, index, "with") && !is(tokens, index + 1, "ordinality") {
@@ -479,11 +583,18 @@ fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>
             Some("update") if !matches!(previous, Some("for" | "do")) => false,
             Some("into") if previous == Some("insert") => {
                 if let Some(target) = word(tokens, index + 1) {
-                    scope.insert_target = Some(target.to_owned());
+                    let block = scope.block_of[index];
+                    scope.blocks[block].insert_target = Some(target.to_owned());
                     if is(tokens, index + 2, "as")
                         && let Some(alias) = word(tokens, index + 3)
                     {
-                        define(&mut scope, index, alias, Source::Alias(target.to_owned()));
+                        define(
+                            &mut scope,
+                            index,
+                            alias,
+                            Source::Alias(target.to_owned()),
+                            true,
+                        );
                     }
                 }
                 continue;
@@ -502,7 +613,7 @@ fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>
                         Source::Columns(BTreeSet::from([alias.clone()]))
                     }
                 };
-                define(&mut scope, item_start, alias, source);
+                define(&mut scope, item_start, alias, source, true);
             }
             if !(lists && punct(tokens, item.end, ',')) {
                 break;
@@ -513,13 +624,14 @@ fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>
     scope
 }
 
-/// Defines `name` in the block that holds token `at`.
-fn define(scope: &mut Scope<'_>, at: usize, name: &str, source: Source) {
+/// Defines `name`, a row alias or a CTE, in the block that holds token `at`.
+fn define(scope: &mut Scope<'_>, at: usize, name: &str, source: Source, row: bool) {
     let block = scope.block_of[at];
     scope.blocks[block].definitions.push(Definition {
         name: name.to_owned(),
         source,
         at,
+        row,
     });
 }
 
@@ -551,7 +663,7 @@ fn define_ctes(scope: &mut Scope<'_>, with: usize) {
         }
         let close = closing(tokens, next);
         let source = listed.map_or(Source::Query(next + 1, close), Source::Columns);
-        define(scope, with, &name, source);
+        define(scope, with, &name, source, false);
         if !punct(tokens, close + 1, ',') {
             return;
         }
@@ -568,6 +680,15 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let tokens = tokenize(sql);
     let scope = scope(&tokens, tables);
     let mut found = Vec::new();
+    // A row or CTE named pg_catalog would be exempt below as the schema.
+    if scope
+        .blocks
+        .iter()
+        .flat_map(|block| &block.definitions)
+        .any(|definition| definition.name == "pg_catalog")
+    {
+        found.push("a relation named pg_catalog".to_owned());
+    }
     for dot in 1..tokens.len() {
         let Some(field) = word(&tokens, dot + 1) else {
             continue;
@@ -588,12 +709,9 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
             continue;
         }
         let columns = if receiver == "excluded" {
-            scope
-                .insert_target
-                .as_deref()
-                .and_then(|target| scope.columns(target, dot, None, 0))
+            scope.excluded(dot)
         } else {
-            scope.columns(receiver, dot, None, 0)
+            scope.row(receiver, dot, 0)
         };
         match columns {
             None => found.push(format!(
