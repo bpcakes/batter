@@ -6,7 +6,7 @@ use crate::{Clock, SystemClock};
 use runlimit_core::attempts::{
     AdmitEvaluation, AttemptAdmission, AttemptCompletionResult, AttemptDenial, AttemptObservation,
     AttemptObserver, AttemptOutcome, AttemptPolicy, AttemptState, AttemptSubject,
-    CompleteEvaluation, PendingLease, observe_attempt_safely,
+    CompleteEvaluation, observe_attempt_safely,
 };
 use std::{
     collections::BTreeMap,
@@ -116,15 +116,26 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         let now = state.now;
         cleanup(&mut state, now);
         let full = state.entries.len() >= self.capacity.get();
-        let evaluated = match state.entries.get_mut(&key) {
-            Some(entry) => {
-                evaluate(entry.state, &entry.policy, now).map_err(|(settled, denial)| {
-                    entry.state = settled;
-                    denial
-                })
+        let stored = state.entries.get_mut(&key);
+        let evaluated = if stored.is_none() && full {
+            Err(AttemptDenial::StorageCapacity)
+        } else {
+            // A subject without an entry is `Clear`.
+            let evaluation = match &stored {
+                Some(entry) => entry.state.admit(&entry.policy, now),
+                None => AttemptState::Clear.admit(policy, now),
+            };
+            match evaluation {
+                AdmitEvaluation::Grant(pending) => Ok(pending),
+                AdmitEvaluation::Denied(denied) => {
+                    let denial = denied.denial().into();
+                    // The denial's own held state is what the entry retains.
+                    if let Some(entry) = stored {
+                        entry.state = denied.held().into();
+                    }
+                    Err(denial)
+                }
             }
-            None if full => Err(AttemptDenial::StorageCapacity),
-            None => evaluate(AttemptState::Clear, policy, now).map_err(|(_, denial)| denial),
         };
         let pending = match evaluated {
             Ok(pending) => pending,
@@ -180,26 +191,28 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         let same_store = Weak::ptr_eq(&receipt.store, &Arc::downgrade(&self.state));
         let result = match state.entries.get_mut(&receipt.key) {
             Some(entry) if same_store => {
-                let (next, result) =
-                    match entry
+                let evaluation =
+                    entry
                         .state
-                        .complete(&entry.policy, now, &receipt.generation, outcome)
-                    {
-                        CompleteEvaluation::Applied(applied) => (
-                            applied.released().into(),
-                            AttemptCompletionResult::Applied(applied.completion()),
-                        ),
-                        CompleteEvaluation::Stale { settled } => {
-                            (settled, AttemptCompletionResult::Stale)
-                        }
-                    };
+                        .complete(&entry.policy, now, &receipt.generation, outcome);
+                // The state stored and the result reported both come from this
+                // one evaluation.
+                let next = match evaluation {
+                    CompleteEvaluation::Applied(applied) => applied.released().into(),
+                    CompleteEvaluation::Stale { settled } => settled,
+                };
                 match next {
                     AttemptState::Clear => {
                         state.entries.remove(&receipt.key);
                     }
                     AttemptState::Leased(_) | AttemptState::Failed(_) => entry.state = next,
                 }
-                result
+                match evaluation {
+                    CompleteEvaluation::Applied(applied) => {
+                        AttemptCompletionResult::Applied(applied.completion())
+                    }
+                    CompleteEvaluation::Stale { .. } => AttemptCompletionResult::Stale,
+                }
             }
             Some(_) | None => AttemptCompletionResult::Stale,
         };
@@ -211,20 +224,6 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
             AttemptCompletionResult::Stale => AttemptObservation::Stale,
         });
         Ok(result)
-    }
-}
-/// Evaluates one admission. A denial also carries the held state to retain.
-fn evaluate(
-    state: AttemptState<u64>,
-    policy: &AttemptPolicy,
-    now: Duration,
-) -> Result<PendingLease, (AttemptState<u64>, AttemptDenial)> {
-    match state.admit(policy, now) {
-        AdmitEvaluation::Grant(pending) => Ok(pending),
-        AdmitEvaluation::Denied(denied) => {
-            let denial = denied.denial().into();
-            Err((denied.held().into(), denial))
-        }
     }
 }
 /// Keys one admission's cleanup examines, and the size of its stack scratch.
