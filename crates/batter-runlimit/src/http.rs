@@ -355,6 +355,33 @@ where
     ///     );
     /// }
     /// ```
+    ///
+    /// Nor can a selector wrap that foreign subject itself: only the boundary's
+    /// deriver constructs a [`DerivedSubject`]:
+    ///
+    /// ```compile_fail,E0423
+    /// use batter_runlimit::{ConsumptionError, Quota};
+    /// use batter_runlimit::http::{AuthInput, DerivedSubject, DirectPeer, HttpQuota};
+    /// use runlimit_core::{KeyHasher, Limiter};
+    ///
+    /// fn wraps_a_foreign_subject<L: Limiter + 'static>(
+    ///     quota: Quota<L>,
+    ///     policies: Vec<L::Policy>,
+    ///     other_policy: &'static L::Policy,
+    /// ) where
+    ///     L::CheckAllError: ConsumptionError,
+    /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    ///     let other_hasher = KeyHasher::new([8; 32]).unwrap(); // Deterministic test secret only.
+    ///     let _ = HttpQuota::new(
+    ///         quota, policies, hasher,
+    ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
+    ///         move |principal: &&'static str, _peer: DirectPeer, _subject| {
+    ///             DerivedSubject(other_hasher.hash_for(other_policy, *principal))
+    ///         },
+    ///     );
+    /// }
+    /// ```
     pub fn new<P, AE, AF>(
         quota: Quota<L>,
         policies: Vec<L::Policy>,

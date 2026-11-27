@@ -50,11 +50,15 @@ contracts, capability facts and validation history.
   input, derives the same keys, so existing counters carry over. A selector
   that returned some other `SubjectKey`, such as
   `SubjectKey::from_digest(bytes)`, gets a new key once its bytes are
-  hashed, and its counters restart. With PostgreSQL storage, replicas on the
-  old and new code count that route separately during a rolling deploy.
-  Where a subject must not regain its allowance at the cutover, stop every
-  writer of the route and keep it closed until its fixed windows expire or
-  its GCRA buckets fully refill before serving it with the new code.
+  hashed, and its counters restart. A counter is named by its policy
+  fingerprint and subject key, not by its route, so with PostgreSQL storage
+  the old and new keys are separate counters wherever both are charged:
+  replicas on the old and new code during a rolling deploy, and any other
+  route or native client that charges the same policy and subject with the old
+  key. Where a subject must not regain its allowance at the cutover, stop
+  every writer that charges the affected counters, wait from the last possible
+  charge until their fixed windows expire or their GCRA buckets fully refill,
+  and resume all of them with the new derivation.
 
   The `quota_service` example now awaits the supervisor's shutdown before
   returning any body error, as `process_owned` does, through the shared
