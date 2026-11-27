@@ -40,11 +40,12 @@ erases native admission, and its completion uses the erased SQLx runner.
 query and atomic workflow, at 4 KiB in both profiles.
 
 `HttpQuota::new(quota, policies, hasher, authenticate, subject)?.prepare(policy,
-routes)` guards every supplied route. The subject selector returns normalized
-subject material for each policy, and the boundary derives the key with
-`hasher.hash_for(policy, material)`, so a protected route never checks an
-unbound or foreign-policy key. It rejects empty and mixed-mode policy sets at
-construction. Call `.with_public_probes(PublicProbes::new().get("/live",
+routes)` guards every supplied route. For each policy the subject selector
+receives a `SubjectDeriver` and returns `deriver.derive(material)` for
+normalized material that may borrow from the principal; only the boundary
+creates a deriver, with its hasher and that policy, so a protected route never
+checks an unbound or foreign-policy key. It rejects empty and mixed-mode policy
+sets at construction. Call `.with_public_probes(PublicProbes::new().get("/live",
 handler)?)` before `prepare` to deliberately add a public GET/HEAD probe. Probes
 bypass lifecycle/deadline admission, authentication and quota, and receive no
 protected `OperationContext` from the assembly; an in-process request built from

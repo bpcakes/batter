@@ -24,7 +24,7 @@ use batter_core::{
     operation::{OperationContext, OperationError},
     registration::RegistrationTarget,
 };
-use runlimit_core::{Check, Denial, KeyHasher, Limiter, QuotaMode, RateLimitPolicy};
+use runlimit_core::{Check, Denial, KeyHasher, Limiter, PolicySubject, QuotaMode, RateLimitPolicy};
 use std::{
     convert::Infallible,
     future::Future,
@@ -193,6 +193,35 @@ pub enum HttpQuotaConfigError {
     },
 }
 
+/// The boundary's key derivation for one of its policies, handed to the
+/// subject selector once per policy and request.
+///
+/// The selector chooses the normalized subject material; only
+/// [`SubjectDeriver::derive`] turns it into a key, with the boundary's
+/// [`KeyHasher`] and exactly this policy. Only the boundary creates a
+/// deriver.
+pub struct SubjectDeriver<'a, Policy> {
+    hasher: &'a KeyHasher,
+    policy: &'a Policy,
+}
+
+impl<'a, Policy: RateLimitPolicy> SubjectDeriver<'a, Policy> {
+    /// The policy this subject is derived for.
+    pub const fn policy(&self) -> &'a Policy {
+        self.policy
+    }
+
+    /// Derives the subject key from normalized `material`, which is read
+    /// here and not retained, so it may borrow from the principal.
+    pub fn derive(self, material: impl AsRef<[u8]>) -> DerivedSubject<'a, Policy> {
+        DerivedSubject(self.hasher.hash_for(self.policy, material))
+    }
+}
+
+/// A subject key the boundary derived for exactly one of its policies; only
+/// [`SubjectDeriver::derive`] creates one.
+pub struct DerivedSubject<'a, Policy: RateLimitPolicy>(PolicySubject<'a, Policy>);
+
 /// Authenticates a principal, derives native subjects, and checks one atomic batch.
 ///
 /// This is not a pre-authentication throttle. The constructor enforces a
@@ -222,16 +251,20 @@ where
     /// are retained in response extensions as `Arc<E>`.
     /// Authentication and subject-selector signatures are checked here.
     ///
-    /// For each policy, `subject` returns the normalized subject material,
-    /// such as an owner id or a peer address, and the boundary derives the
-    /// key with `hasher.hash_for(policy, material)`. The key is therefore
-    /// always bound to the policy it is checked against: a selector cannot
-    /// return an unbound key, an opaque digest or a key derived for another
-    /// policy.
+    /// For each policy, `subject` receives a [`SubjectDeriver`] for that
+    /// policy, chooses the normalized subject material, such as an owner id
+    /// or a peer address, and returns `deriver.derive(material)`. The
+    /// material may borrow from the principal. Only the boundary creates a
+    /// deriver, with its `hasher` and the policy it checks, so a selector
+    /// cannot return an unbound key, an opaque digest or a key derived for
+    /// another policy.
     ///
-    /// Migration: the selector used to return a `SubjectKey`, usually
+    /// Migration: the selector used to take `&L::Policy` and return a
+    /// `SubjectKey`, usually
     /// `hasher.hash_for(policy, material).into_unbound_subject_key()`; pass
-    /// that `KeyHasher` as the third argument and return `material` instead.
+    /// that `KeyHasher` as the third argument, take the deriver instead of
+    /// the policy and return `deriver.derive(material)`. Read the policy with
+    /// [`SubjectDeriver::policy`].
     ///
     /// A wrong authentication input fails at construction:
     ///
@@ -248,7 +281,7 @@ where
     ///     let _ = HttpQuota::new(
     ///         quota, policies, hasher,
     ///         |_wrong: u8| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |principal: &&'static str, _peer: DirectPeer, _policy: &L::Policy| *principal,
+    ///         |principal: &&'static str, _peer: DirectPeer, subject| subject.derive(*principal),
     ///     );
     /// }
     /// ```
@@ -268,15 +301,15 @@ where
     ///     let _ = HttpQuota::new(
     ///         quota, policies, hasher,
     ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |_wrong: &u64, _peer: DirectPeer, _policy: &L::Policy| "owner",
+    ///         |_wrong: &u64, _peer: DirectPeer, subject| subject.derive("owner"),
     ///     );
     /// }
     /// ```
-    /// A selector that returns a key instead of subject material fails at
+    /// A selector that returns a key instead of a derived subject fails at
     /// construction, so an opaque digest or a key derived for another policy
     /// cannot reach the boundary:
     ///
-    /// ```compile_fail,E0277
+    /// ```compile_fail,E0308
     /// use batter_runlimit::{ConsumptionError, Quota};
     /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
     /// use runlimit_core::{KeyHasher, Limiter, SubjectKey};
@@ -289,13 +322,13 @@ where
     ///     let _ = HttpQuota::new(
     ///         quota, policies, hasher,
     ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |_principal: &&'static str, _peer: DirectPeer, _policy: &L::Policy| {
+    ///         |_principal: &&'static str, _peer: DirectPeer, _subject| {
     ///             SubjectKey::from_digest([1; 32])
     ///         },
     ///     );
     /// }
     /// ```
-    pub fn new<P, AE, AF, S>(
+    pub fn new<P, AE, AF>(
         quota: Quota<L>,
         policies: Vec<L::Policy>,
         hasher: KeyHasher,
@@ -307,8 +340,14 @@ where
         AE: std::error::Error + Send + Sync + 'static,
         A: Fn(AuthInput) -> AF + Send + Sync + 'static,
         AF: Future<Output = Result<P, AE>> + Send + 'static,
-        K: Fn(&P, DirectPeer, &L::Policy) -> S + Send + Sync + 'static,
-        S: AsRef<[u8]> + 'static,
+        K: for<'a> Fn(
+                &P,
+                DirectPeer,
+                SubjectDeriver<'a, L::Policy>,
+            ) -> DerivedSubject<'a, L::Policy>
+            + Send
+            + Sync
+            + 'static,
     {
         let Some(first) = policies.first() else {
             return Err(HttpQuotaConfigError::EmptyPolicies);
@@ -367,18 +406,20 @@ where
     /// router merge to panic here, before the service can be registered.
     /// Use distinct paths for public and protected GET handlers.
     /// Response-body streaming is outside the operation and observation lifetime.
-    ///
-    /// Migration: `prepare` takes the selector's material type as a fourth
-    /// type parameter; a call that named `prepare::<P, AE, AF>` now names
-    /// `prepare::<P, AE, AF, _>` or omits the turbofish.
-    pub fn prepare<P, AE, AF, S>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
+    pub fn prepare<P, AE, AF>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
     where
         P: Clone + Send + Sync + 'static,
         AE: std::error::Error + Send + Sync + 'static,
         A: Fn(AuthInput) -> AF + Send + Sync + 'static,
         AF: Future<Output = Result<P, AE>> + Send + 'static,
-        K: Fn(&P, DirectPeer, &L::Policy) -> S + Send + Sync + 'static,
-        S: AsRef<[u8]> + 'static,
+        K: for<'a> Fn(
+                &P,
+                DirectPeer,
+                SubjectDeriver<'a, L::Policy>,
+            ) -> DerivedSubject<'a, L::Policy>
+            + Send
+            + Sync
+            + 'static,
     {
         let probes = self
             .public_probes
@@ -393,7 +434,7 @@ where
         let business = routes
             .layer(middleware::from_fn_with_state(
                 Arc::new(self),
-                boundary::<L, A, K, P, AE, AF, S>,
+                boundary::<L, A, K, P, AE, AF>,
             ))
             .layer(middleware::from_fn_with_state(policy, request_admission));
         PreparedHttp {
@@ -487,7 +528,7 @@ impl BoundaryRejection {
     }
 }
 
-async fn boundary<L, A, K, P, AE, AF, S>(
+async fn boundary<L, A, K, P, AE, AF>(
     State(boundary): State<Arc<HttpQuota<L, A, K>>>,
     mut request: Request,
     next: Next,
@@ -499,8 +540,10 @@ where
     AE: std::error::Error + Send + Sync + 'static,
     A: Fn(AuthInput) -> AF + Send + Sync + 'static,
     AF: Future<Output = Result<P, AE>> + Send,
-    K: Fn(&P, DirectPeer, &L::Policy) -> S + Send + Sync + 'static,
-    S: AsRef<[u8]> + 'static,
+    K: for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) -> DerivedSubject<'a, L::Policy>
+        + Send
+        + Sync
+        + 'static,
 {
     // Never accept an already-installed principal as authentication evidence.
     request.extensions_mut().remove::<Authenticated<P>>();
@@ -540,11 +583,11 @@ where
         .policies
         .iter()
         .map(|policy| {
-            Check::new(
-                boundary
-                    .hasher
-                    .hash_for(policy, (boundary.subject)(&principal, peer, policy)),
-            )
+            let deriver = SubjectDeriver {
+                hasher: &boundary.hasher,
+                policy,
+            };
+            Check::new((boundary.subject)(&principal, peer, deriver).0)
         })
         .collect::<Vec<_>>();
     request.extensions_mut().insert(Authenticated(principal));

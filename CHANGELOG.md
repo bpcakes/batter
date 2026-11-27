@@ -9,14 +9,16 @@ contracts, capability facts and validation history.
 ## Unreleased
 
 - **Breaking:** `batter::runlimit::http::HttpQuota::new` takes the
-  `KeyHasher` as its third argument, and the subject selector returns the
-  normalized subject material (`impl AsRef<[u8]> + 'static`, such as an owner
-  id or a peer address) instead of a `SubjectKey` (`batter-39wm.8`). The
-  boundary derives each policy's key with `hasher.hash_for(policy, material)`,
-  so a protected route can no longer check an unbound key, an opaque
-  `SubjectKey::from_digest` value or a key derived for another policy, which
-  the old signature accepted and rebound. Every caller previously reached the
-  native escape hatch `into_unbound_subject_key` here.
+  `KeyHasher` as its third argument, and the subject selector receives a
+  `SubjectDeriver` for the policy it checks instead of `&L::Policy` and
+  returns the `DerivedSubject` that `deriver.derive(material)` makes instead
+  of a `SubjectKey` (`batter-39wm.8`). Only the boundary creates a deriver,
+  with its hasher and that policy, so a protected route can no longer check
+  an unbound key, an opaque `SubjectKey::from_digest` value or a key derived
+  for another policy, which the old signature accepted and rebound. Every
+  caller previously reached the native escape hatch
+  `into_unbound_subject_key` here. The material may borrow from the
+  principal; `deriver.policy()` reads the policy.
 
   ```rust
   // Before:
@@ -24,25 +26,22 @@ contracts, capability facts and validation history.
       hasher.hash_for(policy, principal.id()).into_unbound_subject_key()
   })?;
   // After:
-  HttpQuota::new(quota, policies, hasher, authenticate, |principal, _peer, _policy| {
-      principal.id()
+  HttpQuota::new(quota, policies, hasher, authenticate, |principal, _peer, subject| {
+      subject.derive(principal.id())
   })?;
   ```
 
-  `HttpQuota::prepare` takes the material type as a fourth type parameter;
-  a call that spelled `prepare::<P, AE, AF>(..)` now writes
-  `prepare::<P, AE, AF, _>(..)` or omits the turbofish.
-
   Stored counters: a selector that returned
   `hasher.hash_for(policy, material).into_unbound_subject_key()` and now
-  returns `material`, with the same secret and normalized input, derives the
-  same keys, so existing counters carry over. A selector that returned some
-  other `SubjectKey`, such as `SubjectKey::from_digest(bytes)`, gets a new key
-  once its bytes are hashed: its counters restart. With PostgreSQL storage,
-  replicas on the old and new code count that route separately during a
-  rolling deploy, so the route admits up to its limit on each side until the
-  last old replica is gone and the old windows expire. Deploy such a change
-  where that is acceptable, or drain the route first.
+  returns `deriver.derive(material)`, with the same secret and normalized
+  input, derives the same keys, so existing counters carry over. A selector
+  that returned some other `SubjectKey`, such as
+  `SubjectKey::from_digest(bytes)`, gets a new key once its bytes are
+  hashed, and its counters restart. With PostgreSQL storage, replicas on the
+  old and new code count that route separately during a rolling deploy.
+  Where a subject must not regain its allowance at the cutover, stop every
+  writer of the route and keep it closed until its fixed windows expire or
+  its GCRA buckets fully refill before serving it with the new code.
 
   The `quota_service` example now awaits the supervisor's shutdown before
   returning any body error, as `process_owned` does, through the shared

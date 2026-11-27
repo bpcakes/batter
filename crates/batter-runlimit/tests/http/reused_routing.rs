@@ -116,7 +116,7 @@ impl Fixture {
                     }
                 }
             },
-            |principal: &Principal, _: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+            |principal: &Principal, _: DirectPeer, subject| subject.derive(principal.0),
         )
         .unwrap()
         .with_public_probes(

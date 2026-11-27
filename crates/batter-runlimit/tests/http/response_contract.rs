@@ -42,7 +42,7 @@ async fn nested_check_process_cancellation_uses_admission_renderer_and_original_
                 std::future::pending::<Result<Principal, AuthError>>().await
             }
         },
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 1000), routes())
@@ -67,7 +67,7 @@ async fn process_cancellation_after_native_grant_keeps_consumption_and_uses_admi
         vec![policy("owner", 1)],
         hasher,
         |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(
@@ -102,7 +102,7 @@ async fn deadline_during_authentication_uses_admission_renderer() {
             tokio::time::advance(Duration::from_millis(11)).await;
             Ok::<_, AuthError>(Principal("owner-a"))
         },
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 10), routes())
@@ -134,7 +134,7 @@ async fn public_probe_cannot_claim_quota_writer() {
         vec![policy("owner", 1)],
         hasher,
         |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .with_public_probes(probe)
@@ -166,7 +166,7 @@ async fn empty_public_probe_set_prepares_without_public_handlers() {
             vec![policy("owner", 1)],
             hasher,
             |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-            |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+            |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
         )
         .unwrap()
         .with_public_probes(probes)
@@ -360,7 +360,7 @@ async fn protected_root_fallback_survives_declared_public_probe() {
                 _ => Err(AuthError),
             }
         },
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .with_public_probes(probes)
@@ -454,7 +454,7 @@ async fn timeout_renderer_cannot_publish_quota_during_authentication() {
         vec![policy("owner", 1)],
         hasher,
         |_input: AuthInput| std::future::pending::<Result<Principal, AuthError>>(),
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(http_policy, routes())
@@ -665,7 +665,7 @@ async fn protected_root_fallback_without_probes_keeps_all_request_gates() {
                 _ => Err(AuthError),
             }
         },
-        |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 1000), business)

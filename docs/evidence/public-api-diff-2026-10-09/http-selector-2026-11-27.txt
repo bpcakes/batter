@@ -8,12 +8,13 @@ Method: existing surface.py over rustdoc JSON from
 -Zunstable-options --output-format json`, in separate worktrees per tree.
 This is a structural inspection only; supported verification uses the
 unmodified pinned toolchain.
-Result: no entry is added or removed. surface.py compares entries by path and
-kind, so it cannot see the one signature change, checked by hand:
+Result: nothing is removed; `SubjectDeriver` (with `policy` and `derive`) and
+`DerivedSubject` are added. surface.py compares entries by path and kind, so
+it cannot see the signature change, checked by hand:
 `batter_runlimit::http::HttpQuota::new` gains a `KeyHasher` third argument and
 its selector bound changes from `Fn(&P, DirectPeer, &L::Policy) -> SubjectKey`
-to `Fn(&P, DirectPeer, &L::Policy) -> S` with `S: AsRef<[u8]> + 'static`; the
-same selector bound changes on `HttpQuota::prepare`. That hard cut has its
+to `for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) ->
+DerivedSubject<'a, L::Policy>`; the same bound changes on `HttpQuota::prepare`. That hard cut has its
 `Breaking:` entry in the root CHANGELOG.md and a `Migration:` sentence on
 `HttpQuota::new`.
 

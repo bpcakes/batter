@@ -51,8 +51,8 @@ async fn main() -> Result<(), BoxError> {
             .map_err(|_| std::io::Error::other("startup failed"))?;
         let response_budget = ResponseConstructionBudget::new(Duration::from_secs(1))?;
         let request_policy = RequestPolicy::new(running.operation_admission(), response_budget);
-        // Authentication returns the principal; the boundary derives each
-        // policy's key from the material the selector returns.
+        // Authentication returns the principal; the selector names its subject
+        // material and the boundary's deriver turns it into each policy's key.
         let boundary = HttpQuota::new(
             quota,
             vec![policy],
@@ -68,7 +68,7 @@ async fn main() -> Result<(), BoxError> {
                     Err(std::io::Error::other("authentication failed"))
                 }
             },
-            |principal: &&'static str, _peer, _policy: &FixedWindowPolicy| *principal,
+            |principal: &&'static str, _peer, subject| subject.derive(*principal),
         )?;
         let probes = PublicProbes::new().get("/live", || async { "live" })?;
         let prepared = boundary.with_public_probes(probes).prepare(

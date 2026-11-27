@@ -59,7 +59,7 @@ fn http_policy_modes_are_validated_at_construction() {
             policies,
             hasher,
             |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-            |principal: &Principal, _peer: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+            |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
         )
     };
 

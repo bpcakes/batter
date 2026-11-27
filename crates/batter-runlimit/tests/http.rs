@@ -1,6 +1,8 @@
 //! The authenticated quota-before-body HTTP boundary.
 #![allow(clippy::unwrap_used, reason = "a panic fails the test")]
 #![allow(clippy::missing_assert_message, reason = "test names locate failures")]
+#[path = "http/derivation.rs"]
+mod derivation;
 #[path = "http/dispatch_and_concurrency.rs"]
 mod dispatch_and_concurrency;
 #[path = "http/multi_policy.rs"]
@@ -86,11 +88,11 @@ where
                 _ => Err(AuthError),
             }
         },
-        |principal: &Principal, peer: DirectPeer, policy: &FixedWindowPolicy| {
-            if policy.scope().as_str() == "peer" {
-                peer.ip().to_string()
+        |principal: &Principal, peer: DirectPeer, subject| {
+            if subject.policy().scope().as_str() == "peer" {
+                subject.derive(peer.ip().to_string())
             } else {
-                principal.0.to_owned()
+                subject.derive(principal.0)
             }
         },
     )
@@ -613,7 +615,7 @@ async fn authentication_timeout_never_reaches_quota_or_handler() {
         vec![policy("owner", 1)],
         hasher,
         |_input: AuthInput| std::future::pending::<Result<Principal, AuthError>>(),
-        |principal: &Principal, _: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(
@@ -678,7 +680,7 @@ async fn protected_routes_are_guarded_by_default_and_public_probes_are_explicit(
                 Err(AuthError)
             }
         },
-        |principal: &Principal, _: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
+        |principal: &Principal, _: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 1000), routes())

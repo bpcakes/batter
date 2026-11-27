@@ -960,10 +960,10 @@ therefore stay out of the caller's future size, layout and `Send` proof. The wor
 future must be `Send`; the internal HTTP boundary keeps its own direct path.
 
 `HttpQuota::new(quota, policies, hasher, authenticate, subject)?.prepare(policy,
-protected_routes)` derives each policy's key itself, with
-`hasher.hash_for(policy, material)` over the material the selector returns,
-rejects an empty policy set or mixed enforced/shadow modes at construction, then
-owns lifecycle/deadline -> async authentication -> native atomic batch ->
+protected_routes)` derives each policy's key itself: the selector receives a
+`SubjectDeriver` for that policy and returns `deriver.derive(material)`, rejects
+an empty policy set or mixed enforced/shadow modes at construction, then owns
+lifecycle/deadline -> async authentication -> native atomic batch ->
 body/handler ordering. Subject-dependent native batch validation stays with
 Runlimit. Every route passed to `prepare` is guarded. To expose a public probe,
 call `.with_public_probes(PublicProbes::new().get("/live", handler)?)` before
@@ -984,14 +984,15 @@ Unavailable lifecycle admission therefore precedes a 401 only on protected
 paths. The auth factory gets owned headers, direct transport peer and the
 request context, not a body or untrusted principal extension. The subject
 selector gets only the authenticated principal, direct peer and native policy.
-It returns normalized subject material (`impl AsRef<[u8]>`), never a key:
-`HttpQuota` derives each policy's key itself with the `KeyHasher` passed to
-`new`. Closure signatures are checked at `new`.
-Handlers extract `Authenticated<P>`, whose constructor is private; raw
-`Extension<P>` is never authentication evidence and can be overwritten by
-unrelated middleware. No forwarded-header/proxy trust is inferred. Behind a
-proxy, the direct peer is the proxy. Authorization remains application policy;
-pre-authentication attempts use the separate `AttemptRunner` described below.
+It gets a `SubjectDeriver` for the policy, reads the policy from it, and returns
+`deriver.derive(material)` for normalized subject material, never a key: only
+`HttpQuota` creates a deriver, with the `KeyHasher` passed to `new`. Closure
+signatures are checked at `new`. Handlers extract `Authenticated<P>`, whose
+constructor is private; raw `Extension<P>` is never authentication evidence and
+can be overwritten by unrelated middleware. No forwarded-header/proxy trust is
+inferred. Behind a proxy, the direct peer is the proxy. Authorization remains
+application policy; pre-authentication attempts use the separate `AttemptRunner`
+described below.
 
 One batch is intentional: stacked native single-check HTTP layers can charge an
 earlier quota before a later denial. This adapter reuses native atomic checking,
