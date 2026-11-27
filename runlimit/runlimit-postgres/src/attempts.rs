@@ -262,7 +262,7 @@ async fn admit_transaction(
 ) -> Result<ConnectionOutcome<AttemptAdmission<PgAttemptReceipt>>, ConnectionOutcome<CheckError>> {
     let policy = subject.policy().clone();
     let key = subject.counter_key();
-    let shard = capacity_shard(key);
+    let shard = i16::from(capacity_shard(key));
     let fingerprint = key.fingerprint().into_bytes();
     let subject = key.subject().into_bytes();
     let mut tx = connection.begin().await?;
@@ -331,7 +331,7 @@ async fn admit_transaction(
                     .bind(slot)
                     .bind(failures)
                     .bind(now_ms)
-                    .bind(integer(policy.quiet_period().millis()))
+                    .bind(policy.quiet_period().millis_i64())
                     .bind(until_ms),
             )
             .await?
@@ -415,9 +415,6 @@ async fn finish_capacity_denial(
         Ok(()) => ConnectionOutcome::Reusable(denial),
         Err(outcome) => outcome.map(|_| denial),
     }
-}
-fn integer(value: u64) -> i64 {
-    i64::try_from(value).expect("validated policy duration fits i64")
 }
 fn delay(value: i64) -> Delay {
     Delay::new(Duration::from_millis(value.unsigned_abs()))

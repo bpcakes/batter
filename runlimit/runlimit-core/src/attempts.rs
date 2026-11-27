@@ -1,5 +1,8 @@
 //! Outcome-aware, consecutive-failure throttling, separate from request quotas.
-use std::time::Duration;
+use std::{
+    num::{NonZeroU32, NonZeroU64},
+    time::Duration,
+};
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -120,14 +123,18 @@ impl AttemptPolicy {
     /// transitions call it, and [`Self::delay_schedule`] tabulates it for
     /// storage that cannot.
     pub fn delay(&self, failures: u32) -> Duration {
-        if failures == 0 {
-            return Duration::ZERO;
-        }
-        Duration::from_millis(
-            self.initial_delay
-                .millis()
-                .saturating_mul(1_u64.checked_shl(failures - 1).unwrap_or(u64::MAX))
-                .min(self.maximum_delay.millis()),
+        NonZeroU32::new(failures).map_or(Duration::ZERO, |failures| {
+            self.failure_delay(failures).duration()
+        })
+    }
+
+    /// The delay after `failures` consecutive failures: the initial delay
+    /// doubled per earlier failure, saturating, and capped at the maximum.
+    fn failure_delay(&self, failures: NonZeroU32) -> QuotaPeriod {
+        const DOUBLING: NonZeroU64 = NonZeroU64::MIN.saturating_add(1);
+        self.initial_delay.scaled(
+            DOUBLING.saturating_pow(failures.get() - 1),
+            self.maximum_delay,
         )
     }
     /// [`Self::delay`] tabulated for storage that applies a failure where this
@@ -136,7 +143,12 @@ impl AttemptPolicy {
     /// Element `n - 1` is `delay(n)`. The table ends at the first failure count
     /// that reaches the cap, so it is never empty and has at most 65 elements;
     /// every larger count waits the last element. Bind the table instead of
-    /// writing the formula a second time.
+    /// writing the formula a second time. Each element is a [`QuotaPeriod`],
+    /// a nonzero whole-millisecond delay no longer than the maximum delay, so
+    /// storage converts it with [`QuotaPeriod::millis_i64`] without failing.
+    ///
+    /// Migration: `delay_schedule` returned `Vec<Duration>`; call
+    /// [`QuotaPeriod::duration`] on an element for the former value.
     ///
     /// ```
     /// # use std::time::Duration;
@@ -152,7 +164,7 @@ impl AttemptPolicy {
     /// )
     /// .unwrap();
     /// let schedule = policy.delay_schedule();
-    /// assert_eq!(schedule, [10, 20, 40].map(Duration::from_millis));
+    /// assert_eq!(schedule, [millis(10), millis(20), millis(40)]);
     /// // Storage holds the count before this failure. Count the failure first,
     /// // saturating as the state does, then look its delay up; past the table
     /// // every count waits the last one.
@@ -160,16 +172,15 @@ impl AttemptPolicy {
     ///     let failures = stored_failures.saturating_add(1);
     ///     let position = usize::try_from(failures)
     ///         .map_or(schedule.len(), |count| count.min(schedule.len()));
-    ///     assert_eq!(schedule[position - 1], policy.delay(failures));
+    ///     assert_eq!(schedule[position - 1].duration(), policy.delay(failures));
     /// }
     /// ```
-    pub fn delay_schedule(&self) -> Vec<Duration> {
-        let cap = self.maximum_delay.duration();
+    pub fn delay_schedule(&self) -> Vec<QuotaPeriod> {
         let mut schedule = Vec::new();
-        for failures in 1..=u32::MAX {
-            let delay = self.delay(failures);
+        for failures in (1..=u32::MAX).filter_map(NonZeroU32::new) {
+            let delay = self.failure_delay(failures);
             schedule.push(delay);
-            if delay >= cap {
+            if delay >= self.maximum_delay {
                 break;
             }
         }

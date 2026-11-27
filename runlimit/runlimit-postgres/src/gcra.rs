@@ -225,12 +225,17 @@ async fn run_transaction<D>(
     build: impl FnOnce(Admission) -> Result<D, CheckError>,
 ) -> Result<ConnectionOutcome<D>, Failure> {
     let mut transaction = connection.begin().await?;
-    let mut shards = checks
+    let mut lock_order = checks
         .iter()
         .map(|check| capacity_shard(check.counter_key()))
         .collect::<Vec<_>>();
-    shards.sort_unstable();
-    shards.dedup();
+    lock_order.sort_unstable();
+    lock_order.dedup();
+    let shards = lock_order
+        .iter()
+        .copied()
+        .map(i16::from)
+        .collect::<Vec<_>>();
     let locked = transaction
         .fetch_all(
             CheckPhase::AcquiringCapacityShardLocks,
@@ -247,17 +252,17 @@ async fn run_transaction<D>(
     let mut now: i64 = field(&sample, "now_ms")?;
     // The watermark clamps evaluation only; elapsed time uses the real sample.
     let database_now: DateTime<Utc> = field(&sample, "database_now")?;
-    for (row, expected) in locked.iter().zip(&shards) {
+    for (row, &expected) in locked.iter().zip(&lock_order) {
         let shard: i16 = field(row, "capacity_shard")?;
         let count: i64 = field(row, "row_count")?;
         let observed: i64 = field(row, "observed_at_ms")?;
-        if shard != *expected
+        if shard != i16::from(expected)
             || !(0..=i64::from(crate::HARD_MAX_ROWS_PER_SHARD)).contains(&count)
             || observed < 0
         {
             return Err(invariant("invalid GCRA capacity ledger"));
         }
-        counts[usize::try_from(shard).expect("shard came from validated key")] = count;
+        counts[usize::from(expected)] = count;
         now = now.max(observed);
     }
     let now_u128 = u128::try_from(now).map_err(|_| invariant("negative GCRA database time"))?;
@@ -379,12 +384,12 @@ fn evaluate(
         }
         let tat: Option<String> = field(row, "tat_scaled")?;
         let expires: Option<i64> = field(row, "expires_at_ms")?;
-        let stored = match (tat, expires) {
+        let stored = match (tat, expires.map(u64::try_from)) {
             (None, None) => None,
-            (Some(tat), Some(expires)) if expires >= 0 => Some((
+            (Some(tat), Some(Ok(expires))) => Some((
                 tat.parse::<u128>()
                     .map_err(|_| invariant("invalid GCRA theoretical arrival time"))?,
-                u128::try_from(expires).expect("nonnegative expiry"),
+                u128::from(expires),
             )),
             _ => return Err(invariant("inconsistent GCRA stored counter")),
         };
@@ -412,8 +417,7 @@ fn evaluate(
             }
             gcra::Evaluation::Allowed(allowance) => {
                 if stored.is_none() {
-                    let shard = usize::try_from(capacity_shard(check.counter_key()))
-                        .expect("stable shard fits usize");
+                    let shard = usize::from(capacity_shard(check.counter_key()));
                     if counts[shard] >= i64::from(maximum) {
                         denial.get_or_insert((index, PendingDenial::StorageCapacity));
                     }

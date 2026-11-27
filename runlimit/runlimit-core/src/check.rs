@@ -73,6 +73,32 @@ impl<'a, P: RateLimitPolicy + ?Sized> Check<'a, P> {
     pub const fn cost(&self) -> u64 {
         self.cost
     }
+
+    /// Returns the cost as a signed 64-bit integer, exactly.
+    ///
+    /// A check's cost never exceeds its policy's capacity, which is at most
+    /// [`MAX_LIMIT`](crate::MAX_LIMIT), `i64::MAX`, so a backend can store it
+    /// in a signed 64-bit column without a fallible conversion.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use runlimit_core::{Check, FixedWindowPolicy, PolicyId, ScopeId, SubjectKey};
+    /// let policy = FixedWindowPolicy::new(
+    ///     PolicyId::new("api.submit").unwrap(),
+    ///     ScopeId::new("owner").unwrap(),
+    ///     10,
+    ///     Duration::from_secs(60),
+    /// )
+    /// .unwrap();
+    /// let check = Check::new(SubjectKey::from_digest([1; 32]).bind(&policy))
+    ///     .with_cost(3)
+    ///     .unwrap();
+    /// assert_eq!(check.cost_i64(), 3);
+    /// ```
+    pub const fn cost_i64(&self) -> i64 {
+        // Validated against the policy capacity in `with_cost`.
+        self.cost.cast_signed()
+    }
 }
 
 fn validate_cost<P: RateLimitPolicy + ?Sized>(policy: &P, cost: u64) -> Result<(), CheckError> {

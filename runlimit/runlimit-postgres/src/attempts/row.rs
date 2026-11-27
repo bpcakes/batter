@@ -1,7 +1,8 @@
 //! The only decode of a persisted attempt row, and the only conversions
 //! between the table's millisecond columns and the shared lease state's time.
-use runlimit_core::attempts::{
-    AttemptLease, AttemptPolicy, AttemptState, FailedAttempts, StorageFenced,
+use runlimit_core::{
+    QuotaPeriod,
+    attempts::{AttemptLease, AttemptPolicy, AttemptState, FailedAttempts, StorageFenced},
 };
 use sqlx::{Row, postgres::PgRow};
 use std::{num::NonZeroU32, time::Duration};
@@ -74,17 +75,12 @@ pub(super) fn stored_instant(instant: Duration) -> Option<i64> {
     Some((millis ^ EPOCH_SHIFT).cast_signed())
 }
 
-/// Whole milliseconds of a duration for a `BIGINT` value, or `None` beyond it.
-fn millis(value: Duration) -> Option<i64> {
-    i64::try_from(value.as_millis()).ok()
-}
-
 /// [`AttemptPolicy::delay_schedule`] in the completion statement's unit.
 pub(super) fn delay_schedule(policy: &AttemptPolicy) -> Vec<i64> {
     policy
         .delay_schedule()
         .into_iter()
-        .map(|delay| millis(delay).expect("a validated policy delay fits BIGINT"))
+        .map(QuotaPeriod::millis_i64)
         .collect()
 }
 

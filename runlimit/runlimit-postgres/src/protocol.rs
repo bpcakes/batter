@@ -73,8 +73,8 @@ pub(crate) fn advisory_lock_id(counter_key: CounterKey) -> i64 {
 /// generated `capacity_shard` column computes the same value. This is a
 /// persistent cross-replica protocol: advisory locks, occupancy counts and
 /// slot searches target the shard it names.
-pub(crate) fn capacity_shard(counter_key: CounterKey) -> i16 {
-    i16::from(counter_key.fingerprint().as_bytes()[0] ^ counter_key.subject().as_bytes()[0])
+pub(crate) fn capacity_shard(counter_key: CounterKey) -> u8 {
+    counter_key.fingerprint().as_bytes()[0] ^ counter_key.subject().as_bytes()[0]
 }
 
 #[cfg(test)]

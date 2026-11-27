@@ -129,7 +129,7 @@ use maintenance::run_cleanup_transaction;
 use transaction::ConnectionOutcome;
 
 #[cfg(test)]
-use admission::database_integer;
+use admission::interval;
 #[cfg(test)]
 use pending::PendingAllowance;
 #[cfg(test)]
@@ -526,13 +526,17 @@ mod tests {
             .with_cost(MAX_LIMIT)
             .unwrap();
 
-        assert_eq!(database_integer(policy.limit().get()), i64::MAX);
-        assert_eq!(database_integer(check.cost()), i64::MAX);
-        let interval = PgInterval::try_from(policy.window().duration()).unwrap();
-        assert_eq!(interval.months, 0);
-        assert_eq!(interval.days, 0);
+        assert_eq!(policy.limit().get_i64(), i64::MAX);
+        assert_eq!(check.cost_i64(), i64::MAX);
+        let window = interval(policy.window());
         assert_eq!(
-            interval.microseconds,
+            window,
+            PgInterval::try_from(policy.window().duration()).unwrap()
+        );
+        assert_eq!(window.months, 0);
+        assert_eq!(window.days, 0);
+        assert_eq!(
+            window.microseconds,
             i64::try_from(MAX_WINDOW_MILLIS * 1_000).unwrap()
         );
     }

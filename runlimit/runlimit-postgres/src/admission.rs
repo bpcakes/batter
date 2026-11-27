@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use runlimit_core::{Allowance, BatchDecision, Check, Decision, Denial, QuotaDenial};
+use runlimit_core::{Allowance, BatchDecision, Check, Decision, Denial, QuotaDenial, QuotaPeriod};
 use sqlx::{
     Row,
     postgres::{PgRow, types::PgInterval},
@@ -91,8 +91,13 @@ pub(crate) struct BatchSqlInput {
 impl BatchSqlInput {
     pub(crate) fn from_checks(checks: &[Check<'_>]) -> Self {
         let counter_keys = checks.iter().map(Check::counter_key).collect::<Vec<_>>();
-        let mut ordered_indices = (0..checks.len()).collect::<Vec<_>>();
-        ordered_indices.sort_unstable_by_key(|index| counter_keys[*index]);
+        // One-based input positions, in lock (counter key) order.
+        let mut lock_order = counter_keys
+            .iter()
+            .copied()
+            .zip(1_i64..)
+            .collect::<Vec<_>>();
+        lock_order.sort_unstable_by_key(|(key, _)| *key);
 
         let mut input = Self {
             policy_ids: Vec::with_capacity(checks.len()),
@@ -100,12 +105,9 @@ impl BatchSqlInput {
             fingerprints: Vec::with_capacity(checks.len()),
             subjects: Vec::with_capacity(checks.len()),
             capacity_shards: Vec::with_capacity(checks.len()),
-            lock_input_positions: ordered_indices
+            lock_input_positions: lock_order
                 .into_iter()
-                .map(|index| {
-                    i64::try_from(index + 1)
-                        .expect("bounded batch input positions fit PostgreSQL BIGINT")
-                })
+                .map(|(_, position)| position)
                 .collect(),
             advisory_lock_ids: counter_keys.iter().copied().map(advisory_lock_id).collect(),
             windows: Vec::with_capacity(checks.len()),
@@ -125,13 +127,12 @@ impl BatchSqlInput {
             input
                 .subjects
                 .push(counter_key.subject().as_bytes().to_vec());
-            input.capacity_shards.push(capacity_shard(counter_key));
-            input.windows.push(
-                PgInterval::try_from(policy.window().duration())
-                    .expect("core policy windows fit PostgreSQL INTERVAL exactly"),
-            );
-            input.costs.push(database_integer(check.cost()));
-            input.limits.push(database_integer(policy.limit().get()));
+            input
+                .capacity_shards
+                .push(i16::from(capacity_shard(counter_key)));
+            input.windows.push(interval(policy.window()));
+            input.costs.push(check.cost_i64());
+            input.limits.push(policy.limit().get_i64());
         }
         input
     }
@@ -548,9 +549,15 @@ async fn upsert_batch(
     Ok((allowances, response_now))
 }
 
-pub(crate) fn database_integer(value: u64) -> i64 {
-    i64::try_from(value)
-        .expect("core policy and check validation keep database integers within i64")
+/// A policy window as an exact `INTERVAL` of microseconds. Every
+/// [`QuotaPeriod`]'s microsecond count fits `BIGINT`, which `runlimit-core`
+/// checks at compile time.
+pub(crate) const fn interval(window: QuotaPeriod) -> PgInterval {
+    PgInterval {
+        months: 0,
+        days: 0,
+        microseconds: window.millis_i64() * 1_000,
+    }
 }
 
 fn read_used(row: &PgRow) -> Result<u64, CheckError> {
