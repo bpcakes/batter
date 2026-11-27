@@ -281,7 +281,10 @@ async fn admit_transaction(
     };
     let pending = match stored.unwrap_or(AttemptState::Clear).admit(&policy, now) {
         AdmitEvaluation::Grant(pending) => pending,
-        AdmitEvaluation::Denied { denial, .. } => return finish_denial(tx, denial.into()).await,
+        AdmitEvaluation::Denied { settled, denial } => {
+            let key = (fingerprint.as_slice(), subject.as_slice());
+            return finish_denial(tx, key, stored, settled, denial.into()).await;
+        }
     };
     let failures = i64::from(pending.failures());
     let until_ms = row::stored_instant(pending.until())
@@ -304,11 +307,11 @@ async fn admit_transaction(
                 .await?;
             let row_count: i64 = occupancy.try_get("row_count").map_err(decode)?;
             if row_count >= i64::from(maximum) {
-                return Ok(finish_capacity_denial(tx).await);
+                return Ok(finish_committed_denial(tx, AttemptDenial::StorageCapacity).await);
             }
             let slot = tx.fetch_one(PHASE, sqlx::query("SELECT min(slot)::integer AS slot FROM generate_series(0, $2::integer-1) AS slot WHERE NOT EXISTS (SELECT 1 FROM runlimit_attempts WHERE capacity_shard=$1 AND capacity_slot=slot)").bind(shard).bind(i64::from(maximum))).await?;
             let Some(slot) = slot.try_get::<Option<i32>, _>("slot").map_err(decode)? else {
-                return Ok(finish_capacity_denial(tx).await);
+                return Ok(finish_committed_denial(tx, AttemptDenial::StorageCapacity).await);
             };
             tx.fetch_one(PHASE, sqlx::query("INSERT INTO runlimit_attempts (config_fingerprint,subject_key,capacity_slot,failures,last_failure_ms,retry_at_ms,quiet_ms,lease_until_ms,lease_token) VALUES ($1,$2,$3,$4,$5,$5,$6,$7,pg_catalog.gen_random_uuid()::text) RETURNING lease_token").bind(fingerprint.as_slice()).bind(subject.as_slice()).bind(slot).bind(failures).bind(now_ms).bind(integer(policy.quiet_period().millis())).bind(until_ms)).await?
         }
@@ -326,23 +329,49 @@ async fn admit_transaction(
         },
     )))
 }
+/// Reports a denial, which owns no reservation, storing the one state change
+/// a denial can observe.
 async fn finish_denial(
-    tx: CheckTransaction<'_>,
+    mut tx: CheckTransaction<'_>,
+    (fingerprint, subject): (&[u8], &[u8]),
+    stored: Option<AttemptState<()>>,
+    settled: AttemptState<()>,
     denial: AttemptDenial,
 ) -> Result<ConnectionOutcome<AttemptAdmission<PgAttemptReceipt>>, ConnectionOutcome<CheckError>> {
-    // Cleanup may have removed expired rows but denial owns no reservation.
-    // A successful rollback restores cleanup too. A rollback failure must close
-    // the connection before reporting the otherwise valid denial.
-    Ok(tx.deny(AttemptAdmission::Denied(denial)).await)
+    match settled {
+        // A denial changes state only by settling an expired lease into its
+        // failure. The server clock can step backwards, and the unsettled lease
+        // would then be live again for its receipt, so the failure this denial
+        // reports is stored with it.
+        AttemptState::Failed(expired) if stored != Some(settled) => {
+            let expiry = sqlx::query(StoredAttempt::EXPIRE_SQL)
+                .bind(fingerprint)
+                .bind(subject)
+                .bind(i64::from(expired.failures().get()))
+                .bind(row::saturating_stored_instant(expired.last_failure()))
+                .bind(row::saturating_stored_instant(expired.retry_at()));
+            tx.execute(PHASE, expiry).await?;
+            Ok(finish_committed_denial(tx, denial).await)
+        }
+        // Cleanup may have removed expired rows, and a successful rollback
+        // restores them too. A rollback failure must close the connection
+        // before reporting the otherwise valid denial.
+        AttemptState::Clear | AttemptState::Leased(_) | AttemptState::Failed(_) => {
+            Ok(tx.deny(AttemptAdmission::Denied(denial)).await)
+        }
+    }
 }
-async fn finish_capacity_denial(
+async fn finish_committed_denial(
     tx: CheckTransaction<'_>,
+    denial: AttemptDenial,
 ) -> ConnectionOutcome<AttemptAdmission<PgAttemptReceipt>> {
-    // No reservation was inserted. Preserve bounded expired-row cleanup even
-    // when a lowered cap still denies this call; otherwise rolling back every
-    // batch can make an over-cap shard permanently unreclaimable. The admission
-    // denial remains certain even if cleanup's commit acknowledgement is lost.
-    let denial = AttemptAdmission::Denied(AttemptDenial::StorageCapacity);
+    // No reservation was inserted. A capacity denial preserves bounded
+    // expired-row cleanup even when a lowered cap still denies this call;
+    // otherwise rolling back every batch can make an over-cap shard permanently
+    // unreclaimable. A backoff denial preserves the lease expiry it observed.
+    // The admission denial remains certain even if the commit acknowledgement
+    // is lost.
+    let denial = AttemptAdmission::Denied(denial);
     match tx.commit().await {
         Ok(()) => ConnectionOutcome::Reusable(denial),
         Err(outcome) => outcome.map(|_| denial),

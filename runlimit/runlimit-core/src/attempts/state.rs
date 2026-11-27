@@ -240,6 +240,7 @@ impl From<LeaseDenial> for AttemptDenial {
 
 /// The provisional result of evaluating one admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use = "an evaluation changes nothing until the backend stores its state"]
 pub enum AdmitEvaluation<T> {
     /// Admission is possible. Nothing is reserved until the backend stores
     /// [`AttemptState::Leased`] with the issued lease.
@@ -259,6 +260,7 @@ pub enum AdmitEvaluation<T> {
 
 /// The provisional result of evaluating one completion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use = "an evaluation changes nothing until the backend stores its state"]
 pub enum CompleteEvaluation<T> {
     /// The token held the live lease. The backend must store `state` before it
     /// reports `completion`.

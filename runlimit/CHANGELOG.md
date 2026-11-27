@@ -60,14 +60,28 @@ The format is based on [Keep a Changelog], and this project adheres to
   delay from the bound `AttemptPolicy::delay_schedule` instead of restating the
   formula; the imported `src/attempt_complete.sql` is retained unchanged as a
   provenance record that no code path executes. No migration, schema, public
-  item, lock protocol or fence changes, and rows written by earlier releases
-  decode unchanged, so mixed-version replicas agree. While a lease is held,
-  `last_failure_ms` and `retry_at_ms` now hold the admission instant; neither
-  release reads them until the lease ends. A row without a lease and without
-  failures is `Clear`: it no longer denies `Backoff` when a server clock
-  regression leaves the clock behind its `retry_at_ms`. A new live test,
+  item, lock protocol or fence changes. Storage is compatible in both
+  directions: rows written by earlier releases decode unchanged, and every row
+  this release writes is a shape earlier releases already read. While a lease
+  is held, `last_failure_ms` and `retry_at_ms` now hold the admission instant;
+  neither release reads them until the lease ends. A new live test,
   `memory_and_postgres_share_attempt_transition_semantics`, holds both backends
   to one scripted lifecycle (`batter-ctk7.8`).
+
+  Replicas of both releases reach the same decisions while the server clock
+  does not step backwards. After a backwards step they can differ during a
+  rolling upgrade, in two cases:
+
+  - A row without a lease and without failures is `Clear`. After a success
+    both timestamps hold the completion instant, so an earlier release denies
+    `Backoff` until the clock passes that instant again, and this release
+    admits.
+  - A denied admission that is the first to observe an expired lease now
+    stores that failure and releases the lease token in the same transaction,
+    which it commits. An earlier release rolled the denial back, so a clock
+    stepping behind the lease deadline made the lease live again and let its
+    receipt complete, erasing the failure the denial had reported. This
+    release reports that receipt `Stale`. Every other denial still rolls back.
 - **Breaking:** this is a run-time break for hand-edited attempt rows only;
   nothing stops compiling and no row this library writes is affected.
   `PostgresAttemptLimiter::admit` now fails closed with
@@ -76,8 +90,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   is corrected or admission's bounded cleanup deletes it after its quiet period.
 
   ```sql
-  -- A delay on a subject with no failures and no lease.
-  UPDATE runlimit_attempts SET failures = 0, retry_at_ms = last_failure_ms + 60000;
+  -- A delay on one subject with no failures and no lease.
+  UPDATE runlimit_attempts SET failures = 0, retry_at_ms = last_failure_ms + 60000
+  WHERE config_fingerprint = $1 AND subject_key = $2 AND lease_until_ms IS NULL;
   ```
 
   ```rust
@@ -87,8 +102,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   limiter.admit(subject).await
   ```
 
-  To hold a subject back by hand, store at least one failure with the delay:
-  `SET failures = GREATEST(failures, 1), retry_at_ms = ...`. Moving
+  To hold a subject back by hand, store at least one failure with the delay,
+  for that one unleased row: `SET failures = GREATEST(failures, 1),
+  retry_at_ms = ...` with the same `WHERE` clause. Moving
   `retry_at_ms` earlier still releases a subject and keeps its failures, and
   stored instants before 1970 keep their exact meaning. An operator matching
   logs can match that detail string; `"invalid attempt failure count"` is

@@ -3,7 +3,8 @@
 //! The memory and PostgreSQL attempt backends answer one scripted lifecycle
 //! identically: the same admissions, denials, completions, delays and
 //! observations, in the same order. A stored row that fits no lease state is
-//! refused before commit instead of being reinterpreted.
+//! refused before commit instead of being reinterpreted, and a lease expiry
+//! that a denial reported stays expired when the server clock steps backwards.
 //!
 //! Memory time is an injected clock. PostgreSQL time is the server clock, so
 //! the script advances it by moving every stored instant of the subject's row
@@ -262,6 +263,18 @@ impl Database {
             schema,
         }
     }
+    /// Moves the server clock by `minutes` relative to every stored instant:
+    /// forward when positive, backwards when negative.
+    async fn advance(&self, minutes: i64) {
+        sqlx::query(
+            "UPDATE runlimit_attempts SET last_failure_ms=last_failure_ms-$1,\
+             retry_at_ms=retry_at_ms-$1,lease_until_ms=lease_until_ms-$1",
+        )
+        .bind(minutes * i64::try_from(MINUTE).unwrap())
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
     async fn close(self) {
         self.pool.close().await;
         sqlx::query(AssertSqlSafe(format!(
@@ -285,16 +298,7 @@ async fn run_postgres(policy: &AttemptPolicy, recorder: Arc<Recorder>) -> Vec<Se
     let mut seen = Vec::new();
     for (step, _) in script() {
         match step {
-            Step::Advance(minutes) => {
-                sqlx::query(
-                    "UPDATE runlimit_attempts SET last_failure_ms=last_failure_ms-$1,\
-                     retry_at_ms=retry_at_ms-$1,lease_until_ms=lease_until_ms-$1",
-                )
-                .bind(i64::try_from(minutes * MINUTE).unwrap())
-                .execute(&db.pool)
-                .await
-                .unwrap();
-            }
+            Step::Advance(minutes) => db.advance(i64::try_from(minutes).unwrap()).await,
             Step::Admit => seen.push(match limiter.admit(subject).await.unwrap() {
                 AttemptAdmission::Admitted(receipt) => {
                     receipts.push(Some(receipt));
@@ -417,5 +421,54 @@ async fn a_delay_without_failures_is_a_storage_invariant_until_the_row_is_correc
         ),
         Seen::Applied(AttemptOutcome::Failure, 2, 20)
     );
+    db.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn an_expiry_reported_by_a_denial_survives_a_backwards_clock_step() {
+    let db = Database::new().await;
+    let limiter = PostgresAttemptLimiter::new(db.pool.clone());
+    let policy = policy();
+    let subject = KeyHasher::new([7; 32])
+        .unwrap()
+        .hash_attempt_for(&policy, b"user");
+    let admit = async || match limiter.admit(subject).await.unwrap() {
+        AttemptAdmission::Admitted(receipt) => Ok(receipt),
+        AttemptAdmission::Denied(denial) => Err(denied(denial)),
+    };
+    let stored = async || {
+        sqlx::query_as::<_, (i64, bool)>(
+            "SELECT failures, lease_token IS NULL AND lease_until_ms IS NULL FROM runlimit_attempts",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+
+    let receipt = admit().await.expect("first admission was denied");
+    // A live lease denies without changing the row.
+    assert_eq!(admit().await.err(), Some(Seen::Busy(20)));
+    assert_eq!(stored().await, (0, false));
+    // At its deadline the lease has failed, and the denial that reports the
+    // backoff stores that failure and releases the token.
+    db.advance(20).await;
+    assert_eq!(admit().await.err(), Some(Seen::Backoff(10)));
+    assert_eq!(stored().await, (1, true));
+
+    // The clock steps back behind the deadline. The receipt stays stale and
+    // cannot erase the failure the denial reported.
+    db.advance(-1).await;
+    assert_eq!(
+        completed(
+            limiter
+                .complete(receipt, AttemptOutcome::Success)
+                .await
+                .unwrap()
+        ),
+        Seen::Stale
+    );
+    assert_eq!(stored().await, (1, true));
+    assert_eq!(admit().await.err(), Some(Seen::Backoff(11)));
     db.close().await;
 }
