@@ -18,7 +18,7 @@ use std::path::Path;
 
 use sqlx::{
     Connection as _, Executor as _, PgConnection, PgPool, Postgres, SqlSafeStr as _,
-    migrate::{MigrationSource as _, ResolveConfig},
+    migrate::{Migrate as _, MigrateDatabase as _, MigrationSource as _, ResolveConfig},
     postgres::{PgArguments, PgPoolCopyExt as _},
 };
 
@@ -194,6 +194,97 @@ fn resolve_blocking() {
 fn resolve_blocking_with_config() {
     let _ =
         sqlx::migrate::resolve_blocking_with_config(Path::new("migrations"), &ResolveConfig::new());
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn dangerous_set_table_name() {
+    let mut migrator = sqlx::migrate::Migrator::with_migrations(Vec::new());
+    let _ = migrator.dangerous_set_table_name("migrations");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn create_schema() {
+    let mut migrator = sqlx::migrate::Migrator::with_migrations(Vec::new());
+    let _ = migrator.create_schema("schema");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn create_schema_if_not_exists(connection: &mut PgConnection) {
+    let _ = connection.create_schema_if_not_exists("schema");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn ensure_migrations_table(connection: &mut PgConnection) {
+    let _ = connection.ensure_migrations_table("migrations");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn dirty_version(connection: &mut PgConnection) {
+    let _ = connection.dirty_version("migrations");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn list_applied_migrations(connection: &mut PgConnection) {
+    let _ = connection.list_applied_migrations("migrations");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrate_lock(connection: &mut PgConnection) {
+    let _ = connection.lock();
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrate_unlock(connection: &mut PgConnection) {
+    let _ = connection.unlock();
+}
+
+// The migration parameter names `Migration`, which the type expectation covers.
+#[expect(clippy::disallowed_methods, reason = "probe")]
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn migrate_apply(connection: &mut PgConnection, migration: &sqlx::migrate::Migration) {
+    let _ = connection.apply("migrations", migration);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn migrate_revert(connection: &mut PgConnection, migration: &sqlx::migrate::Migration) {
+    let _ = connection.revert("migrations", migration);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn migrate_skip(connection: &mut PgConnection, migration: &sqlx::migrate::Migration) {
+    let _ = connection.skip("migrations", migration);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn create_database() {
+    let _ = Postgres::create_database("postgresql://localhost/database");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn database_exists() {
+    let _ = Postgres::database_exists("postgresql://localhost/database");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn drop_database() {
+    let _ = Postgres::drop_database("postgresql://localhost/database");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn force_drop_database() {
+    let _ = Postgres::force_drop_database("postgresql://localhost/database");
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn listener() {
+    let _: Option<sqlx::postgres::PgListener> = None;
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn advisory_lock() {
+    let _ = sqlx::postgres::PgAdvisoryLock::new("key");
 }
 
 #[expect(clippy::disallowed_types, reason = "probe")]

@@ -13,8 +13,8 @@
 //! reliably; lint flags passed on the command line belong to
 //! `scripts/verify.sh`.
 //!
-//! The lint names this file looks for are assembled with `concat!`, so its
-//! own source names none of them.
+//! Strings in this file that would read as lint lists or includes are split
+//! with `concat!`, so its own source holds none.
 
 use std::{
     collections::BTreeSet,
@@ -54,20 +54,39 @@ const METHODS: &[&str] = &[
     "sqlx::Execute::sql",
     "sqlx::Transaction::begin",
     "sqlx::migrate::Migrator::new",
+    "sqlx::migrate::Migrator::dangerous_set_table_name",
+    "sqlx::migrate::Migrator::create_schema",
     "sqlx::migrate::MigrationSource::resolve",
     "sqlx::migrate::resolve_blocking",
     "sqlx::migrate::resolve_blocking_with_config",
+    "sqlx::migrate::Migrate::create_schema_if_not_exists",
+    "sqlx::migrate::Migrate::ensure_migrations_table",
+    "sqlx::migrate::Migrate::dirty_version",
+    "sqlx::migrate::Migrate::list_applied_migrations",
+    "sqlx::migrate::Migrate::lock",
+    "sqlx::migrate::Migrate::unlock",
+    "sqlx::migrate::Migrate::apply",
+    "sqlx::migrate::Migrate::revert",
+    "sqlx::migrate::Migrate::skip",
+    "sqlx::migrate::MigrateDatabase::create_database",
+    "sqlx::migrate::MigrateDatabase::database_exists",
+    "sqlx::migrate::MigrateDatabase::drop_database",
+    "sqlx::migrate::MigrateDatabase::force_drop_database",
 ];
 
-/// sqlx types that carry SQL text. `SqlStr` has no public tuple constructor,
-/// so disallowing the type also closes `Transaction::begin(.., Some(text))`
-/// and a hand-built `Migration`.
+/// sqlx types that carry SQL text or send sqlx's own: `SqlStr` has no public
+/// tuple constructor, so disallowing the type also closes
+/// `Transaction::begin(.., Some(text))` and a hand-built `Migration`;
+/// `PgListener` builds `LISTEN` statements from channel names and
+/// `PgAdvisoryLock` calls `pg_advisory_lock` through `search_path`.
 const TYPES: &[&str] = &[
     "sqlx::AssertSqlSafe",
     "sqlx::SqlStr",
     "sqlx::QueryBuilder",
     "sqlx::RawSql",
     "sqlx::migrate::Migration",
+    "sqlx::postgres::PgListener",
+    "sqlx::postgres::PgAdvisoryLock",
 ];
 
 /// sqlx's query macros.
@@ -91,18 +110,33 @@ const PROBES: &str = "catalog_guard/gate/probes.rs";
 
 mod probes;
 
-/// The gate's lint names and the groups that contain them; the first three
-/// are the lints themselves.
+/// The gate's lints, each also matching its renamed singular spelling.
 const GATE_LINTS: &[&str] = &[
-    concat!("disallowed", "_method"),
-    concat!("disallowed", "_type"),
-    concat!("disallowed", "_macro"),
-    concat!("clippy", "::all"),
-    concat!("clippy", "::default"),
-    concat!("clippy", "::style"),
-    // Silencing an unfulfilled probe would hide a gap in the gate.
-    concat!("unfulfilled", "_lint_expectations"),
+    "clippy::disallowed_method",
+    "clippy::disallowed_type",
+    "clippy::disallowed_macro",
 ];
+
+/// The groups that hold the gate's lints (`clippy-driver -Whelp`), rustc's
+/// `warnings`, and the lint that fails an unmet probe.
+const GATE_GROUPS: &[&str] = &[
+    "clippy::all",
+    "clippy::default",
+    "clippy::style",
+    "warnings",
+    "unfulfilled_lint_expectations",
+];
+
+/// Whether one item of a lint list names a gate lint.
+fn is_gate_lint(item: &str) -> bool {
+    GATE_LINTS.iter().any(|lint| item.starts_with(lint))
+}
+
+/// Whether one item of a lint list names the gate, a group holding it, or a
+/// lint a macro assembles.
+fn names_the_gate(item: &str) -> bool {
+    item.contains('$') || is_gate_lint(item) || GATE_GROUPS.contains(&item)
+}
 
 /// The only suppressions of the gate, each pinned to its whole item, by the
 /// file under `src` that holds it. Whitespace is ignored.
@@ -174,24 +208,43 @@ fn rust_files(directory: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
-/// The paths a `clippy.toml` list names.
+/// The paths of the active entries in one `clippy.toml` list. Each line of
+/// the list is blank, a comment, or exactly one
+/// `{ path = "...", reason = "..." },` entry; anything else fails, so a
+/// commented-out entry is never counted as one Clippy loaded.
 fn listed(config: &str, key: &str) -> BTreeSet<String> {
-    let start = config
-        .find(&format!("\n{key} = ["))
-        .unwrap_or_else(|| panic!("clippy.toml has no {key} list"));
-    let list = &config[start..];
-    let list = &list[..list.find("\n]").expect("the list is closed")];
-    list.split("path = \"")
-        .skip(1)
-        .map(|rest| rest[..rest.find('"').expect("a quoted path")].to_owned())
-        .collect()
+    let opener = format!("{key} = [");
+    let mut lines = config.lines().skip_while(|line| *line != opener);
+    assert!(lines.next().is_some(), "clippy.toml has no {key} list");
+    let mut paths = BTreeSet::new();
+    for line in lines.map(str::trim) {
+        if line == "]" {
+            return paths;
+        }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((path, _)) = line
+            .strip_prefix("{ path = \"")
+            .and_then(|rest| rest.split_once('"'))
+            .filter(|(_, rest)| rest.starts_with(", reason = \"") && rest.ends_with("\" },"))
+        else {
+            panic!("clippy.toml {key}: unreadable line {line}");
+        };
+        assert!(
+            paths.insert(path.to_owned()),
+            "clippy.toml {key} repeats {path}"
+        );
+    }
+    panic!("clippy.toml {key} is not closed");
 }
 
-/// The contents of each `allow(...)` or `expect(...)` lint list in `code`,
-/// skipping `.expect(` and `::expect(` calls.
-fn lint_lists(code: &str) -> Vec<&str> {
+/// Each `allow(...)` or `expect(...)` lint list in `code`, whose whitespace
+/// is removed, with whether it is an expectation and its items, skipping
+/// `.expect(` and `::expect(` calls and a list's `reason`.
+fn lint_lists(code: &str) -> Vec<(bool, Vec<&str>)> {
     let mut lists = Vec::new();
-    for opener in [concat!("allow", "("), concat!("expect", "(")] {
+    for (expect, opener) in [(false, "allow("), (true, "expect(")] {
         for (start, _) in code.match_indices(opener) {
             let before = code[..start].chars().next_back();
             if before.is_some_and(|c| c == '.' || c == ':' || c == '_' || c.is_alphanumeric()) {
@@ -199,18 +252,27 @@ fn lint_lists(code: &str) -> Vec<&str> {
             }
             let open = start + opener.len();
             let mut depth = 1;
-            let end = code[open..]
-                .char_indices()
-                .find_map(|(offset, c)| {
-                    match c {
-                        '(' => depth += 1,
-                        ')' => depth -= 1,
-                        _ => {}
+            let mut items = Vec::new();
+            let mut item = open;
+            let mut end = code.len();
+            for (offset, c) in code[open..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    ',' if depth == 1 => {
+                        items.push(&code[item..open + offset]);
+                        item = open + offset + 1;
                     }
-                    (depth == 0).then_some(open + offset)
-                })
-                .unwrap_or(code.len());
-            lists.push(&code[open..end]);
+                    _ => {}
+                }
+                if depth == 0 {
+                    end = open + offset;
+                    break;
+                }
+            }
+            items.push(&code[item..end]);
+            items.retain(|item| !item.is_empty() && !item.starts_with("reason="));
+            lists.push((expect, items));
         }
     }
     lists
@@ -238,15 +300,6 @@ fn only_the_pinned_items_suppress_the_gate() {
     let exceptions = exceptions();
     for (file, path) in rust_files(&source) {
         let mut code = without_whitespace(&fs::read_to_string(&path).expect("source is readable"));
-        if file == PROBES {
-            // A probe expects the lint to fire; it never allows it.
-            for lint in &GATE_LINTS[..3] {
-                code = code.replace(
-                    &format!("{}(clippy::{lint}", concat!("#[ex", "pect")),
-                    "#[probe(",
-                );
-            }
-        }
         for (_, pinned) in exceptions.iter().filter(|(owner, _)| *owner == file) {
             let pinned = without_whitespace(pinned);
             match code.matches(&pinned).count() {
@@ -259,14 +312,13 @@ fn only_the_pinned_items_suppress_the_gate() {
                 )),
             }
         }
-        for lint in GATE_LINTS {
-            if code.contains(lint) {
-                problems.push(format!("{file}: names {lint} outside a pinned exception"));
-            }
-        }
-        for list in lint_lists(&code) {
-            if list.contains("warnings") || list.contains('$') {
-                problems.push(format!("{file}: suppresses `{list}`"));
+        for (expect, items) in lint_lists(&code) {
+            // A probe expects a gate lint to fire; nothing may allow one.
+            let probe = file == PROBES && expect;
+            for item in items {
+                if names_the_gate(item) && !(probe && is_gate_lint(item)) {
+                    problems.push(format!("{file}: suppresses `{item}`"));
+                }
             }
         }
         // Code from outside `src` would escape this scan.
@@ -298,8 +350,42 @@ fn the_suppression_scan_reads_each_lint_list() {
         "#[al",
         "low(dead_code, warnings)] fn a() { x.expect(\"warnings\"); }",
         "#[cfg_attr(test, ex",
-        "pect($lint))] fn b() {}",
+        "pect($lint, reason = \"r\"))] fn b() {}",
+        "#[de",
+        "ny(clippy::disallowed_methods)] fn c() {}",
         "Option::expect(value, \"$1\");",
     ));
-    assert_eq!(lint_lists(&code), ["dead_code,warnings", "$lint"]);
+    let lists = lint_lists(&code);
+    assert_eq!(
+        lists,
+        [
+            (false, vec!["dead_code", "warnings"]),
+            (true, vec!["$lint"])
+        ]
+    );
+    let flagged: Vec<_> = lists
+        .iter()
+        .flat_map(|(_, items)| items.iter().copied().filter(|item| names_the_gate(item)))
+        .collect();
+    assert_eq!(flagged, ["warnings", "$lint"]);
+    assert!(names_the_gate("clippy::disallowed_method"));
+    assert!(!names_the_gate("clippy::pedantic"));
+}
+
+#[test]
+fn the_inventory_reader_counts_only_active_entries() {
+    let config = concat!(
+        "x = 1\n",
+        "list = [\n",
+        "    { path = \"a\", reason = \"r\" },\n",
+        "    # { path = \"b\", reason = \"r\" },\n",
+        "]\n",
+    );
+    assert_eq!(listed(config, "list"), BTreeSet::from(["a".to_owned()]));
+    for unreadable in [
+        "list = [\n    { path = \"a\", reason = \"r\" }, # trailing\n]\n",
+        "list = [\n    { path = \"a\", reason = \"r\" },\n",
+    ] {
+        assert!(std::panic::catch_unwind(|| listed(unreadable, "list")).is_err());
+    }
 }

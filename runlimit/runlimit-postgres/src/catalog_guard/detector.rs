@@ -160,8 +160,9 @@ fn outside_dialect(sql: &str) -> Vec<String> {
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
+            // PostgreSQL ends a line comment at either line terminator.
             b'-' if bytes.get(index + 1) == Some(&b'-') => {
-                while index < bytes.len() && bytes[index] != b'\n' {
+                while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
                     index += 1;
                 }
             }
@@ -354,8 +355,8 @@ fn strip_comments_and_quotes(sql: &str) -> String {
         match character {
             '-' if chars.peek() == Some(&'-') => {
                 for skipped in chars.by_ref() {
-                    if skipped == '\n' {
-                        code.push('\n');
+                    if matches!(skipped, '\n' | '\r') {
+                        code.push(skipped);
                         break;
                     }
                 }

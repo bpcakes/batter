@@ -223,8 +223,9 @@ class SqlGateTests(unittest.TestCase):
 
     def test_lowering_a_gate_lint_or_its_group_fails(self):
         for setting in (b'style = "allow"', b'default = { level = "allow" }',
-                        b'disallowed_methods = "allow"', b'disallowed_types = { level = "allow" }',
-                        b'disallowed_macros = "allow"'):
+                        b'disallowed_methods = "allow"', b'disallowed-methods = "allow"',
+                        b'disallowed_types = { priority = 1, level = "allow" }',
+                        b'disallowed-macros = { level = "allow", priority = 1 }'):
             with self.subTest(setting=setting), self.assertRaisesRegex(ValueError, 'lowers'):
                 validate_sql_gate(self.tree(self.MANIFEST + setting + b'\n'))
         lowered_all = self.MANIFEST.replace(b'all = { level = "warn", priority = -1 }',
@@ -232,13 +233,21 @@ class SqlGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'clippy::all'):
             validate_sql_gate(self.tree(lowered_all))
 
+    def test_lint_levels_set_in_another_form_fail_closed(self):
+        for manifest in (self.MANIFEST + b'\n[lints.clippy.style]\nlevel = "allow"\n',
+                         b'lints.clippy.style = "allow"\n' + self.MANIFEST,
+                         self.MANIFEST + b'"style" = "allow"\n',
+                         self.MANIFEST + b'style = { level = "allow", note = 1 }\n'):
+            with self.subTest(manifest=manifest), self.assertRaises(ValueError):
+                validate_sql_gate(self.tree(manifest))
+
     def test_allowing_warnings_or_inheriting_workspace_levels_fails(self):
-        for lint in (b'warnings', b'unfulfilled_lint_expectations'):
+        for lint in (b'warnings', b'unfulfilled_lint_expectations', b'unfulfilled-lint-expectations'):
             allowed = self.MANIFEST.replace(b'unsafe_code = "forbid"', lint + b' = "allow"')
-            with self.subTest(lint=lint), self.assertRaisesRegex(ValueError, lint.decode()):
+            with self.subTest(lint=lint), self.assertRaisesRegex(ValueError, 'lowers'):
                 validate_sql_gate(self.tree(allowed))
         inherited = (b'[package]\nname = "runlimit-postgres"\n\n[lints]\nworkspace = true\n')
-        with self.assertRaisesRegex(ValueError, 'workspace'):
+        with self.assertRaisesRegex(ValueError, 'inherits'):
             validate_sql_gate(self.tree(inherited))
 
     def test_dropping_a_shared_clippy_setting_fails(self):

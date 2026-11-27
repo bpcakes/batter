@@ -5,10 +5,11 @@ cognitive-complexity-threshold = 20
 # This crate sends SQL text only through `statements::Statement::query`, the
 # one site allowed to call `sqlx::query`; the bundled migrators run only the
 # migrations `sqlx::migrate!` embeds. Every sqlx 0.9 entry point that accepts
-# SQL text, or makes text acceptable, is disallowed, so Clippy resolves each
-# call, import, rename and trait method to it. `src/catalog_guard/gate.rs`
-# pins this inventory, probes each entry and checks that nothing else
-# suppresses these lints.
+# SQL text, makes text acceptable, builds SQL from a name this crate supplies
+# or calls a catalog function through `search_path` is disallowed, so Clippy
+# resolves each call, import, rename and trait method to it.
+# `src/catalog_guard/gate.rs` pins this inventory, probes each entry and
+# checks that nothing else suppresses these lints.
 disallowed-methods = [
     { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },
     { path = "sqlx::query_with", reason = "run SQL only through statements::Statement::query" },
@@ -40,9 +41,24 @@ disallowed-methods = [
     { path = "sqlx::Execute::sql", reason = "SQL text comes only from a Statement" },
     { path = "sqlx::Transaction::begin", reason = "begin transactions with the default statement" },
     { path = "sqlx::migrate::Migrator::new", reason = "run only the migrations sqlx::migrate! embeds" },
+    { path = "sqlx::migrate::Migrator::dangerous_set_table_name", reason = "migration table names are interpolated into SQL" },
+    { path = "sqlx::migrate::Migrator::create_schema", reason = "migration schema names are interpolated into SQL" },
     { path = "sqlx::migrate::MigrationSource::resolve", reason = "run only the migrations sqlx::migrate! embeds" },
     { path = "sqlx::migrate::resolve_blocking", reason = "run only the migrations sqlx::migrate! embeds" },
     { path = "sqlx::migrate::resolve_blocking_with_config", reason = "run only the migrations sqlx::migrate! embeds" },
+    { path = "sqlx::migrate::Migrate::create_schema_if_not_exists", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::ensure_migrations_table", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::dirty_version", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::list_applied_migrations", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::lock", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::unlock", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::apply", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::revert", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::Migrate::skip", reason = "sends sqlx-built SQL; run migrations through the bundled migrators" },
+    { path = "sqlx::migrate::MigrateDatabase::create_database", reason = "sends SQL built from a database URL" },
+    { path = "sqlx::migrate::MigrateDatabase::database_exists", reason = "sends SQL built from a database URL" },
+    { path = "sqlx::migrate::MigrateDatabase::drop_database", reason = "sends SQL built from a database URL" },
+    { path = "sqlx::migrate::MigrateDatabase::force_drop_database", reason = "sends SQL built from a database URL" },
 ]
 disallowed-types = [
     { path = "sqlx::AssertSqlSafe", reason = "SQL text comes only from a Statement" },
@@ -50,6 +66,8 @@ disallowed-types = [
     { path = "sqlx::QueryBuilder", reason = "SQL text comes only from a Statement" },
     { path = "sqlx::RawSql", reason = "SQL text comes only from a Statement" },
     { path = "sqlx::migrate::Migration", reason = "run only the migrations sqlx::migrate! embeds" },
+    { path = "sqlx::postgres::PgListener", reason = "LISTEN statements are built from channel names" },
+    { path = "sqlx::postgres::PgAdvisoryLock", reason = "its SQL calls pg_advisory_lock through search_path; lock with a Statement" },
 ]
 disallowed-macros = [
     { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },

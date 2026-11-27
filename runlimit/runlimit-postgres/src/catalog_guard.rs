@@ -124,6 +124,8 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT $1::double",
         "SELECT $1::DOUBLE, $2::double precision",
         "SELECT * FROM json_to_record($1) AS (values integer)",
+        "SELECT 1 -- note\rFROM floor(1)",
+        "SELECT 1 -- note\r$tag$x$tag$",
         "SELECT * FROM t, json_to_record($1) AS (insert integer)",
         "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[]) WITH ORDINALITY AS x(v, n), floor(1)",
     ] {

@@ -5,9 +5,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import re
 import tarfile
 import tempfile
-import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -31,6 +31,11 @@ UNEXECUTED_RECORDS = {
 SQL_GATE_LINTS = frozenset({'all', 'default', 'style', 'disallowed_methods',
                             'disallowed_types', 'disallowed_macros'})
 ENABLED_LEVELS = frozenset({'warn', 'deny', 'forbid'})
+# A `[lints.rust]` or `[lints.clippy]` header, and one entry inside it.
+LINT_TABLE = re.compile(r'^\[lints(?:\.(rust|clippy))?\]\s*(?:#.*)?$')
+LINT_ENTRY = re.compile(r'^([A-Za-z0-9_-]+)\s*=\s*(?:"([a-z]+)"|\{(.*)\})\s*(?:#.*)?$')
+INLINE_LEVEL = re.compile(r'^\s*(?:level\s*=\s*"([a-z]+)"\s*(?:,\s*priority\s*=\s*-?\d+\s*)?'
+                          r'|priority\s*=\s*-?\d+\s*,\s*level\s*=\s*"([a-z]+)"\s*)$')
 
 
 def validate_graph(metadata, root):
@@ -120,9 +125,40 @@ def validate_provenance(root, expected, required=None):
             raise ValueError('provenance holds an uninventoried file: ' + name)
 
 
-def lint_level(setting):
-    """The level of a `[lints]` entry, written as a string or a table."""
-    return setting.get('level') if isinstance(setting, dict) else setting
+def manifest_lints(text):
+    """The `[lints.rust]` and `[lints.clippy]` levels of a repository-controlled manifest.
+
+    This is a fail-closed reader for that schema, not a TOML parser, so the
+    verification entrypoint keeps its Python 3.9 minimum: a lint set in any
+    other table, as a dotted key or in any other form raises. Names are
+    normalized to underscores, as Cargo accepts either spelling.
+    """
+    levels = {'rust': {}, 'clippy': {}}
+    table = None
+    for number, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('['):
+            match = LINT_TABLE.match(line)
+            if match and match.group(1) is None:
+                raise ValueError('runlimit-postgres sets [lints], which inherits or nests lint '
+                                 'levels; its SQL gate sets [lints.rust] and [lints.clippy]')
+            if not match and re.match(r'^\[+\s*"?lints\b', line):
+                raise ValueError(f'Cargo.toml:{number}: unsupported lint table {line}')
+            table = match.group(1) if match else None
+            continue
+        if table is None:
+            if re.match(r'^"?lints\b', line):
+                raise ValueError(f'Cargo.toml:{number}: set lints in [lints.rust] or [lints.clippy]')
+            continue
+        entry = LINT_ENTRY.match(line)
+        inline = entry and entry.group(3) is not None and INLINE_LEVEL.match(entry.group(3))
+        if not entry or (entry.group(3) is not None and not inline):
+            raise ValueError(f'Cargo.toml:{number}: unreadable lint entry {line}')
+        level = entry.group(2) or inline.group(1) or inline.group(2)
+        levels[table][entry.group(1).replace('-', '_')] = level
+    return levels
 
 
 def validate_sql_gate(root):
@@ -137,22 +173,24 @@ def validate_sql_gate(root):
     of runlimit/clippy.toml, must repeat every shared setting.
     """
     package = Path(root) / 'runlimit' / 'runlimit-postgres'
-    lints = tomllib.loads((package / 'Cargo.toml').read_text()).get('lints', {})
-    if 'workspace' in lints:
-        raise ValueError('runlimit-postgres inherits workspace lint levels; its SQL gate sets its own')
-    clippy = lints.get('clippy', {})
-    if lint_level(clippy.get('all')) not in ENABLED_LEVELS:
+    lints = manifest_lints((package / 'Cargo.toml').read_text())
+    clippy = lints['clippy']
+    if clippy.get('all') not in ENABLED_LEVELS:
         raise ValueError('runlimit-postgres must enable clippy::all, which holds its SQL gate')
-    lowered = [f'clippy::{name}' for name, setting in clippy.items()
-               if name in SQL_GATE_LINTS and lint_level(setting) not in ENABLED_LEVELS]
-    lowered += [name for name, setting in lints.get('rust', {}).items()
+    lowered = [f'clippy::{name}' for name, level in clippy.items()
+               if name in SQL_GATE_LINTS and level not in ENABLED_LEVELS]
+    lowered += [name for name, level in lints['rust'].items()
                 if name in ('warnings', 'unfulfilled_lint_expectations')
-                and lint_level(setting) not in ENABLED_LEVELS]
+                and level not in ENABLED_LEVELS]
     if lowered:
         raise ValueError(f'runlimit-postgres lowers its SQL gate lints: {sorted(lowered)}')
-    shared = tomllib.loads((Path(root) / 'runlimit' / 'clippy.toml').read_text())
-    local = tomllib.loads((package / 'clippy.toml').read_text())
-    dropped = sorted(key for key, value in shared.items() if local.get(key) != value)
+    # The shared file holds scalar `key = value` settings; each must appear as
+    # the same top-level line in the crate's file.
+    local = {line.strip() for line in (package / 'clippy.toml').read_text().splitlines()}
+    dropped = sorted(line.strip() for line in
+                     (Path(root) / 'runlimit' / 'clippy.toml').read_text().splitlines()
+                     if line.strip() and not line.strip().startswith('#')
+                     and line.strip() not in local)
     if dropped:
         raise ValueError(f'runlimit-postgres/clippy.toml drops shared settings: {dropped}')
 

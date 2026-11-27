@@ -202,7 +202,9 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   from each family's `statements!` block, whose text is a string literal or
   `include_str!` of a `.sql` file directly in `src`; add a statement there,
   and a new family to `families!`. The crate's own `clippy.toml` disallows
-  every sqlx entry point that accepts SQL text, so SQL reaches sqlx only
+  every sqlx entry point that accepts SQL text or builds SQL from a name the
+  crate supplies (migration tables, databases, `LISTEN` channels), and the
+  advisory-lock helper whose SQL resolves through `search_path`, so SQL reaches sqlx only
   through `Statement::query`; the three bundled migrators are the only other
   pinned exception. Do not suppress those lints, their groups,
   `warnings` or `unfulfilled_lint_expectations` anywhere else, and re-read
