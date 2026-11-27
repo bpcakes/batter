@@ -59,7 +59,10 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   lease is granted for the whole policy lease or refused: where its deadline
   is not representable `admit` returns `DeadlineOverflow`, which memory
   reports as `ClockExhausted` and PostgreSQL as its storage-range invariant.
-  Do not saturate a lease deadline. A lease token is the
+  Do not saturate a lease deadline. Every admission result carries the
+  subject's state at the evaluation instant, a grant and a refused deadline
+  included, so a memory admission that fails after evaluating still stores
+  it. A lease token is the
   only completion fence, so a backend never issues one again for a subject
   while an older receipt can still present it, across removal and recreation
   of the stored subject included: memory numbers leases from one store-wide

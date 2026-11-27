@@ -5,6 +5,7 @@ use runlimit_core::{
     attempts::{
         AdmitEvaluation, AttemptCompletion, AttemptDenial, AttemptLease, AttemptOutcome,
         AttemptPolicy, AttemptState, CompleteEvaluation, FailedAttempts, LeaseDenial,
+        UnleasedAttempt,
     },
 };
 use std::{num::NonZeroU32, time::Duration};
@@ -50,7 +51,7 @@ fn grant(state: AttemptState<u8>, now: u64) -> (u32, Duration) {
     match state.admit(&policy(), ms(now)) {
         AdmitEvaluation::Grant(pending) => (pending.failures(), pending.until()),
         AdmitEvaluation::Denied(denied) => panic!("unexpected denial {:?}", denied.denial()),
-        AdmitEvaluation::DeadlineOverflow => panic!("the lease deadline overflowed"),
+        AdmitEvaluation::DeadlineOverflow(_) => panic!("the lease deadline overflowed"),
     }
 }
 fn denial(state: AttemptState<u8>, now: u64) -> (AttemptState<u8>, LeaseDenial) {
@@ -60,7 +61,7 @@ fn denial_at(state: AttemptState<u8>, now: Duration) -> (AttemptState<u8>, Lease
     match state.admit(&policy(), now) {
         AdmitEvaluation::Denied(denied) => (denied.held().into(), denied.denial()),
         AdmitEvaluation::Grant(pending) => panic!("unexpected grant {pending:?}"),
-        AdmitEvaluation::DeadlineOverflow => panic!("the lease deadline overflowed"),
+        AdmitEvaluation::DeadlineOverflow(_) => panic!("the lease deadline overflowed"),
     }
 }
 fn busy(remaining: u64) -> LeaseDenial {
@@ -218,6 +219,7 @@ fn a_released_retry_time_admits_without_forgetting_failures() {
     let AdmitEvaluation::Grant(pending) = state.admit(&policy(), ms(1_000)) else {
         panic!("released subject was denied");
     };
+    assert_eq!(AttemptState::from(pending.replaces()), state);
     let (_, completion) = applied(
         AttemptState::Leased(pending.issue(TOKEN)),
         1_001,
@@ -283,15 +285,29 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
             let lease = AttemptState::Leased(pending.issue(TOKEN));
             assert_eq!(pending.until(), now.saturating_add(ms(LEASE)));
             assert_eq!(lease.settle(&policy, now), lease);
+            // The reservation replaces the subject's state at that instant.
+            assert_eq!(
+                AttemptState::from(pending.replaces()),
+                state.settle(&policy, now)
+            );
         }
     }
     // Past that instant no deadline is representable. A subject that would be
     // admitted is refused instead of taking a shortened or expired lease.
     for now in [last_grant.saturating_add(Duration::from_nanos(1)), end] {
         for state in admissible {
-            assert_eq!(state.admit(&policy, now), AdmitEvaluation::DeadlineOverflow);
+            assert_eq!(
+                state.admit(&policy, now),
+                AdmitEvaluation::DeadlineOverflow(UnleasedAttempt::Clear)
+            );
         }
     }
+    // The refusal carries the state at that instant, failures included.
+    let recent = FailedAttempts::new(NonZeroU32::MIN, last_grant, last_grant);
+    assert_eq!(
+        AttemptState::<u8>::Failed(recent).admit(&policy, end.saturating_sub(ms(1))),
+        AdmitEvaluation::DeadlineOverflow(UnleasedAttempt::Failed(recent))
+    );
     // A held subject is still denied there, and its lease still expires. The
     // failure's retry and quiet deadlines both saturate to the last instant,
     // so at that instant the expiry counts and then clears.

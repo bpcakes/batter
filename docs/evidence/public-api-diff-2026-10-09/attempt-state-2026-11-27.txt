@@ -15,13 +15,13 @@ under `runlimit_core::attempts`. The only addition outside it is the variant
 exhaustive match on that enum compiling and has its `Breaking:` entry in
 runlimit/CHANGELOG.md. runlimit-postgres is unchanged.
 
-## runlimit-core: 722 -> 855 entries; 0 removed, 133 added
+## runlimit-core: 722 -> 856 entries; 0 removed, 134 added
 + ADDED   enum runlimit_core::attempts::AdmitEvaluation
 + ADDED   enum runlimit_core::attempts::AttemptState
 + ADDED   enum runlimit_core::attempts::CompleteEvaluation
 + ADDED   enum runlimit_core::attempts::HeldAttempt
 + ADDED   enum runlimit_core::attempts::LeaseDenial
-+ ADDED   enum runlimit_core::attempts::ReleasedAttempt
++ ADDED   enum runlimit_core::attempts::UnleasedAttempt
 + ADDED   impl runlimit_core::attempts::AdmitEvaluation: Clone
 + ADDED   impl runlimit_core::attempts::AdmitEvaluation: Copy
 + ADDED   impl runlimit_core::attempts::AdmitEvaluation: Debug
@@ -86,18 +86,18 @@ runlimit/CHANGELOG.md. runlimit-postgres is unchanged.
 + ADDED   impl runlimit_core::attempts::PendingLease: Eq
 + ADDED   impl runlimit_core::attempts::PendingLease: PartialEq
 + ADDED   impl runlimit_core::attempts::PendingLease: StructuralPartialEq
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: Clone
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: Copy
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: Debug
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: Eq
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: From
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: PartialEq
-+ ADDED   impl runlimit_core::attempts::ReleasedAttempt: StructuralPartialEq
 + ADDED   impl runlimit_core::attempts::StorageFenced: Clone
 + ADDED   impl runlimit_core::attempts::StorageFenced: Copy
 + ADDED   impl runlimit_core::attempts::StorageFenced: Debug
 + ADDED   impl runlimit_core::attempts::StorageFenced: PartialEq
 + ADDED   impl runlimit_core::attempts::StorageFenced: StructuralPartialEq
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: Clone
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: Copy
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: Debug
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: Eq
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: From
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: PartialEq
++ ADDED   impl runlimit_core::attempts::UnleasedAttempt: StructuralPartialEq
 + ADDED   method runlimit_core::attempts::AppliedCompletion::completion
 + ADDED   method runlimit_core::attempts::AppliedCompletion::released
 + ADDED   method runlimit_core::attempts::AttemptLease::failures
@@ -116,6 +116,7 @@ runlimit/CHANGELOG.md. runlimit-postgres is unchanged.
 + ADDED   method runlimit_core::attempts::FailedAttempts::retry_at
 + ADDED   method runlimit_core::attempts::PendingLease::failures
 + ADDED   method runlimit_core::attempts::PendingLease::issue
++ ADDED   method runlimit_core::attempts::PendingLease::replaces
 + ADDED   method runlimit_core::attempts::PendingLease::until
 + ADDED   struct runlimit_core::attempts::AppliedCompletion
 + ADDED   struct runlimit_core::attempts::AttemptLease
@@ -133,8 +134,8 @@ runlimit/CHANGELOG.md. runlimit-postgres is unchanged.
 + ADDED   use runlimit_core::attempts::HeldAttempt <- evaluation::HeldAttempt
 + ADDED   use runlimit_core::attempts::LeaseDenial <- evaluation::LeaseDenial
 + ADDED   use runlimit_core::attempts::PendingLease <- evaluation::PendingLease
-+ ADDED   use runlimit_core::attempts::ReleasedAttempt <- evaluation::ReleasedAttempt
 + ADDED   use runlimit_core::attempts::StorageFenced <- state::StorageFenced
++ ADDED   use runlimit_core::attempts::UnleasedAttempt <- evaluation::UnleasedAttempt
 + ADDED   variant runlimit_core::attempts::AdmitEvaluation::DeadlineOverflow
 + ADDED   variant runlimit_core::attempts::AdmitEvaluation::Denied
 + ADDED   variant runlimit_core::attempts::AdmitEvaluation::Grant
@@ -147,8 +148,8 @@ runlimit/CHANGELOG.md. runlimit-postgres is unchanged.
 + ADDED   variant runlimit_core::attempts::HeldAttempt::Leased
 + ADDED   variant runlimit_core::attempts::LeaseDenial::Backoff
 + ADDED   variant runlimit_core::attempts::LeaseDenial::Busy
-+ ADDED   variant runlimit_core::attempts::ReleasedAttempt::Clear
-+ ADDED   variant runlimit_core::attempts::ReleasedAttempt::Failed
++ ADDED   variant runlimit_core::attempts::UnleasedAttempt::Clear
++ ADDED   variant runlimit_core::attempts::UnleasedAttempt::Failed
 
 ## runlimit-memory: 155 -> 156 entries; 0 removed, 1 added
 + ADDED   variant runlimit_memory::attempts::MemoryAttemptError::ClockExhausted

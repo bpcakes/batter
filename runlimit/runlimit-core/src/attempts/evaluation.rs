@@ -10,14 +10,22 @@ use crate::Delay;
 /// An evaluated reservation that the backend has not persisted yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PendingLease {
-    pub(super) failures: u32,
+    pub(super) replaces: UnleasedAttempt,
     pub(super) until: Duration,
 }
 
 impl PendingLease {
+    /// The subject's state at the evaluation instant, which the reservation
+    /// replaces. A backend that cannot issue the lease stores this instead.
+    pub const fn replaces(&self) -> UnleasedAttempt {
+        self.replaces
+    }
     /// Consecutive failures the new reservation carries forward.
     pub const fn failures(&self) -> u32 {
-        self.failures
+        match self.replaces {
+            UnleasedAttempt::Clear => 0,
+            UnleasedAttempt::Failed(failed) => failed.failures().get(),
+        }
     }
     /// The instant from which the new reservation is expired: the evaluation
     /// instant plus the whole policy lease.
@@ -28,7 +36,7 @@ impl PendingLease {
     /// outstanding for the subject may carry that token: see the obligations
     /// on [`AttemptState`].
     pub const fn issue<T>(self, token: T) -> AttemptLease<T> {
-        AttemptLease::new(token, self.failures, self.until)
+        AttemptLease::new(token, self.failures(), self.until)
     }
 }
 
@@ -74,12 +82,16 @@ pub enum AdmitEvaluation<T> {
     Denied(DeniedAdmission<T>),
     /// The subject would be admitted, but its lease deadline lies past the end
     /// of representable time, so no lease can be held. Nothing is reserved; a
-    /// backend reports its own clock or storage range failure.
+    /// backend reports its own clock or storage range failure. The payload is
+    /// the subject's state at the evaluation instant, to store or leave as for
+    /// [`DeniedAdmission::held`].
     ///
     /// ```
     /// # use std::time::Duration;
     /// # use runlimit_core::{PolicyId, QuotaPeriod, ScopeId};
-    /// use runlimit_core::attempts::{AdmitEvaluation, AttemptPolicy, AttemptState};
+    /// use runlimit_core::attempts::{
+    ///     AdmitEvaluation, AttemptPolicy, AttemptState, UnleasedAttempt,
+    /// };
     /// # let seconds = |value| QuotaPeriod::new(Duration::from_secs(value)).unwrap();
     /// # let policy = AttemptPolicy::new(
     /// #     PolicyId::new("sign-in").unwrap(),
@@ -94,10 +106,10 @@ pub enum AdmitEvaluation<T> {
     /// let late = Duration::MAX - Duration::from_secs(19);
     /// assert_eq!(
     ///     AttemptState::<u64>::Clear.admit(&policy, late),
-    ///     AdmitEvaluation::DeadlineOverflow
+    ///     AdmitEvaluation::DeadlineOverflow(UnleasedAttempt::Clear)
     /// );
     /// ```
-    DeadlineOverflow,
+    DeadlineOverflow(UnleasedAttempt),
 }
 
 /// The state of a subject that cannot be admitted. [`AttemptState::Clear`]
@@ -176,21 +188,22 @@ pub enum CompleteEvaluation<T> {
     },
 }
 
-/// The state an applied completion leaves. The lease is released either way,
-/// so [`AttemptState::Leased`] is not among them.
+/// The state of a subject no lease holds: what an applied completion leaves,
+/// and what an admissible subject is in before its reservation. It is never
+/// [`AttemptState::Leased`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleasedAttempt {
-    /// The attempt succeeded and no failure is retained.
+pub enum UnleasedAttempt {
+    /// No failure is retained.
     Clear,
-    /// The attempt failed or was abandoned.
+    /// Consecutive failures are retained.
     Failed(FailedAttempts),
 }
 
-impl<T> From<ReleasedAttempt> for AttemptState<T> {
-    fn from(released: ReleasedAttempt) -> Self {
+impl<T> From<UnleasedAttempt> for AttemptState<T> {
+    fn from(released: UnleasedAttempt) -> Self {
         match released {
-            ReleasedAttempt::Clear => Self::Clear,
-            ReleasedAttempt::Failed(failed) => Self::Failed(failed),
+            UnleasedAttempt::Clear => Self::Clear,
+            UnleasedAttempt::Failed(failed) => Self::Failed(failed),
         }
     }
 }
@@ -199,25 +212,25 @@ impl<T> From<ReleasedAttempt> for AttemptState<T> {
 /// gives at the evaluation instant.
 ///
 /// Only [`AttemptState::complete`] builds one, so a success is always stored
-/// as [`ReleasedAttempt::Clear`] and a failure with its own count and delay:
+/// as [`UnleasedAttempt::Clear`] and a failure with its own count and delay:
 ///
 /// ```compile_fail,E0451
-/// use runlimit_core::attempts::{AppliedCompletion, AttemptCompletion, FailedAttempts, ReleasedAttempt};
+/// use runlimit_core::attempts::{AppliedCompletion, AttemptCompletion, FailedAttempts, UnleasedAttempt};
 /// fn mismatched(success: AttemptCompletion, failed: FailedAttempts) -> AppliedCompletion {
-///     AppliedCompletion { released: ReleasedAttempt::Failed(failed), completion: success }
+///     AppliedCompletion { released: UnleasedAttempt::Failed(failed), completion: success }
 /// }
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use = "an evaluation changes nothing until the backend stores its state"]
 pub struct AppliedCompletion {
-    pub(super) released: ReleasedAttempt,
+    pub(super) released: UnleasedAttempt,
     pub(super) completion: AttemptCompletion,
 }
 
 impl AppliedCompletion {
     /// The state the backend must store before it reports
     /// [`Self::completion`].
-    pub const fn released(&self) -> ReleasedAttempt {
+    pub const fn released(&self) -> UnleasedAttempt {
         self.released
     }
     /// Metadata for the applied outcome.

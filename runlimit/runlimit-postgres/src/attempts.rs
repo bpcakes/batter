@@ -297,7 +297,7 @@ async fn admit_transaction(
         AdmitEvaluation::Denied(denied) => return finish_denial(tx, denied.denial().into()).await,
         // The same refusal as a deadline past the storage range below. A
         // `BIGINT` millisecond clock ends long before the state's time does.
-        AdmitEvaluation::DeadlineOverflow => return Err(invariant(DEADLINE_RANGE)),
+        AdmitEvaluation::DeadlineOverflow(_) => return Err(invariant(DEADLINE_RANGE)),
     };
     let failures = i64::from(pending.failures());
     let until_ms = row::stored_instant(pending.until()).ok_or_else(|| invariant(DEADLINE_RANGE))?;

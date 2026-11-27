@@ -84,6 +84,32 @@ fn a_refused_lease_deadline_still_stores_the_settled_subject() {
 }
 
 #[test]
+fn an_exhausted_receipt_sequence_still_stores_the_settled_subject() {
+    let policy = policy();
+    let clock = TestClock::default();
+    let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone());
+    let subject = KeyHasher::new([7; 32])
+        .unwrap()
+        .hash_attempt_for(&policy, b"user");
+    let AttemptAdmission::Admitted(_abandoned) = limiter.admit(subject).unwrap() else {
+        panic!("first admission was denied");
+    };
+    // As above, this scan rests the cursor on the only entry.
+    assert!(matches!(
+        limiter.admit(subject).unwrap(),
+        AttemptAdmission::Denied(AttemptDenial::Busy { .. })
+    ));
+    limiter.state.lock().unwrap().generation = u64::MAX;
+    // The lease expired at 20 ms and its failure cleared at 120 ms.
+    clock.0.store(120, Ordering::SeqCst);
+    assert!(matches!(
+        limiter.admit(subject),
+        Err(MemoryAttemptError::SequenceExhausted)
+    ));
+    assert!(limiter.state.lock().unwrap().entries.is_empty());
+}
+
+#[test]
 fn cleanup_stores_the_failure_of_an_expired_lease_it_retains() {
     let policy = policy();
     let clock = TestClock::default();

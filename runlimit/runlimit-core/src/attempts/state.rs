@@ -6,7 +6,7 @@ use std::{num::NonZeroU32, time::Duration};
 
 use super::{
     AdmitEvaluation, AppliedCompletion, AttemptCompletion, AttemptOutcome, AttemptPolicy,
-    CompleteEvaluation, DeniedAdmission, HeldAttempt, PendingLease, ReleasedAttempt,
+    CompleteEvaluation, DeniedAdmission, HeldAttempt, PendingLease, UnleasedAttempt,
 };
 use crate::Delay;
 
@@ -56,7 +56,7 @@ use crate::Delay;
 ///     PolicyId, QuotaPeriod, ScopeId,
 ///     attempts::{
 ///         AdmitEvaluation, AttemptOutcome, AttemptPolicy, AttemptState, CompleteEvaluation,
-///         LeaseDenial, ReleasedAttempt,
+///         LeaseDenial, UnleasedAttempt,
 ///     },
 /// };
 ///
@@ -92,7 +92,7 @@ use crate::Delay;
 ///     unreachable!("the token holds the live lease");
 /// };
 /// assert_eq!(applied.completion().retry_after().duration(), Duration::from_secs(10));
-/// assert!(matches!(applied.released(), ReleasedAttempt::Failed(_)));
+/// assert!(matches!(applied.released(), UnleasedAttempt::Failed(_)));
 /// ```
 ///
 /// The variants are the whole lifecycle. A lease has no retry time and a retry
@@ -271,8 +271,8 @@ impl<T> AttemptState<T> {
     /// [`AdmitEvaluation::DeadlineOverflow`] instead of a shortened or
     /// already expired lease. Denials are unaffected there.
     pub fn admit(self, policy: &AttemptPolicy, now: Duration) -> AdmitEvaluation<T> {
-        let failures = match self.settle(policy, now) {
-            Self::Clear => 0,
+        let unleased = match self.settle(policy, now) {
+            Self::Clear => UnleasedAttempt::Clear,
             Self::Leased(lease) => {
                 return AdmitEvaluation::Denied(DeniedAdmission {
                     retry_after: Delay::new(lease.until.saturating_sub(now)),
@@ -287,11 +287,14 @@ impl<T> AttemptState<T> {
                     held: HeldAttempt::Failed(failed),
                 });
             }
-            Self::Failed(failed) => failed.failures.get(),
+            Self::Failed(failed) => UnleasedAttempt::Failed(failed),
         };
         match now.checked_add(policy.lease().duration()) {
-            Some(until) => AdmitEvaluation::Grant(PendingLease { failures, until }),
-            None => AdmitEvaluation::DeadlineOverflow,
+            Some(until) => AdmitEvaluation::Grant(PendingLease {
+                replaces: unleased,
+                until,
+            }),
+            None => AdmitEvaluation::DeadlineOverflow(unleased),
         }
     }
 
@@ -319,7 +322,7 @@ impl<T> AttemptState<T> {
         };
         match outcome {
             AttemptOutcome::Success => CompleteEvaluation::Applied(AppliedCompletion {
-                released: ReleasedAttempt::Clear,
+                released: UnleasedAttempt::Clear,
                 completion: AttemptCompletion {
                     outcome,
                     consecutive_failures: 0,
@@ -329,7 +332,7 @@ impl<T> AttemptState<T> {
             AttemptOutcome::Failure | AttemptOutcome::Abandoned => {
                 let failed = fail(policy, lease.failures, now);
                 CompleteEvaluation::Applied(AppliedCompletion {
-                    released: ReleasedAttempt::Failed(failed),
+                    released: UnleasedAttempt::Failed(failed),
                     completion: AttemptCompletion {
                         outcome,
                         consecutive_failures: failed.failures.get(),

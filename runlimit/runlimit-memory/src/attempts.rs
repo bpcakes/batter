@@ -6,7 +6,7 @@ use crate::{Clock, SystemClock};
 use runlimit_core::attempts::{
     AdmitEvaluation, AttemptAdmission, AttemptCompletionResult, AttemptDenial, AttemptObservation,
     AttemptObserver, AttemptOutcome, AttemptPolicy, AttemptState, AttemptSubject,
-    CompleteEvaluation, observe_attempt_safely,
+    CompleteEvaluation, UnleasedAttempt, observe_attempt_safely,
 };
 use std::{
     collections::BTreeMap,
@@ -148,15 +148,8 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
                     }
                     Err(denial)
                 }
-                AdmitEvaluation::DeadlineOverflow => {
-                    // Nothing is reserved, and the subject's state at this
-                    // instant is retained as on every other evaluation.
-                    if let Some(entry) = stored {
-                        entry.state = entry.state.settle(&entry.policy, now);
-                        if matches!(entry.state, AttemptState::Clear) {
-                            state.entries.remove(&key);
-                        }
-                    }
+                AdmitEvaluation::DeadlineOverflow(unleased) => {
+                    retain(&mut state.entries, &key, unleased);
                     return Err(MemoryAttemptError::ClockExhausted);
                 }
             }
@@ -169,11 +162,11 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
                 return Ok(AttemptAdmission::Denied(denial));
             }
         };
-        state.generation = state
-            .generation
-            .checked_add(1)
-            .ok_or(MemoryAttemptError::SequenceExhausted)?;
-        let generation = state.generation;
+        let Some(generation) = state.generation.checked_add(1) else {
+            retain(&mut state.entries, &key, pending.replaces());
+            return Err(MemoryAttemptError::SequenceExhausted);
+        };
+        state.generation = generation;
         let leased = AttemptState::Leased(pending.issue(generation));
         state
             .entries
@@ -247,6 +240,20 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
             AttemptCompletionResult::Stale => AttemptObservation::Stale,
         });
         Ok(result)
+    }
+}
+/// Retains the state of a subject whose reservation could not be made, as
+/// every other evaluation retains its own. A `Clear` subject is removed.
+fn retain(entries: &mut BTreeMap<Key, Entry>, key: &Key, unleased: UnleasedAttempt) {
+    match unleased {
+        UnleasedAttempt::Clear => {
+            entries.remove(key);
+        }
+        UnleasedAttempt::Failed(failed) => {
+            if let Some(entry) = entries.get_mut(key) {
+                entry.state = AttemptState::Failed(failed);
+            }
+        }
     }
 }
 /// Keys one admission's cleanup examines, and the size of its stack scratch.

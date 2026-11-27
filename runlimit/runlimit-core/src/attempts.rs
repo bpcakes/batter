@@ -11,7 +11,7 @@ mod state;
 
 pub use evaluation::{
     AdmitEvaluation, AppliedCompletion, CompleteEvaluation, DeniedAdmission, HeldAttempt,
-    LeaseDenial, PendingLease, ReleasedAttempt,
+    LeaseDenial, PendingLease, UnleasedAttempt,
 };
 pub use state::{AttemptLease, AttemptState, FailedAttempts, StorageFenced};
 

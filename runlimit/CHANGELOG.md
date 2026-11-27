@@ -17,9 +17,12 @@ The format is based on [Keep a Changelog], and this project adheres to
   `Denied(DeniedAdmission<T>)` or `DeadlineOverflow`) and `CompleteEvaluation`
   (`Applied(AppliedCompletion)` or `Stale`). A lease is granted for the whole
   policy lease or not at all: within one lease of `Duration::MAX` a subject
-  that would be admitted gets `DeadlineOverflow`. Only a transition builds a
+  that would be admitted gets `DeadlineOverflow`. A grant and a refused
+  deadline both carry the subject's `UnleasedAttempt` state at that instant,
+  so a backend that cannot issue the lease can still store it. Only a
+  transition builds a
   `DeniedAdmission` or an `AppliedCompletion`, and each carries the narrower
-  state it can leave, `HeldAttempt<T>` or `ReleasedAttempt`, beside the
+  state it can leave, `HeldAttempt<T>` or `UnleasedAttempt`, beside the
   `LeaseDenial` or `AttemptCompletion` that state gives, so a backend stores
   one and reports the other without checking them against each other. `T` is
   the backend's lease token, which `complete` requires to be
