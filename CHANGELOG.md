@@ -8,6 +8,32 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** `batter::runlimit::http::HttpQuota::new` takes the
+  `KeyHasher` as its third argument, and the subject selector returns the
+  normalized subject material (`impl AsRef<[u8]> + 'static`, such as an owner
+  id or a peer address) instead of a `SubjectKey` (`batter-39wm.8`). The
+  boundary derives each policy's key with `hasher.hash_for(policy, material)`,
+  so a protected route can no longer check an unbound key, an opaque
+  `SubjectKey::from_digest` value or a key derived for another policy, which
+  the old signature accepted and rebound. Every caller previously reached the
+  native escape hatch `into_unbound_subject_key` here.
+
+  ```rust
+  // Before:
+  HttpQuota::new(quota, policies, authenticate, move |principal, _peer, policy| {
+      hasher.hash_for(policy, principal.id()).into_unbound_subject_key()
+  })?;
+  // After:
+  HttpQuota::new(quota, policies, hasher, authenticate, |principal, _peer, _policy| {
+      principal.id()
+  })?;
+  ```
+
+  The `quota_service` example now awaits the supervisor's shutdown before
+  returning any body error, as `process_owned` does, through the shared
+  `examples/support.rs` `complete`, and imports native types through
+  `batter::runlimit::{native, memory}` only.
+
 - **Breaking:** require a validated `PgSessionTimeouts` in
   `PgSessionProfile::new` and remove `PgSessionProfile::with_timeouts`
   (`batter-ndpi`;

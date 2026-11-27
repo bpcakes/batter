@@ -103,6 +103,7 @@ impl Fixture {
         let client = HttpQuota::new(
             Quota::new(backend.clone()),
             vec![policy("owner", 10)],
+            hasher,
             move |input: AuthInput| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 let authorized = input.headers.get(header::AUTHORIZATION)
@@ -115,11 +116,7 @@ impl Fixture {
                     }
                 }
             },
-            move |principal: &Principal, _: DirectPeer, policy: &FixedWindowPolicy| {
-                hasher
-                    .hash_for(policy, principal.0)
-                    .into_unbound_subject_key()
-            },
+            |principal: &Principal, _: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
         )
         .unwrap()
         .with_public_probes(

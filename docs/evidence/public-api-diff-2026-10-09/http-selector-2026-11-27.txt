@@ -1,0 +1,20 @@
+batter-39wm.8 public API surface check, 2026-11-27
+
+Before: weed/runlimit-contract-breaks-39wm.6 (the stacked base of this change)
+After: weed/runlimit-http-selector-39wm.8
+Toolchain: nightly-2026-10-01
+Method: existing surface.py over rustdoc JSON from
+`cargo +nightly-2026-10-01 rustdoc -p batter-runlimit --lib --all-features --locked --
+-Zunstable-options --output-format json`, in separate worktrees per tree.
+This is a structural inspection only; supported verification uses the
+unmodified pinned toolchain.
+Result: no entry is added or removed. surface.py compares entries by path and
+kind, so it cannot see the one signature change, checked by hand:
+`batter_runlimit::http::HttpQuota::new` gains a `KeyHasher` third argument and
+its selector bound changes from `Fn(&P, DirectPeer, &L::Policy) -> SubjectKey`
+to `Fn(&P, DirectPeer, &L::Policy) -> S` with `S: AsRef<[u8]> + 'static`; the
+same selector bound changes on `HttpQuota::prepare`. That hard cut has its
+`Breaking:` entry in the root CHANGELOG.md and a `Migration:` sentence on
+`HttpQuota::new`.
+
+## batter-runlimit: 229 -> 229 entries; 0 removed, 0 added

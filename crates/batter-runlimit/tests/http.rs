@@ -71,6 +71,7 @@ where
     HttpQuota::new(
         quota,
         policies,
+        hasher,
         |input: AuthInput| async move {
             // Prove async authentication fits without a caller-owned middleware layer.
             tokio::task::yield_now().await;
@@ -85,15 +86,11 @@ where
                 _ => Err(AuthError),
             }
         },
-        move |principal: &Principal, peer: DirectPeer, policy: &FixedWindowPolicy| {
+        |principal: &Principal, peer: DirectPeer, policy: &FixedWindowPolicy| {
             if policy.scope().as_str() == "peer" {
-                hasher
-                    .hash_for(policy, peer.ip().to_string())
-                    .into_unbound_subject_key()
+                peer.ip().to_string()
             } else {
-                hasher
-                    .hash_for(policy, principal.0)
-                    .into_unbound_subject_key()
+                principal.0.to_owned()
             }
         },
     )
@@ -614,12 +611,9 @@ async fn authentication_timeout_never_reaches_quota_or_handler() {
     let client = HttpQuota::new(
         Quota::new(backend.clone()),
         vec![policy("owner", 1)],
+        hasher,
         |_input: AuthInput| std::future::pending::<Result<Principal, AuthError>>(),
-        move |principal: &Principal, _: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
     )
     .unwrap()
     .prepare(
@@ -672,6 +666,7 @@ async fn protected_routes_are_guarded_by_default_and_public_probes_are_explicit(
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
+        hasher,
         |input: AuthInput| async move {
             if input
                 .headers
@@ -683,11 +678,7 @@ async fn protected_routes_are_guarded_by_default_and_public_probes_are_explicit(
                 Err(AuthError)
             }
         },
-        move |principal: &Principal, _: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _: DirectPeer, _policy: &FixedWindowPolicy| principal.0,
     )
     .unwrap()
     .prepare(request_policy(&running, 1000), routes())

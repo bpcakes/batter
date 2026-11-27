@@ -24,7 +24,7 @@ use batter_core::{
     operation::{OperationContext, OperationError},
     registration::RegistrationTarget,
 };
-use runlimit_core::{Check, Denial, Limiter, QuotaMode, RateLimitPolicy, SubjectKey};
+use runlimit_core::{Check, Denial, KeyHasher, Limiter, QuotaMode, RateLimitPolicy};
 use std::{
     convert::Infallible,
     future::Future,
@@ -206,6 +206,7 @@ where
 {
     quota: Quota<L>,
     policies: Vec<L::Policy>,
+    hasher: KeyHasher,
     authenticate: A,
     subject: K,
     public_probes: Option<PublicProbes>,
@@ -221,21 +222,33 @@ where
     /// are retained in response extensions as `Arc<E>`.
     /// Authentication and subject-selector signatures are checked here.
     ///
+    /// For each policy, `subject` returns the normalized subject material,
+    /// such as an owner id or a peer address, and the boundary derives the
+    /// key with `hasher.hash_for(policy, material)`. The key is therefore
+    /// always bound to the policy it is checked against: a selector cannot
+    /// return an unbound key, an opaque digest or a key derived for another
+    /// policy.
+    ///
+    /// Migration: the selector used to return a `SubjectKey`, usually
+    /// `hasher.hash_for(policy, material).into_unbound_subject_key()`; pass
+    /// that `KeyHasher` as the third argument and return `material` instead.
+    ///
     /// A wrong authentication input fails at construction:
     ///
     /// ```compile_fail
     /// use batter_runlimit::{ConsumptionError, Quota};
     /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
-    /// use runlimit_core::{Limiter, SubjectKey};
+    /// use runlimit_core::{KeyHasher, Limiter};
     ///
     /// fn wrong_auth<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
     /// where
     ///     L::CheckAllError: ConsumptionError,
     /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
     ///     let _ = HttpQuota::new(
-    ///         quota, policies,
+    ///         quota, policies, hasher,
     ///         |_wrong: u8| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |_principal: &&'static str, _peer: DirectPeer, _policy: &L::Policy| -> SubjectKey { todo!() },
+    ///         |principal: &&'static str, _peer: DirectPeer, _policy: &L::Policy| *principal,
     ///     );
     /// }
     /// ```
@@ -245,22 +258,24 @@ where
     /// ```compile_fail
     /// use batter_runlimit::{ConsumptionError, Quota};
     /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
-    /// use runlimit_core::{Limiter, SubjectKey};
+    /// use runlimit_core::{KeyHasher, Limiter};
     ///
     /// fn wrong_selector<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
     /// where
     ///     L::CheckAllError: ConsumptionError,
     /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
     ///     let _ = HttpQuota::new(
-    ///         quota, policies,
+    ///         quota, policies, hasher,
     ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |_wrong: &u64, _peer: DirectPeer, _policy: &L::Policy| -> SubjectKey { todo!() },
+    ///         |_wrong: &u64, _peer: DirectPeer, _policy: &L::Policy| "owner",
     ///     );
     /// }
     /// ```
-    pub fn new<P, AE, AF>(
+    pub fn new<P, AE, AF, S>(
         quota: Quota<L>,
         policies: Vec<L::Policy>,
+        hasher: KeyHasher,
         authenticate: A,
         subject: K,
     ) -> Result<Self, HttpQuotaConfigError>
@@ -269,7 +284,8 @@ where
         AE: std::error::Error + Send + Sync + 'static,
         A: Fn(AuthInput) -> AF + Send + Sync + 'static,
         AF: Future<Output = Result<P, AE>> + Send + 'static,
-        K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+        K: Fn(&P, DirectPeer, &L::Policy) -> S + Send + Sync + 'static,
+        S: AsRef<[u8]> + 'static,
     {
         let Some(first) = policies.first() else {
             return Err(HttpQuotaConfigError::EmptyPolicies);
@@ -288,6 +304,7 @@ where
         Ok(Self {
             quota,
             policies,
+            hasher,
             authenticate,
             subject,
             public_probes: None,
@@ -327,13 +344,14 @@ where
     /// router merge to panic here, before the service can be registered.
     /// Use distinct paths for public and protected GET handlers.
     /// Response-body streaming is outside the operation and observation lifetime.
-    pub fn prepare<P, AE, AF>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
+    pub fn prepare<P, AE, AF, S>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
     where
         P: Clone + Send + Sync + 'static,
         AE: std::error::Error + Send + Sync + 'static,
         A: Fn(AuthInput) -> AF + Send + Sync + 'static,
         AF: Future<Output = Result<P, AE>> + Send + 'static,
-        K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+        K: Fn(&P, DirectPeer, &L::Policy) -> S + Send + Sync + 'static,
+        S: AsRef<[u8]> + 'static,
     {
         let probes = self
             .public_probes
@@ -348,7 +366,7 @@ where
         let business = routes
             .layer(middleware::from_fn_with_state(
                 Arc::new(self),
-                boundary::<L, A, K, P, AE, AF>,
+                boundary::<L, A, K, P, AE, AF, S>,
             ))
             .layer(middleware::from_fn_with_state(policy, request_admission));
         PreparedHttp {
@@ -442,7 +460,7 @@ impl BoundaryRejection {
     }
 }
 
-async fn boundary<L, A, K, P, AE, AF>(
+async fn boundary<L, A, K, P, AE, AF, S>(
     State(boundary): State<Arc<HttpQuota<L, A, K>>>,
     mut request: Request,
     next: Next,
@@ -454,7 +472,8 @@ where
     AE: std::error::Error + Send + Sync + 'static,
     A: Fn(AuthInput) -> AF + Send + Sync + 'static,
     AF: Future<Output = Result<P, AE>> + Send,
-    K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+    K: Fn(&P, DirectPeer, &L::Policy) -> S + Send + Sync + 'static,
+    S: AsRef<[u8]> + 'static,
 {
     // Never accept an already-installed principal as authentication evidence.
     request.extensions_mut().remove::<Authenticated<P>>();
@@ -493,7 +512,13 @@ where
     let checks = boundary
         .policies
         .iter()
-        .map(|policy| Check::new((boundary.subject)(&principal, peer, policy).bind(policy)))
+        .map(|policy| {
+            Check::new(
+                boundary
+                    .hasher
+                    .hash_for(policy, (boundary.subject)(&principal, peer, policy)),
+            )
+        })
         .collect::<Vec<_>>();
     request.extensions_mut().insert(Authenticated(principal));
     match boundary
