@@ -95,8 +95,10 @@ pub fn quota_policy<P: RateLimitPolicy + ?Sized>(
 /// The result has the form `"name";a=N;w=S`. An available quota uses the
 /// immediately available allowance and rounds its replenishment delay up to
 /// whole seconds. An exhausted quota uses `a=0` and rounds the backend's retry
-/// delay up in the same way, so `w` never ends before the backend would admit
-/// the rejected cost. Neither creates a `Retry-After` field or chooses an HTTP
+/// delay up in the same way, so `w` never understates the delay the backend
+/// reported at its evaluation instant. It is a snapshot, not a promise of
+/// admission: another request sharing the quota can spend the replenished
+/// units first. Neither creates a `Retry-After` field or chooses an HTTP
 /// status.
 ///
 /// ```

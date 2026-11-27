@@ -18,8 +18,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   range at the crate root, so an input fails with the same `EncodingError`
   whichever revision is selected. `draft_12` omits the optional `c` cost
   parameter, because a decision does not carry the cost of its check, and does
-  not implement the new `RateLimit-Partition` field, which only describes the
-  partition keys Runlimit never emits. Golden tests pin both revisions,
+  not implement the new `RateLimit-Partition` field, because a Runlimit policy
+  records neither the application's partition dimensions nor which requests
+  it applies to. Golden tests pin both revisions,
   including rounding up to whole seconds, and the
   [reference record](../docs/references/http.md#ratelimit-header-fields-draft-revisions--11-and--12-2026-11-27)
   compares them against the drafts (`batter-39wm.9`).

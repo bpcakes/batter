@@ -281,7 +281,7 @@ use runlimit_core::{Capacity, QuotaDenial};
 use runlimit_http::draft_12;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-// A 4.2 s retry delay rounds up: `w` never ends before the cost is admitted.
+// A 4.2 s retry delay rounds up: `w` never understates the backend's delay.
 let denial = QuotaDenial::new(Capacity::new(100)?, Duration::from_millis(4_200));
 let (name, value) = draft_12::service_limit("default", denial)?;
 assert_eq!(name.as_str(), "ratelimit");
