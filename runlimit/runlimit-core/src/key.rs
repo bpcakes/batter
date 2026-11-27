@@ -247,6 +247,10 @@ impl KeyHasher {
     /// let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
     /// let subject = hasher.hash_attempt_for(&policy, b"user@example.test");
     /// assert!(std::ptr::eq(subject.policy(), &policy));
+    ///
+    /// // A backend finds the subject's stored state by its storage identity.
+    /// let key = subject.counter_key();
+    /// assert_eq!(key.fingerprint(), policy.fingerprint());
     /// ```
     pub fn hash_attempt_for<'a>(
         &self,
