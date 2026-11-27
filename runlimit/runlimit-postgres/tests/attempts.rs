@@ -80,6 +80,39 @@ async fn failure_escalation_cap_and_success_reset() {
     db.teardown().await;
 }
 
+// The generated `capacity_shard` column and the Rust shard helper that locks
+// and counts it are one protocol: the attempt vectors in runlimit-core and the
+// `protocol.rs` shard vector give 0x38 ^ 0xc6 for this policy and subject.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn stored_capacity_shard_matches_the_protocol_vector() {
+    let db = database().await;
+    let p = AttemptPolicy::new(
+        PolicyId::new("sign-in").unwrap(),
+        ScopeId::new("account").unwrap(),
+        period(1_000),
+        period(60_000),
+        period(600_000),
+        period(30_000),
+    )
+    .unwrap();
+    let s = KeyHasher::new([0x42; 32])
+        .unwrap()
+        .hash_attempt_for(&p, b"user@example.test");
+    drop(receipt(
+        PostgresAttemptLimiter::new(db.pool.clone())
+            .admit(s)
+            .await
+            .unwrap(),
+    ));
+    let shard: i16 = sqlx::query_scalar("SELECT capacity_shard FROM runlimit_attempts")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(shard, 254);
+    db.teardown().await;
+}
+
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL"]
 async fn concurrent_replicas_admit_exactly_one_verification() {

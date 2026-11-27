@@ -4,7 +4,14 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{Delay, PolicyFingerprint, PolicyId, QuotaPeriod, ScopeId, SubjectKey};
+use crate::{CounterKey, Delay, PolicyFingerprint, PolicyId, QuotaPeriod, ScopeId, SubjectKey};
+
+// This domain string and the byte layout in `AttemptPolicy::new` are a
+// persistent cross-replica protocol: PostgreSQL stores attempt rows under the
+// fingerprint. Changing any byte strands stored attempt state during a rolling
+// deployment. A deliberate incompatible change requires a new domain version
+// and a storage migration, never an in-place rewrite of the v1 encoding.
+const ATTEMPT_FINGERPRINT_DOMAIN: &[u8] = b"runlimit/attempt-policy/v1\0";
 
 mod evaluation;
 mod state;
@@ -61,7 +68,7 @@ impl AttemptPolicy {
             return Err(AttemptPolicyError::QuietBelowMaximum);
         }
         let mut hash = Sha256::new();
-        hash.update(b"runlimit/attempt-policy/v1\0");
+        hash.update(ATTEMPT_FINGERPRINT_DOMAIN);
         hash.update(id.as_str().as_bytes());
         hash.update([0]);
         hash.update(scope.as_str().as_bytes());
@@ -181,6 +188,13 @@ impl AttemptSubject<'_> {
     /// Exact policy reference retained by derivation.
     pub const fn policy(&self) -> &AttemptPolicy {
         self.policy
+    }
+    /// The storage identity: this policy's fingerprint and the subject key.
+    ///
+    /// Backends key, shard and lock attempt state by this value, exactly as
+    /// quota backends use [`Check::counter_key`](crate::Check::counter_key).
+    pub const fn counter_key(&self) -> CounterKey {
+        CounterKey::new(self.policy.fingerprint, self.subject)
     }
     /// Opaque digest for backend storage. This explicitly leaves policy binding.
     pub const fn into_unbound_subject_key(self) -> SubjectKey {

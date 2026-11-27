@@ -27,6 +27,7 @@
 use crate::{
     CheckError, CheckPhase, PostgresConfig,
     base::PgLimiterBase,
+    protocol::{ATTEMPT_LOCK_NAMESPACE, capacity_shard},
     transaction::{BoundedConnection, Check, CheckTransaction, ConnectionOutcome},
 };
 use row::StoredAttempt;
@@ -61,8 +62,6 @@ const COMPLETE_SQL: &str = include_str!("attempt_complete_scheduled.sql");
 const CLEANUP_SQL: &str = include_str!("attempt_cleanup.sql");
 const DEADLINE_RANGE: &str = "attempt lease expiry exceeds the storage range";
 const PHASE: CheckPhase = CheckPhase::AcquiringCounterRowLocks;
-// Stable protocol: a distinct two-integer namespace and 256 capacity shards.
-const LOCK_NAMESPACE: i32 = 0x524c_4154;
 
 /// Consuming opaque lease; no clone, serialization, public constructor, or raw token access.
 pub struct PgAttemptReceipt {
@@ -260,14 +259,15 @@ async fn admit_transaction(
     maximum: u32,
 ) -> Result<ConnectionOutcome<AttemptAdmission<PgAttemptReceipt>>, ConnectionOutcome<CheckError>> {
     let policy = subject.policy().clone();
-    let fingerprint = policy.fingerprint().into_bytes();
-    let subject = subject.into_unbound_subject_key().into_bytes();
-    let shard = i16::from(fingerprint[0] ^ subject[0]);
+    let key = subject.counter_key();
+    let shard = capacity_shard(key);
+    let fingerprint = key.fingerprint().into_bytes();
+    let subject = key.subject().into_bytes();
     let mut tx = connection.begin().await?;
     tx.execute(
         PHASE,
         sqlx::query("SELECT pg_catalog.pg_advisory_xact_lock($1, $2)")
-            .bind(LOCK_NAMESPACE)
+            .bind(ATTEMPT_LOCK_NAMESPACE)
             .bind(i32::from(shard)),
     )
     .await?;

@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `AttemptSubject::counter_key` returns the attempt storage identity, the
+  policy fingerprint and the subject key, as `Check::counter_key` does for
+  quota checks. The memory and PostgreSQL attempt backends key, shard and lock
+  by it instead of rebuilding it from `into_unbound_subject_key`. The attempt
+  policy fingerprint, the attempt subject key and the PostgreSQL attempt
+  capacity shard now have golden-vector tests computed independently of the
+  crate, and `hash_for` and `hash_attempt_for` share one private keyed
+  encoding. Every derived byte is unchanged (`batter-39wm.3`).
 - `runlimit_core::attempts::AttemptState<T>` is the one attempt lease
   lifecycle: `Clear`, `Leased(AttemptLease<T>)` or `Failed(FailedAttempts)`.
   Its pure `settle`, `admit` and `complete` own lease expiry counted as a

@@ -118,10 +118,10 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         subject: AttemptSubject<'_>,
     ) -> Result<AttemptAdmission<MemoryAttemptReceipt>, MemoryAttemptError> {
         let policy = subject.policy();
-        let key = (
-            policy.fingerprint().into_bytes(),
-            subject.into_unbound_subject_key().into_bytes(),
-        );
+        let key = {
+            let key = subject.counter_key();
+            (key.fingerprint().into_bytes(), key.subject().into_bytes())
+        };
         let mut state = self
             .state
             .lock()
