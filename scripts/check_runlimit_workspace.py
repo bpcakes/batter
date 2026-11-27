@@ -3,12 +3,17 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
 EXPECTED_PUBLISH = ['crates-io']
 EXPECTED_VERSION = '0.4.0'
+# Imported statements that no code path executes. They stay byte-identical
+# outside every package, so they are neither published nor compiled.
+PROVENANCE = 'provenance'
+EMBEDDED_PROVENANCE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"[^"]*\b' + PROVENANCE + '/')
 
 
 def validate_graph(metadata, root):
@@ -65,6 +70,17 @@ def validate_assets(root):
         path = native / name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('immutable imported asset changed or missing: ' + name)
+    provenance = native / PROVENANCE
+    for path in sorted(provenance.rglob('*')) if provenance.is_dir() else ():
+        name = path.relative_to(native).as_posix()
+        if path.is_file() and path.name != 'README.md' and name not in expected:
+            raise ValueError('provenance holds an uninventoried file: ' + name)
+    for path in sorted(native.rglob('*.rs')):
+        if provenance in path.parents or 'target' in path.relative_to(native).parts:
+            continue
+        if EMBEDDED_PROVENANCE.search(path.read_text()):
+            raise ValueError('source embeds an unexecuted provenance record: '
+                             + path.relative_to(native).as_posix())
 
 
 if __name__ == '__main__':

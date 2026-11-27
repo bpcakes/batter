@@ -21,12 +21,16 @@ The workspace check rejects changes/removal; it permits new forward migrations.
 A superseded imported statement is replaced by a new file rather than edited:
 since `batter-z4m9`, fixed-window cleanup executes
 `runlimit-postgres/src/cleanup_expired_by_key.sql`, which identifies expired rows
-by primary key, and the imported `src/cleanup_expired.sql`, which read `ctid`, is
+by primary key, and the imported `cleanup_expired.sql`, which read `ctid`, is
 retained byte-identical as a provenance record that no code path executes.
 Since `batter-ctk7.8`, attempt completion likewise executes
 `runlimit-postgres/src/attempt_complete_scheduled.sql`, which reads the failure
-delay from a schedule bound by Rust, and the imported `src/attempt_complete.sql`,
+delay from a schedule bound by Rust, and the imported `attempt_complete.sql`,
 which restated the backoff formula, is retained byte-identical and unexecuted.
+Both records live in [`provenance/runlimit-postgres/`](provenance/README.md),
+outside every package, so they are neither published nor compiled; the
+workspace check rejects an uninventoried file there and any `include_str!` or
+`include_bytes!` of one (`batter-39wm.2`).
 Source archives retain SQL and both license names, and mutation fixtures include
 this native root. Root verification preserves default/all-feature tests and lint,
 the release-mode fail-closed regression, and CI's explicit native PostgreSQL tests.

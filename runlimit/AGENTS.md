@@ -27,7 +27,8 @@ protected authenticated assembly belong in `crates/batter-runlimit`. Application
 own credentials, identity normalization, proxy trust, response bodies and policies.
 Never rewrite published migrations or persistent lock/key derivation protocols.
 The import inventory retains original SQL/license digests; new schema work adds
-forward migrations instead. Source-copy consumer work is tracked by batter-isdr.2.
+forward migrations instead. A superseded statement gets a new file beside its
+executor; the unexecuted original moves to `provenance/`, outside every package. Source-copy consumer work is tracked by batter-isdr.2.
 
 ## Invariants
 

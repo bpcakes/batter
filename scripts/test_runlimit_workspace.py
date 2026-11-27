@@ -87,3 +87,36 @@ class AssetTests(unittest.TestCase):
             migration.unlink()
             with self.assertRaisesRegex(ValueError, 'changed or missing'):
                 validate_assets(root)
+
+    def test_provenance_records_stay_inventoried_and_unembedded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = root / 'runlimit'
+            record = native / 'provenance' / 'runlimit-postgres' / 'superseded.sql'
+            record.parent.mkdir(parents=True)
+            record.write_text('SELECT 1')
+            for name in ('LICENSE-MIT', 'LICENSE-APACHE'):
+                (native / name).write_text(name)
+            (native / 'provenance' / 'README.md').write_text('records')
+            names = ['LICENSE-MIT', 'LICENSE-APACHE', 'provenance/runlimit-postgres/superseded.sql']
+            expected = {name: hashlib.sha256((native / name).read_bytes()).hexdigest()
+                        for name in names}
+            (native / 'upstream-assets.json').write_text(json.dumps(expected))
+            validate_assets(root)
+            self.assertTrue(eligible(record, root))
+
+            stray = record.with_name('stray.sql')
+            stray.write_text('SELECT 2')
+            with self.assertRaisesRegex(ValueError, 'uninventoried file: provenance/'):
+                validate_assets(root)
+            stray.unlink()
+
+            source = native / 'runlimit-postgres' / 'src' / 'lib.rs'
+            source.parent.mkdir(parents=True)
+            source.write_text('// The provenance/ records are not executed.\n')
+            validate_assets(root)
+            for embed in ('include_str!("../../provenance/runlimit-postgres/superseded.sql")',
+                          'include_bytes!( "../../provenance/x.sql")'):
+                source.write_text('const SQL: &str = ' + embed + ';\n')
+                with self.subTest(embed=embed), self.assertRaisesRegex(ValueError, 'embeds'):
+                    validate_assets(root)
