@@ -53,10 +53,13 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   `AttemptPolicy::delay`. A backend decodes storage into that enum and persists
   the lease it grants and the completion it applies; it keeps no loose lease,
   failure or retry fields and no second copy of a rule. Memory clamps its clock
-  and stores the settled state on every evaluation. PostgreSQL samples the
-  server clock and writes nothing on a denial or a stale completion, so a
-  backwards clock step re-evaluates the stored row at the earlier instant
-  (`batter-ctk7.22`); do not store that settlement on one path only. PostgreSQL completion must lock, sample
+  and stores the settled state on every evaluation, cleanup scans included.
+  PostgreSQL samples the server clock and leaves the subject's row unchanged
+  on a `Busy` or `Backoff` denial and on a stale completion, so a backwards
+  clock step re-evaluates the stored row at the earlier instant
+  (`batter-ctk7.22`); do not store that settlement on one path only. A
+  `StorageCapacity` denial is not read-only: it commits the bounded cleanup of
+  expired rows. PostgreSQL completion must lock, sample
   the clock and check its fence in one statement, so that statement applies
   the live-lease case in SQL and reads its delay from the bound
   `AttemptPolicy::delay_schedule`; never restate the formula in SQL.

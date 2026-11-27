@@ -48,11 +48,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 - `MemoryAttemptLimiter` stores `AttemptState` instead of separate failure,
   timestamp and optional-lease fields, and evaluates admission, completion and
   cleanup through it. Admissions, denials, completions, delays, observations,
-  the 16-entry cleanup scan and allocation behavior are unchanged. One internal
-  effect is new: `complete` with a receipt whose lease has expired still returns
-  and observes `Stale`, but now records the expiry as a failure at once rather
-  than at the next admission, and removes the subject when its quiet period has
-  also passed, which frees that capacity slot without a cleanup scan
+  the 16-entry cleanup scan and allocation behavior are unchanged. Two internal
+  effects are new. `complete` with a receipt whose lease has expired still
+  returns and observes `Stale`, but now records the expiry as a failure at once
+  rather than at the next admission, and removes the subject when its quiet
+  period has also passed, which frees that capacity slot without a cleanup
+  scan. A cleanup scan that retains an entry whose lease has expired stores
+  that failure instead of recomputing it on every later scan
   (`batter-ctk7.7`).
 - `PostgresAttemptLimiter::admit` decodes the locked row once into
   `AttemptState` and evaluates it with the transition the memory backend calls.
@@ -77,10 +79,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 
   One clock-step behavior is unchanged from earlier releases and is now
   documented and pinned by the live test
-  `a_backwards_clock_step_revives_an_unreplaced_expired_lease`: a denial or a
-  stale completion writes nothing, so after a step behind a lease deadline a
-  lease already reported expired is live again until that deadline
-  (`batter-ctk7.22`).
+  `a_backwards_clock_step_revives_an_unreplaced_expired_lease`: a `Busy` or
+  `Backoff` denial and a stale completion leave the subject's row unchanged, so
+  after a step behind a lease deadline a lease already reported expired is
+  live again until that deadline (`batter-ctk7.22`). A `StorageCapacity`
+  denial still commits the bounded cleanup of expired rows, as before.
 - **Breaking:** this is a run-time break for hand-edited attempt rows only;
   nothing stops compiling and no row this library writes is affected.
   `PostgresAttemptLimiter::admit` now fails closed with
@@ -89,13 +92,16 @@ The format is based on [Keep a Changelog], and this project adheres to
   is corrected or admission's bounded cleanup deletes it after its quiet period.
 
   ```sql
-  -- A delay on one subject with no failures and no lease.
+  -- A delay on one subject with no failures and no lease, under a quiet
+  -- period longer than the 60 seconds.
   UPDATE runlimit_attempts SET failures = 0, retry_at_ms = last_failure_ms + 60000
   WHERE config_fingerprint = $1 AND subject_key = $2 AND lease_until_ms IS NULL;
   ```
 
   ```rust
-  // Before: Ok(AttemptAdmission::Denied(AttemptDenial::Backoff { .. })) until retry_at_ms.
+  // Before: Ok(AttemptAdmission::Denied(AttemptDenial::Backoff { .. })) until
+  //         retry_at_ms, or until the quiet period after last_failure_ms ended
+  //         if that came first.
   // After:  Err(CheckError::StorageInvariant(_)), detail
   //         "attempt without failures carries a retry delay".
   limiter.admit(subject).await
@@ -103,7 +109,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
   To hold a subject back by hand, store at least one failure with the delay,
   for that one unleased row: `SET failures = GREATEST(failures, 1),
-  retry_at_ms = ...` with the same `WHERE` clause. Moving
+  retry_at_ms = ...` with the same `WHERE` clause. As before, the hold ends at
+  `retry_at_ms` or when the quiet period after `last_failure_ms` ends,
+  whichever comes first: the failure then clears and cleanup may delete the
+  row, so a later `retry_at_ms` cannot hold longer. To hold for up to one quiet
+  period from now, also set `last_failure_ms` to the current server time in
+  milliseconds. Moving
   `retry_at_ms` earlier still releases a subject and keeps its failures, and
   stored instants before 1970 keep their exact meaning. An operator matching
   logs can match that detail string; `"invalid attempt failure count"` is

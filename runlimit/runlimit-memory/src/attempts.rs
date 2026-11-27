@@ -225,10 +225,11 @@ fn evaluate(
 }
 /// Keys one admission's cleanup examines, and the size of its stack scratch.
 const CLEANUP_SCAN: usize = 16;
-/// Reclaims entries that have settled to [`AttemptState::Clear`] among the
-/// next keys after the cursor: no live lease and a full quiet period since the
-/// last failure. The cursor rests on the last examined key, or wraps when
-/// nothing follows it.
+/// Settles the next keys after the cursor and reclaims those that reach
+/// [`AttemptState::Clear`]: no live lease and a full quiet period since the
+/// last failure. A retained entry keeps its settled state, so an expired lease
+/// is stored as its failure. The cursor rests on the last examined key, or
+/// wraps when nothing follows it.
 fn cleanup(state: &mut State, now: Duration) {
     use std::ops::Bound::{Excluded, Unbounded};
     let mut scratch = [([0; 32], [0; 32]); CLEANUP_SCAN];
@@ -244,9 +245,11 @@ fn cleanup(state: &mut State, now: Duration) {
     let keys = &scratch[..scanned];
     state.cursor = keys.last().copied();
     for key in keys {
-        if state.entries.get(key).is_some_and(|entry| {
-            matches!(entry.state.settle(&entry.policy, now), AttemptState::Clear)
-        }) {
+        let Some(entry) = state.entries.get_mut(key) else {
+            continue;
+        };
+        entry.state = entry.state.settle(&entry.policy, now);
+        if matches!(entry.state, AttemptState::Clear) {
             state.entries.remove(key);
         }
     }
@@ -290,10 +293,9 @@ mod tests {
     }
 
     /// Initial delay 10 ms, cap 40 ms, quiet period 100 ms, lease 20 ms.
-    #[test]
-    fn completing_an_expired_receipt_counts_the_expiry_without_waiting_for_an_admission() {
+    fn policy() -> AttemptPolicy {
         let period = |value| QuotaPeriod::new(ms(value)).unwrap();
-        let policy = AttemptPolicy::new(
+        AttemptPolicy::new(
             PolicyId::new("auth").unwrap(),
             ScopeId::new("identifier").unwrap(),
             period(10),
@@ -301,7 +303,42 @@ mod tests {
             period(100),
             period(20),
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn cleanup_stores_the_failure_of_an_expired_lease_it_retains() {
+        let policy = policy();
+        let clock = TestClock::default();
+        let limiter =
+            MemoryAttemptLimiter::with_clock(NonZeroUsize::new(2).unwrap(), clock.clone());
+        let hasher = KeyHasher::new([7; 32]).unwrap();
+        let AttemptAdmission::Admitted(_abandoned) = limiter
+            .admit(hasher.hash_attempt_for(&policy, b"first"))
+            .unwrap()
+        else {
+            panic!("first admission was denied");
+        };
+        // Another subject's admission scans the first entry after its 20 ms
+        // deadline and inside its quiet period, so it is retained as a failure.
+        clock.0.store(25, Ordering::SeqCst);
+        let AttemptAdmission::Admitted(_held) = limiter
+            .admit(hasher.hash_attempt_for(&policy, b"second"))
+            .unwrap()
+        else {
+            panic!("second admission was denied");
+        };
+        let state = limiter.state.lock().unwrap();
+        let expired = AttemptState::Failed(FailedAttempts::new(NonZeroU32::MIN, ms(20), ms(30)));
+        let mut states: Vec<_> = state.entries.values().map(|entry| entry.state).collect();
+        states.retain(|state| !matches!(state, AttemptState::Leased(_)));
+        assert_eq!(state.entries.len(), 2);
+        assert_eq!(states, [expired]);
+    }
+
+    #[test]
+    fn completing_an_expired_receipt_counts_the_expiry_without_waiting_for_an_admission() {
+        let policy = policy();
         let clock = TestClock::default();
         let recorder = Arc::new(Recorder::default());
         let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone())

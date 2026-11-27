@@ -14,13 +14,16 @@
 //! lock, which hides the row from admission until its transaction ends, so its
 //! completion applies even after the lease deadline.
 //!
-//! Every evaluation samples the server clock, and a denial or a stale
-//! completion writes nothing. Of the two choices `AttemptState` gives a backend
-//! for a regressing clock, this one re-evaluates the stored row at the earlier
-//! instant: after a backwards step behind a lease deadline, a lease already
-//! reported expired is live again until that deadline, for admission and for
-//! its own receipt. Earlier releases behave the same; `batter-ctk7.22` tracks
-//! evaluating against an instant that never decreases.
+//! Every evaluation samples the server clock. A `Busy` or `Backoff` denial
+//! rolls back and a stale completion matches no row, so neither changes the
+//! subject's row; a `StorageCapacity` denial has no row for the subject and
+//! commits only the bounded cleanup of expired rows. Of the two choices
+//! `AttemptState` gives a backend for a regressing clock, this one re-evaluates
+//! the stored row at the earlier instant: after a backwards step behind a
+//! lease deadline, a lease already reported expired is live again until that
+//! deadline, for admission and for its own receipt. Earlier releases behave
+//! the same; `batter-ctk7.22` tracks evaluating against an instant that never
+//! decreases.
 use crate::{
     CheckError, CheckPhase, ConnectionCancellationGuard, ConnectionOutcome, PostgresConfig,
     admission::{CheckTransaction, acquire_check_connection},
