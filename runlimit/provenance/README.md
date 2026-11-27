@@ -15,8 +15,8 @@ statement is a new file beside the code that executes it.
 `scripts/check_runlimit_workspace.py` requires each superseded record, by
 digest, to be inventoried only here under a canonical path, every other file
 here except this README and OS metadata to be inventoried, and no symlink here
-or at this directory. It then packages and verifies every native crate, so a
-library that embeds a record fails to build from its own archive, and rejects an
-archive member, under any name, that contains a record's complete bytes, alone
-or within a larger file. Packaged test targets are not built from the archive
-(`batter-88bd`).
+or at this directory. It then packages and verifies every native crate, with
+default and with all features, so a library that embeds a record fails to build
+from its own archive, and rejects an archive member, under any name, that
+contains a record's complete bytes, alone or within a larger file. Packaged test
+targets are not built from the archive (`batter-88bd`).

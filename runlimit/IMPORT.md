@@ -32,14 +32,14 @@ outside every package. The workspace check requires both superseded records, by
 digest, to be inventoried only under canonical `provenance/` paths, every other
 file there except the README and OS metadata to be inventoried, and no symlink
 in or at the directory. It then packages and verifies each native crate with
-`cargo package --all-features`, which builds every library from its own archive
-where the records are absent, and rejects an archive member, under any name,
-that contains a record's complete bytes, alone or within a larger file
-(`batter-39wm.2`). Cargo does not build packaged test targets from the archive;
-that pre-existing gap is `batter-88bd`. Source archives retain SQL and both
-license names, and mutation fixtures include this native root. Root verification
-preserves default/all-feature tests and lint, the release-mode fail-closed
-regression, and CI's explicit native PostgreSQL tests.
+`cargo package`, with default and with all features, which builds every library
+from its own archive where the records are absent, and rejects an archive
+member, under any name, that contains a record's complete bytes, alone or within
+a larger file (`batter-39wm.2`). Cargo does not build packaged test targets from
+the archive; that pre-existing gap is `batter-88bd`. Source archives retain SQL
+and both license names, and mutation fixtures include this native root. Root
+verification preserves default/all-feature tests and lint, the release-mode
+fail-closed regression, and CI's explicit native PostgreSQL tests.
 
 The native smoke source is retained unchanged at `smoke/native_consumer.rs`.
 `python3 scripts/check_runlimit_consumer.py` executes it and the added facade

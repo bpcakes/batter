@@ -150,21 +150,23 @@ def validate_published(archives, records):
 def package_archives(root, target_directory):
     """Package and verify every native crate, returning the archives Cargo built.
 
-    Cargo's verification builds each library, with all features, from its
-    extracted archive, where `provenance/` and every other path outside the
-    crate are absent, so a library that embeds a record fails here. Cargo
-    does not build a package's test, example or bench targets from the
-    archive; that pre-existing gap is `batter-88bd` and is not specific to records.
+    Cargo's verification builds each library from its extracted archive,
+    where `provenance/` and every other path outside the crate are absent, so
+    a library that embeds a record fails here. It runs once with default
+    features and once with all features, so code compiled under either set
+    is built. Cargo does not build a package's test, example or bench targets
+    from the archive; that pre-existing gap is `batter-88bd` and is not
+    specific to records.
     """
-    command = ['cargo', 'package', '--allow-dirty', '--locked', '--all-features']
-    for suffix in NATIVE:
-        command += ['-p', 'runlimit-' + suffix]
-    result = subprocess.run(command, cwd=root, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise ValueError('native packaging or verification failed:\n' + result.stderr[-4000:])
+    packages = [argument for suffix in NATIVE for argument in ('-p', 'runlimit-' + suffix)]
+    for features in ([], ['--all-features']):
+        command = ['cargo', 'package', '--allow-dirty', '--locked', *features, *packages]
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise ValueError(f'native packaging or verification failed ({" ".join(features) or "default features"}):\n'
+                             + result.stderr[-4000:])
     return [Path(target_directory) / 'package' / f'runlimit-{suffix}-{EXPECTED_VERSION}.crate'
             for suffix in NATIVE]
-
 
 if __name__ == '__main__':
     metadata = json.loads(subprocess.check_output(
