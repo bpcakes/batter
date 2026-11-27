@@ -78,6 +78,11 @@ const METHODS: &[&str] = &[
     "sqlx::migrate::MigrateDatabase::database_exists",
     "sqlx::migrate::MigrateDatabase::drop_database",
     "sqlx::migrate::MigrateDatabase::force_drop_database",
+    "sqlx::testing::TestFn::run_test",
+    "sqlx::testing::TestSupport::test_context",
+    "sqlx::testing::TestSupport::cleanup_test",
+    "sqlx::testing::TestSupport::cleanup_test_dbs",
+    "sqlx::testing::TestSupport::snapshot",
 ];
 
 /// sqlx types that carry SQL text or send sqlx's own: `SqlStr` has no public
@@ -93,6 +98,9 @@ const TYPES: &[&str] = &[
     "sqlx::migrate::Migration",
     "sqlx::postgres::PgListener",
     "sqlx::postgres::PgAdvisoryLock",
+    "sqlx::testing::TestArgs",
+    "sqlx::testing::TestFixture",
+    "sqlx::testing::TestContext",
 ];
 
 /// sqlx's query macros.
@@ -114,6 +122,8 @@ const MACROS: &[&str] = &[
 /// The probe module, relative to `src`.
 const PROBES: &str = "catalog_guard/gate/probes.rs";
 
+#[cfg(runlimit_macro_probes)]
+mod macro_probes;
 mod probes;
 mod rust_text;
 

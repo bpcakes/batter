@@ -211,8 +211,11 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   sqlx's SQL-text parameters on every sqlx upgrade; `src/catalog_guard/gate.rs`
   pins the inventory and the exceptions, and `gate/probes.rs` uses each entry
   under an expectation that Clippy rejects it, so an entry that stops
-  resolving fails the Clippy runs. `scripts/check_runlimit_workspace.py` keeps
-  the manifest from lowering those lints. Integration tests may use raw SQL
+  resolving fails the Clippy runs. Clippy reports `disallowed_macros` outside
+  any lint scope, so `gate/macro_probes.rs` compiles only under
+  `--cfg runlimit_macro_probes` from the committed `.sqlx` metadata, and
+  `scripts/check_runlimit_workspace.py` requires each query macro to be
+  reported there; it also keeps the manifest from lowering those lints. Integration tests may use raw SQL
   behind their crate-level allow. Each statement calls catalog functions and
   casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
   and `double precision` keeps both words. A multi-array `unnest` is spelled

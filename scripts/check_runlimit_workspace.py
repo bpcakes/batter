@@ -34,8 +34,13 @@ ENABLED_LEVELS = frozenset({'warn', 'deny', 'forbid'})
 # A `[lints.rust]` or `[lints.clippy]` header, and one entry inside it.
 LINT_TABLE = re.compile(r'^\[lints(?:\.(rust|clippy))?\]\s*(?:#.*)?$')
 LINT_ENTRY = re.compile(r'^([A-Za-z0-9_-]+)\s*=\s*(?:"([a-z]+)"|\{(.*)\})\s*(?:#.*)?$')
-INLINE_LEVEL = re.compile(r'^\s*(?:level\s*=\s*"([a-z]+)"\s*(?:,\s*priority\s*=\s*-?\d+\s*)?'
-                          r'|priority\s*=\s*-?\d+\s*,\s*level\s*=\s*"([a-z]+)"\s*)$')
+# One field of an inline lint table: a quoted level, an integer priority, or
+# a one-line array of quoted check-cfg strings.
+INLINE_FIELD = re.compile(r'\s*(level|priority|check-cfg)\s*=\s*("[a-z]+"|-?\d+|'
+                          r'\[\s*(?:(?:"[^"\\]*"|\'[^\']*\')\s*,?\s*)*\])\s*(?:,|$)')
+# The query macros Clippy reports outside any lint scope; see
+# runlimit-postgres/src/catalog_guard/gate/macro_probes.rs.
+MACRO_PROBES = 'src/catalog_guard/gate/macro_probes.rs'
 
 
 def validate_graph(metadata, root):
@@ -133,6 +138,76 @@ def first_key(dotted):
     return next((part for part in match.groups() if part is not None), '') if match else ''
 
 
+def inline_level(fields):
+    """The level of an inline lint table's fields, or None unless every field is readable."""
+    found, position = {}, 0
+    while position < len(fields):
+        match = INLINE_FIELD.match(fields, position)
+        if not match or match.group(1) in found or match.end() == position:
+            return None
+        found[match.group(1)] = match.group(2)
+        position = match.end()
+    level = found.get('level', '')
+    return level.strip('"') if level.startswith('"') else None
+
+
+def listed_paths(config, key):
+    """The paths of one clippy.toml list's active `{ path = ..., reason = ... },` lines."""
+    lines = iter(config.splitlines())
+    if f'{key} = [' not in lines:
+        raise ValueError(f'clippy.toml has no {key} list')
+    paths = []
+    for line in (line.strip() for line in lines):
+        if line == ']':
+            return paths
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'\{ path = "([^"]+)", reason = "[^"]*" \},', line)
+        if not match:
+            raise ValueError(f'clippy.toml {key}: unreadable line {line}')
+        paths.append(match.group(1))
+    raise ValueError(f'clippy.toml {key} is not closed')
+
+
+def macro_reports(messages):
+    """The `(file, macro)` pairs Clippy's JSON `messages` report as disallowed macros."""
+    reports = set()
+    for line in messages.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        diagnostic = message.get('message') or {}
+        if (message.get('reason') != 'compiler-message'
+                or (diagnostic.get('code') or {}).get('code') != 'clippy::disallowed_macros'):
+            continue
+        name = re.search(r'disallowed macro `([^`]+)`', diagnostic.get('message', ''))
+        for span in diagnostic.get('spans', []):
+            if span.get('is_primary') and name:
+                reports.add((span['file_name'], name.group(1)))
+    return reports
+
+
+def validate_macro_probes(root):
+    """Require Clippy to report every disallowed query macro at its probe.
+
+    `disallowed_macros` is reported outside any local lint scope, so an
+    attribute cannot expect it; the probes compile only under
+    `--cfg runlimit_macro_probes`, which this check passes to Clippy.
+    """
+    package = Path(root) / 'runlimit' / 'runlimit-postgres'
+    expected = set(listed_paths((package / 'clippy.toml').read_text(), 'disallowed-macros'))
+    result = subprocess.run(
+        ['cargo', 'clippy', '-p', 'runlimit-postgres', '--lib', '--tests', '--locked',
+         '--message-format=json', '--', '--cfg', 'runlimit_macro_probes'],
+        cwd=root, capture_output=True, text=True)
+    probes = f'runlimit/runlimit-postgres/{MACRO_PROBES}'
+    reported = {name for file, name in macro_reports(result.stdout) if file == probes}
+    if result.returncode != 0 or reported != expected:
+        raise ValueError(f'Clippy must report each disallowed macro at its probe; '
+                         f'missing {sorted(expected - reported)}, exit {result.returncode}')
+
+
 def manifest_lints(text):
     """The `[lints.rust]` and `[lints.clippy]` levels of a repository-controlled manifest.
 
@@ -162,11 +237,14 @@ def manifest_lints(text):
                 raise ValueError(f'Cargo.toml:{number}: set lints in [lints.rust] or [lints.clippy]')
             continue
         entry = LINT_ENTRY.match(line)
-        inline = entry and entry.group(3) is not None and INLINE_LEVEL.match(entry.group(3))
-        if not entry or (entry.group(3) is not None and not inline):
+        level = entry and (entry.group(2) or inline_level(entry.group(3) or ''))
+        if not level:
             raise ValueError(f'Cargo.toml:{number}: unreadable lint entry {line}')
-        level = entry.group(2) or inline.group(1) or inline.group(2)
-        levels[table][entry.group(1).replace('-', '_')] = level
+        name = entry.group(1).replace('-', '_')
+        # Cargo applies both spellings of a lint, so one hides the other here.
+        if name in levels[table]:
+            raise ValueError(f'Cargo.toml:{number}: lints.{table} sets {name} twice')
+        levels[table][name] = level
     return levels
 
 
@@ -278,6 +356,7 @@ if __name__ == '__main__':
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
     validate_sql_gate(ROOT)
+    validate_macro_probes(ROOT)
     expected = json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text())
     with tempfile.TemporaryDirectory(prefix='runlimit-package-') as scratch:
         validate_published(package_archives(ROOT, scratch), record_contents(ROOT, expected))

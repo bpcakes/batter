@@ -4,8 +4,9 @@
 //! executor, a function pointer and a local macro. rustc ignores Clippy
 //! expectations, and a Clippy run with `-D warnings` fails on an unfulfilled
 //! one, so an entry that stops resolving or a shape the gate misses fails
-//! verification. Nothing here runs. sqlx's query macros need a database to
-//! expand, so `clippy.toml` lists them without a probe.
+//! verification. Nothing here runs. Clippy reports `disallowed_macros`
+//! outside any local lint scope, so no attribute can expect it; the query
+//! macros are probed by `macro_probes` instead.
 
 #![allow(
     dead_code,
@@ -310,6 +311,50 @@ fn listener() {
 #[expect(clippy::disallowed_types, reason = "probe")]
 fn advisory_lock() {
     let _ = sqlx::postgres::PgAdvisoryLock::new("key");
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn test_args() {
+    let _ = sqlx::testing::TestArgs::new("probe");
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn test_fixture() {
+    let _: Option<sqlx::testing::TestFixture> = None;
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn test_context() {
+    let _: Option<sqlx::testing::TestContext<Postgres>> = None;
+}
+
+// The arguments name `TestArgs`, which the type expectation covers.
+#[expect(clippy::disallowed_methods, reason = "probe")]
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn run_test(args: sqlx::testing::TestArgs) {
+    let test: fn() -> std::future::Ready<()> = || std::future::ready(());
+    sqlx::testing::TestFn::run_test(test, args);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn support_test_context(args: &sqlx::testing::TestArgs) {
+    let _ = <Postgres as sqlx::testing::TestSupport>::test_context(args);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn support_cleanup_test() {
+    let _ = <Postgres as sqlx::testing::TestSupport>::cleanup_test("probe");
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn support_cleanup_test_dbs() {
+    let _ = <Postgres as sqlx::testing::TestSupport>::cleanup_test_dbs();
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn support_snapshot(connection: &mut PgConnection) {
+    let _ = <Postgres as sqlx::testing::TestSupport>::snapshot(connection);
 }
 
 #[expect(clippy::disallowed_types, reason = "probe")]

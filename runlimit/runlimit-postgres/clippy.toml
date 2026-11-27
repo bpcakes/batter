@@ -64,6 +64,11 @@ disallowed-methods = [
     { path = "sqlx::migrate::MigrateDatabase::database_exists", reason = "sends SQL built from a database URL" },
     { path = "sqlx::migrate::MigrateDatabase::drop_database", reason = "sends SQL built from a database URL" },
     { path = "sqlx::migrate::MigrateDatabase::force_drop_database", reason = "sends SQL built from a database URL" },
+    { path = "sqlx::testing::TestFn::run_test", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::testing::TestSupport::test_context", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::testing::TestSupport::cleanup_test", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::testing::TestSupport::cleanup_test_dbs", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::testing::TestSupport::snapshot", reason = "sqlx::testing runs fixture SQL and manages databases" },
 ]
 disallowed-types = [
     { path = "sqlx::AssertSqlSafe", reason = "SQL text comes only from a Statement" },
@@ -73,6 +78,9 @@ disallowed-types = [
     { path = "sqlx::migrate::Migration", reason = "run only the migrations sqlx::migrate! embeds" },
     { path = "sqlx::postgres::PgListener", reason = "LISTEN statements are built from channel names" },
     { path = "sqlx::postgres::PgAdvisoryLock", reason = "its SQL calls pg_advisory_lock through search_path; lock with a Statement" },
+    { path = "sqlx::testing::TestArgs", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::testing::TestFixture", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::testing::TestContext", reason = "sqlx::testing runs fixture SQL and manages databases" },
 ]
 disallowed-macros = [
     { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },

@@ -218,6 +218,14 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                     found.push("CAST(...) instead of ::".to_owned());
                 }
             }
+            // PostgreSQL accepts non-ASCII letters in unquoted identifiers,
+            // which this reader does not tokenize; count each character once.
+            byte if byte >= 0x80 => {
+                if byte & 0xC0 != 0x80 {
+                    found.push("a non-ASCII character outside a comment or string".to_owned());
+                }
+                index += 1;
+            }
             _ => index += 1,
         }
         // Comments and whitespace leave `previous` where it was.

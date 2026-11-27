@@ -19,6 +19,9 @@ from check_runlimit_workspace import (
     validate_provenance,
     validate_published,
     validate_sql_gate,
+    listed_paths,
+    macro_reports,
+    manifest_lints,
 )
 from package import eligible
 
@@ -253,6 +256,34 @@ class SqlGateTests(unittest.TestCase):
         inherited = (b'[package]\nname = "runlimit-postgres"\n\n[lints]\nworkspace = true\n')
         with self.assertRaisesRegex(ValueError, 'inherits'):
             validate_sql_gate(self.tree(inherited))
+
+    def test_check_cfg_inline_tables_read_and_duplicate_spellings_fail(self):
+        lints = manifest_lints(self.MANIFEST.decode() + "unexpected_cfgs = "
+                               "{ level = \"warn\", check-cfg = ['cfg(probe)'] }\n")
+        self.assertEqual(lints['clippy']['unexpected_cfgs'], 'warn')
+        conflicting = self.MANIFEST + (b'disallowed-methods = { level = "allow", priority = 2 }\n'
+                                       b'disallowed_methods = { level = "warn", priority = 1 }\n')
+        with self.assertRaisesRegex(ValueError, 'twice'):
+            validate_sql_gate(self.tree(conflicting))
+        for broken in (b'style = { level = "warn", level = "allow" }\n',
+                       b'style = { level = "warn", check-cfg = [cfg] }\n'):
+            with self.subTest(broken=broken), self.assertRaisesRegex(ValueError, 'unreadable'):
+                validate_sql_gate(self.tree(self.MANIFEST + broken))
+
+    def test_macro_reports_and_lists_read_only_what_clippy_and_toml_mean(self):
+        report = json.dumps({'reason': 'compiler-message', 'message': {
+            'code': {'code': 'clippy::disallowed_macros'},
+            'message': 'use of a disallowed macro `sqlx::query`',
+            'spans': [{'file_name': 'probe.rs', 'is_primary': True}]}})
+        other = json.dumps({'reason': 'compiler-message', 'message': {
+            'code': {'code': 'clippy::disallowed_methods'}, 'message': 'x', 'spans': []}})
+        self.assertEqual(macro_reports('\n'.join([report, other, 'not json'])),
+                         {('probe.rs', 'sqlx::query')})
+        config = ('x = 1\nlist = [\n    { path = "a", reason = "r" },\n'
+                  '    # { path = "b", reason = "r" },\n]\n')
+        self.assertEqual(listed_paths(config, 'list'), ['a'])
+        with self.assertRaisesRegex(ValueError, 'unreadable'):
+            listed_paths('list = [\n    { path = "a", reason = "r" }, # x\n]\n', 'list')
 
     def test_dropping_a_shared_clippy_setting_fails(self):
         with self.assertRaisesRegex(ValueError, 'cognitive-complexity-threshold'):

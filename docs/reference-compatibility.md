@@ -187,8 +187,9 @@ sources with local native types. No dependency patch is required. Package versio
 SQL migrations and lock/key protocols remain unchanged apart from the coordinated
 0.4.0 source release version; see
 [Runlimit provenance](../runlimit/IMPORT.md). `scripts/check_runlimit_workspace.py`
-checks local identities, native dependency direction, original SQL/license digests and
-that `runlimit-postgres` keeps its SQL gate lints enabled.
+checks local identities, native dependency direction, original SQL/license digests,
+that `runlimit-postgres` keeps its SQL gate lints enabled, and that Clippy rejects each
+disallowed query macro.
 
 ## Public report hard cuts
 
