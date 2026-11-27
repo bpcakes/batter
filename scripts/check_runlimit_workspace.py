@@ -4,12 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tarfile
 import tempfile
-
-from package import source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -152,45 +149,36 @@ def validate_published(archives, records):
                                          f'record {name} in {member.name}')
 
 
-def detached_source(root, destination):
-    """Copy the source tree to `destination` without `runlimit/provenance/`."""
-    root = Path(root)
-    provenance = root / 'runlimit' / PROVENANCE
-    for path in source_files(root):
-        if path == provenance or provenance in path.parents:
-            continue
-        target = destination / path.relative_to(root)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
-
-
-def package_archives(root, target_directory):
+def package_archives(root, directory):
     """Package and verify every native crate, returning the archives Cargo built.
 
-    Packaging runs in a detached copy of the source tree that omits
-    `provenance/`, with the working directory and `PWD` pointing at the
-    copy, so the records are absent from every path a build there can name
-    relative to the checkout. Cargo's verification builds each library from
-    its extracted archive, once with default features and once with all
-    features, so a library that embeds a record fails here. Cargo does not
-    build a package's test, example or bench targets from the archive; that
-    pre-existing gap is `batter-88bd` and is not specific to records.
+    Packaging runs in the checkout, so the archives are exactly what crates.io
+    would receive. `directory`, outside the checkout, is Cargo's target
+    directory: verification extracts each archive there and builds its
+    library, once with default features and once with all features, with
+    `PWD` pointing there too. A library that embeds a record by a path
+    relative to its crate, to the checkout's ancestors or to `PWD` therefore
+    fails here. An absolute path into one machine's checkout is not detected.
+    Cargo does not build a package's test, example or bench targets from the
+    archive; that pre-existing gap is `batter-88bd` and is not specific to
+    records.
     """
+    root = Path(root).resolve()
+    directory = Path(directory).resolve()
+    if directory == root or root in directory.parents:
+        raise ValueError(f'package verification directory {directory} is inside the checkout')
     packages = [argument for suffix in NATIVE for argument in ('-p', 'runlimit-' + suffix)]
-    with tempfile.TemporaryDirectory() as scratch:
-        copy = Path(scratch) / 'source'
-        detached_source(root, copy)
-        environment = {**os.environ, 'PWD': str(copy)}
-        for features in ([], ['--all-features']):
-            command = ['cargo', 'package', '--allow-dirty', '--locked', '--target-dir',
-                       str(target_directory), *features, *packages]
-            result = subprocess.run(command, cwd=copy, env=environment, capture_output=True,
-                                    text=True)
-            if result.returncode != 0:
-                selection = ' '.join(features) or 'default features'
-                raise ValueError(f'native packaging or verification failed ({selection}):\n'
-                                 + result.stderr[-4000:])
-    return [Path(target_directory) / 'package' / f'runlimit-{suffix}-{EXPECTED_VERSION}.crate'
+    environment = {**os.environ, 'PWD': str(directory)}
+    for features in ([], ['--all-features']):
+        command = ['cargo', 'package', '--allow-dirty', '--locked', '--target-dir',
+                   str(directory), *features, *packages]
+        result = subprocess.run(command, cwd=root, env=environment, capture_output=True,
+                                text=True)
+        if result.returncode != 0:
+            selection = ' '.join(features) or 'default features'
+            raise ValueError(f'native packaging or verification failed ({selection}):\n'
+                             + result.stderr[-4000:])
+    return [directory / 'package' / f'runlimit-{suffix}-{EXPECTED_VERSION}.crate'
             for suffix in NATIVE]
 
 if __name__ == '__main__':
@@ -199,6 +187,6 @@ if __name__ == '__main__':
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
     expected = json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text())
-    validate_published(package_archives(ROOT, metadata['target_directory']),
-                       record_contents(ROOT, expected))
+    with tempfile.TemporaryDirectory(prefix='runlimit-package-') as scratch:
+        validate_published(package_archives(ROOT, scratch), record_contents(ROOT, expected))
     print('Runlimit: five publishable local identities, native ownership and imported SQL/licenses verified')

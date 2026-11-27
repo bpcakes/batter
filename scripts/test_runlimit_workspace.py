@@ -15,6 +15,7 @@ from check_runlimit_workspace import (
     UNEXECUTED_RECORDS,
     validate_assets,
     validate_graph,
+    package_archives,
     validate_provenance,
     validate_published,
 )
@@ -188,3 +189,11 @@ class AssetTests(unittest.TestCase):
                         ValueError, 'would publish provenance record provenance/'):
                     validate_published([clean, archive('copy.crate', [(member, data)])],
                                        records)
+
+    def test_package_verification_refuses_a_directory_inside_the_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for inside in (root, root / 'target' / 'package-check'):
+                with self.subTest(inside=inside), self.assertRaisesRegex(ValueError, 'inside the checkout'):
+                    package_archives(root, inside)
+
