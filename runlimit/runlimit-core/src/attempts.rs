@@ -144,8 +144,13 @@ impl AttemptPolicy {
     /// .unwrap();
     /// let schedule = policy.delay_schedule();
     /// assert_eq!(schedule, [10, 20, 40].map(Duration::from_millis));
-    /// let stored_failures = 9;
-    /// assert_eq!(schedule[stored_failures.min(schedule.len()) - 1], policy.delay(9));
+    /// // Storage holds the count before this failure. Count the failure first,
+    /// // then look its delay up; past the table every count waits the last one.
+    /// for stored_failures in [0_usize, 1, 2, 9] {
+    ///     let failures = stored_failures + 1;
+    ///     let delay = schedule[failures.min(schedule.len()) - 1];
+    ///     assert_eq!(delay, policy.delay(u32::try_from(failures).unwrap()));
+    /// }
     /// ```
     pub fn delay_schedule(&self) -> Vec<Duration> {
         let cap = self.maximum_delay.duration();

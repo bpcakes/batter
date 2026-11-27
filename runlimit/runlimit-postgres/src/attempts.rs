@@ -371,12 +371,17 @@ fn completion_query<'a>(
     outcome: AttemptOutcome,
     transaction_id: Option<&'a str>,
 ) -> Query<'a, Postgres, PgArguments> {
+    // A success applies no delay, and the statement never reads the schedule.
+    let schedule = match outcome {
+        AttemptOutcome::Success => Vec::new(),
+        AttemptOutcome::Failure | AttemptOutcome::Abandoned => row::delay_schedule(&receipt.policy),
+    };
     sqlx::query(COMPLETE_SQL)
         .bind(receipt.policy.fingerprint().into_bytes().to_vec())
         .bind(receipt.subject.to_vec())
         .bind(&receipt.token)
         .bind(outcome == AttemptOutcome::Success)
-        .bind(row::delay_schedule(&receipt.policy))
+        .bind(schedule)
         .bind(transaction_id)
 }
 fn completion_result(

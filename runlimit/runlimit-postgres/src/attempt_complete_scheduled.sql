@@ -4,6 +4,7 @@
 -- $5 is AttemptPolicy::delay_schedule in milliseconds: element n is the delay
 -- after n consecutive failures and every later count waits the last element.
 -- The schedule is derived in Rust only; do not restate its formula here.
+-- A success ($4) applies no delay, never reads $5 and binds it empty.
 -- A stored count below zero fits no state. The lookup stays in bounds for it
 -- so the returned count, not a NULL delay, reaches the caller's validation.
 WITH locked AS MATERIALIZED (
