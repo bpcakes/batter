@@ -52,7 +52,11 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   are derived only by its `settle`, `admit` and `complete` and by
   `AttemptPolicy::delay`. A backend decodes storage into that enum and persists
   the lease it grants and the completion it applies; it keeps no loose lease,
-  failure or retry fields and no second copy of a rule. Memory clamps its clock
+  failure or retry fields and no second copy of a rule. A lease token is the
+  only completion fence, so a backend never issues one again for a subject
+  while an older receipt can still present it, across removal and recreation
+  of the stored subject included: memory numbers leases from one store-wide
+  counter and PostgreSQL generates a random token. Memory clamps its clock
   and stores the settled state on every evaluation, cleanup scans included.
   PostgreSQL samples the server clock and leaves the subject's row unchanged
   on a `Busy` or `Backoff` denial and on a stale completion, so a backwards

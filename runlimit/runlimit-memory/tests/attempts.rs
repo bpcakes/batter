@@ -121,6 +121,40 @@ fn stale_receipts_cannot_reset_new_failure_state_or_other_stores() {
 }
 
 #[test]
+fn a_receipt_that_outlives_its_removed_subject_cannot_complete_a_later_lease() {
+    let clock = TestClock::default();
+    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let policy = policy();
+    let hasher = KeyHasher::new([7; 32]).unwrap();
+    let subject = hasher.hash_attempt_for(&policy, b"user");
+    let first = receipt(store.admit(subject).unwrap());
+    // The first lease expires at 20 and its failure clears at 120, so this
+    // admission's cleanup removes the subject before storing it again.
+    clock.set(120);
+    let second = receipt(store.admit(subject).unwrap());
+    // A success removes the subject a second time.
+    assert!(matches!(
+        store.complete(second, AttemptOutcome::Success).unwrap(),
+        AttemptCompletionResult::Applied(done) if done.consecutive_failures() == 0
+    ));
+    let third = receipt(store.admit(subject).unwrap());
+    // A sequence restarting with the stored subject would number these leases
+    // alike and let the first receipt clear the third.
+    assert_eq!(
+        store.complete(first, AttemptOutcome::Success).unwrap(),
+        AttemptCompletionResult::Stale
+    );
+    assert!(matches!(
+        store.admit(subject).unwrap(),
+        AttemptAdmission::Denied(AttemptDenial::Busy { .. })
+    ));
+    assert!(matches!(
+        store.complete(third, AttemptOutcome::Failure).unwrap(),
+        AttemptCompletionResult::Applied(done) if done.consecutive_failures() == 1
+    ));
+}
+
+#[test]
 fn bounded_storage_reclaims_quiet_subjects_and_never_evicts_live_lease() {
     let clock = TestClock::default();
     let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());

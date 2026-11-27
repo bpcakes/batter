@@ -8,10 +8,10 @@ use crate::Delay;
 
 /// Everything a backend retains about one subject under one attempt policy.
 ///
-/// `T` is the backend's lease token: whatever distinguishes one reservation
-/// from the next for the same subject. A backend that fences completion
-/// outside this type, such as a database statement comparing its own token,
-/// decodes with `T = ()`.
+/// `T` is the backend's lease token, and equality with the live lease's token
+/// is the only fence [`Self::complete`] checks. A backend that fences
+/// completion outside this type, such as a database statement comparing its
+/// own token, decodes with `T = ()` and owes the same token rule there.
 ///
 /// # Backend obligations
 ///
@@ -29,6 +29,13 @@ use crate::Delay;
 ///   alone: a lease reported expired is live again before its deadline.
 ///   Samples stay below [`Duration::MAX`]. No later deadline is representable
 ///   at that last instant, so a lease granted there is already expired.
+/// - A token is never issued again for a subject while a receipt that carries
+///   it can still be presented, including after the subject's stored state
+///   was removed and created again. Telling a lease from the one before it is
+///   not enough: a counter that restarts with the stored state issues 1, 2, 1,
+///   and a late completion of the first lease then applies to the third. The
+///   memory backend numbers leases from one counter for the whole store that
+///   never restarts; the PostgreSQL backend generates a random token for each.
 /// - Transitions for one subject are serialized.
 /// - A state is evaluated only with the policy whose fingerprint keys it.
 ///   Another policy would reinterpret the stored failure count and instants.
@@ -221,7 +228,9 @@ impl PendingLease {
     pub const fn until(&self) -> Duration {
         self.until
     }
-    /// Binds the backend's token, giving the lease to store.
+    /// Binds the backend's token, giving the lease to store. No receipt still
+    /// outstanding for the subject may carry that token: see the obligations
+    /// on [`AttemptState`].
     pub const fn issue<T>(self, token: T) -> AttemptLease<T> {
         AttemptLease::new(token, self.failures, self.until)
     }
