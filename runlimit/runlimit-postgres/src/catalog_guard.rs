@@ -133,8 +133,28 @@ fn no_production_module_builds_sql_outside_statements() {
     let mut violations = Vec::new();
     let mut included_files = BTreeSet::new();
     for (file, production) in production_sources(&source) {
-        let (literals, code) = sql_literals(&production);
         let statements = is_statements_file(&file);
+        // Inside crate::statements only the statements! declarations, the
+        // macro itself and Statement::query may hold SQL; every other line
+        // of those files is checked like any other module.
+        let trusted = if statements {
+            trusted_statement_code(&production)
+        } else {
+            Vec::new()
+        };
+        // A statement's file is registered by the include that loads it; an
+        // include outside a statements! block is still rejected below.
+        if statements {
+            for (_, path) in includes(&production, &sql_literals(&production).1) {
+                if let Some(parent) = Path::new(&file).parent()
+                    && let Ok(resolved) = source.join(parent).join(&path).canonicalize()
+                {
+                    included_files.insert(resolved);
+                }
+            }
+        }
+        let production = blank(&production, &trusted);
+        let (literals, code) = sql_literals(&production);
         for (start, _) in code.match_indices("include!") {
             if start == 0 || !code.as_bytes()[start - 1].is_ascii_alphanumeric() {
                 violations.push(format!("{file}: include!"));
@@ -147,22 +167,13 @@ fn no_production_module_builds_sql_outside_statements() {
             let migration = owner
                 .as_deref()
                 .is_some_and(|name| MIGRATIONS.contains(&(file.as_str(), name)));
-            match resolved {
-                Some(resolved) if statements => {
-                    included_files.insert(resolved);
-                }
-                Some(_) if migration => {}
-                _ => violations.push(format!("{file}: {owner:?} includes {path}")),
+            if resolved.is_none() || !migration {
+                violations.push(format!("{file}: {owner:?} includes {path}"));
             }
-        }
-        if statements {
-            continue;
         }
         for (_, name) in MIGRATIONS {
             for (start, _) in code.match_indices(name) {
-                let item_start = code[..start]
-                    .rfind([';', '}'])
-                    .map_or(0, |end| end + 1);
+                let item_start = code[..start].rfind([';', '}']).map_or(0, |end| end + 1);
                 let item = code[item_start..start].trim_start();
                 let declaration = item.contains("const")
                     && code[start + name.len()..].trim_start().starts_with(':');
@@ -199,6 +210,50 @@ fn no_production_module_builds_sql_outside_statements() {
         violations.is_empty(),
         "SQL outside crate::statements:\n{violations:#?}"
     );
+}
+
+/// The byte ranges of `source`, a file of `crate::statements`, that may hold
+/// SQL: each `statements! { .. }` invocation, the `macro_rules! statements`
+/// definition, and the body of `Statement::query`.
+fn trusted_statement_code(source: &str) -> Vec<std::ops::Range<usize>> {
+    let (_, code) = sql_literals(source);
+    let mut ranges = Vec::new();
+    // The scanner blanks a lifetime's apostrophe, so match `fn query<`.
+    for opener in ["statements! {", "macro_rules! statements {", "fn query<"] {
+        for (start, _) in code.match_indices(opener) {
+            let Some(open) = code[start..].find('{').map(|offset| start + offset) else {
+                continue;
+            };
+            let mut depth = 0_usize;
+            for (offset, byte) in code.as_bytes()[open..].iter().enumerate() {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            ranges.push(start..open + offset + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    ranges
+}
+
+/// `source` with `ranges` replaced by spaces, keeping line breaks.
+fn blank(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
+    let mut bytes = source.as_bytes().to_vec();
+    for range in ranges {
+        for byte in &mut bytes[range.clone()] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(bytes).unwrap()
 }
 
 /// One identifier in blanked Rust code: its text, what follows it and

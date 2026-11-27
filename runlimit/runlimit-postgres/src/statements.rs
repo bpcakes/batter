@@ -57,11 +57,17 @@ SELECT
 /// whose names come from their own declarations.
 #[cfg(test)]
 pub(crate) fn all() -> Vec<(String, Statement)> {
+    // Each family's label and registry come from the same module path.
+    macro_rules! family {
+        ($module:ident) => {
+            (concat!(stringify!($module), "::"), $module::ALL)
+        };
+    }
     let families: [(&str, &[(&str, Statement)]); 4] = [
         ("", ALL),
-        ("attempts::", attempts::ALL),
-        ("fixed_window::", fixed_window::ALL),
-        ("gcra::", gcra::ALL),
+        family!(attempts),
+        family!(fixed_window),
+        family!(gcra),
     ];
     families
         .into_iter()
