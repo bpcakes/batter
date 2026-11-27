@@ -25,9 +25,11 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 mod detector;
 mod literals;
+mod modules;
 
 use detector::unqualified;
-use literals::{files, includes, production_sources, query_arguments, sql_literals};
+use literals::{files, includes, query_arguments, sql_literals};
+use modules::production_sources;
 
 use crate::{
     attempts::{row::StoredAttempt, sql as attempt},
