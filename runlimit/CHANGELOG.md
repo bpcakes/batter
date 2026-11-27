@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `runlimit_core::attempts::AttemptState<T>` is the one attempt lease
+  lifecycle: `Clear`, `Leased(AttemptLease<T>)` or `Failed(FailedAttempts)`.
+  Its pure `settle`, `admit` and `complete` own lease expiry counted as a
+  failure at the deadline, the quiet-period reset, the busy and backoff denials
+  and the failure delay, and return `AdmitEvaluation` (`Grant(PendingLease)` or
+  `Denied` with a `LeaseDenial`) and `CompleteEvaluation` (`Applied` or
+  `Stale`). `T` is the backend's lease token. `AttemptPolicy::delay` is the
+  only backoff derivation, and the new `AttemptPolicy::delay_schedule`
+  tabulates it for storage that must apply a failure inside one statement.
+  This is backend-author API, as `runlimit_core::gcra::evaluate` is for GCRA;
+  the limiter APIs and their results are unchanged (`batter-ctk7.6`).
+
 ### Fixed
 
 - `PostgresGcraLimiter::cleanup_expired` advanced every candidate shard to the
@@ -31,6 +45,54 @@ The format is based on [Keep a Changelog], and this project adheres to
   saved updates after preflight succeeds. The session adds no allocation to single
   checks. The two-check batches measured in `batter-ctk7.10` used fewer
   allocations.
+- `MemoryAttemptLimiter` stores `AttemptState` instead of separate failure,
+  timestamp and optional-lease fields, and evaluates admission, completion and
+  cleanup through it. Admissions, denials, completions, delays, observations,
+  the 16-entry cleanup scan and allocation behavior are unchanged. One internal
+  effect is new: `complete` with a receipt whose lease has expired still returns
+  and observes `Stale`, but now records the expiry as a failure at once rather
+  than at the next admission, and removes the subject when its quiet period has
+  also passed, which frees that capacity slot without a cleanup scan
+  (`batter-ctk7.7`).
+- `PostgresAttemptLimiter::admit` decodes the locked row once into
+  `AttemptState` and evaluates it with the transition the memory backend calls.
+  Completion executes `src/attempt_complete_scheduled.sql`, which reads the
+  delay from the bound `AttemptPolicy::delay_schedule` instead of restating the
+  formula; the imported `src/attempt_complete.sql` is retained unchanged as a
+  provenance record that no code path executes. No migration, schema, public
+  item, lock protocol or fence changes, and rows written by earlier releases
+  decode unchanged, so mixed-version replicas agree. While a lease is held,
+  `last_failure_ms` and `retry_at_ms` now hold the admission instant; neither
+  release reads them until the lease ends. A row without a lease and without
+  failures is `Clear`: it no longer denies `Backoff` when a server clock
+  regression leaves the clock behind its `retry_at_ms`. A new live test,
+  `memory_and_postgres_share_attempt_transition_semantics`, holds both backends
+  to one scripted lifecycle (`batter-ctk7.8`).
+- **Breaking:** this is a run-time break for hand-edited attempt rows only;
+  nothing stops compiling and no row this library writes is affected.
+  `PostgresAttemptLimiter::admit` now fails closed with
+  `CheckError::StorageInvariant`, before commit and without consuming anything,
+  for a row that fits no lease state. The subject stays refused until the row
+  is corrected or admission's bounded cleanup deletes it after its quiet period.
+
+  ```sql
+  -- A delay on a subject with no failures and no lease.
+  UPDATE runlimit_attempts SET failures = 0, retry_at_ms = last_failure_ms + 60000;
+  ```
+
+  ```rust
+  // Before: Ok(AttemptAdmission::Denied(AttemptDenial::Backoff { .. })) until retry_at_ms.
+  // After:  Err(CheckError::StorageInvariant(_)), detail
+  //         "attempt without failures carries a retry delay".
+  limiter.admit(subject).await
+  ```
+
+  To hold a subject back by hand, store at least one failure with the delay:
+  `SET failures = GREATEST(failures, 1), retry_at_ms = ...`. Moving
+  `retry_at_ms` earlier still releases a subject and keeps its failures, and
+  stored instants before 1970 keep their exact meaning. An operator matching
+  logs can match that detail string; `"invalid attempt failure count"` is
+  unchanged (`batter-ctk7.8`).
 - PostgreSQL GCRA retry and replenishment delays now subtract database-measured
   elapsed time through the final statement of the decision path, saturating at
   zero, matching fixed-window delay semantics. The evaluation instant, persisted

@@ -6,6 +6,13 @@ use thiserror::Error;
 
 use crate::{Delay, PolicyFingerprint, PolicyId, QuotaPeriod, ScopeId, SubjectKey};
 
+mod state;
+
+pub use state::{
+    AdmitEvaluation, AttemptLease, AttemptState, CompleteEvaluation, FailedAttempts, LeaseDenial,
+    PendingLease,
+};
+
 /// Validated exponential-backoff policy with exactly one in-flight attempt.
 /// Every failure doubles the previous delay, up to the cap. Success resets
 /// retry state; abandonment and expired leases count as failures. Audit history
@@ -99,6 +106,10 @@ impl AttemptPolicy {
         self.fingerprint
     }
     /// Delay after this many consecutive failures; zero means no delay.
+    ///
+    /// This is the only derivation of the backoff schedule. [`AttemptState`]
+    /// transitions call it, and [`Self::delay_schedule`] tabulates it for
+    /// storage that cannot.
     pub fn delay(&self, failures: u32) -> Duration {
         if failures == 0 {
             return Duration::ZERO;
@@ -109,6 +120,44 @@ impl AttemptPolicy {
                 .saturating_mul(1_u64.checked_shl(failures - 1).unwrap_or(u64::MAX))
                 .min(self.maximum_delay.millis()),
         )
+    }
+    /// [`Self::delay`] tabulated for storage that applies a failure where this
+    /// crate cannot run, such as inside one database statement.
+    ///
+    /// Element `n - 1` is `delay(n)`. The table ends at the first failure count
+    /// that reaches the cap, so it is never empty and has at most 65 elements;
+    /// every larger count waits the last element. Bind the table instead of
+    /// writing the formula a second time.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use runlimit_core::{PolicyId, QuotaPeriod, ScopeId, attempts::AttemptPolicy};
+    /// let millis = |value| QuotaPeriod::new(Duration::from_millis(value)).unwrap();
+    /// let policy = AttemptPolicy::new(
+    ///     PolicyId::new("sign-in").unwrap(),
+    ///     ScopeId::new("account").unwrap(),
+    ///     millis(10),
+    ///     millis(40),
+    ///     millis(100),
+    ///     millis(20),
+    /// )
+    /// .unwrap();
+    /// let schedule = policy.delay_schedule();
+    /// assert_eq!(schedule, [10, 20, 40].map(Duration::from_millis));
+    /// let stored_failures = 9;
+    /// assert_eq!(schedule[stored_failures.min(schedule.len()) - 1], policy.delay(9));
+    /// ```
+    pub fn delay_schedule(&self) -> Vec<Duration> {
+        let cap = self.maximum_delay.duration();
+        let mut schedule = Vec::new();
+        for failures in 1..=u32::MAX {
+            let delay = self.delay(failures);
+            schedule.push(delay);
+            if delay >= cap {
+                break;
+            }
+        }
+        schedule
     }
 }
 

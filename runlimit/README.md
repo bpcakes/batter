@@ -555,6 +555,18 @@ after locks; process-local storage clamps backwards clock readings. PostgreSQL
 uses server wall time, so a server clock correction can extend or shorten
 waiting periods; deploy with disciplined database time.
 
+Both backends evaluate one lifecycle, `runlimit_core::attempts::AttemptState`:
+a subject is `Clear`, `Leased` or `Failed`, and that type's pure `settle`,
+`admit` and `complete` own expiry, the quiet-period reset, the denials and the
+delay. A backend author decodes storage into the state and persists what the
+evaluation returns, as `gcra::evaluate` works for GCRA. PostgreSQL completion
+applies its failure inside one statement, so it binds
+`AttemptPolicy::delay_schedule` rather than restating the backoff formula. A
+receipt first presented after its lease expired is `Stale` in both backends; the
+expiry itself is the failure. A PostgreSQL claim is the one extension: it
+validates the lease while taking the row lock, so its transaction may finish
+past the deadline.
+
 The policy validates nonzero whole-millisecond initial delay, delay cap, quiet
 period, and admission lease. The cap must be at least the initial delay, and
 quiet expiry must be at least the cap. Failure counts saturate at `u32::MAX`;

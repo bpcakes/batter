@@ -46,6 +46,18 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   they charge each unique key. GCRA retains its evaluated updates through
   cleanup and capacity preflight. Only a preflighted single or batch session
   can commit. Observers run after shard locks drop.
+- The memory and PostgreSQL attempt backends evaluate one lease lifecycle,
+  `runlimit_core::attempts::AttemptState`. Lease expiry counted as a failure,
+  the quiet-period reset, the busy and backoff denials and the failure delay
+  are derived only by its `settle`, `admit` and `complete` and by
+  `AttemptPolicy::delay`. A backend decodes storage into that enum and persists
+  what the evaluation returns; it keeps no loose lease, failure or retry
+  fields and no second copy of a rule. PostgreSQL completion must lock, sample
+  the clock and check its fence in one statement, so that statement applies
+  the live-lease case in SQL and reads its delay from the bound
+  `AttemptPolicy::delay_schedule`; never restate the formula in SQL.
+  `runlimit-postgres/tests/attempt_state.rs` holds both backends to one
+  scripted lifecycle, and a new attempt rule extends that script.
 - A policy configuration fingerprint is part of every storage key. Changing
   any storage-relevant configuration never reinterprets an existing counter.
 - Numbers are validated once, where they enter. `Capacity` is nonzero and at

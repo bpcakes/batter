@@ -1,12 +1,12 @@
 //! Bounded process-local outcome-aware attempts. Dropped receipts expire as failures.
+//!
+//! Every lease rule is `runlimit_core::attempts::AttemptState`'s. This module
+//! owns only storage: the bounded map, receipt generations and the clock clamp.
 use crate::{Clock, SystemClock};
-use runlimit_core::{
-    Delay,
-    attempts::{
-        AttemptAdmission, AttemptCompletion, AttemptCompletionResult, AttemptDenial,
-        AttemptObservation, AttemptObserver, AttemptOutcome, AttemptPolicy, AttemptSubject,
-        observe_attempt_safely,
-    },
+use runlimit_core::attempts::{
+    AdmitEvaluation, AttemptAdmission, AttemptCompletionResult, AttemptDenial, AttemptObservation,
+    AttemptObserver, AttemptOutcome, AttemptPolicy, AttemptState, AttemptSubject,
+    CompleteEvaluation, PendingLease, observe_attempt_safely,
 };
 use std::{
     collections::BTreeMap,
@@ -17,12 +17,11 @@ use std::{
 use thiserror::Error;
 
 type Key = ([u8; 32], [u8; 32]);
+/// One retained subject. A lease's token is the generation of its receipt. A
+/// subject that becomes [`AttemptState::Clear`] is removed, not retained.
 struct Entry {
     policy: AttemptPolicy,
-    failures: u32,
-    last_failure: Duration,
-    retry_at: Duration,
-    lease: Option<(u64, Duration)>,
+    state: AttemptState<u64>,
 }
 #[derive(Default)]
 struct State {
@@ -116,35 +115,39 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         state.now = state.now.max(self.clock.now());
         let now = state.now;
         cleanup(&mut state, now);
-        let denial = if let Some(entry) = state.entries.get_mut(&key) {
-            reconcile(entry, now);
-            deny(entry, now)
-        } else if state.entries.len() >= self.capacity.get() {
-            Some(AttemptDenial::StorageCapacity)
-        } else {
-            None
+        let full = state.entries.len() >= self.capacity.get();
+        let evaluated = match state.entries.get_mut(&key) {
+            Some(entry) => {
+                evaluate(entry.state, &entry.policy, now).map_err(|(settled, denial)| {
+                    entry.state = settled;
+                    denial
+                })
+            }
+            None if full => Err(AttemptDenial::StorageCapacity),
+            None => evaluate(AttemptState::Clear, policy, now).map_err(|(_, denial)| denial),
         };
-        if let Some(denial) = denial {
-            drop(state);
-            self.observe(AttemptObservation::Denied(denial));
-            return Ok(AttemptAdmission::Denied(denial));
-        }
+        let pending = match evaluated {
+            Ok(pending) => pending,
+            Err(denial) => {
+                drop(state);
+                self.observe(AttemptObservation::Denied(denial));
+                return Ok(AttemptAdmission::Denied(denial));
+            }
+        };
         state.generation = state
             .generation
             .checked_add(1)
             .ok_or(MemoryAttemptError::SequenceExhausted)?;
         let generation = state.generation;
-        let entry = state.entries.entry(key).or_insert_with(|| Entry {
-            policy: policy.clone(),
-            failures: 0,
-            last_failure: now,
-            retry_at: now,
-            lease: None,
-        });
-        entry.lease = Some((
-            generation,
-            now.saturating_add(entry.policy.lease().duration()),
-        ));
+        let leased = AttemptState::Leased(pending.issue(generation));
+        state
+            .entries
+            .entry(key)
+            .and_modify(|entry| entry.state = leased)
+            .or_insert_with(|| Entry {
+                policy: policy.clone(),
+                state: leased,
+            });
         drop(state);
         self.observe(AttemptObservation::Admitted);
         Ok(AttemptAdmission::Admitted(MemoryAttemptReceipt {
@@ -153,7 +156,9 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
             generation,
         }))
     }
-    /// Completes a reservation once. Stale receipts never mutate current state.
+    /// Completes a reservation once. A stale receipt never applies its outcome.
+    /// A receipt presented after its lease expired is stale: the expiry has
+    /// already counted as a failure at the lease deadline.
     ///
     /// # Errors
     /// Returns [`MemoryAttemptCompletionError`] when the state mutex is poisoned.
@@ -163,35 +168,41 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         receipt: MemoryAttemptReceipt,
         outcome: AttemptOutcome,
     ) -> Result<AttemptCompletionResult, MemoryAttemptCompletionError> {
-        let mut state = self
+        let mut guard = self
             .state
             .lock()
             .map_err(|_| MemoryAttemptCompletionError)?;
+        let state = &mut *guard;
         state.now = state.now.max(self.clock.now());
         let now = state.now;
-        let valid_store = Weak::ptr_eq(&receipt.store, &Arc::downgrade(&self.state));
+        // A receipt from another store names no reservation here, whatever
+        // generation it carries.
+        let same_store = Weak::ptr_eq(&receipt.store, &Arc::downgrade(&self.state));
         let result = match state.entries.get_mut(&receipt.key) {
-            Some(entry)
-                if valid_store
-                    && entry.lease.is_some_and(|(generation, until)| {
-                        generation == receipt.generation && now < until
-                    }) =>
-            {
-                entry.lease = None;
-                let (failures, delay) = if outcome == AttemptOutcome::Success {
-                    (0, Duration::ZERO)
-                } else {
-                    fail(entry, now);
-                    (entry.failures, entry.policy.delay(entry.failures))
-                };
-                if outcome == AttemptOutcome::Success {
-                    state.entries.remove(&receipt.key);
+            Some(entry) if same_store => {
+                let (next, result) =
+                    match entry
+                        .state
+                        .complete(&entry.policy, now, &receipt.generation, outcome)
+                    {
+                        CompleteEvaluation::Applied { state, completion } => {
+                            (state, AttemptCompletionResult::Applied(completion))
+                        }
+                        CompleteEvaluation::Stale { settled } => {
+                            (settled, AttemptCompletionResult::Stale)
+                        }
+                    };
+                match next {
+                    AttemptState::Clear => {
+                        state.entries.remove(&receipt.key);
+                    }
+                    AttemptState::Leased(_) | AttemptState::Failed(_) => entry.state = next,
                 }
-                AttemptCompletionResult::Applied(completion(outcome, failures, delay))
+                result
             }
-            _ => AttemptCompletionResult::Stale,
+            Some(_) | None => AttemptCompletionResult::Stale,
         };
-        drop(state);
+        drop(guard);
         self.observe(match result {
             AttemptCompletionResult::Applied(completion) => {
                 AttemptObservation::Completed(completion)
@@ -201,46 +212,23 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         Ok(result)
     }
 }
-fn completion(outcome: AttemptOutcome, failures: u32, delay: Duration) -> AttemptCompletion {
-    AttemptCompletion::new(outcome, failures, Delay::new(delay))
-        .expect("policy transition produces consistent completion metadata")
-}
-fn fail(entry: &mut Entry, now: Duration) {
-    entry.failures = entry.failures.saturating_add(1);
-    entry.last_failure = now;
-    entry.retry_at = now.saturating_add(entry.policy.delay(entry.failures));
-}
-fn reconcile(entry: &mut Entry, now: Duration) {
-    if let Some((_, until)) = entry.lease
-        && now >= until
-    {
-        entry.lease = None;
-        fail(entry, until);
+/// Evaluates one admission. A denial also carries the settled state to retain.
+fn evaluate(
+    state: AttemptState<u64>,
+    policy: &AttemptPolicy,
+    now: Duration,
+) -> Result<PendingLease, (AttemptState<u64>, AttemptDenial)> {
+    match state.admit(policy, now) {
+        AdmitEvaluation::Grant(pending) => Ok(pending),
+        AdmitEvaluation::Denied { settled, denial } => Err((settled, denial.into())),
     }
-    if entry.lease.is_none()
-        && now
-            >= entry
-                .last_failure
-                .saturating_add(entry.policy.quiet_period().duration())
-    {
-        entry.failures = 0;
-        entry.retry_at = now;
-    }
-}
-fn deny(entry: &Entry, now: Duration) -> Option<AttemptDenial> {
-    if let Some((_, until)) = entry.lease {
-        return Some(AttemptDenial::Busy {
-            retry_after: Delay::new(until.saturating_sub(now)),
-        });
-    }
-    (now < entry.retry_at).then(|| AttemptDenial::Backoff {
-        retry_after: Delay::new(entry.retry_at.saturating_sub(now)),
-    })
 }
 /// Keys one admission's cleanup examines, and the size of its stack scratch.
 const CLEANUP_SCAN: usize = 16;
-/// Reclaims quiet-expired entries among the next keys after the cursor. The
-/// cursor rests on the last examined key, or wraps when nothing follows it.
+/// Reclaims entries that have settled to [`AttemptState::Clear`] among the
+/// next keys after the cursor: no live lease and a full quiet period since the
+/// last failure. The cursor rests on the last examined key, or wraps when
+/// nothing follows it.
 fn cleanup(state: &mut State, now: Duration) {
     use std::ops::Bound::{Excluded, Unbounded};
     let mut scratch = [([0; 32], [0; 32]); CLEANUP_SCAN];
@@ -257,10 +245,124 @@ fn cleanup(state: &mut State, now: Duration) {
     state.cursor = keys.last().copied();
     for key in keys {
         if state.entries.get(key).is_some_and(|entry| {
-            let origin = entry.lease.map_or(entry.last_failure, |(_, until)| until);
-            now >= origin.saturating_add(entry.policy.quiet_period().duration())
+            matches!(entry.state.settle(&entry.policy, now), AttemptState::Clear)
         }) {
             state.entries.remove(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AttemptState, Clock, MemoryAttemptLimiter};
+    use runlimit_core::{
+        KeyHasher, PolicyId, QuotaPeriod, ScopeId,
+        attempts::{
+            AttemptAdmission, AttemptCompletionResult, AttemptDenial, AttemptObservation,
+            AttemptObserver, AttemptOutcome, AttemptPolicy, FailedAttempts,
+        },
+    };
+    use std::{
+        num::{NonZeroU32, NonZeroUsize},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::Duration,
+    };
+
+    #[derive(Clone, Default)]
+    struct TestClock(Arc<AtomicU64>);
+    impl Clock for TestClock {
+        fn now(&self) -> Duration {
+            Duration::from_millis(self.0.load(Ordering::SeqCst))
+        }
+    }
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<AttemptObservation>>);
+    impl AttemptObserver for Recorder {
+        fn observe(&self, observation: AttemptObservation) {
+            self.0.lock().unwrap().push(observation);
+        }
+    }
+    fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    /// Initial delay 10 ms, cap 40 ms, quiet period 100 ms, lease 20 ms.
+    #[test]
+    fn completing_an_expired_receipt_counts_the_expiry_without_waiting_for_an_admission() {
+        let period = |value| QuotaPeriod::new(ms(value)).unwrap();
+        let policy = AttemptPolicy::new(
+            PolicyId::new("auth").unwrap(),
+            ScopeId::new("identifier").unwrap(),
+            period(10),
+            period(40),
+            period(100),
+            period(20),
+        )
+        .unwrap();
+        let clock = TestClock::default();
+        let recorder = Arc::new(Recorder::default());
+        let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone())
+            .with_observer(recorder.clone());
+        let subject = KeyHasher::new([7; 32])
+            .unwrap()
+            .hash_attempt_for(&policy, b"user");
+        let stored = |limiter: &MemoryAttemptLimiter<TestClock>| {
+            let state = limiter.state.lock().unwrap();
+            assert!(state.entries.len() <= 1);
+            state.entries.values().next().map(|entry| entry.state)
+        };
+
+        let AttemptAdmission::Admitted(expired) = limiter.admit(subject).unwrap() else {
+            panic!("first admission was denied");
+        };
+        clock.0.store(25, Ordering::SeqCst);
+        assert_eq!(
+            limiter.complete(expired, AttemptOutcome::Success).unwrap(),
+            AttemptCompletionResult::Stale
+        );
+        // The stale completion did not apply its success, but the entry no
+        // longer claims a lease: the expiry is the first failure, dated at the
+        // 20 ms deadline rather than at the 25 ms it was noticed.
+        assert_eq!(
+            stored(&limiter),
+            Some(AttemptState::Failed(FailedAttempts::new(
+                NonZeroU32::MIN,
+                ms(20),
+                ms(30)
+            )))
+        );
+        let backoff = AttemptDenial::Backoff {
+            retry_after: runlimit_core::Delay::new(ms(5)),
+        };
+        assert!(matches!(
+            limiter.admit(subject).unwrap(),
+            AttemptAdmission::Denied(denial) if denial == backoff
+        ));
+
+        // A stale completion that finds the quiet period over releases the
+        // capacity slot at once instead of leaving it to a later cleanup scan.
+        clock.0.store(30, Ordering::SeqCst);
+        let AttemptAdmission::Admitted(quiet) = limiter.admit(subject).unwrap() else {
+            panic!("admission after the delay was denied");
+        };
+        clock.0.store(150, Ordering::SeqCst);
+        assert_eq!(
+            limiter.complete(quiet, AttemptOutcome::Failure).unwrap(),
+            AttemptCompletionResult::Stale
+        );
+        assert_eq!(stored(&limiter), None);
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            [
+                AttemptObservation::Admitted,
+                AttemptObservation::Stale,
+                AttemptObservation::Denied(backoff),
+                AttemptObservation::Admitted,
+                AttemptObservation::Stale,
+            ]
+        );
     }
 }
