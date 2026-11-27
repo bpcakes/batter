@@ -1,7 +1,7 @@
-use std::{fmt, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc};
 
 use runlimit_core::{
-    Allowance, BatchDecision, BatchError, Capacity, Check, Decision, Limiter, Observer, QuotaDenial,
+    Allowance, BatchDecision, BatchError, Check, Decision, Limiter, Observer, QuotaDenial,
 };
 use thiserror::Error;
 
@@ -19,36 +19,49 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    pub(crate) fn denial(self, check: &Check<'_>, expires: u128, now: u128) -> Option<QuotaDenial> {
+    /// Charges `check` to this active window, or denies it when the stored
+    /// usage and the cost exceed the limit. Usage above the limit, which no
+    /// path writes, leaves nothing to spend, so it fails closed as a denial
+    /// in every build.
+    pub(crate) fn evaluate(
+        self,
+        check: &Check<'_>,
+        expires: u128,
+        now: u128,
+    ) -> Result<(Self, Allowance), QuotaDenial> {
         let limit = check.policy().limit();
-        (remaining_quota(limit, self.used) < check.cost())
-            .then(|| QuotaDenial::new(limit, remaining_duration(expires - now)))
+        let replenishes_after = remaining_duration(expires - now);
+        Allowance::full(limit, replenishes_after)
+            .spend(self.used)
+            .and_then(|left| left.spend(check.cost()))
+            .map(|allowance| {
+                // Both fit the limit here, so their sum cannot overflow.
+                let entry = Self {
+                    used: self.used + check.cost(),
+                };
+                (entry, allowance)
+            })
+            .ok_or_else(|| QuotaDenial::new(limit, replenishes_after))
     }
 
+    pub(crate) fn denial(self, check: &Check<'_>, expires: u128, now: u128) -> Option<QuotaDenial> {
+        self.evaluate(check, expires, now).err()
+    }
+
+    /// Charges a check that [`Self::denial`] admitted during preflight, under
+    /// the same shard locks and clock sample.
     pub(crate) fn charge(self, check: &Check<'_>, expires: u128, now: u128) -> (Self, Allowance) {
-        let entry = Self {
-            used: self.used + check.cost(),
-        };
-        let limit = check.policy().limit();
-        (
-            entry,
-            allowance(
-                limit,
-                remaining_quota(limit, entry.used),
-                remaining_duration(expires - now),
-            ),
-        )
+        self.evaluate(check, expires, now)
+            .expect("a preflighted check is admitted at commit under the same locks and clock")
     }
 
     pub(crate) fn open(check: &Check<'_>, now: u128) -> (Self, Allowance, u128) {
         let window = check.policy().window();
-        let limit = check.policy().limit();
+        let allowance = Allowance::full(check.policy().limit(), window.duration())
+            .spend(check.cost())
+            .expect("a check's cost never exceeds its policy's capacity");
         let entry = Self { used: check.cost() };
-        (
-            entry,
-            allowance(limit, remaining_quota(limit, entry.used), window.duration()),
-            now + u128::from(window.millis()),
-        )
+        (entry, allowance, now + u128::from(window.millis()))
     }
 }
 
@@ -98,10 +111,10 @@ mod fixed_window {
         ) -> Result<QuotaEvaluation<Self::Token>, Self::EvalError> {
             let counter_key = check.counter_key();
             if let Some((active, expires)) = shard.active_entry(counter_key, now_millis) {
-                if let Some(denial) = active.denial(check, expires, now_millis) {
-                    return Ok(QuotaEvaluation::Denied(denial));
-                }
-                let (entry, allowance) = active.charge(check, expires, now_millis);
+                let (entry, allowance) = match active.evaluate(check, expires, now_millis) {
+                    Ok(charged) => charged,
+                    Err(denial) => return Ok(QuotaEvaluation::Denied(denial)),
+                };
                 return Ok(QuotaEvaluation::Allowed(PendingConsumption {
                     counter_key,
                     allowance,
@@ -123,13 +136,6 @@ mod fixed_window {
 }
 
 pub(crate) use fixed_window::FixedWindowAlgorithm;
-
-/// Builds an allowance whose `available` was derived by subtracting from
-/// `limit`, so it can never exceed the capacity.
-fn allowance(limit: Capacity, available: u64, replenishes_after: Duration) -> Allowance {
-    Allowance::new(limit, available, replenishes_after)
-        .expect("remaining quota is derived from the limit and cannot exceed it")
-}
 
 /// A sharded, hard-bounded, process-local fixed-window store.
 ///
@@ -329,14 +335,6 @@ impl<C: Clock> MemoryStore<C> {
     }
 }
 
-fn remaining_quota(limit: Capacity, used: u64) -> u64 {
-    debug_assert!(
-        used <= limit.get(),
-        "stored quota usage ({used}) exceeded its policy limit ({limit})"
-    );
-    limit.get().saturating_sub(used)
-}
-
 impl<C: Clock> Limiter for MemoryStore<C> {
     type Policy = runlimit_core::FixedWindowPolicy;
     type CheckError = PoisonedShardError;
@@ -480,7 +478,7 @@ mod tests {
         Observation, Observer, PolicyId, QuotaDenial, QuotaMode, ScopeId, SubjectKey,
     };
 
-    use super::{Entry, MemoryBatchError, MemoryStore, PoisonedShardError, remaining_quota};
+    use super::{Entry, MemoryBatchError, MemoryStore, PoisonedShardError};
     use crate::{Clock, MemoryStoreConfig, shards::counter_key_hash};
 
     fn capacity(value: u64) -> Capacity {
@@ -801,22 +799,10 @@ mod tests {
         assert!(store.check(&second_check).unwrap().permits_request());
     }
 
+    // No path writes usage above the limit; if storage held it, the check
+    // would fail closed as a denial, the same in every build profile.
     #[test]
-    fn remaining_quota_reaches_zero_without_wrapping() {
-        assert_eq!(remaining_quota(capacity(3), 0), 3);
-        assert_eq!(remaining_quota(capacity(3), 3), 0);
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    #[should_panic(expected = "stored quota usage (4) exceeded its policy limit (3)")]
-    fn corrupt_quota_state_trips_the_debug_invariant() {
-        let _ = remaining_quota(capacity(3), 4);
-    }
-
-    #[cfg(not(debug_assertions))]
-    #[test]
-    fn corrupt_quota_state_fails_closed_in_release_builds() {
+    fn corrupt_quota_state_fails_closed() {
         let policy = policy("auth.login", "client", 3, Duration::from_secs(60));
         let check = Check::new(subject(1).bind(&policy));
         let key = check.counter_key();

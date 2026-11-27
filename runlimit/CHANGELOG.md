@@ -9,6 +9,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Allowance::full(capacity, replenishes_after)` is an unused allowance, and
+  `Allowance::spend(cost)` returns the allowance after spending `cost`, or
+  `None` when less is available. Together they derive an allowance from
+  stored usage without a fallible construction. `runlimit-memory` evaluates
+  fixed-window entries through them, so usage above the limit, which no path
+  writes, fails closed as a denial in every build profile; the
+  `debug_assert` and saturating subtraction that guarded it, their
+  profile-split tests and the release-only matrix run are gone.
+  `runlimit-postgres` derives a sampled allowance the same way
+  (`batter-39wm.6`).
 - `Capacity::get_i64`, `QuotaPeriod::millis_i64` and `Check::cost_i64` return
   the validated numbers as exact signed 64-bit integers, and
   `Allowance::with_replenishes_after` replaces an allowance's delay without
@@ -72,6 +82,40 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking:** `MemoryAttemptLimiter::with_clock(capacity, clock)` is
+  removed. A constructor named `with_*` broke the rule that every `with_*`
+  is a builder method; the limiter now has the same builder as the quota
+  stores (`batter-39wm.6`).
+
+  ```rust
+  // Before:
+  let limiter = MemoryAttemptLimiter::with_clock(capacity, clock);
+  // After:
+  let limiter = MemoryAttemptLimiter::builder(capacity).with_clock(clock).build();
+  ```
+- **Breaking:** `DecisionError` is removed. Each decision constructor
+  returns an error that names only its own failure:
+  `Allowance::new` returns `AvailableExceedsCapacity`,
+  `BatchDecision::allowed` returns `EmptyAllowedBatch`, and
+  `BatchDecision::denied` and `BatchDecision::shadow_denied` return
+  `DeniedIndexOutOfRange`. The fields and messages are unchanged
+  (`batter-39wm.6`).
+
+  ```rust
+  // Before: one enum with variants no single constructor could produce.
+  match Allowance::new(capacity, available, delay) {
+      Err(DecisionError::AvailableExceedsCapacity { capacity, available }) => {}
+      Err(DecisionError::EmptyBatch | DecisionError::DeniedIndexOutOfRange { .. }) => {}
+      Ok(allowance) => {}
+  }
+  // After: the constructor's own error.
+  match Allowance::new(capacity, available, delay) {
+      Err(AvailableExceedsCapacity { capacity, available }) => {}
+      Ok(allowance) => {}
+  }
+  // BatchDecision::allowed(..) now fails with EmptyAllowedBatch;
+  // denied(..) and shadow_denied(..) with DeniedIndexOutOfRange { index, batch_size }.
+  ```
 - **Breaking:** `AttemptPolicy::delay_schedule` returns `Vec<QuotaPeriod>`
   instead of `Vec<Duration>`. Each element is the same nonzero,
   whole-millisecond delay, no longer than the maximum delay, so storage

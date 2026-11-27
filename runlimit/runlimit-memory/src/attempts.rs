@@ -80,23 +80,72 @@ pub enum MemoryAttemptError {
 #[error("attempt state mutex poisoned")]
 pub struct MemoryAttemptCompletionError;
 
+/// Builds a [`MemoryAttemptLimiter`], with an injected clock when
+/// deterministic time is required.
+///
+/// Migration: `MemoryAttemptLimiter::with_clock(capacity, clock)` is now
+/// `MemoryAttemptLimiter::builder(capacity).with_clock(clock).build()`.
+///
+/// ```
+/// use std::{num::NonZeroUsize, time::Duration};
+///
+/// use runlimit_memory::{Clock, attempts::MemoryAttemptLimiter};
+///
+/// struct TestClock;
+/// impl Clock for TestClock {
+///     fn now(&self) -> Duration { Duration::ZERO }
+/// }
+///
+/// let limiter = MemoryAttemptLimiter::builder(NonZeroUsize::new(8).unwrap())
+///     .with_clock(TestClock)
+///     .build();
+/// # drop(limiter);
+/// ```
+#[must_use]
+pub struct MemoryAttemptLimiterBuilder<C = SystemClock> {
+    capacity: NonZeroUsize,
+    clock: C,
+}
+
 impl MemoryAttemptLimiter {
     /// Creates a hard-bounded limiter using monotonic system time.
     pub fn new(capacity: NonZeroUsize) -> Self {
-        Self::with_clock(capacity, SystemClock::new())
+        Self::builder(capacity).build()
+    }
+
+    /// Begins constructing a hard-bounded limiter for at most `capacity`
+    /// retained subjects. Use [`MemoryAttemptLimiterBuilder::with_clock`]
+    /// before [`MemoryAttemptLimiterBuilder::build`] for deterministic time.
+    pub fn builder(capacity: NonZeroUsize) -> MemoryAttemptLimiterBuilder {
+        MemoryAttemptLimiterBuilder {
+            capacity,
+            clock: SystemClock::new(),
+        }
     }
 }
-impl<C: Clock> MemoryAttemptLimiter<C> {
-    /// Creates a limiter with an injected monotonic clock. A sample earlier
-    /// than one already seen is read as that one.
-    pub fn with_clock(capacity: NonZeroUsize, clock: C) -> Self {
-        Self {
-            state: Arc::default(),
+
+impl<C: Clock> MemoryAttemptLimiterBuilder<C> {
+    /// Replaces the clock. A sample earlier than one already seen is read as
+    /// that one.
+    pub fn with_clock<D: Clock>(self, clock: D) -> MemoryAttemptLimiterBuilder<D> {
+        MemoryAttemptLimiterBuilder {
+            capacity: self.capacity,
             clock,
-            capacity,
+        }
+    }
+
+    /// Builds the limiter with no retained subjects.
+    pub fn build(self) -> MemoryAttemptLimiter<C> {
+        MemoryAttemptLimiter {
+            state: Arc::default(),
+            clock: self.clock,
+            capacity: self.capacity,
             observer: None,
         }
     }
+}
+
+impl<C: Clock> MemoryAttemptLimiter<C> {
     /// Installs a panic-isolated observer.
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<dyn AttemptObserver>) -> Self {

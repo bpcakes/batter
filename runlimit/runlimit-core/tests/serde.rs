@@ -5,8 +5,9 @@
 use std::time::Duration;
 
 use runlimit_core::{
-    Allowance, BatchDecision, BatchDecisionView, Capacity, Decision, DecisionError, Delay, Denial,
-    FixedWindowPolicy, GcraPolicy, MAX_WINDOW_MILLIS, PolicyId, QuotaDenial, QuotaMode, ScopeId,
+    Allowance, AvailableExceedsCapacity, BatchDecision, BatchDecisionView, Capacity, Decision,
+    Delay, Denial, FixedWindowPolicy, GcraPolicy, MAX_WINDOW_MILLIS, PolicyId, QuotaDenial,
+    QuotaMode, ScopeId,
 };
 use serde_json::json;
 
@@ -257,7 +258,7 @@ fn decision_deserialization_rejects_impossible_metadata() {
 fn invalid_allowances_cannot_be_constructed() {
     assert_eq!(
         Allowance::new(capacity(8), 9, Duration::from_secs(1)),
-        Err(DecisionError::AvailableExceedsCapacity {
+        Err(AvailableExceedsCapacity {
             capacity: capacity(8),
             available: 9,
         })

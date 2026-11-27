@@ -60,7 +60,9 @@ fn a_refused_lease_deadline_still_stores_the_settled_subject() {
     let policy = policy();
     let end = Duration::MAX;
     let clock = Late(Arc::new(Mutex::new(end.saturating_sub(ms(150)))));
-    let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone());
+    let limiter = MemoryAttemptLimiter::builder(NonZeroUsize::MIN)
+        .with_clock(clock.clone())
+        .build();
     let subject = KeyHasher::new([7; 32])
         .unwrap()
         .hash_attempt_for(&policy, b"user");
@@ -87,7 +89,9 @@ fn a_refused_lease_deadline_still_stores_the_settled_subject() {
 fn an_exhausted_receipt_sequence_still_stores_the_settled_subject() {
     let policy = policy();
     let clock = TestClock::default();
-    let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone());
+    let limiter = MemoryAttemptLimiter::builder(NonZeroUsize::MIN)
+        .with_clock(clock.clone())
+        .build();
     let subject = KeyHasher::new([7; 32])
         .unwrap()
         .hash_attempt_for(&policy, b"user");
@@ -113,7 +117,9 @@ fn an_exhausted_receipt_sequence_still_stores_the_settled_subject() {
 fn cleanup_stores_the_failure_of_an_expired_lease_it_retains() {
     let policy = policy();
     let clock = TestClock::default();
-    let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(2).unwrap(), clock.clone());
+    let limiter = MemoryAttemptLimiter::builder(NonZeroUsize::new(2).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let AttemptAdmission::Admitted(_abandoned) = limiter
         .admit(hasher.hash_attempt_for(&policy, b"first"))
@@ -143,7 +149,9 @@ fn completing_an_expired_receipt_counts_the_expiry_without_waiting_for_an_admiss
     let policy = policy();
     let clock = TestClock::default();
     let recorder = Arc::new(Recorder::default());
-    let limiter = MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone())
+    let limiter = MemoryAttemptLimiter::builder(NonZeroUsize::MIN)
+        .with_clock(clock.clone())
+        .build()
         .with_observer(recorder.clone());
     let subject = KeyHasher::new([7; 32])
         .unwrap()

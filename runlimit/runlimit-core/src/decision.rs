@@ -50,32 +50,44 @@ impl From<Duration> for Delay {
     }
 }
 
-/// An invalid decision or batch construction.
+/// The one failure of [`Allowance::new`]: more available quota than the
+/// capacity.
+///
+/// Migration: this replaces `DecisionError::AvailableExceedsCapacity`; match
+/// `AvailableExceedsCapacity { capacity, available }` instead.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum DecisionError {
-    /// An allowance reported more available quota than its capacity.
-    #[error("available quota {available} exceeds decision capacity {capacity}")]
-    AvailableExceedsCapacity {
-        /// Decision capacity.
-        capacity: Capacity,
-        /// Invalid available quota.
-        available: u64,
-    },
-    /// A batch denial named an input index at or beyond its batch size.
-    #[error("denied batch index {index} is out of range for a batch of {batch_size} checks")]
-    DeniedIndexOutOfRange {
-        /// Index of the denied input supplied by the caller.
-        index: usize,
-        /// Batch size supplied by the caller.
-        batch_size: usize,
-    },
-    /// An allowed batch carried no allowances.
-    ///
-    /// Backends reject empty batches before evaluation, so an allowed batch
-    /// always describes at least one consumed check.
-    #[error("an allowed batch must carry at least one allowance")]
-    EmptyBatch,
+#[error("available quota {available} exceeds decision capacity {capacity}")]
+pub struct AvailableExceedsCapacity {
+    /// Decision capacity.
+    pub capacity: Capacity,
+    /// Invalid available quota.
+    pub available: u64,
 }
+
+/// The one failure of [`BatchDecision::denied`] and
+/// [`BatchDecision::shadow_denied`]: an input index at or beyond the batch
+/// size, which also rejects an empty batch.
+///
+/// Migration: this replaces `DecisionError::DeniedIndexOutOfRange`; match
+/// `DeniedIndexOutOfRange { index, batch_size }` instead.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("denied batch index {index} is out of range for a batch of {batch_size} checks")]
+pub struct DeniedIndexOutOfRange {
+    /// Index of the denied input supplied by the caller.
+    pub index: usize,
+    /// Batch size supplied by the caller.
+    pub batch_size: usize,
+}
+
+/// The one failure of [`BatchDecision::allowed`]: no allowances.
+///
+/// Backends reject empty batches before evaluation, so an allowed batch
+/// always describes at least one consumed check.
+///
+/// Migration: this replaces `DecisionError::EmptyBatch`.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("an allowed batch must carry at least one allowance")]
+pub struct EmptyAllowedBatch;
 
 /// Validated details for quota exhaustion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -169,15 +181,15 @@ impl Allowance {
     ///
     /// # Errors
     ///
-    /// Returns [`DecisionError::AvailableExceedsCapacity`] when `available`
-    /// exceeds `capacity`.
+    /// Returns [`AvailableExceedsCapacity`] when `available` exceeds
+    /// `capacity`.
     pub const fn new(
         capacity: Capacity,
         available: u64,
         replenishes_after: Duration,
-    ) -> Result<Self, DecisionError> {
+    ) -> Result<Self, AvailableExceedsCapacity> {
         if available > capacity.get() {
-            return Err(DecisionError::AvailableExceedsCapacity {
+            return Err(AvailableExceedsCapacity {
                 capacity,
                 available,
             });
@@ -187,6 +199,38 @@ impl Allowance {
             available,
             replenishes_after: Delay::new(replenishes_after),
         })
+    }
+
+    /// An unused allowance: the whole capacity is available.
+    ///
+    /// With [`Allowance::spend`] this derives an allowance from stored usage
+    /// without a fallible construction: usage beyond the capacity simply
+    /// leaves nothing to spend.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use runlimit_core::{Allowance, Capacity};
+    /// let full = Allowance::full(Capacity::new(3).unwrap(), Duration::from_secs(60));
+    /// assert_eq!(full.available(), 3);
+    /// assert_eq!(full.spend(2).map(Allowance::available), Some(1));
+    /// assert_eq!(full.spend(2).and_then(|left| left.spend(2)), None);
+    /// ```
+    pub const fn full(capacity: Capacity, replenishes_after: Duration) -> Self {
+        Self {
+            capacity,
+            available: capacity.get(),
+            replenishes_after: Delay::new(replenishes_after),
+        }
+    }
+
+    /// The allowance after spending `cost` more, or `None` when less than
+    /// `cost` is available.
+    #[must_use]
+    pub const fn spend(self, cost: u64) -> Option<Self> {
+        match self.available.checked_sub(cost) {
+            Some(available) => Some(Self { available, ..self }),
+            None => None,
+        }
     }
 
     /// Returns the maximum immediately available policy allowance.
@@ -491,10 +535,10 @@ pub enum BatchDecisionView<'a> {
 const fn validate_batch_index(
     index: usize,
     batch_size: usize,
-) -> Result<NonZeroUsize, DecisionError> {
+) -> Result<NonZeroUsize, DeniedIndexOutOfRange> {
     match NonZeroUsize::new(batch_size) {
         Some(batch_size) if index < batch_size.get() => Ok(batch_size),
-        _ => Err(DecisionError::DeniedIndexOutOfRange { index, batch_size }),
+        _ => Err(DeniedIndexOutOfRange { index, batch_size }),
     }
 }
 
@@ -503,10 +547,10 @@ impl BatchDecision {
     ///
     /// # Errors
     ///
-    /// Returns [`DecisionError::EmptyBatch`] when `allowances` is empty.
-    pub fn allowed(allowances: Vec<Allowance>) -> Result<Self, DecisionError> {
+    /// Returns [`EmptyAllowedBatch`] when `allowances` is empty.
+    pub fn allowed(allowances: Vec<Allowance>) -> Result<Self, EmptyAllowedBatch> {
         if allowances.is_empty() {
-            return Err(DecisionError::EmptyBatch);
+            return Err(EmptyAllowedBatch);
         }
         Ok(Self {
             outcome: BatchOutcome::Allowed(allowances),
@@ -517,13 +561,13 @@ impl BatchDecision {
     ///
     /// # Errors
     ///
-    /// Returns [`DecisionError::DeniedIndexOutOfRange`] when `index` is not
-    /// below `batch_size`, which also rejects an empty batch.
+    /// Returns [`DeniedIndexOutOfRange`] when `index` is not below
+    /// `batch_size`, which also rejects an empty batch.
     pub fn denied(
         index: usize,
         batch_size: usize,
         denial: impl Into<Denial>,
-    ) -> Result<Self, DecisionError> {
+    ) -> Result<Self, DeniedIndexOutOfRange> {
         let batch_size = validate_batch_index(index, batch_size)?;
         Ok(Self {
             outcome: BatchOutcome::Denied {
@@ -538,13 +582,13 @@ impl BatchDecision {
     ///
     /// # Errors
     ///
-    /// Returns [`DecisionError::DeniedIndexOutOfRange`] when `index` is not
-    /// below `batch_size`, which also rejects an empty batch.
+    /// Returns [`DeniedIndexOutOfRange`] when `index` is not below
+    /// `batch_size`, which also rejects an empty batch.
     pub const fn shadow_denied(
         index: usize,
         batch_size: usize,
         denial: QuotaDenial,
-    ) -> Result<Self, DecisionError> {
+    ) -> Result<Self, DeniedIndexOutOfRange> {
         let batch_size = match validate_batch_index(index, batch_size) {
             Ok(batch_size) => batch_size,
             Err(error) => return Err(error),

@@ -64,14 +64,17 @@ pub(crate) fn batch_decision(
             "allowed batch returned a different number of allowances than submitted checks",
         ));
     }
+    let out_of_range = |_| CheckError::storage_invariant("denied batch index is out of range");
     match admission {
-        Admission::Allowed(allowances) => BatchDecision::allowed(allowances),
-        Admission::Denied { index, denial } => BatchDecision::denied(index, batch_size, denial),
+        Admission::Allowed(allowances) => BatchDecision::allowed(allowances)
+            .map_err(|_| CheckError::storage_invariant("allowed batch returned no allowances")),
+        Admission::Denied { index, denial } => {
+            BatchDecision::denied(index, batch_size, denial).map_err(out_of_range)
+        }
         Admission::ShadowDenied { index, denial } => {
-            BatchDecision::shadow_denied(index, batch_size, denial)
+            BatchDecision::shadow_denied(index, batch_size, denial).map_err(out_of_range)
         }
     }
-    .map_err(|_| CheckError::storage_invariant("batch decision did not match the submitted batch"))
 }
 
 #[derive(Debug)]
