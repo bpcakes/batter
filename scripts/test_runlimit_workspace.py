@@ -127,6 +127,14 @@ class AssetTests(unittest.TestCase):
             (native / 'provenance' / 'outward').symlink_to(live.parent)
             with self.assertRaisesRegex(ValueError, 'provenance holds a symlink'):
                 validate_assets(root)
+            (native / 'provenance' / 'outward').unlink()
+            validate_assets(root)
+
+            moved = root / 'elsewhere'
+            (native / 'provenance').rename(moved)
+            (native / 'provenance').symlink_to(moved)
+            with self.assertRaisesRegex(ValueError, 'provenance is a symlink'):
+                validate_assets(root)
 
     def test_a_package_archive_cannot_carry_a_record(self):
         record = b'SELECT 1'

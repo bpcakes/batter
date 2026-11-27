@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
-import tempfile
 
 from package import eligible
 
@@ -14,7 +13,8 @@ NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
 EXPECTED_PUBLISH = ['crates-io']
 EXPECTED_VERSION = '0.4.0'
 # Imported statements that no code path executes. They stay byte-identical
-# outside every package; `validate_published` checks the archives Cargo builds.
+# outside every package; `package_archives` and `validate_published` check the
+# archives Cargo builds and verifies.
 PROVENANCE = 'provenance'
 
 
@@ -84,6 +84,8 @@ def validate_provenance(root, expected):
     """
     native = Path(root) / 'runlimit'
     provenance = native / PROVENANCE
+    if provenance.is_symlink():
+        raise ValueError('provenance is a symlink: ' + PROVENANCE)
     if not provenance.is_dir():
         return
     for path in sorted(provenance.rglob('*')):
@@ -121,15 +123,21 @@ def validate_published(archives, expected):
                                      f'{records[digest]} as {member.name}')
 
 
-def package_archives(root, directory):
-    """Package every native crate into `directory` without building it."""
-    command = ['cargo', 'package', '--no-verify', '--allow-dirty', '--locked',
-               '--target-dir', str(directory)]
+def package_archives(root, target_directory):
+    """Package and verify every native crate, returning the archives Cargo built.
+
+    Cargo's verification builds each crate, with all features, from its
+    extracted archive, where `provenance/` and every other path outside the
+    crate are absent, so a crate that embeds a record fails here.
+    """
+    command = ['cargo', 'package', '--allow-dirty', '--locked', '--all-features']
     for suffix in NATIVE:
         command += ['-p', 'runlimit-' + suffix]
-    subprocess.run(command, cwd=root, check=True, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
-    return sorted((Path(directory) / 'package').glob('*.crate'))
+    result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError('native packaging or verification failed:\n' + result.stderr[-4000:])
+    return [Path(target_directory) / 'package' / f'runlimit-{suffix}-{EXPECTED_VERSION}.crate'
+            for suffix in NATIVE]
 
 
 if __name__ == '__main__':
@@ -137,7 +145,6 @@ if __name__ == '__main__':
         ['cargo', 'metadata', '--format-version', '1', '--all-features', '--locked'], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
-    with tempfile.TemporaryDirectory() as scratch:
-        validate_published(package_archives(ROOT, scratch),
-                           json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text()))
+    validate_published(package_archives(ROOT, metadata['target_directory']),
+                       json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text()))
     print('Runlimit: five publishable local identities, native ownership and imported SQL/licenses verified')

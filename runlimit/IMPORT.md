@@ -29,9 +29,11 @@ delay from a schedule bound by Rust, and the imported `attempt_complete.sql`,
 which restated the backoff formula, is retained byte-identical and unexecuted.
 Both records live in [`provenance/runlimit-postgres/`](provenance/README.md),
 outside every package. The workspace check requires every file there to be an
-inventoried regular file, and it packages each native crate with
-`cargo package --no-verify` and rejects an archive member, under any name,
-that carries a record's bytes (`batter-39wm.2`).
+inventoried regular file and the directory itself not to be a symlink. It then
+packages and verifies each native crate with `cargo package --all-features`,
+which builds every crate from its own archive where the records are absent,
+and rejects an archive member, under any name, that carries a record's bytes
+(`batter-39wm.2`).
 Source archives retain SQL and both license names, and mutation fixtures include
 this native root. Root verification preserves default/all-feature tests and lint,
 the release-mode fail-closed regression, and CI's explicit native PostgreSQL tests.

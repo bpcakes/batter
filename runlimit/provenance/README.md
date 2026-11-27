@@ -13,5 +13,7 @@ This directory is outside every package, so the records are not published.
 Do not copy a record back into a package or embed one with `include_str!`; a
 new statement is a new file beside the code that executes it.
 `scripts/check_runlimit_workspace.py` requires every file here to be an
-inventoried regular file (no symlinks), and it packages each native crate and
-rejects an archive member, under any name, that carries a record's bytes.
+inventoried regular file, with no symlink here or at this directory. It then
+packages and verifies every native crate, so a crate that embeds a record
+fails to build from its own archive, and it rejects an archive member, under
+any name, that carries a record's bytes.
