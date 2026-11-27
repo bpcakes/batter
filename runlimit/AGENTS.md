@@ -161,7 +161,10 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
 - `Limiter::check` and `Limiter::check_all` futures do no work before their
   first poll. The type system cannot express this, so every backend keeps a
   regression test that drops an unpolled future and proves nothing was
-  evaluated or consumed.
+  evaluated or consumed. A synchronous backend keeps `async fn` bodies and
+  suppresses `clippy::unused_async_trait_impl` per method with that reason;
+  never take the lint's `future::ready` suggestion, which evaluates eagerly.
+  Test doubles follow the same rule.
 - Retry and replenishment delays are measured from the backend's authoritative
   evaluation time and round up when converted to whole-second headers.
   Both PostgreSQL limiters (fixed-window and GCRA) subtract database-clock

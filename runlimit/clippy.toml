@@ -1,3 +1,1 @@
 cognitive-complexity-threshold = 20
-# Preserve the upstream prose spelling on the minimum Clippy version.
-doc-valid-idents = ["PostgreSQL", ".."]
