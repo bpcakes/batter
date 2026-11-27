@@ -11,7 +11,8 @@ use crate::Delay;
 /// `T` is the backend's lease token, and equality with the live lease's token
 /// is the only fence [`Self::complete`] checks. A backend that fences
 /// completion outside this type, such as a database statement comparing its
-/// own token, decodes with `T = ()` and owes the same token rule there.
+/// own token, decodes with `T = `[`StorageFenced`], which admits and settles
+/// but cannot complete, and owes the same token rule there.
 ///
 /// # Backend obligations
 ///
@@ -164,6 +165,27 @@ impl<T> AttemptLease<T> {
         self.until
     }
 }
+
+/// Stands where a lease token would in a state decoded without one, because
+/// the backend's storage compares the token itself.
+///
+/// It is deliberately not [`Eq`], which [`AttemptState::complete`] requires.
+/// A unit token would equal itself and complete any live lease, a stale
+/// receipt's replacement included, so a completion that skipped the storage
+/// fence does not compile:
+///
+/// ```compile_fail,E0277
+/// # use std::time::Duration;
+/// use runlimit_core::attempts::{AttemptOutcome, AttemptPolicy, AttemptState, StorageFenced};
+/// fn complete(policy: &AttemptPolicy, decoded: AttemptState<StorageFenced>) {
+///     let _ = decoded.complete(policy, Duration::ZERO, &StorageFenced, AttemptOutcome::Success);
+/// }
+/// ```
+///
+/// Decoded states still compare, and [`AttemptState::admit`] and
+/// [`AttemptState::settle`] evaluate them as they do any other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StorageFenced;
 
 /// A nonzero run of consecutive failures and the delay it imposes.
 ///
@@ -377,16 +399,9 @@ impl<T> AttemptState<T> {
     /// The outcome applies only while `token` holds the live lease. A lease
     /// that has expired by `now` has already failed, so its own token is stale.
     ///
-    /// A token type is [`Eq`]: a token that could differ from itself would
-    /// leave its own live lease to expire as a failure.
-    ///
-    /// ```compile_fail,E0277
-    /// # use std::time::Duration;
-    /// # use runlimit_core::attempts::{AttemptOutcome, AttemptPolicy, AttemptState};
-    /// # fn complete(policy: &AttemptPolicy, state: AttemptState<f64>) {
-    /// let _ = state.complete(policy, Duration::ZERO, &f64::NAN, AttemptOutcome::Success);
-    /// # }
-    /// ```
+    /// A token type is [`Eq`]: a token that could differ from itself, as a
+    /// floating-point `NaN` does, would leave its own live lease to expire as
+    /// a failure. [`StorageFenced`] is no token and cannot complete.
     pub fn complete(
         self,
         policy: &AttemptPolicy,

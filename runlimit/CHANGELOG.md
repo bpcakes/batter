@@ -15,7 +15,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   failure at the deadline, the quiet-period reset, the busy and backoff denials
   and the failure delay, and return `AdmitEvaluation` (`Grant(PendingLease)` or
   `Denied` with a `LeaseDenial`) and `CompleteEvaluation` (`Applied` or
-  `Stale`). `T` is the backend's lease token. `AttemptPolicy::delay` is the
+  `Stale`). `T` is the backend's lease token, which `complete` requires to be
+  `Eq`; `StorageFenced` stands in for it where storage compares the token
+  itself, and a state decoded with it cannot complete. `AttemptPolicy::delay` is the
   only backoff derivation, and the new `AttemptPolicy::delay_schedule`
   tabulates it for storage that must apply a failure inside one statement.
   This is backend-author API, as `runlimit_core::gcra::evaluate` is for GCRA;
@@ -49,7 +51,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   timestamp and optional-lease fields, and evaluates admission, completion and
   cleanup through it. Admissions, denials, completions, delays, observations,
   the 16-entry cleanup scan and allocation behavior are unchanged for each
-  subject. Two effects on stored state are new. `complete` with a receipt whose
+  subject, with one exception on an injected clock within one failure delay
+  of `Duration::MAX`: the retry deadline saturates there, and a failed
+  completion and its `Completed` observation now report the wait that remains
+  until it, as the next `Backoff` denial does, where they reported the full
+  policy delay. Two effects on stored state are new. `complete` with a receipt whose
   lease has expired still returns and observes `Stale`, but now records the
   expiry as a failure at once rather than at the next admission, and removes
   the subject when its quiet period has also passed. That frees its capacity

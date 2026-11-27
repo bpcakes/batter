@@ -1,6 +1,8 @@
 //! The only decode of a persisted attempt row, and the only conversions
 //! between the table's millisecond columns and the shared lease state's time.
-use runlimit_core::attempts::{AttemptLease, AttemptPolicy, AttemptState, FailedAttempts};
+use runlimit_core::attempts::{
+    AttemptLease, AttemptPolicy, AttemptState, FailedAttempts, StorageFenced,
+};
 use sqlx::{Row, postgres::PgRow};
 use std::{num::NonZeroU32, time::Duration};
 
@@ -27,19 +29,19 @@ impl StoredAttempt {
     }
 
     /// Decodes the row into the one state it can mean, or names the reason no
-    /// state fits. Admission tokens are compared by the database, so the state
-    /// carries none.
+    /// state fits. Lease tokens are compared by the database, so the state
+    /// carries none and cannot evaluate a completion.
     ///
     /// While a lease is held the failure timestamps are unread: every exit
     /// from the lease overwrites both. Without a lease, zero failures mean
     /// [`AttemptState::Clear`], which has no delay to honor, so such a row with
     /// a retry time after its last activity is rejected instead of silently
     /// dropping or enforcing the delay.
-    pub(super) fn state(self) -> Result<AttemptState<()>, &'static str> {
+    pub(super) fn state(self) -> Result<AttemptState<StorageFenced>, &'static str> {
         let failures = u32::try_from(self.failures).map_err(|_| "invalid attempt failure count")?;
         if let Some(until) = self.lease_until_ms {
             return Ok(AttemptState::Leased(AttemptLease::new(
-                (),
+                StorageFenced,
                 failures,
                 instant(until),
             )));
@@ -95,7 +97,8 @@ mod tests {
     use runlimit_core::{
         PolicyId, QuotaPeriod, ScopeId,
         attempts::{
-            AdmitEvaluation, AttemptLease, AttemptPolicy, AttemptState, FailedAttempts, LeaseDenial,
+            AdmitEvaluation, AttemptLease, AttemptPolicy, AttemptState, FailedAttempts,
+            LeaseDenial, StorageFenced,
         },
     };
     use std::{num::NonZeroU32, time::Duration};
@@ -114,15 +117,15 @@ mod tests {
         let since_earliest = i128::from(millis) - i128::from(i64::MIN);
         Duration::from_millis(u64::try_from(since_earliest).unwrap())
     }
-    fn failed(failures: u32, last: i64, retry: i64) -> AttemptState<()> {
+    fn failed(failures: u32, last: i64, retry: i64) -> AttemptState<StorageFenced> {
         AttemptState::Failed(FailedAttempts::new(
             NonZeroU32::new(failures).unwrap(),
             at(last),
             at(retry),
         ))
     }
-    fn leased(failures: u32, until: i64) -> AttemptState<()> {
-        AttemptState::Leased(AttemptLease::new((), failures, at(until)))
+    fn leased(failures: u32, until: i64) -> AttemptState<StorageFenced> {
+        AttemptState::Leased(AttemptLease::new(StorageFenced, failures, at(until)))
     }
 
     #[test]

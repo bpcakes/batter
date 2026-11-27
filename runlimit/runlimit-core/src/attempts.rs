@@ -10,7 +10,7 @@ mod state;
 
 pub use state::{
     AdmitEvaluation, AttemptLease, AttemptState, CompleteEvaluation, FailedAttempts, LeaseDenial,
-    PendingLease,
+    PendingLease, StorageFenced,
 };
 
 /// Validated exponential-backoff policy with exactly one in-flight attempt.
