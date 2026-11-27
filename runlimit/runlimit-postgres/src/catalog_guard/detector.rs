@@ -95,7 +95,10 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
         let qualifier = qualifier_before(&code, start);
         let after = skip_spaces(bytes, index);
         let qualified_next = bytes.get(after) == Some(&b'.');
-        if bytes.get(after) == Some(&b'(') {
+        let back = skip_spaces_back(bytes, start);
+        let cast_type = back >= 2 && &code[back - 2..back] == "::";
+        // `::numeric(39, 0)` is a type modifier, not a call.
+        if bytes.get(after) == Some(&b'(') && !cast_type {
             match qualifier.as_deref() {
                 Some("pg_catalog") => {}
                 Some(schema) => found.push(format!("{schema}.{word}(...)")),
@@ -104,8 +107,7 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
                 None => found.push(format!("{word}(...)")),
             }
         }
-        let back = skip_spaces_back(bytes, start);
-        if qualifier.is_none() && back >= 2 && &code[back - 2..back] == "::" {
+        if qualifier.is_none() && cast_type {
             if qualified_next {
                 if word != "pg_catalog" {
                     found.push(format!("::{word}.(...)"));

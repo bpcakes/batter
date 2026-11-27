@@ -26,8 +26,11 @@
 //! SQL: no SQL-looking literal, no `sqlx` query constructor, macro or
 //! builder, no `include!`, no `include_str!` or `include_bytes!` but a
 //! published migration's, and no reference to a published migration beyond
-//! its declaration and re-export, since those are the crate's only other SQL
-//! strings and an `Executor` accepts a string directly.
+//! its declaration and unrenamed crate-root re-export. SQL text can therefore
+//! come only from a scanned literal or a pinned migration, so a raw
+//! `Executor` call, which accepts a string directly, has nothing unregistered
+//! to run. SQL assembled at run time from fragments that do not read as
+//! statements is outside what a source guard can see.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -117,6 +120,17 @@ fn only_the_registering_macro_constructs_statements() {
         1,
         "statements.rs holds one statements! block besides the macro definition"
     );
+    // impl Statement is trusted as a whole, so it may contain one constructor
+    // call, sqlx::query(self.0), and no SQL text.
+    let implementation = &root_code[root_code.find("impl Statement {").unwrap()..];
+    let implementation = &implementation[..implementation.find("\n}\n").unwrap()];
+    assert_eq!(
+        implementation.matches("sqlx::").count(),
+        1,
+        "impl Statement may call sqlx only in Statement::query"
+    );
+    assert!(implementation.contains("sqlx::query(self.0)"));
+    assert_eq!(root_code.matches("impl Statement {").count(), 1);
     for path in files(&source.join("statements"), "rs") {
         let (_, code) = sql_literals(&fs::read_to_string(&path).unwrap());
         assert!(
@@ -197,7 +211,11 @@ fn no_production_module_builds_sql_outside_statements() {
                 let item = code[item_start..start].trim_start();
                 let declaration = item.contains("const")
                     && code[start + name.len()..].trim_start().starts_with(':');
-                if !declaration && !item.starts_with("pub use") {
+                // The crate-root re-export of a family's migration, unrenamed.
+                let reexport = file == "lib.rs"
+                    && item.starts_with("pub use")
+                    && !code[start + name.len()..].trim_start().starts_with("as");
+                if !declaration && !reexport {
                     violations.push(format!("{file}: refers to the migration {name}"));
                 }
             }
@@ -234,14 +252,18 @@ fn no_production_module_builds_sql_outside_statements() {
 
 /// The byte ranges of `source`, a file of `crate::statements`, that may hold
 /// SQL: each `statements! { .. }` invocation, the `macro_rules! statements`
-/// definition, and the body of `Statement::query`.
+/// definition, and `impl Statement`, whose only SQL is `Statement::query`'s
+/// `sqlx::query(self.0)`; the guard checks that impl separately.
 fn trusted_statement_code(file: &str, source: &str) -> Vec<std::ops::Range<usize>> {
     let (_, code) = sql_literals(source);
     let mut ranges = Vec::new();
-    // Statement::query and the macro live only in the root file; the scanner
-    // blanks a lifetime's apostrophe, so match `fn query<`.
+    // Statement::query and the macro live only in the root file.
     let openers: &[&str] = if file == "statements.rs" {
-        &["statements! {", "macro_rules! statements {", "fn query<"]
+        &[
+            "statements! {",
+            "macro_rules! statements {",
+            "impl Statement {",
+        ]
     } else {
         &["statements! {"]
     };
@@ -361,6 +383,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
          pg_catalog.unnest(ARRAY[1, 2]::BIGINT[])) WITH ORDINALITY AS input(a, b, position)",
         "SELECT pg_catalog.length('floor(1)::text') -- count(*)\n",
         "SELECT $1::integer, $2::SMALLINT, $3::double precision",
+        "SELECT $1::numeric(39, 0), $2::varchar(128), $3::timestamp(3)",
         "SELECT pg_catalog.set_config('statement_timeout', $1, true), $2::BIGINT",
         "SELECT pg_catalog.length('can''t'), pg_catalog.length('x'''), pg_catalog.floor(1)",
         "WITH a(x) AS NOT MATERIALIZED (VALUES (1)), b AS ( SELECT 2) TABLE a",

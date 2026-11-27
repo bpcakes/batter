@@ -72,12 +72,18 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
         if start > 0 && is_identifier_part(bytes[start - 1]) {
             continue;
         }
-        let name: String = code[start + 4..]
-            .trim_start()
+        let declared = code[start + 4..].trim_start();
+        // A raw identifier, `mod r#type;`, names the file `type.rs`.
+        let raw = declared.starts_with("r#");
+        let name: String = declared[if raw { 2 } else { 0 }..]
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
             .collect();
-        let after_name = start + 4 + code[start + 4..].find(&name).unwrap_or(0) + name.len();
+        let after_name = start
+            + 4
+            + (code[start + 4..].len() - declared.len())
+            + if raw { 2 } else { 0 }
+            + name.len();
         let attributes = attributes_before(code, start);
         // Only an unconditional #[cfg(test)] makes a module test-only; a
         // conditional gate such as cfg_attr(.., cfg(test)) is scanned.
@@ -101,6 +107,7 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
             Some(value.split_once('"')?.0.to_owned())
         });
         let body = match code[after_name..].trim_start().bytes().next() {
+            _ if name.is_empty() => continue,
             Some(b';') => None,
             Some(b'{') => {
                 let open = after_name + code[after_name..].find('{').unwrap_or(0);
@@ -121,7 +128,7 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
                 }
                 Some(start..close)
             }
-            _ => continue,
+            _ => panic!("cannot resolve the declaration of mod {name}; declare it plainly"),
         };
         modules.push(Module {
             name,
