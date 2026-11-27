@@ -112,11 +112,31 @@ fn only_the_registering_macro_constructs_statements() {
         .filter_map(|(name, _)| name.split_once("::").map(|(family, _)| family.to_owned()))
         .collect();
     let mut files_found = BTreeSet::new();
+    assert_eq!(
+        root_code.matches("statements! {").count(),
+        1,
+        "statements.rs holds one statements! block besides the macro definition"
+    );
     for path in files(&source.join("statements"), "rs") {
         let (_, code) = sql_literals(&fs::read_to_string(&path).unwrap());
         assert!(
             !code.contains("Statement("),
             "{} constructs a Statement outside the statements! macro",
+            path.display()
+        );
+        // One top-level block per family file: a nested module's block would
+        // register into an ALL that statements::all() never visits.
+        assert_eq!(
+            code.matches("statements! {").count(),
+            1,
+            "{} must declare its statements in exactly one statements! block",
+            path.display()
+        );
+        assert!(
+            !code
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .any(|word| word == "mod"),
+            "{} must not declare modules",
             path.display()
         );
         files_found.insert(path.file_stem().unwrap().to_str().unwrap().to_owned());
@@ -138,7 +158,7 @@ fn no_production_module_builds_sql_outside_statements() {
         // macro itself and Statement::query may hold SQL; every other line
         // of those files is checked like any other module.
         let trusted = if statements {
-            trusted_statement_code(&production)
+            trusted_statement_code(&file, &production)
         } else {
             Vec::new()
         };
@@ -215,11 +235,17 @@ fn no_production_module_builds_sql_outside_statements() {
 /// The byte ranges of `source`, a file of `crate::statements`, that may hold
 /// SQL: each `statements! { .. }` invocation, the `macro_rules! statements`
 /// definition, and the body of `Statement::query`.
-fn trusted_statement_code(source: &str) -> Vec<std::ops::Range<usize>> {
+fn trusted_statement_code(file: &str, source: &str) -> Vec<std::ops::Range<usize>> {
     let (_, code) = sql_literals(source);
     let mut ranges = Vec::new();
-    // The scanner blanks a lifetime's apostrophe, so match `fn query<`.
-    for opener in ["statements! {", "macro_rules! statements {", "fn query<"] {
+    // Statement::query and the macro live only in the root file; the scanner
+    // blanks a lifetime's apostrophe, so match `fn query<`.
+    let openers: &[&str] = if file == "statements.rs" {
+        &["statements! {", "macro_rules! statements {", "fn query<"]
+    } else {
+        &["statements! {"]
+    };
+    for opener in openers {
         for (start, _) in code.match_indices(opener) {
             let Some(open) = code[start..].find('{').map(|offset| start + offset) else {
                 continue;
@@ -357,6 +383,8 @@ fn the_scanner_finds_every_statement_literal() {
             let _ = sqlx::query("/* a */ VALUES (1)");
             let _ = query(&format!("(SELECT {}", 1));
             let _ = sqlx::raw_sql(r#"TABLE t"#);
+            let _ = connection.execute("(
+                SELECT 1)");
             // sqlx::query("SELECT 'a comment'")
             let lifetime: &'static str = "not sql";
         }
@@ -374,6 +402,7 @@ fn the_scanner_finds_every_statement_literal() {
             (None, "/* a */ VALUES (1)"),
             (None, "(SELECT {}"),
             (None, "TABLE t"),
+            (None, "(\n                SELECT 1)"),
         ]
     );
     let words: Vec<_> = identifiers(&code)

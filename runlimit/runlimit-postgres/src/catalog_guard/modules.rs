@@ -79,9 +79,15 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
             .collect();
         let after_name = start + 4 + code[start + 4..].find(&name).unwrap_or(0) + name.len();
         let attributes = attributes_before(code, start);
-        let test_only = attributes
-            .iter()
-            .any(|range| code[range.clone()].contains("cfg(test)"));
+        // Only an unconditional #[cfg(test)] makes a module test-only; a
+        // conditional gate such as cfg_attr(.., cfg(test)) is scanned.
+        let test_only = attributes.iter().any(|range| {
+            code[range.clone()]
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+                == "#[cfg(test)]"
+        });
         assert!(
             !attributes.iter().any(|range| {
                 let attribute = &code[range.clone()];

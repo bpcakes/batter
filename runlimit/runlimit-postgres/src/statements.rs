@@ -5,7 +5,7 @@
 //! the rest of the crate can execute only the statements defined here, through
 //! [`Statement::query`]. Each one calls catalog functions and casts to
 //! non-keyword types by their `pg_catalog` names, and keeps to the dialect
-//! `crate::catalog_guard` reads; that guard checks every entry of [`ALL`] and
+//! `crate::catalog_guard` reads; that guard checks every entry of `all()` and
 //! that no other module builds SQL. Published migrations are immutable and
 //! live with their migrators instead.
 
@@ -15,7 +15,7 @@ use sqlx::{Postgres, postgres::PgArguments, query::Query};
 #[derive(Clone, Copy)]
 pub(crate) struct Statement(&'static str);
 
-/// Declares a family's statements and its [`ALL`]-style registry together, so
+/// Declares a family's statements and its `ALL` registry together, so
 /// every statement is registered under its own name and nothing else in this
 /// module constructs a [`Statement`].
 macro_rules! statements {

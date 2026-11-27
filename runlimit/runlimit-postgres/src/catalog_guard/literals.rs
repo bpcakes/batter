@@ -178,7 +178,7 @@ const STATEMENT_KEYWORDS: &[&str] = &[
 /// `text` without leading whitespace, SQL comments and opening parentheses.
 fn statement_start(mut text: &str) -> &str {
     loop {
-        let trimmed = text.trim_start().trim_start_matches('(');
+        let trimmed = text.trim_start_matches(|c: char| c.is_whitespace() || c == '(');
         text = if let Some(rest) = trimmed.strip_prefix("--") {
             rest.split_once('\n').map_or("", |(_, rest)| rest)
         } else if let Some(rest) = trimmed.strip_prefix("/*") {
