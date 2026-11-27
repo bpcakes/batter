@@ -8,6 +8,7 @@ so the import stays auditable. No code path executes these statements.
 | --- | --- | --- |
 | `runlimit-postgres/cleanup_expired.sql` | `runlimit-postgres/src/cleanup_expired_by_key.sql` | It selected victims by `ctid`, which needs relation-level `SELECT`. |
 | `runlimit-postgres/attempt_complete.sql` | `runlimit-postgres/src/attempt_complete_scheduled.sql` | It restated the backoff formula in SQL instead of reading `AttemptPolicy::delay_schedule`. |
+| `runlimit-postgres/attempt_cleanup.sql` | `runlimit-postgres/src/attempt_cleanup_qualified.sql` | It called `floor` through `search_path`. |
 
 This directory is outside every package, so the records are not published. Do
 not copy a record back into a package or embed one with `include_str!`; a new

@@ -23,6 +23,7 @@ PROVENANCE_METADATA = frozenset({'.DS_Store'})
 UNEXECUTED_RECORDS = {
     '29c13de727bea2b67dec3a6cdaf7bfb317cd13f849ee4396fec293b55597d667': 'attempt_complete.sql',
     'e9b9bc4cacae015fd06f14d8e6eeb6b0e10e77f17344d52598a5828598a4a49c': 'cleanup_expired.sql',
+    '740a2ec53f208cddce451f69508e4c9264b14b74523b5fc11cf522bf7adbf243': 'attempt_cleanup.sql',
 }
 
 

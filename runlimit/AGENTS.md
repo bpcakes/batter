@@ -197,6 +197,12 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   time. Do not add a second connection, timeout, migration or elapsed-time
   path beside these. Live suites share `tests/support`'s `IsolatedSchema` and
   shard-key helpers.
+- Every PostgreSQL statement is a named constant or `src/*.sql` file
+  registered in `runlimit-postgres/src/catalog_guard.rs`, and calls catalog
+  functions and casts to non-keyword types (`text`, `bytea`) by their
+  `pg_catalog` names. A multi-array `unnest` is spelled
+  `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
+  the unqualified spelling. Published migrations are exempt and immutable.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.
   `SubjectKey::from_digest` exists for tests and already-opaque digests only.

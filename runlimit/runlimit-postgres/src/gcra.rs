@@ -35,33 +35,33 @@ pub const INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL: &str =
 /// [`PostgresGcraLimiter::migrate`] for cancellation-safe pooled migration.
 pub static GCRA_MIGRATOR: Migrator = sqlx::migrate!("./gcra-migrations");
 
-const LOCK_SHARDS: &str = "SELECT capacity_shard, row_count, observed_at_ms FROM runlimit_gcra_shards WHERE capacity_shard = ANY($1) ORDER BY capacity_shard FOR UPDATE";
-const SAMPLE_TIME: &str = r"
+pub(crate) const LOCK_SHARDS: &str = "SELECT capacity_shard, row_count, observed_at_ms FROM runlimit_gcra_shards WHERE capacity_shard = ANY($1) ORDER BY capacity_shard FOR UPDATE";
+pub(crate) const SAMPLE_TIME: &str = r"
 WITH sample AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS database_now)
-SELECT database_now, floor(extract(epoch FROM database_now) * 1000)::BIGINT AS now_ms
+SELECT database_now, pg_catalog.floor(extract(epoch FROM database_now) * 1000)::BIGINT AS now_ms
 FROM sample";
-const READ_COUNTERS: &str = r"
-SELECT input.ordinality - 1 AS input_index, stored.tat_scaled::TEXT AS tat_scaled,
+pub(crate) const READ_COUNTERS: &str = r"
+SELECT input.ordinality - 1 AS input_index, stored.tat_scaled::pg_catalog.text AS tat_scaled,
     stored.expires_at_ms, pg_catalog.clock_timestamp() AS response_now
-FROM unnest($1::BYTEA[], $2::BYTEA[]) WITH ORDINALITY AS input(fingerprint, subject, ordinality)
+FROM ROWS FROM (pg_catalog.unnest($1::pg_catalog.bytea[]), pg_catalog.unnest($2::pg_catalog.bytea[])) WITH ORDINALITY AS input(fingerprint, subject, ordinality)
 LEFT JOIN runlimit_gcra AS stored ON stored.config_fingerprint = input.fingerprint
     AND stored.subject_key = input.subject
 ORDER BY input.ordinality";
-const UPSERT: &str = r"
+pub(crate) const UPSERT: &str = r"
 INSERT INTO runlimit_gcra(config_fingerprint, subject_key, tat_scaled, expires_at_ms)
 SELECT fingerprint, subject, tat::NUMERIC, expires
-FROM unnest($1::BYTEA[], $2::BYTEA[], $3::TEXT[], $4::BIGINT[]) AS input(fingerprint, subject, tat, expires)
+FROM ROWS FROM (pg_catalog.unnest($1::pg_catalog.bytea[]), pg_catalog.unnest($2::pg_catalog.bytea[]), pg_catalog.unnest($3::pg_catalog.text[]), pg_catalog.unnest($4::BIGINT[])) AS input(fingerprint, subject, tat, expires)
 ON CONFLICT (config_fingerprint, subject_key) DO UPDATE
 SET tat_scaled = EXCLUDED.tat_scaled, expires_at_ms = EXCLUDED.expires_at_ms";
-const UPDATE_WATERMARKS: &str = r"
+pub(crate) const UPDATE_WATERMARKS: &str = r"
 WITH updated AS (
     UPDATE runlimit_gcra_shards SET observed_at_ms = $2 WHERE capacity_shard = ANY($1)
     RETURNING 1
 )
-SELECT count(*) AS updated_count, pg_catalog.clock_timestamp() AS response_now FROM updated";
-const CLEANUP_LOCKS: &str = r"
+SELECT pg_catalog.count(*) AS updated_count, pg_catalog.clock_timestamp() AS response_now FROM updated";
+pub(crate) const CLEANUP_LOCKS: &str = r"
 WITH sample AS MATERIALIZED (
-    SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
+    SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
 ), candidates AS MATERIALIZED (
     -- At most 256 indexed probes, each returning at most one candidate. Using
     -- the same shard clock as admission makes logically expired slots
@@ -79,14 +79,14 @@ WHERE capacity.capacity_shard IN (SELECT capacity_shard FROM candidates)
 ORDER BY capacity.capacity_shard FOR UPDATE OF capacity SKIP LOCKED";
 // Each shard advances on its own clock. Sharing the most advanced candidate's
 // watermark would expire still-active counters in the other candidates.
-const CLEANUP_ADVANCE_TIME: &str = r"
+pub(crate) const CLEANUP_ADVANCE_TIME: &str = r"
 WITH sample AS MATERIALIZED (
-    SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
+    SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
 )
 UPDATE runlimit_gcra_shards
 SET observed_at_ms = greatest((SELECT now_ms FROM sample), observed_at_ms)
 WHERE capacity_shard = ANY($1)";
-const CLEANUP_DELETE: &str = r"
+pub(crate) const CLEANUP_DELETE: &str = r"
 WITH expired AS MATERIALIZED (
     SELECT candidate.config_fingerprint, candidate.subject_key
     FROM runlimit_gcra_shards AS shard

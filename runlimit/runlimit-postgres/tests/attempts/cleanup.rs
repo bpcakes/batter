@@ -54,7 +54,7 @@ async fn dense_shard_cleanup_uses_expiry_as_an_index_condition() {
         // settings, not a copied candidate SELECT or a forced index scan.
         let plan = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
             "EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF) {}",
-            include_str!("../../src/attempt_cleanup.sql")
+            include_str!("../../src/attempt_cleanup_qualified.sql")
         )))
         .bind(0_i16)
         .fetch_all(&mut *tx)

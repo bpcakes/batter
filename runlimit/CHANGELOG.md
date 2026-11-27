@@ -62,6 +62,20 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- Every statement `runlimit-postgres` sends calls catalog functions and casts
+  to non-keyword types by their `pg_catalog` names: `set_config`,
+  `pg_advisory_xact_lock`, `cardinality`, `count`, `min`, `floor`, `unnest`,
+  `generate_series`, `text` and `bytea`, beside the already qualified clock.
+  A schema ahead of `pg_catalog` on the caller's `search_path` can no longer
+  replace any of them; operators and the limiters' tables still resolve
+  through it. Multi-array `unnest(a, b)` is spelled `ROWS FROM
+  (pg_catalog.unnest(a), pg_catalog.unnest(b))`, its documented equivalent.
+  The attempt limiter's inline statements are now named constants, and a unit
+  guard registers every statement and every `src/*.sql` file and rejects an
+  unqualified call or cast. Attempt cleanup executes
+  `src/attempt_cleanup_qualified.sql`; the imported `attempt_cleanup.sql`
+  moves, byte-identical, to the provenance records. Results, locks and
+  persisted state are unchanged (`batter-39wm.4`).
 - The `runlimit-postgres` package no longer ships `src/attempt_complete.sql`
   or `src/cleanup_expired.sql`. No code path executed either statement; both
   stay byte-identical, with their digests, as provenance records in

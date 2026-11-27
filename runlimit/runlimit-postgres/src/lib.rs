@@ -102,6 +102,8 @@ use sqlx::{
 mod admission;
 pub mod attempts;
 mod base;
+#[cfg(test)]
+mod catalog_guard;
 mod gcra;
 pub use gcra::{
     CREATE_RUNLIMIT_GCRA_SQL, GCRA_MIGRATOR, INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL,
@@ -130,9 +132,7 @@ use admission::database_integer;
 #[cfg(test)]
 use pending::PendingAllowance;
 #[cfg(test)]
-use protocol::{
-    BATCH_PREFLIGHT_SQL, BATCH_UPSERT_SQL, CLEANUP_SQL, advisory_lock_id, capacity_shard,
-};
+use protocol::{CLEANUP_SQL, advisory_lock_id, capacity_shard};
 #[cfg(test)]
 use sqlx::postgres::types::PgInterval;
 #[cfg(test)]
@@ -1064,20 +1064,5 @@ mod tests {
         assert!(CLEANUP_SQL.contains("FOR UPDATE SKIP LOCKED"));
         assert!(CLEANUP_SQL.contains("ORDER BY capacity.capacity_shard"));
         assert!(CLEANUP_SQL.contains("FOR UPDATE OF capacity"));
-    }
-
-    #[test]
-    fn every_production_clock_call_is_catalog_qualified() {
-        for (name, sql) in [
-            ("batch preflight", BATCH_PREFLIGHT_SQL),
-            ("batch upsert", BATCH_UPSERT_SQL),
-            ("cleanup", CLEANUP_SQL),
-        ] {
-            let without_qualified_calls = sql.replace("pg_catalog.clock_timestamp()", "");
-            assert!(
-                !without_qualified_calls.contains("clock_timestamp()"),
-                "{name} contains a search_path-resolved clock_timestamp() call"
-            );
-        }
     }
 }
