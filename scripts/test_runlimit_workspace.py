@@ -163,10 +163,8 @@ class AssetTests(unittest.TestCase):
             self.assertFalse(native.exists())
 
     def test_a_package_archive_cannot_carry_a_record(self):
-        record = b'SELECT 1'
-        expected = {'LICENSE-MIT': 'a', 'LICENSE-APACHE': 'b',
-                    'runlimit-postgres/migrations/initial.sql': hashlib.sha256(b'SELECT 0').hexdigest(),
-                    'provenance/runlimit-postgres/superseded.sql': hashlib.sha256(record).hexdigest()}
+        record = b'SELECT 1 FROM superseded'
+        records = {'provenance/runlimit-postgres/superseded.sql': record}
         with tempfile.TemporaryDirectory() as directory:
             def archive(name, members):
                 path = Path(directory) / name
@@ -177,13 +175,16 @@ class AssetTests(unittest.TestCase):
                         bundle.addfile(info, io.BytesIO(data))
                 return path
             clean = archive('clean.crate', [('runlimit-postgres-0.4.0/migrations/initial.sql',
-                                             b'SELECT 0')])
-            validate_published([clean], expected)
-            for member in ('runlimit-postgres-0.4.0/src/superseded.sql',
-                           'runlimit-postgres-0.4.0/archived query.txt',
-                           'runlimit-postgres-0.4.0/README.md'):
+                                             b'SELECT 0'),
+                                            ('runlimit-postgres-0.4.0/src/partial.sql',
+                                             record[:-1])])
+            validate_published([clean], records)
+            for member, data in (('runlimit-postgres-0.4.0/src/superseded.sql', record),
+                                 ('runlimit-postgres-0.4.0/archived query.txt', record),
+                                 ('runlimit-postgres-0.4.0/README.md', record),
+                                 ('runlimit-postgres-0.4.0/src/prefixed.sql',
+                                  b'-- kept for reference\n' + record + b'\n-- end\n')):
                 with self.subTest(member=member), self.assertRaisesRegex(
                         ValueError, 'would publish provenance record provenance/'):
-                    validate_published([clean, archive('copy.crate', [(member, record)])],
-                                       expected)
-
+                    validate_published([clean, archive('copy.crate', [(member, data)])],
+                                       records)

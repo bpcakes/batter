@@ -120,30 +120,31 @@ def is_provenance_path(native, name):
     return provenance in (native / name).resolve().parents
 
 
-def record_digests(expected):
-    """Return `{digest: name}` for every unexecuted import record."""
+def record_contents(root, expected):
+    """Return `{inventory name: bytes}` for every record under provenance/."""
+    native = Path(root) / 'runlimit'
     prefix = PROVENANCE + '/'
-    records = dict(UNEXECUTED_RECORDS)
-    records.update({digest: name for name, digest in expected.items() if name.startswith(prefix)})
-    return records
+    return {name: (native / name).read_bytes() for name in sorted(expected)
+            if name.startswith(prefix)}
 
 
-def validate_published(archives, expected):
+def validate_published(archives, records):
     """Reject a native package archive that would publish a record's bytes.
 
     The archive is what crates.io receives, so any member, under any name and
-    however Cargo sourced it, that carries a record's bytes is rejected.
+    however Cargo sourced it, that contains a record's complete bytes, alone
+    or inside a larger file, is rejected.
     """
-    records = record_digests(expected)
     for archive in archives:
         with tarfile.open(archive, 'r:gz') as bundle:
             for member in bundle.getmembers():
                 if not member.isfile():
                     continue
-                digest = hashlib.sha256(bundle.extractfile(member).read()).hexdigest()
-                if digest in records:
-                    raise ValueError(f'{Path(archive).name} would publish provenance record '
-                                     f'{records[digest]} as {member.name}')
+                data = bundle.extractfile(member).read()
+                for name, content in records.items():
+                    if content in data:
+                        raise ValueError(f'{Path(archive).name} would publish provenance '
+                                         f'record {name} in {member.name}')
 
 
 def package_archives(root, target_directory):
@@ -170,6 +171,7 @@ if __name__ == '__main__':
         ['cargo', 'metadata', '--format-version', '1', '--all-features', '--locked'], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
+    expected = json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text())
     validate_published(package_archives(ROOT, metadata['target_directory']),
-                       json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text()))
+                       record_contents(ROOT, expected))
     print('Runlimit: five publishable local identities, native ownership and imported SQL/licenses verified')
