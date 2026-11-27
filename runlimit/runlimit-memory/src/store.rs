@@ -34,7 +34,9 @@ impl Entry {
         self.used
             .checked_add(check.cost())
             .and_then(|used| {
-                let allowance = Allowance::from_usage(limit, used, replenishes_after)?;
+                // Usage above the limit cannot pay for the check; it reads
+                // as ordinary exhaustion rather than as a storage error.
+                let allowance = Allowance::from_usage(limit, used, replenishes_after).ok()?;
                 Some((Self { used }, allowance))
             })
             .ok_or_else(|| QuotaDenial::new(limit, replenishes_after))

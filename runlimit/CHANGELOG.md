@@ -10,9 +10,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Added
 
 - `Allowance::from_usage(capacity, used, replenishes_after)` returns the
-  allowance left after `used` units, or `None` when `used` exceeds the
-  capacity, so a backend that stores usage derives its allowance without
-  subtracting and re-validating. The caller supplies the delay.
+  allowance left after `used` units, or `UsageExceedsCapacity` when `used`
+  exceeds the capacity, so a backend that stores usage derives its allowance
+  without subtracting and re-validating. The caller supplies the delay.
   `runlimit-memory` evaluates fixed-window entries through it, so stored
   usage above the limit, which no path writes, reads as ordinary quota
   exhaustion in every build profile: a denial for an enforced policy and a
@@ -128,7 +128,19 @@ The format is based on [Keep a Changelog], and this project adheres to
       Err(_) => unreachable!(),
       Ok(decision) => {}
   }
-  // After: the same pattern for denied(..) and shadow_denied(..).
+  // After: only the error pattern changes.
+  match BatchDecision::denied(index, batch_size, denial) {
+      Err(DeniedIndexOutOfRange { index, batch_size }) => {}
+      Ok(decision) => {}
+  }
+
+  // Before:
+  match BatchDecision::shadow_denied(index, batch_size, quota_denial) {
+      Err(DecisionError::DeniedIndexOutOfRange { index, batch_size }) => {}
+      Err(_) => unreachable!(),
+      Ok(decision) => {}
+  }
+  // After: only the error pattern changes.
   match BatchDecision::shadow_denied(index, batch_size, quota_denial) {
       Err(DeniedIndexOutOfRange { index, batch_size }) => {}
       Ok(decision) => {}

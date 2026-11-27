@@ -32,6 +32,7 @@ pub use counter::CounterKey;
 pub use decision::{
     Admitted, AdmittedView, Allowance, AvailableExceedsCapacity, BatchDecision, BatchDecisionView,
     Decision, DecisionView, Delay, Denial, DeniedIndexOutOfRange, EmptyAllowedBatch, QuotaDenial,
+    UsageExceedsCapacity,
 };
 pub use identifier::{IdentifierError, MAX_IDENTIFIER_LENGTH, PolicyId, ScopeId};
 pub use key::{KeyHasher, KeyHasherError, PolicySubject, SubjectKey};

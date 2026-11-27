@@ -79,6 +79,17 @@ pub struct DeniedIndexOutOfRange {
     pub batch_size: usize,
 }
 
+/// The one failure of [`Allowance::from_usage`]: stored usage above the
+/// capacity, which leaves no valid allowance.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("stored usage {used} exceeds capacity {capacity}")]
+pub struct UsageExceedsCapacity {
+    /// Policy capacity.
+    pub capacity: Capacity,
+    /// Invalid stored usage.
+    pub used: u64,
+}
+
 /// The one failure of [`BatchDecision::allowed`]: no allowances.
 ///
 /// Backends reject empty batches before evaluation, so an allowed batch
@@ -201,34 +212,41 @@ impl Allowance {
         })
     }
 
-    /// The allowance left after `used` units of `capacity`, or `None` when
-    /// `used` exceeds the capacity.
+    /// The allowance left after `used` units of `capacity`.
     ///
     /// A backend that stores usage, such as a fixed window's count, derives
-    /// its allowance with this instead of subtracting and re-validating:
-    /// usage beyond the capacity simply leaves no allowance. The caller
-    /// supplies the delay, since only it knows when its capacity returns.
+    /// its allowance with this instead of subtracting and re-validating. The
+    /// caller supplies the delay, since only it knows when its capacity
+    /// returns. Usage equal to the capacity leaves a valid allowance with
+    /// nothing available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsageExceedsCapacity`] when `used` exceeds `capacity`.
     ///
     /// ```
     /// # use std::time::Duration;
-    /// # use runlimit_core::{Allowance, Capacity};
+    /// # use runlimit_core::{Allowance, Capacity, UsageExceedsCapacity};
     /// let capacity = Capacity::new(3).unwrap();
     /// let left = Allowance::from_usage(capacity, 2, Duration::from_secs(60)).unwrap();
     /// assert_eq!(left.available(), 1);
-    /// assert_eq!(Allowance::from_usage(capacity, 4, Duration::from_secs(60)), None);
+    /// assert_eq!(
+    ///     Allowance::from_usage(capacity, 4, Duration::from_secs(60)),
+    ///     Err(UsageExceedsCapacity { capacity, used: 4 })
+    /// );
     /// ```
     pub const fn from_usage(
         capacity: Capacity,
         used: u64,
         replenishes_after: Duration,
-    ) -> Option<Self> {
+    ) -> Result<Self, UsageExceedsCapacity> {
         match capacity.get().checked_sub(used) {
-            Some(available) => Some(Self {
+            Some(available) => Ok(Self {
                 capacity,
                 available,
                 replenishes_after: Delay::new(replenishes_after),
             }),
-            None => None,
+            None => Err(UsageExceedsCapacity { capacity, used }),
         }
     }
 

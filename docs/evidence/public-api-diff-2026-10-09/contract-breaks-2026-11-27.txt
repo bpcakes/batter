@@ -16,10 +16,10 @@ and a `Migration:` sentence on its replacement's rustdoc:
 `MemoryAttemptLimiter::builder` and `MemoryAttemptLimiterBuilder`). The
 return types of `Allowance::new`, `BatchDecision::allowed`, `denied` and
 `shadow_denied` change with them; surface.py does not compare signatures.
-`Allowance::from_usage` is an addition. runlimit-postgres is
+`Allowance::from_usage` and its error `UsageExceedsCapacity` are additions. runlimit-postgres is
 unchanged.
 
-## runlimit-core: 861 -> 883 entries; 13 removed, 35 added
+## runlimit-core: 861 -> 895 entries; 13 removed, 47 added
 - REMOVED enum runlimit_core::DecisionError
 - REMOVED impl runlimit_core::DecisionError: Clone
 - REMOVED impl runlimit_core::DecisionError: Copy
@@ -37,6 +37,8 @@ unchanged.
 + ADDED   field runlimit_core::AvailableExceedsCapacity.capacity
 + ADDED   field runlimit_core::DeniedIndexOutOfRange.batch_size
 + ADDED   field runlimit_core::DeniedIndexOutOfRange.index
++ ADDED   field runlimit_core::UsageExceedsCapacity.capacity
++ ADDED   field runlimit_core::UsageExceedsCapacity.used
 + ADDED   impl runlimit_core::AvailableExceedsCapacity: Clone
 + ADDED   impl runlimit_core::AvailableExceedsCapacity: Copy
 + ADDED   impl runlimit_core::AvailableExceedsCapacity: Debug
@@ -61,13 +63,23 @@ unchanged.
 + ADDED   impl runlimit_core::EmptyAllowedBatch: Error
 + ADDED   impl runlimit_core::EmptyAllowedBatch: PartialEq
 + ADDED   impl runlimit_core::EmptyAllowedBatch: StructuralPartialEq
++ ADDED   impl runlimit_core::UsageExceedsCapacity: Clone
++ ADDED   impl runlimit_core::UsageExceedsCapacity: Copy
++ ADDED   impl runlimit_core::UsageExceedsCapacity: Debug
++ ADDED   impl runlimit_core::UsageExceedsCapacity: Display
++ ADDED   impl runlimit_core::UsageExceedsCapacity: Eq
++ ADDED   impl runlimit_core::UsageExceedsCapacity: Error
++ ADDED   impl runlimit_core::UsageExceedsCapacity: PartialEq
++ ADDED   impl runlimit_core::UsageExceedsCapacity: StructuralPartialEq
 + ADDED   method runlimit_core::Allowance::from_usage
 + ADDED   struct runlimit_core::AvailableExceedsCapacity
 + ADDED   struct runlimit_core::DeniedIndexOutOfRange
 + ADDED   struct runlimit_core::EmptyAllowedBatch
++ ADDED   struct runlimit_core::UsageExceedsCapacity
 + ADDED   use runlimit_core::AvailableExceedsCapacity <- decision::AvailableExceedsCapacity
 + ADDED   use runlimit_core::DeniedIndexOutOfRange <- decision::DeniedIndexOutOfRange
 + ADDED   use runlimit_core::EmptyAllowedBatch <- decision::EmptyAllowedBatch
++ ADDED   use runlimit_core::UsageExceedsCapacity <- decision::UsageExceedsCapacity
 ## runlimit-memory: 156 -> 159 entries; 1 removed, 4 added
 - REMOVED method runlimit_memory::attempts::MemoryAttemptLimiter::with_clock
 + ADDED   method runlimit_memory::attempts::MemoryAttemptLimiter::builder
