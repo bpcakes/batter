@@ -271,10 +271,9 @@ impl PostgresLimiter {
     /// conservatively classified as [`CheckError::CommitOutcomeUnknown`].
     pub async fn check(&self, check: &Check<'_>) -> Result<Decision, CheckError> {
         self.base
-            .observed_check(
-                check,
-                self.run_checks(std::slice::from_ref(check), single_decision),
-            )
+            .observed_check(check, || {
+                self.run_checks(std::slice::from_ref(check), single_decision)
+            })
             .await
     }
 
@@ -305,10 +304,9 @@ impl PostgresLimiter {
     /// the same classification as [`Self::check`].
     pub async fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, BatchCheckError> {
         self.base
-            .observed_batch(
-                checks,
-                self.run_checks(checks, |admission| batch_decision(checks.len(), admission)),
-            )
+            .observed_batch(checks, || {
+                self.run_checks(checks, |admission| batch_decision(checks.len(), admission))
+            })
             .await
     }
 

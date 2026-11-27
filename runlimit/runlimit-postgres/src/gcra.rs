@@ -120,10 +120,9 @@ impl PostgresGcraLimiter {
     /// Returns classified pre-commit or uncertain-commit failures.
     pub async fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, CheckError> {
         self.base
-            .observed_check(
-                check,
-                self.run(std::slice::from_ref(check), single_decision),
-            )
+            .observed_check(check, || {
+                self.run(std::slice::from_ref(check), single_decision)
+            })
             .await
     }
 
@@ -138,10 +137,9 @@ impl PostgresGcraLimiter {
         checks: &[Check<'_, GcraPolicy>],
     ) -> Result<BatchDecision, BatchCheckError> {
         self.base
-            .observed_batch(
-                checks,
-                self.run(checks, |admission| batch_decision(checks.len(), admission)),
-            )
+            .observed_batch(checks, || {
+                self.run(checks, |admission| batch_decision(checks.len(), admission))
+            })
             .await
     }
 

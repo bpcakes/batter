@@ -155,31 +155,40 @@ pub(crate) enum BundledHistory {
 ///
 /// The `observed_*` wrappers are the one timing and reporting path of both
 /// quota limiters: each measures wall-clock time around the whole operation,
-/// connection acquisition included, and reports its result once.
+/// connection acquisition included, and reports its result once. Each takes
+/// the operation as a function and builds its future inside, so a caller's
+/// future holds the admission state machine once rather than also keeping
+/// the moved-in argument.
 impl PgLimiterBase<dyn Observer> {
     /// Runs one check's `admission` and reports it.
-    pub(crate) async fn observed_check<P: RateLimitPolicy + ?Sized>(
+    pub(crate) async fn observed_check<P: RateLimitPolicy + ?Sized, F>(
         &self,
         check: &Check<'_, P>,
-        admission: impl Future<Output = Result<Decision, CheckError>>,
-    ) -> Result<Decision, CheckError> {
+        admission: impl FnOnce() -> F,
+    ) -> Result<Decision, CheckError>
+    where
+        F: Future<Output = Result<Decision, CheckError>>,
+    {
         let started = Instant::now();
-        let result = admission.await;
+        let result = admission().await;
         self.observe_check(check, &result, started.elapsed());
         result
     }
 
-    /// Validates `checks`, runs the batch's `admission` only when they form a
-    /// valid batch, and reports the batch either way. A rejected batch drops
-    /// `admission` unpolled, so it never acquires a connection.
-    pub(crate) async fn observed_batch<P: RateLimitPolicy>(
+    /// Validates `checks`, builds and runs the batch's `admission` only when
+    /// they form a valid batch, and reports the batch either way. A rejected
+    /// batch never calls `admission`, so it never acquires a connection.
+    pub(crate) async fn observed_batch<P: RateLimitPolicy, F>(
         &self,
         checks: &[Check<'_, P>],
-        admission: impl Future<Output = Result<BatchDecision, CheckError>>,
-    ) -> Result<BatchDecision, BatchCheckError> {
+        admission: impl FnOnce() -> F,
+    ) -> Result<BatchDecision, BatchCheckError>
+    where
+        F: Future<Output = Result<BatchDecision, CheckError>>,
+    {
         let started = Instant::now();
         let result = match validate_batch(checks, self.config.max_batch_size()) {
-            Ok(()) => admission.await.map_err(BatchCheckError::from),
+            Ok(()) => admission().await.map_err(BatchCheckError::from),
             Err(error) => Err(error.into()),
         };
         self.observe_batch(checks, &result, started.elapsed());
@@ -320,6 +329,50 @@ mod tests {
             ["Failed NotConsumed", "cleanup 0 Confirmed { removed: 0 }"]
         );
         assert_eq!(*gcra_observer.0.lock().unwrap(), observed);
+    }
+
+    /// An admission whose future is large and holds its state across an
+    /// await.
+    async fn large_admission<T>(outcome: T) -> T {
+        let state = [7_u8; 4096];
+        tokio::task::yield_now().await;
+        std::hint::black_box(&state);
+        outcome
+    }
+
+    // Each wrapper builds the admission future inside itself, so its own
+    // future holds that state machine once instead of also keeping a moved-in
+    // copy, which once doubled every check future past Tokio's boxing size.
+    #[tokio::test]
+    async fn the_observed_wrappers_hold_the_admission_future_once() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
+        let base = super::PgLimiterBase::<dyn Observer>::new(pool);
+        let hasher = runlimit_core::KeyHasher::new([1; 32]).expect("valid test secret");
+        let policy = runlimit_core::FixedWindowPolicy::new(
+            runlimit_core::PolicyId::new("size").expect("valid policy id"),
+            runlimit_core::ScopeId::new("subject").expect("valid scope id"),
+            1,
+            Duration::from_secs(1),
+        )
+        .expect("valid policy");
+        let check = runlimit_core::Check::new(hasher.hash_for(&policy, "subject"));
+        let checks = [runlimit_core::Check::new(
+            hasher.hash_for(&policy, "subject"),
+        )];
+        let error = || crate::CheckError::storage_invariant("never run");
+        let inner = std::mem::size_of_val(&large_admission(Err::<(), _>(error())));
+        let check_size =
+            std::mem::size_of_val(&base.observed_check(&check, || large_admission(Err(error()))));
+        let batch_size =
+            std::mem::size_of_val(&base.observed_batch(&checks, || large_admission(Err(error()))));
+        for (name, size) in [("check", check_size), ("batch", batch_size)] {
+            assert!(
+                size < inner + 1024,
+                "observed_{name} future is {size} bytes around a {inner}-byte admission"
+            );
+        }
     }
 
     #[tokio::test]
