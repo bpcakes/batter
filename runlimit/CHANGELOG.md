@@ -66,14 +66,16 @@ The format is based on [Keep a Changelog], and this project adheres to
   attempts and timeout settings) calls catalog functions and casts to
   non-keyword types by their `pg_catalog` names: `set_config`,
   `pg_advisory_xact_lock`, `cardinality`, `count`, `min`, `floor`, `unnest`,
-  `generate_series`, `text` and `bytea`, beside the already qualified clock.
-  A schema ahead of `pg_catalog` on the caller's `search_path` can no longer
+  `generate_series`, `text` and `bytea`, beside the already qualified clock. A
+  schema ahead of `pg_catalog` on the caller's `search_path` can no longer
   replace any of them; operators and the limiters' tables still resolve
   through it. Multi-array `unnest(a, b)` is spelled `ROWS FROM
   (pg_catalog.unnest(a), pg_catalog.unnest(b))`, its documented equivalent.
   Every operational statement now lives in one private `statements` module as
-  a `Statement`, the only SQL the crate can execute, and a unit guard rejects
-  an unqualified call or cast in any of them and any SQL built elsewhere. Attempt cleanup executes
+  a closed `Statement` enum, and a unit guard rejects an unqualified call or
+  cast in any of them. The package's `clippy.toml` disallows every sqlx entry
+  point that accepts SQL text, so only `Statement::query` and the bundled
+  migrators send SQL. Attempt cleanup executes
   `src/attempt_cleanup_qualified.sql`; the imported `attempt_cleanup.sql`
   moves, byte-identical, to the provenance records. The published migrations
   are immutable and unqualified; run `migrate` under a trusted `search_path`.

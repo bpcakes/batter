@@ -1,5 +1,10 @@
 //! Live coverage of the migration path every `PostgreSQL` limiter shares.
 
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "tests provision and inspect database state with their own SQL"
+)]
 mod support;
 
 use std::time::Duration;

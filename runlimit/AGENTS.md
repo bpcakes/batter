@@ -198,19 +198,24 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   path beside these. Live suites share `tests/support`'s `IsolatedSchema` and
   shard-key helpers.
 - Every operational PostgreSQL statement is a `Statement` in
-  `runlimit-postgres/src/statements/`, the only module that can construct
-  one, and the crate executes SQL only through `Statement::query`. Add a new
-  statement inside its family's `statements!` block, which also registers
-  it; `src/catalog_guard.rs` rejects any other construction and any SQL
-  literal, `sqlx` query constructor, macro, builder, `include!` or use of a
-  published migration constant elsewhere. Each statement calls catalog functions and
-  casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names. A multi-array `unnest` is spelled
+  `runlimit-postgres/src/statements/`. `Statement` is a closed enum generated
+  from each family's `statements!` block, whose text is a string literal or
+  `include_str!` of a `.sql` file directly in `src`; add a statement there,
+  and a new family to `families!`. The crate's own `clippy.toml` disallows
+  every sqlx entry point that accepts SQL text, so SQL reaches sqlx only
+  through `Statement::query`; the three bundled migrators are the only other
+  pinned exception. Do not suppress those lints anywhere else, and re-read
+  sqlx's SQL-text parameters on every sqlx upgrade; `src/catalog_guard/gate.rs`
+  pins the inventory and the exceptions. Integration tests may use raw SQL
+  behind their crate-level allow. Each statement calls catalog functions and
+  casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
+  and `double precision` keeps both words. A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
-  the unqualified spelling. The guard reads a restricted dialect and rejects
-  the rest: no dollar quoting or quoted identifiers, casts only as `::`,
-  string constants only as function arguments or list elements, and no
-  `sqlx` query macros. Published migrations are exempt and immutable,
-  and run under the caller's `search_path`, which must be trusted.
+  the unqualified spelling. `src/catalog_guard.rs` reads a restricted
+  dialect and rejects the rest: no dollar quoting or quoted identifiers,
+  casts only as `::`, and string constants only as function arguments or
+  list elements. Published migrations are exempt and immutable, and run
+  under the caller's `search_path`, which must be trusted.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.
   `SubjectKey::from_digest` exists for tests and already-opaque digests only.

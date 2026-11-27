@@ -1,0 +1,61 @@
+# Clippy reads the nearest clippy.toml only, so this file replaces
+# runlimit/clippy.toml for runlimit-postgres and repeats its settings first.
+cognitive-complexity-threshold = 20
+
+# This crate sends SQL text only through `statements::Statement::query`, the
+# one site allowed to call `sqlx::query`; the bundled migrators run only the
+# migrations `sqlx::migrate!` embeds. Every sqlx 0.9 entry point that accepts
+# SQL text, or makes text acceptable, is disallowed, so Clippy resolves each
+# call, import, rename and trait method to it. `src/catalog_guard.rs` pins
+# this inventory and checks that nothing else suppresses these lints.
+disallowed-methods = [
+    { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_with", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::__query_with_result", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_as", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_as_with", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_scalar", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_scalar_with", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::__query_scalar_with_result", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::raw_sql", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::Executor::execute", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::execute_many", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::fetch", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::fetch_many", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::fetch_all", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::fetch_one", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::fetch_optional", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::prepare", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::prepare_with", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Executor::describe", reason = "execute a Statement's query instead of raw text" },
+    { path = "sqlx::Connection::begin_with", reason = "begin transactions with the default statement" },
+    { path = "sqlx::Pool::begin_with", reason = "begin transactions with the default statement" },
+    { path = "sqlx::Pool::try_begin_with", reason = "begin transactions with the default statement" },
+    { path = "sqlx::postgres::PgConnection::copy_in_raw", reason = "COPY takes SQL text" },
+    { path = "sqlx::postgres::PgConnection::copy_out_raw", reason = "COPY takes SQL text" },
+    { path = "sqlx::postgres::PgPoolCopyExt::copy_in_raw", reason = "COPY takes SQL text" },
+    { path = "sqlx::postgres::PgPoolCopyExt::copy_out_raw", reason = "COPY takes SQL text" },
+    { path = "sqlx::SqlSafeStr::into_sql_str", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::migrate::Migrator::new", reason = "run only the migrations sqlx::migrate! embeds" },
+]
+disallowed-types = [
+    { path = "sqlx::AssertSqlSafe", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::SqlStr", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::QueryBuilder", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::RawSql", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::migrate::Migration", reason = "run only the migrations sqlx::migrate! embeds" },
+]
+disallowed-macros = [
+    { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_unchecked", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_file", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_file_unchecked", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_as", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_as_unchecked", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_file_as", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_file_as_unchecked", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_scalar", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_scalar_unchecked", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_file_scalar", reason = "run SQL only through statements::Statement::query" },
+    { path = "sqlx::query_file_scalar_unchecked", reason = "run SQL only through statements::Statement::query" },
+]

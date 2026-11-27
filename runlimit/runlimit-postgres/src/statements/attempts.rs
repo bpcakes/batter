@@ -1,7 +1,5 @@
 //! The attempt limiter's statements.
 
-use super::Statement;
-
 statements! {
     /// Takes the shard's admission lock: `ATTEMPT_LOCK_NAMESPACE`, then the shard.
     SHARD_LOCK_SQL = "SELECT pg_catalog.pg_advisory_xact_lock($1, $2)";

@@ -1,7 +1,5 @@
 //! The fixed-window limiter's statements.
 
-use super::Statement;
-
 statements! {
     BATCH_ADVISORY_LOCK_SQL = r"
 WITH RECURSIVE acquired(position, locked) AS (

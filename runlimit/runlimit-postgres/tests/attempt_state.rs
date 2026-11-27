@@ -13,6 +13,12 @@
 //! moves the server clock forward, so a deadline reached exactly in memory is
 //! also reached in PostgreSQL, and remaining delays are compared rounded up to
 //! the script's one-minute step.
+
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "tests provision and inspect database state with their own SQL"
+)]
 use runlimit_core::{
     KeyHasher,
     attempts::{AttemptAdmission, AttemptOutcome, AttemptPolicy},

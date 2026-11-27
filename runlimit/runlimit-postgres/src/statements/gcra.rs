@@ -1,7 +1,5 @@
 //! The GCRA limiter's statements.
 
-use super::Statement;
-
 statements! {
     LOCK_SHARDS = "SELECT capacity_shard, row_count, observed_at_ms FROM runlimit_gcra_shards WHERE capacity_shard = ANY($1) ORDER BY capacity_shard FOR UPDATE";
 

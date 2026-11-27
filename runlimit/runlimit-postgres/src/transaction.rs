@@ -19,7 +19,7 @@ use tokio::time::{Instant, timeout, timeout_at};
 use crate::{
     CheckError, CheckPhase, CleanupPhase, MaintenanceError, PostgresConfig,
     protocol::{is_server_timeout, remaining_server_timeout_settings},
-    statements::SET_LOCAL_TIMEOUTS_SQL,
+    statements::session::SET_LOCAL_TIMEOUTS_SQL,
 };
 
 /// Whether the connection that produced a value may return to its pool.

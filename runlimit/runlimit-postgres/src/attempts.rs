@@ -51,6 +51,10 @@ use std::{fmt, sync::Arc, time::Duration};
 pub(crate) mod row;
 
 /// Isolated migration history; install only when opting into attempt policies.
+#[expect(
+    clippy::disallowed_types,
+    reason = "sqlx::migrate! embeds each migration as a sqlx::SqlStr"
+)]
 pub static ATTEMPTS_MIGRATOR: Migrator = sqlx::migrate!("./attempts-migrations");
 /// SQL suitable for a new forward-only application-owned migration.
 pub const CREATE_RUNLIMIT_ATTEMPTS_SQL: &str =

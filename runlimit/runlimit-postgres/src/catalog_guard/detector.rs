@@ -47,7 +47,6 @@ const KEYWORD_TYPES: &[&str] = &[
     "character",
     "dec",
     "decimal",
-    "double",
     "float",
     "int",
     "integer",
@@ -112,12 +111,30 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
                 if word != "pg_catalog" {
                     found.push(format!("::{word}.(...)"));
                 }
+            } else if word == "double" {
+                // Only the two-word spelling is grammar; `double` alone
+                // resolves through `search_path`.
+                if !next_word_is(&code, after, "precision") {
+                    found.push("::double without precision".to_owned());
+                }
             } else if !KEYWORD_TYPES.contains(&word.as_str()) {
                 found.push(format!("::{word}"));
             }
         }
     }
     found
+}
+
+/// Whether the identifier at `start` in `code` is `word`, ignoring case.
+fn next_word_is(code: &str, start: usize, word: &str) -> bool {
+    let end = start + word.len();
+    code.get(start..end)
+        .is_some_and(|found| found.eq_ignore_ascii_case(word))
+        && !code
+            .as_bytes()
+            .get(end)
+            .copied()
+            .is_some_and(is_identifier_part)
 }
 
 /// The lowercase schema or relation that qualifies the identifier at `start`
@@ -343,7 +360,7 @@ const fn is_identifier_start(byte: u8) -> bool {
     byte.is_ascii_alphabetic() || byte == b'_'
 }
 
-pub(super) const fn is_identifier_part(byte: u8) -> bool {
+const fn is_identifier_part(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 

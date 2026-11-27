@@ -179,6 +179,10 @@ pub const BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL: &str =
 /// pooled application that shares `_sqlx_migrations`, prefer
 /// [`PostgresLimiter::migrate`] and configure every other participating
 /// [`Migrator`] to set [`Migrator::set_ignore_missing`] to `true`.
+#[expect(
+    clippy::disallowed_types,
+    reason = "sqlx::migrate! embeds each migration as a sqlx::SqlStr"
+)]
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// A replica-safe rate limiter backed by a `PostgreSQL` pool.

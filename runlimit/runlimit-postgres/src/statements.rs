@@ -1,80 +1,168 @@
 //! Every SQL statement the limiters send at run time, and the only way to
 //! send one.
 //!
-//! A [`Statement`]'s text is private to this module and its submodules, so
-//! the rest of the crate can execute only the statements defined here, through
-//! [`Statement::query`]. Each one calls catalog functions and casts to
-//! non-keyword types by their `pg_catalog` names, and keeps to the dialect
-//! `crate::catalog_guard` reads; that guard checks every entry of `all()` and
-//! that no other module builds SQL. Published migrations are immutable and
-//! live with their migrators instead.
+//! [`Statement`] is closed: each family module declares its statements in one
+//! `statements!` block, which generates the family's `Id` enum and fixes each
+//! statement's text to a string literal, and `families!` below generates
+//! [`Statement`] over the families. A value can therefore name only a declared
+//! statement, and `all()` lists every one for `crate::catalog_guard`.
+//!
+//! [`Statement::query`] is the one place this crate's Clippy configuration
+//! (`clippy.toml`) lets SQL text reach sqlx: every sqlx entry point that
+//! accepts SQL text is disallowed elsewhere. Each statement calls catalog
+//! functions and casts to non-keyword types by their `pg_catalog` names and
+//! keeps to the dialect `crate::catalog_guard` reads. Published migrations
+//! are immutable and run only through their migrators.
 
 use sqlx::{Postgres, postgres::PgArguments, query::Query};
 
-/// One operational statement.
-#[derive(Clone, Copy)]
-pub(crate) struct Statement(&'static str);
-
-/// Declares a family's statements and its `ALL` registry together, so
-/// every statement is registered under its own name and nothing else in this
-/// module constructs a [`Statement`].
+/// Declares one family's statements: an `Id` variant and a constant per
+/// statement. A statement's text is a string literal or the
+/// `include_str!` of a `.sql` file named by a literal path; nothing else,
+/// such as a published migration's constant, is accepted.
 macro_rules! statements {
-    ($($(#[$attribute:meta])* $name:ident = $sql:expr;)+) => {
-        $($(#[$attribute])* pub(crate) const $name: Statement = Statement($sql);)+
+    (@munch [$($done:tt)*]) => {
+        statements!(@emit $($done)*);
+    };
+    (@munch [$($done:tt)*]
+        $(#[$attribute:meta])* $name:ident = include_str!($path:literal); $($rest:tt)*
+    ) => {
+        statements!(@munch [$($done)* {
+            [$(#[$attribute])*] $name (::core::include_str!($path)) (Some($path))
+        }] $($rest)*);
+    };
+    (@munch [$($done:tt)*]
+        $(#[$attribute:meta])* $name:ident = $sql:literal; $($rest:tt)*
+    ) => {
+        statements!(@munch [$($done)* { [$(#[$attribute])*] $name ($sql) (None) }] $($rest)*);
+    };
+    (@munch [$($done:tt)*] $($rest:tt)+) => {
+        compile_error!(
+            "a statement is `NAME = \"<literal>\";` or `NAME = include_str!(\"<file>.sql\");`"
+        );
+    };
+    (@emit $({ [$($attribute:tt)*] $name:ident ($($text:tt)+) ($($file:tt)+) })+) => {
+        /// The statements this family declares.
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[allow(
+            non_camel_case_types,
+            clippy::upper_case_acronyms,
+            reason = "each variant is named like the constant call sites use"
+        )]
+        pub(crate) enum Id {
+            $($name,)+
+        }
 
-        /// Every statement of this family, by name.
-        #[cfg(test)]
-        pub(crate) const ALL: &[(&str, Statement)] = &[$((stringify!($name), $name)),+];
+        impl Id {
+            /// Every statement of this family, in declaration order.
+            #[cfg(test)]
+            pub(crate) const ALL: &[Self] = &[$(Self::$name),+];
+
+            /// The statement's text.
+            pub(crate) const fn sql(self) -> &'static str {
+                match self {
+                    $(Self::$name => $($text)+,)+
+                }
+            }
+
+            /// The statement's declared name.
+            #[cfg(test)]
+            pub(crate) const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$name => stringify!($name),)+
+                }
+            }
+
+            /// The `.sql` file the statement includes, relative to its
+            /// family's module file, if it is not a literal.
+            #[cfg(test)]
+            pub(crate) const fn file(self) -> Option<&'static str> {
+                match self {
+                    $(Self::$name => $($file)+,)+
+                }
+            }
+        }
+
+        $(
+            $($attribute)*
+            pub(crate) const $name: $crate::statements::Statement = Id::$name.statement();
+        )+
+    };
+    ($($input:tt)+) => {
+        statements!(@munch [] $($input)+);
     };
 }
 
-pub(crate) mod attempts;
-pub(crate) mod fixed_window;
-pub(crate) mod gcra;
+/// Generates [`Statement`] over every family, so each family is a variant of
+/// it and part of `all()`.
+macro_rules! families {
+    ($($family:ident => $module:ident),+ $(,)?) => {
+        $(pub(crate) mod $module;)+
+
+        /// One declared operational statement.
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub(crate) enum Statement {
+            $($family($module::Id),)+
+        }
+
+        $(
+            impl $module::Id {
+                const fn statement(self) -> Statement {
+                    Statement::$family(self)
+                }
+            }
+        )+
+
+        impl Statement {
+            /// The statement's text.
+            pub(crate) const fn sql(self) -> &'static str {
+                match self {
+                    $(Self::$family(id) => id.sql(),)+
+                }
+            }
+
+            /// The `.sql` file the statement includes, relative to its
+            /// family's module file, if it is not a literal.
+            #[cfg(test)]
+            pub(crate) const fn file(self) -> Option<&'static str> {
+                match self {
+                    $(Self::$family(id) => id.file(),)+
+                }
+            }
+
+            /// The statement's path in this module.
+            #[cfg(test)]
+            fn name(self) -> String {
+                match self {
+                    $(Self::$family(id) => format!(concat!(stringify!($module), "::{}"), id.name()),)+
+                }
+            }
+        }
+
+        /// Every statement, by its path in this module.
+        #[cfg(test)]
+        pub(crate) fn all() -> Vec<(String, Statement)> {
+            let mut all = Vec::new();
+            $(all.extend($module::Id::ALL.iter().map(|id| id.statement()));)+
+            all.into_iter().map(|statement| (statement.name(), statement)).collect()
+        }
+    };
+}
+
+families! {
+    Attempts => attempts,
+    FixedWindow => fixed_window,
+    Gcra => gcra,
+    Session => session,
+}
 
 impl Statement {
     /// The statement as a query ready for binding.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place SQL text reaches sqlx"
+    )]
     pub(crate) fn query<'q>(self) -> Query<'q, Postgres, PgArguments> {
-        sqlx::query(self.0)
+        sqlx::query(self.sql())
     }
-
-    /// The statement's text, for the guard and for tests.
-    #[cfg(test)]
-    pub(crate) const fn sql(self) -> &'static str {
-        self.0
-    }
-}
-
-statements! {
-    SET_LOCAL_TIMEOUTS_SQL = r"
-SELECT
-    pg_catalog.set_config('statement_timeout', $1, true),
-    pg_catalog.set_config('lock_timeout', $2, true)
-";
-}
-
-/// Every statement, by its path in this module: the root's and each family's,
-/// whose names come from their own declarations.
-#[cfg(test)]
-pub(crate) fn all() -> Vec<(String, Statement)> {
-    // Each family's label and registry come from the same module path.
-    macro_rules! family {
-        ($module:ident) => {
-            (concat!(stringify!($module), "::"), $module::ALL)
-        };
-    }
-    let families: [(&str, &[(&str, Statement)]); 4] = [
-        ("", ALL),
-        family!(attempts),
-        family!(fixed_window),
-        family!(gcra),
-    ];
-    families
-        .into_iter()
-        .flat_map(|(family, statements)| {
-            statements
-                .iter()
-                .map(move |(name, statement)| (format!("{family}{name}"), *statement))
-        })
-        .collect()
 }

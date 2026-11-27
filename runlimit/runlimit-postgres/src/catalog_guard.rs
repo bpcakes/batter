@@ -18,71 +18,23 @@
 //! function arguments or list elements. The guard rejects anything outside it
 //! rather than trying to parse it.
 //!
-//! The set of statements is closed by construction: `crate::statements` owns
-//! every [`Statement`](crate::statements::Statement), each family declares
-//! its statements through one macro that also registers them, and only a
-//! statement can be executed. This guard checks that nothing else in that
-//! module constructs a statement and that no other production module builds
-//! SQL: no SQL-looking literal, no `sqlx` query constructor, macro or
-//! builder, no `include!`, no `include_str!` or `include_bytes!` but a
-//! published migration's, and no reference to a published migration beyond
-//! its declaration and unrenamed crate-root re-export. SQL text can therefore
-//! come only from a scanned literal or a pinned migration, so a raw
-//! `Executor` call, which accepts a string directly, has nothing unregistered
-//! to run. SQL assembled at run time from fragments that do not read as
-//! statements is outside what a source guard can see.
+//! The set of statements is closed by construction: `crate::statements`
+//! generates [`Statement`](crate::statements::Statement) from each family's
+//! `statements!` block, whose text is a string literal or an included `.sql`
+//! file in `src`, so `statements::all()` lists every statement the crate can
+//! send and the first test below checks each one. No other SQL text can
+//! reach PostgreSQL: the crate's `clippy.toml` disallows every sqlx entry
+//! point that accepts SQL text, and `gate` checks that inventory and that
+//! only `Statement::query` and the three bundled migrators suppress it.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
 mod detector;
-mod literals;
-mod modules;
+mod gate;
 
 use detector::unqualified;
-use literals::{files, includes, sql_literals};
-use modules::production_sources;
 
 use crate::statements;
-
-/// The published migration constants: immutable, executed only through the
-/// migrators, and exempt from this guard.
-const MIGRATIONS: &[(&str, &str)] = &[
-    ("lib.rs", "CREATE_RUNLIMIT_FIXED_WINDOWS_SQL"),
-    ("lib.rs", "SET_RUNLIMIT_FIXED_WINDOWS_FILLFACTOR_SQL"),
-    ("lib.rs", "BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL"),
-    ("gcra.rs", "CREATE_RUNLIMIT_GCRA_SQL"),
-    ("gcra.rs", "INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL"),
-    ("attempts.rs", "CREATE_RUNLIMIT_ATTEMPTS_SQL"),
-];
-
-/// `sqlx` items that build or run SQL from a string; only `statements` uses
-/// them.
-const SQL_BUILDERS: &[&str] = &[
-    "QueryBuilder",
-    "query_as",
-    "query_as_unchecked",
-    "query_as_with",
-    "query_file",
-    "query_file_as",
-    "query_file_as_unchecked",
-    "query_file_scalar",
-    "query_file_scalar_unchecked",
-    "query_file_unchecked",
-    "query_scalar",
-    "query_scalar_unchecked",
-    "query_scalar_with",
-    "query_unchecked",
-    "query_with",
-    "raw_sql",
-];
-
-fn source_directory() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn is_statements_file(file: &str) -> bool {
-    file == "statements.rs" || file.starts_with("statements/")
-}
 
 #[test]
 fn every_statement_qualifies_its_catalog_functions_and_types() {
@@ -100,247 +52,46 @@ fn every_statement_qualifies_its_catalog_functions_and_types() {
     );
 }
 
+// A statement may include only a `.sql` file directly in `src`, so a published
+// migration, which lives in its migrator's directory, cannot become one; and
+// every such file is a statement, so none is left unchecked.
 #[test]
-fn only_the_registering_macro_constructs_statements() {
-    let source = source_directory();
-    let root = fs::read_to_string(source.join("statements.rs")).unwrap();
-    let (_, root_code) = sql_literals(&root);
-    let constructions = root_code.matches("Statement(").count();
-    assert_eq!(
-        constructions, 2,
-        "statements.rs may name Statement( only in its definition and in the macro body"
-    );
-    let families: BTreeSet<String> = statements::all()
-        .iter()
-        .filter_map(|(name, _)| name.split_once("::").map(|(family, _)| family.to_owned()))
+fn included_statements_are_exactly_the_sql_files_in_src() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let on_disk: BTreeSet<String> = fs::read_dir(&source)
+        .expect("src is readable")
+        .map(|entry| entry.expect("src entry is readable").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sql"))
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    let mut files_found = BTreeSet::new();
-    assert_eq!(
-        root_code.matches("statements! {").count(),
-        1,
-        "statements.rs holds one statements! block besides the macro definition"
-    );
-    // impl Statement is trusted as a whole, so it may contain one constructor
-    // call, sqlx::query(self.0), and no SQL text.
-    let implementation = &root_code[root_code.find("impl Statement {").unwrap()..];
-    let implementation = &implementation[..implementation.find("\n}\n").unwrap()];
-    assert_eq!(
-        implementation.matches("sqlx::").count(),
-        1,
-        "impl Statement may call sqlx only in Statement::query"
-    );
-    assert!(implementation.contains("sqlx::query(self.0)"));
-    assert_eq!(root_code.matches("impl Statement {").count(), 1);
-    for path in files(&source.join("statements"), "rs") {
-        let (_, code) = sql_literals(&fs::read_to_string(&path).unwrap());
-        assert!(
-            !code.contains("Statement("),
-            "{} constructs a Statement outside the statements! macro",
-            path.display()
-        );
-        // One top-level block per family file: a nested module's block would
-        // register into an ALL that statements::all() never visits.
-        assert_eq!(
-            code.matches("statements! {").count(),
-            1,
-            "{} must declare its statements in exactly one statements! block",
-            path.display()
-        );
-        assert!(
-            !code
-                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .any(|word| word == "mod"),
-            "{} must not declare modules",
-            path.display()
-        );
-        files_found.insert(path.file_stem().unwrap().to_str().unwrap().to_owned());
-    }
-    assert_eq!(
-        files_found, families,
-        "statements::all() must include every family file"
-    );
-}
-
-#[test]
-fn no_production_module_builds_sql_outside_statements() {
-    let source = source_directory();
-    let mut violations = Vec::new();
-    let mut included_files = BTreeSet::new();
-    for (file, production) in production_sources(&source) {
-        let statements = is_statements_file(&file);
-        // Inside crate::statements only the statements! declarations, the
-        // macro itself and Statement::query may hold SQL; every other line
-        // of those files is checked like any other module.
-        let trusted = if statements {
-            trusted_statement_code(&file, &production)
-        } else {
-            Vec::new()
-        };
-        // A statement's file is registered by the include that loads it; an
-        // include outside a statements! block is still rejected below.
-        if statements {
-            for (_, path) in includes(&production, &sql_literals(&production).1) {
-                if let Some(parent) = Path::new(&file).parent()
-                    && let Ok(resolved) = source.join(parent).join(&path).canonicalize()
-                {
-                    included_files.insert(resolved);
-                }
-            }
-        }
-        let production = blank(&production, &trusted);
-        let (literals, code) = sql_literals(&production);
-        for (start, _) in code.match_indices("include!") {
-            if start == 0 || !code.as_bytes()[start - 1].is_ascii_alphanumeric() {
-                violations.push(format!("{file}: include!"));
-            }
-        }
-        for (owner, path) in includes(&production, &code) {
-            let resolved = Path::new(&file)
-                .parent()
-                .and_then(|parent| source.join(parent).join(&path).canonicalize().ok());
-            let migration = owner
-                .as_deref()
-                .is_some_and(|name| MIGRATIONS.contains(&(file.as_str(), name)));
-            if resolved.is_none() || !migration {
-                violations.push(format!("{file}: {owner:?} includes {path}"));
-            }
-        }
-        for (_, name) in MIGRATIONS {
-            for (start, _) in code.match_indices(name) {
-                let item_start = code[..start].rfind([';', '}']).map_or(0, |end| end + 1);
-                let item = code[item_start..start].trim_start();
-                let declaration = item.contains("const")
-                    && code[start + name.len()..].trim_start().starts_with(':');
-                // The crate-root re-export of a family's migration, unrenamed.
-                let reexport = file == "lib.rs"
-                    && item.starts_with("pub use")
-                    && !code[start + name.len()..].trim_start().starts_with("as");
-                if !declaration && !reexport {
-                    violations.push(format!("{file}: refers to the migration {name}"));
-                }
-            }
-        }
-        for (_, literal) in literals {
-            violations.push(format!("{file}: SQL literal {literal:.60}"));
-        }
-        for word in identifiers(&code) {
-            if SQL_BUILDERS.contains(&word.text) {
-                violations.push(format!("{file}: sqlx {}", word.text));
-            }
-            // `sqlx::query::Query` names the module; `sqlx::query::<_>(..)`
-            // is the function with a turbofish.
-            let module_path = word
-                .after
-                .strip_prefix("::")
-                .is_some_and(|rest| !rest.trim_start().starts_with('<'));
-            let function = word.qualified_by_sqlx && !module_path;
-            if word.text == "query" && (word.after.starts_with('!') || function) {
-                violations.push(format!("{file}: sqlx query{}", &word.after[..1]));
-            }
-        }
-    }
-    for path in files(&source, "sql") {
-        if !included_files.contains(&path.canonicalize().unwrap()) {
-            violations.push(format!("{} is not included by a statement", path.display()));
-        }
-    }
-    assert!(
-        violations.is_empty(),
-        "SQL outside crate::statements:\n{violations:#?}"
-    );
-}
-
-/// The byte ranges of `source`, a file of `crate::statements`, that may hold
-/// SQL: each `statements! { .. }` invocation, the `macro_rules! statements`
-/// definition, and `impl Statement`, whose only SQL is `Statement::query`'s
-/// `sqlx::query(self.0)`; the guard checks that impl separately.
-fn trusted_statement_code(file: &str, source: &str) -> Vec<std::ops::Range<usize>> {
-    let (_, code) = sql_literals(source);
-    let mut ranges = Vec::new();
-    // Statement::query and the macro live only in the root file.
-    let openers: &[&str] = if file == "statements.rs" {
-        &[
-            "statements! {",
-            "macro_rules! statements {",
-            "impl Statement {",
-        ]
-    } else {
-        &["statements! {"]
-    };
-    for opener in openers {
-        for (start, _) in code.match_indices(opener) {
-            let Some(open) = code[start..].find('{').map(|offset| start + offset) else {
-                continue;
-            };
-            let mut depth = 0_usize;
-            for (offset, byte) in code.as_bytes()[open..].iter().enumerate() {
-                match byte {
-                    b'{' => depth += 1,
-                    b'}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            ranges.push(start..open + offset + 1);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    ranges
-}
-
-/// `source` with `ranges` replaced by spaces, keeping line breaks.
-fn blank(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
-    let mut bytes = source.as_bytes().to_vec();
-    for range in ranges {
-        for byte in &mut bytes[range.clone()] {
-            if *byte != b'\n' {
-                *byte = b' ';
-            }
-        }
-    }
-    String::from_utf8(bytes).unwrap()
-}
-
-/// One identifier in blanked Rust code: its text, what follows it and
-/// whether it is written as `sqlx::name` or imported in a `use sqlx` item.
-struct Identifier<'a> {
-    text: &'a str,
-    after: &'a str,
-    qualified_by_sqlx: bool,
-}
-
-fn identifiers(code: &str) -> Vec<Identifier<'_>> {
-    let bytes = code.as_bytes();
-    let mut found = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if !(byte.is_ascii_alphabetic() || byte == b'_')
-            || index > 0 && (bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'_')
-        {
-            index += 1;
+    let mut included = BTreeSet::new();
+    let mut problems = Vec::new();
+    for (name, statement) in statements::all() {
+        let Some(file) = statement.file() else {
             continue;
+        };
+        // Relative to src/statements/<family>.rs.
+        match file.strip_prefix("../") {
+            Some(sql)
+                if !sql.contains('/')
+                    && Path::new(sql)
+                        .extension()
+                        .is_some_and(|extension| extension == "sql") =>
+            {
+                if !included.insert(sql.to_owned()) {
+                    problems.push(format!(
+                        "{name} includes {sql}, which another statement includes"
+                    ));
+                }
+            }
+            _ => problems.push(format!("{name} includes {file}, not a .sql file in src")),
         }
-        let start = index;
-        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-        {
-            index += 1;
-        }
-        let before = code[..start].trim_end();
-        let statement_start = before.rfind(';').map_or(0, |end| end + 1);
-        let in_sqlx_use = code[statement_start..start]
-            .trim_start()
-            .starts_with("use sqlx");
-        found.push(Identifier {
-            text: &code[start..index],
-            after: code[index..].trim_start(),
-            qualified_by_sqlx: before.ends_with("sqlx::") || in_sqlx_use,
-        });
     }
-    found
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(
+        included, on_disk,
+        "every .sql file in src is exactly one statement"
+    );
 }
 
 #[test]
@@ -369,6 +120,8 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT pg_catalog.length('can''t'), floor(1)",
         "SELECT /* outer /* inner */ -- */ 1, floor(1)",
         "SELECT pg_catalog.\"unnest\"($1::integer[], $2::integer[])",
+        "SELECT $1::double",
+        "SELECT $1::DOUBLE, $2::double precision",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
@@ -382,7 +135,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT 1 FROM ROWS FROM (pg_catalog.unnest($1::pg_catalog.bytea[]), \
          pg_catalog.unnest(ARRAY[1, 2]::BIGINT[])) WITH ORDINALITY AS input(a, b, position)",
         "SELECT pg_catalog.length('floor(1)::text') -- count(*)\n",
-        "SELECT $1::integer, $2::SMALLINT, $3::double precision",
+        "SELECT $1::integer, $2::SMALLINT, $3::double precision, $4::DOUBLE  PRECISION[]",
         "SELECT $1::numeric(39, 0), $2::varchar(128), $3::timestamp(3)",
         "SELECT pg_catalog.set_config('statement_timeout', $1, true), $2::BIGINT",
         "SELECT pg_catalog.length('can''t'), pg_catalog.length('x'''), pg_catalog.floor(1)",
@@ -394,60 +147,4 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
             "{sql} must be accepted"
         );
     }
-}
-
-#[test]
-fn the_scanner_finds_every_statement_literal() {
-    let source = r##"
-        const NAMED_SQL: &str = "-- leading note\nSELECT 1";
-        const CONTINUED_SQL: &str = "SELECT \
-            2";
-        fn inline() {
-            let _ = sqlx::query("/* a */ VALUES (1)");
-            let _ = query(&format!("(SELECT {}", 1));
-            let _ = sqlx::raw_sql(r#"TABLE t"#);
-            let _ = connection.execute("(
-                SELECT 1)");
-            // sqlx::query("SELECT 'a comment'")
-            let lifetime: &'static str = "not sql";
-        }
-    "##;
-    let (literals, code) = sql_literals(source);
-    let statements: Vec<_> = literals
-        .iter()
-        .map(|(owner, text)| (owner.as_deref(), text.as_str()))
-        .collect();
-    assert_eq!(
-        statements,
-        [
-            (Some("NAMED_SQL"), "-- leading note\nSELECT 1"),
-            (Some("CONTINUED_SQL"), "SELECT 2"),
-            (None, "/* a */ VALUES (1)"),
-            (None, "(SELECT {}"),
-            (None, "TABLE t"),
-            (None, "(\n                SELECT 1)"),
-        ]
-    );
-    let words: Vec<_> = identifiers(&code)
-        .into_iter()
-        .filter(|word| word.text == "query" || SQL_BUILDERS.contains(&word.text))
-        .map(|word| (word.text, word.qualified_by_sqlx))
-        .collect();
-    assert_eq!(
-        words,
-        [("query", true), ("query", false), ("raw_sql", true)]
-    );
-    let imported = identifiers(
-        "use sqlx::{query, query::Query};\nfn f() { statement.query(); sqlx::query::<P>(Q); }",
-    );
-    let imported: Vec<_> = imported
-        .iter()
-        .filter(|word| word.text == "query")
-        .map(|word| (word.qualified_by_sqlx, word.after.starts_with("::")))
-        .collect();
-    assert_eq!(
-        imported,
-        [(true, false), (true, true), (false, false), (true, true)],
-        "the import, the module path and the turbofish call are sqlx's; the method is a statement's"
-    );
 }

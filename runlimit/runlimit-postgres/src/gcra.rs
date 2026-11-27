@@ -34,6 +34,10 @@ pub const INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL: &str =
 
 /// Raw GCRA migrator with `SQLx`'s strict defaults. Prefer
 /// [`PostgresGcraLimiter::migrate`] for cancellation-safe pooled migration.
+#[expect(
+    clippy::disallowed_types,
+    reason = "sqlx::migrate! embeds each migration as a sqlx::SqlStr"
+)]
 pub static GCRA_MIGRATOR: Migrator = sqlx::migrate!("./gcra-migrations");
 
 /// Replica-safe GCRA quotas using the same exact arithmetic as the memory store.
