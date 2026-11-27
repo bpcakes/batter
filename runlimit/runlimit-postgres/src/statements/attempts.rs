@@ -42,7 +42,8 @@ statements! {
     CLAIM_SQL = "WITH locked AS MATERIALIZED (\
      SELECT config_fingerprint, subject_key, lease_token, lease_until_ms FROM runlimit_attempts \
      WHERE config_fingerprint = $1 AND subject_key = $2 FOR UPDATE), \
-     sampled AS MATERIALIZED (SELECT *, pg_catalog.floor(extract(epoch FROM \
+     sampled(config_fingerprint, subject_key, lease_token, lease_until_ms, now_ms) AS MATERIALIZED (\
+     SELECT *, pg_catalog.floor(extract(epoch FROM \
      pg_catalog.clock_timestamp()) * 1000)::bigint AS now_ms FROM locked) \
      UPDATE runlimit_attempts AS attempts \
      SET lease_token = pg_catalog.gen_random_uuid()::pg_catalog.text FROM sampled \

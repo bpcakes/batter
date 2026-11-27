@@ -19,7 +19,7 @@ FROM acquired
 ";
 
     BATCH_ROW_LOCK_SQL = r"
-WITH input_keys AS (
+WITH input_keys(config_fingerprint, subject_key, input_position) AS (
     SELECT *
     FROM ROWS FROM (
         pg_catalog.unnest($1::pg_catalog.bytea[]),
@@ -30,7 +30,7 @@ WITH input_keys AS (
         input_position
     )
 ),
-lock_order AS (
+lock_order(input_position, lock_position) AS (
     SELECT *
     FROM pg_catalog.unnest($3::BIGINT[])
         WITH ORDINALITY AS positions(input_position, lock_position)
@@ -55,7 +55,12 @@ FOR UPDATE OF windows
 ";
 
     BATCH_CAPACITY_LOCK_SQL = r"
-WITH input_keys AS (
+WITH input_keys(
+    config_fingerprint,
+    subject_key,
+    capacity_shard,
+    input_position
+) AS (
     SELECT *
     FROM ROWS FROM (
         pg_catalog.unnest($1::pg_catalog.bytea[]),
@@ -108,7 +113,7 @@ ORDER BY missing_keys.input_position
 ";
 
     BATCH_PREFLIGHT_SQL = r"
-WITH input AS (
+WITH input(config_fingerprint, subject_key, cost, quota_limit, input_position) AS (
     SELECT *
     FROM ROWS FROM (
         pg_catalog.unnest($1::pg_catalog.bytea[]),
@@ -151,7 +156,16 @@ LEFT JOIN first_denial ON TRUE
 ";
 
     BATCH_UPSERT_SQL = r"
-WITH input AS (
+WITH input(
+    policy_id,
+    scope_id,
+    config_fingerprint,
+    subject_key,
+    window_size,
+    cost,
+    quota_limit,
+    input_position
+) AS (
     SELECT *
     FROM ROWS FROM (
         pg_catalog.unnest($1::pg_catalog.text[]),

@@ -115,47 +115,41 @@ fn included_statements_are_exactly_the_sql_files_in_src() {
 }
 
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
-// such column, so a qualified name must be a column of its own receiver.
+// such column, so a qualified name must be a column of its declared receiver.
 #[test]
 fn a_qualified_name_must_be_a_column_of_its_receiver() {
     let tables = fields::tables([
-        "CREATE TABLE IF NOT EXISTS t (id BIGINT PRIMARY KEY, used BIGINT NOT NULL, \
+        "CREATE TABLE t (id BIGINT PRIMARY KEY, used BIGINT NOT NULL, \
          CONSTRAINT used_positive CHECK (used > 0)); ALTER TABLE t ADD COLUMN shard SMALLINT;",
         "CREATE TABLE u (id BIGINT, label TEXT)",
     ]);
-    assert_eq!(
-        tables["t"],
-        ["id", "shard", "used"]
-            .map(str::to_owned)
-            .into_iter()
-            .collect()
-    );
     for sql in [
         "SELECT a.row_to_json FROM t AS a",
         // An output alias of the same name is not a column of `a`.
         "SELECT a.row_to_json AS row_to_json FROM t AS a",
-        // `label` is a column, but of `u`, not of `a`.
-        "SELECT a.label FROM t AS a JOIN u ON TRUE",
+        "SELECT a.label FROM t AS a JOIN u AS b ON TRUE",
         "SELECT missing.id FROM t",
-        // `*` gives `c` the columns of `t` and `u`, and nothing else.
-        "WITH c AS (SELECT * FROM t, u) SELECT c.row_to_json FROM c",
-        "WITH c AS (VALUES (1)) SELECT c.column1 FROM c",
-        // A field of a parenthesized row is not a named relation's column.
         "SELECT (a).row_to_json FROM t AS a",
-        // A computed item without `AS` names no column.
+        // Only a bare column reference or an `AS` item names a column.
+        "WITH c AS (SELECT * FROM t) SELECT c.id FROM c",
+        "WITH c AS (VALUES (1)) SELECT c.column1 FROM c",
+        "WITH c AS (SELECT a.used::bigint FROM t AS a) SELECT c.used FROM c",
+        "WITH c AS (SELECT a.used::bigint IS NULL FROM t AS a) SELECT c.used FROM c",
         "WITH c AS (SELECT 1 + a.used FROM t AS a) SELECT c.used FROM c",
+        "WITH c AS (SELECT ARRAY[1, a.used, 2] AS samples FROM t AS a) SELECT c.used FROM c",
         "WITH c AS (SELECT pg_catalog.count(*) FROM t) SELECT c.count FROM c",
-        // Two relations of one name in one block are ambiguous.
+        // A name is declared once per statement, set-operation arms included.
         "SELECT a.id FROM t AS a, u AS a",
-        // A cast followed by more expression names no column.
-        "WITH c AS (SELECT a.used::bigint + 1 FROM t AS a) SELECT c.used FROM c",
-        // `x` is the table `t`, not the sibling alias `t` of `u`.
+        "SELECT r.id FROM t AS r UNION ALL SELECT r.id FROM u AS r",
+        // A declared name may not shadow a table or the catalog schema.
         "SELECT x.label FROM t AS x, u AS t",
-        // Each EXCLUDED belongs to its own INSERT's target.
-        "WITH i AS (INSERT INTO u (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.used \
-         RETURNING u.id) INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
-        // A row aliased pg_catalog is not the schema.
+        "SELECT 1 FROM u AS t WHERE EXISTS (SELECT 1 FROM t WHERE t.label IS NOT NULL)",
+        "WITH t AS (SELECT 1 AS id) INSERT INTO t (id) VALUES (1) \
+         ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.id",
         "SELECT pg_catalog.row_to_json FROM t AS pg_catalog",
+        // EXCLUDED needs exactly one INSERT, into a migrated table.
+        "WITH i AS (INSERT INTO u (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label \
+         RETURNING id) INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
     ] {
         assert!(
             !fields::unresolved(sql, &tables).is_empty(),
@@ -167,25 +161,15 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
          pg_catalog.unnest($1::BIGINT[]) AS c(n), u AS d",
         "WITH w(k) AS (SELECT 1), v AS (SELECT a.shard, a.id AS key FROM t AS a) \
          SELECT w.k, v.shard, v.key, t.used FROM w, v, t",
-        "WITH k AS (SELECT * FROM ROWS FROM (pg_catalog.unnest($1::BIGINT[])) WITH ORDINALITY AS r(x, n)) \
-         SELECT k.x, k.n FROM k JOIN LATERAL (SELECT u.label FROM u) AS l ON TRUE WHERE l.label = 'a'",
+        "WITH k(x, n) AS (SELECT * FROM ROWS FROM (pg_catalog.unnest($1::BIGINT[])) WITH ORDINALITY AS r(x, n)) \
+         SELECT k.x, k.n FROM k JOIN LATERAL (SELECT q.label FROM u AS q) AS l ON TRUE WHERE l.label = 'a'",
         "INSERT INTO t (id, used) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
         "WITH changed AS (UPDATE t AS row SET used = 1 RETURNING row.id, pg_catalog.count(*) AS total) \
          SELECT changed.id, changed.total FROM changed",
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
-        // Each block resolves its own `r`; a subquery also sees the outer `o`.
-        "WITH x AS (SELECT r.used FROM t AS r), y AS (SELECT r.label FROM u AS r) \
-         SELECT x.used, y.label FROM x, y",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
-        "WITH c AS (SELECT a.used::pg_catalog.text, a.id AS key FROM t AS a) SELECT c.used, c.key FROM c",
-        "WITH c AS (SELECT a.used::double precision::pg_catalog.numeric(39, 0)[] FROM t AS a) SELECT c.used FROM c",
-        "SELECT x.used FROM t AS x, u AS t",
-        "WITH i AS (INSERT INTO u (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label \
-         RETURNING u.id) INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
-        // `*` covers every joined input.
-        "WITH c AS (SELECT * FROM t CROSS JOIN u) SELECT c.label, c.shard FROM c",
-        "WITH c AS (SELECT * FROM t AS a LEFT OUTER JOIN u AS b ON b.id = a.id AND (a.used > 0) \
-         INNER JOIN t AS z USING (id)) SELECT c.label FROM c",
+        "WITH c AS (SELECT a.used::pg_catalog.text AS used, ARRAY[1, a.id] AS samples, a.id \
+         FROM t AS a) SELECT c.used, c.samples, c.id FROM c",
     ] {
         assert_eq!(
             fields::unresolved(sql, &tables),
@@ -224,6 +208,10 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT $1::double",
         "SELECT $1::DOUBLE, $2::double precision",
         "SELECT * FROM json_to_record($1) AS (values integer)",
+        // Unreserved keywords are function names outside their grammar.
+        "SELECT materialized($1)",
+        "SELECT 1 FROM t WHERE x = set(1)",
+        "SELECT conflict(1), filter(2)",
         "SELECT 1 -- note\rFROM floor(1)",
         "SELECT text -- (\n'ready'",
         "SELECT $1::类型",
@@ -252,6 +240,9 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT pg_catalog.length(/* units */ 'x'), pg_catalog.concat('a', -- next\n 'b')",
         "SELECT pg_catalog.length('é') -- naïve note\n",
         "WITH a(x) AS NOT MATERIALIZED (VALUES (1)), b AS ( SELECT 2) TABLE a",
+        "INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO UPDATE SET (b, c) = (1, 2)",
+        "UPDATE t AS r SET (b) = ROW(1) WHERE pg_catalog.count(*) FILTER (WHERE TRUE) > 0",
+        "SELECT pg_catalog.count(*) OVER (ORDER BY 1)",
     ] {
         assert_eq!(
             unqualified(sql),

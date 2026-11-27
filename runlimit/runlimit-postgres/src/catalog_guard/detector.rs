@@ -99,8 +99,8 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
             match qualifier.as_deref() {
                 Some("pg_catalog") => {}
                 Some(schema) => found.push(format!("{schema}.{word}(...)")),
-                None if SYNTAX.contains(&word.as_str())
-                    || owns_column_list(&code, start, &ctes) => {}
+                None if is_syntax(&code, start, &word) || owns_column_list(&code, start, &ctes) => {
+                }
                 None => found.push(format!("{word}(...)")),
             }
         }
@@ -133,6 +133,63 @@ fn next_word_is(code: &str, start: usize, word: &str) -> bool {
             .get(end)
             .copied()
             .is_some_and(is_identifier_part)
+}
+
+/// Unreserved keywords in `SYNTAX`: PostgreSQL also accepts each as a
+/// function name, so `word(` is grammar only after the word it follows there.
+const CONTEXTUAL_SYNTAX: &[(&str, &[&str])] = &[
+    ("conflict", &["on"]),
+    ("filter", &[")"]),
+    ("materialized", &["as", "not"]),
+    ("over", &[")"]),
+    ("recursive", &[]),
+    ("set", &["update"]),
+];
+
+/// Whether `word(` at `start` is grammar rather than a function call: a
+/// reserved or column-name keyword anywhere, or an unreserved one in its
+/// grammatical position. `SET (` follows an `UPDATE` target, so it is
+/// grammar after `UPDATE table` or `UPDATE table AS alias` too.
+fn is_syntax(code: &str, start: usize, word: &str) -> bool {
+    if !SYNTAX.contains(&word) {
+        return false;
+    }
+    let Some((_, after)) = CONTEXTUAL_SYNTAX
+        .iter()
+        .find(|(keyword, _)| *keyword == word)
+    else {
+        return true;
+    };
+    let previous = previous_tokens(code, start, 4);
+    let follows = |token: &str| previous.first().is_some_and(|first| first == token);
+    after.iter().any(|token| follows(token))
+        || word == "set"
+            && (previous.get(1).is_some_and(|t| t == "update")
+                || previous.get(1).is_some_and(|t| t == "as")
+                    && previous.get(3).is_some_and(|t| t == "update"))
+}
+
+/// Up to `count` lowercase tokens before `start`, nearest first: each an
+/// identifier or a single punctuation character.
+fn previous_tokens(code: &str, start: usize, count: usize) -> Vec<String> {
+    let bytes = code.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = start;
+    while tokens.len() < count {
+        index = skip_spaces_back(bytes, index);
+        if index == 0 {
+            break;
+        }
+        let end = index;
+        while index > 0 && is_identifier_part(bytes[index - 1]) {
+            index -= 1;
+        }
+        if index == end {
+            index -= 1;
+        }
+        tokens.push(code[index..end].to_ascii_lowercase());
+    }
+    tokens
 }
 
 /// The lowercase schema or relation that qualifies the identifier at `start`

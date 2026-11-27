@@ -15,7 +15,8 @@ WITH locked AS MATERIALIZED (
     SELECT locked.*, pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint AS now_ms
     FROM locked
 ), next AS MATERIALIZED (
-    SELECT *, CASE WHEN $4 THEN 0 ELSE LEAST(failures + 1, 4294967295) END AS next_failures,
+    SELECT config_fingerprint, subject_key, now_ms,
+        CASE WHEN $4 THEN 0 ELSE LEAST(failures + 1, 4294967295) END AS next_failures,
         CASE WHEN $4 THEN 0 ELSE
             ($5::bigint[])[GREATEST(
                 LEAST(failures + 1, pg_catalog.cardinality($5::bigint[])), 1

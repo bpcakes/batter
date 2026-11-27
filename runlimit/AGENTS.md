@@ -220,12 +220,16 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   behind their crate-level allow. Each statement calls catalog functions and
   casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
   and `double precision` keeps both words. A qualified name `x.f` must be a
-  column of its own receiver (a migrated table, a CTE or an alias, resolved
-  by `src/catalog_guard/fields.rs`), because PostgreSQL otherwise reads it as
-  the call `f(x)` through `search_path`. Name a computed CTE or subquery
-  output with `AS`, give each relation one name per query block, and keep
-  the migrations' column changes to `ADD`, `DROP` and `RENAME`, which the
-  guard applies. A multi-array `unnest` is spelled
+  column of a receiver declared with stated columns (`src/catalog_guard/fields.rs`),
+  because PostgreSQL otherwise reads it as the call `f(x)` through
+  `search_path`: a migrated table or its alias, a CTE or `FROM` item with an
+  explicit column list, or a CTE or subquery whose select items name
+  themselves (a bare column reference or `AS name`, never `*`). `EXCLUDED`
+  needs exactly one `INSERT`, into a migrated table. Declare each name once
+  per statement and never as a table name or `pg_catalog`; keep the
+  migrations' column changes to `ADD`, `DROP` and `RENAME`. Unreserved
+  keywords such as `materialized` count as grammar only in their position.
+  A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
   the unqualified spelling. `src/catalog_guard.rs` reads a restricted
   dialect and rejects the rest: no dollar quoting or quoted identifiers,
