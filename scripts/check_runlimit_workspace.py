@@ -2,13 +2,9 @@
 """Enforce local native Runlimit identities, ownership and immutable import assets."""
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
-import posixpath
-import re
+from pathlib import Path
 import subprocess
 import tarfile
-
-from package import eligible
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -18,16 +14,14 @@ EXPECTED_VERSION = '0.4.0'
 # outside every package; `package_archives` and `validate_published` check the
 # archives Cargo builds and verifies.
 PROVENANCE = 'provenance'
+# Operating-system metadata that may appear in provenance/ without a digest.
+PROVENANCE_METADATA = frozenset({'.DS_Store'})
 # Digests of the superseded imported statements, which must stay inventoried
 # under provenance/, whatever path the inventory gives them.
 UNEXECUTED_RECORDS = {
     '29c13de727bea2b67dec3a6cdaf7bfb317cd13f849ee4396fec293b55597d667': 'attempt_complete.sql',
     'e9b9bc4cacae015fd06f14d8e6eeb6b0e10e77f17344d52598a5828598a4a49c': 'cleanup_expired.sql',
 }
-# A literal include in any delimiter, as a plain string without escapes or a
-# raw string.
-INCLUDE = re.compile(r'include_(?:str|bytes)!\s*[(\[{]\s*'
-                     r'(?:r(?P<hashes>#*)"(?P<raw>.*?)"(?P=hashes)|"(?P<plain>[^"\\]*)")')
 
 
 def validate_graph(metadata, root):
@@ -88,20 +82,21 @@ def validate_assets(root, required=None):
 
 
 def validate_provenance(root, expected, required=None):
-    """Require every unexecuted import record to be an inventoried regular file.
+    """Keep every unexecuted import record an inventoried file under provenance/.
 
-    Files that are not source material by `package.eligible`, such as Finder
-    metadata, are ignored; a symlink anywhere in the directory is rejected so
-    each record's bytes really live outside every package.
+    Each required record, found by digest, must be inventoried only under a
+    canonical `provenance/` path that resolves inside the directory. Every
+    file there except the README and known operating-system metadata must be
+    inventoried, whatever its extension, and no symlink may appear in it or
+    replace it.
     """
-    prefix = PROVENANCE + '/'
-    for digest, record in (UNEXECUTED_RECORDS if required is None else required).items():
-        names = [name for name, value in expected.items() if value == digest]
-        if not names or any(not name.startswith(prefix) for name in names):
-            raise ValueError(f'superseded record {record} must be inventoried only under '
-                             f'{prefix}, not {names}')
     native = Path(root) / 'runlimit'
     provenance = native / PROVENANCE
+    for digest, record in (UNEXECUTED_RECORDS if required is None else required).items():
+        names = [name for name, value in expected.items() if value == digest]
+        if not names or not all(is_provenance_path(native, name) for name in names):
+            raise ValueError(f'superseded record {record} must be inventoried only under '
+                             f'{PROVENANCE}/, not {names}')
     if provenance.is_symlink():
         raise ValueError('provenance is a symlink: ' + PROVENANCE)
     if not provenance.is_dir():
@@ -110,10 +105,19 @@ def validate_provenance(root, expected, required=None):
         name = path.relative_to(native).as_posix()
         if path.is_symlink():
             raise ValueError('provenance holds a symlink: ' + name)
-        if path == provenance / 'README.md' or not eligible(path, Path(root)):
+        if path.is_dir() or path == provenance / 'README.md' or path.name in PROVENANCE_METADATA:
             continue
         if name not in expected:
             raise ValueError('provenance holds an uninventoried file: ' + name)
+
+
+def is_provenance_path(native, name):
+    """Whether inventory `name` is a canonical path that resolves in provenance/."""
+    parts = name.split('/')
+    if len(parts) < 2 or parts[0] != PROVENANCE or any(part in ('', '.', '..') for part in parts):
+        return False
+    provenance = (native / PROVENANCE).resolve()
+    return provenance in (native / name).resolve().parents
 
 
 def record_digests(expected):
@@ -125,43 +129,31 @@ def record_digests(expected):
 
 
 def validate_published(archives, expected):
-    """Reject a native package archive that publishes or depends on a record.
+    """Reject a native package archive that would publish a record's bytes.
 
-    The archive is what crates.io receives. Any member, under any name and
-    however Cargo sourced it, that carries a record's bytes is rejected. Every
-    literal `include_str!`/`include_bytes!` in any of its Rust files, tests
-    and examples included, must name a file inside the archive. Cargo's
-    verification additionally builds each library from its archive; an
-    include path assembled by another macro outside a library target is not
-    checked.
+    The archive is what crates.io receives, so any member, under any name and
+    however Cargo sourced it, that carries a record's bytes is rejected.
     """
     records = record_digests(expected)
     for archive in archives:
         with tarfile.open(archive, 'r:gz') as bundle:
-            members = {member.name: member for member in bundle.getmembers() if member.isfile()}
-            for name, member in members.items():
-                data = bundle.extractfile(member).read()
-                digest = hashlib.sha256(data).hexdigest()
+            for member in bundle.getmembers():
+                if not member.isfile():
+                    continue
+                digest = hashlib.sha256(bundle.extractfile(member).read()).hexdigest()
                 if digest in records:
                     raise ValueError(f'{Path(archive).name} would publish provenance record '
-                                     f'{records[digest]} as {name}')
-                if not name.endswith('.rs'):
-                    continue
-                for match in INCLUDE.finditer(data.decode('utf-8', 'replace')):
-                    literal = match.group('raw') if match.group('raw') is not None \
-                        else match.group('plain')
-                    target = posixpath.normpath(str(PurePosixPath(name).parent / literal))
-                    if target not in members:
-                        raise ValueError(f'{Path(archive).name}: {name} includes {literal}, '
-                                         'which is not in the archive')
+                                     f'{records[digest]} as {member.name}')
 
 
 def package_archives(root, target_directory):
     """Package and verify every native crate, returning the archives Cargo built.
 
-    Cargo's verification builds each crate, with all features, from its
+    Cargo's verification builds each library, with all features, from its
     extracted archive, where `provenance/` and every other path outside the
-    crate are absent, so a crate that embeds a record fails here.
+    crate are absent, so a library that embeds a record fails here. Cargo
+    does not build a package's test, example or bench targets from the
+    archive; that pre-existing gap is `batter-88bd` and is not specific to records.
     """
     command = ['cargo', 'package', '--allow-dirty', '--locked', '--all-features']
     for suffix in NATIVE:

@@ -13,9 +13,9 @@ This directory is outside every package, so the records are not published.
 Do not copy a record back into a package or embed one with `include_str!`; a
 new statement is a new file beside the code that executes it.
 `scripts/check_runlimit_workspace.py` requires each superseded record, by
-digest, to be inventoried only here, every file here to be an inventoried
-regular file, and no symlink here or at this directory. It then packages and
-verifies every native crate, so a library that embeds a record fails to build
-from its own archive. It rejects an archive member, under any name, that
-carries a record's bytes, and a literal include in any archived Rust file that
-names a path outside the archive.
+digest, to be inventoried only here under a canonical path, every other file
+here except this README and OS metadata to be inventoried, and no symlink here
+or at this directory. It then packages and verifies every native crate, so a
+library that embeds a record fails to build from its own archive, and rejects
+an archive member, under any name, that carries a record's bytes. Packaged
+test targets are not built from the archive (`batter-88bd`).

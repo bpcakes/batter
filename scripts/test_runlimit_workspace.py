@@ -111,11 +111,12 @@ class AssetTests(unittest.TestCase):
             validate_assets(root, required={})
             self.assertTrue(eligible(record, root))
 
-            stray = record.with_name('stray.sql')
-            stray.write_text('SELECT 2')
-            with self.assertRaisesRegex(ValueError, 'uninventoried file: provenance/'):
-                validate_assets(root, required={})
-            stray.unlink()
+            for stray in (record.with_name('stray.sql'), record.with_name('old.psql')):
+                stray.write_text('SELECT 2')
+                with self.subTest(stray=stray.name), self.assertRaisesRegex(
+                        ValueError, 'uninventoried file: provenance/'):
+                    validate_assets(root, required={})
+                stray.unlink()
 
             live = native / 'runlimit-postgres' / 'src' / 'superseded.sql'
             live.parent.mkdir(parents=True)
@@ -155,6 +156,10 @@ class AssetTests(unittest.TestCase):
                     validate_provenance(root, layout, UNEXECUTED_RECORDS)
             validate_provenance(root, {**archived, 'provenance/runlimit-postgres/' + record: digest},
                                 UNEXECUTED_RECORDS)
+            for name in ('provenance/../history/' + record, 'provenance/./' + record,
+                         'provenance', 'runlimit-postgres/provenance/' + record):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'only under'):
+                    validate_provenance(root, {**archived, name: digest}, UNEXECUTED_RECORDS)
             self.assertFalse(native.exists())
 
     def test_a_package_archive_cannot_carry_a_record(self):
@@ -182,17 +187,3 @@ class AssetTests(unittest.TestCase):
                     validate_published([clean, archive('copy.crate', [(member, record)])],
                                        expected)
 
-            sources = [('runlimit-postgres-0.4.0/src/lib.rs',
-                        b'const SQL: &str = include_str!("live.sql");'),
-                       ('runlimit-postgres-0.4.0/src/live.sql', b'SELECT 2'),
-                       ('runlimit-postgres-0.4.0/migrations/initial.sql', b'SELECT 0'),
-                       ('runlimit-postgres-0.4.0/tests/live.rs',
-                        b'const M: &str = include_str!("../migrations/./initial.sql");')]
-            validate_published([archive('includes.crate', sources)], expected)
-            for test in (b'include_str!("../../provenance/runlimit-postgres/superseded.sql")',
-                         b'include_bytes![r#"../src/missing.sql"#]',
-                         b'include_str! { "/etc/hosts" }'):
-                with self.subTest(test=test), self.assertRaisesRegex(ValueError, 'not in the archive'):
-                    validate_published([archive('include.crate', sources + [
-                        ('runlimit-postgres-0.4.0/tests/archived.rs', b'const S: &str = ' + test + b';')])],
-                        expected)
