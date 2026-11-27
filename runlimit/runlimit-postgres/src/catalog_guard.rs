@@ -7,8 +7,9 @@
 //! grammar maps to `pg_catalog` itself (`EXTRACT`, `COALESCE`, `GREATEST`,
 //! `LEAST`, and keyword types such as `bigint`) needs no prefix. Operators
 //! and the limiter's own tables still resolve through `search_path`, which
-//! the application chooses. Published migrations are immutable and are not
-//! checked here.
+//! the application chooses. Published migrations are immutable, are not
+//! qualified and are not checked here; they run under the caller's
+//! `search_path`, which must be trusted while migrating.
 //!
 //! Completeness does not depend on remembering to register a statement: every
 //! SQL-looking string literal in production source must initialize a
@@ -20,7 +21,7 @@ mod detector;
 mod literals;
 
 use detector::unqualified;
-use literals::{rust_files, sql_literals};
+use literals::{files, query_arguments, sql_literals};
 
 use crate::{
     attempts::{row::StoredAttempt, sql as attempt},
@@ -112,7 +113,8 @@ fn every_production_sql_literal_and_file_is_registered() {
         .map(|(file, name, _)| (*file, *name))
         .collect();
     let mut unregistered = Vec::new();
-    for path in rust_files(&source) {
+    let names: BTreeSet<&str> = STATEMENTS.iter().map(|(_, name, _)| *name).collect();
+    for path in files(&source, "rs") {
         let file = path
             .strip_prefix(&source)
             .unwrap()
@@ -131,20 +133,27 @@ fn every_production_sql_literal_and_file_is_registered() {
             .split("#[cfg(test)]\nmod tests")
             .next()
             .unwrap_or_default();
-        for (owner, literal) in sql_literals(production) {
+        let (literals, code) = sql_literals(production);
+        for (owner, literal) in literals {
             match owner {
                 Some(name) if registered.contains(&(file.as_str(), name.as_str())) => {}
                 owner => unregistered.push(format!("{file}: {owner:?} {literal:.60}")),
             }
         }
-    }
-    for entry in fs::read_dir(&source).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|extension| extension == "sql") {
-            let text = fs::read_to_string(&path).unwrap();
-            if !STATEMENTS.iter().any(|(_, _, sql)| *sql == text) {
-                unregistered.push(format!("{} is not a registered statement", path.display()));
+        for argument in query_arguments(&code) {
+            let constant = argument.rsplit("::").next().unwrap_or_default();
+            let is_path = argument.split("::").all(|part| {
+                !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            });
+            if !is_path || !names.contains(constant) {
+                unregistered.push(format!("{file}: query constructor argument `{argument}`"));
             }
+        }
+    }
+    for path in files(&source, "sql") {
+        let text = fs::read_to_string(&path).unwrap();
+        if !STATEMENTS.iter().any(|(_, _, sql)| *sql == text) {
+            unregistered.push(format!("{} is not a registered statement", path.display()));
         }
     }
     assert!(
@@ -164,6 +173,10 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "WITH t AS (SELECT clock_timestamp()) SELECT 1",
         "SELECT 1 FROM unnest($1::BIGINT[]) AS input(value)",
         "SELECT 1 FROM pg_catalog.unnest($1::pg_catalog.bytea[], $2::BIGINT[]) AS input(a, b)",
+        "SELECT public.clock_timestamp()",
+        "SELECT \"clock_timestamp\"()",
+        "SELECT /* note */ floor(1)",
+        "SELECT $1::public.text",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
@@ -185,4 +198,45 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
             "{sql} must be accepted"
         );
     }
+}
+
+#[test]
+fn the_scanner_finds_every_statement_literal_and_constructor_argument() {
+    let source = r##"
+        const NAMED_SQL: &str = "-- leading note\nSELECT 1";
+        const CONTINUED_SQL: &str = "SELECT \
+            2";
+        fn inline() {
+            let _ = sqlx::query("/* a */ VALUES (1)");
+            let _ = sqlx::query_scalar::<_, i64>(NAMED_SQL);
+            let _ = query(&format!("(SELECT {}", 1));
+            let _ = sqlx::raw_sql(r#"TABLE t"#);
+            // sqlx::query("SELECT 'a comment'")
+            let lifetime: &'static str = "not sql";
+        }
+    "##;
+    let (literals, code) = sql_literals(source);
+    let statements: Vec<_> = literals
+        .iter()
+        .map(|(owner, text)| (owner.as_deref(), text.as_str()))
+        .collect();
+    assert_eq!(
+        statements,
+        [
+            (Some("NAMED_SQL"), "-- leading note\nSELECT 1"),
+            (Some("CONTINUED_SQL"), "SELECT 2"),
+            (None, "/* a */ VALUES (1)"),
+            (None, "(SELECT {}"),
+            (None, "TABLE t"),
+        ]
+    );
+    let arguments = query_arguments(&code);
+    assert_eq!(arguments.len(), 4, "{arguments:?}");
+    assert!(
+        arguments[0].is_empty(),
+        "a literal argument is blanked: {arguments:?}"
+    );
+    assert_eq!(arguments[1], "NAMED_SQL");
+    assert!(arguments[2].starts_with("&format!"), "{arguments:?}");
+    assert!(arguments[3].is_empty(), "{arguments:?}");
 }

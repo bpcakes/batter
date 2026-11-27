@@ -78,7 +78,7 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
     }
     let mut index = 0;
     while index < bytes.len() {
-        if !is_identifier_start(bytes[index]) || index > 0 && is_qualified_before(bytes, index) {
+        if !is_identifier_start(bytes[index]) || index > 0 && is_identifier_part(bytes[index - 1]) {
             index += 1;
             continue;
         }
@@ -87,24 +87,45 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
             index += 1;
         }
         let word = code[start..index].to_ascii_lowercase();
+        let qualifier = qualifier_before(&code, start);
         let after = skip_spaces(bytes, index);
         let qualified_next = bytes.get(after) == Some(&b'.');
-        if bytes.get(after) == Some(&b'(')
-            && !SYNTAX.contains(&word.as_str())
-            && !owns_column_list(&code, start, after)
-        {
-            found.push(format!("{word}(...)"));
+        if bytes.get(after) == Some(&b'(') {
+            match qualifier.as_deref() {
+                Some("pg_catalog") => {}
+                Some(schema) => found.push(format!("{schema}.{word}(...)")),
+                None if SYNTAX.contains(&word.as_str())
+                    || owns_column_list(&code, start, after) => {}
+                None => found.push(format!("{word}(...)")),
+            }
         }
         let back = skip_spaces_back(bytes, start);
-        if back >= 2
-            && &code[back - 2..back] == "::"
-            && !qualified_next
-            && !KEYWORD_TYPES.contains(&word.as_str())
-        {
-            found.push(format!("::{word}"));
+        if qualifier.is_none() && back >= 2 && &code[back - 2..back] == "::" {
+            if qualified_next {
+                if word != "pg_catalog" {
+                    found.push(format!("::{word}.(...)"));
+                }
+            } else if !KEYWORD_TYPES.contains(&word.as_str()) {
+                found.push(format!("::{word}"));
+            }
         }
     }
     found
+}
+
+/// The lowercase schema or relation that qualifies the identifier at `start`
+/// (`schema.name`), if any.
+fn qualifier_before(code: &str, start: usize) -> Option<String> {
+    let bytes = code.as_bytes();
+    if start == 0 || bytes[start - 1] != b'.' {
+        return None;
+    }
+    let end = start - 1;
+    let mut begin = end;
+    while begin > 0 && is_identifier_part(bytes[begin - 1]) {
+        begin -= 1;
+    }
+    Some(code[begin..end].to_ascii_lowercase())
 }
 
 /// Whether the parenthesis after `start..after` is a relation's column list:
@@ -181,6 +202,9 @@ fn is_cte_body(rest: &str) -> bool {
     words.next().is_some_and(|word| word.starts_with('('))
 }
 
+/// `sql` with comments and string constants blanked. A double-quoted
+/// identifier keeps its text, so `"clock_timestamp"()` still reads as a call;
+/// one that is not a plain identifier becomes `quoted`.
 fn strip_comments_and_quotes(sql: &str) -> String {
     let mut code = String::with_capacity(sql.len());
     let mut chars = sql.chars().peekable();
@@ -194,13 +218,30 @@ fn strip_comments_and_quotes(sql: &str) -> String {
                     }
                 }
             }
-            '\'' | '"' => {
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut previous = ' ';
                 for skipped in chars.by_ref() {
-                    if skipped == character {
+                    if previous == '*' && skipped == '/' {
+                        break;
+                    }
+                    previous = skipped;
+                }
+                code.push(' ');
+            }
+            '\'' => {
+                for skipped in chars.by_ref() {
+                    if skipped == '\'' {
                         break;
                     }
                 }
                 code.push(' ');
+            }
+            '"' => {
+                let identifier: String = chars.by_ref().take_while(|c| *c != '"').collect();
+                let plain = identifier.bytes().next().is_some_and(is_identifier_start)
+                    && identifier.bytes().all(is_identifier_part);
+                code.push_str(if plain { &identifier } else { "quoted" });
             }
             other => code.push(other),
         }
@@ -214,13 +255,6 @@ const fn is_identifier_start(byte: u8) -> bool {
 
 pub(super) const fn is_identifier_part(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
-}
-
-/// Whether the identifier at `index` continues a word, a parameter or a
-/// qualified name rather than starting one.
-fn is_qualified_before(bytes: &[u8], index: usize) -> bool {
-    let previous = bytes[index - 1];
-    is_identifier_part(previous) || previous == b'.'
 }
 
 fn skip_spaces(bytes: &[u8], mut index: usize) -> usize {

@@ -1,46 +1,133 @@
 //! The Rust side of the catalog guard: finds every string literal in a source
-//! file that reads as a SQL statement, with the constant it initializes.
+//! file that reads as a SQL statement, with the constant it initializes, and
+//! the argument of every `sqlx` query constructor.
 
 use std::{fs, path::Path};
 
 use super::detector::is_identifier_part;
 
-pub(super) fn rust_files(directory: &Path) -> Vec<std::path::PathBuf> {
-    let mut files = Vec::new();
+/// The `sqlx` functions that turn a string into an executable statement.
+const QUERY_CONSTRUCTORS: &[&str] = &[
+    "query",
+    "query_as",
+    "query_scalar",
+    "query_with",
+    "query_as_with",
+    "query_scalar_with",
+    "raw_sql",
+];
+
+/// Every file under `directory` with `extension`, recursively.
+pub(super) fn files(directory: &Path, extension: &str) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
     for entry in fs::read_dir(directory).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            files.extend(rust_files(&path));
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            files.push(path);
+            found.extend(files(&path, extension));
+        } else if path.extension().is_some_and(|actual| actual == extension) {
+            found.push(path);
         }
     }
-    files.sort();
-    files
+    found.sort();
+    found
+}
+
+/// The argument text of every `sqlx` query constructor call in `code`, which
+/// must have its literals and comments blanked by [`sql_literals`].
+pub(super) fn query_arguments(code: &str) -> Vec<String> {
+    let bytes = code.as_bytes();
+    let mut arguments = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_alphabetic() || index > 0 && is_identifier_part(bytes[index - 1])
+        {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_identifier_part(bytes[index]) {
+            index += 1;
+        }
+        if !QUERY_CONSTRUCTORS.contains(&&code[start..index]) {
+            continue;
+        }
+        let mut open = index;
+        if code[open..].starts_with("::<") {
+            let mut depth = 0_usize;
+            for (offset, byte) in bytes[open..].iter().enumerate() {
+                match byte {
+                    b'<' => depth += 1,
+                    b'>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            open += offset + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let open = open + code[open..].len() - code[open..].trim_start().len();
+        if bytes.get(open) != Some(&b'(') {
+            continue;
+        }
+        let mut depth = 0_usize;
+        let mut end = open + 1;
+        while end < bytes.len() {
+            match (bytes[end], depth) {
+                (b'(' | b'[' | b'{', _) => depth += 1,
+                (b')' | b']' | b'}' | b',', 0) => break,
+                (b')' | b']' | b'}', _) => depth -= 1,
+                _ => {}
+            }
+            end += 1;
+        }
+        arguments.push(code[open + 1..end].trim().to_owned());
+        index = end;
+    }
+    arguments
 }
 
 /// Every string literal in Rust `source` whose text starts like a statement,
-/// with the constant it initializes, if any.
-pub(super) fn sql_literals(source: &str) -> Vec<(Option<String>, String)> {
+/// with the constant it initializes, if any; and `source` with every literal
+/// and comment blanked.
+pub(super) fn sql_literals(source: &str) -> (Vec<(Option<String>, String)>, String) {
     let mut literals = Vec::new();
     let bytes = source.as_bytes();
+    let mut code = bytes.to_vec();
+    let mut blank = |from: usize, to: usize| {
+        for byte in &mut code[from..to.min(bytes.len())] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    };
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
             b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                let start = index;
                 while index < bytes.len() && bytes[index] != b'\n' {
                     index += 1;
                 }
+                blank(start, index);
             }
             b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                let start = index;
                 index += 2;
                 while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
                 {
                     index += 1;
                 }
                 index += 2;
+                blank(start, index);
             }
-            b'\'' => index = skip_char_literal(source, index),
+            b'\'' => {
+                let start = index;
+                index = skip_char_literal(source, index);
+                blank(start, index);
+            }
             b'r' if matches!(bytes.get(index + 1), Some(b'"' | b'#'))
                 && (index == 0 || !is_identifier_part(bytes[index - 1])) =>
             {
@@ -58,6 +145,7 @@ pub(super) fn sql_literals(source: &str) -> Vec<(Option<String>, String)> {
                     .find(&terminator)
                     .map_or(bytes.len(), |offset| open + 1 + offset);
                 record(source, index, &source[open + 1..end], &mut literals);
+                blank(index, end + terminator.len());
                 index = end + terminator.len();
             }
             b'"' => {
@@ -68,15 +156,16 @@ pub(super) fn sql_literals(source: &str) -> Vec<(Option<String>, String)> {
                 record(
                     source,
                     index,
-                    &source[index + 1..end.min(bytes.len())],
+                    &unescape(&source[index + 1..end.min(bytes.len())]),
                     &mut literals,
                 );
+                blank(index, end + 1);
                 index = end + 1;
             }
             _ => index += 1,
         }
     }
-    literals
+    (literals, String::from_utf8(code).unwrap())
 }
 
 fn skip_char_literal(source: &str, index: usize) -> usize {
@@ -95,17 +184,70 @@ fn skip_char_literal(source: &str, index: usize) -> usize {
     }
 }
 
+/// Statement keywords; a literal that starts with one, after comments and
+/// opening parentheses, is treated as SQL.
+const STATEMENT_KEYWORDS: &[&str] = &[
+    "ALTER",
+    "ANALYZE",
+    "BEGIN",
+    "CALL",
+    "COMMIT",
+    "COPY",
+    "CREATE",
+    "DECLARE",
+    "DELETE",
+    "DISCARD",
+    "DO",
+    "DROP",
+    "EXECUTE",
+    "EXPLAIN",
+    "FETCH",
+    "GRANT",
+    "INSERT",
+    "LISTEN",
+    "LOCK",
+    "MERGE",
+    "NOTIFY",
+    "PREPARE",
+    "REFRESH",
+    "RELEASE",
+    "RESET",
+    "REVOKE",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "SELECT",
+    "SET",
+    "SHOW",
+    "TABLE",
+    "TRUNCATE",
+    "UPDATE",
+    "VACUUM",
+    "VALUES",
+    "WITH",
+];
+
+/// `text` without leading whitespace, SQL comments and opening parentheses.
+fn statement_start(mut text: &str) -> &str {
+    loop {
+        let trimmed = text.trim_start().trim_start_matches('(');
+        text = if let Some(rest) = trimmed.strip_prefix("--") {
+            rest.split_once('\n').map_or("", |(_, rest)| rest)
+        } else if let Some(rest) = trimmed.strip_prefix("/*") {
+            rest.split_once("*/").map_or("", |(_, rest)| rest)
+        } else {
+            return trimmed;
+        };
+    }
+}
+
 fn record(source: &str, start: usize, literal: &str, literals: &mut Vec<(Option<String>, String)>) {
     let statement = literal.trim_start();
-    let keyword = statement
+    let keyword = statement_start(statement)
         .split(|c: char| !c.is_ascii_alphabetic())
         .next()
         .unwrap_or_default()
         .to_ascii_uppercase();
-    if !matches!(
-        keyword.as_str(),
-        "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "WITH" | "SET" | "LOCK" | "CALL" | "DO"
-    ) {
+    if !STATEMENT_KEYWORDS.contains(&keyword.as_str()) {
         return;
     }
     let before = source[..start].trim_end();
@@ -132,4 +274,36 @@ fn record(source: &str, start: usize, literal: &str, literals: &mut Vec<(Option<
                 .then(|| name.to_owned())
         });
     literals.push((owner, statement.to_owned()));
+}
+
+/// The value of a non-raw string literal's body for the escapes SQL text uses:
+/// line continuations, `\n`, `\t`, `\r`, `\0`, `\\`, `\"` and `\'`. Any other
+/// escape is kept as written.
+fn unescape(body: &str) -> String {
+    let mut value = String::with_capacity(body.len());
+    let mut chars = body.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            value.push(character);
+            continue;
+        }
+        match chars.next() {
+            Some('\n') => {
+                while chars.peek().is_some_and(|next| next.is_whitespace()) {
+                    chars.next();
+                }
+            }
+            Some('n') => value.push('\n'),
+            Some('t') => value.push('\t'),
+            Some('r') => value.push('\r'),
+            Some('0') => value.push('\0'),
+            Some(escaped @ ('\\' | '"' | '\'')) => value.push(escaped),
+            Some(other) => {
+                value.push('\\');
+                value.push(other);
+            }
+            None => value.push('\\'),
+        }
+    }
+    value
 }
