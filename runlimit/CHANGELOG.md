@@ -48,14 +48,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 - `MemoryAttemptLimiter` stores `AttemptState` instead of separate failure,
   timestamp and optional-lease fields, and evaluates admission, completion and
   cleanup through it. Admissions, denials, completions, delays, observations,
-  the 16-entry cleanup scan and allocation behavior are unchanged. Two internal
-  effects are new. `complete` with a receipt whose lease has expired still
-  returns and observes `Stale`, but now records the expiry as a failure at once
-  rather than at the next admission, and removes the subject when its quiet
-  period has also passed, which frees that capacity slot without a cleanup
-  scan. A cleanup scan that retains an entry whose lease has expired stores
-  that failure instead of recomputing it on every later scan
-  (`batter-ctk7.7`).
+  the 16-entry cleanup scan and allocation behavior are unchanged for each
+  subject. Two effects on stored state are new. `complete` with a receipt whose
+  lease has expired still returns and observes `Stale`, but now records the
+  expiry as a failure at once rather than at the next admission, and removes
+  the subject when its quiet period has also passed. That frees its capacity
+  slot without a cleanup scan, so in a full store a new subject can be
+  admitted, and observed as `Admitted`, where it was denied `StorageCapacity`
+  until a scan reached the expired entry. A cleanup scan that retains an entry
+  whose lease has expired stores that failure instead of recomputing it on
+  every later scan (`batter-ctk7.7`).
 - `PostgresAttemptLimiter::admit` decodes the locked row once into
   `AttemptState` and evaluates it with the transition the memory backend calls.
   Completion executes `src/attempt_complete_scheduled.sql`, which reads the
@@ -112,7 +114,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   retry_at_ms = ...` with the same `WHERE` clause. As before, the hold ends at
   `retry_at_ms` or when the quiet period after `last_failure_ms` ends,
   whichever comes first: the failure then clears and cleanup may delete the
-  row, so a later `retry_at_ms` cannot hold longer. To hold for up to one quiet
+  row, so a later `retry_at_ms` cannot hold longer. The `Backoff` denial now
+  reports the wait until that earlier instant; earlier releases reported the
+  wait until `retry_at_ms` even when the quiet period ended first, so replicas
+  of the two releases report different delays for such a row and admit at the
+  same instant. To hold for up to one quiet
   period from now, also set `last_failure_ms` to the current server time in
   milliseconds. Moving
   `retry_at_ms` earlier still releases a subject and keeps its failures, and

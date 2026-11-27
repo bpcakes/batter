@@ -214,6 +214,29 @@ fn a_released_retry_time_admits_without_forgetting_failures() {
 }
 
 #[test]
+fn a_retry_time_past_the_quiet_period_reports_the_wait_until_the_failures_clear() {
+    // An operator may also move the stored retry time later. The quiet period
+    // still ends at 1_100, so that is when admission resumes and what the
+    // denial reports, not the 500 further milliseconds to the stored time.
+    let state = failed(2, 1_000, 1_600);
+    for (now, remaining) in [(1_000, 100), (1_090, 10), (1_099, 1)] {
+        assert_eq!(denial(state, now), (state, backoff(remaining)));
+        let LeaseDenial::Backoff { retry_after } = denial(state, now).1 else {
+            panic!("a held subject backs off");
+        };
+        // The subject is admitted exactly when the reported delay has elapsed.
+        let resumes = ms(now).saturating_add(retry_after.duration());
+        assert_eq!(resumes, ms(1_100));
+        assert!(matches!(
+            state.admit(&policy(), resumes),
+            AdmitEvaluation::Grant(pending) if pending.failures() == 0
+        ));
+    }
+    // A retry time inside the quiet period is reported as stored.
+    assert_eq!(denial(failed(2, 1_000, 1_050), 1_010).1, backoff(40));
+}
+
+#[test]
 fn a_clock_behind_the_stored_instants_neither_expires_nor_clears_anything() {
     let lease = leased(1, 1_000);
     assert_eq!(denial(lease, 0), (lease, busy(1_000)));
@@ -247,7 +270,9 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
     // both saturate to that same instant, so the expiry counts and then clears.
     let last = AttemptState::Leased(AttemptLease::new(TOKEN, 0, end));
     assert_eq!(last.settle(&policy, end), AttemptState::Clear);
-    let late = AttemptState::<u8>::Failed(FailedAttempts::new(NonZeroU32::MIN, ms(1_000), end));
+    // A clock far behind a failure at that instant waits out the whole
+    // difference: the quiet deadline saturates there too and cannot cap it.
+    let late = AttemptState::<u8>::Failed(FailedAttempts::new(NonZeroU32::MIN, end, end));
     assert_eq!(
         late.admit(&policy, ms(1_050)),
         AdmitEvaluation::Denied {

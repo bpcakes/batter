@@ -156,7 +156,9 @@ impl<T> AttemptLease<T> {
 ///
 /// `retry_at` is stored rather than derived because a backend persists it and
 /// an operator may move it. An instant at or before `last_failure` releases the
-/// subject without forgetting its failures.
+/// subject without forgetting its failures. An instant after the quiet period
+/// ends cannot hold the subject longer: the failures clear there first, and a
+/// backoff denial reports the wait until then.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FailedAttempts {
     failures: NonZeroU32,
@@ -182,9 +184,15 @@ impl FailedAttempts {
     pub const fn last_failure(&self) -> Duration {
         self.last_failure
     }
-    /// The first instant at which another attempt may be admitted.
+    /// The stored end of the delay. Another attempt may be admitted from this
+    /// instant, or from the end of the quiet period when that comes first.
     pub const fn retry_at(&self) -> Duration {
         self.retry_at
+    }
+    /// The end of the quiet period: the instant these failures clear.
+    fn clears_at(&self, policy: &AttemptPolicy) -> Duration {
+        self.last_failure
+            .saturating_add(policy.quiet_period().duration())
     }
 }
 
@@ -302,10 +310,7 @@ impl<T> AttemptState<T> {
             Self::Leased(lease) => fail(policy, lease.failures, lease.until),
             Self::Failed(failed) => failed,
         };
-        let quiet_from = failed
-            .last_failure
-            .saturating_add(policy.quiet_period().duration());
-        if now >= quiet_from {
+        if now >= failed.clears_at(policy) {
             Self::Clear
         } else {
             Self::Failed(failed)
@@ -325,9 +330,13 @@ impl<T> AttemptState<T> {
                 };
             }
             Self::Failed(failed) if now < failed.retry_at => {
+                // The failure has not cleared, so its quiet period is still
+                // running. A restored retry time may lie past the end of it,
+                // and admission resumes at whichever comes first.
+                let admits_at = failed.retry_at.min(failed.clears_at(policy));
                 return AdmitEvaluation::Denied {
                     denial: LeaseDenial::Backoff {
-                        retry_after: Delay::new(failed.retry_at.saturating_sub(now)),
+                        retry_after: Delay::new(admits_at.saturating_sub(now)),
                     },
                     settled: Self::Failed(failed),
                 };
