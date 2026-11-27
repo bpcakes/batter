@@ -2,15 +2,23 @@
 //!
 //! PostgreSQL reads `x.f` as the call `f(x)` when the relation `x` has no
 //! column `f`, resolving `f` through `search_path`. So every qualified name
-//! must be a column of its own receiver: a table the bundled migrations
-//! create, a common table expression, or an alias of a table, CTE, subquery
-//! or function, whose columns come from its column list, its select or
-//! `RETURNING` output, or the table it names. `EXCLUDED` is the insert
-//! target. A receiver or output the reader cannot work out fails closed.
+//! must be a column of its own receiver, which is looked up in the query
+//! block that holds the reference and then in each enclosing block: a common
+//! table expression, an alias of a table, CTE, subquery or function, or a
+//! table the bundled migrations leave (`schema`). `EXCLUDED` is the insert
+//! target. A relation's columns come from its column list, the table it
+//! names, or its select or `RETURNING` output, where an item names a column
+//! only as a complete column reference or with `AS`. A field of anything but
+//! a named relation, a name defined twice in one block, or a receiver or
+//! output the reader cannot work out fails closed.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::detector::strip_comments_and_quotes;
+
+mod schema;
+
+pub(super) use schema::tables;
 
 /// Words that end a `FROM` item instead of naming its alias.
 const CLAUSE_WORDS: &[&str] = &[
@@ -52,17 +60,6 @@ const CLAUSE_WORDS: &[&str] = &[
     "where",
     "window",
     "with",
-];
-
-/// Words that open a table constraint rather than a column definition.
-const CONSTRAINT_WORDS: &[&str] = &[
-    "check",
-    "constraint",
-    "exclude",
-    "foreign",
-    "like",
-    "primary",
-    "unique",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,73 +163,10 @@ fn name_list(tokens: &[Token], open: usize) -> BTreeSet<String> {
         .collect()
 }
 
-/// The table and column names the migrations create, by table.
-pub(super) fn tables<'a>(
-    migrations: impl IntoIterator<Item = &'a str>,
-) -> BTreeMap<String, BTreeSet<String>> {
-    let mut tables: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for migration in migrations {
-        let tokens = tokenize(migration);
-        let mut altered: Option<String> = None;
-        let mut index = 0;
-        while index < tokens.len() {
-            if punct(&tokens, index, ';') {
-                altered = None;
-            }
-            if is(&tokens, index, "table") {
-                let mut name = index + 1;
-                while ["if", "not", "exists", "only"]
-                    .iter()
-                    .any(|w| is(&tokens, name, w))
-                {
-                    name += 1;
-                }
-                if let Some(table) = word(&tokens, name).map(str::to_owned) {
-                    let columns = tables.entry(table.clone()).or_default();
-                    if is(&tokens, index.wrapping_sub(1), "create") && punct(&tokens, name + 1, '(')
-                    {
-                        for (start, _) in items(&tokens, name + 2, closing(&tokens, name + 1)) {
-                            if let Some(column) = word(&tokens, start)
-                                && !CONSTRAINT_WORDS.contains(&column)
-                            {
-                                columns.insert(column.to_owned());
-                            }
-                        }
-                    }
-                    if is(&tokens, index.wrapping_sub(1), "alter") {
-                        altered = Some(table);
-                    }
-                }
-            }
-            if is(&tokens, index, "add")
-                && let Some(table) = &altered
-            {
-                let mut column = index + 1;
-                while ["column", "if", "not", "exists"]
-                    .iter()
-                    .any(|w| is(&tokens, column, w))
-                {
-                    column += 1;
-                }
-                if let Some(name) = word(&tokens, column)
-                    && !CONSTRAINT_WORDS.contains(&name)
-                {
-                    tables
-                        .entry(table.clone())
-                        .or_default()
-                        .insert(name.to_owned());
-                }
-            }
-            index += 1;
-        }
-    }
-    tables
-}
-
 /// How a relation name gets its columns.
 #[derive(Clone, Debug)]
 enum Source {
-    /// A table, or an explicit column list.
+    /// An explicit column list.
     Columns(BTreeSet<String>),
     /// The output of the select or DML statement in `tokens[start..end]`.
     Query(usize, usize),
@@ -240,44 +174,65 @@ enum Source {
     Alias(String),
 }
 
+/// One relation name a query block defines, at token `at`.
+struct Definition {
+    name: String,
+    source: Source,
+    at: usize,
+}
+
+/// A query block: the statement itself, or a parenthesized query inside it.
+struct Block {
+    end: usize,
+    parent: Option<usize>,
+    definitions: Vec<Definition>,
+}
+
 struct Scope<'t> {
     tokens: &'t [Token],
-    relations: BTreeMap<String, Vec<Source>>,
+    tables: &'t BTreeMap<String, BTreeSet<String>>,
+    blocks: Vec<Block>,
+    /// The innermost block holding each token.
+    block_of: Vec<usize>,
     insert_target: Option<String>,
 }
 
 impl Scope<'_> {
-    fn define(&mut self, name: &str, source: Source) {
-        self.relations
-            .entry(name.to_owned())
-            .or_default()
-            .push(source);
-    }
-
-    /// The columns every definition of `name` has, or `None` when `name`
-    /// is unknown or any definition is unreadable.
-    fn columns(&self, name: &str, depth: usize) -> Option<BTreeSet<String>> {
-        let definitions = self.relations.get(name)?;
-        let mut common: Option<BTreeSet<String>> = None;
-        for source in definitions {
-            let columns = self.source_columns(source, depth)?;
-            common = Some(match common {
-                None => columns,
-                Some(previous) => previous.intersection(&columns).cloned().collect(),
-            });
-        }
-        common
-    }
-
-    fn source_columns(&self, source: &Source, depth: usize) -> Option<BTreeSet<String>> {
-        if depth > 16 {
+    /// The columns `name` has where token `at` stands, from the innermost
+    /// block outward and then the migrated tables, skipping the definition
+    /// at `skip` so an alias can name the relation it shadows.
+    fn columns(
+        &self,
+        name: &str,
+        at: usize,
+        skip: Option<usize>,
+        depth: usize,
+    ) -> Option<BTreeSet<String>> {
+        if depth > 32 {
             return None;
         }
-        match source {
-            Source::Columns(columns) => Some(columns.clone()),
-            Source::Query(start, end) => self.output(*start, *end, depth + 1),
-            Source::Alias(name) => self.columns(name, depth + 1),
+        let mut block = Some(*self.block_of.get(at)?);
+        while let Some(current) = block {
+            let mut found = self.blocks[current]
+                .definitions
+                .iter()
+                .filter(|definition| definition.name == name && Some(definition.at) != skip);
+            match (found.next(), found.next()) {
+                (Some(definition), None) => {
+                    return match &definition.source {
+                        Source::Columns(columns) => Some(columns.clone()),
+                        Source::Query(start, end) => self.output(*start, *end, depth + 1),
+                        Source::Alias(target) => {
+                            self.columns(target, definition.at, Some(definition.at), depth + 1)
+                        }
+                    };
+                }
+                // Two relations of one name in one block: ambiguous.
+                (Some(_), Some(_)) => return None,
+                (None, _) => block = self.blocks[current].parent,
+            }
         }
+        self.tables.get(name).cloned()
     }
 
     /// The output columns of the query in `tokens[start..end]`.
@@ -309,17 +264,11 @@ impl Scope<'_> {
         let mut columns = BTreeSet::new();
         for (item_start, item_end) in items(tokens, list_start, list_end) {
             match &tokens[item_start..item_end] {
-                [Token::Punct('*')] if select => {
-                    columns.extend(self.star(list_end, end, depth)?);
-                }
+                [Token::Punct('*')] if select => columns.extend(self.star(list_end, end, depth)?),
                 [Token::Word(relation), Token::Punct('.'), Token::Punct('*')] => {
-                    columns.extend(self.columns(relation, depth)?);
+                    columns.extend(self.columns(relation, item_start, None, depth + 1)?);
                 }
-                item => {
-                    if let Some(name) = output_name(item) {
-                        columns.insert(name);
-                    }
-                }
+                item => columns.extend(output_name(item)),
             }
         }
         Some(columns)
@@ -339,16 +288,17 @@ impl Scope<'_> {
                 (_, Some(listed), _) => listed,
                 (Some(alias), None, ItemSource::Function) => BTreeSet::from([alias.clone()]),
                 (_, None, ItemSource::Query(start, finish)) => {
-                    self.output(*start, *finish, depth)?
+                    self.output(*start, *finish, depth + 1)?
                 }
-                (_, None, ItemSource::Relation(name)) => self.columns(name, depth)?,
-                _ => return None,
+                (_, None, ItemSource::Relation(name)) => {
+                    self.columns(name, index, None, depth + 1)?
+                }
+                (None, None, ItemSource::Function) => return None,
             });
-            index = item.end;
-            if !(punct(tokens, index, ',') && index < end) {
+            if !(punct(tokens, item.end, ',') && item.end < end) {
                 return Some(columns);
             }
-            index += 1;
+            index = item.end + 1;
         }
     }
 }
@@ -380,33 +330,27 @@ fn top_level_word(tokens: &[Token], start: usize, end: usize, words: &[&str]) ->
     })
 }
 
-/// The column name PostgreSQL gives one select-list item, if any.
+/// The column name a select-list item gives its output: an `AS` name, or a
+/// complete column reference, cast or not. Anything else names no column the
+/// guard relies on.
 fn output_name(item: &[Token]) -> Option<String> {
     if let [.., Token::Word(as_word), Token::Word(alias)] = item
         && as_word == "as"
     {
         return Some(alias.clone());
     }
-    // A trailing cast keeps the name of what it casts.
     let mut end = item.len();
-    while let Some(colon) = item[..end]
+    while let Some(cast) = item[..end]
         .windows(2)
         .rposition(|pair| pair == [Token::Punct(':'), Token::Punct(':')])
     {
-        end = colon;
+        end = cast;
     }
     match &item[..end] {
-        [Token::Word(name)] | [.., Token::Punct('.'), Token::Word(name)] => Some(name.clone()),
-        [.., Token::Word(function), Token::Punct('(')] => Some(function.clone()),
-        tokens => {
-            let open = tokens.iter().position(|t| *t == Token::Punct('('))?;
-            match tokens.get(open.checked_sub(1)?) {
-                Some(Token::Word(function)) if closing(tokens, open) == tokens.len() - 1 => {
-                    Some(function.clone())
-                }
-                _ => None,
-            }
+        [Token::Word(name)] | [Token::Word(_), Token::Punct('.'), Token::Word(name)] => {
+            Some(name.clone())
         }
+        _ => None,
     }
 }
 
@@ -432,10 +376,7 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     }
     let source = if punct(tokens, index, '(') {
         let close = closing(tokens, index);
-        let source = if ["select", "with", "values"]
-            .iter()
-            .any(|w| is(tokens, index + 1, w))
-        {
+        let source = if opens_query(tokens, index) {
             ItemSource::Query(index + 1, close)
         } else {
             ItemSource::Function
@@ -488,24 +429,51 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     }
 }
 
-/// Every relation the statement names: the migrations' tables, its common
-/// table expressions and its `FROM`, `JOIN`, `USING`, `UPDATE` and `INTO`
-/// items.
-fn scope<'t>(tokens: &'t [Token], tables: &BTreeMap<String, BTreeSet<String>>) -> Scope<'t> {
+/// Whether the parenthesis at `open` holds a query, which is its own block.
+fn opens_query(tokens: &[Token], open: usize) -> bool {
+    ["select", "with", "values", "insert", "update", "delete"]
+        .iter()
+        .any(|w| is(tokens, open + 1, w))
+}
+
+/// Every query block of the statement and the relations each defines.
+fn scope<'t>(tokens: &'t [Token], tables: &'t BTreeMap<String, BTreeSet<String>>) -> Scope<'t> {
+    let mut blocks = vec![Block {
+        end: tokens.len(),
+        parent: None,
+        definitions: Vec::new(),
+    }];
+    let mut block_of = Vec::with_capacity(tokens.len());
+    let mut open = vec![0_usize];
+    for index in 0..tokens.len() {
+        while open.len() > 1 && index >= blocks[*open.last().expect("the statement block")].end {
+            open.pop();
+        }
+        block_of.push(*open.last().expect("the statement block"));
+        if punct(tokens, index, '(') && opens_query(tokens, index) {
+            blocks.push(Block {
+                end: closing(tokens, index),
+                parent: open.last().copied(),
+                definitions: Vec::new(),
+            });
+            open.push(blocks.len() - 1);
+        }
+    }
     let mut scope = Scope {
         tokens,
-        relations: BTreeMap::new(),
+        tables,
+        blocks,
+        block_of,
         insert_target: None,
     };
-    for (table, columns) in tables {
-        scope.define(table, Source::Columns(columns.clone()));
-    }
     for index in 0..tokens.len() {
-        if is(tokens, index, "with") {
-            define_ctes(&mut scope, index + 1);
+        if is(tokens, index, "with") && !is(tokens, index + 1, "ordinality") {
+            define_ctes(&mut scope, index);
         }
         let previous = word(tokens, index.wrapping_sub(1));
         let lists = match word(tokens, index) {
+            // `ROWS FROM (...)` is a single FROM item, read by `from_item`.
+            Some("from") if previous == Some("rows") => continue,
             Some("from" | "using") => true,
             Some("join") => false,
             Some("update") if !matches!(previous, Some("for" | "do")) => false,
@@ -515,7 +483,7 @@ fn scope<'t>(tokens: &'t [Token], tables: &BTreeMap<String, BTreeSet<String>>) -
                     if is(tokens, index + 2, "as")
                         && let Some(alias) = word(tokens, index + 3)
                     {
-                        scope.define(alias, Source::Alias(target.to_owned()));
+                        define(&mut scope, index, alias, Source::Alias(target.to_owned()));
                     }
                 }
                 continue;
@@ -534,7 +502,7 @@ fn scope<'t>(tokens: &'t [Token], tables: &BTreeMap<String, BTreeSet<String>>) -
                         Source::Columns(BTreeSet::from([alias.clone()]))
                     }
                 };
-                scope.define(alias, source);
+                define(&mut scope, item_start, alias, source);
             }
             if !(lists && punct(tokens, item.end, ',')) {
                 break;
@@ -545,9 +513,20 @@ fn scope<'t>(tokens: &'t [Token], tables: &BTreeMap<String, BTreeSet<String>>) -
     scope
 }
 
-/// Defines the common table expressions of the `WITH` list at `index`.
-fn define_ctes(scope: &mut Scope<'_>, mut index: usize) {
+/// Defines `name` in the block that holds token `at`.
+fn define(scope: &mut Scope<'_>, at: usize, name: &str, source: Source) {
+    let block = scope.block_of[at];
+    scope.blocks[block].definitions.push(Definition {
+        name: name.to_owned(),
+        source,
+        at,
+    });
+}
+
+/// Defines the common table expressions of the `WITH` list at `with`.
+fn define_ctes(scope: &mut Scope<'_>, with: usize) {
     let tokens = scope.tokens;
+    let mut index = with + 1;
     if is(tokens, index, "recursive") {
         index += 1;
     }
@@ -572,7 +551,7 @@ fn define_ctes(scope: &mut Scope<'_>, mut index: usize) {
         }
         let close = closing(tokens, next);
         let source = listed.map_or(Source::Query(next + 1, close), Source::Columns);
-        scope.define(&name, source);
+        define(scope, with, &name, source);
         if !punct(tokens, close + 1, ',') {
             return;
         }
@@ -589,15 +568,22 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let tokens = tokenize(sql);
     let scope = scope(&tokens, tables);
     let mut found = Vec::new();
-    for index in 0..tokens.len() {
-        let (Some(receiver), Some(field)) = (word(&tokens, index), word(&tokens, index + 2)) else {
+    for dot in 1..tokens.len() {
+        let Some(field) = word(&tokens, dot + 1) else {
             continue;
         };
-        if !punct(&tokens, index + 1, '.')
-            || receiver == "pg_catalog"
-            || punct(&tokens, index + 3, '(')
-            || punct(&tokens, index.wrapping_sub(1), '.')
-            || punct(&tokens, index.wrapping_sub(1), ':')
+        if !punct(&tokens, dot, '.') || punct(&tokens, dot + 2, '(') {
+            continue;
+        }
+        let Some(receiver) = word(&tokens, dot - 1) else {
+            found.push(format!(
+                "({{expression}}).{field} (a field of an expression)"
+            ));
+            continue;
+        };
+        if receiver == "pg_catalog"
+            || punct(&tokens, dot.wrapping_sub(2), '.')
+            || punct(&tokens, dot.wrapping_sub(2), ':')
         {
             continue;
         }
@@ -605,9 +591,9 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
             scope
                 .insert_target
                 .as_deref()
-                .and_then(|target| scope.columns(target, 0))
+                .and_then(|target| scope.columns(target, dot, None, 0))
         } else {
-            scope.columns(receiver, 0)
+            scope.columns(receiver, dot, None, 0)
         };
         match columns {
             None => found.push(format!(

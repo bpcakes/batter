@@ -140,6 +140,13 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         // `*` gives `c` the columns of `t` and `u`, and nothing else.
         "WITH c AS (SELECT * FROM t, u) SELECT c.row_to_json FROM c",
         "WITH c AS (VALUES (1)) SELECT c.column1 FROM c",
+        // A field of a parenthesized row is not a named relation's column.
+        "SELECT (a).row_to_json FROM t AS a",
+        // A computed item without `AS` names no column.
+        "WITH c AS (SELECT 1 + a.used FROM t AS a) SELECT c.used FROM c",
+        "WITH c AS (SELECT pg_catalog.count(*) FROM t) SELECT c.count FROM c",
+        // Two relations of one name in one block are ambiguous.
+        "SELECT a.id FROM t AS a, u AS a",
     ] {
         assert!(
             !fields::unresolved(sql, &tables).is_empty(),
@@ -154,9 +161,14 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "WITH k AS (SELECT * FROM ROWS FROM (pg_catalog.unnest($1::BIGINT[])) WITH ORDINALITY AS r(x, n)) \
          SELECT k.x, k.n FROM k JOIN LATERAL (SELECT u.label FROM u) AS l ON TRUE WHERE l.label = 'a'",
         "INSERT INTO t (id, used) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
-        "WITH changed AS (UPDATE t AS row SET used = 1 RETURNING row.id, pg_catalog.count(*)) \
-         SELECT changed.id, changed.count FROM changed",
+        "WITH changed AS (UPDATE t AS row SET used = 1 RETURNING row.id, pg_catalog.count(*) AS total) \
+         SELECT changed.id, changed.total FROM changed",
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
+        // Each block resolves its own `r`; a subquery also sees the outer `o`.
+        "WITH x AS (SELECT r.used FROM t AS r), y AS (SELECT r.label FROM u AS r) \
+         SELECT x.used, y.label FROM x, y",
+        "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
+        "WITH c AS (SELECT a.used::pg_catalog.text, a.id AS key FROM t AS a) SELECT c.used, c.key FROM c",
     ] {
         assert_eq!(
             fields::unresolved(sql, &tables),
