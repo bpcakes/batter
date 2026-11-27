@@ -219,10 +219,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   reported there; it also keeps the manifest from lowering those lints. Integration tests may use raw SQL
   behind their crate-level allow. Each statement calls catalog functions and
   casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
-  and `double precision` keeps both words. A qualified name `x.f` must name a
-  column or table the bundled migrations declare, or an alias, CTE or column
-  list of its own statement, because PostgreSQL otherwise reads it as the
-  call `f(x)` through `search_path`. A multi-array `unnest` is spelled
+  and `double precision` keeps both words. A qualified name `x.f` must be a
+  column of its own receiver (a migrated table, a CTE or an alias, resolved
+  by `src/catalog_guard/fields.rs`), because PostgreSQL otherwise reads it as
+  the call `f(x)` through `search_path`. A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
   the unqualified spelling. `src/catalog_guard.rs` reads a restricted
   dialect and rejects the rest: no dollar quoting or quoted identifiers,

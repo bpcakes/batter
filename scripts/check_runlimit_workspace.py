@@ -174,8 +174,7 @@ def listed_paths(config, key):
     raise ValueError(f'clippy.toml {key} is not closed')
 
 
-# The SQL gate's lints, which the probes trigger at whatever level the
-# manifest or the caller's flags give them.
+# The SQL gate's lints, which the probes trigger.
 GATE_CODES = frozenset({'clippy::disallowed_macros', 'clippy::disallowed_methods',
                         'clippy::disallowed_types'})
 
@@ -211,8 +210,9 @@ def validate_macro_probes(root):
     attribute cannot expect it; the probes compile only under
     `--cfg runlimit_macro_probes`, which this check passes to Clippy. They
     expand from the committed `.sqlx` metadata, so SQLx runs offline whatever
-    the caller's environment says. The gate's own diagnostics are expected at
-    any level, so only another error, or a failure with none, fails the run.
+    the caller's environment says. The gate lints and `warnings` are pinned to
+    warn after every other flag, so the expected reports never fail the build:
+    the run must both succeed and report each macro at its probe.
     """
     package = (Path(root) / 'runlimit' / 'runlimit-postgres').resolve()
     expected = set(listed_paths((package / 'clippy.toml').read_text(), 'disallowed-macros'))
@@ -226,14 +226,15 @@ def validate_macro_probes(root):
     environment = {**os.environ, 'SQLX_OFFLINE': 'true', 'SQLX_OFFLINE_DIR': str(cache)}
     result = subprocess.run(
         ['cargo', 'clippy', '-p', 'runlimit-postgres', '--lib', '--tests', '--locked',
-         '--message-format=json', '--', '--cfg', 'runlimit_macro_probes'],
+         '--message-format=json', '--', '--cfg', 'runlimit_macro_probes', '-W', 'warnings',
+         *(flag for code in sorted(GATE_CODES) for flag in ('-W', code))],
         cwd=root, env=environment, capture_output=True, text=True)
-    reports, unexpected = macro_reports(result.stdout)
+    reports, errors = macro_reports(result.stdout)
     probes = f'runlimit/runlimit-postgres/{MACRO_PROBES}'
     reported = {name for file, name in reports if file == probes}
-    if unexpected or (result.returncode != 0 and not reports):
+    if result.returncode != 0 or errors:
         raise ValueError('the macro probes failed to build:\n'
-                         + '\n'.join(unexpected or [result.stderr[-4000:]]))
+                         + '\n'.join(errors or [result.stderr[-4000:]]))
     if reported != expected:
         raise ValueError(f'Clippy must report each disallowed macro at its probe; '
                          f'missing {sorted(expected - reported)}')

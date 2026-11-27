@@ -5,15 +5,14 @@
 //! windows).
 //!
 //! The rule covers function calls, casts and composite-field notation: `x.f`
-//! calls `f(x)` when `x` has no column `f`, so every qualified name must name
-//! a column or table the bundled migrations declare, or a name the statement
-//! declares. SQL syntax that the PostgreSQL grammar maps to `pg_catalog`
-//! itself (`EXTRACT`, `COALESCE`, `GREATEST`, `LEAST`, and keyword types such
-//! as `bigint`) needs no prefix. Operators and the limiter's own tables still
-//! resolve through `search_path`, which the application chooses. Published
-//! migrations are immutable, are not qualified and are not checked here; they
-//! run under the caller's `search_path`, which must be trusted while
-//! migrating.
+//! calls `f(x)` when `x` has no column `f`, so every qualified name must be a
+//! column of its own receiver, which `fields` resolves. SQL syntax that the
+//! PostgreSQL grammar maps to `pg_catalog` itself (`EXTRACT`, `COALESCE`,
+//! `GREATEST`, `LEAST`, and keyword types such as `bigint`) needs no prefix.
+//! Operators and the limiter's own tables still resolve through
+//! `search_path`, which the application chooses. Published migrations are
+//! immutable, are not qualified and are not checked here; they run under the
+//! caller's `search_path`, which must be trusted while migrating.
 //!
 //! Operational SQL keeps to a dialect this guard reads completely: no dollar
 //! quoting, no quoted identifiers, casts only as `::` (never `CAST(...)` or a
@@ -34,34 +33,36 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
 mod detector;
+mod fields;
 mod gate;
 
-use detector::{declared_names, unknown_fields, unqualified};
+use detector::unqualified;
 
 use crate::statements;
 
-/// Every table and column the bundled migrations declare.
-fn migrated_names() -> BTreeSet<String> {
-    [
+/// The tables the bundled migrations create, with their columns.
+fn migrated_tables() -> std::collections::BTreeMap<String, BTreeSet<String>> {
+    let migrations: Vec<&str> = [
         &crate::MIGRATOR,
         &crate::GCRA_MIGRATOR,
         &crate::attempts::ATTEMPTS_MIGRATOR,
     ]
     .into_iter()
     .flat_map(|migrator| migrator.iter())
-    .flat_map(|migration| declared_names(migration.sql.as_str()))
-    .collect()
+    .map(|migration| migration.sql.as_str())
+    .collect();
+    fields::tables(migrations)
 }
 
 #[test]
 fn every_statement_qualifies_its_catalog_functions_and_types() {
-    let known = migrated_names();
+    let tables = migrated_tables();
     let mut violations = Vec::new();
     for (name, statement) in statements::all() {
         violations.extend(
             unqualified(statement.sql())
                 .into_iter()
-                .chain(unknown_fields(statement.sql(), &known))
+                .chain(fields::unresolved(statement.sql(), &tables))
                 .map(|found| format!("{name}: {found}")),
         );
     }
@@ -114,35 +115,54 @@ fn included_statements_are_exactly_the_sql_files_in_src() {
 }
 
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
-// such column, so a qualified name must name something declared.
+// such column, so a qualified name must be a column of its own receiver.
 #[test]
-fn a_qualified_name_must_name_a_column_table_or_alias() {
-    let known = declared_names(
+fn a_qualified_name_must_be_a_column_of_its_receiver() {
+    let tables = fields::tables([
         "CREATE TABLE IF NOT EXISTS t (id BIGINT PRIMARY KEY, used BIGINT NOT NULL, \
-         CONSTRAINT used_positive CHECK (used > 0)); ALTER TABLE t ADD COLUMN shard SMALLINT",
-    );
+         CONSTRAINT used_positive CHECK (used > 0)); ALTER TABLE t ADD COLUMN shard SMALLINT;",
+        "CREATE TABLE u (id BIGINT, label TEXT)",
+    ]);
     assert_eq!(
-        known,
-        ["id", "shard", "t", "used"]
+        tables["t"],
+        ["id", "shard", "used"]
             .map(str::to_owned)
             .into_iter()
             .collect()
     );
     for sql in [
         "SELECT a.row_to_json FROM t AS a",
-        "SELECT a . used, a.to_json FROM t AS a",
+        // An output alias of the same name is not a column of `a`.
+        "SELECT a.row_to_json AS row_to_json FROM t AS a",
+        // `label` is a column, but of `u`, not of `a`.
+        "SELECT a.label FROM t AS a JOIN u ON TRUE",
+        "SELECT missing.id FROM t",
+        // `*` gives `c` the columns of `t` and `u`, and nothing else.
+        "WITH c AS (SELECT * FROM t, u) SELECT c.row_to_json FROM c",
+        "WITH c AS (VALUES (1)) SELECT c.column1 FROM c",
     ] {
         assert!(
-            !unknown_fields(sql, &known).is_empty(),
+            !fields::unresolved(sql, &tables).is_empty(),
             "{sql} must be rejected"
         );
     }
     for sql in [
-        "SELECT a.used, b.total, c.n FROM t AS a, (SELECT 1 AS total) AS b, x AS c(n)",
-        "WITH w(k) AS (SELECT 1) SELECT w.k, t.shard, EXCLUDED.used FROM w, t",
+        "SELECT a.used, b.total, c.n, d.id FROM t AS a, (SELECT 1 AS total) AS b, \
+         pg_catalog.unnest($1::BIGINT[]) AS c(n), u AS d",
+        "WITH w(k) AS (SELECT 1), v AS (SELECT a.shard, a.id AS key FROM t AS a) \
+         SELECT w.k, v.shard, v.key, t.used FROM w, v, t",
+        "WITH k AS (SELECT * FROM ROWS FROM (pg_catalog.unnest($1::BIGINT[])) WITH ORDINALITY AS r(x, n)) \
+         SELECT k.x, k.n FROM k JOIN LATERAL (SELECT u.label FROM u) AS l ON TRUE WHERE l.label = 'a'",
+        "INSERT INTO t (id, used) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
+        "WITH changed AS (UPDATE t AS row SET used = 1 RETURNING row.id, pg_catalog.count(*)) \
+         SELECT changed.id, changed.count FROM changed",
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
     ] {
-        assert_eq!(unknown_fields(sql, &known), Vec::<String>::new(), "{sql}");
+        assert_eq!(
+            fields::unresolved(sql, &tables),
+            Vec::<String>::new(),
+            "{sql}"
+        );
     }
 }
 
