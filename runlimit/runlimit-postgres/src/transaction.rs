@@ -18,7 +18,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::{
     CheckError, CheckPhase, CleanupPhase, MaintenanceError, PostgresConfig,
-    protocol::{SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, remaining_server_timeout_settings},
+    protocol::{is_server_timeout, remaining_server_timeout_settings},
+    statements::SET_LOCAL_TIMEOUTS_SQL,
 };
 
 /// Whether the connection that produced a value may return to its pool.
@@ -260,7 +261,8 @@ impl<F: Family> BoundedTransaction<'_, F> {
         before_commit::<F, _>(
             self.deadline,
             phase,
-            sqlx::query(SET_LOCAL_TIMEOUTS_SQL)
+            SET_LOCAL_TIMEOUTS_SQL
+                .query()
                 .bind(statement_timeout)
                 .bind(lock_timeout)
                 .execute(&mut *self.inner),

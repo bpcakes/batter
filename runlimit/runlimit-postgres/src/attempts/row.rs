@@ -16,11 +16,6 @@ pub(crate) struct StoredAttempt {
 }
 
 impl StoredAttempt {
-    /// Locks the subject's row and reads exactly the columns [`Self::read`] decodes.
-    pub(crate) const LOCK_SQL: &str = "SELECT failures, last_failure_ms, retry_at_ms, \
-         lease_until_ms FROM runlimit_attempts WHERE config_fingerprint = $1 AND subject_key = $2 \
-         FOR UPDATE";
-
     pub(super) fn read(row: &PgRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
             failures: row.try_get("failures")?,

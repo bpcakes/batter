@@ -640,8 +640,9 @@ operational SQL (checks, cleanup, attempts and timeout settings) is written
 with its `pg_catalog` name, authoritative time as
 `pg_catalog.clock_timestamp()` included, so a caller-controlled `search_path`
 cannot substitute a clock, `set_config`, an aggregate, `unnest` or a type. A
-unit guard registers every operational statement and rejects an unqualified
-call or cast. Operators and the limiters' own tables still resolve through the
+closed set of statements in the crate's `statements` module is the only SQL
+it can execute, and a unit guard rejects an unqualified call or cast in any of
+them. Operators and the limiters' own tables still resolve through the
 application's `search_path`. The published migrations are immutable and are
 not qualified: run `migrate` with a `search_path` that only trusted roles can
 write to.

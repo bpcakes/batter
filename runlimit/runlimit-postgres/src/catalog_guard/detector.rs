@@ -162,8 +162,11 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                     found.push("a string constant outside a function argument".to_owned());
                 }
                 index += 1;
-                while index < bytes.len() && bytes[index] != b'\'' {
-                    index += 1;
+                // A doubled quote is an escaped quote inside the same constant.
+                while index < bytes.len()
+                    && (bytes[index] != b'\'' || bytes.get(index + 1) == Some(&b'\''))
+                {
+                    index += if bytes[index] == b'\'' { 2 } else { 1 };
                 }
                 index += 1;
             }
@@ -307,8 +310,9 @@ fn strip_comments_and_quotes(sql: &str) -> String {
                 code.push(' ');
             }
             '\'' => {
-                for skipped in chars.by_ref() {
-                    if skipped == '\'' {
+                // A doubled quote is an escaped quote inside the same constant.
+                while let Some(skipped) = chars.next() {
+                    if skipped == '\'' && chars.next_if_eq(&'\'').is_none() {
                         break;
                     }
                 }

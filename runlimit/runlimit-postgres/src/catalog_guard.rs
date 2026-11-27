@@ -1,7 +1,8 @@
-//! Every production statement resolves catalog objects by their `pg_catalog`
-//! name, so a schema earlier on the caller's `search_path` cannot replace a
-//! function or type the limiter relies on (a shadowed `set_config` would
-//! silently drop the server timeouts; a shadowed clock would move windows).
+//! Every operational statement resolves catalog objects by their
+//! `pg_catalog` name, so a schema earlier on the caller's `search_path` cannot
+//! replace a function or type the limiter relies on (a shadowed `set_config`
+//! would silently drop the server timeouts; a shadowed clock would move
+//! windows).
 //!
 //! The rule covers function calls and casts. SQL syntax that the PostgreSQL
 //! grammar maps to `pg_catalog` itself (`EXTRACT`, `COALESCE`, `GREATEST`,
@@ -13,13 +14,17 @@
 //!
 //! Operational SQL keeps to a dialect this guard reads completely: no dollar
 //! quoting, no quoted identifiers, casts only as `::` (never `CAST(...)` or a
-//! typed literal such as `text 'value'`), string constants only as function
-//! arguments or list elements, and no `sqlx` query macros. The guard rejects
-//! anything outside it rather than trying to parse it.
+//! typed literal such as `text 'value'`), and string constants only as
+//! function arguments or list elements. The guard rejects anything outside it
+//! rather than trying to parse it.
 //!
-//! Completeness does not depend on remembering to register a statement: every
-//! SQL-looking string literal in production source must initialize a
-//! registered constant, and every `.sql` file in `src/` must be registered.
+//! The set of statements is closed by construction: `crate::statements` owns
+//! every [`Statement`](crate::statements::Statement), and only a statement
+//! can be executed. This guard checks that [`ALL`] lists every statement
+//! declared there and that no other production module builds SQL: no
+//! SQL-looking literal, no `sqlx` query constructor, macro or builder, no
+//! `include!`, and no `include_str!` or `include_bytes!` but a published
+//! migration's.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -28,90 +33,10 @@ mod literals;
 mod modules;
 
 use detector::unqualified;
-use literals::{files, includes, query_arguments, sql_literals};
+use literals::{files, includes, sql_literals};
 use modules::production_sources;
 
-use crate::{
-    attempts::{row::StoredAttempt, sql as attempt},
-    gcra, protocol,
-};
-
-/// `(source file, constant, statement)` for every statement the crate sends.
-const STATEMENTS: &[(&str, &str, &str)] = &[
-    (
-        "protocol.rs",
-        "SET_LOCAL_TIMEOUTS_SQL",
-        protocol::SET_LOCAL_TIMEOUTS_SQL,
-    ),
-    (
-        "protocol.rs",
-        "BATCH_ADVISORY_LOCK_SQL",
-        protocol::BATCH_ADVISORY_LOCK_SQL,
-    ),
-    (
-        "protocol.rs",
-        "BATCH_ROW_LOCK_SQL",
-        protocol::BATCH_ROW_LOCK_SQL,
-    ),
-    (
-        "protocol.rs",
-        "BATCH_CAPACITY_LOCK_SQL",
-        protocol::BATCH_CAPACITY_LOCK_SQL,
-    ),
-    (
-        "protocol.rs",
-        "BATCH_PREFLIGHT_SQL",
-        protocol::BATCH_PREFLIGHT_SQL,
-    ),
-    (
-        "protocol.rs",
-        "BATCH_UPSERT_SQL",
-        protocol::BATCH_UPSERT_SQL,
-    ),
-    ("protocol.rs", "CLEANUP_SQL", protocol::CLEANUP_SQL),
-    ("gcra.rs", "LOCK_SHARDS", gcra::LOCK_SHARDS),
-    ("gcra.rs", "SAMPLE_TIME", gcra::SAMPLE_TIME),
-    ("gcra.rs", "READ_COUNTERS", gcra::READ_COUNTERS),
-    ("gcra.rs", "UPSERT", gcra::UPSERT),
-    ("gcra.rs", "UPDATE_WATERMARKS", gcra::UPDATE_WATERMARKS),
-    ("gcra.rs", "CLEANUP_LOCKS", gcra::CLEANUP_LOCKS),
-    (
-        "gcra.rs",
-        "CLEANUP_ADVANCE_TIME",
-        gcra::CLEANUP_ADVANCE_TIME,
-    ),
-    ("gcra.rs", "CLEANUP_DELETE", gcra::CLEANUP_DELETE),
-    ("attempts/row.rs", "LOCK_SQL", StoredAttempt::LOCK_SQL),
-    ("attempts/sql.rs", "SHARD_LOCK_SQL", attempt::SHARD_LOCK_SQL),
-    ("attempts/sql.rs", "CLEANUP_SQL", attempt::CLEANUP_SQL),
-    (
-        "attempts/sql.rs",
-        "SAMPLE_TIME_SQL",
-        attempt::SAMPLE_TIME_SQL,
-    ),
-    ("attempts/sql.rs", "OCCUPANCY_SQL", attempt::OCCUPANCY_SQL),
-    ("attempts/sql.rs", "FREE_SLOT_SQL", attempt::FREE_SLOT_SQL),
-    ("attempts/sql.rs", "INSERT_SQL", attempt::INSERT_SQL),
-    ("attempts/sql.rs", "LEASE_SQL", attempt::LEASE_SQL),
-    ("attempts/sql.rs", "CLAIM_SQL", attempt::CLAIM_SQL),
-    ("attempts/sql.rs", "COMPLETE_SQL", attempt::COMPLETE_SQL),
-];
-
-#[test]
-fn every_statement_qualifies_its_catalog_functions_and_types() {
-    let mut violations = Vec::new();
-    for (file, name, sql) in STATEMENTS {
-        violations.extend(
-            unqualified(sql)
-                .into_iter()
-                .map(|found| format!("{file} {name}: {found}")),
-        );
-    }
-    assert!(
-        violations.is_empty(),
-        "unqualified catalog objects:\n{violations:#?}"
-    );
-}
+use crate::statements::ALL;
 
 /// The published migration constants: immutable, executed only through the
 /// migrators, and exempt from this guard.
@@ -124,83 +49,189 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("attempts.rs", "CREATE_RUNLIMIT_ATTEMPTS_SQL"),
 ];
 
-/// Whether `(file, name)` is registered with exactly `sql`.
-fn is_registered(file: &str, name: &str, sql: &str) -> bool {
-    STATEMENTS
-        .iter()
-        .any(|entry| entry.0 == file && entry.1 == name && entry.2 == sql)
+/// `sqlx` items that build or run SQL from a string; only `statements` uses
+/// them.
+const SQL_BUILDERS: &[&str] = &[
+    "QueryBuilder",
+    "query_as",
+    "query_as_unchecked",
+    "query_as_with",
+    "query_file",
+    "query_file_as",
+    "query_file_as_unchecked",
+    "query_file_scalar",
+    "query_file_scalar_unchecked",
+    "query_file_unchecked",
+    "query_scalar",
+    "query_scalar_unchecked",
+    "query_scalar_with",
+    "query_unchecked",
+    "query_with",
+    "raw_sql",
+];
+
+fn source_directory() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+fn is_statements_file(file: &str) -> bool {
+    file == "statements.rs" || file.starts_with("statements/")
 }
 
 #[test]
-fn every_production_statement_is_registered() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let names: BTreeSet<&str> = STATEMENTS.iter().map(|(_, name, _)| *name).collect();
-    let mut unregistered = Vec::new();
+fn every_statement_qualifies_its_catalog_functions_and_types() {
+    let mut violations = Vec::new();
+    for (name, statement) in ALL {
+        violations.extend(
+            unqualified(statement.sql())
+                .into_iter()
+                .map(|found| format!("{name}: {found}")),
+        );
+    }
+    assert!(
+        violations.is_empty(),
+        "unqualified catalog objects:\n{violations:#?}"
+    );
+}
+
+#[test]
+fn the_registry_lists_every_statement_once() {
+    let source = source_directory();
+    let mut declared = BTreeSet::new();
+    for path in
+        std::iter::once(source.join("statements.rs")).chain(files(&source.join("statements"), "rs"))
+    {
+        let family = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| *stem != "statements");
+        let (_, code) = sql_literals(&fs::read_to_string(&path).unwrap());
+        for (start, _) in code.match_indices(": Statement") {
+            let name: String = code[..start]
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if code[..start - name.len()].trim_end().ends_with("const") {
+                declared.insert(family.map_or(name.clone(), |family| format!("{family}::{name}")));
+            }
+        }
+    }
+    let registered: Vec<&str> = ALL.iter().map(|(name, _)| *name).collect();
+    let unique: BTreeSet<&str> = registered.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        registered.len(),
+        "a statement is registered twice"
+    );
+    assert_eq!(
+        unique,
+        declared.iter().map(String::as_str).collect(),
+        "statements::ALL must list exactly the declared statements"
+    );
+}
+
+#[test]
+fn no_production_module_builds_sql_outside_statements() {
+    let source = source_directory();
+    let mut violations = Vec::new();
     let mut included_files = BTreeSet::new();
     for (file, production) in production_sources(&source) {
         let (literals, code) = sql_literals(&production);
-        for (start, _) in code.match_indices("query") {
-            let rest = &code[start..];
-            let name_end = rest
-                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .unwrap_or(rest.len());
-            let boundary = start == 0 || !code.as_bytes()[start - 1].is_ascii_alphanumeric();
-            if boundary && rest[name_end..].starts_with('!') {
-                unregistered.push(format!("{file}: sqlx macro {}!", &rest[..name_end]));
-            }
-        }
-        for (owner, value) in literals {
-            if !owner
-                .as_deref()
-                .is_some_and(|name| is_registered(&file, name, &value))
-            {
-                unregistered.push(format!("{file}: {owner:?} {value:.60}"));
+        let statements = is_statements_file(&file);
+        for (start, _) in code.match_indices("include!") {
+            if start == 0 || !code.as_bytes()[start - 1].is_ascii_alphanumeric() {
+                violations.push(format!("{file}: include!"));
             }
         }
         for (owner, path) in includes(&production, &code) {
+            let resolved = Path::new(&file)
+                .parent()
+                .and_then(|parent| source.join(parent).join(&path).canonicalize().ok());
             let migration = owner
                 .as_deref()
                 .is_some_and(|name| MIGRATIONS.contains(&(file.as_str(), name)));
-            let included = Path::new(&file)
-                .parent()
-                .and_then(|parent| source.join(parent).join(&path).canonicalize().ok());
-            let registered = owner
-                .as_deref()
-                .zip(included)
-                .is_some_and(|(name, included)| {
-                    let matches = fs::read_to_string(&included)
-                        .is_ok_and(|sql| is_registered(&file, name, &sql));
-                    if matches {
-                        included_files.insert(included);
-                    }
-                    matches
-                });
-            if !migration && !registered {
-                unregistered.push(format!("{file}: {owner:?} includes {path}"));
+            match resolved {
+                Some(resolved) if statements => {
+                    included_files.insert(resolved);
+                }
+                Some(_) if migration => {}
+                _ => violations.push(format!("{file}: {owner:?} includes {path}")),
             }
         }
-        for argument in query_arguments(&code) {
-            let constant = argument.rsplit("::").next().unwrap_or_default();
-            let is_path = argument.split("::").all(|part| {
-                !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-            });
-            if !is_path || !names.contains(constant) {
-                unregistered.push(format!("{file}: query constructor argument `{argument}`"));
+        if statements {
+            continue;
+        }
+        for (_, literal) in literals {
+            violations.push(format!("{file}: SQL literal {literal:.60}"));
+        }
+        for word in identifiers(&code) {
+            if SQL_BUILDERS.contains(&word.text) {
+                violations.push(format!("{file}: sqlx {}", word.text));
+            }
+            // `sqlx::query::Query` names the module; `sqlx::query::<_>(..)`
+            // is the function with a turbofish.
+            let module_path = word
+                .after
+                .strip_prefix("::")
+                .is_some_and(|rest| !rest.trim_start().starts_with('<'));
+            let function = word.qualified_by_sqlx && !module_path;
+            if word.text == "query" && (word.after.starts_with('!') || function) {
+                violations.push(format!("{file}: sqlx query{}", &word.after[..1]));
             }
         }
     }
     for path in files(&source, "sql") {
         if !included_files.contains(&path.canonicalize().unwrap()) {
-            unregistered.push(format!(
-                "{} is not included by a registered statement",
-                path.display()
-            ));
+            violations.push(format!("{} is not included by a statement", path.display()));
         }
     }
     assert!(
-        unregistered.is_empty(),
-        "unregistered SQL:\n{unregistered:#?}"
+        violations.is_empty(),
+        "SQL outside crate::statements:\n{violations:#?}"
     );
+}
+
+/// One identifier in blanked Rust code: its text, what follows it and
+/// whether it is written as `sqlx::name` or imported in a `use sqlx` item.
+struct Identifier<'a> {
+    text: &'a str,
+    after: &'a str,
+    qualified_by_sqlx: bool,
+}
+
+fn identifiers(code: &str) -> Vec<Identifier<'_>> {
+    let bytes = code.as_bytes();
+    let mut found = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !(byte.is_ascii_alphabetic() || byte == b'_')
+            || index > 0 && (bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'_')
+        {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+        {
+            index += 1;
+        }
+        let before = code[..start].trim_end();
+        let statement_start = before.rfind(';').map_or(0, |end| end + 1);
+        let in_sqlx_use = code[statement_start..start]
+            .trim_start()
+            .starts_with("use sqlx");
+        found.push(Identifier {
+            text: &code[start..index],
+            after: code[index..].trim_start(),
+            qualified_by_sqlx: before.ends_with("sqlx::") || in_sqlx_use,
+        });
+    }
+    found
 }
 
 #[test]
@@ -226,6 +257,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT $tag$x$tag$",
         "SELECT text 'ready'",
         "SELECT CAST($1 AS pg_catalog.text)",
+        "SELECT pg_catalog.length('can''t'), floor(1)",
         "SELECT pg_catalog.\"unnest\"($1::integer[], $2::integer[])",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
@@ -242,6 +274,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT pg_catalog.length('floor(1)::text') -- count(*)\n",
         "SELECT $1::integer, $2::SMALLINT, $3::double precision",
         "SELECT pg_catalog.set_config('statement_timeout', $1, true), $2::BIGINT",
+        "SELECT pg_catalog.length('can''t'), pg_catalog.length('x'''), pg_catalog.floor(1)",
         "WITH a(x) AS NOT MATERIALIZED (VALUES (1)), b AS ( SELECT 2) TABLE a",
     ] {
         assert_eq!(
@@ -253,14 +286,13 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
 }
 
 #[test]
-fn the_scanner_finds_every_statement_literal_and_constructor_argument() {
+fn the_scanner_finds_every_statement_literal() {
     let source = r##"
         const NAMED_SQL: &str = "-- leading note\nSELECT 1";
         const CONTINUED_SQL: &str = "SELECT \
             2";
         fn inline() {
             let _ = sqlx::query("/* a */ VALUES (1)");
-            let _ = sqlx::query_scalar::<_, i64>(NAMED_SQL);
             let _ = query(&format!("(SELECT {}", 1));
             let _ = sqlx::raw_sql(r#"TABLE t"#);
             // sqlx::query("SELECT 'a comment'")
@@ -282,13 +314,26 @@ fn the_scanner_finds_every_statement_literal_and_constructor_argument() {
             (None, "TABLE t"),
         ]
     );
-    let arguments = query_arguments(&code);
-    assert_eq!(arguments.len(), 4, "{arguments:?}");
-    assert!(
-        arguments[0].is_empty(),
-        "a literal argument is blanked: {arguments:?}"
+    let words: Vec<_> = identifiers(&code)
+        .into_iter()
+        .filter(|word| word.text == "query" || SQL_BUILDERS.contains(&word.text))
+        .map(|word| (word.text, word.qualified_by_sqlx))
+        .collect();
+    assert_eq!(
+        words,
+        [("query", true), ("query", false), ("raw_sql", true)]
     );
-    assert_eq!(arguments[1], "NAMED_SQL");
-    assert!(arguments[2].starts_with("&format!"), "{arguments:?}");
-    assert!(arguments[3].is_empty(), "{arguments:?}");
+    let imported = identifiers(
+        "use sqlx::{query, query::Query};\nfn f() { statement.query(); sqlx::query::<P>(Q); }",
+    );
+    let imported: Vec<_> = imported
+        .iter()
+        .filter(|word| word.text == "query")
+        .map(|word| (word.qualified_by_sqlx, word.after.starts_with("::")))
+        .collect();
+    assert_eq!(
+        imported,
+        [(true, false), (true, true), (false, false), (true, true)],
+        "the import, the module path and the turbofish call are sqlx's; the method is a statement's"
+    );
 }

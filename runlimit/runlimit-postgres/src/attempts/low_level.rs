@@ -25,7 +25,8 @@ pub async fn claim_in<'e, E: Executor<'e, Database = Postgres>>(
     executor: E,
     mut receipt: PgAttemptReceipt,
 ) -> Result<PgAttemptClaimResult, sqlx::Error> {
-    let row = sqlx::query(super::sql::CLAIM_SQL)
+    let row = super::sql::CLAIM_SQL
+        .query()
         .bind(receipt.policy.fingerprint().into_bytes().to_vec())
         .bind(receipt.subject.to_vec())
         .bind(&receipt.token)

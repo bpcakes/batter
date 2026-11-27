@@ -28,6 +28,7 @@ use crate::{
     CheckError, CheckPhase, PostgresConfig,
     base::PgLimiterBase,
     protocol::{ATTEMPT_LOCK_NAMESPACE, capacity_shard},
+    statements::attempts as sql,
     transaction::{BoundedConnection, Check, CheckTransaction, ConnectionOutcome},
 };
 use row::StoredAttempt;
@@ -48,7 +49,6 @@ use sqlx::{
 use std::{fmt, sync::Arc, time::Duration};
 
 pub(crate) mod row;
-pub(crate) mod sql;
 
 /// Isolated migration history; install only when opting into attempt policies.
 pub static ATTEMPTS_MIGRATOR: Migrator = sqlx::migrate!("./attempts-migrations");
@@ -265,24 +265,24 @@ async fn admit_transaction(
     let mut tx = connection.begin().await?;
     tx.execute(
         PHASE,
-        sqlx::query(sql::SHARD_LOCK_SQL)
+        sql::SHARD_LOCK_SQL
+            .query()
             .bind(ATTEMPT_LOCK_NAMESPACE)
             .bind(i32::from(shard)),
     )
     .await?;
-    tx.execute(PHASE, sqlx::query(sql::CLEANUP_SQL).bind(shard))
+    tx.execute(PHASE, sql::CLEANUP_SQL.query().bind(shard))
         .await?;
     let rows = tx
         .fetch_all(
             PHASE,
-            sqlx::query(StoredAttempt::LOCK_SQL)
+            sql::ROW_LOCK_SQL
+                .query()
                 .bind(fingerprint.as_slice())
                 .bind(subject.as_slice()),
         )
         .await?;
-    let time = tx
-        .fetch_one(PHASE, sqlx::query(sql::SAMPLE_TIME_SQL))
-        .await?;
+    let time = tx.fetch_one(PHASE, sql::SAMPLE_TIME_SQL.query()).await?;
     let decode = |error| {
         ConnectionOutcome::Reusable(CheckError::storage_decode_invariant(
             "decode attempt admission response",
@@ -321,7 +321,8 @@ async fn admit_transaction(
             };
             tx.fetch_one(
                 PHASE,
-                sqlx::query(sql::INSERT_SQL)
+                sql::INSERT_SQL
+                    .query()
                     .bind(fingerprint.as_slice())
                     .bind(subject.as_slice())
                     .bind(slot)
@@ -335,7 +336,8 @@ async fn admit_transaction(
         Some(_) => {
             tx.fetch_one(
                 PHASE,
-                sqlx::query(sql::LEASE_SQL)
+                sql::LEASE_SQL
+                    .query()
                     .bind(fingerprint.as_slice())
                     .bind(subject.as_slice())
                     .bind(failures)
@@ -371,7 +373,7 @@ async fn free_slot(
     // allocated by replicas using a higher bound. A hole in the new slot
     // interval is not proof that total shard occupancy is below the cap.
     let occupancy = tx
-        .fetch_one(PHASE, sqlx::query(sql::OCCUPANCY_SQL).bind(shard))
+        .fetch_one(PHASE, sql::OCCUPANCY_SQL.query().bind(shard))
         .await?;
     let row_count: i64 = occupancy.try_get("row_count").map_err(decode)?;
     if row_count >= i64::from(maximum) {
@@ -380,7 +382,8 @@ async fn free_slot(
     let slot = tx
         .fetch_one(
             PHASE,
-            sqlx::query(sql::FREE_SLOT_SQL)
+            sql::FREE_SLOT_SQL
+                .query()
                 .bind(shard)
                 .bind(i64::from(maximum)),
         )
@@ -426,7 +429,8 @@ fn completion_query<'a>(
         AttemptOutcome::Success => Vec::new(),
         AttemptOutcome::Failure | AttemptOutcome::Abandoned => row::delay_schedule(&receipt.policy),
     };
-    sqlx::query(sql::COMPLETE_SQL)
+    sql::COMPLETE_SQL
+        .query()
         .bind(receipt.policy.fingerprint().into_bytes().to_vec())
         .bind(receipt.subject.to_vec())
         .bind(&receipt.token)

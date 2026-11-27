@@ -114,6 +114,7 @@ mod errors;
 mod maintenance;
 mod pending;
 mod protocol;
+mod statements;
 mod transaction;
 
 pub use config::{PostgresConfig, PostgresConfigError};
@@ -132,9 +133,11 @@ use admission::database_integer;
 #[cfg(test)]
 use pending::PendingAllowance;
 #[cfg(test)]
-use protocol::{CLEANUP_SQL, advisory_lock_id, capacity_shard};
+use protocol::{advisory_lock_id, capacity_shard};
 #[cfg(test)]
 use sqlx::postgres::types::PgInterval;
+#[cfg(test)]
+use statements::fixed_window::CLEANUP_SQL;
 #[cfg(test)]
 use tokio::time::Instant;
 #[cfg(test)]
@@ -1054,15 +1057,30 @@ mod tests {
     #[test]
     fn cleanup_query_is_bounded_and_nonblocking() {
         assert_eq!(
-            CLEANUP_SQL.matches("pg_catalog.clock_timestamp()").count(),
+            CLEANUP_SQL
+                .sql()
+                .matches("pg_catalog.clock_timestamp()")
+                .count(),
             1
         );
-        assert!(CLEANUP_SQL.contains("AS MATERIALIZED"));
-        assert!(CLEANUP_SQL.contains("SELECT sampled_at\n        FROM authoritative_time"));
-        assert!(!CLEANUP_SQL.contains("window_expires_at <= pg_catalog.clock_timestamp()"));
-        assert!(CLEANUP_SQL.contains("LIMIT $1"));
-        assert!(CLEANUP_SQL.contains("FOR UPDATE SKIP LOCKED"));
-        assert!(CLEANUP_SQL.contains("ORDER BY capacity.capacity_shard"));
-        assert!(CLEANUP_SQL.contains("FOR UPDATE OF capacity"));
+        assert!(CLEANUP_SQL.sql().contains("AS MATERIALIZED"));
+        assert!(
+            CLEANUP_SQL
+                .sql()
+                .contains("SELECT sampled_at\n        FROM authoritative_time")
+        );
+        assert!(
+            !CLEANUP_SQL
+                .sql()
+                .contains("window_expires_at <= pg_catalog.clock_timestamp()")
+        );
+        assert!(CLEANUP_SQL.sql().contains("LIMIT $1"));
+        assert!(CLEANUP_SQL.sql().contains("FOR UPDATE SKIP LOCKED"));
+        assert!(
+            CLEANUP_SQL
+                .sql()
+                .contains("ORDER BY capacity.capacity_shard")
+        );
+        assert!(CLEANUP_SQL.sql().contains("FOR UPDATE OF capacity"));
     }
 }

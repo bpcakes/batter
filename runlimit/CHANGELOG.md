@@ -71,9 +71,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   replace any of them; operators and the limiters' tables still resolve
   through it. Multi-array `unnest(a, b)` is spelled `ROWS FROM
   (pg_catalog.unnest(a), pg_catalog.unnest(b))`, its documented equivalent.
-  The attempt limiter's inline statements are now named constants, and a unit
-  guard registers every statement and every `src/*.sql` file and rejects an
-  unqualified call or cast. Attempt cleanup executes
+  Every operational statement now lives in one private `statements` module as
+  a `Statement`, the only SQL the crate can execute, and a unit guard rejects
+  an unqualified call or cast in any of them and any SQL built elsewhere. Attempt cleanup executes
   `src/attempt_cleanup_qualified.sql`; the imported `attempt_cleanup.sql`
   moves, byte-identical, to the provenance records. The published migrations
   are immutable and unqualified; run `migrate` under a trusted `search_path`.

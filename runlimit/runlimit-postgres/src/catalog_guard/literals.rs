@@ -1,21 +1,10 @@
 //! The Rust side of the catalog guard: finds every string literal in a source
 //! file that reads as a SQL statement, with the constant it initializes, and
-//! the argument of every `sqlx` query constructor.
+//! every `include_str!`/`include_bytes!`.
 
 use std::{fs, path::Path};
 
 use super::detector::is_identifier_part;
-
-/// The `sqlx` functions that turn a string into an executable statement.
-const QUERY_CONSTRUCTORS: &[&str] = &[
-    "query",
-    "query_as",
-    "query_scalar",
-    "query_with",
-    "query_as_with",
-    "query_scalar_with",
-    "raw_sql",
-];
 
 /// Every file under `directory` with `extension`, recursively.
 pub(super) fn files(directory: &Path, extension: &str) -> Vec<std::path::PathBuf> {
@@ -30,63 +19,6 @@ pub(super) fn files(directory: &Path, extension: &str) -> Vec<std::path::PathBuf
     }
     found.sort();
     found
-}
-
-/// The argument text of every `sqlx` query constructor call in `code`, which
-/// must have its literals and comments blanked by [`sql_literals`].
-pub(super) fn query_arguments(code: &str) -> Vec<String> {
-    let bytes = code.as_bytes();
-    let mut arguments = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        if !bytes[index].is_ascii_alphabetic() || index > 0 && is_identifier_part(bytes[index - 1])
-        {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        while index < bytes.len() && is_identifier_part(bytes[index]) {
-            index += 1;
-        }
-        if !QUERY_CONSTRUCTORS.contains(&&code[start..index]) {
-            continue;
-        }
-        let mut open = index;
-        if code[open..].starts_with("::<") {
-            let mut depth = 0_usize;
-            for (offset, byte) in bytes[open..].iter().enumerate() {
-                match byte {
-                    b'<' => depth += 1,
-                    b'>' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            open += offset + 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let open = open + code[open..].len() - code[open..].trim_start().len();
-        if bytes.get(open) != Some(&b'(') {
-            continue;
-        }
-        let mut depth = 0_usize;
-        let mut end = open + 1;
-        while end < bytes.len() {
-            match (bytes[end], depth) {
-                (b'(' | b'[' | b'{', _) => depth += 1,
-                (b')' | b']' | b'}' | b',', 0) => break,
-                (b')' | b']' | b'}', _) => depth -= 1,
-                _ => {}
-            }
-            end += 1;
-        }
-        arguments.push(code[open + 1..end].trim().to_owned());
-        index = end;
-    }
-    arguments
 }
 
 /// Every string literal in Rust `source` whose text starts like a statement,
