@@ -13,9 +13,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   lifecycle: `Clear`, `Leased(AttemptLease<T>)` or `Failed(FailedAttempts)`.
   Its pure `settle`, `admit` and `complete` own lease expiry counted as a
   failure at the deadline, the quiet-period reset, the busy and backoff denials
-  and the failure delay, and return `AdmitEvaluation` (`Grant(PendingLease)` or
-  `Denied(DeniedAdmission<T>)`) and `CompleteEvaluation`
-  (`Applied(AppliedCompletion)` or `Stale`). Only a transition builds a
+  and the failure delay, and return `AdmitEvaluation` (`Grant(PendingLease)`,
+  `Denied(DeniedAdmission<T>)` or `DeadlineOverflow`) and `CompleteEvaluation`
+  (`Applied(AppliedCompletion)` or `Stale`). A lease is granted for the whole
+  policy lease or not at all: within one lease of `Duration::MAX` a subject
+  that would be admitted gets `DeadlineOverflow`. Only a transition builds a
   `DeniedAdmission` or an `AppliedCompletion`, and each carries the narrower
   state it can leave, `HeldAttempt<T>` or `ReleasedAttempt`, beside the
   `LeaseDenial` or `AttemptCompletion` that state gives, so a backend stores
@@ -60,9 +62,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   of `Duration::MAX`: the retry deadline saturates there, and a failed
   completion and its `Completed` observation now report the wait that remains
   until it, as the next `Backoff` denial does, where they reported the full
-  policy delay. A clock at `Duration::MAX` itself is now read as the instant
-  before it: earlier releases granted a lease there that was already expired
-  and granted a second one beside it. Two effects on stored state are new. `complete` with a receipt whose
+  policy delay. Admission on such a clock within one lease of `Duration::MAX`
+  now fails, as the first **Breaking** entry below describes. Two effects on
+  stored state are new. `complete` with a receipt whose
   lease has expired still returns and observes `Stale`, but now records the
   expiry as a failure at once rather than at the next admission, and removes
   the subject when its quiet period has also passed. That frees its capacity
@@ -99,6 +101,39 @@ The format is based on [Keep a Changelog], and this project adheres to
   after a step behind a lease deadline a lease already reported expired is
   live again until that deadline (`batter-ctk7.22`). A `StorageCapacity`
   denial still commits the bounded cleanup of expired rows, as before.
+- **Breaking:** `MemoryAttemptError` has a new variant, `ClockExhausted`, so
+  an exhaustive `match` on it stops compiling until it handles the variant.
+  `MemoryAttemptLimiter::admit` returns it when the clock is within one policy
+  lease of `Duration::MAX` and the subject would otherwise be admitted. Only a
+  clock injected through `MemoryAttemptLimiter::with_clock` reaches that
+  range. Earlier releases admitted there with a lease cut short at
+  `Duration::MAX`; at `Duration::MAX` itself that lease was already expired,
+  so its receipt was stale and a second admission was granted beside it.
+  Denials are unchanged there, and a lease that ends exactly at
+  `Duration::MAX` still expires at that instant. The error displays as
+  `attempt clock exhausted its representable range`.
+
+  ```rust
+  // Before: every admission error was one of two variants.
+  match limiter.admit(subject) {
+      Ok(admission) => handle(admission),
+      Err(MemoryAttemptError::Poisoned | MemoryAttemptError::SequenceExhausted) => fail_closed(),
+  }
+  // After: fail closed for the clock range as well.
+  match limiter.admit(subject) {
+      Ok(admission) => handle(admission),
+      Err(
+          MemoryAttemptError::Poisoned
+          | MemoryAttemptError::SequenceExhausted
+          | MemoryAttemptError::ClockExhausted,
+      ) => fail_closed(),
+  }
+
+  // Before, with an injected clock at Duration::MAX: Ok(Admitted(receipt)),
+  //         twice in a row for one subject, each receipt already stale.
+  // After:  Err(MemoryAttemptError::ClockExhausted) both times.
+  limiter.admit(subject)
+  ```
 - **Breaking:** this is a run-time break for hand-edited attempt rows only;
   nothing stops compiling and no row this library writes is affected.
   `PostgresAttemptLimiter::admit` now fails closed with

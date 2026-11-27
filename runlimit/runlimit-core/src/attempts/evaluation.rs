@@ -19,7 +19,8 @@ impl PendingLease {
     pub const fn failures(&self) -> u32 {
         self.failures
     }
-    /// The instant from which the new reservation is expired.
+    /// The instant from which the new reservation is expired: the evaluation
+    /// instant plus the whole policy lease.
     pub const fn until(&self) -> Duration {
         self.until
     }
@@ -71,6 +72,32 @@ pub enum AdmitEvaluation<T> {
     Grant(PendingLease),
     /// No reservation was made.
     Denied(DeniedAdmission<T>),
+    /// The subject would be admitted, but its lease deadline lies past the end
+    /// of representable time, so no lease can be held. Nothing is reserved; a
+    /// backend reports its own clock or storage range failure.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use runlimit_core::{PolicyId, QuotaPeriod, ScopeId};
+    /// use runlimit_core::attempts::{AdmitEvaluation, AttemptPolicy, AttemptState};
+    /// # let seconds = |value| QuotaPeriod::new(Duration::from_secs(value)).unwrap();
+    /// # let policy = AttemptPolicy::new(
+    /// #     PolicyId::new("sign-in").unwrap(),
+    /// #     ScopeId::new("account").unwrap(),
+    /// #     seconds(10),
+    /// #     seconds(40),
+    /// #     seconds(100),
+    /// #     seconds(20),
+    /// # )
+    /// # .unwrap();
+    /// // Twenty seconds of lease do not fit after this instant.
+    /// let late = Duration::MAX - Duration::from_secs(19);
+    /// assert_eq!(
+    ///     AttemptState::<u64>::Clear.admit(&policy, late),
+    ///     AdmitEvaluation::DeadlineOverflow
+    /// );
+    /// ```
+    DeadlineOverflow,
 }
 
 /// The state of a subject that cannot be admitted. [`AttemptState::Clear`]

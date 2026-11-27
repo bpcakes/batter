@@ -58,6 +58,7 @@ pub const CREATE_RUNLIMIT_ATTEMPTS_SQL: &str =
 // in SQL; this successor reads the delay from the schedule Rust binds.
 const COMPLETE_SQL: &str = include_str!("attempt_complete_scheduled.sql");
 const CLEANUP_SQL: &str = include_str!("attempt_cleanup.sql");
+const DEADLINE_RANGE: &str = "attempt lease expiry exceeds the storage range";
 const PHASE: CheckPhase = CheckPhase::AcquiringCounterRowLocks;
 // Stable protocol: a distinct two-integer namespace and 256 capacity shards.
 const LOCK_NAMESPACE: i32 = 0x524c_4154;
@@ -294,10 +295,12 @@ async fn admit_transaction(
         AdmitEvaluation::Grant(pending) => pending,
         // The held state is left unstored: see the module's clock note.
         AdmitEvaluation::Denied(denied) => return finish_denial(tx, denied.denial().into()).await,
+        // The same refusal as a deadline past the storage range below. A
+        // `BIGINT` millisecond clock ends long before the state's time does.
+        AdmitEvaluation::DeadlineOverflow => return Err(invariant(DEADLINE_RANGE)),
     };
     let failures = i64::from(pending.failures());
-    let until_ms = row::stored_instant(pending.until())
-        .ok_or_else(|| invariant("attempt lease expiry exceeds the storage range"))?;
+    let until_ms = row::stored_instant(pending.until()).ok_or_else(|| invariant(DEADLINE_RANGE))?;
     // A held lease leaves both failure timestamps unread until it ends, so
     // every reservation stores the admission instant in them.
     let token_row = match stored {

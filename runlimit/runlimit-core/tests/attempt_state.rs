@@ -50,6 +50,7 @@ fn grant(state: AttemptState<u8>, now: u64) -> (u32, Duration) {
     match state.admit(&policy(), ms(now)) {
         AdmitEvaluation::Grant(pending) => (pending.failures(), pending.until()),
         AdmitEvaluation::Denied(denied) => panic!("unexpected denial {:?}", denied.denial()),
+        AdmitEvaluation::DeadlineOverflow => panic!("the lease deadline overflowed"),
     }
 }
 fn denial(state: AttemptState<u8>, now: u64) -> (AttemptState<u8>, LeaseDenial) {
@@ -59,6 +60,7 @@ fn denial_at(state: AttemptState<u8>, now: Duration) -> (AttemptState<u8>, Lease
     match state.admit(&policy(), now) {
         AdmitEvaluation::Denied(denied) => (denied.held().into(), denied.denial()),
         AdmitEvaluation::Grant(pending) => panic!("unexpected grant {pending:?}"),
+        AdmitEvaluation::DeadlineOverflow => panic!("the lease deadline overflowed"),
     }
 }
 fn busy(remaining: u64) -> LeaseDenial {
@@ -268,32 +270,42 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
     assert_eq!(completion.consecutive_failures(), u32::MAX);
     assert_eq!(completion.retry_after().duration(), ms(MAXIMUM));
 
-    // Every grant is live at its own evaluation instant, up to the last one a
-    // backend may sample.
+    // Every grant lasts the whole lease, up to the last instant one fits
+    // before the end of representable time.
     let end = Duration::MAX;
-    for now in [
-        ms(1_000),
-        ms(50_000),
-        end.saturating_sub(Duration::from_nanos(1)),
-    ] {
-        for state in [AttemptState::Clear, failed(3, 0, 0), leased(1, 0)] {
+    let last_grant = end.saturating_sub(ms(LEASE));
+    let admissible = [AttemptState::Clear, failed(3, 0, 0), leased(1, 0)];
+    for now in [ms(1_000), ms(50_000), last_grant] {
+        for state in admissible {
             let AdmitEvaluation::Grant(pending) = state.admit(&policy, now) else {
-                panic!("an admissible subject was denied");
+                panic!("an admissible subject was not granted");
             };
             let lease = AttemptState::Leased(pending.issue(TOKEN));
-            assert!(pending.until() > now);
+            assert_eq!(pending.until(), now.saturating_add(ms(LEASE)));
             assert_eq!(lease.settle(&policy, now), lease);
         }
     }
-    // The backend obligations exclude the last instant itself: no later
-    // deadline is representable there, so the deadline saturates to it.
-    let AdmitEvaluation::Grant(pending) = AttemptState::<u8>::Clear.admit(&policy, end) else {
-        panic!("clear subject was denied");
-    };
-    assert_eq!(pending.until(), end);
-    // At the end of representable time the failure's retry and quiet deadlines
-    // both saturate to that same instant, so the expiry counts and then clears.
+    // Past that instant no deadline is representable. A subject that would be
+    // admitted is refused instead of taking a shortened or expired lease.
+    for now in [last_grant.saturating_add(Duration::from_nanos(1)), end] {
+        for state in admissible {
+            assert_eq!(state.admit(&policy, now), AdmitEvaluation::DeadlineOverflow);
+        }
+    }
+    // A held subject is still denied there, and its lease still expires. The
+    // failure's retry and quiet deadlines both saturate to the last instant,
+    // so at that instant the expiry counts and then clears.
     let last = AttemptState::Leased(AttemptLease::new(TOKEN, 0, end));
+    let nanosecond = Duration::from_nanos(1);
+    assert_eq!(
+        denial_at(last, end.saturating_sub(nanosecond)),
+        (
+            last,
+            LeaseDenial::Busy {
+                retry_after: Delay::new(nanosecond),
+            }
+        )
+    );
     assert_eq!(last.settle(&policy, end), AttemptState::Clear);
     // A failure 1 ms before that instant cannot store its 10 ms delay. Its
     // completion and an admission at the same instant report the same wait.

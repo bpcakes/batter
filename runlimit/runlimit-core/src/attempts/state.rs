@@ -32,10 +32,6 @@ use crate::Delay;
 ///   backend does with its server clock. The second choice has a visible
 ///   cost wherever a denial or a stale completion left the stored state
 ///   alone: a lease reported expired is live again before its deadline.
-///   Samples stay below [`Duration::MAX`]. No later deadline is representable
-///   at that last instant, so a lease granted there is already expired. The
-///   memory backend reads such a sample as the instant before it; the
-///   PostgreSQL backend's millisecond clock cannot reach it.
 /// - A token is never issued again for a subject while a receipt that carries
 ///   it can still be presented, including after the subject's stored state
 ///   was removed and created again. Telling a lease from the one before it is
@@ -269,8 +265,11 @@ impl<T> AttemptState<T> {
 
     /// Evaluates one admission at `now` without changing anything.
     ///
-    /// A granted lease is live at `now` for every instant below
-    /// [`Duration::MAX`], which the backend obligations exclude.
+    /// A granted lease lasts the whole policy lease from `now`. Within one
+    /// lease of [`Duration::MAX`] that deadline is not representable, and a
+    /// subject that would be granted is refused with
+    /// [`AdmitEvaluation::DeadlineOverflow`] instead of a shortened or
+    /// already expired lease. Denials are unaffected there.
     pub fn admit(self, policy: &AttemptPolicy, now: Duration) -> AdmitEvaluation<T> {
         let failures = match self.settle(policy, now) {
             Self::Clear => 0,
@@ -290,10 +289,10 @@ impl<T> AttemptState<T> {
             }
             Self::Failed(failed) => failed.failures.get(),
         };
-        AdmitEvaluation::Grant(PendingLease {
-            failures,
-            until: now.saturating_add(policy.lease().duration()),
-        })
+        match now.checked_add(policy.lease().duration()) {
+            Some(until) => AdmitEvaluation::Grant(PendingLease { failures, until }),
+            None => AdmitEvaluation::DeadlineOverflow,
+        }
     }
 
     /// Evaluates the completion presented by `token` at `now`.

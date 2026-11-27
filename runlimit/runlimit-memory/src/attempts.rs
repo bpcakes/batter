@@ -30,14 +30,10 @@ struct State {
     now: Duration,
     cursor: Option<Key>,
 }
-/// The last instant an evaluation uses. `AttemptState` needs every sample
-/// below `Duration::MAX`, where no later lease deadline is representable.
-const LAST_INSTANT: Duration = Duration::MAX.saturating_sub(Duration::from_nanos(1));
 impl State {
-    /// The evaluation instant for a clock sample: it never decreases and never
-    /// passes [`LAST_INSTANT`].
+    /// The evaluation instant for a clock sample. It never decreases.
     fn advance(&mut self, sample: Duration) -> Duration {
-        self.now = self.now.max(sample).min(LAST_INSTANT);
+        self.now = self.now.max(sample);
         self.now
     }
 }
@@ -71,6 +67,11 @@ pub enum MemoryAttemptError {
     /// The process exhausted its unique receipt sequence.
     #[error("attempt receipt sequence exhausted")]
     SequenceExhausted,
+    /// The clock is within one lease of the end of representable time, so the
+    /// lease deadline of an otherwise admitted attempt cannot be held. Only an
+    /// injected clock reaches it; denials are still reported there.
+    #[error("attempt clock exhausted its representable range")]
+    ClockExhausted,
 }
 
 /// The only process-local completion failure: poisoned attempt state.
@@ -87,8 +88,7 @@ impl MemoryAttemptLimiter {
 }
 impl<C: Clock> MemoryAttemptLimiter<C> {
     /// Creates a limiter with an injected monotonic clock. A sample earlier
-    /// than one already seen is read as that one, and `Duration::MAX` as the
-    /// instant before it.
+    /// than one already seen is read as that one.
     pub fn with_clock(capacity: NonZeroUsize, clock: C) -> Self {
         Self {
             state: Arc::default(),
@@ -111,7 +111,8 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
     /// Reserves exactly one attempt. Expired reservations count as failures.
     ///
     /// # Errors
-    /// Returns an error on poisoned state or exhausted receipt sequence.
+    /// Returns an error on poisoned state, an exhausted receipt sequence, or a
+    /// clock too close to the end of representable time to hold a lease.
     pub fn admit(
         &self,
         subject: AttemptSubject<'_>,
@@ -146,6 +147,9 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
                         entry.state = denied.held().into();
                     }
                     Err(denial)
+                }
+                AdmitEvaluation::DeadlineOverflow => {
+                    return Err(MemoryAttemptError::ClockExhausted);
                 }
             }
         };

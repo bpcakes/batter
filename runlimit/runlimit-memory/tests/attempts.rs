@@ -8,12 +8,12 @@ use runlimit_core::{
 };
 use runlimit_memory::{
     Clock,
-    attempts::{MemoryAttemptLimiter, MemoryAttemptReceipt},
+    attempts::{MemoryAttemptError, MemoryAttemptLimiter, MemoryAttemptReceipt},
 };
 use std::{
     num::NonZeroUsize,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -154,29 +154,46 @@ fn a_receipt_that_outlives_its_removed_subject_cannot_complete_a_later_lease() {
     ));
 }
 
-/// No later deadline is representable at `Duration::MAX`, so a lease granted
-/// there would already be expired and a second admission would be granted too.
+/// A lease is granted whole or not at all, and one that ends exactly at the
+/// end of representable time still expires there.
 #[test]
-fn a_clock_at_the_end_of_representable_time_still_grants_one_live_lease() {
-    struct End;
-    impl Clock for End {
+fn a_lease_deadline_past_representable_time_is_refused_and_a_held_lease_still_expires() {
+    #[derive(Clone)]
+    struct Late(Arc<Mutex<Duration>>);
+    impl Clock for Late {
         fn now(&self) -> Duration {
-            Duration::MAX
+            *self.0.lock().unwrap()
         }
     }
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), End);
+    let end = Duration::MAX;
+    let clock = Late(Arc::new(Mutex::new(
+        end.saturating_sub(Duration::from_millis(20)),
+    )));
+    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
+    // The 20 ms lease ends at the last instant, which is still representable.
     let first = receipt(store.admit(subject).unwrap());
+    *clock.0.lock().unwrap() = end.saturating_sub(Duration::from_millis(1));
     assert!(matches!(
         store.admit(subject).unwrap(),
-        AttemptAdmission::Denied(AttemptDenial::Busy { .. })
+        AttemptAdmission::Denied(AttemptDenial::Busy { retry_after })
+            if retry_after.duration() == Duration::from_millis(1)
     ));
-    assert!(matches!(
+    // At its deadline the lease has expired, so its receipt is stale. No new
+    // lease fits after that instant, and none is granted.
+    *clock.0.lock().unwrap() = end;
+    for _ in 0..2 {
+        assert!(matches!(
+            store.admit(subject),
+            Err(MemoryAttemptError::ClockExhausted)
+        ));
+    }
+    assert_eq!(
         store.complete(first, AttemptOutcome::Success).unwrap(),
-        AttemptCompletionResult::Applied(done) if done.consecutive_failures() == 0
-    ));
+        AttemptCompletionResult::Stale
+    );
 }
 
 #[test]

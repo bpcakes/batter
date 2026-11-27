@@ -55,7 +55,11 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   failure or retry fields and no second copy of a rule. Only a transition
   builds a `DeniedAdmission` or an `AppliedCompletion`, each pairing the
   narrower state it can leave with the denial or completion that state gives;
-  keep their fields private rather than widening either to `AttemptState`. A lease token is the
+  keep their fields private rather than widening either to `AttemptState`. A
+  lease is granted for the whole policy lease or refused: where its deadline
+  is not representable `admit` returns `DeadlineOverflow`, which memory
+  reports as `ClockExhausted` and PostgreSQL as its storage-range invariant.
+  Do not saturate a lease deadline. A lease token is the
   only completion fence, so a backend never issues one again for a subject
   while an older receipt can still present it, across removal and recreation
   of the stored subject included: memory numbers leases from one store-wide
