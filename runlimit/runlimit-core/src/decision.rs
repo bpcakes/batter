@@ -201,34 +201,33 @@ impl Allowance {
         })
     }
 
-    /// An unused allowance: the whole capacity is available.
+    /// The allowance left after `used` units of `capacity`, or `None` when
+    /// `used` exceeds the capacity.
     ///
-    /// With [`Allowance::spend`] this derives an allowance from stored usage
-    /// without a fallible construction: usage beyond the capacity simply
-    /// leaves nothing to spend.
+    /// A backend that stores usage, such as a fixed window's count, derives
+    /// its allowance with this instead of subtracting and re-validating:
+    /// usage beyond the capacity simply leaves no allowance. The caller
+    /// supplies the delay, since only it knows when its capacity returns.
     ///
     /// ```
     /// # use std::time::Duration;
     /// # use runlimit_core::{Allowance, Capacity};
-    /// let full = Allowance::full(Capacity::new(3).unwrap(), Duration::from_secs(60));
-    /// assert_eq!(full.available(), 3);
-    /// assert_eq!(full.spend(2).map(Allowance::available), Some(1));
-    /// assert_eq!(full.spend(2).and_then(|left| left.spend(2)), None);
+    /// let capacity = Capacity::new(3).unwrap();
+    /// let left = Allowance::from_usage(capacity, 2, Duration::from_secs(60)).unwrap();
+    /// assert_eq!(left.available(), 1);
+    /// assert_eq!(Allowance::from_usage(capacity, 4, Duration::from_secs(60)), None);
     /// ```
-    pub const fn full(capacity: Capacity, replenishes_after: Duration) -> Self {
-        Self {
-            capacity,
-            available: capacity.get(),
-            replenishes_after: Delay::new(replenishes_after),
-        }
-    }
-
-    /// The allowance after spending `cost` more, or `None` when less than
-    /// `cost` is available.
-    #[must_use]
-    pub const fn spend(self, cost: u64) -> Option<Self> {
-        match self.available.checked_sub(cost) {
-            Some(available) => Some(Self { available, ..self }),
+    pub const fn from_usage(
+        capacity: Capacity,
+        used: u64,
+        replenishes_after: Duration,
+    ) -> Option<Self> {
+        match capacity.get().checked_sub(used) {
+            Some(available) => Some(Self {
+                capacity,
+                available,
+                replenishes_after: Delay::new(replenishes_after),
+            }),
             None => None,
         }
     }

@@ -56,7 +56,7 @@ Use a focused part while developing; it does not replace a required complete run
 | `no-default-features` | Minimal core/facade, standalone outbound leaf, and the shipped outbound example without dev-only reqwest features. |
 | `doctests` | Workspace all-feature rustdoc examples, including compilation failures for invalid compositions. |
 | `consumers` | Facade feature checks, native/source-copy consumers and graph/tool controls. |
-| `runlimit` | Native default-feature tests, optimized corrupt-state regression and workspace graph checks. |
+| `runlimit` | Native default-feature tests, which include the profile-independent corrupt-state test, and workspace graph checks. |
 | `scripts` | Bounded process, smoke, live-runner and consumer controls. |
 
 [test_matrix.py](../scripts/test_matrix.py) owns the exact inventory and ordered
@@ -410,9 +410,9 @@ population-wide agent-usability result.
 ## Native Runlimit workspace verification
 
 Native tests cover policy validation, bounded memory behavior, PostgreSQL
-storage and transport. The matrix includes default-feature tests and the
-optimized corrupt-state regression; graph/consumer checks reject unwanted
-dependencies. Adapter tests cover quota-before-work, authenticated attempts and
+storage and transport. The matrix includes default-feature tests, among them
+the corrupt-state test, which evaluates the same way in every build profile;
+graph/consumer checks reject unwanted dependencies. Adapter tests cover quota-before-work, authenticated attempts and
 registered expiry maintenance. See [native guidance](../runlimit/AGENTS.md).
 
 ## Enqueue-intent reconciliation

@@ -31,15 +31,11 @@ impl Entry {
     ) -> Result<(Self, Allowance), QuotaDenial> {
         let limit = check.policy().limit();
         let replenishes_after = remaining_duration(expires - now);
-        Allowance::full(limit, replenishes_after)
-            .spend(self.used)
-            .and_then(|left| left.spend(check.cost()))
-            .map(|allowance| {
-                // Both fit the limit here, so their sum cannot overflow.
-                let entry = Self {
-                    used: self.used + check.cost(),
-                };
-                (entry, allowance)
+        self.used
+            .checked_add(check.cost())
+            .and_then(|used| {
+                let allowance = Allowance::from_usage(limit, used, replenishes_after)?;
+                Some((Self { used }, allowance))
             })
             .ok_or_else(|| QuotaDenial::new(limit, replenishes_after))
     }
@@ -57,9 +53,9 @@ impl Entry {
 
     pub(crate) fn open(check: &Check<'_>, now: u128) -> (Self, Allowance, u128) {
         let window = check.policy().window();
-        let allowance = Allowance::full(check.policy().limit(), window.duration())
-            .spend(check.cost())
-            .expect("a check's cost never exceeds its policy's capacity");
+        let allowance =
+            Allowance::from_usage(check.policy().limit(), check.cost(), window.duration())
+                .expect("a check's cost never exceeds its policy's capacity");
         let entry = Self { used: check.cost() };
         (entry, allowance, now + u128::from(window.millis()))
     }

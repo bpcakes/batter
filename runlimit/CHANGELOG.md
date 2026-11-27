@@ -9,16 +9,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
-- `Allowance::full(capacity, replenishes_after)` is an unused allowance, and
-  `Allowance::spend(cost)` returns the allowance after spending `cost`, or
-  `None` when less is available. Together they derive an allowance from
-  stored usage without a fallible construction. `runlimit-memory` evaluates
-  fixed-window entries through them, so usage above the limit, which no path
-  writes, fails closed as a denial in every build profile; the
-  `debug_assert` and saturating subtraction that guarded it, their
-  profile-split tests and the release-only matrix run are gone.
-  `runlimit-postgres` derives a sampled allowance the same way
-  (`batter-39wm.6`).
+- `Allowance::from_usage(capacity, used, replenishes_after)` returns the
+  allowance left after `used` units, or `None` when `used` exceeds the
+  capacity, so a backend that stores usage derives its allowance without
+  subtracting and re-validating. The caller supplies the delay.
+  `runlimit-memory` evaluates fixed-window entries through it, so stored
+  usage above the limit, which no path writes, reads as ordinary quota
+  exhaustion in every build profile: a denial for an enforced policy and a
+  shadow denial for a shadow one. The `debug_assert` and saturating
+  subtraction that guarded it, their profile-split tests and the release-only
+  matrix run are gone. `runlimit-postgres` derives a sampled allowance the
+  same way (`batter-39wm.6`).
 - `Capacity::get_i64`, `QuotaPeriod::millis_i64` and `Check::cost_i64` return
   the validated numbers as exact signed 64-bit integers, and
   `Allowance::with_replenishes_after` replaces an allowance's delay without
@@ -113,8 +114,25 @@ The format is based on [Keep a Changelog], and this project adheres to
       Err(AvailableExceedsCapacity { capacity, available }) => {}
       Ok(allowance) => {}
   }
-  // BatchDecision::allowed(..) now fails with EmptyAllowedBatch;
-  // denied(..) and shadow_denied(..) with DeniedIndexOutOfRange { index, batch_size }.
+
+  // Before:
+  let allowed: Result<BatchDecision, DecisionError> = BatchDecision::allowed(allowances);
+  if let Err(DecisionError::EmptyBatch) = allowed {}
+  // After:
+  let allowed: Result<BatchDecision, EmptyAllowedBatch> = BatchDecision::allowed(allowances);
+  if let Err(EmptyAllowedBatch) = allowed {}
+
+  // Before:
+  match BatchDecision::denied(index, batch_size, denial) {
+      Err(DecisionError::DeniedIndexOutOfRange { index, batch_size }) => {}
+      Err(_) => unreachable!(),
+      Ok(decision) => {}
+  }
+  // After: the same pattern for denied(..) and shadow_denied(..).
+  match BatchDecision::shadow_denied(index, batch_size, quota_denial) {
+      Err(DeniedIndexOutOfRange { index, batch_size }) => {}
+      Ok(decision) => {}
+  }
   ```
 - **Breaking:** `AttemptPolicy::delay_schedule` returns `Vec<QuotaPeriod>`
   instead of `Vec<Duration>`. Each element is the same nonzero,

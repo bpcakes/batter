@@ -15,14 +15,15 @@ use crate::{
 mod session;
 
 /// The one conversion of a stored entry's remaining lifetime, in clock
-/// milliseconds, to a delay. An entry never outlives its policy's window or
-/// period, which `runlimit-core` bounds by `MAX_WINDOW`, far below
-/// `u64::MAX` milliseconds, so the narrowing cannot fail.
+/// milliseconds, to a delay. A fixed-window entry lives at most one window,
+/// and a GCRA entry at most its policy's full refill time, which can exceed
+/// one period; `runlimit-core` bounds both by `MAX_WINDOW` when it validates
+/// the policy, far below `u64::MAX` milliseconds, so the narrowing cannot
+/// fail.
 pub(crate) fn remaining_duration(millis: u128) -> Duration {
-    Duration::from_millis(
-        u64::try_from(millis)
-            .expect("a stored entry's remaining lifetime cannot exceed its policy window"),
-    )
+    Duration::from_millis(u64::try_from(millis).expect(
+        "a stored entry's remaining lifetime is bounded by its validated window or full refill",
+    ))
 }
 
 pub(crate) use session::{

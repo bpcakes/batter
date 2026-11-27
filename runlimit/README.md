@@ -805,8 +805,9 @@ work admitted during a time window.
 
 Run from the Batter repository root. Rust 1.100.0, the default workspace
 toolchain, is also the minimum. Root `scripts/verify.sh` includes all native tests,
-default-feature tests/lint, strict all-feature lint, doctests, and the release-mode
-memory corruption/fail-closed regression. Use the root Beads tracker and
+default-feature tests/lint, strict all-feature lint and doctests; the memory
+corrupt-state test evaluates the same way in every build profile, so it needs
+no separate release run. Use the root Beads tracker and
 [testing guide](../docs/testing.md#native-runlimit-workspace-verification).
 
 ```sh

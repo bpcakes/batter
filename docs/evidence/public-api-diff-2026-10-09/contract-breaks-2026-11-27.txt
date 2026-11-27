@@ -16,10 +16,10 @@ and a `Migration:` sentence on its replacement's rustdoc:
 `MemoryAttemptLimiter::builder` and `MemoryAttemptLimiterBuilder`). The
 return types of `Allowance::new`, `BatchDecision::allowed`, `denied` and
 `shadow_denied` change with them; surface.py does not compare signatures.
-`Allowance::full` and `Allowance::spend` are additions. runlimit-postgres is
+`Allowance::from_usage` is an addition. runlimit-postgres is
 unchanged.
 
-## runlimit-core: 861 -> 884 entries; 13 removed, 36 added
+## runlimit-core: 861 -> 883 entries; 13 removed, 35 added
 - REMOVED enum runlimit_core::DecisionError
 - REMOVED impl runlimit_core::DecisionError: Clone
 - REMOVED impl runlimit_core::DecisionError: Copy
@@ -61,8 +61,7 @@ unchanged.
 + ADDED   impl runlimit_core::EmptyAllowedBatch: Error
 + ADDED   impl runlimit_core::EmptyAllowedBatch: PartialEq
 + ADDED   impl runlimit_core::EmptyAllowedBatch: StructuralPartialEq
-+ ADDED   method runlimit_core::Allowance::full
-+ ADDED   method runlimit_core::Allowance::spend
++ ADDED   method runlimit_core::Allowance::from_usage
 + ADDED   struct runlimit_core::AvailableExceedsCapacity
 + ADDED   struct runlimit_core::DeniedIndexOutOfRange
 + ADDED   struct runlimit_core::EmptyAllowedBatch
