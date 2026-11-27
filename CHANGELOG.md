@@ -31,6 +31,19 @@ contracts, capability facts and validation history.
   })?;
   ```
 
+  A generic helper that calls `prepare` on a built `HttpQuota` names the new
+  higher-ranked selector bound:
+
+  ```rust
+  // Before:
+  K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+  // After:
+  K: for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) -> DerivedSubject<'a, L::Policy>
+      + Send
+      + Sync
+      + 'static,
+  ```
+
   Stored counters: a selector that returned
   `hasher.hash_for(policy, material).into_unbound_subject_key()` and now
   returns `deriver.derive(material)`, with the same secret and normalized

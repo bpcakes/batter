@@ -30,14 +30,22 @@ pub fn register_signals(supervisor: &mut Supervisor) -> Result<(), BoxError> {
     Ok(())
 }
 
-/// Both independent failures remain available for a trusted application sink.
+/// A failed example: its body, its shutdown, or both, each kept whole for a
+/// trusted application sink.
 #[allow(
     dead_code,
     reason = "not every example awaits a body beside its shutdown"
 )]
-pub struct CompletionFailure {
-    pub body: Option<BoxError>,
-    pub shutdown: Option<ShutdownFailure>,
+pub enum CompletionFailure {
+    /// The body failed and shutdown succeeded.
+    Body(BoxError),
+    /// Shutdown failed after the body succeeded.
+    Shutdown(ShutdownFailure),
+    /// Both failed independently.
+    Both {
+        body: BoxError,
+        shutdown: ShutdownFailure,
+    },
 }
 
 impl std::fmt::Display for CompletionFailure {
@@ -62,19 +70,16 @@ pub fn complete(
     body: Result<(), BoxError>,
     shutdown: Result<ShutdownSuccess, ShutdownFailure>,
 ) -> Result<ShutdownSuccess, BoxError> {
-    match (body, shutdown) {
-        (Ok(()), Ok(success)) => Ok(success),
-        (body, shutdown) => {
-            let failure = CompletionFailure {
-                body: body.err(),
-                shutdown: shutdown.err(),
-            };
-            tracing::warn!(
-                body_failed = failure.body.is_some(),
-                shutdown_failed = failure.shutdown.is_some(),
-                "example did not complete successfully"
-            );
-            Err(Box::new(failure))
-        }
-    }
+    let failure = match (body, shutdown) {
+        (Ok(()), Ok(success)) => return Ok(success),
+        (Err(body), Ok(_)) => CompletionFailure::Body(body),
+        (Ok(()), Err(shutdown)) => CompletionFailure::Shutdown(shutdown),
+        (Err(body), Err(shutdown)) => CompletionFailure::Both { body, shutdown },
+    };
+    tracing::warn!(
+        body_failed = !matches!(failure, CompletionFailure::Shutdown(_)),
+        shutdown_failed = !matches!(failure, CompletionFailure::Body(_)),
+        "example did not complete successfully"
+    );
+    Err(Box::new(failure))
 }

@@ -119,17 +119,14 @@ mod tests {
         let body = Err(std::io::Error::other("body-marker").into());
         let error = complete(body, shutdown).unwrap_err();
         let combined = error.downcast_ref::<CompletionFailure>().unwrap();
+        let CompletionFailure::Both { body, shutdown } = combined else {
+            panic!("both failures must be retained")
+        };
         assert_eq!(
-            combined
-                .body
-                .as_ref()
-                .unwrap()
-                .downcast_ref::<std::io::Error>()
-                .unwrap()
-                .to_string(),
+            body.downcast_ref::<std::io::Error>().unwrap().to_string(),
             "body-marker"
         );
-        let Some(ShutdownFailure::Report(report)) = &combined.shutdown else {
+        let ShutdownFailure::Report(report) = shutdown else {
             panic!("failed shutdown must retain its report")
         };
         assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);

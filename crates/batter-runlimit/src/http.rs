@@ -328,6 +328,33 @@ where
     ///     );
     /// }
     /// ```
+    ///
+    /// A native subject derived with another hasher for another policy fails
+    /// on its type, even when that policy outlives the boundary:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter_runlimit::{ConsumptionError, Quota};
+    /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
+    /// use runlimit_core::{KeyHasher, Limiter};
+    ///
+    /// fn returns_a_foreign_subject<L: Limiter + 'static>(
+    ///     quota: Quota<L>,
+    ///     policies: Vec<L::Policy>,
+    ///     other_policy: &'static L::Policy,
+    /// ) where
+    ///     L::CheckAllError: ConsumptionError,
+    /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    ///     let other_hasher = KeyHasher::new([8; 32]).unwrap(); // Deterministic test secret only.
+    ///     let _ = HttpQuota::new(
+    ///         quota, policies, hasher,
+    ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
+    ///         move |principal: &&'static str, _peer: DirectPeer, _subject| {
+    ///             other_hasher.hash_for(other_policy, *principal)
+    ///         },
+    ///     );
+    /// }
+    /// ```
     pub fn new<P, AE, AF>(
         quota: Quota<L>,
         policies: Vec<L::Policy>,
@@ -406,6 +433,11 @@ where
     /// router merge to panic here, before the service can be registered.
     /// Use distinct paths for public and protected GET handlers.
     /// Response-body streaming is outside the operation and observation lifetime.
+    ///
+    /// Migration: a generic helper that bounded the selector as
+    /// `K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey` before calling
+    /// `prepare` now bounds it as
+    /// `K: for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) -> DerivedSubject<'a, L::Policy>`.
     pub fn prepare<P, AE, AF>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
     where
         P: Clone + Send + Sync + 'static,

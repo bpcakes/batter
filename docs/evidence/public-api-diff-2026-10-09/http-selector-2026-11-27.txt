@@ -1,7 +1,7 @@
 batter-39wm.8 public API surface check, 2026-11-27
 
-Before: weed/runlimit-contract-breaks-39wm.6 (the stacked base of this change)
-After: weed/runlimit-http-selector-39wm.8
+Before: 13a8dcc1, weed/runlimit-contract-breaks-39wm.6 (the stacked base of this change)
+After: weed/runlimit-http-selector-39wm.8, the selector-deriver revision
 Toolchain: nightly-2026-10-01
 Method: existing surface.py over rustdoc JSON from
 `cargo +nightly-2026-10-01 rustdoc -p batter-runlimit --lib --all-features --locked --
@@ -14,8 +14,12 @@ it cannot see the signature change, checked by hand:
 `batter_runlimit::http::HttpQuota::new` gains a `KeyHasher` third argument and
 its selector bound changes from `Fn(&P, DirectPeer, &L::Policy) -> SubjectKey`
 to `for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) ->
-DerivedSubject<'a, L::Policy>`; the same bound changes on `HttpQuota::prepare`. That hard cut has its
-`Breaking:` entry in the root CHANGELOG.md and a `Migration:` sentence on
-`HttpQuota::new`.
+DerivedSubject<'a, L::Policy>`; the same bound changes on `HttpQuota::prepare`.
+That hard cut has its `Breaking:` entry in the root CHANGELOG.md and a
+`Migration:` sentence on `HttpQuota::new` and on `HttpQuota::prepare`.
 
-## batter-runlimit: 229 -> 229 entries; 0 removed, 0 added
+## batter-runlimit: 229 -> 233 entries; 0 removed, 4 added
++ ADDED   method batter_runlimit::http::SubjectDeriver::derive
++ ADDED   method batter_runlimit::http::SubjectDeriver::policy
++ ADDED   struct batter_runlimit::http::DerivedSubject
++ ADDED   struct batter_runlimit::http::SubjectDeriver
