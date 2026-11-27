@@ -165,11 +165,28 @@ fn items(tokens: &[Token], start: usize, end: usize) -> Vec<(usize, usize)> {
 }
 
 /// The identifiers of a parenthesized name list opening at `open`.
-fn name_list(tokens: &[Token], open: usize) -> BTreeSet<String> {
+/// The explicit column list after a declared name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ColumnList {
+    /// No list follows the name.
+    Absent,
+    /// A list of plain names.
+    Names(BTreeSet<String>),
+    /// A list with more than names, such as a column definition list
+    /// (`AS r(value text)`), whose types this guard does not check.
+    Typed,
+}
+
+/// The column list opening at `open`.
+fn column_list(tokens: &[Token], open: usize) -> ColumnList {
     items(tokens, open + 1, closing(tokens, open))
         .into_iter()
-        .filter_map(|(start, _)| word(tokens, start).map(str::to_owned))
-        .collect()
+        .map(|(start, end)| match &tokens[start..end] {
+            [Token::Word(name)] => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<Option<_>>()
+        .map_or(ColumnList::Typed, ColumnList::Names)
 }
 
 #[derive(Clone, Debug)]
@@ -183,7 +200,7 @@ enum ItemSource {
 struct FromItem {
     source: ItemSource,
     alias: Option<String>,
-    columns: Option<BTreeSet<String>>,
+    columns: ColumnList,
     end: usize,
 }
 
@@ -218,9 +235,7 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
             ItemSource::Relation(name)
         }
     };
-    let mut ordinality = false;
     if is(tokens, index, "with") && is(tokens, index + 1, "ordinality") {
-        ordinality = true;
         index += 2;
     }
     if is(tokens, index, "as") {
@@ -232,12 +247,12 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     if alias.is_some() {
         index += 1;
     }
-    let mut columns = None;
+    // Only an explicit list states the columns; `WITH ORDINALITY` adds one
+    // to columns the guard does not otherwise know.
+    let mut columns = ColumnList::Absent;
     if alias.is_some() && punct(tokens, index, '(') {
-        columns = Some(name_list(tokens, index));
+        columns = column_list(tokens, index);
         index = closing(tokens, index) + 1;
-    } else if ordinality && let Some(alias) = &alias {
-        columns = Some(BTreeSet::from([alias.clone(), "ordinality".to_owned()]));
     }
     FromItem {
         source,
@@ -346,9 +361,9 @@ struct Declarations<'t> {
 
 impl Declarations<'_> {
     fn declare(&mut self, name: &str, declared: Declared) {
-        if name == "pg_catalog" || self.tables.contains_key(name) {
+        if ["pg_catalog", "excluded"].contains(&name) || self.tables.contains_key(name) {
             self.problems.push(format!(
-                "{name} is declared, but names a table or the catalog"
+                "{name} is declared, but names a table, the catalog or EXCLUDED"
             ));
         }
         if self.names.insert(name.to_owned(), declared).is_some() {
@@ -409,10 +424,20 @@ fn declarations<'t>(
             let item = from_item(tokens, item_start);
             if let Some(alias) = &item.alias {
                 let declared = match (&item.columns, &item.source) {
-                    (Some(columns), _) => Declared::Columns(columns.clone()),
-                    (None, ItemSource::Relation(name)) => Declared::Alias(name.clone()),
-                    (None, ItemSource::Query(start, end)) => Declared::Query(*start, *end),
-                    (None, ItemSource::Function) => Declared::Unlisted,
+                    (ColumnList::Names(columns), _) => Declared::Columns(columns.clone()),
+                    (ColumnList::Typed, _) => {
+                        declarations.problems.push(format!(
+                            "{alias}'s column definition list types columns the guard does not check"
+                        ));
+                        Declared::Unlisted
+                    }
+                    (ColumnList::Absent, ItemSource::Relation(name)) => {
+                        Declared::Alias(name.clone())
+                    }
+                    (ColumnList::Absent, ItemSource::Query(start, end)) => {
+                        Declared::Query(*start, *end)
+                    }
+                    (ColumnList::Absent, ItemSource::Function) => Declared::Unlisted,
                 };
                 declarations.declare(alias, declared);
             }
@@ -432,9 +457,9 @@ fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index
     }
     while let Some(name) = word(tokens, index).map(str::to_owned) {
         let mut next = index + 1;
-        let mut listed = None;
+        let mut listed = ColumnList::Absent;
         if punct(tokens, next, '(') {
-            listed = Some(name_list(tokens, next));
+            listed = column_list(tokens, next);
             next = closing(tokens, next) + 1;
         }
         if !is(tokens, next, "as") {
@@ -450,15 +475,37 @@ fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index
             return;
         }
         let close = closing(tokens, next);
-        declarations.declare(
-            &name,
-            listed.map_or(Declared::Query(next + 1, close), Declared::Columns),
-        );
+        let declared = match listed {
+            ColumnList::Absent => Declared::Query(next + 1, close),
+            ColumnList::Names(columns) => Declared::Columns(columns),
+            ColumnList::Typed => {
+                declarations
+                    .problems
+                    .push(format!("{name}'s column list holds more than names"));
+                Declared::Unlisted
+            }
+        };
+        declarations.declare(&name, declared);
         if !punct(tokens, close + 1, ',') {
             return;
         }
         index = close + 2;
     }
+}
+
+/// The end of the parenthesized query holding token `index`, or of the
+/// statement.
+fn enclosing_end(tokens: &[Token], index: usize) -> usize {
+    let mut depth = 0_usize;
+    for open in (0..index).rev() {
+        match tokens[open] {
+            Token::Punct(')') => depth += 1,
+            Token::Punct('(') if depth == 0 => return closing(tokens, open),
+            Token::Punct('(') => depth -= 1,
+            _ => {}
+        }
+    }
+    tokens.len()
 }
 
 /// The qualified names in `sql` that are not columns of their receiver, and
@@ -470,13 +517,21 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let tokens = tokenize(sql);
     let declarations = declarations(&tokens, tables);
     let mut found = declarations.problems.clone();
-    // EXCLUDED is the target of the statement's one INSERT.
-    let inserts: Vec<&str> = (1..tokens.len())
+    // EXCLUDED is the target of the statement's one INSERT, inside that
+    // INSERT's ON CONFLICT clause.
+    let inserts: Vec<usize> = (1..tokens.len())
         .filter(|&index| is(&tokens, index, "into") && is(&tokens, index - 1, "insert"))
-        .filter_map(|index| word(&tokens, index + 1))
         .collect();
     let excluded = match inserts.as_slice() {
-        [target] => tables.get(*target).cloned(),
+        [into] => {
+            let end = enclosing_end(&tokens, *into);
+            (*into..end)
+                .find(|&index| is(&tokens, index, "conflict") && is(&tokens, index - 1, "on"))
+                .and_then(|conflict| {
+                    let target = word(&tokens, into + 1)?;
+                    Some((conflict..end, tables.get(target).cloned()?))
+                })
+        }
         _ => None,
     };
     for dot in 1..tokens.len() {
@@ -499,7 +554,10 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
             continue;
         }
         let columns = if receiver == "excluded" {
-            excluded.clone()
+            excluded
+                .as_ref()
+                .filter(|(clause, _)| clause.contains(&dot))
+                .map(|(_, columns)| columns.clone())
         } else {
             declarations.columns(receiver, 0)
         };

@@ -63,7 +63,15 @@ fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
             .filter(|column| !CONSTRAINT_WORDS.contains(column))
             .map(str::to_owned)
             .collect();
-        tables.insert(table, columns);
+        // A repeated conditional create leaves the table as it is.
+        let conditional = is(tokens, 2, "if");
+        match tables.get(&table) {
+            Some(_) if conditional => {}
+            Some(_) => panic!("CREATE TABLE {table} creates an existing table"),
+            None => {
+                tables.insert(table, columns);
+            }
+        }
     } else if is(tokens, 0, "drop") && is(tokens, 1, "table") {
         for (start, _) in items(tokens, skip_guards(tokens, 2), tokens.len()) {
             if let Some(table) = word(tokens, start) {
@@ -146,7 +154,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          ADD CONSTRAINT k UNIQUE (id);
          ALTER TABLE t RENAME COLUMN used TO spent;
          ALTER TABLE t RENAME TO counters;
-         DROP TABLE gone;",
+         DROP TABLE gone;
+         CREATE TABLE IF NOT EXISTS counters (unrelated BIGINT);",
     ]);
     assert_eq!(tables.keys().collect::<Vec<_>>(), ["counters"]);
     assert_eq!(

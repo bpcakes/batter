@@ -147,6 +147,14 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "WITH t AS (SELECT 1 AS id) INSERT INTO t (id) VALUES (1) \
          ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.id",
         "SELECT pg_catalog.row_to_json FROM t AS pg_catalog",
+        // WITH ORDINALITY adds a column; it does not name one after the alias.
+        "SELECT e.e, e.ordinality FROM pg_catalog.jsonb_each($1) WITH ORDINALITY AS e",
+        // A column definition list types its columns through search_path.
+        "SELECT r.value FROM pg_catalog.jsonb_to_record($1) AS r(value text)",
+        // EXCLUDED is the conflict pseudo-row only: no alias, and no row
+        // before the conflict clause.
+        "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",
+        "INSERT INTO t (id) SELECT u.id FROM u WHERE EXCLUDED.used > 0 ON CONFLICT (id) DO NOTHING",
         // EXCLUDED needs exactly one INSERT, into a migrated table.
         "WITH i AS (INSERT INTO u (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label \
          RETURNING id) INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET used = EXCLUDED.used",
