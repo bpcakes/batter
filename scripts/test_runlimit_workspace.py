@@ -1,8 +1,10 @@
 """Negative controls for native source ownership and preserved import artifacts."""
 import copy
 import hashlib
+import io
 import json
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -12,7 +14,7 @@ from check_runlimit_workspace import (
     NATIVE,
     validate_assets,
     validate_graph,
-    validate_packaged,
+    validate_published,
 )
 from package import eligible
 
@@ -89,7 +91,7 @@ class AssetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'changed or missing'):
                 validate_assets(root)
 
-    def test_provenance_records_stay_inventoried_unpackaged_and_unembedded(self):
+    def test_provenance_records_are_inventoried_regular_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             native = root / 'runlimit'
@@ -99,6 +101,7 @@ class AssetTests(unittest.TestCase):
             for name in ('LICENSE-MIT', 'LICENSE-APACHE'):
                 (native / name).write_text(name)
             (native / 'provenance' / 'README.md').write_text('records')
+            (native / 'provenance' / '.DS_Store').write_bytes(b'finder metadata')
             names = ['LICENSE-MIT', 'LICENSE-APACHE', 'provenance/runlimit-postgres/superseded.sql']
             expected = {name: hashlib.sha256((native / name).read_bytes()).hexdigest()
                         for name in names}
@@ -112,56 +115,40 @@ class AssetTests(unittest.TestCase):
                 validate_assets(root)
             stray.unlink()
 
-            package = native / 'runlimit-postgres'
-            for restored in (package / 'src' / 'superseded.sql',
-                             root / 'crates' / 'adapter' / 'sql' / 'renamed.sql'):
-                restored.parent.mkdir(parents=True, exist_ok=True)
-                restored.write_bytes(record.read_bytes())
-                with self.subTest(restored=restored), self.assertRaisesRegex(ValueError, 'copied to'):
-                    validate_assets(root)
-                restored.unlink()
-            (package / 'src' / 'live.sql').write_text('SELECT 3')
-            validate_assets(root)
+            live = native / 'runlimit-postgres' / 'src' / 'superseded.sql'
+            live.parent.mkdir(parents=True)
+            live.write_bytes(record.read_bytes())
+            record.unlink()
+            record.symlink_to(live)
+            with self.assertRaisesRegex(ValueError, 'provenance holds a symlink'):
+                validate_assets(root)
+            record.unlink()
+            record.write_bytes(live.read_bytes())
+            (native / 'provenance' / 'outward').symlink_to(live.parent)
+            with self.assertRaisesRegex(ValueError, 'provenance holds a symlink'):
+                validate_assets(root)
 
-            for link, target in ((package / 'src' / 'superseded.sql', record),
-                                 (package / 'archive', record.parent)):
-                link.symlink_to(target)
-                with self.subTest(link=link), self.assertRaisesRegex(ValueError, 'links into'):
-                    validate_assets(root)
-                link.unlink()
-
-            native_source = package / 'src' / 'lib.rs'
-            adapter_source = root / 'crates' / 'adapter' / 'src' / 'lib.rs'
-            for source in (native_source, adapter_source):
-                source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text('// The imported superseded.sql is never executed.\n'
-                                  'const LIVE: &str = include_str!("live.sql");\n')
-            validate_assets(root)
-            named = (
-                (native_source, 'include_str!("../../provenance/runlimit-postgres/superseded.sql")'),
-                (native_source, 'include_str!(r"../../provenance/runlimit-postgres/superseded.sql")'),
-                (native_source, 'include_bytes!(r#"../../provenance/runlimit-postgres/superseded.sql"#)'),
-                (adapter_source, 'include_str!("../../../runlimit/provenance/runlimit-postgres/'
-                                 'superseded.sql")'),
-                (native_source, '// see provenance/runlimit-postgres/superseded.sql'))
-            resolved = (
-                (native_source, 'include_str!("../../provenance/runlimit-postgres/./superseded.sql")'),
-                (native_source, 'include_str! { "../../provenance//runlimit-postgres/superseded.sql" }'),
-                (native_source, 'include_bytes![r"../../provenance/x/../runlimit-postgres/superseded.sql"]'),
-                (adapter_source, 'include_str!("../../../runlimit/provenance/./runlimit-postgres/'
-                                 'superseded.sql")'))
-            for message, cases in (('names provenance', named), ('includes provenance', resolved)):
-                for source, text in cases:
-                    original = source.read_text()
-                    source.write_text(text + '\n')
-                    with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
-                        validate_assets(root)
-                    source.write_text(original)
-
-            listing = [('runlimit-postgres', package, ['Cargo.toml', 'src/live.sql'])]
-            (package / 'Cargo.toml').write_text('[package]')
-            validate_packaged(root, expected, listing)
-            (package / 'src' / 'superseded.sql').symlink_to(record)
-            listing = [('runlimit-postgres', package, ['src/live.sql', 'src/superseded.sql'])]
-            with self.assertRaisesRegex(ValueError, 'would publish provenance record'):
-                validate_packaged(root, expected, listing)
+    def test_a_package_archive_cannot_carry_a_record(self):
+        record = b'SELECT 1'
+        expected = {'LICENSE-MIT': 'a', 'LICENSE-APACHE': 'b',
+                    'runlimit-postgres/migrations/initial.sql': hashlib.sha256(b'SELECT 0').hexdigest(),
+                    'provenance/runlimit-postgres/superseded.sql': hashlib.sha256(record).hexdigest()}
+        with tempfile.TemporaryDirectory() as directory:
+            def archive(name, members):
+                path = Path(directory) / name
+                with tarfile.open(path, 'w:gz') as bundle:
+                    for member, data in members:
+                        info = tarfile.TarInfo(member)
+                        info.size = len(data)
+                        bundle.addfile(info, io.BytesIO(data))
+                return path
+            clean = archive('clean.crate', [('runlimit-postgres-0.4.0/migrations/initial.sql',
+                                             b'SELECT 0')])
+            validate_published([clean], expected)
+            for member in ('runlimit-postgres-0.4.0/src/superseded.sql',
+                           'runlimit-postgres-0.4.0/archived query.txt',
+                           'runlimit-postgres-0.4.0/README.md'):
+                with self.subTest(member=member), self.assertRaisesRegex(
+                        ValueError, 'would publish provenance record provenance/'):
+                    validate_published([clean, archive('copy.crate', [(member, record)])],
+                                       expected)

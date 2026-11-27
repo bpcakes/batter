@@ -10,12 +10,8 @@ so the import stays auditable. No code path executes these statements.
 | `runlimit-postgres/attempt_complete.sql` | `runlimit-postgres/src/attempt_complete_scheduled.sql` | It restated the backoff formula in SQL instead of reading `AttemptPolicy::delay_schedule`. |
 
 This directory is outside every package, so the records are not published.
-Do not copy a record back into a package, embed one with `include_str!` or
-`include_bytes!`, or add a file here without a digest.
-`scripts/check_runlimit_workspace.py` rejects an uninventoried file here and,
-anywhere else in the tree, a `.sql` file with a record's bytes, a symlink into
-this directory, a Rust source that contains a record's path, even in a
-comment, or whose literal include path resolves to a record. It also rejects
-a record's content in any native package's `cargo package --list` files.
-Refer to a record by its file name. A new statement is a new file beside the
-code that executes it.
+Do not copy a record back into a package or embed one with `include_str!`; a
+new statement is a new file beside the code that executes it.
+`scripts/check_runlimit_workspace.py` requires every file here to be an
+inventoried regular file (no symlinks), and it packages each native crate and
+rejects an archive member, under any name, that carries a record's bytes.
