@@ -174,6 +174,18 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   `StorageInvariant` failure, never a decision that may already have consumed
   quota, and a single check is shaped directly rather than converted from a
   batch of one.
+- The three PostgreSQL limiters share one private shell and do not carry
+  their own copies of it. `runlimit-postgres/src/base.rs` owns the pool,
+  runtime bounds, observer, `Debug` output, the one migration path and bounded
+  connection acquisition. `src/transaction.rs` owns the guarded connection and
+  the one transaction type, which refreshes the server timeouts before every
+  statement and before commit; quota checks and cleanup differ only in the
+  `Family` that names their phases and classifies their failures. Both quota
+  limiters shape and finalize a decision through `admission::finalize`, and
+  `src/pending.rs` is the only place a delay loses authoritative elapsed
+  time. Do not add a second connection, timeout, migration or elapsed-time
+  path beside these. Live suites share `tests/support`'s `IsolatedSchema` and
+  shard-key helpers.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.
   `SubjectKey::from_digest` exists for tests and already-opaque digests only.

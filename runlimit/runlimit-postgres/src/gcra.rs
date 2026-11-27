@@ -3,32 +3,23 @@
 use std::{fmt, future::Future, sync::Arc, time::Instant as WallInstant};
 
 use runlimit_core::{
-    AdmissionObservation, BatchDecision, Check, CleanupObservation, CleanupOutcome, Decision,
-    GcraPolicy, Limiter, Observation, Observer, QuotaMode, gcra, observe_safely, validate_batch,
+    BatchDecision, Check, Decision, GcraPolicy, Limiter, Observer, gcra, validate_batch,
 };
 use sqlx::{
-    Acquire, PgPool, Row,
+    PgPool, Row,
     migrate::{MigrateError, Migrator},
     postgres::PgRow,
     types::chrono::{DateTime, Utc},
 };
-use tokio::time::Instant;
 
 use crate::{
-    BatchCheckError, CheckError, CheckPhase, CleanupPhase, ConnectionCancellationGuard,
-    ConnectionOutcome, MaintenanceError, PostgresConfig,
-    admission::{
-        Admission, CheckTransaction, PendingDenial, PendingQuotaDenial, acquire_check_connection,
-        authoritative_elapsed, batch_decision, single_decision,
-    },
-    maintenance::{
-        acquire_maintenance_connection, commit_maintenance, maintenance_before_commit,
-        set_maintenance_server_timeouts,
-    },
+    BatchCheckError, CheckError, CheckPhase, CleanupPhase, MaintenanceError, PostgresConfig,
+    admission::{Admission, batch_decision, finalize, single_decision},
+    base::PgLimiterBase,
+    pending::{Pending, PendingDenial, PendingQuotaDenial, authoritative_elapsed},
     protocol::{CAPACITY_SHARD_COUNT, capacity_shard},
+    transaction::{self, BoundedConnection, CheckTransaction, ConnectionOutcome},
 };
-
-mod response;
 
 /// Independent, opt-in GCRA storage migration. Strict host migrators may vendor
 /// this SQL into their own migration stream; no fixed-window tables are needed.
@@ -131,18 +122,12 @@ WHERE stored.config_fingerprint = expired.config_fingerprint AND stored.subject_
 /// after releasing database connections.
 #[derive(Clone)]
 pub struct PostgresGcraLimiter {
-    pool: PgPool,
-    config: PostgresConfig,
-    observer: Option<Arc<dyn Observer>>,
+    base: PgLimiterBase<dyn Observer>,
 }
 
 impl fmt::Debug for PostgresGcraLimiter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PostgresGcraLimiter")
-            .field("pool", &self.pool)
-            .field("config", &self.config)
-            .field("has_observer", &self.observer.is_some())
-            .finish()
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.base.fmt_debug("PostgresGcraLimiter", formatter)
     }
 }
 
@@ -150,54 +135,45 @@ impl PostgresGcraLimiter {
     /// Creates a limiter with default operational bounds. Migrate before use.
     pub const fn new(pool: PgPool) -> Self {
         Self {
-            pool,
-            config: PostgresConfig::new(),
-            observer: None,
+            base: PgLimiterBase::new(pool),
         }
     }
 
     /// Uses explicit operational bounds without changing policy semantics.
     #[must_use]
     pub const fn with_config(mut self, config: PostgresConfig) -> Self {
-        self.config = config;
+        self.base.set_config(config);
         self
     }
 
     /// Installs a low-cardinality observer; callback panics are isolated.
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<dyn Observer>) -> Self {
-        self.observer = Some(observer);
+        self.base.set_observer(observer);
         self
     }
 
     /// Returns the underlying pool.
     pub const fn pool(&self) -> &PgPool {
-        &self.pool
+        self.base.pool()
     }
 
     /// Returns the runtime configuration.
     pub const fn config(&self) -> PostgresConfig {
-        self.config
+        self.base.config()
     }
 
     /// Applies only the independent GCRA migrations.
     ///
     /// Every migrator sharing `SQLx` history must ignore unrelated versions.
-    /// Cancellation/error closes the session rather than leaking migration locks.
+    /// The connection returns to the pool only after a successful run and
+    /// unlock; cancellation or an error closes the session rather than leaking
+    /// migration locks.
     ///
     /// # Errors
     /// Returns `SQLx` migration or acquisition failures.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        let mut connection = ConnectionCancellationGuard::new(self.pool.acquire().await?);
-        let mut migrator = sqlx::migrate!("./gcra-migrations");
-        migrator.set_ignore_missing(true);
-        let result = migrator
-            .run_direct(None, &mut **connection.connection(), false)
-            .await;
-        if result.is_ok() {
-            connection.reuse();
-        }
-        result
+        self.base.migrate(&GCRA_MIGRATOR).await
     }
 
     /// Checks and consumes one GCRA quota. Denials consume nothing.
@@ -207,19 +183,7 @@ impl PostgresGcraLimiter {
     pub async fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, CheckError> {
         let started = WallInstant::now();
         let result = self.run(std::slice::from_ref(check), single_decision).await;
-        if let Some(observer) = &self.observer {
-            let observation = match &result {
-                Ok(decision) => {
-                    AdmissionObservation::from_check(check, decision, started.elapsed())
-                }
-                Err(error) => AdmissionObservation::failed_check(
-                    check,
-                    error.consumption(),
-                    started.elapsed(),
-                ),
-            };
-            observe_safely(observer.as_ref(), &Observation::Admission(observation));
-        }
+        self.base.observe_check(check, &result, started.elapsed());
         result
     }
 
@@ -234,26 +198,14 @@ impl PostgresGcraLimiter {
         checks: &[Check<'_, GcraPolicy>],
     ) -> Result<BatchDecision, BatchCheckError> {
         let started = WallInstant::now();
-        let result = match validate_batch(checks, self.config.max_batch_size()) {
+        let result = match validate_batch(checks, self.base.config().max_batch_size()) {
             Ok(()) => self
                 .run(checks, |admission| batch_decision(checks.len(), admission))
                 .await
                 .map_err(BatchCheckError::from),
             Err(error) => Err(error.into()),
         };
-        if let Some(observer) = &self.observer {
-            let observation = match &result {
-                Ok(decision) => {
-                    AdmissionObservation::from_batch(checks, decision, started.elapsed())
-                }
-                Err(error) => AdmissionObservation::failed_batch(
-                    checks,
-                    error.consumption(),
-                    started.elapsed(),
-                ),
-            };
-            observe_safely(observer.as_ref(), &Observation::Admission(observation));
-        }
+        self.base.observe_batch(checks, &result, started.elapsed());
         result
     }
 
@@ -262,16 +214,9 @@ impl PostgresGcraLimiter {
         checks: &[Check<'_, GcraPolicy>],
         build: impl FnOnce(Admission) -> Result<D, CheckError>,
     ) -> Result<D, CheckError> {
-        let connection =
-            acquire_check_connection(&self.pool, self.config.pool_acquire_timeout()).await?;
-        let mut guarded = ConnectionCancellationGuard::new(connection);
-        let deadline = Instant::now() + self.config.operation_timeout();
-        let result =
-            run_transaction(guarded.connection(), checks, self.config, deadline, build).await;
-        guarded.finish(match result {
-            Ok(result) => result.map(Ok),
-            Err(error) => error.map(Err),
-        })
+        let mut connection = self.base.check_connection().await?;
+        let result = run_transaction(&mut connection, checks, self.base.config(), build).await;
+        connection.finish(result)
     }
 
     /// Removes at most `maximum_rows` expired counters and releases their slots.
@@ -282,21 +227,8 @@ impl PostgresGcraLimiter {
     pub async fn cleanup_expired(&self, maximum_rows: u32) -> Result<u64, MaintenanceError> {
         let started = WallInstant::now();
         let result = self.cleanup(maximum_rows).await;
-        if let Some(observer) = &self.observer {
-            let outcome = match &result {
-                Ok(removed) => CleanupOutcome::Confirmed { removed: *removed },
-                Err(error) if error.may_have_removed_rows() => CleanupOutcome::Unknown,
-                Err(_) => CleanupOutcome::NoEffect,
-            };
-            observe_safely(
-                observer.as_ref(),
-                &Observation::Cleanup(CleanupObservation::new(
-                    usize::try_from(maximum_rows).unwrap_or(usize::MAX),
-                    outcome,
-                    started.elapsed(),
-                )),
-            );
-        }
+        self.base
+            .observe_cleanup(maximum_rows, &result, started.elapsed());
         result
     }
 
@@ -304,15 +236,9 @@ impl PostgresGcraLimiter {
         if maximum_rows == 0 {
             return Ok(0);
         }
-        let connection =
-            acquire_maintenance_connection(&self.pool, self.config.pool_acquire_timeout()).await?;
-        let mut guarded = ConnectionCancellationGuard::new(connection);
-        let deadline = Instant::now() + self.config.operation_timeout();
-        let result = cleanup_transaction(guarded.connection(), maximum_rows, deadline).await;
-        guarded.finish(match result {
-            Ok(rows) => ConnectionOutcome::Reusable(Ok(rows)),
-            Err(error) => error.map(Err),
-        })
+        let mut connection = self.base.maintenance_connection().await?;
+        let result = cleanup_transaction(&mut connection, maximum_rows).await;
+        connection.finish(result.map(ConnectionOutcome::Reusable))
     }
 }
 
@@ -355,13 +281,12 @@ fn field<'r, T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>>(
 }
 
 async fn run_transaction<D>(
-    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    connection: &mut BoundedConnection<transaction::Check>,
     checks: &[Check<'_, GcraPolicy>],
     config: PostgresConfig,
-    deadline: Instant,
     build: impl FnOnce(Admission) -> Result<D, CheckError>,
 ) -> Result<ConnectionOutcome<D>, Failure> {
-    let mut transaction = CheckTransaction::begin(connection, deadline).await?;
+    let mut transaction = connection.begin().await?;
     let mut shards = checks
         .iter()
         .map(|check| capacity_shard(check.counter_key()))
@@ -421,36 +346,33 @@ async fn run_transaction<D>(
         config.maximum_rows_per_shard(),
         now_u128,
     )?;
-    match pending {
-        denied @ Pending::Denied { .. } => {
-            let response_now = field(
-                rows.last()
-                    .ok_or_else(|| invariant("missing GCRA response time"))?,
-                "response_now",
-            )?;
-            let decision = build(denied.finish(authoritative_elapsed(database_now, response_now)))
-                .map_err(ConnectionOutcome::Reusable)?;
-            Ok(transaction.deny(decision).await)
-        }
+    // Elapsed time runs through the path's last statement: the preflight for a
+    // denial, the watermark update for an allowance.
+    let response_now = match &pending {
+        Pending::Denied { .. } => field(
+            rows.last()
+                .ok_or_else(|| invariant("missing GCRA response time"))?,
+            "response_now",
+        )?,
         Pending::Allowed(allowances) => {
-            let response_now = persist_allowances(
+            persist_allowances(
                 &mut transaction,
                 &fingerprints,
                 &subjects,
-                &allowances,
+                allowances,
                 &shards,
                 now,
             )
-            .await?;
-            let decision = build(
-                Pending::Allowed(allowances)
-                    .finish(authoritative_elapsed(database_now, response_now)),
-            )
-            .map_err(ConnectionOutcome::Reusable)?;
-            transaction.commit().await?;
-            Ok(ConnectionOutcome::Reusable(decision))
+            .await?
         }
-    }
+    };
+    finalize(
+        transaction,
+        pending,
+        authoritative_elapsed(database_now, response_now),
+        build,
+    )
+    .await
 }
 
 async fn persist_allowances(
@@ -498,22 +420,13 @@ async fn persist_allowances(
     field(&response, "response_now")
 }
 
-enum Pending {
-    Allowed(Vec<gcra::PendingAllowance>),
-    Denied {
-        index: usize,
-        denial: PendingDenial,
-        mode: QuotaMode,
-    },
-}
-
 fn evaluate(
     checks: &[Check<'_, GcraPolicy>],
     rows: &[PgRow],
     counts: &mut [i64; CAPACITY_SHARD_COUNT],
     maximum: u32,
     now: u128,
-) -> Result<Pending, Failure> {
+) -> Result<Pending<gcra::PendingAllowance>, Failure> {
     if rows.len() != checks.len() {
         return Err(invariant("GCRA preflight count disagrees with the batch"));
     }
@@ -581,67 +494,40 @@ fn evaluate(
 }
 
 async fn cleanup_transaction(
-    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    connection: &mut BoundedConnection<transaction::Maintenance>,
     maximum: u32,
-    deadline: Instant,
 ) -> Result<u64, ConnectionOutcome<MaintenanceError>> {
-    let mut transaction = maintenance_before_commit(
-        deadline,
-        CleanupPhase::BeginningTransaction,
-        connection.begin(),
-    )
-    .await?;
-    set_maintenance_server_timeouts(
-        &mut transaction,
-        deadline,
-        CleanupPhase::ConfiguringTimeouts,
-    )
-    .await?;
-    let rows = maintenance_before_commit(
-        deadline,
-        CleanupPhase::DeletingExpiredWindows,
-        sqlx::query(CLEANUP_LOCKS).fetch_all(&mut *transaction),
-    )
-    .await?;
+    let mut transaction = connection.begin().await?;
+    let rows = transaction
+        .fetch_all(
+            CleanupPhase::DeletingExpiredWindows,
+            sqlx::query(CLEANUP_LOCKS),
+        )
+        .await?;
     let shards = rows
         .iter()
         .map(|row| row.try_get::<i16, _>("capacity_shard"))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| ConnectionOutcome::Reusable(MaintenanceError::Database(error)))?;
-    set_maintenance_server_timeouts(
-        &mut transaction,
-        deadline,
-        CleanupPhase::ConfiguringTimeouts,
-    )
-    .await?;
     // Cleanup forgets theoretical arrival times, so its clock observation must
     // survive the deleted rows. Keep that observation monotonic under the same
     // shard locks as admission, and persist it in the deletion transaction.
     // Use a separate statement: the deletion triggers also update ledger rows,
     // and PostgreSQL does not support updating a row twice in one command.
-    maintenance_before_commit(
-        deadline,
-        CleanupPhase::DeletingExpiredWindows,
-        sqlx::query(CLEANUP_ADVANCE_TIME)
-            .bind(&shards)
-            .execute(&mut *transaction),
-    )
-    .await?;
-    set_maintenance_server_timeouts(
-        &mut transaction,
-        deadline,
-        CleanupPhase::ConfiguringTimeouts,
-    )
-    .await?;
-    let deleted = maintenance_before_commit(
-        deadline,
-        CleanupPhase::DeletingExpiredWindows,
-        sqlx::query(CLEANUP_DELETE)
-            .bind(shards)
-            .bind(i64::from(maximum))
-            .execute(&mut *transaction),
-    )
-    .await?;
-    commit_maintenance(deadline, transaction).await?;
+    transaction
+        .execute(
+            CleanupPhase::DeletingExpiredWindows,
+            sqlx::query(CLEANUP_ADVANCE_TIME).bind(&shards),
+        )
+        .await?;
+    let deleted = transaction
+        .execute(
+            CleanupPhase::DeletingExpiredWindows,
+            sqlx::query(CLEANUP_DELETE)
+                .bind(&shards)
+                .bind(i64::from(maximum)),
+        )
+        .await?;
+    transaction.commit().await?;
     Ok(deleted.rows_affected())
 }

@@ -32,6 +32,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   tabulates it for storage that must apply a failure inside one statement.
   This is backend-author API, as `runlimit_core::gcra::evaluate` is for GCRA;
   the limiter APIs and their results are unchanged (`batter-ctk7.6`).
+- `PostgresAttemptLimiter` implements `Debug` and has `config()`, and
+  `PostgresAttemptLimiter::new` is a `const fn`, matching `PostgresLimiter` and
+  `PostgresGcraLimiter` (`batter-2oht`).
 
 ### Fixed
 
@@ -49,6 +52,143 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- The three PostgreSQL limiters now share one private shell for their pool,
+  bounds, observer, migration, bounded connections and transactions, and both
+  quota limiters share one response finisher. No public item is removed,
+  renamed or re-typed; SQL, lock order and persisted state are unchanged. Two
+  observable differences follow here, and the next entry records a third
+  (`batter-2oht`):
+  - `PostgresAttemptLimiter::migrate` returns its connection to the pool after
+    a successful run and unlock, as the other two limiters do. It previously
+    closed the connection on every outcome. An error or cancellation still
+    closes it.
+  - `PostgresGcraLimiter`'s `Debug` output ends with `..`, as
+    `PostgresLimiter`'s does, because the observer is reported only as
+    `has_observer`.
+- **Breaking:** a deadline reached exactly now counts as exhausted when the
+  timeout refresh before a statement or a commit is computed, as a deadline
+  already passed does (`batter-2oht`). A zero remaining budget was previously
+  treated as budget: the refresh was sent with 1 ms server timeouts and could
+  retire a reusable connection when it timed out. The operation now fails
+  before sending that refresh and its connection stays reusable. This is a
+  runtime break: nothing stops compiling, but an admission that could return a
+  denial now fails. If the deadline was reached at the refresh before a later
+  statement, and that refresh and every remaining statement finished before
+  the client timer fired, `PostgresLimiter::check` and `check_all`,
+  `PostgresGcraLimiter::check` and `check_all`, and
+  `PostgresAttemptLimiter::admit` returned their denial. That includes a
+  shadow denial, which permits the request, and the attempt limiter's busy,
+  backoff and storage-capacity denials. They now return
+  `CheckError::TimedOutBeforeCommit` with the phase of the statement that was
+  about to run. Allowances, attempt admissions and completions, and cleanup
+  need a commit, which already failed once the deadline was reached. Quota
+  consumption certainty is unchanged: nothing was consumed either way. The
+  window is a single clock reading wide.
+
+  Newly failing, with its handling:
+
+  ```rust,ignore
+  // Before: the operation deadline was reached exactly as the last
+  // statement's timeout refresh was computed, and that statement finished
+  // before the client timer fired. Each call returned its denial; a shadow
+  // denial permitted the request.
+  let decision = limiter.check(&check).await?;
+  let batch = limiter.check_all(&checks).await?;
+  let admission = attempts.admit(subject).await?;
+
+  // After: the same calls fail before sending the refresh. Nothing was
+  // consumed and no lease was taken, so fail closed as for any other
+  // pre-commit timeout. A single check and an attempt admission report
+  // `CheckError` directly:
+  match limiter.check(&check).await {
+      Ok(decision) => apply(decision),
+      Err(CheckError::TimedOutBeforeCommit { phase }) => fail_closed(phase),
+      Err(error) => fail_closed_for(error),
+  }
+  match attempts.admit(subject).await {
+      Ok(admission) => apply_admission(admission),
+      Err(CheckError::TimedOutBeforeCommit { phase }) => fail_closed(phase),
+      Err(error) => fail_closed_for(error),
+  }
+  // A batch wraps the same error in `BatchCheckError::Check`:
+  match limiter.check_all(&checks).await {
+      Ok(batch) => apply_batch(batch),
+      Err(BatchCheckError::Check(CheckError::TimedOutBeforeCommit { phase })) => {
+          fail_closed(phase)
+      }
+      Err(error) => fail_closed_for_batch(error),
+  }
+  ```
+
+  Log text an operator may match. A call that returned a denial and logged no
+  error can now end as "PostgreSQL rate-limit check timed out while
+  preflighting counter batch; quota was not consumed", or with another phase
+  in place of "preflighting counter batch"; an attempt admission reports
+  "acquiring counter row lock" there, and a batch prints the same text. A
+  statement that follows a refresh which itself used up the budget is still
+  attempted, as before (`batter-pp9j`).
+- **Breaking:** `PostgresLimiter::cleanup_expired` and
+  `PostgresGcraLimiter::cleanup_expired` commit the way a check does: refresh
+  the server timeouts, confirm that budget remains, then attempt the commit
+  (`batter-2oht`). Cleanup previously confirmed the budget first and attempted
+  the commit after the refresh without looking at the clock again. This is a
+  runtime break: nothing stops compiling, but one cleanup that could succeed
+  now fails. Three cases at the deadline are affected differently:
+  - The deadline has been reached or passed on arriving at commit, so no
+    refresh is sent. The error is still `TimedOutBeforeCommit` and no rows are
+    removed, but its phase is `CleanupPhase::PreparingCommit` instead of
+    `CleanupPhase::StartingCommit`.
+  - The refresh itself reports a timeout, from the client deadline or from
+    the server. Unchanged: `TimedOutBeforeCommit` with
+    `CleanupPhase::PreparingCommit`.
+  - The refresh succeeds and the budget check that follows finds the deadline
+    passed. Cleanup used to attempt the commit anyway, with three possible
+    results: `Ok(removed)` when the server acknowledged before the client
+    timer fired, `CommitOutcomeUnknown` when `SQLx` returned an error first (a
+    connection lost during commit, for example), and `CommitTimedOut`
+    otherwise. The last two are uncertain outcomes. It now stops before the
+    attempt with `TimedOutBeforeCommit` and `CleanupPhase::StartingCommit`,
+    and removes no rows.
+
+  A cleanup that used to succeed can also end with
+  `CleanupPhase::PreparingCommit`. Cleanup read the clock twice before commit.
+  If the first reading still had budget and the second, for the refresh,
+  found the deadline reached exactly, the refresh was sent with 1 ms timeouts
+  and the commit could follow and succeed. A deadline reached exactly now
+  counts as exhausted, as the previous entry records.
+
+  Newly failing, with its handling:
+
+  ```rust,ignore
+  // Before: the commit's timeout refresh succeeded with the operation
+  // deadline already passed, and the server acknowledged the commit before
+  // the client timer fired. This returned the number of removed rows.
+  let removed = limiter.cleanup_expired(1_000).await?;
+
+  // After: the same run stops before commit and removes nothing. Expired rows
+  // stay eligible, so the next scheduled pass repeats the work. Raise
+  // `PostgresConfig::with_operation_timeout` if it recurs.
+  match limiter.cleanup_expired(1_000).await {
+      Ok(removed) => record(removed),
+      Err(MaintenanceError::TimedOutBeforeCommit {
+          phase: CleanupPhase::PreparingCommit | CleanupPhase::StartingCommit,
+      }) => retry_on_the_next_pass(),
+      Err(error) if error.may_have_removed_rows() => treat_as_unknown(error),
+      Err(error) => treat_as_no_effect(error),
+  }
+  ```
+
+  Log text an operator may match. A run that ended as "PostgreSQL
+  expired-window cleanup commit timed out; rows may have been removed" or as
+  "PostgreSQL expired-window cleanup commit outcome is unknown; rows may have
+  been removed" can now end as "PostgreSQL expired-window cleanup timed out
+  while starting expired-window cleanup commit; no rows were removed", and a
+  run that succeeded can now end that way or as "timed out while preparing
+  cleanup commit". A run that reached commit after its deadline reported
+  "timed out while starting expired-window cleanup commit" and now reports
+  "timed out while preparing cleanup commit". A unit test proves that an
+  exhausted budget never polls the commit; the timing of a real refresh
+  against the deadline is not reproduced by a test.
 - `MemoryStore` and `GcraStore` now bind each check or batch to the shards it
   locks. Fixed-window batches stop at the first quota or capacity denial. GCRA
   checks the remaining members for arithmetic errors before cleanup. Both

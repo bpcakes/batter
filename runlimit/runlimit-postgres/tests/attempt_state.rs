@@ -25,6 +25,9 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
+/// The disposable-schema fixture every live suite shares.
+#[path = "support/mod.rs"]
+mod schema;
 #[path = "attempt_state/support.rs"]
 mod support;
 use support::{Database, MINUTE, Recorder, ScriptClock, Seen, Step, completed, denied, policy};

@@ -25,9 +25,11 @@ use runlimit_postgres::{
 };
 use sha2::{Digest, Sha256};
 use sqlx::{AssertSqlSafe, PgPool, migrate::Migrate, postgres::PgPoolOptions};
+use support::{
+    IsolatedSchema, TEST_DATABASE_URL, admin_pool, capacity_shard_for, key_in_capacity_shard,
+};
 use tokio::{sync::Barrier, time::sleep};
 
-const TEST_DATABASE_URL: &str = "RUNLIMIT_POSTGRES_TEST_DATABASE_URL";
 const CLEANUP_SQL: &str = include_str!("../src/cleanup_expired_by_key.sql");
 const TEST_HOST_MIGRATION_VERSION: i64 = 20_260_722_000_000;
 const PUBLISHED_CREATE_MIGRATION_VERSION: i64 = 20_260_723_000_000;
@@ -37,6 +39,7 @@ const ADVISORY_LOCK_DOMAIN: &[u8] = b"runlimit/postgres-advisory-lock/v1\0";
 
 #[path = "postgres/cleanup_plan.rs"]
 mod cleanup_plan;
+mod support;
 
 const PUBLISHED_CREATE_MIGRATION_SHA384: [u8; 48] = [
     0x31, 0xd9, 0x3f, 0xde, 0x98, 0xc2, 0x36, 0x4a, 0x33, 0x06, 0x2e, 0x37, 0x35, 0x08, 0xf5, 0x63,
@@ -148,14 +151,9 @@ fn published_create_migration_is_immutable_and_later_migrations_are_additive() {
     );
 }
 
+/// Connects to the default schema with the bundled migrations applied.
 async fn test_pool(maximum_connections: u32) -> PgPool {
-    let database_url = std::env::var(TEST_DATABASE_URL)
-        .expect("RUNLIMIT_POSTGRES_TEST_DATABASE_URL is required for ignored integration tests");
-    let pool = PgPoolOptions::new()
-        .max_connections(maximum_connections)
-        .connect(&database_url)
-        .await
-        .expect("connect to integration-test PostgreSQL");
+    let pool = admin_pool(maximum_connections).await;
     PostgresLimiter::new(pool.clone())
         .migrate()
         .await
@@ -163,127 +161,27 @@ async fn test_pool(maximum_connections: u32) -> PgPool {
     pool
 }
 
-// Dynamic SQL below interpolates only fixture-generated schema identifiers and
-// checked-in SQL. Values continue to use bind parameters. AssertSqlSafe marks
-// these audited statements for SQLx.
-struct IsolatedSchema {
-    admin_pool: PgPool,
-    primary_pool: PgPool,
-    schema: String,
-    additional_pools: Vec<PgPool>,
+/// An empty isolated schema for tests that run migrations themselves.
+async fn migration_schema(maximum_connections: u32) -> IsolatedSchema {
+    IsolatedSchema::create("migration", maximum_connections).await
 }
 
-impl IsolatedSchema {
-    async fn for_migration_test(maximum_connections: u32) -> Self {
-        let admin_pool = Self::admin_pool(2).await;
-        Self::create(admin_pool, "migration", maximum_connections).await
-    }
-
-    async fn for_cleanup_test(maximum_connections: u32) -> Self {
-        // Keep applying the bundled migrations in the default schema: these
-        // tests also cover coexistence with an already-migrated application.
-        let admin_pool = test_pool(1).await;
-        let fixture = Self::create(admin_pool, "cleanup", maximum_connections).await;
-        sqlx::raw_sql(include_str!(
-            "../migrations/20260723000000_create_runlimit_fixed_windows.sql"
-        ))
-        .execute(&fixture.primary_pool)
+/// An isolated schema holding the published table and its cardinality ledger.
+async fn cleanup_schema(maximum_connections: u32) -> IsolatedSchema {
+    // Keep applying the bundled migrations in the default schema: these
+    // tests also cover coexistence with an already-migrated application.
+    let admin_pool = test_pool(1).await;
+    let fixture =
+        IsolatedSchema::create_with_admin(admin_pool, "cleanup", maximum_connections).await;
+    sqlx::raw_sql(CREATE_RUNLIMIT_FIXED_WINDOWS_SQL)
+        .execute(&fixture.pool)
         .await
         .expect("create isolated cleanup-test table");
-        sqlx::raw_sql(BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL)
-            .execute(&fixture.primary_pool)
-            .await
-            .expect("install isolated cardinality ledger");
-        fixture
-    }
-
-    async fn admin_pool(maximum_connections: u32) -> PgPool {
-        let database_url = std::env::var(TEST_DATABASE_URL).expect(
-            "RUNLIMIT_POSTGRES_TEST_DATABASE_URL is required for ignored integration tests",
-        );
-        PgPoolOptions::new()
-            .max_connections(maximum_connections)
-            .connect(&database_url)
-            .await
-            .expect("connect isolated-schema admin pool")
-    }
-
-    async fn create(admin_pool: PgPool, label: &str, maximum_connections: u32) -> Self {
-        let schema_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock is after the Unix epoch")
-            .as_nanos();
-        let schema = format!("runlimit_{label}_{}_{}", process::id(), schema_suffix);
-        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&admin_pool)
-            .await
-            .expect("create isolated test schema");
-        let primary_pool = Self::schema_bound_pool(&schema, maximum_connections).await;
-
-        Self {
-            admin_pool,
-            primary_pool,
-            schema,
-            additional_pools: Vec::new(),
-        }
-    }
-
-    async fn schema_bound_pool(schema: &str, maximum_connections: u32) -> PgPool {
-        let database_url = std::env::var(TEST_DATABASE_URL).expect(
-            "RUNLIMIT_POSTGRES_TEST_DATABASE_URL is required for ignored integration tests",
-        );
-        let connection_schema = schema.to_owned();
-        let pool = PgPoolOptions::new()
-            .max_connections(maximum_connections)
-            .after_connect(move |connection, _metadata| {
-                let search_path_sql = format!("SET search_path = {connection_schema}, pg_catalog");
-                Box::pin(async move {
-                    sqlx::query(AssertSqlSafe(search_path_sql))
-                        .execute(connection)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .connect(&database_url)
-            .await
-            .expect("connect isolated-schema pool");
-        let search_path = sqlx::query_scalar::<_, Vec<String>>("SELECT current_schemas(false)")
-            .fetch_one(&pool)
-            .await
-            .expect("read isolated-schema search path");
-        assert_eq!(search_path, [schema, "pg_catalog"]);
-        pool
-    }
-
-    async fn additional_pool(&mut self, maximum_connections: u32) -> PgPool {
-        let pool = Self::schema_bound_pool(&self.schema, maximum_connections).await;
-        self.additional_pools.push(pool.clone());
-        pool
-    }
-
-    async fn teardown(self) {
-        for pool in self.additional_pools {
-            pool.close().await;
-            assert!(
-                pool.is_closed(),
-                "additional pool must close before schema drop"
-            );
-        }
-        self.primary_pool.close().await;
-        assert!(
-            self.primary_pool.is_closed(),
-            "primary pool must close before schema drop"
-        );
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP SCHEMA {} CASCADE",
-            self.schema
-        )))
-        .execute(&self.admin_pool)
+    sqlx::raw_sql(BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL)
+        .execute(&fixture.pool)
         .await
-        .expect("drop isolated test schema");
-        self.admin_pool.close().await;
-        assert!(self.admin_pool.is_closed(), "admin pool must close last");
-    }
+        .expect("install isolated cardinality ledger");
+    fixture
 }
 
 async fn run_test_host_migrations(pool: &PgPool) {
@@ -331,20 +229,6 @@ fn unique_policy(label: &str, limit: u64, window: Duration) -> FixedWindowPolicy
 
 fn key(value: u8) -> SubjectKey {
     SubjectKey::from_digest([value; 32])
-}
-
-fn key_in_capacity_shard(
-    policy: &FixedWindowPolicy,
-    capacity_shard: u8,
-    discriminator: u8,
-) -> SubjectKey {
-    let mut digest = [discriminator; 32];
-    digest[0] = policy.fingerprint().as_bytes()[0] ^ capacity_shard;
-    SubjectKey::from_digest(digest)
-}
-
-fn capacity_shard_for(policy: &FixedWindowPolicy, subject: SubjectKey) -> i16 {
-    i16::from(policy.fingerprint().as_bytes()[0] ^ subject.as_bytes()[0])
 }
 
 async fn capacity_row_count(pool: &PgPool, capacity_shard: i16) -> i64 {
@@ -609,8 +493,8 @@ EXECUTE FUNCTION {schema}.sleep_during_cleanup();
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn cleanup_uses_an_indexable_cutoff_and_skips_locked_rows() {
-    let fixture = IsolatedSchema::for_cleanup_test(4).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(4).await;
+    let pool = fixture.pool.clone();
     let limiter = PostgresLimiter::new(pool.clone()).with_config(test_config());
     let locked_policy = unique_policy("cleanup-locked-expired", 1, Duration::from_secs(1));
     let expired_policy = unique_policy("cleanup-expired", 1, Duration::from_secs(1));
@@ -675,9 +559,9 @@ FOR UPDATE
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn cleanup_timeout_cannot_late_commit_and_releases_pool_slot() {
-    let fixture = IsolatedSchema::for_cleanup_test(1).await;
+    let fixture = cleanup_schema(1).await;
     let setup_pool = fixture.admin_pool.clone();
-    let pool = fixture.primary_pool.clone();
+    let pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     let policy = unique_policy("cleanup-timeout", 1, Duration::from_secs(1));
     let subject = key(154);
@@ -783,9 +667,9 @@ SELECT EXISTS (
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn pool_wait_does_not_spend_admission_or_cleanup_operation_budget() {
-    let fixture = IsolatedSchema::for_cleanup_test(1).await;
+    let fixture = cleanup_schema(1).await;
     let setup_pool = fixture.admin_pool.clone();
-    let pool = fixture.primary_pool.clone();
+    let pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     let policy = unique_policy("pool-budget-survivor", 1, Duration::from_mins(1));
     let subject = key(155);
@@ -867,8 +751,8 @@ WHERE
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn migration_coexists_with_an_ignore_missing_host_and_discards_errors() {
-    let fixture = IsolatedSchema::for_migration_test(1).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = migration_schema(1).await;
+    let pool = fixture.pool.clone();
     let limiter = PostgresLimiter::new(pool.clone());
 
     // Both migrators must opt in to a shared SQLx history. Exercise both run
@@ -952,8 +836,8 @@ SELECT
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn migration_upgrades_the_published_0_1_table_additively() {
-    let fixture = IsolatedSchema::for_migration_test(1).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = migration_schema(1).await;
+    let pool = fixture.pool.clone();
     let existing_policy = unique_policy("migration-capacity-backfill", 2, Duration::from_mins(1));
     let existing_subject = key(154);
     let published_create_migration = MIGRATOR
@@ -1033,9 +917,9 @@ WHERE config_fingerprint = $1 AND subject_key = $2
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn cancelling_migration_discards_its_session_lock() {
-    let fixture = IsolatedSchema::for_migration_test(1).await;
+    let fixture = migration_schema(1).await;
     let setup_pool = fixture.admin_pool.clone();
-    let pool = fixture.primary_pool.clone();
+    let pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     run_test_host_migrations(&pool).await;
     let migration_backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -1191,8 +1075,8 @@ WHERE
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn configured_capacity_denies_only_new_keys_in_the_full_shard() {
-    let fixture = IsolatedSchema::for_cleanup_test(4).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(4).await;
+    let pool = fixture.pool.clone();
     let policy = unique_policy("configured-capacity", 10, Duration::from_mins(1));
     let shard = 17;
     let first_subject = key_in_capacity_shard(&policy, shard, 1);
@@ -1260,8 +1144,8 @@ async fn configured_capacity_denies_only_new_keys_in_the_full_shard() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn expired_rows_hold_capacity_until_cleanup_commits() {
-    let fixture = IsolatedSchema::for_cleanup_test(3).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(3).await;
+    let pool = fixture.pool.clone();
     let policy = unique_policy("expired-capacity", 10, Duration::from_mins(1));
     let shard = 23;
     let expired_subject = key_in_capacity_shard(&policy, shard, 1);
@@ -1307,8 +1191,8 @@ async fn expired_rows_hold_capacity_until_cleanup_commits() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn capacity_denied_batch_rolls_back_and_remains_enforced_in_shadow_mode() {
-    let fixture = IsolatedSchema::for_cleanup_test(3).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(3).await;
+    let pool = fixture.pool.clone();
     let policy = unique_policy("batch-capacity", 10, Duration::from_mins(1))
         .with_quota_mode(QuotaMode::Shadow);
     let shard = 29;
@@ -1348,8 +1232,8 @@ async fn capacity_denied_batch_rolls_back_and_remains_enforced_in_shadow_mode() 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn shadow_quota_denial_is_reported_without_consuming_more_quota() {
-    let fixture = IsolatedSchema::for_cleanup_test(2).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(2).await;
+    let pool = fixture.pool.clone();
     let policy =
         unique_policy("shadow-quota", 1, Duration::from_mins(1)).with_quota_mode(QuotaMode::Shadow);
     let earlier_subject = key_in_capacity_shard(&policy, 30, 1);
@@ -1405,8 +1289,8 @@ async fn shadow_quota_denial_is_reported_without_consuming_more_quota() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn database_trigger_hard_cap_blocks_old_writer_insertions() {
-    let fixture = IsolatedSchema::for_cleanup_test(2).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(2).await;
+    let pool = fixture.pool.clone();
     let policy = unique_policy("trigger-hard-cap", 10, Duration::from_mins(1));
     let shard = 31;
     let subject = key_in_capacity_shard(&policy, shard, 1);
@@ -1467,8 +1351,8 @@ VALUES ($1, $2, $3, $4, pg_catalog.clock_timestamp(),
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn database_trigger_rejects_storage_key_updates_without_ledger_drift() {
-    let fixture = IsolatedSchema::for_cleanup_test(2).await;
-    let pool = fixture.primary_pool.clone();
+    let fixture = cleanup_schema(2).await;
+    let pool = fixture.pool.clone();
     let policy = unique_policy("immutable-storage-key", 10, Duration::from_mins(1));
     let original_shard = 33;
     let replacement_shard = 34;
@@ -1535,9 +1419,9 @@ WHERE config_fingerprint = $1 AND subject_key = $2
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn malformed_upsert_response_is_rejected_before_commit() {
-    let fixture = IsolatedSchema::for_cleanup_test(2).await;
+    let fixture = cleanup_schema(2).await;
     let setup_pool = fixture.admin_pool.clone();
-    let pool = fixture.primary_pool.clone();
+    let pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     let policy = unique_policy("malformed-response-rollback", 10, Duration::from_mins(1));
     let shard = 41;
@@ -1610,9 +1494,9 @@ EXECUTE FUNCTION {schema}.corrupt_returned_usage();
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn undecodable_upsert_field_is_storage_invariant_before_commit() {
-    let fixture = IsolatedSchema::for_cleanup_test(2).await;
+    let fixture = cleanup_schema(2).await;
     let setup_pool = fixture.admin_pool.clone();
-    let pool = fixture.primary_pool.clone();
+    let pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     let policy = unique_policy("undecodable-response-rollback", 10, Duration::from_mins(1));
     let shard = 43;
@@ -1673,9 +1557,9 @@ async fn undecodable_upsert_field_is_storage_invariant_before_commit() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn failed_insert_rolls_back_capacity_trigger_accounting() {
-    let fixture = IsolatedSchema::for_cleanup_test(2).await;
+    let fixture = cleanup_schema(2).await;
     let setup_pool = fixture.admin_pool.clone();
-    let pool = fixture.primary_pool.clone();
+    let pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     let policy = unique_policy("capacity-rollback", 10, Duration::from_mins(1));
     let shard = 37;
@@ -1742,8 +1626,8 @@ async fn concurrent_replicas_never_exceed_configured_shard_capacity() {
     const CAPACITY: u32 = 4;
     const ATTEMPTS: u8 = 24;
 
-    let mut fixture = IsolatedSchema::for_cleanup_test(12).await;
-    let first_pool = fixture.primary_pool.clone();
+    let mut fixture = cleanup_schema(12).await;
+    let first_pool = fixture.pool.clone();
     let second_pool = fixture.additional_pool(12).await;
     let policy = Arc::new(unique_policy(
         "concurrent-capacity",
@@ -1767,7 +1651,7 @@ async fn concurrent_replicas_never_exceed_configured_shard_capacity() {
         };
         let policy = Arc::clone(&policy);
         let barrier = Arc::clone(&barrier);
-        let subject = key_in_capacity_shard(&policy, shard, discriminator);
+        let subject = key_in_capacity_shard(policy.as_ref(), shard, discriminator);
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
             (
@@ -2042,9 +1926,9 @@ ON runlimit_fixed_windows
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn search_path_clock_shadow_cannot_hijack_admission_or_cleanup_time() {
-    let mut fixture = IsolatedSchema::for_cleanup_test(1).await;
+    let mut fixture = cleanup_schema(1).await;
     let setup_pool = fixture.admin_pool.clone();
-    let table_pool = fixture.primary_pool.clone();
+    let table_pool = fixture.pool.clone();
     let schema = fixture.schema.clone();
     let policy = unique_policy("clock-shadow", 1, Duration::from_hours(1));
     let subject = key(10);
@@ -2666,8 +2550,8 @@ FOR UPDATE
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn successive_lock_waits_share_the_remaining_server_deadline() {
-    let mut fixture = IsolatedSchema::for_cleanup_test(1).await;
-    let tested_pool = fixture.primary_pool.clone();
+    let mut fixture = cleanup_schema(1).await;
+    let tested_pool = fixture.pool.clone();
     let blockers = fixture.additional_pool(2).await;
     let observer = fixture.additional_pool(1).await;
     let policy = unique_policy("successive-locks", 2, Duration::from_secs(10));

@@ -1,5 +1,6 @@
 //! The script vocabulary, the observation recorder, the scripted memory clock
-//! and the disposable schema shared by the attempt state tests.
+//! and the migrated disposable schema shared by the attempt state tests.
+use crate::schema::IsolatedSchema;
 use runlimit_core::{
     PolicyId, QuotaPeriod, ScopeId,
     attempts::{
@@ -9,13 +10,13 @@ use runlimit_core::{
 };
 use runlimit_memory::Clock;
 use runlimit_postgres::attempts::PostgresAttemptLimiter;
-use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
 use std::{
+    ops::Deref,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 pub const MINUTE: u64 = 60_000;
@@ -104,60 +105,23 @@ pub fn policy() -> AttemptPolicy {
     .unwrap()
 }
 
-/// Distinguishes schemas created in one process within one clock tick.
-static NEXT: AtomicU64 = AtomicU64::new(0);
 /// One disposable schema holding the attempt table.
-pub struct Database {
-    pub pool: PgPool,
-    admin: PgPool,
-    schema: String,
+pub struct Database(IsolatedSchema);
+impl Deref for Database {
+    type Target = IsolatedSchema;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl Database {
     pub async fn new() -> Self {
-        let url = std::env::var("RUNLIMIT_POSTGRES_TEST_DATABASE_URL")
-            .expect("disposable PostgreSQL URL required");
-        let admin = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&url)
-            .await
-            .unwrap();
-        let schema = format!(
-            "runlimit_attempt_state_{}_{}_{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        let search_path = format!("SET search_path={schema},pg_catalog");
-        let pool = PgPoolOptions::new()
-            .max_connections(2)
-            .after_connect(move |connection, _| {
-                let query = search_path.clone();
-                Box::pin(async move {
-                    sqlx::query(AssertSqlSafe(query))
-                        .execute(connection)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .connect(&url)
-            .await
-            .unwrap();
-        PostgresAttemptLimiter::new(pool.clone())
+        let schema = IsolatedSchema::create("attempt_state", 2).await;
+        PostgresAttemptLimiter::new(schema.pool.clone())
             .migrate()
             .await
             .unwrap();
-        Self {
-            pool,
-            admin,
-            schema,
-        }
+        Self(schema)
     }
     /// Moves the server clock by `minutes` relative to every stored instant:
     /// forward when positive, backwards when negative.
@@ -172,14 +136,6 @@ impl Database {
         .unwrap();
     }
     pub async fn close(self) {
-        self.pool.close().await;
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP SCHEMA {} CASCADE",
-            self.schema
-        )))
-        .execute(&self.admin)
-        .await
-        .unwrap();
-        self.admin.close().await;
+        self.0.teardown().await;
     }
 }

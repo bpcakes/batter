@@ -89,41 +89,19 @@
 //! cargo test -p runlimit-postgres --test postgres -- --ignored
 //! ```
 
-use std::{
-    fmt,
-    future::Future,
-    sync::Arc,
-    time::{Duration, Instant as WallClockInstant},
-};
+use std::{fmt, future::Future, sync::Arc, time::Instant as WallClockInstant};
 
 use runlimit_core::{
-    AdmissionObservation, BatchDecision, Check, CleanupObservation, CleanupOutcome, Decision,
-    FixedWindowPolicy, Limiter, Observation, Observer, observe_safely, validate_batch,
+    BatchDecision, Check, Decision, FixedWindowPolicy, Limiter, Observer, validate_batch,
 };
 use sqlx::{
-    PgPool, Postgres,
+    PgPool,
     migrate::{MigrateError, Migrator},
-    pool::PoolConnection,
 };
-use tokio::time::Instant;
-
-#[derive(Debug)]
-pub(crate) enum ConnectionOutcome<T> {
-    Reusable(T),
-    MustClose(T),
-}
-
-impl<T> ConnectionOutcome<T> {
-    fn map<U>(self, map: impl FnOnce(T) -> U) -> ConnectionOutcome<U> {
-        match self {
-            Self::Reusable(value) => ConnectionOutcome::Reusable(map(value)),
-            Self::MustClose(value) => ConnectionOutcome::MustClose(map(value)),
-        }
-    }
-}
 
 mod admission;
 pub mod attempts;
+mod base;
 mod gcra;
 pub use gcra::{
     CREATE_RUNLIMIT_GCRA_SQL, GCRA_MIGRATOR, INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL,
@@ -132,7 +110,9 @@ pub use gcra::{
 mod config;
 mod errors;
 mod maintenance;
+mod pending;
 mod protocol;
+mod transaction;
 
 pub use config::{PostgresConfig, PostgresConfigError};
 pub use errors::{
@@ -140,23 +120,25 @@ pub use errors::{
 };
 pub use protocol::{CAPACITY_SHARD_COUNT, HARD_MAX_ROWS_PER_SHARD};
 
-use admission::{
-    Admission, BatchSqlInput, acquire_check_connection, batch_decision, run_check_transaction,
-    single_decision,
-};
-use maintenance::{acquire_maintenance_connection, run_cleanup_transaction};
+use admission::{Admission, BatchSqlInput, batch_decision, run_check_transaction, single_decision};
+use base::PgLimiterBase;
+use maintenance::run_cleanup_transaction;
+use transaction::ConnectionOutcome;
 
 #[cfg(test)]
-use admission::{
-    PendingAllowance, PendingDenial, PendingQuotaDenial, database_integer,
-    finish_denied_transaction,
-};
+use admission::database_integer;
+#[cfg(test)]
+use pending::PendingAllowance;
 #[cfg(test)]
 use protocol::{
     BATCH_PREFLIGHT_SQL, BATCH_UPSERT_SQL, CLEANUP_SQL, advisory_lock_id, capacity_shard,
 };
 #[cfg(test)]
 use sqlx::postgres::types::PgInterval;
+#[cfg(test)]
+use tokio::time::Instant;
+#[cfg(test)]
+use transaction::finish_denied_transaction;
 
 /// SQL for the immutable `20260723000000_create_runlimit_fixed_windows`
 /// migration.
@@ -202,19 +184,12 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 /// counted.
 #[derive(Clone)]
 pub struct PostgresLimiter {
-    pool: PgPool,
-    config: PostgresConfig,
-    observer: Option<Arc<dyn Observer>>,
+    base: PgLimiterBase<dyn Observer>,
 }
 
 impl fmt::Debug for PostgresLimiter {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PostgresLimiter")
-            .field("pool", &self.pool)
-            .field("config", &self.config)
-            .field("has_observer", &self.observer.is_some())
-            .finish_non_exhaustive()
+        self.base.fmt_debug("PostgresLimiter", formatter)
     }
 }
 
@@ -225,16 +200,14 @@ impl PostgresLimiter {
     /// requests.
     pub const fn new(pool: PgPool) -> Self {
         Self {
-            pool,
-            config: PostgresConfig::new(),
-            observer: None,
+            base: PgLimiterBase::new(pool),
         }
     }
 
     /// Returns this limiter with an explicit runtime configuration.
     #[must_use]
     pub const fn with_config(mut self, config: PostgresConfig) -> Self {
-        self.config = config;
+        self.base.set_config(config);
         self
     }
 
@@ -245,18 +218,18 @@ impl PostgresLimiter {
     /// cleanup results.
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<dyn Observer>) -> Self {
-        self.observer = Some(observer);
+        self.base.set_observer(observer);
         self
     }
 
     /// Returns the underlying connection pool.
     pub const fn pool(&self) -> &PgPool {
-        &self.pool
+        self.base.pool()
     }
 
     /// Returns the backend runtime configuration.
     pub const fn config(&self) -> PostgresConfig {
-        self.config
+        self.base.config()
     }
 
     /// Applies the bundled Runlimit database migrations.
@@ -277,18 +250,7 @@ impl PostgresLimiter {
     /// Returns an error if migration metadata cannot be read or `PostgreSQL`
     /// rejects a migration.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        let connection = self.pool.acquire().await?;
-        let mut guarded_connection = ConnectionCancellationGuard::new(connection);
-        let mut migrator = sqlx::migrate!("./migrations");
-        migrator.set_ignore_missing(true);
-
-        let result = migrator
-            .run_direct(None, &mut **guarded_connection.connection(), false)
-            .await;
-        if result.is_ok() {
-            guarded_connection.reuse();
-        }
-        result
+        self.base.migrate(&MIGRATOR).await
     }
 
     /// Checks and, when allowed, consumes one fixed-window quota.
@@ -308,7 +270,7 @@ impl PostgresLimiter {
         let result = self
             .run_checks(std::slice::from_ref(check), single_decision)
             .await;
-        self.observe_single_admission(check, &result, started.elapsed());
+        self.base.observe_check(check, &result, started.elapsed());
         result
     }
 
@@ -340,7 +302,7 @@ impl PostgresLimiter {
     pub async fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, BatchCheckError> {
         let started = WallClockInstant::now();
         let result = self.check_all_unobserved(checks).await;
-        self.observe_batch_admission(checks, &result, started.elapsed());
+        self.base.observe_batch(checks, &result, started.elapsed());
         result
     }
 
@@ -348,7 +310,7 @@ impl PostgresLimiter {
         &self,
         checks: &[Check<'_>],
     ) -> Result<BatchDecision, BatchCheckError> {
-        validate_batch(checks, self.config.max_batch_size())?;
+        validate_batch(checks, self.base.config().max_batch_size())?;
         let batch_size = checks.len();
         Ok(self
             .run_checks(checks, move |admission| {
@@ -368,23 +330,16 @@ impl PostgresLimiter {
         // pool slot. Every database phase then consumes the exact same key
         // arrays, preventing identity drift between locking and mutation.
         let input = BatchSqlInput::from_checks(checks);
-        let connection =
-            acquire_check_connection(&self.pool, self.config.pool_acquire_timeout()).await?;
-        // Pool contention does not consume the database-work budget. A
-        // survivor receives a fresh deadline for begin, statements, locks,
-        // rollback, and commit.
-        let deadline = Instant::now() + self.config.operation_timeout();
-        let mut guarded_connection = ConnectionCancellationGuard::new(connection);
-        let outcome = run_check_transaction(
-            guarded_connection.connection(),
+        let mut connection = self.base.check_connection().await?;
+        let result = run_check_transaction(
+            &mut connection,
             &input,
             checks,
-            self.config.maximum_rows_per_shard(),
-            deadline,
+            self.base.config().maximum_rows_per_shard(),
             build,
         )
         .await;
-        guarded_connection.finish(outcome)
+        connection.finish(result)
     }
 
     /// Deletes at most `maximum_rows` expired windows and releases their
@@ -405,7 +360,8 @@ impl PostgresLimiter {
     pub async fn cleanup_expired(&self, maximum_rows: u32) -> Result<u64, MaintenanceError> {
         let started = WallClockInstant::now();
         let result = self.cleanup_expired_unobserved(maximum_rows).await;
-        self.observe_cleanup(maximum_rows, &result, started.elapsed());
+        self.base
+            .observe_cleanup(maximum_rows, &result, started.elapsed());
         result
     }
 
@@ -414,74 +370,9 @@ impl PostgresLimiter {
             return Ok(0);
         }
 
-        let connection =
-            acquire_maintenance_connection(&self.pool, self.config.pool_acquire_timeout()).await?;
-        let deadline = Instant::now() + self.config.operation_timeout();
-        let mut guarded_connection = ConnectionCancellationGuard::new(connection);
-        let outcome =
-            run_cleanup_transaction(guarded_connection.connection(), maximum_rows, deadline).await;
-        guarded_connection.finish(outcome)
-    }
-
-    fn observe_single_admission(
-        &self,
-        check: &Check<'_>,
-        result: &Result<Decision, CheckError>,
-        elapsed: Duration,
-    ) {
-        match result {
-            Ok(decision) => self
-                .observe_admission(|| AdmissionObservation::from_check(check, decision, elapsed)),
-            Err(error) => self.observe_admission(|| {
-                AdmissionObservation::failed_check(check, error.consumption(), elapsed)
-            }),
-        }
-    }
-
-    fn observe_batch_admission(
-        &self,
-        checks: &[Check<'_>],
-        result: &Result<BatchDecision, BatchCheckError>,
-        elapsed: Duration,
-    ) {
-        match result {
-            Ok(decision) => self
-                .observe_admission(|| AdmissionObservation::from_batch(checks, decision, elapsed)),
-            Err(error) => {
-                self.observe_admission(|| {
-                    AdmissionObservation::failed_batch(checks, error.consumption(), elapsed)
-                });
-            }
-        }
-    }
-
-    fn observe_admission<'a>(&self, build_observation: impl FnOnce() -> AdmissionObservation<'a>) {
-        let Some(observer) = &self.observer else {
-            return;
-        };
-        let admission = build_observation();
-        observe_safely(observer.as_ref(), &Observation::Admission(admission));
-    }
-
-    fn observe_cleanup(
-        &self,
-        requested: u32,
-        result: &Result<u64, MaintenanceError>,
-        elapsed: Duration,
-    ) {
-        let Some(observer) = &self.observer else {
-            return;
-        };
-        let requested = usize::try_from(requested).unwrap_or(usize::MAX);
-        let outcome = match result {
-            Ok(removed) => CleanupOutcome::Confirmed { removed: *removed },
-            Err(error) if error.may_have_removed_rows() => CleanupOutcome::Unknown,
-            Err(_) => CleanupOutcome::NoEffect,
-        };
-        observe_safely(
-            observer.as_ref(),
-            &Observation::Cleanup(CleanupObservation::new(requested, outcome, elapsed)),
-        );
+        let mut connection = self.base.maintenance_connection().await?;
+        let result = run_cleanup_transaction(&mut connection, maximum_rows).await;
+        connection.finish(result.map(ConnectionOutcome::Reusable))
     }
 }
 
@@ -505,50 +396,6 @@ impl Limiter for PostgresLimiter {
     }
 }
 
-struct ConnectionCancellationGuard {
-    connection: PoolConnection<Postgres>,
-    armed: bool,
-}
-
-impl ConnectionCancellationGuard {
-    const fn new(connection: PoolConnection<Postgres>) -> Self {
-        Self {
-            connection,
-            armed: true,
-        }
-    }
-
-    const fn connection(&mut self) -> &mut PoolConnection<Postgres> {
-        &mut self.connection
-    }
-
-    const fn reuse(&mut self) {
-        self.armed = false;
-    }
-
-    fn finish<T, E>(mut self, outcome: ConnectionOutcome<Result<T, E>>) -> Result<T, E> {
-        match outcome {
-            ConnectionOutcome::Reusable(result) => {
-                self.reuse();
-                result
-            }
-            ConnectionOutcome::MustClose(result) => result,
-        }
-    }
-}
-
-impl Drop for ConnectionCancellationGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            // Dropping an SQLx query future does not send a PostgreSQL cancel
-            // request. Close the socket instead of returning a potentially
-            // busy connection to the pool when either Runlimit's deadline or
-            // cancellation of the outer limiter future wins the race.
-            self.connection.close_on_drop();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -560,8 +407,9 @@ mod tests {
     use super::*;
     use runlimit_core::{
         AdmissionOperation, AdmissionOutcome, Allowance, BatchDecisionView, BatchError, Capacity,
-        ConsumptionStatus, DecisionView, Denial, FixedWindowPolicy, MAX_LIMIT, MAX_WINDOW,
-        MAX_WINDOW_MILLIS, PolicyId, QuotaDenial, QuotaMode, ScopeId, SubjectKey,
+        CleanupOutcome, ConsumptionStatus, DecisionView, Denial, FixedWindowPolicy, MAX_LIMIT,
+        MAX_WINDOW, MAX_WINDOW_MILLIS, Observation, PolicyId, QuotaDenial, QuotaMode, ScopeId,
+        SubjectKey,
     };
 
     fn capacity(value: u64) -> Capacity {
@@ -766,13 +614,15 @@ mod tests {
         let second = Check::new(key(2).bind(&second_policy));
         let elapsed = Duration::from_millis(5);
 
-        limiter.observe_single_admission(&first, &Err(CheckError::CommitTimedOut), elapsed);
-        limiter.observe_batch_admission(
+        limiter
+            .base
+            .observe_check(&first, &Err(CheckError::CommitTimedOut), elapsed);
+        limiter.base.observe_batch(
             &[first],
             &Err(BatchCheckError::Check(CheckError::CommitTimedOut)),
             elapsed,
         );
-        limiter.observe_batch_admission(
+        limiter.base.observe_batch(
             &[first, second],
             &Err(BatchCheckError::Check(CheckError::CommitTimedOut)),
             elapsed,
@@ -812,27 +662,29 @@ mod tests {
         let limiter = PostgresLimiter::new(pool).with_observer(observer.clone());
         let elapsed = Duration::from_millis(5);
 
-        limiter.observe_cleanup(7, &Ok(3), elapsed);
-        limiter.observe_cleanup(
+        limiter.base.observe_cleanup(7, &Ok(3), elapsed);
+        limiter.base.observe_cleanup(
             7,
             &Err(MaintenanceError::Database(sqlx::Error::RowNotFound)),
             elapsed,
         );
-        limiter.observe_cleanup(
+        limiter.base.observe_cleanup(
             7,
             &Err(MaintenanceError::TimedOutBeforeCommit {
                 phase: CleanupPhase::DeletingExpiredWindows,
             }),
             elapsed,
         );
-        limiter.observe_cleanup(
+        limiter.base.observe_cleanup(
             7,
             &Err(MaintenanceError::CommitOutcomeUnknown(
                 sqlx::Error::RowNotFound,
             )),
             elapsed,
         );
-        limiter.observe_cleanup(7, &Err(MaintenanceError::CommitTimedOut), elapsed);
+        limiter
+            .base
+            .observe_cleanup(7, &Err(MaintenanceError::CommitTimedOut), elapsed);
 
         assert_eq!(
             observer.cleanups.lock().unwrap().as_slice(),
@@ -843,27 +695,6 @@ mod tests {
                 (7, CleanupOutcome::Unknown),
                 (7, CleanupOutcome::Unknown),
             ]
-        );
-    }
-
-    #[test]
-    fn response_metadata_subtracts_only_authoritative_elapsed_time() {
-        let allowed = PendingAllowance::new(capacity(10), 6, Duration::from_millis(250))
-            .unwrap()
-            .finish(Duration::from_millis(80));
-        let denied = PendingDenial::Quota(PendingQuotaDenial {
-            limit: capacity(10),
-            retry_from_sample: Duration::from_millis(150),
-        })
-        .finish(Duration::from_millis(80));
-
-        assert_eq!(
-            allowed,
-            Allowance::new(capacity(10), 4, Duration::from_millis(170)).unwrap()
-        );
-        assert_eq!(
-            denied,
-            Denial::QuotaExceeded(QuotaDenial::new(capacity(10), Duration::from_millis(70)))
         );
     }
 
