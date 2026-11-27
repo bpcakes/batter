@@ -56,7 +56,9 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   only completion fence, so a backend never issues one again for a subject
   while an older receipt can still present it, across removal and recreation
   of the stored subject included: memory numbers leases from one store-wide
-  counter and PostgreSQL generates a random token. Memory clamps its clock
+  counter and PostgreSQL generates a random token. Tokens are unique per
+  subject only, so a completion takes its store, policy and subject from the
+  receipt. Memory clamps its clock
   and stores the settled state on every evaluation, cleanup scans included.
   PostgreSQL samples the server clock and leaves the subject's row unchanged
   on a `Busy` or `Backoff` denial and on a stale completion, so a backwards

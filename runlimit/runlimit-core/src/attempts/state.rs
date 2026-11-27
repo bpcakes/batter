@@ -36,6 +36,10 @@ use crate::Delay;
 ///   and a late completion of the first lease then applies to the third. The
 ///   memory backend numbers leases from one counter for the whole store that
 ///   never restarts; the PostgreSQL backend generates a random token for each.
+/// - A completion is evaluated against the state its receipt was issued for.
+///   The rule above is per subject, so two subjects may hold equal tokens:
+///   the store, policy and subject come from the receipt itself, never from
+///   the caller beside it, unless the token alone tells all of them apart.
 /// - Transitions for one subject are serialized.
 /// - A state is evaluated only with the policy whose fingerprint keys it.
 ///   Another policy would reinterpret the stored failure count and instants.
@@ -372,6 +376,17 @@ impl<T> AttemptState<T> {
     ///
     /// The outcome applies only while `token` holds the live lease. A lease
     /// that has expired by `now` has already failed, so its own token is stale.
+    ///
+    /// A token type is [`Eq`]: a token that could differ from itself would
+    /// leave its own live lease to expire as a failure.
+    ///
+    /// ```compile_fail,E0277
+    /// # use std::time::Duration;
+    /// # use runlimit_core::attempts::{AttemptOutcome, AttemptPolicy, AttemptState};
+    /// # fn complete(policy: &AttemptPolicy, state: AttemptState<f64>) {
+    /// let _ = state.complete(policy, Duration::ZERO, &f64::NAN, AttemptOutcome::Success);
+    /// # }
+    /// ```
     pub fn complete(
         self,
         policy: &AttemptPolicy,
@@ -380,7 +395,7 @@ impl<T> AttemptState<T> {
         outcome: AttemptOutcome,
     ) -> CompleteEvaluation<T>
     where
-        T: PartialEq,
+        T: Eq,
     {
         let lease = match self.settle(policy, now) {
             Self::Leased(lease) if lease.token == *token => lease,
