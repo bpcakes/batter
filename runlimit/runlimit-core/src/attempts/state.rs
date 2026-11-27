@@ -194,6 +194,13 @@ impl FailedAttempts {
         self.last_failure
             .saturating_add(policy.quiet_period().duration())
     }
+    /// The wait at `now` until another attempt may be admitted: until the
+    /// stored retry time or until the failures clear, whichever comes first.
+    /// A backoff denial and a failed completion both report it from here.
+    fn retry_after(&self, policy: &AttemptPolicy, now: Duration) -> Delay {
+        let admits_at = self.retry_at.min(self.clears_at(policy));
+        Delay::new(admits_at.saturating_sub(now))
+    }
 }
 
 /// An evaluated reservation that the backend has not persisted yet.
@@ -330,13 +337,11 @@ impl<T> AttemptState<T> {
                 };
             }
             Self::Failed(failed) if now < failed.retry_at => {
-                // The failure has not cleared, so its quiet period is still
-                // running. A restored retry time may lie past the end of it,
-                // and admission resumes at whichever comes first.
-                let admits_at = failed.retry_at.min(failed.clears_at(policy));
+                // A restored retry time may lie past the end of the quiet
+                // period, and admission resumes at whichever comes first.
                 return AdmitEvaluation::Denied {
                     denial: LeaseDenial::Backoff {
-                        retry_after: Delay::new(admits_at.saturating_sub(now)),
+                        retry_after: failed.retry_after(policy, now),
                     },
                     settled: Self::Failed(failed),
                 };
@@ -383,7 +388,9 @@ impl<T> AttemptState<T> {
                     completion: AttemptCompletion {
                         outcome,
                         consecutive_failures: failed.failures.get(),
-                        retry_after: Delay::new(policy.delay(failed.failures.get())),
+                        // The policy delay, unless the stored deadline
+                        // saturated at the end of representable time.
+                        retry_after: failed.retry_after(policy, now),
                     },
                 }
             }

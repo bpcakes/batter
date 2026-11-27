@@ -270,6 +270,26 @@ fn failure_counts_and_instants_saturate_instead_of_wrapping() {
     // both saturate to that same instant, so the expiry counts and then clears.
     let last = AttemptState::Leased(AttemptLease::new(TOKEN, 0, end));
     assert_eq!(last.settle(&policy, end), AttemptState::Clear);
+    // A failure 1 ms before that instant cannot store its 10 ms delay. Its
+    // completion and an admission at the same instant report the same wait.
+    let before = end.saturating_sub(ms(1));
+    let CompleteEvaluation::Applied { state, completion } =
+        last.complete(&policy, before, &TOKEN, AttemptOutcome::Failure)
+    else {
+        panic!("live lease was stale");
+    };
+    let capped = AttemptState::<u8>::Failed(FailedAttempts::new(NonZeroU32::MIN, before, end));
+    assert_eq!(state, capped);
+    assert_eq!(completion.retry_after().duration(), ms(1));
+    assert_eq!(
+        capped.admit(&policy, before),
+        AdmitEvaluation::Denied {
+            settled: capped,
+            denial: LeaseDenial::Backoff {
+                retry_after: completion.retry_after(),
+            },
+        }
+    );
     // A clock far behind a failure at that instant waits out the whole
     // difference: the quiet deadline saturates there too and cannot cap it.
     let late = AttemptState::<u8>::Failed(FailedAttempts::new(NonZeroU32::MIN, end, end));
