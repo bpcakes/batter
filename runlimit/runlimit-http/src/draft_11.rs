@@ -32,7 +32,7 @@ use runlimit_core::RateLimitPolicy;
 
 use crate::{
     EncodingError, HeaderField, QuotaState,
-    encoding::{Member, policy_window},
+    encoding::{self, Member, ServiceLimitKeys, policy_window},
 };
 
 /// Encodes one `-11` `RateLimit-Policy` field.
@@ -74,11 +74,12 @@ pub fn service_limit(
     name: &str,
     state: impl Into<QuotaState>,
 ) -> Result<HeaderField, EncodingError> {
-    // The name is validated before the caller's conversion runs.
-    let member = Member::policy(name)?;
-    let limit = state.into().service_limit();
-    let member = member
-        .integer("r", limit.available)?
-        .integer("t", limit.effective_window)?;
-    Ok(member.into_field(HeaderName::from_static("ratelimit")))
+    encoding::service_limit(
+        name,
+        state,
+        &ServiceLimitKeys {
+            available: "r",
+            window: "t",
+        },
+    )
 }
