@@ -2,10 +2,12 @@
 """Enforce local native Runlimit identities, ownership and immutable import assets."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 
-from package import source_files
+from package import EXCLUDED_PARTS, source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -14,6 +16,9 @@ EXPECTED_VERSION = '0.4.0'
 # Imported statements that no code path executes. They stay byte-identical
 # outside every package, so they are neither published nor compiled.
 PROVENANCE = 'provenance'
+# A literal include in any delimiter, as a normal or raw string.
+INCLUDE = re.compile(r'include_(?:str|bytes)!\s*[(\[{]\s*'
+                     r'(?:r(?P<hashes>#*)"(?P<raw>.*?)"(?P=hashes)|"(?P<plain>[^"\\]*)")')
 
 
 def validate_graph(metadata, root):
@@ -73,27 +78,45 @@ def validate_assets(root):
     validate_provenance(Path(root), expected)
 
 
-def validate_provenance(root, expected):
-    """Keep unexecuted import records out of every package and every build.
-
-    A record is found by content and by path, not by parsing Rust: no `.sql`
-    file outside `provenance/` may reproduce a record's bytes, and no Rust
-    source anywhere in the tree may contain a record's path, in code or in a
-    comment, so no `include_str!` spelling can embed one.
-    """
-    native = root / 'runlimit'
+def provenance_records(root, expected):
+    """Return `{resolved path: inventory name}` for the unexecuted import records."""
+    native = Path(root) / 'runlimit'
     provenance = native / PROVENANCE
     records = {}
     for path in sorted(provenance.rglob('*')) if provenance.is_dir() else ():
         name = path.relative_to(native).as_posix()
-        if not path.is_file() or path == provenance / 'README.md':
+        if path.is_symlink() or not path.is_file() or path == provenance / 'README.md':
             continue
         if name not in expected:
             raise ValueError('provenance holds an uninventoried file: ' + name)
-        records[name] = expected[name]
-    by_digest = {digest: name for name, digest in records.items()}
+        records[path.resolve()] = name
+    return records
+
+
+def validate_provenance(root, expected):
+    """Reject accidental reuse of an unexecuted import record.
+
+    This is a tripwire for copying and embedding, not a Rust parser. Outside
+    `provenance/` it rejects a `.sql` file with a record's bytes, a symlink
+    that resolves to a record, and a Rust source that contains a record's path
+    or whose literal `include_str!`/`include_bytes!` path resolves to one.
+    `validate_packaged` checks the published file lists themselves.
+    """
+    root = Path(root)
+    records = provenance_records(root, expected)
+    provenance = (root / 'runlimit' / PROVENANCE).resolve()
+    by_digest = {expected[name]: name for name in records.values()}
+    for directory, names, files in os.walk(root):
+        names[:] = [n for n in names if n not in EXCLUDED_PARTS]
+        for entry in names + files:
+            path = Path(directory) / entry
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                target = path.resolve()
+                if target == provenance or provenance in target.parents:
+                    raise ValueError(f'{relative} links into provenance/')
     for path in source_files(root):
-        if provenance in path.parents:
+        if provenance in path.resolve().parents:
             continue
         relative = path.relative_to(root).as_posix()
         if path.suffix == '.sql':
@@ -102,10 +125,38 @@ def validate_provenance(root, expected):
                 raise ValueError(f'provenance record {record} is copied to {relative}')
         elif path.suffix == '.rs':
             text = path.read_text()
-            for name in records:
+            for name in records.values():
                 if name in text:
                     raise ValueError(f'{relative} names provenance record {name}; refer '
                                      'to a record by file name, never by path')
+            for match in INCLUDE.finditer(text):
+                target = (path.parent / (match.group('raw') or match.group('plain') or '')).resolve()
+                if target in records:
+                    raise ValueError(f'{relative} includes provenance record {records[target]}')
+
+
+def validate_packaged(root, expected, packages):
+    """Reject a published native package whose file list holds a record."""
+    by_digest = {expected[name]: name
+                 for name in provenance_records(root, expected).values()}
+    for package, directory, listed in packages:
+        for name in listed:
+            path = Path(directory) / name
+            if not path.is_file():
+                continue
+            record = by_digest.get(hashlib.sha256(path.read_bytes()).hexdigest())
+            if record is not None:
+                raise ValueError(f'{package} would publish provenance record {record} as {name}')
+
+
+def package_listings(root):
+    """Yield `(package, directory, files)` from Cargo's own package file lists."""
+    for suffix in NATIVE:
+        name = 'runlimit-' + suffix
+        listed = subprocess.check_output(
+            ['cargo', 'package', '-p', name, '--list', '--allow-dirty', '--locked'],
+            cwd=root, text=True).split()
+        yield name, Path(root) / 'runlimit' / name, listed
 
 
 if __name__ == '__main__':
@@ -113,4 +164,6 @@ if __name__ == '__main__':
         ['cargo', 'metadata', '--format-version', '1', '--all-features', '--locked'], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
+    validate_packaged(ROOT, json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text()),
+                      package_listings(ROOT))
     print('Runlimit: five publishable local identities, native ownership and imported SQL/licenses verified')

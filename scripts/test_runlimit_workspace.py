@@ -12,6 +12,7 @@ from check_runlimit_workspace import (
     NATIVE,
     validate_assets,
     validate_graph,
+    validate_packaged,
 )
 from package import eligible
 
@@ -111,34 +112,56 @@ class AssetTests(unittest.TestCase):
                 validate_assets(root)
             stray.unlink()
 
-            for restored in (native / 'runlimit-postgres' / 'src' / 'superseded.sql',
+            package = native / 'runlimit-postgres'
+            for restored in (package / 'src' / 'superseded.sql',
                              root / 'crates' / 'adapter' / 'sql' / 'renamed.sql'):
                 restored.parent.mkdir(parents=True, exist_ok=True)
                 restored.write_bytes(record.read_bytes())
                 with self.subTest(restored=restored), self.assertRaisesRegex(ValueError, 'copied to'):
                     validate_assets(root)
                 restored.unlink()
-            (native / 'runlimit-postgres' / 'src' / 'live.sql').write_text('SELECT 3')
+            (package / 'src' / 'live.sql').write_text('SELECT 3')
             validate_assets(root)
 
-            native_source = native / 'runlimit-postgres' / 'src' / 'lib.rs'
+            for link, target in ((package / 'src' / 'superseded.sql', record),
+                                 (package / 'archive', record.parent)):
+                link.symlink_to(target)
+                with self.subTest(link=link), self.assertRaisesRegex(ValueError, 'links into'):
+                    validate_assets(root)
+                link.unlink()
+
+            native_source = package / 'src' / 'lib.rs'
             adapter_source = root / 'crates' / 'adapter' / 'src' / 'lib.rs'
             for source in (native_source, adapter_source):
                 source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text('// The imported superseded.sql is never executed.\n')
+                source.write_text('// The imported superseded.sql is never executed.\n'
+                                  'const LIVE: &str = include_str!("live.sql");\n')
             validate_assets(root)
-            for source, text in (
-                    (native_source, 'const SQL: &str = include_str!('
-                                    '"../../provenance/runlimit-postgres/superseded.sql");'),
-                    (native_source, 'const SQL: &str = include_str!('
-                                    'r"../../provenance/runlimit-postgres/superseded.sql");'),
-                    (native_source, 'const SQL: &[u8] = include_bytes!(r#"../../provenance/'
-                                    'runlimit-postgres/superseded.sql"#);'),
-                    (adapter_source, 'const SQL: &str = include_str!("../../../runlimit/'
-                                     'provenance/runlimit-postgres/superseded.sql");'),
-                    (native_source, '// see provenance/runlimit-postgres/superseded.sql')):
-                original = source.read_text()
-                source.write_text(text + '\n')
-                with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'names provenance'):
-                    validate_assets(root)
-                source.write_text(original)
+            named = (
+                (native_source, 'include_str!("../../provenance/runlimit-postgres/superseded.sql")'),
+                (native_source, 'include_str!(r"../../provenance/runlimit-postgres/superseded.sql")'),
+                (native_source, 'include_bytes!(r#"../../provenance/runlimit-postgres/superseded.sql"#)'),
+                (adapter_source, 'include_str!("../../../runlimit/provenance/runlimit-postgres/'
+                                 'superseded.sql")'),
+                (native_source, '// see provenance/runlimit-postgres/superseded.sql'))
+            resolved = (
+                (native_source, 'include_str!("../../provenance/runlimit-postgres/./superseded.sql")'),
+                (native_source, 'include_str! { "../../provenance//runlimit-postgres/superseded.sql" }'),
+                (native_source, 'include_bytes![r"../../provenance/x/../runlimit-postgres/superseded.sql"]'),
+                (adapter_source, 'include_str!("../../../runlimit/provenance/./runlimit-postgres/'
+                                 'superseded.sql")'))
+            for message, cases in (('names provenance', named), ('includes provenance', resolved)):
+                for source, text in cases:
+                    original = source.read_text()
+                    source.write_text(text + '\n')
+                    with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
+                        validate_assets(root)
+                    source.write_text(original)
+
+            listing = [('runlimit-postgres', package, ['Cargo.toml', 'src/live.sql'])]
+            (package / 'Cargo.toml').write_text('[package]')
+            validate_packaged(root, expected, listing)
+            (package / 'src' / 'superseded.sql').symlink_to(record)
+            listing = [('runlimit-postgres', package, ['src/live.sql', 'src/superseded.sql'])]
+            with self.assertRaisesRegex(ValueError, 'would publish provenance record'):
+                validate_packaged(root, expected, listing)
