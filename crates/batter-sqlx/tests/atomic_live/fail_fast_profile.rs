@@ -1,9 +1,9 @@
 use super::policy::{Failure, Policy};
 use super::*;
 use batter_sqlx::{
-    PgAtomicUncertainty, PgScopeLoss, PgSessionProfile, run_atomic_profiled_fail_fast_with,
+    PgAtomicUncertainty, PgScopeLoss, PgSessionProfile, PgSessionTimeouts,
+    run_atomic_profiled_fail_fast_with,
 };
-use std::time::Duration;
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
@@ -15,14 +15,11 @@ async fn fail_fast_profile_checks_before_work_and_restores_rejected_changes() ->
         .await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
+        let profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into(), schema.clone()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?
         .with_setting("app.tenant", "original")?;
         for rejection in [true, false] {

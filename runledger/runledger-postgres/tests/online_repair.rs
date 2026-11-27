@@ -1,8 +1,9 @@
 use std::time::{Duration, Instant};
 
 use runledger_postgres::{
-    OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
-    migrate_after_idempotency_cutover, prepare_online_indexes_for_external_migrator,
+    OnlineIndexProblem, PgSessionProfile, PgSessionTimeouts, RunledgerDatabase,
+    SchemaCompatibilityError, migrate_after_idempotency_cutover,
+    prepare_online_indexes_for_external_migrator,
 };
 use sqlx::{AssertSqlSafe, PgPool};
 
@@ -72,14 +73,15 @@ async fn interrupt_build(pool: &PgPool, sql: &'static str) {
 fn relayed_database(pool: &PgPool, relay: &Relay) -> RunledgerDatabase {
     let options = pool.connect_options();
     let login = options.get_username();
-    let profile = PgSessionProfile::new(
-        login,
-        login,
-        vec!["public".into()],
+    let timeouts = PgSessionTimeouts::new(
         Duration::ZERO,
         Duration::from_secs(5),
+        Duration::ZERO,
+        Duration::ZERO,
     )
-    .expect("profile");
+    .expect("timeouts");
+    let profile =
+        PgSessionProfile::new(login, login, vec!["public".into()], timeouts).expect("profile");
     runledger_postgres::low_level::connect_database_lazy(
         relay.options.clone(),
         profile,

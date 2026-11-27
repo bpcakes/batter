@@ -3,7 +3,7 @@ use super::{
     profile_hook_events::HookEvents,
     support::{Result, bounded, combine, require},
 };
-use batter_sqlx::{PgProfiledPool, PgSessionProfile};
+use batter_sqlx::{PgProfiledPool, PgSessionProfile, PgSessionTimeouts};
 use sqlx::{
     Connection, PgConnection,
     postgres::{PgConnectOptions, PgPoolOptions},
@@ -63,14 +63,11 @@ async fn idle_revocation(revocation: Revocation) -> Result {
     )))
     .execute(&mut admin)
     .await;
-    let mut profile = PgSessionProfile::with_timeouts(
+    let mut profile = PgSessionProfile::new(
         &login,
         &role,
         vec![schema.clone()],
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )?
     .with_setting("app.tenant", "restricted")?;
     if parameter {

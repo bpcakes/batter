@@ -538,9 +538,10 @@ Owning Bead: `batter-qhps`; resolved SQLx 0.9.0 and PostgreSQL 18.6.
 - The PostgreSQL 17 [release notes](https://www.postgresql.org/docs/17/release-17.html)
   introduce `transaction_timeout`. Complete declarations require its existence
   even for explicit zero; native setup errors reject unsupported parameters.
-  Compatibility construction does not query or set either undeclared GUC.
-  This historical feature introduction does not define Batter's support floor:
-  PostgreSQL 18 is the minimum for both constructors and all PostgreSQL integrations.
+  At the time of this review, the five-argument compatibility constructor left
+  both transaction timeouts at their reset defaults. The current
+  `PgSessionProfile::new` requires all four timeouts and the adapter applies
+  and verifies each one. PostgreSQL 18 is the minimum for all PostgreSQL integrations.
 
 The native cases distinguish startup/session values, profile enforcement and
 independently observed backend/lock release from a still-held local lease. This

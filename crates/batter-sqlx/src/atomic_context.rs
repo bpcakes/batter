@@ -233,8 +233,7 @@ mod tests {
             "login",
             "serving",
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
+            crate::PgSessionTimeouts::disabled(),
         )
         .unwrap();
         let database = crate::low_level::connect_profiled_pool_lazy(

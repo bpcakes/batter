@@ -135,10 +135,14 @@ All five native package manifests restrict publication to crates.io. Shared
 workspace adoption does not itself prove publication or change transaction ownership.
 
 Use `run_atomic(&database, async |mut scope| ...)`. The `RunledgerDatabase` owns
-mandatory acquisition/release hooks and an immutable `PgSessionProfile`. It declares
-the authenticated and effective roles, one authoritative Runledger schema, server
-statement/lock timeouts and optional custom settings. The trusted path is that
-schema, with PostgreSQL's implicit catalog first and temporary objects last.
+mandatory acquisition/release hooks and an immutable `PgSessionProfile`. The profile
+declares the authenticated and effective roles, one authoritative Runledger schema
+and optional custom settings. Its required `PgSessionTimeouts` declares
+`statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`
+and `transaction_timeout`. Each value overrides the PostgreSQL startup, role or
+database setting. A zero duration explicitly disables that timeout.
+The trusted path is the declared schema, with PostgreSQL's implicit catalog
+first and temporary objects last.
 Fallback schemas are rejected so missing Runledger tables cannot silently resolve
 elsewhere; application objects in other schemas must be explicitly qualified.
 Roles and schemas must already exist. Ordinary APIs and workers receive
@@ -187,7 +191,7 @@ Database policy (`src/support/database.rs`):
 
 <!-- quick-start-source: runledger-runtime/examples/support/database.rs -->
 ```rust
-use runledger_postgres::{PgSessionProfile, RunledgerDatabase};
+use runledger_postgres::{PgSessionProfile, PgSessionTimeouts, RunledgerDatabase};
 use sqlx::postgres::PgConnectOptions;
 use std::time::Duration;
 
@@ -197,13 +201,13 @@ pub async fn connect(url: &str) -> Result<RunledgerDatabase, Box<dyn std::error:
     let login = options.get_username().to_owned();
     let role = std::env::var("RUNLEDGER_DB_ROLE").unwrap_or_else(|_| login.clone());
     let schema = std::env::var("RUNLEDGER_DB_SCHEMA").unwrap_or_else(|_| "public".into());
-    let profile = PgSessionProfile::new(
-        login,
-        role,
-        vec![schema],
+    let timeouts = PgSessionTimeouts::new(
         Duration::from_secs(30),
         Duration::from_secs(5),
+        Duration::from_secs(10),
+        Duration::from_secs(60),
     )?;
+    let profile = PgSessionProfile::new(login, role, vec![schema], timeouts)?;
     Ok(runledger_postgres::low_level::connect_database(options, profile, 5).await?)
 }
 ```
@@ -1481,6 +1485,14 @@ cargo run -p runledger-tui -- --org 00000000-0000-0000-0000-000000000001
 `DATABASE_URL` must point at a database with the Runledger schema already
 migrated. The binary runs `ensure_schema_compatible_after_idempotency_cutover`
 on startup unless `--skip-schema-check` is set.
+
+TUI sessions set a 30s statement timeout, a 5s lock timeout, a 10s idle-in-transaction
+timeout and a 60s total transaction timeout. Earlier TUI versions inherited the
+last two values from connection startup, role or database settings. Upgrading
+overrides those values, including stricter limits. The startup schema check runs
+in one transaction, so its statements share the 60s total budget. PostgreSQL
+terminates the session when that limit expires or when a transaction sits idle
+for 10s.
 
 Keys: `1`–`4` or `Tab` switch screens · `Shift+Tab` moves backward · `j`/`k`
 or Up/Down move selection · `g`/`G` jump to first/last row · `PgUp`/`PgDn` page

@@ -8,7 +8,6 @@ use batter_sqlx::{
     PgPolicyScope, PgSessionProfile, run_atomic, run_atomic_fail_fast_with,
     run_atomic_profiled_fail_fast_with, run_atomic_profiled_with, run_atomic_with,
 };
-use std::time::Duration;
 
 #[derive(Debug, PartialEq)]
 struct Record {
@@ -128,14 +127,11 @@ async fn native_query_macros_preserve_scope_modes_and_statement_counts() -> Resu
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
+        let profile = PgSessionProfile::new(
             &login,
             &login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
+            batter_sqlx::PgSessionTimeouts::disabled(),
         )?;
         for profiled in [false, true] {
             for fast in [false, true] {

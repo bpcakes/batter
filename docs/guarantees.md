@@ -1871,11 +1871,13 @@ The declared login is compared with `session_user`, independently of the effecti
 role. A mismatch fails setup before protected application or inspection callbacks
 receive SQL access.
 PostgreSQL 18 is the minimum supported server for all PostgreSQL integration
-paths, including both profile constructors.
-`PgSessionProfile::with_timeouts` requires all four server timeout selections,
+paths, including `PgSessionProfile`.
+`PgSessionProfile::new` requires a validated `PgSessionTimeouts` value
+(`PgSessionTimeouts::new` for all four server timeout selections, or
+`PgSessionTimeouts::disabled` when all four are explicitly zero),
 including idle-in-transaction and total-transaction limits. The adapter validates
 exact bounded milliseconds before I/O, applies explicit zero as disable, and
-revalidates both settings alongside the existing policy. The shared validation
+revalidates all four settings alongside the existing policy. The shared validation
 also checks the login's current SET permission for the effective role. Ordinary
 profiled-pool acquisition verifies this and schema USAGE without repeating the
 reset performed before idle admission. It also reassigns declared custom settings
@@ -1889,9 +1891,9 @@ native `SET ROLE`, then two bound arrays for the remaining settings. Both functi
 EXECUTE and parameter assignment checks therefore use the effective role;
 the login need not inherit its function grants. Accepted large declarations do
 not become a wide SELECT target list. Unsupported parameters
-fail setup. The compatibility `new` constructor leaves those two settings
-undeclared and preserves their reset defaults without checking them. Startup
-options survive `DISCARD ALL`; subsequent session `SET` values do not. Server
+fail setup. Startup options survive `DISCARD ALL` while subsequent session `SET`
+values do not; profile application then explicitly applies all four declared
+timeouts over both. Server
 timeout termination cannot release a held Rust lease or cancel arbitrary callback
 work; context-owned runners retain cooperative local deadline responsibility.
 Setting keys are ASCII-lowercased before validation and duplicate detection;

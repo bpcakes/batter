@@ -15,7 +15,7 @@ use batter::{
         test_support::{BodyFailure, ConnectionPlan, FixtureError, FixtureSuite, PlannedPool},
     },
 };
-use runledger_postgres::PgSessionProfile;
+use runledger_postgres::{PgSessionProfile, PgSessionTimeouts};
 use sqlx::postgres::PgPoolOptions;
 
 use super::{
@@ -203,8 +203,7 @@ pub async fn session_policy_failure_retained() -> ProbeResult {
             role.clone(),
             "pg_read_all_stats",
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?);
         let first = Arc::new(Mutex::new(None));
         let recorder = Arc::clone(&first);

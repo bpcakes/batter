@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use runledger_postgres::{
-    MIGRATOR, MigrationTimeoutSetting, PgSessionProfile, SchemaCompatibilityError,
+    MIGRATOR, MigrationTimeoutSetting, PgSessionProfile, PgSessionTimeouts,
+    SchemaCompatibilityError,
 };
 use runledger_test_support::{
     EphemeralDatabase, setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool,
@@ -153,14 +154,15 @@ pub async fn migrate_with_profile_timeouts(
     lock_timeout: Duration,
 ) -> Result<(), SchemaCompatibilityError> {
     let login = pool.connect_options().get_username().to_owned();
-    let profile = PgSessionProfile::new(
-        &login,
-        &login,
-        vec!["public".into()],
+    let timeouts = PgSessionTimeouts::new(
         statement_timeout,
         lock_timeout,
+        Duration::ZERO,
+        Duration::ZERO,
     )
-    .expect("profile with explicit timeouts");
+    .expect("explicit timeouts");
+    let profile = PgSessionProfile::new(&login, &login, vec!["public".into()], timeouts)
+        .expect("profile with explicit timeouts");
     migrate_through_profile(pool, profile).await
 }
 
@@ -172,16 +174,15 @@ pub async fn migrate_with_transaction_timeout(
     transaction_timeout: Duration,
 ) -> Result<(), SchemaCompatibilityError> {
     let login = pool.connect_options().get_username().to_owned();
-    let profile = PgSessionProfile::with_timeouts(
-        &login,
-        &login,
-        vec!["public".into()],
+    let timeouts = PgSessionTimeouts::new(
         Duration::ZERO,
         Duration::ZERO,
         Duration::ZERO,
         transaction_timeout,
     )
-    .expect("profile with only a transaction timeout");
+    .expect("transaction timeout");
+    let profile = PgSessionProfile::new(&login, &login, vec!["public".into()], timeouts)
+        .expect("profile with only a transaction timeout");
     migrate_through_profile(pool, profile).await
 }
 

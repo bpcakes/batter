@@ -4,8 +4,8 @@
 use std::{sync::Arc, time::Duration};
 
 use runledger_postgres::{
-    OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
-    ensure_schema_compatible_after_idempotency_cutover,
+    OnlineIndexProblem, PgSessionProfile, PgSessionTimeouts, RunledgerDatabase,
+    SchemaCompatibilityError, ensure_schema_compatible_after_idempotency_cutover,
 };
 use sqlx::migrate::Migrate;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool};
@@ -46,12 +46,18 @@ impl Fixture {
         let role = format!("snapshot_reader_{}", sqlx::types::Uuid::new_v4().simple());
         install_gates(&harness.pool, &role, snapshot_oid, valid).await;
         let options = harness.pool.connect_options();
+        let timeouts = PgSessionTimeouts::new(
+            Duration::from_secs(20),
+            Duration::from_secs(20),
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .expect("restricted verifier timeouts");
         let profile = PgSessionProfile::new(
             options.get_username(),
             &role,
             vec!["public".into()],
-            Duration::from_secs(20),
-            Duration::from_secs(20),
+            timeouts,
         )
         .expect("restricted verifier profile");
         let verifier =

@@ -123,8 +123,7 @@ fn database_pool(
         login,
         login,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
+        batter::sqlx::PgSessionTimeouts::disabled(),
     )?;
     Ok(batter::sqlx::pool_in(slot, options, connection, profile)?
         .pool()

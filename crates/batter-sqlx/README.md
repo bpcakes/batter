@@ -3,8 +3,10 @@
 An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
 0.0.1, Rust 1.100.0 minimum, Unix-only, and targeting crates.io. The foundation
 does not depend on this package.
-PostgreSQL 18 is the minimum supported server for every adapter path, including
-both session-profile constructors; older servers are unsupported.
+Every adapter path requires PostgreSQL 18 or later. `PgSessionProfile::new`
+requires a `PgSessionTimeouts` value that declares all four server timeouts.
+Use `PgSessionTimeouts::disabled()` only when all four should be `0ms`, since
+the profile overrides PostgreSQL startup, role and database settings.
 
 ## Owned transactions and snapshots
 
@@ -165,8 +167,10 @@ Use `run_atomic_profiled(&pool, &profile, ...)` and
 `PgReadOnlySnapshot::inspect_profiled(&pool, &profile, ...)` when role, trusted
 schema path, server timeouts or custom tenant settings matter. `PgSessionProfile`
 declares login/effective roles and safely quoted trusted schemas, plus explicit
-timeouts and bound custom settings. Construct it with `PgSessionProfile::with_timeouts`
-to require statement, lock, idle-in-transaction and total-transaction timeouts.
+timeouts (`PgSessionTimeouts`) and bound custom settings. `PgSessionProfile::new`
+takes a validated `PgSessionTimeouts` constructed with `PgSessionTimeouts::new`
+(statement, lock, idle-in-transaction and total-transaction timeouts together)
+or `PgSessionTimeouts::disabled()` when all four are intentionally disabled.
 Every duration must be exact whole milliseconds in `0..=i32::MAX`; zero explicitly
 disables that timeout, including over nonzero inherited defaults. Setup is library-owned, runs
 after reset and before BEGIN, and is verified before application work. Atomic
@@ -191,11 +195,9 @@ Recovery still rolls back and releases the private savepoint before revalidation
 commit and rollback still validate immediately before their completion command.
 These are statement counts, not latency or server-resource bounds.
 
-The existing `PgSessionProfile::new` is a weaker compatibility constructor: it
-declares only statement/lock timeouts and neither sets nor verifies transaction
-timeouts. Their PostgreSQL reset defaults, including connection startup options,
-remain in effect. `DISCARD ALL` removes later session `SET` customizations; it does
-not erase startup defaults. All three pool hooks remain library-owned: a
+`DISCARD ALL` removes later session `SET` customizations; it does not erase
+startup defaults, which `PgSessionProfile` then explicitly overrides with all
+four declared timeout values. All three pool hooks remain library-owned: a
 session is reset and verified when it connects and before it is admitted idle,
 and acquisition verifies that idle session against the policy without resetting
 it again. Role SET permission, schema USAGE and custom-parameter SET authority can
@@ -218,8 +220,7 @@ clear the statement cache. SQLx statement preparation,
 cache synchronization and native ping are separate protocol work, so these counts
 are not network-round-trip or latency measurements.
 
-Both complete and legacy profiles require PostgreSQL 18 or later. Legacy
-compatibility concerns timeout declarations only. Unsupported settings fail setup
+`PgSessionProfile` requires PostgreSQL 18 or later. Unsupported settings fail setup
 before application access, even when the value is zero; they are never silently
 skipped. Native verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
 interval, while transaction timeout bounds the whole transaction and terminates

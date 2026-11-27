@@ -8,6 +8,107 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** require a validated `PgSessionTimeouts` in
+  `PgSessionProfile::new` and remove `PgSessionProfile::with_timeouts`
+  (`batter-ndpi`;
+  [ADR-010 assessment](docs/evidence/api-assessments/postgresql.md#session-profile-timeout-requirement-assessment-batter-ndpi)).
+  `PgSessionProfile` previously stored `transaction_timeouts_ms: Option<(u32, u32)>`
+  behind two constructors: the default-named five-argument `new` silently left
+  `idle_in_transaction_session_timeout` and `transaction_timeout` undeclared
+  and unverified, while `with_timeouts` enforced all four. The four server
+  timeouts now live in the opaque validated `PgSessionTimeouts` value
+  (`PgSessionTimeouts::new` for explicit bounds, `PgSessionTimeouts::disabled`
+  when all four are explicitly `0ms`, with no `Default`), and
+  `PgSessionProfile::new` takes `PgSessionTimeouts` as its fourth argument.
+  `with_timeouts` is removed without a deprecated shim. Both `PgSessionProfile`
+  and `PgSessionTimeouts` are exposed identically through `batter_sqlx`,
+  `batter::sqlx`, `batter::runledger`, and `runledger_postgres`.
+
+  **Breaking:** `runledger-tui` and the database-backed examples in
+  `runledger-postgres` and `runledger-runtime` now set a 10s idle-in-transaction
+  limit and a 60s total transaction limit. Earlier versions inherited both
+  limits from PostgreSQL startup, role or database settings. The new values
+  override tighter limits as well as longer or disabled ones.
+
+  ```sh
+  # Before, with both limits disabled, the startup schema check could succeed
+  # even when its statements took more than 60s in total.
+  runledger-tui --database-url "$DATABASE_URL"
+  cargo run -p runledger-postgres --example enqueue_job
+  cargo run -p runledger-runtime --example worker_binary
+
+  # After, the same check can time out at 60s, before the TUI opens,
+  # the example enqueues a job or the worker starts.
+  runledger-tui --database-url "$DATABASE_URL"
+  cargo run -p runledger-postgres --example enqueue_job
+  cargo run -p runledger-runtime --example worker_binary
+  ```
+
+  PostgreSQL's English server log reports `terminating connection due to
+  transaction timeout` or `terminating connection due to idle-in-transaction
+  timeout`. See the [operator guide](runledger/README.md#operator-tui).
+
+  ```rust,ignore
+  // Before: five-argument `new` left both transaction timeouts undeclared.
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+  )?;
+
+  // After: declare all four bounds in `PgSessionTimeouts::new`, or use
+  // `PgSessionTimeouts::disabled()` when all four are intentionally disabled.
+  let timeouts = PgSessionTimeouts::new(
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+      Duration::from_secs(10),
+      Duration::from_secs(60),
+  )?;
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      timeouts,
+  )?;
+
+  // Or, when all four server timeouts are explicitly disabled (`0ms`):
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      PgSessionTimeouts::disabled(),
+  )?;
+  ```
+
+  ```rust,ignore
+  // Before: seven-argument `with_timeouts`.
+  let profile = PgSessionProfile::with_timeouts(
+      "login",
+      "serving",
+      vec!["application".into()],
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+      Duration::from_secs(10),
+      Duration::from_secs(60),
+  )?;
+
+  // After: build `PgSessionTimeouts::new` and pass it to `PgSessionProfile::new`.
+  let timeouts = PgSessionTimeouts::new(
+      Duration::from_secs(30),
+      Duration::from_secs(5),
+      Duration::from_secs(10),
+      Duration::from_secs(60),
+  )?;
+  let profile = PgSessionProfile::new(
+      "login",
+      "serving",
+      vec!["application".into()],
+      timeouts,
+  )?;
+  ```
+
 - Add `crates/batter/tests/process_environment_ownership.rs`, which refuses a
   library read of the process environment outside the one declared seam, share
   the executable-root inventory with the panic-hook scan, and record the

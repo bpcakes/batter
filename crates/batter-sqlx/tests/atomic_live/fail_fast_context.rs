@@ -5,7 +5,7 @@ use super::{
 };
 use batter_core::operation::{OperationError, OperationOwner};
 use batter_sqlx::{
-    PgPolicyScope, PgSessionProfile, run_atomic_fail_fast_with_in,
+    PgPolicyScope, PgSessionProfile, PgSessionTimeouts, run_atomic_fail_fast_with_in,
     run_atomic_profiled_fail_fast_with_in,
 };
 use std::time::Duration;
@@ -21,8 +21,7 @@ async fn fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellat
             login,
             login,
             vec!["public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?;
         let database = batter_sqlx::low_level::connect_profiled_pool_lazy(
             (*options).clone(),

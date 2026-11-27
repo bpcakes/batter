@@ -1,9 +1,8 @@
 use super::{fixture, support::Result};
 use batter_sqlx::{
-    PgScopeError, PgScopeFailure, PgSessionProfile, PgTransactionError,
+    PgScopeError, PgScopeFailure, PgSessionProfile, PgSessionTimeouts, PgTransactionError,
     low_level::PgAtomicTransaction,
 };
-use std::time::Duration;
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
@@ -11,10 +10,13 @@ async fn combined_validation_rejects_each_setting_and_recovers_local_changes() -
     let fixture = fixture().await?;
     let body = async {
         let login = fixture.pool.connect_options().get_username().to_owned();
-        let profile = PgSessionProfile::with_timeouts(
-            &login, &login, vec!["public".into()], Duration::ZERO, Duration::ZERO,
-            Duration::ZERO, Duration::ZERO,
-        )?.with_setting("app.tenant", "original")?
+        let profile = PgSessionProfile::new(
+            &login,
+            &login,
+            vec!["public".into()],
+            PgSessionTimeouts::disabled(),
+        )?
+        .with_setting("app.tenant", "original")?
             .with_setting("application_name", "original")?
             .with_setting("timezone", "UTC")?;
         for (key, value) in [
@@ -71,8 +73,7 @@ async fn combined_validation_rejects_role_and_schema_privilege_drift() -> Result
             &login,
             &role,
             vec![schema.clone(), "public".into()],
-            Duration::ZERO,
-            Duration::ZERO,
+            PgSessionTimeouts::disabled(),
         )?;
         for statement in [
             "RESET ROLE".to_owned(),

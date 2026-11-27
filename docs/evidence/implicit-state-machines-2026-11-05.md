@@ -22,6 +22,12 @@ runner consumes private unstarted/started observation owners and accepts only a
 terminal native result when finishing. The HTTP adapter transfers its writer
 without paired optional owners. Authentication and quota-before-body ordering,
 interrupted consumption uncertainty and public APIs remain unchanged.
+The lease lifecycle in L04 and L05 is addressed by `batter-ctk7.6`, `.7` and
+`.8`: `runlimit_core::attempts::AttemptState` is the one explicit state and
+pure transition, the memory store holds it, and PostgreSQL admission decodes
+each row into it. PostgreSQL completion still applies the live-lease case in one
+SQL statement, with its delay bound from Rust. L05's claim and transaction
+fencing protocol and L04's receipt handling remain as catalogued.
 
 R09 has a targeted safety repair in `batter-mpub`: caught main-handler panics
 become fixed-text failures and settlement diagnostics before downstream storage

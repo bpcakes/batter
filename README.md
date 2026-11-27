@@ -70,7 +70,7 @@ targets. Other Unix targets remain unverified. See
 [ADR-007](docs/adr/007-unix-platform-scope.md).
 
 PostgreSQL 18 is the minimum supported server for PostgreSQL integrations,
-including both `PgSessionProfile` constructors. Older servers are unsupported.
+including `PgSessionProfile`. Older servers are unsupported.
 
 ## Quick start
 

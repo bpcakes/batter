@@ -2,7 +2,7 @@ use super::{
     fixture,
     support::{Result, bounded, require},
 };
-use batter_sqlx::{PgSessionProfile, run_atomic_profiled_in};
+use batter_sqlx::{PgSessionProfile, PgSessionTimeouts, run_atomic_profiled_in};
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
@@ -13,8 +13,13 @@ async fn owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_poli
     let body = async {
         let options = fixture.pool.connect_options();
         let login = options.get_username();
-        let profile = PgSessionProfile::new(login, login, vec!["public".into()],
-            Duration::from_secs(2), Duration::from_millis(250))?
+        let timeouts = PgSessionTimeouts::new(
+            Duration::from_secs(2),
+            Duration::from_millis(250),
+            Duration::ZERO,
+            Duration::ZERO,
+        )?;
+        let profile = PgSessionProfile::new(login, login, vec!["public".into()], timeouts)?
             .with_setting("app.tenant", "expected")?;
         let mut cleanup = batter_core::cleanup::CleanupStack::new();
         let database = batter_sqlx::pool_in(cleanup.reserve("pool")?,

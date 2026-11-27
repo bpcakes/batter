@@ -43,7 +43,8 @@ impl PgSessionProfile {
         &self,
         connection: &mut PgConnection,
     ) -> Result<(Option<String>, String, String), sqlx::Error> {
-        let (timeout_names, timeout_values): (Vec<_>, Vec<_>) = self.timeouts().unzip();
+        let (timeout_names, timeout_values): (Vec<_>, Vec<_>) =
+            self.timeouts.as_pairs().into_iter().unzip();
         let (setting_names, setting_values): (Vec<_>, Vec<_>) = [
             ("default_transaction_isolation", "read committed"),
             ("default_transaction_read_only", "off"),

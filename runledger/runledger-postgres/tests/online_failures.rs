@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use runledger_postgres::{
     MigrationTimeoutSetting, OnlineIndexPhase, OnlineIndexProblem, PgSessionProfile,
-    SchemaCompatibilityError, ensure_schema_compatible_after_idempotency_cutover,
+    PgSessionTimeouts, SchemaCompatibilityError,
+    ensure_schema_compatible_after_idempotency_cutover,
     prepare_online_indexes_for_external_migrator,
 };
 use sqlx::migrate::Migrate;
@@ -154,8 +155,7 @@ async fn restricted_verifier_recognizes_hidden_build_progress_and_settled_interr
         options.get_username(),
         &role,
         vec!["public".into()],
-        Duration::ZERO,
-        Duration::ZERO,
+        PgSessionTimeouts::disabled(),
     )
     .expect("restricted profile");
     let verifier = runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
@@ -378,14 +378,15 @@ async fn external_preparation_exposes_the_same_typed_lock_wait_expiry() {
         |pool| async move {
             let options = pool.connect_options();
             let login = options.get_username();
-            let profile = PgSessionProfile::new(
-                login,
-                login,
-                vec!["public".into()],
+            let timeouts = PgSessionTimeouts::new(
                 Duration::from_secs(2),
                 Duration::from_millis(250),
+                Duration::ZERO,
+                Duration::ZERO,
             )
-            .expect("bounded profile");
+            .expect("bounded timeouts");
+            let profile = PgSessionProfile::new(login, login, vec!["public".into()], timeouts)
+                .expect("bounded profile");
             let database =
                 runledger_postgres::low_level::connect_database((*options).clone(), profile, 1)
                     .await

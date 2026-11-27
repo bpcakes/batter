@@ -1,7 +1,7 @@
 //! Declared Runledger database authority shared by ordinary and atomic access.
 use crate::DbPool;
 use batter_sqlx::PgProfiledPool;
-pub use batter_sqlx::{PgProfileError, PgSessionProfile};
+pub use batter_sqlx::{PgProfileError, PgSessionProfile, PgSessionTimeouts};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 /// A pool whose acquisitions establish the declared database profile. There is
