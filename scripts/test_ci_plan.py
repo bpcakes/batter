@@ -67,6 +67,13 @@ class ClosureTests(unittest.TestCase):
         self.assertTrue(all((root / entry).is_dir() for entry in closure), closure)
 
     @unittest.skipUnless(shutil.which("cargo"), "cargo is required for workspace metadata")
+    def test_runlimit_package_inputs_resolve_on_this_tree(self):
+        # The plan's skip proof needs these inputs; an include the planner
+        # cannot resolve here would select the full run for every change.
+        inputs = package_inputs(cargo_metadata(), (RUNLIMIT_PACKAGE,))
+        self.assertIn("runlimit/runlimit-postgres/", inputs)
+
+    @unittest.skipUnless(shutil.which("cargo"), "cargo is required for workspace metadata")
     def test_package_inputs_include_shared_process_sources_loaded_outside_closure(self):
         inputs = package_inputs(cargo_metadata(), ("batter-axum",))
         self.assertIn("test-support/process/launch.rs", inputs)

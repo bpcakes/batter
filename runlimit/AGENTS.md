@@ -204,9 +204,13 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   and a new family to `families!`. The crate's own `clippy.toml` disallows
   every sqlx entry point that accepts SQL text, so SQL reaches sqlx only
   through `Statement::query`; the three bundled migrators are the only other
-  pinned exception. Do not suppress those lints anywhere else, and re-read
+  pinned exception. Do not suppress those lints, their groups,
+  `warnings` or `unfulfilled_lint_expectations` anywhere else, and re-read
   sqlx's SQL-text parameters on every sqlx upgrade; `src/catalog_guard/gate.rs`
-  pins the inventory and the exceptions. Integration tests may use raw SQL
+  pins the inventory and the exceptions, and `gate/probes.rs` uses each entry
+  under an expectation that Clippy rejects it, so an entry that stops
+  resolving fails the Clippy runs. `scripts/check_runlimit_workspace.py` keeps
+  the manifest from lowering those lints. Integration tests may use raw SQL
   behind their crate-level allow. Each statement calls catalog functions and
   casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
   and `double precision` keeps both words. A multi-array `unnest` is spelled

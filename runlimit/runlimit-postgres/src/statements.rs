@@ -17,18 +17,21 @@
 use sqlx::{Postgres, postgres::PgArguments, query::Query};
 
 /// Declares one family's statements: an `Id` variant and a constant per
-/// statement. A statement's text is a string literal or the
-/// `include_str!` of a `.sql` file named by a literal path; nothing else,
-/// such as a published migration's constant, is accepted.
+/// statement. A statement's text is a string literal or the `include_str!`
+/// of a `.sql` file named by a literal path; nothing else, such as a
+/// published migration's constant or another macro, is accepted. The include
+/// is written out in the family's file, where `scripts/ci_plan.py` resolves
+/// it, and this macro only forwards it.
 macro_rules! statements {
     (@munch [$($done:tt)*]) => {
         statements!(@emit $($done)*);
     };
     (@munch [$($done:tt)*]
-        $(#[$attribute:meta])* $name:ident = include_str!($path:literal); $($rest:tt)*
+        $(#[$attribute:meta])* $name:ident = $reader:ident!($path:literal); $($rest:tt)*
     ) => {
+        statements!(@only_include_str $reader);
         statements!(@munch [$($done)* {
-            [$(#[$attribute])*] $name (::core::include_str!($path)) (Some($path))
+            [$(#[$attribute])*] $name (::core::$reader!($path)) (Some($path))
         }] $($rest)*);
     };
     (@munch [$($done:tt)*]
@@ -38,8 +41,12 @@ macro_rules! statements {
     };
     (@munch [$($done:tt)*] $($rest:tt)+) => {
         compile_error!(
-            "a statement is `NAME = \"<literal>\";` or `NAME = include_str!(\"<file>.sql\");`"
+            "a statement's text is a string literal or include_str! of a literal .sql path"
         );
+    };
+    (@only_include_str include_str) => {};
+    (@only_include_str $other:ident) => {
+        compile_error!("a statement may include its text only with include_str!");
     };
     (@emit $({ [$($attribute:tt)*] $name:ident ($($text:tt)+) ($($file:tt)+) })+) => {
         /// The statements this family declares.

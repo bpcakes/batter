@@ -6,8 +6,9 @@ cognitive-complexity-threshold = 20
 # one site allowed to call `sqlx::query`; the bundled migrators run only the
 # migrations `sqlx::migrate!` embeds. Every sqlx 0.9 entry point that accepts
 # SQL text, or makes text acceptable, is disallowed, so Clippy resolves each
-# call, import, rename and trait method to it. `src/catalog_guard.rs` pins
-# this inventory and checks that nothing else suppresses these lints.
+# call, import, rename and trait method to it. `src/catalog_guard/gate.rs`
+# pins this inventory, probes each entry and checks that nothing else
+# suppresses these lints.
 disallowed-methods = [
     { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },
     { path = "sqlx::query_with", reason = "run SQL only through statements::Statement::query" },
@@ -36,7 +37,12 @@ disallowed-methods = [
     { path = "sqlx::postgres::PgPoolCopyExt::copy_in_raw", reason = "COPY takes SQL text" },
     { path = "sqlx::postgres::PgPoolCopyExt::copy_out_raw", reason = "COPY takes SQL text" },
     { path = "sqlx::SqlSafeStr::into_sql_str", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::Execute::sql", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::Transaction::begin", reason = "begin transactions with the default statement" },
     { path = "sqlx::migrate::Migrator::new", reason = "run only the migrations sqlx::migrate! embeds" },
+    { path = "sqlx::migrate::MigrationSource::resolve", reason = "run only the migrations sqlx::migrate! embeds" },
+    { path = "sqlx::migrate::resolve_blocking", reason = "run only the migrations sqlx::migrate! embeds" },
+    { path = "sqlx::migrate::resolve_blocking_with_config", reason = "run only the migrations sqlx::migrate! embeds" },
 ]
 disallowed-types = [
     { path = "sqlx::AssertSqlSafe", reason = "SQL text comes only from a Statement" },

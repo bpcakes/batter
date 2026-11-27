@@ -18,6 +18,7 @@ from check_runlimit_workspace import (
     package_archives,
     validate_provenance,
     validate_published,
+    validate_sql_gate,
 )
 from package import eligible
 
@@ -197,3 +198,49 @@ class AssetTests(unittest.TestCase):
                 with self.subTest(inside=inside), self.assertRaisesRegex(ValueError, 'inside the checkout'):
                     package_archives(root, inside)
 
+
+class SqlGateTests(unittest.TestCase):
+    MANIFEST = (b'[package]\nname = "runlimit-postgres"\n\n[lints.rust]\nunsafe_code = "forbid"\n\n'
+                b'[lints.clippy]\nall = { level = "warn", priority = -1 }\n'
+                b'pedantic = { level = "warn", priority = -1 }\n')
+    SHARED = b'cognitive-complexity-threshold = 20\n'
+    LOCAL = SHARED + b'disallowed-methods = [{ path = "sqlx::query" }]\n'
+
+    def tree(self, manifest=MANIFEST, local=LOCAL):
+        temporary = tempfile.TemporaryDirectory(prefix='runlimit-sql-gate-')
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        package = root / 'runlimit' / 'runlimit-postgres'
+        package.mkdir(parents=True)
+        (package / 'Cargo.toml').write_bytes(manifest)
+        (package / 'clippy.toml').write_bytes(local)
+        (root / 'runlimit' / 'clippy.toml').write_bytes(self.SHARED)
+        return root
+
+    def test_the_checkout_and_a_whole_fixture_pass(self):
+        validate_sql_gate(Path(__file__).resolve().parent.parent)
+        validate_sql_gate(self.tree())
+
+    def test_lowering_a_gate_lint_or_its_group_fails(self):
+        for setting in (b'style = "allow"', b'default = { level = "allow" }',
+                        b'disallowed_methods = "allow"', b'disallowed_types = { level = "allow" }',
+                        b'disallowed_macros = "allow"'):
+            with self.subTest(setting=setting), self.assertRaisesRegex(ValueError, 'lowers'):
+                validate_sql_gate(self.tree(self.MANIFEST + setting + b'\n'))
+        lowered_all = self.MANIFEST.replace(b'all = { level = "warn", priority = -1 }',
+                                            b'all = { level = "allow", priority = -1 }')
+        with self.assertRaisesRegex(ValueError, 'clippy::all'):
+            validate_sql_gate(self.tree(lowered_all))
+
+    def test_allowing_warnings_or_inheriting_workspace_levels_fails(self):
+        for lint in (b'warnings', b'unfulfilled_lint_expectations'):
+            allowed = self.MANIFEST.replace(b'unsafe_code = "forbid"', lint + b' = "allow"')
+            with self.subTest(lint=lint), self.assertRaisesRegex(ValueError, lint.decode()):
+                validate_sql_gate(self.tree(allowed))
+        inherited = (b'[package]\nname = "runlimit-postgres"\n\n[lints]\nworkspace = true\n')
+        with self.assertRaisesRegex(ValueError, 'workspace'):
+            validate_sql_gate(self.tree(inherited))
+
+    def test_dropping_a_shared_clippy_setting_fails(self):
+        with self.assertRaisesRegex(ValueError, 'cognitive-complexity-threshold'):
+            validate_sql_gate(self.tree(local=b'disallowed-methods = []\n'))

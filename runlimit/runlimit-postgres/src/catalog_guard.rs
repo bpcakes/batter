@@ -24,8 +24,9 @@
 //! file in `src`, so `statements::all()` lists every statement the crate can
 //! send and the first test below checks each one. No other SQL text can
 //! reach PostgreSQL: the crate's `clippy.toml` disallows every sqlx entry
-//! point that accepts SQL text, and `gate` checks that inventory and that
-//! only `Statement::query` and the three bundled migrators suppress it.
+//! point that accepts SQL text, and `gate` checks that inventory, probes each
+//! entry under Clippy and checks that only `Statement::query` and the three
+//! bundled migrators suppress it.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -122,6 +123,9 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT pg_catalog.\"unnest\"($1::integer[], $2::integer[])",
         "SELECT $1::double",
         "SELECT $1::DOUBLE, $2::double precision",
+        "SELECT * FROM json_to_record($1) AS (values integer)",
+        "SELECT * FROM t, json_to_record($1) AS (insert integer)",
+        "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[]) WITH ORDINALITY AS x(v, n), floor(1)",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }

@@ -2,6 +2,8 @@
 //! casts in one statement's text. It strips comments and quoted text and
 //! reads SQL structurally; it is not a full parser.
 
+use std::collections::BTreeSet;
+
 /// Call-shaped words that are SQL syntax, not catalog functions.
 const SYNTAX: &[&str] = &[
     "all",
@@ -59,13 +61,8 @@ const KEYWORD_TYPES: &[&str] = &[
     "varchar",
 ];
 
-/// Words that open a common table expression's query body.
-const QUERY_KEYWORDS: &[&str] = &[
-    "delete", "insert", "select", "table", "update", "values", "with",
-];
-
 /// Words before an identifier that make its parenthesis a column list.
-const COLUMN_LIST_OWNERS: &[&str] = &["as", "into", "recursive", "with"];
+const COLUMN_LIST_OWNERS: &[&str] = &["as", "into"];
 
 /// The unqualified catalog functions and types `sql` uses, and any qualified
 /// multi-array `unnest`, which PostgreSQL recognizes only unqualified: the
@@ -73,6 +70,7 @@ const COLUMN_LIST_OWNERS: &[&str] = &["as", "into", "recursive", "with"];
 pub(super) fn unqualified(sql: &str) -> Vec<String> {
     let mut found = outside_dialect(sql);
     let code = strip_comments_and_quotes(sql);
+    let ctes = cte_names(&code);
     let bytes = code.as_bytes();
     for (start, _) in code.to_ascii_lowercase().match_indices("pg_catalog.unnest") {
         let open = skip_spaces(bytes, start + "pg_catalog.unnest".len());
@@ -102,7 +100,7 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
                 Some("pg_catalog") => {}
                 Some(schema) => found.push(format!("{schema}.{word}(...)")),
                 None if SYNTAX.contains(&word.as_str())
-                    || owns_column_list(&code, start, after) => {}
+                    || owns_column_list(&code, start, &ctes) => {}
                 None => found.push(format!("{word}(...)")),
             }
         }
@@ -222,33 +220,106 @@ fn outside_dialect(sql: &str) -> Vec<String> {
     found
 }
 
-/// Whether the parenthesis after `start..after` is a relation's column list:
-/// an alias, insert target or common table expression name.
-fn owns_column_list(code: &str, start: usize, paren: usize) -> bool {
+/// Whether the parenthesis after the identifier at `start` is a column list
+/// rather than a call: an alias's or insert target's (`AS name(...)`,
+/// `INTO name(...)`) or a common table expression's.
+fn owns_column_list(code: &str, start: usize, ctes: &BTreeSet<usize>) -> bool {
     let before = code[..start].trim_end();
     let previous = before
         .rsplit(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if COLUMN_LIST_OWNERS.contains(&previous.as_str()) {
-        return true;
-    }
+    COLUMN_LIST_OWNERS.contains(&previous.as_str()) || ctes.contains(&start)
+}
+
+/// Where each common table expression's name starts: the first after `WITH`
+/// or `WITH RECURSIVE`, and each after a `,` that follows a body. Only
+/// `name [(columns)] AS [NOT] [MATERIALIZED] (` declares one, so
+/// `WITH ORDINALITY AS input(...)` and a record's column definition list
+/// such as `json_to_record($1) AS (values integer)` are not.
+fn cte_names(code: &str) -> BTreeSet<usize> {
     let bytes = code.as_bytes();
+    let mut names = BTreeSet::new();
+    let mut search = 0;
+    while let Some(found) = find_word(code, search, "with") {
+        search = found + "with".len();
+        let mut index = skip_spaces(bytes, search);
+        if word_at(code, index, "recursive") {
+            index = skip_spaces(bytes, index + "recursive".len());
+        }
+        loop {
+            let name = index;
+            let mut next = identifier_end(bytes, index);
+            if next == name {
+                break;
+            }
+            next = skip_spaces(bytes, next);
+            if bytes.get(next) == Some(&b'(') {
+                next = skip_spaces(bytes, closing_paren(bytes, next) + 1);
+            }
+            if !word_at(code, next, "as") {
+                break;
+            }
+            next = skip_spaces(bytes, next + "as".len());
+            for modifier in ["not", "materialized"] {
+                if word_at(code, next, modifier) {
+                    next = skip_spaces(bytes, next + modifier.len());
+                }
+            }
+            if bytes.get(next) != Some(&b'(') {
+                break;
+            }
+            names.insert(name);
+            let after = skip_spaces(bytes, closing_paren(bytes, next) + 1);
+            if bytes.get(after) != Some(&b',') {
+                break;
+            }
+            index = skip_spaces(bytes, after + 1);
+        }
+    }
+    names
+}
+
+/// The next whole-word `word` at or after `from`, ignoring case.
+fn find_word(code: &str, from: usize, word: &str) -> Option<usize> {
+    (from..code.len()).find(|&index| word_at(code, index, word))
+}
+
+/// Whether the whole word at `index` is `word`, ignoring case.
+fn word_at(code: &str, index: usize, word: &str) -> bool {
+    let bytes = code.as_bytes();
+    (index == 0 || !is_identifier_part(bytes[index - 1])) && next_word_is(code, index, word)
+}
+
+/// The end of the identifier starting at `index`, or `index` if none does.
+fn identifier_end(bytes: &[u8], index: usize) -> usize {
+    if !bytes.get(index).copied().is_some_and(is_identifier_start) {
+        return index;
+    }
+    let mut end = index;
+    while bytes.get(end).copied().is_some_and(is_identifier_part) {
+        end += 1;
+    }
+    end
+}
+
+/// The index of the parenthesis closing the one at `open`, or the end.
+fn closing_paren(bytes: &[u8], open: usize) -> usize {
     let mut depth = 0_usize;
-    for (offset, byte) in bytes[paren..].iter().enumerate() {
+    for (index, byte) in bytes.iter().enumerate().skip(open) {
         match byte {
             b'(' => depth += 1,
             b')' => {
                 depth -= 1;
                 if depth == 0 {
-                    return is_cte_body(&code[paren + offset + 1..]);
+                    return index;
                 }
             }
             _ => {}
         }
     }
-    false
+    bytes.len()
 }
 
 /// The number of top-level arguments in the parenthesized list `call` opens.
@@ -269,37 +340,6 @@ fn top_level_arguments(call: &str) -> usize {
         }
     }
     arguments
-}
-
-/// Whether `rest` starts a common table expression body,
-/// `AS [[NOT] MATERIALIZED] (query`, rather than a record-returning call's
-/// column definition list, `AS (name type, ...)`.
-fn is_cte_body(rest: &str) -> bool {
-    let mut rest = rest.trim_start();
-    for word in ["as", "not", "materialized"] {
-        match rest.get(..word.len()) {
-            Some(prefix)
-                if prefix.eq_ignore_ascii_case(word)
-                    && !rest[word.len()..]
-                        .bytes()
-                        .next()
-                        .is_some_and(is_identifier_part) =>
-            {
-                rest = rest[word.len()..].trim_start();
-            }
-            _ if word == "as" => return false,
-            _ => {}
-        }
-    }
-    let Some(body) = rest.strip_prefix('(') else {
-        return false;
-    };
-    let keyword: String = body
-        .trim_start()
-        .chars()
-        .take_while(char::is_ascii_alphabetic)
-        .collect();
-    QUERY_KEYWORDS.contains(&keyword.to_ascii_lowercase().as_str())
 }
 
 /// `sql` with comments and string constants blanked. A double-quoted

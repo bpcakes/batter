@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -25,6 +26,11 @@ UNEXECUTED_RECORDS = {
     'e9b9bc4cacae015fd06f14d8e6eeb6b0e10e77f17344d52598a5828598a4a49c': 'cleanup_expired.sql',
     '740a2ec53f208cddce451f69508e4c9264b14b74523b5fc11cf522bf7adbf243': 'attempt_cleanup.sql',
 }
+# runlimit-postgres's SQL gate lints and the Clippy groups that contain them
+# (`clippy-driver -Whelp`); see runlimit-postgres/src/catalog_guard/gate.rs.
+SQL_GATE_LINTS = frozenset({'all', 'default', 'style', 'disallowed_methods',
+                            'disallowed_types', 'disallowed_macros'})
+ENABLED_LEVELS = frozenset({'warn', 'deny', 'forbid'})
 
 
 def validate_graph(metadata, root):
@@ -114,6 +120,43 @@ def validate_provenance(root, expected, required=None):
             raise ValueError('provenance holds an uninventoried file: ' + name)
 
 
+def lint_level(setting):
+    """The level of a `[lints]` entry, written as a string or a table."""
+    return setting.get('level') if isinstance(setting, dict) else setting
+
+
+def validate_sql_gate(root):
+    """Keep runlimit-postgres's SQL gate lints enabled and its Clippy settings whole.
+
+    The crate's clippy.toml disallows every sqlx entry point that accepts SQL
+    text, and its packaged unit tests pin that inventory. This checkout check
+    covers what those tests cannot read reliably: the manifest must not lower
+    a gate lint, a group containing one, rustc's `warnings` or the
+    `unfulfilled_lint_expectations` that fails an unmet gate probe, nor inherit
+    workspace levels, and the crate's clippy.toml, which Clippy reads instead
+    of runlimit/clippy.toml, must repeat every shared setting.
+    """
+    package = Path(root) / 'runlimit' / 'runlimit-postgres'
+    lints = tomllib.loads((package / 'Cargo.toml').read_text()).get('lints', {})
+    if 'workspace' in lints:
+        raise ValueError('runlimit-postgres inherits workspace lint levels; its SQL gate sets its own')
+    clippy = lints.get('clippy', {})
+    if lint_level(clippy.get('all')) not in ENABLED_LEVELS:
+        raise ValueError('runlimit-postgres must enable clippy::all, which holds its SQL gate')
+    lowered = [f'clippy::{name}' for name, setting in clippy.items()
+               if name in SQL_GATE_LINTS and lint_level(setting) not in ENABLED_LEVELS]
+    lowered += [name for name, setting in lints.get('rust', {}).items()
+                if name in ('warnings', 'unfulfilled_lint_expectations')
+                and lint_level(setting) not in ENABLED_LEVELS]
+    if lowered:
+        raise ValueError(f'runlimit-postgres lowers its SQL gate lints: {sorted(lowered)}')
+    shared = tomllib.loads((Path(root) / 'runlimit' / 'clippy.toml').read_text())
+    local = tomllib.loads((package / 'clippy.toml').read_text())
+    dropped = sorted(key for key, value in shared.items() if local.get(key) != value)
+    if dropped:
+        raise ValueError(f'runlimit-postgres/clippy.toml drops shared settings: {dropped}')
+
+
 def is_provenance_path(native, name):
     """Whether inventory `name` is a canonical path that resolves in provenance/."""
     parts = name.split('/')
@@ -187,6 +230,7 @@ if __name__ == '__main__':
         ['cargo', 'metadata', '--format-version', '1', '--all-features', '--locked'], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
+    validate_sql_gate(ROOT)
     expected = json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text())
     with tempfile.TemporaryDirectory(prefix='runlimit-package-') as scratch:
         validate_published(package_archives(ROOT, scratch), record_contents(ROOT, expected))

@@ -5,9 +5,13 @@
 //! method to those definitions, so this crate cannot send SQL except through
 //! the pinned exceptions below. These tests pin that inventory against sqlx
 //! 0.9 (re-read sqlx's API for SQL-text parameters, `SqlSafeStr` and
-//! `Execute` implementations on every sqlx upgrade), keep the manifest from
-//! lowering the lints, and check that only the pinned sites suppress them.
-//! Lint flags passed on the command line belong to `scripts/verify.sh`.
+//! `Execute` implementations on every sqlx upgrade) and check that only the
+//! pinned sites suppress the lints. `probes` calls each listed entry point
+//! under an expectation that the lint fires, so a Clippy run fails when an
+//! entry stops resolving. `scripts/check_runlimit_workspace.py` keeps the
+//! manifest from lowering the lints, which the packaged manifest cannot show
+//! reliably; lint flags passed on the command line belong to
+//! `scripts/verify.sh`.
 //!
 //! The lint names this file looks for are assembled with `concat!`, so its
 //! own source names none of them.
@@ -47,7 +51,12 @@ const METHODS: &[&str] = &[
     "sqlx::postgres::PgPoolCopyExt::copy_in_raw",
     "sqlx::postgres::PgPoolCopyExt::copy_out_raw",
     "sqlx::SqlSafeStr::into_sql_str",
+    "sqlx::Execute::sql",
+    "sqlx::Transaction::begin",
     "sqlx::migrate::Migrator::new",
+    "sqlx::migrate::MigrationSource::resolve",
+    "sqlx::migrate::resolve_blocking",
+    "sqlx::migrate::resolve_blocking_with_config",
 ];
 
 /// sqlx types that carry SQL text. `SqlStr` has no public tuple constructor,
@@ -77,13 +86,22 @@ const MACROS: &[&str] = &[
     "sqlx::query_file_scalar_unchecked",
 ];
 
-/// The gate's lint names and the groups that contain them.
+/// The probe module, relative to `src`.
+const PROBES: &str = "catalog_guard/gate/probes.rs";
+
+mod probes;
+
+/// The gate's lint names and the groups that contain them; the first three
+/// are the lints themselves.
 const GATE_LINTS: &[&str] = &[
     concat!("disallowed", "_method"),
     concat!("disallowed", "_type"),
     concat!("disallowed", "_macro"),
     concat!("clippy", "::all"),
+    concat!("clippy", "::default"),
     concat!("clippy", "::style"),
+    // Silencing an unfulfilled probe would hide a gap in the gate.
+    concat!("unfulfilled", "_lint_expectations"),
 ];
 
 /// The only suppressions of the gate, each pinned to its whole item, by the
@@ -210,53 +228,6 @@ fn clippy_disallows_every_sqlx_entry_point_that_accepts_sql() {
         let expected: BTreeSet<String> = expected.iter().map(|path| (*path).to_owned()).collect();
         assert_eq!(listed(&config, key), expected, "clippy.toml {key}");
     }
-    // Clippy reads only the nearest clippy.toml, so this one must repeat the
-    // shared runlimit settings it replaces.
-    let shared = fs::read_to_string(manifest_directory().join("../clippy.toml"))
-        .expect("runlimit has a shared clippy.toml");
-    for setting in shared
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        assert!(
-            config.lines().any(|line| line.trim() == setting),
-            "clippy.toml drops the shared setting {setting}"
-        );
-    }
-}
-
-#[test]
-fn the_manifest_keeps_the_gate_lints_enabled() {
-    let manifest = fs::read_to_string(manifest_directory().join("Cargo.toml"))
-        .expect("the manifest is readable");
-    let mut tables = manifest.split("\n[").skip(1);
-    let lints = tables
-        .clone()
-        .find_map(|table| table.strip_prefix("lints.clippy]"))
-        .expect("the manifest has a [lints.clippy] table");
-    assert!(
-        lints.contains("\nall = { level = \"warn\", priority = -1 }"),
-        "the all group stays at warn"
-    );
-    let gate_keys = [
-        "style",
-        concat!("disallowed", "_methods"),
-        concat!("disallowed", "_types"),
-        concat!("disallowed", "_macros"),
-    ];
-    for line in lints.lines() {
-        let key = line.split('=').next().unwrap_or_default().trim();
-        assert!(!gate_keys.contains(&key), "the manifest sets {key}");
-    }
-    assert!(
-        !tables.any(|table| table.starts_with("lints]")),
-        "the package defines its own lint levels"
-    );
-    for line in manifest.lines() {
-        let key = line.split('=').next().unwrap_or_default().trim();
-        assert_ne!(key, "warnings", "the manifest sets the warnings group");
-    }
 }
 
 #[test]
@@ -267,6 +238,15 @@ fn only_the_pinned_items_suppress_the_gate() {
     let exceptions = exceptions();
     for (file, path) in rust_files(&source) {
         let mut code = without_whitespace(&fs::read_to_string(&path).expect("source is readable"));
+        if file == PROBES {
+            // A probe expects the lint to fire; it never allows it.
+            for lint in &GATE_LINTS[..3] {
+                code = code.replace(
+                    &format!("{}(clippy::{lint}", concat!("#[ex", "pect")),
+                    "#[probe(",
+                );
+            }
+        }
         for (_, pinned) in exceptions.iter().filter(|(owner, _)| *owner == file) {
             let pinned = without_whitespace(pinned);
             match code.matches(&pinned).count() {
@@ -295,6 +275,11 @@ fn only_the_pinned_items_suppress_the_gate() {
                 problems.push(format!("{file}: uses {include}"));
             }
         }
+    }
+    // The probes are test code: catalog_guard compiles only under test.
+    let root = without_whitespace(&fs::read_to_string(source.join("lib.rs")).expect("lib.rs"));
+    if !root.contains("#[cfg(test)]modcatalog_guard;") {
+        problems.push("lib.rs: catalog_guard is not test-only".to_owned());
     }
     for (file, _) in &exceptions {
         if !excepted.contains(*file) {
