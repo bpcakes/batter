@@ -200,9 +200,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
 - Every operational PostgreSQL statement is a `Statement` in
   `runlimit-postgres/src/statements/`, the only module that can construct
   one, and the crate executes SQL only through `Statement::query`. Add a new
-  statement there and to `statements::ALL`; `src/catalog_guard.rs` rejects an
-  unlisted statement and any SQL literal, `sqlx` query constructor, macro,
-  builder or `include!` elsewhere. Each statement calls catalog functions and
+  statement inside its family's `statements!` block, which also registers
+  it; `src/catalog_guard.rs` rejects any other construction and any SQL
+  literal, `sqlx` query constructor, macro, builder, `include!` or use of a
+  published migration constant elsewhere. Each statement calls catalog functions and
   casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names. A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
   the unqualified spelling. The guard reads a restricted dialect and rejects

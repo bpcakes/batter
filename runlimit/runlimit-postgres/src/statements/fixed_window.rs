@@ -2,8 +2,8 @@
 
 use super::Statement;
 
-pub(crate) const BATCH_ADVISORY_LOCK_SQL: Statement = Statement(
-    r"
+statements! {
+    BATCH_ADVISORY_LOCK_SQL = r"
 WITH RECURSIVE acquired(position, locked) AS (
     SELECT 1, pg_catalog.pg_advisory_xact_lock($1[1])
     WHERE pg_catalog.cardinality($1::BIGINT[]) > 0
@@ -18,11 +18,9 @@ WITH RECURSIVE acquired(position, locked) AS (
 )
 SELECT pg_catalog.count(*)
 FROM acquired
-",
-);
+";
 
-pub(crate) const BATCH_ROW_LOCK_SQL: Statement = Statement(
-    r"
+    BATCH_ROW_LOCK_SQL = r"
 WITH input_keys AS (
     SELECT *
     FROM ROWS FROM (
@@ -56,11 +54,9 @@ INNER JOIN runlimit_fixed_windows AS windows
     AND windows.subject_key = ordered_keys.subject_key
 ORDER BY ordered_keys.lock_position
 FOR UPDATE OF windows
-",
-);
+";
 
-pub(crate) const BATCH_CAPACITY_LOCK_SQL: Statement = Statement(
-    r"
+    BATCH_CAPACITY_LOCK_SQL = r"
 WITH input_keys AS (
     SELECT *
     FROM ROWS FROM (
@@ -111,11 +107,9 @@ LEFT JOIN locked_shards
     ON locked_shards.capacity_shard = missing_keys.capacity_shard
 CROSS JOIN lock_barrier
 ORDER BY missing_keys.input_position
-",
-);
+";
 
-pub(crate) const BATCH_PREFLIGHT_SQL: Statement = Statement(
-    r"
+    BATCH_PREFLIGHT_SQL = r"
 WITH input AS (
     SELECT *
     FROM ROWS FROM (
@@ -156,11 +150,9 @@ SELECT
     first_denial.window_expires_at
 FROM sample
 LEFT JOIN first_denial ON TRUE
-",
-);
+";
 
-pub(crate) const BATCH_UPSERT_SQL: Statement = Statement(
-    r"
+    BATCH_UPSERT_SQL = r"
 WITH input AS (
     SELECT *
     FROM ROWS FROM (
@@ -250,12 +242,7 @@ INNER JOIN upserted
     AND upserted.subject_key = input.subject_key
 CROSS JOIN response
 ORDER BY input.input_position
-",
-);
+";
 
-// The imported `cleanup_expired.sql` stays byte-identical, outside this
-// package under `runlimit/provenance`, as a digest-guarded record that no code
-// path executes. It selected victims by `ctid`, a system column that
-// PostgreSQL checks against relation-level SELECT; this successor identifies
-// them by primary key so a cleanup login needs only column privileges.
-pub(crate) const CLEANUP_SQL: Statement = Statement(include_str!("../cleanup_expired_by_key.sql"));
+    CLEANUP_SQL = include_str!("../cleanup_expired_by_key.sql");
+}

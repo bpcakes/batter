@@ -82,6 +82,13 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
         let test_only = attributes
             .iter()
             .any(|range| code[range.clone()].contains("cfg(test)"));
+        assert!(
+            !attributes.iter().any(|range| {
+                let attribute = &code[range.clone()];
+                attribute.contains("cfg_attr") && attribute.contains("path")
+            }),
+            "a conditional #[path] on mod {name} cannot be resolved; declare the module plainly"
+        );
         let path = attributes.iter().find_map(|range| {
             let attribute = &text[range.clone()];
             let value = attribute.split_once("path")?.1.split_once('"')?.1;

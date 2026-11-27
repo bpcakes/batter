@@ -19,12 +19,15 @@
 //! rather than trying to parse it.
 //!
 //! The set of statements is closed by construction: `crate::statements` owns
-//! every [`Statement`](crate::statements::Statement), and only a statement
-//! can be executed. This guard checks that [`ALL`] lists every statement
-//! declared there and that no other production module builds SQL: no
-//! SQL-looking literal, no `sqlx` query constructor, macro or builder, no
-//! `include!`, and no `include_str!` or `include_bytes!` but a published
-//! migration's.
+//! every [`Statement`](crate::statements::Statement), each family declares
+//! its statements through one macro that also registers them, and only a
+//! statement can be executed. This guard checks that nothing else in that
+//! module constructs a statement and that no other production module builds
+//! SQL: no SQL-looking literal, no `sqlx` query constructor, macro or
+//! builder, no `include!`, no `include_str!` or `include_bytes!` but a
+//! published migration's, and no reference to a published migration beyond
+//! its declaration and re-export, since those are the crate's only other SQL
+//! strings and an `Executor` accepts a string directly.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -36,7 +39,7 @@ use detector::unqualified;
 use literals::{files, includes, sql_literals};
 use modules::production_sources;
 
-use crate::statements::ALL;
+use crate::statements;
 
 /// The published migration constants: immutable, executed only through the
 /// migrators, and exempt from this guard.
@@ -81,7 +84,7 @@ fn is_statements_file(file: &str) -> bool {
 #[test]
 fn every_statement_qualifies_its_catalog_functions_and_types() {
     let mut violations = Vec::new();
-    for (name, statement) in ALL {
+    for (name, statement) in statements::all() {
         violations.extend(
             unqualified(statement.sql())
                 .into_iter()
@@ -95,42 +98,32 @@ fn every_statement_qualifies_its_catalog_functions_and_types() {
 }
 
 #[test]
-fn the_registry_lists_every_statement_once() {
+fn only_the_registering_macro_constructs_statements() {
     let source = source_directory();
-    let mut declared = BTreeSet::new();
-    for path in
-        std::iter::once(source.join("statements.rs")).chain(files(&source.join("statements"), "rs"))
-    {
-        let family = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .filter(|stem| *stem != "statements");
-        let (_, code) = sql_literals(&fs::read_to_string(&path).unwrap());
-        for (start, _) in code.match_indices(": Statement") {
-            let name: String = code[..start]
-                .chars()
-                .rev()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            if code[..start - name.len()].trim_end().ends_with("const") {
-                declared.insert(family.map_or(name.clone(), |family| format!("{family}::{name}")));
-            }
-        }
-    }
-    let registered: Vec<&str> = ALL.iter().map(|(name, _)| *name).collect();
-    let unique: BTreeSet<&str> = registered.iter().copied().collect();
+    let root = fs::read_to_string(source.join("statements.rs")).unwrap();
+    let (_, root_code) = sql_literals(&root);
+    let constructions = root_code.matches("Statement(").count();
     assert_eq!(
-        unique.len(),
-        registered.len(),
-        "a statement is registered twice"
+        constructions, 2,
+        "statements.rs may name Statement( only in its definition and in the macro body"
     );
+    let families: BTreeSet<String> = statements::all()
+        .iter()
+        .filter_map(|(name, _)| name.split_once("::").map(|(family, _)| family.to_owned()))
+        .collect();
+    let mut files_found = BTreeSet::new();
+    for path in files(&source.join("statements"), "rs") {
+        let (_, code) = sql_literals(&fs::read_to_string(&path).unwrap());
+        assert!(
+            !code.contains("Statement("),
+            "{} constructs a Statement outside the statements! macro",
+            path.display()
+        );
+        files_found.insert(path.file_stem().unwrap().to_str().unwrap().to_owned());
+    }
     assert_eq!(
-        unique,
-        declared.iter().map(String::as_str).collect(),
-        "statements::ALL must list exactly the declared statements"
+        files_found, families,
+        "statements::all() must include every family file"
     );
 }
 
@@ -164,6 +157,19 @@ fn no_production_module_builds_sql_outside_statements() {
         }
         if statements {
             continue;
+        }
+        for (_, name) in MIGRATIONS {
+            for (start, _) in code.match_indices(name) {
+                let item_start = code[..start]
+                    .rfind([';', '}'])
+                    .map_or(0, |end| end + 1);
+                let item = code[item_start..start].trim_start();
+                let declaration = item.contains("const")
+                    && code[start + name.len()..].trim_start().starts_with(':');
+                if !declaration && !item.starts_with("pub use") {
+                    violations.push(format!("{file}: refers to the migration {name}"));
+                }
+            }
         }
         for (_, literal) in literals {
             violations.push(format!("{file}: SQL literal {literal:.60}"));
@@ -258,6 +264,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT text 'ready'",
         "SELECT CAST($1 AS pg_catalog.text)",
         "SELECT pg_catalog.length('can''t'), floor(1)",
+        "SELECT /* outer /* inner */ -- */ 1, floor(1)",
         "SELECT pg_catalog.\"unnest\"($1::integer[], $2::integer[])",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");

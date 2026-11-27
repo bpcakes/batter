@@ -152,6 +152,9 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                 index += 2;
                 while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
                 {
+                    if bytes[index] == b'/' && bytes[index + 1] == b'*' {
+                        found.push("a nested block comment".to_owned());
+                    }
                     index += 1;
                 }
                 index += 2;
