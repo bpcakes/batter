@@ -136,37 +136,72 @@ fn next_word_is(code: &str, start: usize, word: &str) -> bool {
 }
 
 /// Unreserved keywords in `SYNTAX`: PostgreSQL also accepts each as a
-/// function name, so `word(` is grammar only after the word it follows there.
-const CONTEXTUAL_SYNTAX: &[(&str, &[&str])] = &[
-    ("conflict", &["on"]),
-    ("filter", &[")"]),
-    ("materialized", &["as", "not"]),
-    ("over", &[")"]),
-    ("recursive", &[]),
-    ("set", &["update"]),
+/// function name, so `word(` is grammar only in the clause it spells.
+const CONTEXTUAL_SYNTAX: &[&str] = &[
+    "conflict",
+    "filter",
+    "materialized",
+    "over",
+    "recursive",
+    "set",
 ];
 
 /// Whether `word(` at `start` is grammar rather than a function call: a
-/// reserved or column-name keyword anywhere, or an unreserved one in its
-/// grammatical position. `SET (` follows an `UPDATE` target, so it is
-/// grammar after `UPDATE table` or `UPDATE table AS alias` too.
+/// reserved or column-name keyword anywhere, or an unreserved one only in
+/// its own clause.
 fn is_syntax(code: &str, start: usize, word: &str) -> bool {
     if !SYNTAX.contains(&word) {
         return false;
     }
-    let Some((_, after)) = CONTEXTUAL_SYNTAX
-        .iter()
-        .find(|(keyword, _)| *keyword == word)
-    else {
+    if !CONTEXTUAL_SYNTAX.contains(&word) {
         return true;
-    };
+    }
+    let bytes = code.as_bytes();
+    let open = skip_spaces(bytes, start + word.len());
+    let close = closing_paren(bytes, open);
+    let inside = token_at(code, open + 1);
+    let after = token_at(code, close + 1);
     let previous = previous_tokens(code, start, 4);
-    let follows = |token: &str| previous.first().is_some_and(|first| first == token);
-    after.iter().any(|token| follows(token))
-        || word == "set"
-            && (previous.get(1).is_some_and(|t| t == "update")
-                || previous.get(1).is_some_and(|t| t == "as")
-                    && previous.get(3).is_some_and(|t| t == "update"))
+    let before = |index: usize, token: &str| previous.get(index).is_some_and(|p| p == token);
+    let opens_query =
+        ["select", "with", "values", "insert", "update", "delete"].contains(&inside.as_str());
+    match word {
+        // `name [(columns)] AS [NOT] MATERIALIZED (query)`.
+        "materialized" => (before(0, "as") || before(0, "not") && before(1, "as")) && opens_query,
+        // `ON CONFLICT (target) DO ...`; a conflict target's WHERE is outside
+        // this dialect.
+        "conflict" => before(0, "on") && after == "do",
+        // `aggregate(...) FILTER (WHERE ...)`.
+        "filter" => before(0, ")") && inside == "where",
+        // `function(...) OVER (window specification)`.
+        "over" => {
+            before(0, ")")
+                && ["partition", "order", "rows", "range", "groups", ")"].contains(&inside.as_str())
+        }
+        // `UPDATE table [AS alias] SET (columns) = ...`, or `DO UPDATE SET`.
+        "set" => {
+            (before(0, "update") || before(1, "update") || before(1, "as") && before(3, "update"))
+                && after == "="
+        }
+        _ => false,
+    }
+}
+
+/// The lowercase identifier, or the single character, at the first
+/// non-space byte from `index`.
+fn token_at(code: &str, index: usize) -> String {
+    let bytes = code.as_bytes();
+    let start = skip_spaces(bytes, index);
+    let mut end = start;
+    while end < bytes.len() && is_identifier_part(bytes[end]) {
+        end += 1;
+    }
+    if end == start {
+        end = (start + 1).min(bytes.len());
+    }
+    code.get(start..end)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
 }
 
 /// Up to `count` lowercase tokens before `start`, nearest first: each an

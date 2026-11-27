@@ -517,6 +517,17 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let tokens = tokenize(sql);
     let declarations = declarations(&tokens, tables);
     let mut found = declarations.problems.clone();
+    // `AS (...)` around anything but a query is a column definition list,
+    // with or without an alias, `ROWS FROM` items included.
+    for index in 0..tokens.len() {
+        if is(&tokens, index, "as")
+            && punct(&tokens, index + 1, '(')
+            && !opens_query(&tokens, index + 1)
+        {
+            found
+                .push("a column definition list types columns the guard does not check".to_owned());
+        }
+    }
     // EXCLUDED is the target of the statement's one INSERT, inside that
     // INSERT's ON CONFLICT clause.
     let inserts: Vec<usize> = (1..tokens.len())
@@ -547,10 +558,12 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
             ));
             continue;
         };
-        if receiver == "pg_catalog"
-            || punct(&tokens, dot.wrapping_sub(2), '.')
-            || punct(&tokens, dot.wrapping_sub(2), ':')
-        {
+        if punct(&tokens, dot.wrapping_sub(2), '.') {
+            // `schema.table.f` qualifies the table, not `f`.
+            found.push(format!("{receiver}.{field} (a field of a qualified name)"));
+            continue;
+        }
+        if receiver == "pg_catalog" || punct(&tokens, dot.wrapping_sub(2), ':') {
             continue;
         }
         let columns = if receiver == "excluded" {

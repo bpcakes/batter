@@ -151,6 +151,10 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT e.e, e.ordinality FROM pg_catalog.jsonb_each($1) WITH ORDINALITY AS e",
         // A column definition list types its columns through search_path.
         "SELECT r.value FROM pg_catalog.jsonb_to_record($1) AS r(value text)",
+        "SELECT * FROM pg_catalog.json_to_record($1) AS (v text)",
+        "SELECT * FROM ROWS FROM (pg_catalog.json_to_record($1) AS (v text)) AS r(v)",
+        // A schema-qualified table does not qualify the field read from it.
+        "SELECT pg_catalog.pg_class.row_to_json FROM pg_catalog.pg_class",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",
@@ -220,6 +224,10 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT materialized($1)",
         "SELECT 1 FROM t WHERE x = set(1)",
         "SELECT conflict(1), filter(2)",
+        "SELECT 1 FROM t WHERE NOT materialized(1)",
+        "SELECT 1 FROM t JOIN u ON conflict(t.id)",
+        "SELECT pg_catalog.count(*) FILTER (1)",
+        "SELECT pg_catalog.count(*) over(1)",
         "SELECT 1 -- note\rFROM floor(1)",
         "SELECT text -- (\n'ready'",
         "SELECT $1::类型",

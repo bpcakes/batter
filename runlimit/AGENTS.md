@@ -227,8 +227,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   themselves (a bare column reference or `AS name`, never `*`). `EXCLUDED`
   needs exactly one `INSERT`, into a migrated table. Declare each name once
   per statement and never as a table name or `pg_catalog`; keep the
-  migrations' column changes to `ADD`, `DROP` and `RENAME`. Unreserved
-  keywords such as `materialized` count as grammar only in their position.
+  migrations' column changes to `ADD`, `DROP` and `RENAME` of unquoted
+  names. No column definition list (`AS (v text)`) and no three-part field
+  reference. Unreserved keywords such as `materialized` count as grammar only
+  in their own clause (`AS [NOT] MATERIALIZED (query)`, `ON CONFLICT (...) DO`).
   A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
   the unqualified spelling. `src/catalog_guard.rs` reads a restricted

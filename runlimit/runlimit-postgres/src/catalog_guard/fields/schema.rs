@@ -48,6 +48,14 @@ fn skip_guards(tokens: &[Token], mut index: usize) -> usize {
 }
 
 fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
+    let table_ddl =
+        ["create", "alter", "drop"].iter().any(|w| is(tokens, 0, w)) && is(tokens, 1, "table");
+    // The tokenizer reads a quoted identifier as a placeholder, so a table
+    // change it would misname fails instead.
+    assert!(
+        !(table_ddl && tokens.contains(&Token::Word("quoted_identifier".to_owned()))),
+        "table DDL with a quoted identifier, which this reader does not apply"
+    );
     if is(tokens, 0, "create") && is(tokens, 1, "table") {
         let name = skip_guards(tokens, 2);
         let table = word(tokens, name)
@@ -165,9 +173,13 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
             .into_iter()
             .collect()
     );
-    assert!(
-        std::panic::catch_unwind(|| super::tables(["CREATE TABLE t (id BIGINT); \
-            ALTER TABLE t RENAME id"]))
-        .is_err()
-    );
+    for unreadable in [
+        "CREATE TABLE t (id BIGINT); ALTER TABLE t RENAME id",
+        "CREATE TABLE t (failures BIGINT); ALTER TABLE t DROP COLUMN \"failures\"",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| super::tables([unreadable])).is_err(),
+            "{unreadable}"
+        );
+    }
 }
