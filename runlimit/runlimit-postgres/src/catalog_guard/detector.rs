@@ -72,9 +72,9 @@ const COLUMN_LIST_OWNERS: &[&str] = &["as", "into", "recursive", "with"];
 /// multi-array `unnest`, which PostgreSQL recognizes only unqualified: the
 /// qualified spelling is `ROWS FROM (pg_catalog.unnest(a), ...)`.
 pub(super) fn unqualified(sql: &str) -> Vec<String> {
+    let mut found = outside_dialect(sql);
     let code = strip_comments_and_quotes(sql);
     let bytes = code.as_bytes();
-    let mut found = Vec::new();
     for (start, _) in code.to_ascii_lowercase().match_indices("pg_catalog.unnest") {
         let open = skip_spaces(bytes, start + "pg_catalog.unnest".len());
         if bytes.get(open) == Some(&b'(') && top_level_arguments(&code[open..]) > 1 {
@@ -131,6 +131,70 @@ fn qualifier_before(code: &str, start: usize) -> Option<String> {
         begin -= 1;
     }
     Some(code[begin..end].to_ascii_lowercase())
+}
+
+/// The constructs operational SQL leaves out so that this detector reads it
+/// completely: dollar quoting, quoted identifiers, `CAST(...)` (casts use
+/// `::`) and a string constant anywhere but directly after `(` or `,`, which
+/// excludes typed literals such as `text 'value'`.
+fn outside_dialect(sql: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let bytes = sql.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'-' if bytes.get(index + 1) == Some(&b'-') => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index += 2;
+            }
+            b'\'' => {
+                let before = sql[..index].trim_end();
+                if !(before.ends_with('(') || before.ends_with(',')) {
+                    found.push("a string constant outside a function argument".to_owned());
+                }
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'\'' {
+                    index += 1;
+                }
+                index += 1;
+            }
+            b'"' => {
+                found.push("a quoted identifier".to_owned());
+                index += 1;
+            }
+            b'$' if bytes
+                .get(index + 1)
+                .is_some_and(|next| *next == b'$' || is_identifier_start(*next)) =>
+            {
+                found.push("dollar quoting".to_owned());
+                index += 1;
+            }
+            byte if is_identifier_start(byte)
+                && (index == 0 || !is_identifier_part(bytes[index - 1])) =>
+            {
+                let start = index;
+                while index < bytes.len() && is_identifier_part(bytes[index]) {
+                    index += 1;
+                }
+                if sql[start..index].eq_ignore_ascii_case("cast")
+                    && bytes.get(skip_spaces(bytes, index)) == Some(&b'(')
+                {
+                    found.push("CAST(...) instead of ::".to_owned());
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    found
 }
 
 /// Whether the parenthesis after `start..after` is a relation's column list:

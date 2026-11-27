@@ -304,20 +304,38 @@ pub(super) fn production_sources(source: &Path) -> Vec<(String, String)> {
     while let Some(file) = pending.pop() {
         let text = fs::read_to_string(source.join(&file)).unwrap();
         let (_, code) = sql_literals(&text);
+        let declarations = module_declarations(&text, &code);
         let mut production = text.clone().into_bytes();
-        for declaration in module_declarations(&text, &code) {
-            match declaration {
-                Module::OutOfLine { name, path, test } if !test => {
-                    pending.push(child_file(source, &file, &name, path.as_deref()));
-                }
-                Module::InlineTest { body } => {
+        for declaration in &declarations {
+            let enclosing: Vec<&Module> = declarations
+                .iter()
+                .filter(|outer| {
+                    outer.body.as_ref().is_some_and(|body| {
+                        body.start < declaration.start && declaration.start < body.end
+                    })
+                })
+                .collect();
+            if declaration.test_only || enclosing.iter().any(|outer| outer.test_only) {
+                if let Some(body) = declaration.body.clone().filter(|_| declaration.test_only) {
                     for byte in &mut production[body] {
                         if *byte != b'\n' {
                             *byte = b' ';
                         }
                     }
                 }
-                Module::OutOfLine { .. } => {}
+                continue;
+            }
+            if declaration.body.is_none() {
+                let mut nesting: Vec<&Module> = enclosing;
+                nesting.sort_by_key(|outer| outer.start);
+                let nesting: Vec<&str> = nesting.iter().map(|outer| outer.name.as_str()).collect();
+                pending.push(child_file(
+                    source,
+                    &file,
+                    &nesting,
+                    &declaration.name,
+                    declaration.path.as_deref(),
+                ));
             }
         }
         sources.push((file, String::from_utf8(production).unwrap()));
@@ -326,18 +344,17 @@ pub(super) fn production_sources(source: &Path) -> Vec<(String, String)> {
     sources
 }
 
-enum Module {
-    OutOfLine {
-        name: String,
-        path: Option<String>,
-        test: bool,
-    },
-    InlineTest {
-        body: std::ops::Range<usize>,
-    },
+/// One `mod` declaration: out of line (`mod name;`) or inline with its
+/// braced body.
+struct Module {
+    name: String,
+    start: usize,
+    path: Option<String>,
+    test_only: bool,
+    body: Option<std::ops::Range<usize>>,
 }
 
-/// Every `mod name;` and inline `#[cfg(test)] mod name { .. }` in `text`.
+/// Every `mod name;` and inline `mod name { .. }` in `text`.
 fn module_declarations(text: &str, code: &str) -> Vec<Module> {
     let bytes = code.as_bytes();
     let mut modules = Vec::new();
@@ -360,16 +377,12 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
             let value = attribute.split_once("path")?.1.split_once('"')?.1;
             Some(value.split_once('"')?.0.to_owned())
         });
-        match code[after_name..].trim_start().bytes().next() {
-            Some(b';') => modules.push(Module::OutOfLine {
-                name,
-                path,
-                test: test_only,
-            }),
-            Some(b'{') if test_only => {
+        let body = match code[after_name..].trim_start().bytes().next() {
+            Some(b';') => None,
+            Some(b'{') => {
                 let open = after_name + code[after_name..].find('{').unwrap_or(0);
                 let mut depth = 0_usize;
-                let mut close = open;
+                let mut close = code.len();
                 for (offset, byte) in bytes[open..].iter().enumerate() {
                     match byte {
                         b'{' => depth += 1,
@@ -383,10 +396,17 @@ fn module_declarations(text: &str, code: &str) -> Vec<Module> {
                         _ => {}
                     }
                 }
-                modules.push(Module::InlineTest { body: start..close });
+                Some(start..close)
             }
-            _ => {}
-        }
+            _ => continue,
+        };
+        modules.push(Module {
+            name,
+            start,
+            path,
+            test_only,
+            body,
+        });
     }
     modules
 }
@@ -413,17 +433,32 @@ fn attributes_before(code: &str, start: usize) -> Vec<std::ops::Range<usize>> {
     attributes
 }
 
-/// The file of module `name` declared in `file`, relative to `source`.
-fn child_file(source: &Path, file: &str, name: &str, path: Option<&str>) -> String {
+/// The file of module `name` declared in `file`, inside the inline modules
+/// `nesting`, relative to `source`.
+fn child_file(
+    source: &Path,
+    file: &str,
+    nesting: &[&str],
+    name: &str,
+    path: Option<&str>,
+) -> String {
     let parent = Path::new(file).parent().unwrap_or_else(|| Path::new(""));
-    if let Some(path) = path {
-        return parent.join(path).to_str().unwrap().replace('\\', "/");
-    }
-    let directory = if file == "lib.rs" || file.ends_with("/mod.rs") {
+    let mut directory = if file == "lib.rs" || file.ends_with("/mod.rs") {
         parent.to_path_buf()
     } else {
         Path::new(file).with_extension("")
     };
+    for outer in nesting {
+        directory = directory.join(outer);
+    }
+    if let Some(path) = path {
+        let base = if nesting.is_empty() {
+            parent.to_path_buf()
+        } else {
+            directory
+        };
+        return base.join(path).to_str().unwrap().replace('\\', "/");
+    }
     let flat = directory.join(format!("{name}.rs"));
     let nested = directory.join(name).join("mod.rs");
     let chosen = if source.join(&flat).exists() {

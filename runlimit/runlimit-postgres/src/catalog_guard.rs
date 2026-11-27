@@ -11,6 +11,12 @@
 //! qualified and are not checked here; they run under the caller's
 //! `search_path`, which must be trusted while migrating.
 //!
+//! Operational SQL keeps to a dialect this guard reads completely: no dollar
+//! quoting, no quoted identifiers, casts only as `::` (never `CAST(...)` or a
+//! typed literal such as `text 'value'`), string constants only as function
+//! arguments or list elements, and no `sqlx` query macros. The guard rejects
+//! anything outside it rather than trying to parse it.
+//!
 //! Completeness does not depend on remembering to register a statement: every
 //! SQL-looking string literal in production source must initialize a
 //! registered constant, and every `.sql` file in `src/` must be registered.
@@ -128,8 +134,19 @@ fn every_production_statement_is_registered() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let names: BTreeSet<&str> = STATEMENTS.iter().map(|(_, name, _)| *name).collect();
     let mut unregistered = Vec::new();
+    let mut included_files = BTreeSet::new();
     for (file, production) in production_sources(&source) {
         let (literals, code) = sql_literals(&production);
+        for (start, _) in code.match_indices("query") {
+            let rest = &code[start..];
+            let name_end = rest
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(rest.len());
+            let boundary = start == 0 || !code.as_bytes()[start - 1].is_ascii_alphanumeric();
+            if boundary && rest[name_end..].starts_with('!') {
+                unregistered.push(format!("{file}: sqlx macro {}!", &rest[..name_end]));
+            }
+        }
         for (owner, value) in literals {
             if !owner
                 .as_deref()
@@ -144,12 +161,17 @@ fn every_production_statement_is_registered() {
                 .is_some_and(|name| MIGRATIONS.contains(&(file.as_str(), name)));
             let included = Path::new(&file)
                 .parent()
-                .map(|parent| source.join(parent).join(&path));
+                .and_then(|parent| source.join(parent).join(&path).canonicalize().ok());
             let registered = owner
                 .as_deref()
                 .zip(included)
                 .is_some_and(|(name, included)| {
-                    fs::read_to_string(included).is_ok_and(|sql| is_registered(&file, name, &sql))
+                    let matches = fs::read_to_string(&included)
+                        .is_ok_and(|sql| is_registered(&file, name, &sql));
+                    if matches {
+                        included_files.insert(included);
+                    }
+                    matches
                 });
             if !migration && !registered {
                 unregistered.push(format!("{file}: {owner:?} includes {path}"));
@@ -166,9 +188,11 @@ fn every_production_statement_is_registered() {
         }
     }
     for path in files(&source, "sql") {
-        let text = fs::read_to_string(&path).unwrap();
-        if !STATEMENTS.iter().any(|(_, _, sql)| *sql == text) {
-            unregistered.push(format!("{} is not a registered statement", path.display()));
+        if !included_files.contains(&path.canonicalize().unwrap()) {
+            unregistered.push(format!(
+                "{} is not included by a registered statement",
+                path.display()
+            ));
         }
     }
     assert!(
@@ -196,6 +220,11 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT $1::\"char\"",
         "SELECT * FROM jsonb_to_record($1) AS (value integer)",
         "SELECT * FROM pg_catalog.unnest($1::BIGINT[]), jsonb_to_record($2) AS (v integer)",
+        "SELECT $$it's ready$$, pg_catalog.floor(1)",
+        "SELECT $tag$x$tag$",
+        "SELECT text 'ready'",
+        "SELECT CAST($1 AS pg_catalog.text)",
+        "SELECT pg_catalog.\"unnest\"($1::integer[], $2::integer[])",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
@@ -208,9 +237,9 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT 1 FROM pg_catalog.unnest($1::pg_catalog.bytea[]) AS input(value)",
         "SELECT 1 FROM ROWS FROM (pg_catalog.unnest($1::pg_catalog.bytea[]), \
          pg_catalog.unnest(ARRAY[1, 2]::BIGINT[])) WITH ORDINALITY AS input(a, b, position)",
-        "SELECT 'floor(1)::text' -- count(*)\n",
+        "SELECT pg_catalog.length('floor(1)::text') -- count(*)\n",
         "SELECT $1::integer, $2::SMALLINT, $3::double precision",
-        "SELECT pg_catalog.\"floor\"(1), \"pg_catalog\".count(*) FROM t AS \"input\"(a)",
+        "SELECT pg_catalog.set_config('statement_timeout', $1, true), $2::BIGINT",
         "WITH a(x) AS NOT MATERIALIZED (VALUES (1)), b AS ( SELECT 2) TABLE a",
     ] {
         assert_eq!(

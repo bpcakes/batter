@@ -202,7 +202,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   functions and casts to non-keyword types (`text`, `bytea`) by their
   `pg_catalog` names. A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
-  the unqualified spelling. Published migrations are exempt and immutable,
+  the unqualified spelling. The guard reads a restricted dialect and rejects
+  the rest: no dollar quoting or quoted identifiers, casts only as `::`,
+  string constants only as function arguments or list elements, and no
+  `sqlx` query macros. Published migrations are exempt and immutable,
   and run under the caller's `search_path`, which must be trusted.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.
