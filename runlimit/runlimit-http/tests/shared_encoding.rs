@@ -222,3 +222,31 @@ fn quota_states_convert_from_every_reportable_quota_outcome() {
         QuotaState::Exhausted(denial)
     );
 }
+
+/// Counts conversions into [`QuotaState`], so a test can see whether an
+/// encoder ran the caller's conversion.
+struct CountedState<'a>(&'a std::cell::Cell<u32>);
+
+impl From<CountedState<'_>> for QuotaState {
+    fn from(state: CountedState<'_>) -> Self {
+        state.0.set(state.0.get() + 1);
+        QuotaState::from(allowance(10, 4, Duration::from_secs(3)))
+    }
+}
+
+#[test]
+fn an_invalid_name_fails_before_the_callers_conversion_runs() {
+    let conversions = std::cell::Cell::new(0);
+    for encode in [draft_11::service_limit, draft_12::service_limit] {
+        assert!(encode("", CountedState(&conversions)).is_err());
+    }
+    assert_eq!(
+        conversions.get(),
+        0,
+        "no encoder converted the state for an unsafe name"
+    );
+    for encode in [draft_11::service_limit, draft_12::service_limit] {
+        assert!(encode("valid", CountedState(&conversions)).is_ok());
+    }
+    assert_eq!(conversions.get(), 2, "each valid call converted once");
+}

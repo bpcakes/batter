@@ -257,10 +257,12 @@ which policies an application should disclose. `draft_12` also omits the
 optional `c` (request cost) parameter, because a decision does not carry the
 cost of its check, and the `RateLimit-Partition` field, which only describes
 partition keys. Each call encodes one list member; `-12` compares policy names
-case-insensitively, so names sent in one response must differ by more than
-case. Policy periods advertised in `RateLimit-Policy` must be exact whole
-seconds; dynamic service durations are rounded up. Encoding also rejects quota
-values outside RFC 9651's Structured Field integer range.
+case-insensitively, so the members of one field must differ by more than case.
+Use the same name for a policy in `RateLimit-Policy` and for its allowance in
+`RateLimit`, so a client can match them. Policy periods advertised in
+`RateLimit-Policy` must be exact whole seconds; dynamic service durations are
+rounded up. Encoding also rejects quota values outside RFC 9651's Structured
+Field integer range.
 
 `draft_12::service_limit` (like `draft_11::service_limit`) accepts only the
 states a `RateLimit` field can describe: an `Allowance`, a `QuotaDenial`, or an

@@ -121,8 +121,10 @@ pub fn service_limit(
     name: &str,
     state: impl Into<QuotaState>,
 ) -> Result<HeaderField, EncodingError> {
+    // The name is validated before the caller's conversion runs.
+    let member = Member::policy(name)?;
     let limit = state.into().service_limit();
-    let member = Member::policy(name)?
+    let member = member
         .integer("a", limit.available)?
         .integer("w", limit.effective_window)?;
     Ok(member.into_field(HeaderName::from_static("ratelimit")))

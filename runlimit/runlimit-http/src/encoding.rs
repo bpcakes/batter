@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use http::{HeaderName, HeaderValue};
 use runlimit_core::QuotaPeriod;
+use std::fmt::Write as _;
 use thiserror::Error;
 
 /// Largest integer representable by an RFC 9651 Structured Field.
@@ -85,7 +86,8 @@ impl Member {
         self.encoded.push(';');
         self.encoded.push_str(key);
         self.encoded.push('=');
-        self.encoded.push_str(&value.to_string());
+        // Writing into a String cannot fail.
+        let _ = write!(self.encoded, "{value}");
         Ok(self)
     }
 

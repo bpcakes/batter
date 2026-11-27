@@ -1,7 +1,9 @@
 batter-39wm.9 public API surface check, 2026-11-27
 
-Before: weed/runlimit-contract-breaks-39wm.6 at 04b2f6e4 (the stacked base of
-this change)
+Before: 04b2f6e4, the base the change was written on. The stacked merge base is
+now weed/runlimit-http-selector-39wm.8 (fe4795c1 at rebase time); runlimit-http
+and the runlimit-http facade reexport are identical between the two, so the
+comparison holds for the stacked base.
 After: weed/runlimit-ratelimit-draft12-39wm.9
 Toolchain: nightly-2026-10-01
 Method: existing surface.py over rustdoc JSON from
