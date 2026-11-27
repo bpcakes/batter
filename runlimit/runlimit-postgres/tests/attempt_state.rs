@@ -212,6 +212,8 @@ fn run_memory(policy: &AttemptPolicy, recorder: Arc<Recorder>) -> Vec<Seen> {
     seen
 }
 
+/// Distinguishes schemas created in one process within one clock tick.
+static NEXT: AtomicU64 = AtomicU64::new(0);
 /// One disposable schema holding the attempt table.
 struct Database {
     pool: PgPool,
@@ -228,12 +230,13 @@ impl Database {
             .await
             .unwrap();
         let schema = format!(
-            "runlimit_attempt_state_{}_{}",
+            "runlimit_attempt_state_{}_{}_{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         );
         sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&admin)
