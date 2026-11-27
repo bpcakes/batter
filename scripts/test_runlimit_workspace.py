@@ -261,10 +261,16 @@ class SqlGateTests(unittest.TestCase):
         lints = manifest_lints(self.MANIFEST.decode() + "unexpected_cfgs = "
                                "{ level = \"warn\", check-cfg = ['cfg(probe)'] }\n")
         self.assertEqual(lints['clippy']['unexpected_cfgs'], 'warn')
-        conflicting = self.MANIFEST + (b'disallowed-methods = { level = "allow", priority = 2 }\n'
-                                       b'disallowed_methods = { level = "warn", priority = 1 }\n')
-        with self.assertRaisesRegex(ValueError, 'twice'):
-            validate_sql_gate(self.tree(conflicting))
+        for first, second in ((b'disallowed-methods', b'disallowed_methods'),
+                              (b'disallowed_method', b'disallowed_methods'),
+                              (b'disallowed-type', b'disallowed_types')):
+            conflicting = self.MANIFEST + (first + b' = { level = "allow", priority = 2 }\n'
+                                           + second + b' = { level = "warn", priority = 1 }\n')
+            with self.subTest(first=first), self.assertRaisesRegex(ValueError, 'twice'):
+                validate_sql_gate(self.tree(conflicting))
+        for alias in (b'disallowed_method', b'disallowed-type'):
+            with self.subTest(alias=alias), self.assertRaisesRegex(ValueError, 'lowers'):
+                validate_sql_gate(self.tree(self.MANIFEST + alias + b' = "allow"\n'))
         for broken in (b'style = { level = "warn", level = "allow" }\n',
                        b'style = { level = "warn", check-cfg = [cfg] }\n'):
             with self.subTest(broken=broken), self.assertRaisesRegex(ValueError, 'unreadable'):

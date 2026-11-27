@@ -62,8 +62,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
-- Every operational statement `runlimit-postgres` sends (checks, cleanup,
-  attempts and timeout settings) calls catalog functions and casts to
+- **Breaking:** every operational statement `runlimit-postgres` sends (checks,
+  cleanup, attempts and timeout settings) calls catalog functions and casts to
   non-keyword types by their `pg_catalog` names: `set_config`,
   `pg_advisory_xact_lock`, `cardinality`, `count`, `min`, `floor`, `unnest`,
   `generate_series`, `text` and `bytea`, beside the already qualified clock. A
@@ -79,7 +79,30 @@ The format is based on [Keep a Changelog], and this project adheres to
   `src/attempt_cleanup_qualified.sql`; the imported `attempt_cleanup.sql`
   moves, byte-identical, to the provenance records. The published migrations
   are immutable and unqualified; run `migrate` under a trusted `search_path`.
-  Results, locks and persisted state are unchanged (`batter-39wm.4`).
+  Results, locks and persisted state are unchanged for a role that may execute
+  these `pg_catalog` functions, as `PUBLIC` may by default (`batter-39wm.4`).
+
+  This is a run-time break for a role that relied on a same-named function
+  earlier on its `search_path`, such as a schema-local wrapper it may execute
+  while `EXECUTE` on the `pg_catalog` original is revoked. Its checks used to
+  run through the wrapper; they now call `pg_catalog` directly and fail with
+  SQLSTATE `42501`, whose server message an operator may match as
+  `permission denied for function pg_advisory_xact_lock`:
+
+  ```sql
+  -- Before: served by app.pg_advisory_xact_lock(bigint) on the search_path.
+  REVOKE EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) FROM PUBLIC;
+  -- After: the serving role may execute each pg_catalog function itself.
+  GRANT EXECUTE ON FUNCTION
+      pg_catalog.pg_advisory_xact_lock(bigint),
+      pg_catalog.pg_advisory_xact_lock(integer, integer),
+      pg_catalog.set_config(text, text, boolean)
+  TO limiter_role;
+  ```
+
+  A role restricted the same way also needs `EXECUTE` on the other calls:
+  `cardinality`, `clock_timestamp`, `count`, `floor`, `gen_random_uuid`,
+  `generate_series`, `min`, `pg_current_xact_id` and `unnest`.
 - The `runlimit-postgres` package no longer ships `src/attempt_complete.sql`
   or `src/cleanup_expired.sql`. No code path executed either statement; both
   stay byte-identical, with their digests, as provenance records in

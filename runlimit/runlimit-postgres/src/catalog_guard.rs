@@ -4,13 +4,16 @@
 //! would silently drop the server timeouts; a shadowed clock would move
 //! windows).
 //!
-//! The rule covers function calls and casts. SQL syntax that the PostgreSQL
-//! grammar maps to `pg_catalog` itself (`EXTRACT`, `COALESCE`, `GREATEST`,
-//! `LEAST`, and keyword types such as `bigint`) needs no prefix. Operators
-//! and the limiter's own tables still resolve through `search_path`, which
-//! the application chooses. Published migrations are immutable, are not
-//! qualified and are not checked here; they run under the caller's
-//! `search_path`, which must be trusted while migrating.
+//! The rule covers function calls, casts and composite-field notation: `x.f`
+//! calls `f(x)` when `x` has no column `f`, so every qualified name must name
+//! a column or table the bundled migrations declare, or a name the statement
+//! declares. SQL syntax that the PostgreSQL grammar maps to `pg_catalog`
+//! itself (`EXTRACT`, `COALESCE`, `GREATEST`, `LEAST`, and keyword types such
+//! as `bigint`) needs no prefix. Operators and the limiter's own tables still
+//! resolve through `search_path`, which the application chooses. Published
+//! migrations are immutable, are not qualified and are not checked here; they
+//! run under the caller's `search_path`, which must be trusted while
+//! migrating.
 //!
 //! Operational SQL keeps to a dialect this guard reads completely: no dollar
 //! quoting, no quoted identifiers, casts only as `::` (never `CAST(...)` or a
@@ -33,17 +36,32 @@ use std::{collections::BTreeSet, fs, path::Path};
 mod detector;
 mod gate;
 
-use detector::unqualified;
+use detector::{declared_names, unknown_fields, unqualified};
 
 use crate::statements;
 
+/// Every table and column the bundled migrations declare.
+fn migrated_names() -> BTreeSet<String> {
+    [
+        &crate::MIGRATOR,
+        &crate::GCRA_MIGRATOR,
+        &crate::attempts::ATTEMPTS_MIGRATOR,
+    ]
+    .into_iter()
+    .flat_map(|migrator| migrator.iter())
+    .flat_map(|migration| declared_names(migration.sql.as_str()))
+    .collect()
+}
+
 #[test]
 fn every_statement_qualifies_its_catalog_functions_and_types() {
+    let known = migrated_names();
     let mut violations = Vec::new();
     for (name, statement) in statements::all() {
         violations.extend(
             unqualified(statement.sql())
                 .into_iter()
+                .chain(unknown_fields(statement.sql(), &known))
                 .map(|found| format!("{name}: {found}")),
         );
     }
@@ -93,6 +111,39 @@ fn included_statements_are_exactly_the_sql_files_in_src() {
         included, on_disk,
         "every .sql file in src is exactly one statement"
     );
+}
+
+// `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
+// such column, so a qualified name must name something declared.
+#[test]
+fn a_qualified_name_must_name_a_column_table_or_alias() {
+    let known = declared_names(
+        "CREATE TABLE IF NOT EXISTS t (id BIGINT PRIMARY KEY, used BIGINT NOT NULL, \
+         CONSTRAINT used_positive CHECK (used > 0)); ALTER TABLE t ADD COLUMN shard SMALLINT",
+    );
+    assert_eq!(
+        known,
+        ["id", "shard", "t", "used"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
+    );
+    for sql in [
+        "SELECT a.row_to_json FROM t AS a",
+        "SELECT a . used, a.to_json FROM t AS a",
+    ] {
+        assert!(
+            !unknown_fields(sql, &known).is_empty(),
+            "{sql} must be rejected"
+        );
+    }
+    for sql in [
+        "SELECT a.used, b.total, c.n FROM t AS a, (SELECT 1 AS total) AS b, x AS c(n)",
+        "WITH w(k) AS (SELECT 1) SELECT w.k, t.shard, EXCLUDED.used FROM w, t",
+        "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
+    ] {
+        assert_eq!(unknown_fields(sql, &known), Vec::<String>::new(), "{sql}");
+    }
 }
 
 #[test]

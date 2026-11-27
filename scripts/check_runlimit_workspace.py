@@ -31,6 +31,11 @@ UNEXECUTED_RECORDS = {
 SQL_GATE_LINTS = frozenset({'all', 'default', 'style', 'disallowed_methods',
                             'disallowed_types', 'disallowed_macros'})
 ENABLED_LEVELS = frozenset({'warn', 'deny', 'forbid'})
+# Clippy still applies these renamed spellings to the gate lints.
+RENAMED_LINTS = {'disallowed_method': 'disallowed_methods', 'disallowed_type': 'disallowed_types'}
+# The probe query, inline and in probe.sql, whose offline metadata the macro
+# probes expand from.
+PROBE_QUERY = 'SELECT 1 AS one'
 # A `[lints.rust]` or `[lints.clippy]` header, and one entry inside it.
 LINT_TABLE = re.compile(r'^\[lints(?:\.(rust|clippy))?\]\s*(?:#.*)?$')
 LINT_ENTRY = re.compile(r'^([A-Za-z0-9_-]+)\s*=\s*(?:"([a-z]+)"|\{(.*)\})\s*(?:#.*)?$')
@@ -209,12 +214,20 @@ def validate_macro_probes(root):
     the caller's environment says. The gate's own diagnostics are expected at
     any level, so only another error, or a failure with none, fails the run.
     """
-    package = Path(root) / 'runlimit' / 'runlimit-postgres'
+    package = (Path(root) / 'runlimit' / 'runlimit-postgres').resolve()
     expected = set(listed_paths((package / 'clippy.toml').read_text(), 'disallowed-macros'))
+    cache = package / '.sqlx'
+    probe_file = (package / MACRO_PROBES).with_name('probe.sql').read_text()
+    for query in (PROBE_QUERY, probe_file):
+        entry = cache / f'query-{hashlib.sha256(query.encode()).hexdigest()}.json'
+        if not entry.is_file() or json.loads(entry.read_text()).get('query') != query:
+            raise ValueError(f'runlimit-postgres/.sqlx lacks the probe metadata for {query!r}')
+    # The package's own cache only: SQLx would read SQLX_OFFLINE_DIR first.
+    environment = {**os.environ, 'SQLX_OFFLINE': 'true', 'SQLX_OFFLINE_DIR': str(cache)}
     result = subprocess.run(
         ['cargo', 'clippy', '-p', 'runlimit-postgres', '--lib', '--tests', '--locked',
          '--message-format=json', '--', '--cfg', 'runlimit_macro_probes'],
-        cwd=root, env={**os.environ, 'SQLX_OFFLINE': 'true'}, capture_output=True, text=True)
+        cwd=root, env=environment, capture_output=True, text=True)
     reports, unexpected = macro_reports(result.stdout)
     probes = f'runlimit/runlimit-postgres/{MACRO_PROBES}'
     reported = {name for file, name in reports if file == probes}
@@ -259,7 +272,8 @@ def manifest_lints(text):
         if not level:
             raise ValueError(f'Cargo.toml:{number}: unreadable lint entry {line}')
         name = entry.group(1).replace('-', '_')
-        # Cargo applies both spellings of a lint, so one hides the other here.
+        name = RENAMED_LINTS.get(name, name) if table == 'clippy' else name
+        # Cargo applies every spelling of a lint, so one would hide another.
         if name in levels[table]:
             raise ValueError(f'Cargo.toml:{number}: lints.{table} sets {name} twice')
         levels[table][name] = level
