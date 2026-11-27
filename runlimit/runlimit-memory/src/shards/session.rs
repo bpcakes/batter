@@ -13,7 +13,8 @@ mod batch;
 #[cfg(test)]
 mod tests;
 
-use batch::{BatchAlgorithm, BatchEffects, LockedBatch};
+pub(crate) use batch::BatchAlgorithm;
+use batch::{BatchEffects, LockedBatch};
 
 /// Outcome of read-only quota evaluation for one check.
 pub(crate) enum QuotaEvaluation<T> {

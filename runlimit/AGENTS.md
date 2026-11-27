@@ -34,7 +34,13 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
 
 - The memory fixed-window and PostgreSQL backends implement the same anchored
   fixed-window semantics. `GcraStore` implements only `GcraPolicy`. Both
-  in-memory stores share one private consuming shard/batch session
+  public in-memory stores are thin wrappers over one private shell,
+  `runlimit-memory/src/shell.rs`, which owns their clock, shards and
+  observer, construction, `Debug` output and error shaping; do not give
+  either store its own copy. Their shared `MemoryBatchError`,
+  `PoisonedShardError` and `MemoryStoreStats` live in `src/errors.rs` and
+  `src/stats.rs`, not in either algorithm's module. The shell drives one
+  private consuming shard/batch session
   (`runlimit-memory/src/shards/session.rs` and its `batch` module). The session
   retains the check or validated batch and its routing from lock acquisition
   through preflight. The shard owner retains the configuration used at
@@ -132,7 +138,9 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   go through the one private `KeyHasher::derive` encoding. Attempt backends
   identify stored state by `AttemptSubject::counter_key`; PostgreSQL derives
   every family's capacity shard, which it locks, with
-  `protocol::capacity_shard`, while memory serializes on one store lock. Golden
+  `protocol::capacity_shard`, and decides whether that shard has room for a
+  new row only with `protocol::shard_admits_new_row`, while memory
+  serializes on one store lock. Golden
   vectors pin each persisted encoding; never add a derivation, fingerprint
   or shard routine without one. `Check::new`
   accepts only that bound value, so the normal derivation-to-check path has no
@@ -198,7 +206,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
 - The three PostgreSQL limiters share one private shell and do not carry
   their own copies of it. `runlimit-postgres/src/base.rs` owns the pool,
   runtime bounds, observer, `Debug` output, the one migration path and bounded
-  connection acquisition. `src/transaction.rs` owns the guarded connection and
+  connection acquisition, and the quota limiters' observed check, batch and
+  cleanup wrappers: their timing, batch validation before a connection is
+  acquired, the zero-row cleanup short-circuit and the one maintenance
+  connection. `src/transaction.rs` owns the guarded connection and
   the one transaction type, which refreshes the server timeouts before every
   statement and before commit; quota checks and cleanup differ only in the
   `Family` that names their phases and classifies their failures. Both quota

@@ -1,10 +1,8 @@
 //! Opt-in durable GCRA storage; independent from the fixed-window protocol.
 
-use std::{fmt, future::Future, sync::Arc, time::Instant as WallInstant};
+use std::{fmt, future::Future, sync::Arc};
 
-use runlimit_core::{
-    BatchDecision, Check, Decision, GcraPolicy, Limiter, Observer, gcra, validate_batch,
-};
+use runlimit_core::{BatchDecision, Check, Decision, GcraPolicy, Limiter, Observer, gcra};
 use sqlx::{
     PgPool, Row,
     migrate::{MigrateError, Migrator},
@@ -17,7 +15,9 @@ use crate::{
     admission::{Admission, batch_decision, finalize, single_decision},
     base::{BundledHistory, PgLimiterBase},
     pending::{Pending, PendingDenial, PendingQuotaDenial, authoritative_elapsed},
-    protocol::{CAPACITY_SHARD_COUNT, capacity_shard},
+    protocol::{
+        CAPACITY_SHARD_COUNT, HARD_MAX_ROWS_PER_SHARD, capacity_shard, shard_admits_new_row,
+    },
     statements::gcra as sql,
     transaction::{self, BoundedConnection, CheckTransaction, ConnectionOutcome},
 };
@@ -119,10 +119,12 @@ impl PostgresGcraLimiter {
     /// # Errors
     /// Returns classified pre-commit or uncertain-commit failures.
     pub async fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, CheckError> {
-        let started = WallInstant::now();
-        let result = self.run(std::slice::from_ref(check), single_decision).await;
-        self.base.observe_check(check, &result, started.elapsed());
-        result
+        self.base
+            .observed_check(
+                check,
+                self.run(std::slice::from_ref(check), single_decision),
+            )
+            .await
     }
 
     /// Consumes a validated nonempty batch atomically, preserving input order.
@@ -135,16 +137,12 @@ impl PostgresGcraLimiter {
         &self,
         checks: &[Check<'_, GcraPolicy>],
     ) -> Result<BatchDecision, BatchCheckError> {
-        let started = WallInstant::now();
-        let result = match validate_batch(checks, self.base.config().max_batch_size()) {
-            Ok(()) => self
-                .run(checks, |admission| batch_decision(checks.len(), admission))
-                .await
-                .map_err(BatchCheckError::from),
-            Err(error) => Err(error.into()),
-        };
-        self.base.observe_batch(checks, &result, started.elapsed());
-        result
+        self.base
+            .observed_batch(
+                checks,
+                self.run(checks, |admission| batch_decision(checks.len(), admission)),
+            )
+            .await
     }
 
     async fn run<D>(
@@ -163,20 +161,9 @@ impl PostgresGcraLimiter {
     /// # Errors
     /// Returns bounded maintenance failures; an uncertain commit may have deleted rows.
     pub async fn cleanup_expired(&self, maximum_rows: u32) -> Result<u64, MaintenanceError> {
-        let started = WallInstant::now();
-        let result = self.cleanup(maximum_rows).await;
         self.base
-            .observe_cleanup(maximum_rows, &result, started.elapsed());
-        result
-    }
-
-    async fn cleanup(&self, maximum_rows: u32) -> Result<u64, MaintenanceError> {
-        if maximum_rows == 0 {
-            return Ok(0);
-        }
-        let mut connection = self.base.maintenance_connection().await?;
-        let result = cleanup_transaction(&mut connection, maximum_rows).await;
-        connection.finish(result.map(ConnectionOutcome::Reusable))
+            .observed_cleanup(maximum_rows, cleanup_transaction)
+            .await
     }
 }
 
@@ -245,7 +232,7 @@ async fn run_transaction<D>(
     if locked.len() != shards.len() {
         return Err(invariant("GCRA capacity ledger is missing a shard"));
     }
-    let mut counts = [0_i64; CAPACITY_SHARD_COUNT];
+    let mut stored_rows = [0_u64; CAPACITY_SHARD_COUNT];
     let sample = transaction
         .fetch_one(CheckPhase::PreflightingCounters, sql::SAMPLE_TIME.query())
         .await?;
@@ -256,13 +243,15 @@ async fn run_transaction<D>(
         let shard: i16 = field(row, "capacity_shard")?;
         let count: i64 = field(row, "row_count")?;
         let observed: i64 = field(row, "observed_at_ms")?;
-        if shard != i16::from(expected)
-            || !(0..=i64::from(crate::HARD_MAX_ROWS_PER_SHARD)).contains(&count)
-            || observed < 0
-        {
-            return Err(invariant("invalid GCRA capacity ledger"));
+        let count = u64::try_from(count)
+            .ok()
+            .filter(|count| *count <= u64::from(HARD_MAX_ROWS_PER_SHARD));
+        match count {
+            Some(count) if shard == i16::from(expected) && observed >= 0 => {
+                stored_rows[usize::from(expected)] = count;
+            }
+            _ => return Err(invariant("invalid GCRA capacity ledger")),
         }
-        counts[usize::from(expected)] = count;
         now = now.max(observed);
     }
     let now_u128 = u128::try_from(now).map_err(|_| invariant("negative GCRA database time"))?;
@@ -286,7 +275,7 @@ async fn run_transaction<D>(
     let pending = evaluate(
         checks,
         &rows,
-        &mut counts,
+        &stored_rows,
         config.maximum_rows_per_shard(),
         now_u128,
     )?;
@@ -368,13 +357,14 @@ async fn persist_allowances(
 fn evaluate(
     checks: &[Check<'_, GcraPolicy>],
     rows: &[PgRow],
-    counts: &mut [i64; CAPACITY_SHARD_COUNT],
+    stored_rows: &[u64; CAPACITY_SHARD_COUNT],
     maximum: u32,
     now: u128,
 ) -> Result<Pending<gcra::PendingAllowance>, Failure> {
     if rows.len() != checks.len() {
         return Err(invariant("GCRA preflight count disagrees with the batch"));
     }
+    let mut pending_rows = [0_u32; CAPACITY_SHARD_COUNT];
     let mut pending = Vec::with_capacity(checks.len());
     let mut denial = None;
     for (index, (check, row)) in checks.iter().zip(rows).enumerate() {
@@ -418,10 +408,10 @@ fn evaluate(
             gcra::Evaluation::Allowed(allowance) => {
                 if stored.is_none() {
                     let shard = usize::from(capacity_shard(check.counter_key()));
-                    if counts[shard] >= i64::from(maximum) {
+                    if !shard_admits_new_row(stored_rows[shard], pending_rows[shard], maximum) {
                         denial.get_or_insert((index, PendingDenial::StorageCapacity));
                     }
-                    counts[shard] += 1;
+                    pending_rows[shard] += 1;
                 }
                 pending.push(allowance);
             }

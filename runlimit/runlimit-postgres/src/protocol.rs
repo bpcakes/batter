@@ -77,6 +77,17 @@ pub(crate) fn capacity_shard(counter_key: CounterKey) -> u8 {
     counter_key.fingerprint().as_bytes()[0] ^ counter_key.subject().as_bytes()[0]
 }
 
+/// The one capacity rule of every storage family: whether a shard that
+/// already stores `stored_rows` rows, and to which the same operation has
+/// already admitted `pending_rows` new rows, has room for one more new row
+/// under the operational bound `maximum_rows`.
+///
+/// Only a new storage key needs a slot; an existing or expired row never
+/// does. A count too large to add is full, so the rule fails closed.
+pub(crate) fn shard_admits_new_row(stored_rows: u64, pending_rows: u32, maximum_rows: u32) -> bool {
+    stored_rows.saturating_add(u64::from(pending_rows)) < u64::from(maximum_rows)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -85,7 +96,10 @@ mod tests {
 
     use runlimit_core::{KeyHasher, PolicyId, QuotaPeriod, ScopeId, attempts::AttemptPolicy};
 
-    use super::{SERVER_TIMEOUT_GRACE, capacity_shard, remaining_server_timeout_settings};
+    use super::{
+        SERVER_TIMEOUT_GRACE, capacity_shard, remaining_server_timeout_settings,
+        shard_admits_new_row,
+    };
     use crate::statements::fixed_window::CLEANUP_SQL;
 
     // The attempt-protocol vectors in runlimit-core pin this policy's
@@ -108,6 +122,22 @@ mod tests {
             .hash_attempt_for(&policy, b"user@example.test");
 
         assert_eq!(capacity_shard(subject.counter_key()), 254);
+    }
+
+    #[test]
+    fn a_shard_admits_a_new_row_only_below_its_bound() {
+        // Stored and pending rows count alike: the next row needs a free slot.
+        assert!(shard_admits_new_row(0, 0, 1));
+        assert!(!shard_admits_new_row(1, 0, 1));
+        assert!(!shard_admits_new_row(0, 1, 1));
+        assert!(shard_admits_new_row(2, 1, 4));
+        assert!(!shard_admits_new_row(3, 1, 4));
+        assert!(!shard_admits_new_row(4, 0, 4));
+        // A lowered bound denies a shard already above it.
+        assert!(!shard_admits_new_row(9, 0, 4));
+        assert!(!shard_admits_new_row(0, 0, 0));
+        // An unaddable count is full rather than wrapping to room.
+        assert!(!shard_admits_new_row(u64::MAX, u32::MAX, u32::MAX));
     }
 
     // The clock is paused, so "now" is the same instant on both sides of each

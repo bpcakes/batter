@@ -89,11 +89,9 @@
 //! cargo test -p runlimit-postgres --test postgres -- --ignored
 //! ```
 
-use std::{fmt, future::Future, sync::Arc, time::Instant as WallClockInstant};
+use std::{fmt, future::Future, sync::Arc};
 
-use runlimit_core::{
-    BatchDecision, Check, Decision, FixedWindowPolicy, Limiter, Observer, validate_batch,
-};
+use runlimit_core::{BatchDecision, Check, Decision, FixedWindowPolicy, Limiter, Observer};
 use sqlx::{
     PgPool,
     migrate::{MigrateError, Migrator},
@@ -126,7 +124,6 @@ pub use protocol::{CAPACITY_SHARD_COUNT, HARD_MAX_ROWS_PER_SHARD};
 use admission::{Admission, BatchSqlInput, batch_decision, run_check_transaction, single_decision};
 use base::{BundledHistory, PgLimiterBase};
 use maintenance::run_cleanup_transaction;
-use transaction::ConnectionOutcome;
 
 #[cfg(test)]
 use admission::interval;
@@ -141,7 +138,7 @@ use statements::fixed_window::CLEANUP_SQL;
 #[cfg(test)]
 use tokio::time::Instant;
 #[cfg(test)]
-use transaction::finish_denied_transaction;
+use transaction::{ConnectionOutcome, finish_denied_transaction};
 
 /// SQL for the immutable `20260723000000_create_runlimit_fixed_windows`
 /// migration.
@@ -273,12 +270,12 @@ impl PostgresLimiter {
     /// commit are [`CheckError::DefinitelyNotConsumed`]. Any commit error is
     /// conservatively classified as [`CheckError::CommitOutcomeUnknown`].
     pub async fn check(&self, check: &Check<'_>) -> Result<Decision, CheckError> {
-        let started = WallClockInstant::now();
-        let result = self
-            .run_checks(std::slice::from_ref(check), single_decision)
-            .await;
-        self.base.observe_check(check, &result, started.elapsed());
-        result
+        self.base
+            .observed_check(
+                check,
+                self.run_checks(std::slice::from_ref(check), single_decision),
+            )
+            .await
     }
 
     /// Atomically checks and consumes every quota in the nonempty `checks`.
@@ -307,23 +304,12 @@ impl PostgresLimiter {
     /// consume nothing. Database failures are [`BatchCheckError::Check`] with
     /// the same classification as [`Self::check`].
     pub async fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, BatchCheckError> {
-        let started = WallClockInstant::now();
-        let result = self.check_all_unobserved(checks).await;
-        self.base.observe_batch(checks, &result, started.elapsed());
-        result
-    }
-
-    async fn check_all_unobserved(
-        &self,
-        checks: &[Check<'_>],
-    ) -> Result<BatchDecision, BatchCheckError> {
-        validate_batch(checks, self.base.config().max_batch_size())?;
-        let batch_size = checks.len();
-        Ok(self
-            .run_checks(checks, move |admission| {
-                batch_decision(batch_size, admission)
-            })
-            .await?)
+        self.base
+            .observed_batch(
+                checks,
+                self.run_checks(checks, |admission| batch_decision(checks.len(), admission)),
+            )
+            .await
     }
 
     /// Runs one admission transaction for a validated, nonempty slice of
@@ -365,21 +351,9 @@ impl PostgresLimiter {
     /// [`MaintenanceError::may_have_removed_rows`]. Cleanup only targets
     /// already-expired rows and never consumes quota.
     pub async fn cleanup_expired(&self, maximum_rows: u32) -> Result<u64, MaintenanceError> {
-        let started = WallClockInstant::now();
-        let result = self.cleanup_expired_unobserved(maximum_rows).await;
         self.base
-            .observe_cleanup(maximum_rows, &result, started.elapsed());
-        result
-    }
-
-    async fn cleanup_expired_unobserved(&self, maximum_rows: u32) -> Result<u64, MaintenanceError> {
-        if maximum_rows == 0 {
-            return Ok(0);
-        }
-
-        let mut connection = self.base.maintenance_connection().await?;
-        let result = run_cleanup_transaction(&mut connection, maximum_rows).await;
-        connection.finish(result.map(ConnectionOutcome::Reusable))
+            .observed_cleanup(maximum_rows, run_cleanup_transaction)
+            .await
     }
 }
 

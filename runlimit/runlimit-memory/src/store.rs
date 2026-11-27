@@ -1,16 +1,11 @@
 use std::{fmt, sync::Arc};
 
-use runlimit_core::{
-    Allowance, BatchDecision, BatchError, Check, Decision, Limiter, Observer, QuotaDenial,
-};
-use thiserror::Error;
+use runlimit_core::{Allowance, BatchDecision, Check, Decision, Limiter, Observer, QuotaDenial};
 
 use crate::{
-    Clock, MemoryStoreConfig, SystemClock,
-    shards::{
-        BatchSessionError, BoundedShards, CheckSessionError, execute_batch, execute_check,
-        remaining_duration,
-    },
+    Clock, MemoryBatchError, MemoryStoreConfig, MemoryStoreStats, PoisonedShardError, SystemClock,
+    shards::{BatchSessionError, CheckSessionError, remaining_duration},
+    shell::{ShellBuilder, StoreAlgorithm, StoreShell},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +130,25 @@ mod fixed_window {
 
 pub(crate) use fixed_window::FixedWindowAlgorithm;
 
+impl StoreAlgorithm for FixedWindowAlgorithm {
+    type CheckError = PoisonedShardError;
+    type CheckAllError = MemoryBatchError;
+
+    fn check_error(error: CheckSessionError<Self::EvalError>) -> PoisonedShardError {
+        match error {
+            CheckSessionError::PoisonedShard(poisoned) => poisoned,
+            CheckSessionError::Evaluation(never) => match never {},
+        }
+    }
+
+    fn check_all_error(error: BatchSessionError<Self::EvalError>) -> MemoryBatchError {
+        match error {
+            BatchSessionError::Store(store) => store,
+            BatchSessionError::Evaluation(never) => match never {},
+        }
+    }
+}
+
 /// A sharded, hard-bounded, process-local fixed-window store.
 ///
 /// The store never evicts an active key to admit a new one. Every check touches
@@ -147,9 +161,7 @@ pub(crate) use fixed_window::FixedWindowAlgorithm;
 /// availability tradeoff: it restores poisoned shards by discarding their
 /// counters rather than trusting state whose consistency is unknown.
 pub struct MemoryStore<C = SystemClock> {
-    clock: C,
-    shards: BoundedShards<Entry>,
-    observer: Option<Arc<dyn Observer>>,
+    shell: StoreShell<FixedWindowAlgorithm, C>,
 }
 
 /// Builds an empty [`MemoryStore`] with its clock chosen before any quota
@@ -174,29 +186,12 @@ pub struct MemoryStore<C = SystemClock> {
 /// ```
 #[must_use]
 pub struct MemoryStoreBuilder<C = SystemClock> {
-    config: MemoryStoreConfig,
-    clock: C,
+    shell: ShellBuilder<C>,
 }
 
 impl<C> fmt::Debug for MemoryStore<C> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let poisoned_shards = self.shards.poisoned_count();
-
-        formatter
-            .debug_struct("MemoryStore")
-            .field("config", self.shards.config())
-            .field("has_observer", &self.observer.is_some())
-            .field("poisoned_shards", &poisoned_shards)
-            .field("shard_state", &Redacted)
-            .finish_non_exhaustive()
-    }
-}
-
-struct Redacted;
-
-impl fmt::Debug for Redacted {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("[REDACTED]")
+        self.shell.fmt_debug("MemoryStore", formatter)
     }
 }
 
@@ -214,8 +209,7 @@ impl MemoryStore<SystemClock> {
     /// clock's coordinate system.
     pub fn builder(config: MemoryStoreConfig) -> MemoryStoreBuilder<SystemClock> {
         MemoryStoreBuilder {
-            config,
-            clock: SystemClock::new(),
+            shell: ShellBuilder::new(config),
         }
     }
 }
@@ -224,8 +218,7 @@ impl<C> MemoryStoreBuilder<C> {
     /// Returns this builder with a caller-supplied monotonic clock.
     pub fn with_clock<D: Clock>(self, clock: D) -> MemoryStoreBuilder<D> {
         MemoryStoreBuilder {
-            config: self.config,
-            clock,
+            shell: self.shell.with_clock(clock),
         }
     }
 }
@@ -234,9 +227,7 @@ impl<C: Clock> MemoryStoreBuilder<C> {
     /// Builds an empty store whose timestamps use the selected clock.
     pub fn build(self) -> MemoryStore<C> {
         MemoryStore {
-            clock: self.clock,
-            shards: BoundedShards::new(self.config),
-            observer: None,
+            shell: self.shell.build(),
         }
     }
 }
@@ -248,7 +239,7 @@ impl<C> MemoryStore<C> {
     /// panic is isolated and cannot change the admission result.
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<dyn Observer>) -> Self {
-        self.observer = Some(observer);
+        self.shell.set_observer(observer);
         self
     }
 }
@@ -261,16 +252,7 @@ impl<C: Clock> MemoryStore<C> {
     /// Returns an error without allowing the request when the target shard is
     /// poisoned.
     pub fn check(&self, check: &Check<'_>) -> Result<Decision, PoisonedShardError> {
-        execute_check::<FixedWindowAlgorithm, _>(
-            &self.shards,
-            &self.clock,
-            self.observer.as_deref(),
-            check,
-        )
-        .map_err(|error| match error {
-            CheckSessionError::PoisonedShard(poisoned) => poisoned,
-            CheckSessionError::Evaluation(never) => match never {},
-        })
+        self.shell.check(check)
     }
 
     /// Evaluates a nonempty batch atomically.
@@ -285,16 +267,7 @@ impl<C: Clock> MemoryStore<C> {
     /// key, targets more distinct keys at one shard than that shard can ever
     /// store, or a touched shard is poisoned.
     pub fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, MemoryBatchError> {
-        execute_batch::<FixedWindowAlgorithm, _>(
-            &self.shards,
-            &self.clock,
-            self.observer.as_deref(),
-            checks,
-        )
-        .map_err(|error| match error {
-            BatchSessionError::Store(store) => store,
-            BatchSessionError::Evaluation(never) => match never {},
-        })
+        self.shell.check_all(checks)
     }
 
     /// Returns current storage usage.
@@ -303,7 +276,7 @@ impl<C: Clock> MemoryStore<C> {
     ///
     /// Returns an error if a shard is poisoned.
     pub fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
-        self.shards.stats()
+        self.shell.stats()
     }
 
     /// Removes every stored counter.
@@ -312,7 +285,7 @@ impl<C: Clock> MemoryStore<C> {
     ///
     /// Returns an error if a shard is poisoned.
     pub fn clear(&self) -> Result<(), PoisonedShardError> {
-        self.shards.clear()
+        self.shell.clear()
     }
 
     /// Rebuilds every poisoned shard and returns the number recovered.
@@ -329,7 +302,7 @@ impl<C: Clock> MemoryStore<C> {
     /// observe either the pre-recovery poisoned store or the complete recovered
     /// state, never a partially reopened multi-shard store.
     pub fn recover_poisoned(&self) -> usize {
-        self.shards.recover_poisoned()
+        self.shell.recover_poisoned()
     }
 }
 
@@ -355,106 +328,6 @@ impl<C: Clock> Limiter for MemoryStore<C> {
     async fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, Self::CheckAllError> {
         MemoryStore::check_all(self, checks)
     }
-}
-
-/// Current bounded-store usage.
-///
-/// With the `serde` feature, this serializes as an object containing `entries`,
-/// `capacity`, and `shard_count`. Telemetry is intentionally serialize-only.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MemoryStoreStats {
-    entries: usize,
-    capacity: usize,
-    shard_count: usize,
-}
-
-impl MemoryStoreStats {
-    pub(crate) const fn from_parts(entries: usize, capacity: usize, shard_count: usize) -> Self {
-        Self {
-            entries,
-            capacity,
-            shard_count,
-        }
-    }
-
-    /// Returns the number of stored counters.
-    pub const fn entries(self) -> usize {
-        self.entries
-    }
-
-    /// Returns the hard maximum number of stored counters.
-    pub const fn capacity(self) -> usize {
-        self.capacity
-    }
-
-    /// Returns the number of independently locked shards.
-    pub const fn shard_count(self) -> usize {
-        self.shard_count
-    }
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Serialize)]
-struct MemoryStoreStatsWire {
-    entries: usize,
-    capacity: usize,
-    shard_count: usize,
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for MemoryStoreStats {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serde::Serialize::serialize(
-            &MemoryStoreStatsWire {
-                entries: self.entries(),
-                capacity: self.capacity(),
-                shard_count: self.shard_count(),
-            },
-            serializer,
-        )
-    }
-}
-
-/// A shard mutex was poisoned by a panic and remains unavailable.
-///
-/// This is the only failure a single check, [`MemoryStore::stats`], or
-/// [`MemoryStore::clear`] can report. Every operation touching the shard
-/// fails closed until [`MemoryStore::recover_poisoned`] rebuilds it.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-#[error("memory-store shard {shard_index} is poisoned and unavailable")]
-pub struct PoisonedShardError {
-    /// Poisoned shard index.
-    pub shard_index: usize,
-}
-
-/// A fail-closed failure of an in-memory atomic batch.
-///
-/// Every variant is reachable from [`MemoryStore::check_all`]; failures that
-/// only a batch can produce never appear on the single-check path.
-#[derive(Clone, Debug, Error, Eq, PartialEq)]
-pub enum MemoryBatchError {
-    /// The atomic batch violated a backend-independent structural requirement.
-    #[error(transparent)]
-    InvalidBatch(#[from] BatchError),
-    /// An atomic batch can never fit in one shard, regardless of expiry.
-    #[error(
-        "batch targets {key_count} distinct keys at memory-store shard {shard_index}, \
-         but that shard can store at most {capacity}"
-    )]
-    BatchExceedsShardCapacity {
-        /// Index of the shard that cannot hold all targeted keys.
-        shard_index: usize,
-        /// Number of distinct batch keys targeting the shard.
-        key_count: usize,
-        /// Hard key capacity of the shard.
-        capacity: usize,
-    },
-    /// A touched shard was poisoned and remains unavailable.
-    #[error(transparent)]
-    PoisonedShard(#[from] PoisonedShardError),
 }
 
 #[cfg(test)]
@@ -713,7 +586,7 @@ mod tests {
         shard_index: usize,
         count: usize,
     ) -> Vec<SubjectKey> {
-        assert!(shard_index < store.shards.len());
+        assert!(shard_index < store.shell.shards().len());
         let mut subjects = Vec::with_capacity(count);
 
         for value in 0_u64..10_000 {
@@ -721,7 +594,7 @@ mod tests {
             digest[..8].copy_from_slice(&value.to_le_bytes());
             let candidate = SubjectKey::from_digest(digest);
             let counter_key = Check::new(candidate.bind(policy)).counter_key();
-            if store.shards.shard_index(&counter_key) == shard_index {
+            if store.shell.shards().shard_index(&counter_key) == shard_index {
                 subjects.push(candidate);
                 if subjects.len() == count {
                     break;
@@ -755,9 +628,9 @@ mod tests {
         for value in 0_u64..SUBJECT_COUNT {
             let subject = key_hasher.hash_for(&policy, value.to_le_bytes());
             let key = Check::new(subject).counter_key();
-            let first_index = first.shards.shard_index(&key);
+            let first_index = first.shell.shards().shard_index(&key);
 
-            assert_eq!(first_index, second.shards.shard_index(&key));
+            assert_eq!(first_index, second.shell.shards().shard_index(&key));
             counts[first_index] += 1;
         }
 
@@ -807,7 +680,7 @@ mod tests {
         for used in [4, u64::MAX] {
             let store = with_clock(MemoryStoreConfig::new(2).unwrap(), ManualClock::default());
             {
-                let mut shard = store.shards.shard(0).lock().unwrap();
+                let mut shard = store.shell.shards().shard(0).lock().unwrap();
                 assert!(shard.replace(key, Entry { used }, 60_000).is_none());
             }
 
@@ -1298,8 +1171,8 @@ mod tests {
             ])
             .unwrap())
         );
-        assert_eq!(store.shards.shard(0).lock().unwrap().used(), 1);
-        assert_eq!(store.shards.shard(1).lock().unwrap().used(), 2);
+        assert_eq!(store.shell.shards().shard(0).lock().unwrap().used(), 1);
+        assert_eq!(store.shell.shards().shard(1).lock().unwrap().used(), 2);
     }
 
     #[test]
@@ -1336,8 +1209,8 @@ mod tests {
                     .unwrap()
             )
         );
-        assert_eq!(store.shards.shard(0).lock().unwrap().used(), 2);
-        assert_eq!(store.shards.shard(1).lock().unwrap().used(), 0);
+        assert_eq!(store.shell.shards().shard(0).lock().unwrap().used(), 2);
+        assert_eq!(store.shell.shards().shard(1).lock().unwrap().used(), 0);
 
         assert!(
             store
@@ -1471,12 +1344,12 @@ mod tests {
             "the two checks targeting shard 0 need two cleanup slots: {cleanup_batch:?}"
         );
 
-        let shard = store.shards.shard(0).lock().unwrap();
+        let shard = store.shell.shards().shard(0).lock().unwrap();
         assert_eq!(shard.used(), 4);
         assert_eq!(shard.expiration_count_at_or_before(1_000), 2);
         drop(shard);
 
-        let shard = store.shards.shard(1).lock().unwrap();
+        let shard = store.shell.shards().shard(1).lock().unwrap();
         assert_eq!(shard.used(), 4);
         assert_eq!(shard.expiration_count_at_or_before(1_000), 3);
     }
@@ -1530,7 +1403,7 @@ mod tests {
             clock.advance(Duration::from_millis(1));
         }
 
-        let shard = store.shards.shard(0).lock().unwrap();
+        let shard = store.shell.shards().shard(0).lock().unwrap();
         assert_eq!(shard.used(), 1);
         assert_eq!(shard.expiration_count(), 1);
     }
@@ -1568,7 +1441,7 @@ mod tests {
             );
 
             let key = target.counter_key();
-            let shard = store.shards.shard(0).lock().unwrap();
+            let shard = store.shell.shards().shard(0).lock().unwrap();
             assert_eq!(shard.used(), 1);
             assert_eq!(shard.expiration_count(), 1);
             assert_eq!(shard.entry(key), Some((&Entry { used: 1 }, 5)));

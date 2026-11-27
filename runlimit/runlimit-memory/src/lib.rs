@@ -21,13 +21,16 @@
 pub mod attempts;
 mod clock;
 mod config;
+mod errors;
 mod gcra;
 mod shards;
+mod shell;
+mod stats;
 mod store;
 
 pub use clock::{Clock, SystemClock};
 pub use config::{MemoryStoreConfig, MemoryStoreConfigError};
+pub use errors::{MemoryBatchError, PoisonedShardError};
 pub use gcra::{GcraBatchError, GcraCheckError, GcraStore, GcraStoreBuilder};
-pub use store::{
-    MemoryBatchError, MemoryStore, MemoryStoreBuilder, MemoryStoreStats, PoisonedShardError,
-};
+pub use stats::MemoryStoreStats;
+pub use store::{MemoryStore, MemoryStoreBuilder};
