@@ -28,12 +28,53 @@ pub(in crate::catalog_guard) fn tables<'a>(
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut tables = BTreeMap::new();
     for migration in migrations {
-        let tokens = tokenize(migration);
+        let tokens = tokenize(&opaque_bodies(migration));
         for statement in tokens.split(|token| *token == Token::Punct(';')) {
             apply(statement, &mut tables);
         }
     }
     tables
+}
+
+/// `migration` with each dollar-quoted body blanked: a function body runs
+/// when called, not when the migration defines it, so its statements are no
+/// schema change. Comments and quoted text are skipped while looking for
+/// bodies.
+fn opaque_bodies(migration: &str) -> String {
+    let mut out = String::with_capacity(migration.len());
+    let mut rest = migration;
+    while let Some(character) = rest.chars().next() {
+        let skipped = match character {
+            '-' if rest.starts_with("--") => rest.find('\n').unwrap_or(rest.len()),
+            '/' if rest.starts_with("/*") => rest.find("*/").map_or(rest.len(), |end| end + 2),
+            '\'' | '"' => rest[1..].find(character).map_or(rest.len(), |end| end + 2),
+            '$' => match dollar_tag(rest) {
+                Some(tag) => {
+                    let body = rest[tag.len()..]
+                        .find(tag)
+                        .map_or(rest.len(), |end| end + 2 * tag.len());
+                    out.extend(std::iter::repeat_n(' ', body));
+                    rest = &rest[body..];
+                    continue;
+                }
+                None => character.len_utf8(),
+            },
+            _ => character.len_utf8(),
+        };
+        out.push_str(&rest[..skipped]);
+        rest = &rest[skipped..];
+    }
+    out
+}
+
+/// The dollar-quote opener (`$$` or `$tag$`) at the start of `text`.
+fn dollar_tag(text: &str) -> Option<&str> {
+    let end = text[1..].find('$')? + 2;
+    let tag = &text[1..end - 1];
+    tag.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        .then(|| &text[..end])
+        .filter(|_| !tag.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// The index past `IF [NOT] EXISTS` and `ONLY` at `index`.
@@ -164,6 +205,10 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          ALTER TABLE t RENAME TO counters;
          DROP TABLE gone;
          CREATE TABLE IF NOT EXISTS counters (unrelated BIGINT);",
+        // A function body's DDL runs when the function is called.
+        "CREATE FUNCTION f() RETURNS void AS $body$ SELECT 1; ALTER TABLE counters DROP COLUMN id; $body$ \
+         LANGUAGE sql; -- $$ is no body here
+         CREATE FUNCTION g() RETURNS void AS $$ ALTER TABLE counters DROP COLUMN shard $$ LANGUAGE sql;",
     ]);
     assert_eq!(tables.keys().collect::<Vec<_>>(), ["counters"]);
     assert_eq!(

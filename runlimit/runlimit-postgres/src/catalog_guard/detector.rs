@@ -72,12 +72,6 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
     let code = strip_comments_and_quotes(sql);
     let ctes = cte_names(&code);
     let bytes = code.as_bytes();
-    for (start, _) in code.to_ascii_lowercase().match_indices("pg_catalog.unnest") {
-        let open = skip_spaces(bytes, start + "pg_catalog.unnest".len());
-        if bytes.get(open) == Some(&b'(') && top_level_arguments(&code[open..]) > 1 {
-            found.push("multi-array pg_catalog.unnest(...)".to_owned());
-        }
-    }
     let mut index = 0;
     while index < bytes.len() {
         if !is_identifier_start(bytes[index]) || index > 0 && is_identifier_part(bytes[index - 1]) {
@@ -95,6 +89,13 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
         let back = skip_spaces_back(bytes, start);
         let cast_type = back >= 2 && &code[back - 2..back] == "::";
         // `::numeric(39, 0)` is a type modifier, not a call.
+        if bytes.get(after) == Some(&b'(')
+            && word == "unnest"
+            && qualifier.as_deref() == Some("pg_catalog")
+            && top_level_arguments(&code[after..]) > 1
+        {
+            found.push("multi-array pg_catalog.unnest(...)".to_owned());
+        }
         if bytes.get(after) == Some(&b'(') && !cast_type {
             match qualifier.as_deref() {
                 Some("pg_catalog") => {}
@@ -231,10 +232,13 @@ fn previous_tokens(code: &str, start: usize, count: usize) -> Vec<String> {
 /// (`schema.name`), if any.
 fn qualifier_before(code: &str, start: usize) -> Option<String> {
     let bytes = code.as_bytes();
-    if start == 0 || bytes[start - 1] != b'.' {
+    // Whitespace, and the comments `code` blanks, may stand on either side
+    // of the dot.
+    let dot = skip_spaces_back(bytes, start);
+    if dot == 0 || bytes[dot - 1] != b'.' {
         return None;
     }
-    let end = start - 1;
+    let end = skip_spaces_back(bytes, dot - 1);
     let mut begin = end;
     while begin > 0 && is_identifier_part(bytes[begin - 1]) {
         begin -= 1;

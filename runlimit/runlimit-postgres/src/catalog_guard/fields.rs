@@ -194,6 +194,7 @@ enum ItemSource {
     Relation(String),
     Query(usize, usize),
     Function,
+    Join,
 }
 
 #[derive(Debug)]
@@ -211,10 +212,12 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     }
     let source = if punct(tokens, index, '(') {
         let close = closing(tokens, index);
+        // A parenthesized FROM item is a subquery or a join, whose operands'
+        // aliases the declaration scan would not see.
         let source = if opens_query(tokens, index) {
             ItemSource::Query(index + 1, close)
         } else {
-            ItemSource::Function
+            ItemSource::Join
         };
         index = close + 1;
         source
@@ -422,6 +425,11 @@ fn declarations<'t>(
         let mut item_start = index + 1;
         loop {
             let item = from_item(tokens, item_start);
+            if matches!(item.source, ItemSource::Join) {
+                declarations
+                    .problems
+                    .push("a parenthesized join".to_owned());
+            }
             if let Some(alias) = &item.alias {
                 let declared = match (&item.columns, &item.source) {
                     (ColumnList::Names(columns), _) => Declared::Columns(columns.clone()),
@@ -437,7 +445,9 @@ fn declarations<'t>(
                     (ColumnList::Absent, ItemSource::Query(start, end)) => {
                         Declared::Query(*start, *end)
                     }
-                    (ColumnList::Absent, ItemSource::Function) => Declared::Unlisted,
+                    (ColumnList::Absent, ItemSource::Function | ItemSource::Join) => {
+                        Declared::Unlisted
+                    }
                 };
                 declarations.declare(alias, declared);
             }

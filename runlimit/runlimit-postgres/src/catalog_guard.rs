@@ -155,6 +155,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT * FROM ROWS FROM (pg_catalog.json_to_record($1) AS (v text)) AS r(v)",
         // A schema-qualified table does not qualify the field read from it.
         "SELECT pg_catalog.pg_class.row_to_json FROM pg_catalog.pg_class",
+        // A parenthesized join hides its first operand's alias.
+        "SELECT pg_catalog.row_to_json FROM (t AS pg_catalog CROSS JOIN u AS g)",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",
@@ -225,6 +227,10 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT 1 FROM t WHERE x = set(1)",
         "SELECT conflict(1), filter(2)",
         "SELECT 1 FROM t WHERE NOT materialized(1)",
+        // A qualifier binds across whitespace and comments.
+        "SELECT other_schema. greatest(1, 2)",
+        "SELECT other_schema /* x */ . floor(1)",
+        "SELECT 1 FROM pg_catalog . unnest($1::BIGINT[], $2::BIGINT[]) AS i(a, b)",
         "SELECT 1 FROM t JOIN u ON conflict(t.id)",
         "SELECT pg_catalog.count(*) FILTER (1)",
         "SELECT pg_catalog.count(*) over(1)",
@@ -259,6 +265,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO UPDATE SET (b, c) = (1, 2)",
         "UPDATE t AS r SET (b) = ROW(1) WHERE pg_catalog.count(*) FILTER (WHERE TRUE) > 0",
         "SELECT pg_catalog.count(*) OVER (ORDER BY 1)",
+        "SELECT pg_catalog. count(*), pg_catalog /* x */ . floor(1)",
     ] {
         assert_eq!(
             unqualified(sql),
