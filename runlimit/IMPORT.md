@@ -28,9 +28,11 @@ Since `batter-ctk7.8`, attempt completion likewise executes
 delay from a schedule bound by Rust, and the imported `attempt_complete.sql`,
 which restated the backoff formula, is retained byte-identical and unexecuted.
 Both records live in [`provenance/runlimit-postgres/`](provenance/README.md),
-outside every package, so they are neither published nor compiled; the
-workspace check rejects an uninventoried file there and any `include_str!` or
-`include_bytes!` of one (`batter-39wm.2`).
+outside every package, so they are neither published nor compiled. The
+workspace check rejects an uninventoried file there, a copy of a record's bytes
+in any other `.sql` file of the tree, and any Rust source that names a record's
+path, which covers every literal `include_str!` or `include_bytes!` spelling
+(`batter-39wm.2`).
 Source archives retain SQL and both license names, and mutation fixtures include
 this native root. Root verification preserves default/all-feature tests and lint,
 the release-mode fail-closed regression, and CI's explicit native PostgreSQL tests.

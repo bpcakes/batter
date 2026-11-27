@@ -267,9 +267,9 @@ CROSS JOIN response
 ORDER BY input.input_position
 ";
 
-// The imported `runlimit/provenance/runlimit-postgres/cleanup_expired.sql`
-// stays byte-identical, outside this package, as a digest-guarded provenance
-// record that no code path executes. It selected victims by `ctid`, a system column that
+// The imported `cleanup_expired.sql` stays byte-identical, outside this
+// package under `runlimit/provenance`, as a digest-guarded record that no code
+// path executes. It selected victims by `ctid`, a system column that
 // PostgreSQL checks against relation-level SELECT; this successor identifies
 // them by primary key so a cleanup login needs only column privileges.
 pub(crate) const CLEANUP_SQL: &str = include_str!("cleanup_expired_by_key.sql");

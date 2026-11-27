@@ -3,8 +3,9 @@
 import hashlib
 import json
 from pathlib import Path
-import re
 import subprocess
+
+from package import source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
@@ -13,7 +14,6 @@ EXPECTED_VERSION = '0.4.0'
 # Imported statements that no code path executes. They stay byte-identical
 # outside every package, so they are neither published nor compiled.
 PROVENANCE = 'provenance'
-EMBEDDED_PROVENANCE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"[^"]*\b' + PROVENANCE + '/')
 
 
 def validate_graph(metadata, root):
@@ -70,17 +70,42 @@ def validate_assets(root):
         path = native / name
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('immutable imported asset changed or missing: ' + name)
+    validate_provenance(Path(root), expected)
+
+
+def validate_provenance(root, expected):
+    """Keep unexecuted import records out of every package and every build.
+
+    A record is found by content and by path, not by parsing Rust: no `.sql`
+    file outside `provenance/` may reproduce a record's bytes, and no Rust
+    source anywhere in the tree may contain a record's path, in code or in a
+    comment, so no `include_str!` spelling can embed one.
+    """
+    native = root / 'runlimit'
     provenance = native / PROVENANCE
+    records = {}
     for path in sorted(provenance.rglob('*')) if provenance.is_dir() else ():
         name = path.relative_to(native).as_posix()
-        if path.is_file() and path.name != 'README.md' and name not in expected:
-            raise ValueError('provenance holds an uninventoried file: ' + name)
-    for path in sorted(native.rglob('*.rs')):
-        if provenance in path.parents or 'target' in path.relative_to(native).parts:
+        if not path.is_file() or path == provenance / 'README.md':
             continue
-        if EMBEDDED_PROVENANCE.search(path.read_text()):
-            raise ValueError('source embeds an unexecuted provenance record: '
-                             + path.relative_to(native).as_posix())
+        if name not in expected:
+            raise ValueError('provenance holds an uninventoried file: ' + name)
+        records[name] = expected[name]
+    by_digest = {digest: name for name, digest in records.items()}
+    for path in source_files(root):
+        if provenance in path.parents:
+            continue
+        relative = path.relative_to(root).as_posix()
+        if path.suffix == '.sql':
+            record = by_digest.get(hashlib.sha256(path.read_bytes()).hexdigest())
+            if record is not None:
+                raise ValueError(f'provenance record {record} is copied to {relative}')
+        elif path.suffix == '.rs':
+            text = path.read_text()
+            for name in records:
+                if name in text:
+                    raise ValueError(f'{relative} names provenance record {name}; refer '
+                                     'to a record by file name, never by path')
 
 
 if __name__ == '__main__':

@@ -53,9 +53,9 @@ pub static ATTEMPTS_MIGRATOR: Migrator = sqlx::migrate!("./attempts-migrations")
 /// SQL suitable for a new forward-only application-owned migration.
 pub const CREATE_RUNLIMIT_ATTEMPTS_SQL: &str =
     include_str!("../attempts-migrations/20260921000001_create_runlimit_attempts.sql");
-// The imported `runlimit/provenance/runlimit-postgres/attempt_complete.sql`
-// stays byte-identical, outside this package, as a digest-guarded provenance
-// record that no code path executes. It restated the backoff formula
+// The imported `attempt_complete.sql` stays byte-identical, outside this
+// package under `runlimit/provenance`, as a digest-guarded record that no code
+// path executes. It restated the backoff formula
 // in SQL; this successor reads the delay from the schedule Rust binds.
 const COMPLETE_SQL: &str = include_str!("attempt_complete_scheduled.sql");
 const CLEANUP_SQL: &str = include_str!("attempt_cleanup.sql");

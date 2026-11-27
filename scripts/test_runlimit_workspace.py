@@ -88,7 +88,7 @@ class AssetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'changed or missing'):
                 validate_assets(root)
 
-    def test_provenance_records_stay_inventoried_and_unembedded(self):
+    def test_provenance_records_stay_inventoried_unpackaged_and_unembedded(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             native = root / 'runlimit'
@@ -111,12 +111,34 @@ class AssetTests(unittest.TestCase):
                 validate_assets(root)
             stray.unlink()
 
-            source = native / 'runlimit-postgres' / 'src' / 'lib.rs'
-            source.parent.mkdir(parents=True)
-            source.write_text('// The provenance/ records are not executed.\n')
-            validate_assets(root)
-            for embed in ('include_str!("../../provenance/runlimit-postgres/superseded.sql")',
-                          'include_bytes!( "../../provenance/x.sql")'):
-                source.write_text('const SQL: &str = ' + embed + ';\n')
-                with self.subTest(embed=embed), self.assertRaisesRegex(ValueError, 'embeds'):
+            for restored in (native / 'runlimit-postgres' / 'src' / 'superseded.sql',
+                             root / 'crates' / 'adapter' / 'sql' / 'renamed.sql'):
+                restored.parent.mkdir(parents=True, exist_ok=True)
+                restored.write_bytes(record.read_bytes())
+                with self.subTest(restored=restored), self.assertRaisesRegex(ValueError, 'copied to'):
                     validate_assets(root)
+                restored.unlink()
+            (native / 'runlimit-postgres' / 'src' / 'live.sql').write_text('SELECT 3')
+            validate_assets(root)
+
+            native_source = native / 'runlimit-postgres' / 'src' / 'lib.rs'
+            adapter_source = root / 'crates' / 'adapter' / 'src' / 'lib.rs'
+            for source in (native_source, adapter_source):
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text('// The imported superseded.sql is never executed.\n')
+            validate_assets(root)
+            for source, text in (
+                    (native_source, 'const SQL: &str = include_str!('
+                                    '"../../provenance/runlimit-postgres/superseded.sql");'),
+                    (native_source, 'const SQL: &str = include_str!('
+                                    'r"../../provenance/runlimit-postgres/superseded.sql");'),
+                    (native_source, 'const SQL: &[u8] = include_bytes!(r#"../../provenance/'
+                                    'runlimit-postgres/superseded.sql"#);'),
+                    (adapter_source, 'const SQL: &str = include_str!("../../../runlimit/'
+                                     'provenance/runlimit-postgres/superseded.sql");'),
+                    (native_source, '// see provenance/runlimit-postgres/superseded.sql')):
+                original = source.read_text()
+                source.write_text(text + '\n')
+                with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'names provenance'):
+                    validate_assets(root)
+                source.write_text(original)
