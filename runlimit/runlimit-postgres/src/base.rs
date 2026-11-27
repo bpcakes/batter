@@ -80,6 +80,14 @@ impl<O: ?Sized> PgLimiterBase<O> {
     /// Migration locking is session scoped. The connection returns to the pool
     /// only after a successful run and unlock; an error or cancellation closes
     /// it instead.
+    ///
+    /// This is the one place a migrator runs. It runs a fresh migrator over
+    /// `bundled`'s migrations, so the default history table and no schema
+    /// apply whatever fields `bundled` carries.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place the bundled migrations run"
+    )]
     pub(crate) async fn migrate(&self, bundled: &Migrator) -> Result<(), MigrateError> {
         let mut connection = ConnectionCancellationGuard::new(self.pool.acquire().await?);
         let mut migrator = Migrator::with_migrations(bundled.iter().cloned().collect());

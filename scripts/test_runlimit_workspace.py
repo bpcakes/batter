@@ -235,6 +235,10 @@ class SqlGateTests(unittest.TestCase):
 
     def test_lint_levels_set_in_another_form_fail_closed(self):
         for manifest in (self.MANIFEST + b'\n[lints.clippy.style]\nlevel = "allow"\n',
+                         self.MANIFEST + b"\n['lints'.clippy.disallowed_methods]\nlevel = \"allow\"\n",
+                         self.MANIFEST + b'\n[ "lints" . clippy . style ]\nlevel = "allow"\n',
+                         self.MANIFEST + b'\n["\\u006cints".clippy.style]\nlevel = "allow"\n',
+                         b"'lints'.clippy.style = \"allow\"\n" + self.MANIFEST,
                          b'lints.clippy.style = "allow"\n' + self.MANIFEST,
                          self.MANIFEST + b'"style" = "allow"\n',
                          self.MANIFEST + b'style = { level = "allow", note = 1 }\n'):

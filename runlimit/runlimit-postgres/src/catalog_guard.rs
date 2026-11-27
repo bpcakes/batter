@@ -125,6 +125,8 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT $1::DOUBLE, $2::double precision",
         "SELECT * FROM json_to_record($1) AS (values integer)",
         "SELECT 1 -- note\rFROM floor(1)",
+        "SELECT text -- (\n'ready'",
+        "SELECT pg_catalog.length(1, /* , */ x 'y')",
         "SELECT 1 -- note\r$tag$x$tag$",
         "SELECT * FROM t, json_to_record($1) AS (insert integer)",
         "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[]) WITH ORDINALITY AS x(v, n), floor(1)",
@@ -145,6 +147,7 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT $1::numeric(39, 0), $2::varchar(128), $3::timestamp(3)",
         "SELECT pg_catalog.set_config('statement_timeout', $1, true), $2::BIGINT",
         "SELECT pg_catalog.length('can''t'), pg_catalog.length('x'''), pg_catalog.floor(1)",
+        "SELECT pg_catalog.length(/* units */ 'x'), pg_catalog.concat('a', -- next\n 'b')",
         "WITH a(x) AS NOT MATERIALIZED (VALUES (1)), b AS ( SELECT 2) TABLE a",
     ] {
         assert_eq!(

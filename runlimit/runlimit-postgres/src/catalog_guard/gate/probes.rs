@@ -197,6 +197,31 @@ fn resolve_blocking_with_config() {
 }
 
 #[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrator_run(migrator: &sqlx::migrate::Migrator, pool: &PgPool) {
+    let _ = migrator.run(pool);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrator_run_to(migrator: &sqlx::migrate::Migrator, pool: &PgPool) {
+    let _ = migrator.run_to(1, pool);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrator_skip(migrator: &sqlx::migrate::Migrator, pool: &PgPool) {
+    let _ = migrator.skip(pool, None);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrator_undo(migrator: &sqlx::migrate::Migrator, pool: &PgPool) {
+    let _ = migrator.undo(pool, 0);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn migrator_run_direct(migrator: &sqlx::migrate::Migrator, connection: &mut PgConnection) {
+    let _ = migrator.run_direct(None, connection, false);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
 fn dangerous_set_table_name() {
     let mut migrator = sqlx::migrate::Migrator::with_migrations(Vec::new());
     let _ = migrator.dangerous_set_table_name("migrations");

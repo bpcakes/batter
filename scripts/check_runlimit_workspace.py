@@ -125,6 +125,14 @@ def validate_provenance(root, expected, required=None):
             raise ValueError('provenance holds an uninventoried file: ' + name)
 
 
+def first_key(dotted):
+    """The first component of a dotted TOML key, unquoted, or None for an escaped one."""
+    if '\\' in dotted:
+        return None
+    match = re.match(r'\s*(?:"([^"]*)"|\'([^\']*)\'|([A-Za-z0-9_-]+))', dotted)
+    return next((part for part in match.groups() if part is not None), '') if match else ''
+
+
 def manifest_lints(text):
     """The `[lints.rust]` and `[lints.clippy]` levels of a repository-controlled manifest.
 
@@ -134,7 +142,7 @@ def manifest_lints(text):
     normalized to underscores, as Cargo accepts either spelling.
     """
     levels = {'rust': {}, 'clippy': {}}
-    table = None
+    table, root = None, True
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith('#'):
@@ -144,12 +152,13 @@ def manifest_lints(text):
             if match and match.group(1) is None:
                 raise ValueError('runlimit-postgres sets [lints], which inherits or nests lint '
                                  'levels; its SQL gate sets [lints.rust] and [lints.clippy]')
-            if not match and re.match(r'^\[+\s*"?lints\b', line):
+            # Any other spelling of a lints table, quoted or escaped, fails closed.
+            if not match and first_key(line.lstrip('[')) in ('lints', None):
                 raise ValueError(f'Cargo.toml:{number}: unsupported lint table {line}')
-            table = match.group(1) if match else None
+            table, root = (match.group(1) if match else None), False
             continue
         if table is None:
-            if re.match(r'^"?lints\b', line):
+            if root and first_key(line) in ('lints', None):
                 raise ValueError(f'Cargo.toml:{number}: set lints in [lints.rust] or [lints.clippy]')
             continue
         entry = LINT_ENTRY.match(line)

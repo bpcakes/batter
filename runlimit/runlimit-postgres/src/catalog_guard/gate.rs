@@ -13,8 +13,9 @@
 //! reliably; lint flags passed on the command line belong to
 //! `scripts/verify.sh`.
 //!
-//! Strings in this file that would read as lint lists or includes are split
-//! with `concat!`, so its own source holds none.
+//! Every file is read through `rust_text::normalize`, so a comment, a doc
+//! line or a string that quotes an attribute is not mistaken for one, and a
+//! comment inside a lint list does not hide its lint.
 
 use std::{
     collections::BTreeSet,
@@ -54,6 +55,11 @@ const METHODS: &[&str] = &[
     "sqlx::Execute::sql",
     "sqlx::Transaction::begin",
     "sqlx::migrate::Migrator::new",
+    "sqlx::migrate::Migrator::run",
+    "sqlx::migrate::Migrator::run_to",
+    "sqlx::migrate::Migrator::run_direct",
+    "sqlx::migrate::Migrator::skip",
+    "sqlx::migrate::Migrator::undo",
     "sqlx::migrate::Migrator::dangerous_set_table_name",
     "sqlx::migrate::Migrator::create_schema",
     "sqlx::migrate::MigrationSource::resolve",
@@ -109,6 +115,9 @@ const MACROS: &[&str] = &[
 const PROBES: &str = "catalog_guard/gate/probes.rs";
 
 mod probes;
+mod rust_text;
+
+use rust_text::normalize;
 
 /// The gate's lints, each also matching its renamed singular spelling.
 const GATE_LINTS: &[&str] = &[
@@ -139,31 +148,43 @@ fn names_the_gate(item: &str) -> bool {
 }
 
 /// The only suppressions of the gate, each pinned to its whole item, by the
-/// file under `src` that holds it. Whitespace is ignored.
+/// file under `src` that holds it, compared after `normalize`.
 fn exceptions() -> Vec<(&'static str, String)> {
     // `sqlx::migrate!` names `sqlx::SqlStr` in its expansion, so each bundled
     // migrator carries the one type exception.
     let migrator = |name: &str, directory: &str| {
         format!(
-            concat!(
-                "#[expect(clippy::disallowed",
-                "_types, reason = \"sqlx::migrate! embeds each migration as a sqlx::SqlStr\")]",
-                "pub static {name}: Migrator = sqlx::migrate!(\"{directory}\");",
-            ),
-            name = name,
-            directory = directory,
+            "#[expect(clippy::disallowed_types, \
+             reason = \"sqlx::migrate! embeds each migration as a sqlx::SqlStr\")]
+             pub static {name}: Migrator = sqlx::migrate!(\"{directory}\");"
         )
     };
     vec![
         (
             "statements.rs",
-            concat!(
-                "#[expect(clippy::disallowed",
-                "_methods, reason = \"the one place SQL text reaches sqlx\")]",
-                "pub(crate) fn query<'q>(self) -> Query<'q, Postgres, PgArguments> {",
-                "    sqlx::query(self.sql())",
-                "}",
-            )
+            "#[expect(clippy::disallowed_methods, reason = \"the one place SQL text reaches sqlx\")]
+             pub(crate) fn query<'q>(self) -> Query<'q, Postgres, PgArguments> {
+                 sqlx::query(self.sql())
+             }"
+            .to_owned(),
+        ),
+        // A fresh migrator over the bundled migrations, so neither a table
+        // name nor a schema written on `bundled` reaches SQL.
+        (
+            "base.rs",
+            "#[expect(clippy::disallowed_methods, reason = \"the one place the bundled migrations run\")]
+             pub(crate) async fn migrate(&self, bundled: &Migrator) -> Result<(), MigrateError> {
+                 let mut connection = ConnectionCancellationGuard::new(self.pool.acquire().await?);
+                 let mut migrator = Migrator::with_migrations(bundled.iter().cloned().collect());
+                 migrator.set_ignore_missing(true);
+                 let result = migrator
+                     .run_direct(None, &mut **connection.connection(), false)
+                     .await;
+                 connection.release(match result {
+                     Ok(()) => ConnectionOutcome::Reusable(Ok(())),
+                     Err(error) => ConnectionOutcome::MustClose(Err(error)),
+                 })
+             }"
             .to_owned(),
         ),
         ("lib.rs", migrator("MIGRATOR", "./migrations")),
@@ -177,10 +198,6 @@ fn exceptions() -> Vec<(&'static str, String)> {
 
 fn manifest_directory() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn without_whitespace(text: &str) -> String {
-    text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 /// Every `.rs` file under `directory`, by its path relative to it.
@@ -299,9 +316,9 @@ fn only_the_pinned_items_suppress_the_gate() {
     let mut excepted = BTreeSet::new();
     let exceptions = exceptions();
     for (file, path) in rust_files(&source) {
-        let mut code = without_whitespace(&fs::read_to_string(&path).expect("source is readable"));
+        let mut code = normalize(&fs::read_to_string(&path).expect("source is readable"));
         for (_, pinned) in exceptions.iter().filter(|(owner, _)| *owner == file) {
-            let pinned = without_whitespace(pinned);
+            let pinned = normalize(pinned);
             match code.matches(&pinned).count() {
                 1 => {
                     code = code.replacen(&pinned, "", 1);
@@ -322,14 +339,14 @@ fn only_the_pinned_items_suppress_the_gate() {
             }
         }
         // Code from outside `src` would escape this scan.
-        for include in [concat!("#[pa", "th"), concat!("include", "!(")] {
+        for include in ["#[path", "include!("] {
             if code.contains(include) {
                 problems.push(format!("{file}: uses {include}"));
             }
         }
     }
     // The probes are test code: catalog_guard compiles only under test.
-    let root = without_whitespace(&fs::read_to_string(source.join("lib.rs")).expect("lib.rs"));
+    let root = normalize(&fs::read_to_string(source.join("lib.rs")).expect("lib.rs"));
     if !root.contains("#[cfg(test)]modcatalog_guard;") {
         problems.push("lib.rs: catalog_guard is not test-only".to_owned());
     }
@@ -345,16 +362,13 @@ fn only_the_pinned_items_suppress_the_gate() {
 
 #[test]
 fn the_suppression_scan_reads_each_lint_list() {
-    // Split so this fixture is not itself a lint list.
-    let code = without_whitespace(concat!(
-        "#[al",
-        "low(dead_code, warnings)] fn a() { x.expect(\"warnings\"); }",
-        "#[cfg_attr(test, ex",
-        "pect($lint, reason = \"r\"))] fn b() {}",
-        "#[de",
-        "ny(clippy::disallowed_methods)] fn c() {}",
-        "Option::expect(value, \"$1\");",
-    ));
+    let code = normalize(
+        "/// Quoting #[allow(clippy::all)] here is documentation.
+         #[allow(dead_code, /* a note */ warnings)] fn a() { x.expect(\"warnings\"); }
+         #[cfg_attr(test, expect($lint, reason = \"r\"))] fn b() {}
+         #[deny(clippy::disallowed_methods)] fn c() {}
+         Option::expect(value, \"$1\");",
+    );
     let lists = lint_lists(&code);
     assert_eq!(
         lists,

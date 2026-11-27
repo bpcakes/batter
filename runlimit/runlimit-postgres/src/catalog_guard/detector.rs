@@ -158,7 +158,11 @@ fn outside_dialect(sql: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = sql.as_bytes();
     let mut index = 0;
+    // The last byte outside comments and whitespace, which decides where a
+    // string constant stands.
+    let mut previous = None;
     while index < bytes.len() {
+        let token = index;
         match bytes[index] {
             // PostgreSQL ends a line comment at either line terminator.
             b'-' if bytes.get(index + 1) == Some(&b'-') => {
@@ -178,8 +182,7 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                 index += 2;
             }
             b'\'' => {
-                let before = sql[..index].trim_end();
-                if !(before.ends_with('(') || before.ends_with(',')) {
+                if !matches!(previous, Some(b'(' | b',')) {
                     found.push("a string constant outside a function argument".to_owned());
                 }
                 index += 1;
@@ -216,6 +219,12 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                 }
             }
             _ => index += 1,
+        }
+        // Comments and whitespace leave `previous` where it was.
+        let comment = bytes[token] == b'-' && bytes.get(token + 1) == Some(&b'-')
+            || bytes[token] == b'/' && bytes.get(token + 1) == Some(&b'*');
+        if !comment && !bytes[token].is_ascii_whitespace() {
+            previous = Some(bytes[index.min(bytes.len()) - 1]);
         }
     }
     found
