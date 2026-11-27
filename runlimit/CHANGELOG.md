@@ -7,6 +7,32 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `runlimit_core::attempts::AttemptState<T>` is the one attempt lease
+  lifecycle: `Clear`, `Leased(AttemptLease<T>)` or `Failed(FailedAttempts)`.
+  Its pure `settle`, `admit` and `complete` own lease expiry counted as a
+  failure at the deadline, the quiet-period reset, the busy and backoff denials
+  and the failure delay, and return `AdmitEvaluation` (`Grant(PendingLease)`,
+  `Denied(DeniedAdmission<T>)` or `DeadlineOverflow`) and `CompleteEvaluation`
+  (`Applied(AppliedCompletion)` or `Stale`). A lease is granted for the whole
+  policy lease or not at all: within one lease of `Duration::MAX` a subject
+  that would be admitted gets `DeadlineOverflow`. A grant and a refused
+  deadline both carry the subject's `UnleasedAttempt` state at that instant,
+  so a backend that cannot issue the lease can still store it. Only a
+  transition builds a
+  `DeniedAdmission` or an `AppliedCompletion`, and each carries the narrower
+  state it can leave, `HeldAttempt<T>` or `UnleasedAttempt`, beside the
+  `LeaseDenial` or `AttemptCompletion` that state gives, so a backend stores
+  one and reports the other without checking them against each other. `T` is
+  the backend's lease token, which `complete` requires to be
+  `Eq`; `StorageFenced` stands in for it where storage compares the token
+  itself, and a state decoded with it cannot complete. `AttemptPolicy::delay` is the
+  only backoff derivation, and the new `AttemptPolicy::delay_schedule`
+  tabulates it for storage that must apply a failure inside one statement.
+  This is backend-author API, as `runlimit_core::gcra::evaluate` is for GCRA;
+  the limiter APIs and their results are unchanged (`batter-ctk7.6`).
+
 ### Fixed
 
 - `PostgresGcraLimiter::cleanup_expired` advanced every candidate shard to the
@@ -31,6 +57,128 @@ The format is based on [Keep a Changelog], and this project adheres to
   saved updates after preflight succeeds. The session adds no allocation to single
   checks. The two-check batches measured in `batter-ctk7.10` used fewer
   allocations.
+- `MemoryAttemptLimiter` stores `AttemptState` instead of separate failure,
+  timestamp and optional-lease fields, and evaluates admission, completion and
+  cleanup through it. Admissions, denials, completions, delays, observations,
+  the 16-entry cleanup scan and allocation behavior are unchanged for each
+  subject, with one exception on an injected clock within one failure delay
+  of `Duration::MAX`: the retry deadline saturates there, and a failed
+  completion and its `Completed` observation now report the wait that remains
+  until it, as the next `Backoff` denial does, where they reported the full
+  policy delay. Admission on such a clock within one lease of `Duration::MAX`
+  now fails, as the first **Breaking** entry below describes. Two effects on
+  stored state are new. `complete` with a receipt whose
+  lease has expired still returns and observes `Stale`, but now records the
+  expiry as a failure at once rather than at the next admission, and removes
+  the subject when its quiet period has also passed. That frees its capacity
+  slot without a cleanup scan, so in a full store a new subject can be
+  admitted, and observed as `Admitted`, where it was denied `StorageCapacity`
+  until a scan reached the expired entry. A cleanup scan that retains an entry
+  whose lease has expired stores that failure instead of recomputing it on
+  every later scan (`batter-ctk7.7`).
+- `PostgresAttemptLimiter::admit` decodes the locked row once into
+  `AttemptState` and evaluates it with the transition the memory backend calls.
+  Completion executes `src/attempt_complete_scheduled.sql`, which reads the
+  delay from the bound `AttemptPolicy::delay_schedule` instead of restating the
+  formula; the imported `src/attempt_complete.sql` is retained unchanged as a
+  provenance record that no code path executes. No migration, schema, public
+  item, lock protocol or fence changes. Storage is compatible in both
+  directions: rows written by earlier releases decode unchanged, and every row
+  this release writes is a shape earlier releases already read. While a lease
+  is held, `last_failure_ms` and `retry_at_ms` now hold the admission instant;
+  neither release reads them until the lease ends. A new live test,
+  `memory_and_postgres_share_attempt_transition_semantics`, holds both backends
+  to one scripted lifecycle (`batter-ctk7.8`).
+
+  For rows this library writes, replicas of both releases reach the same
+  decisions while the server clock does not step backwards. After a backwards
+  step they can differ during a rolling upgrade in one case: a row without a
+  lease and without failures is `Clear`. After a success both timestamps hold
+  the completion instant, so an earlier release denies `Backoff` until the
+  clock passes that instant again, and this release admits.
+
+  One clock-step behavior is unchanged from earlier releases and is now
+  documented and pinned by the live test
+  `a_backwards_clock_step_revives_an_unreplaced_expired_lease`: a `Busy` or
+  `Backoff` denial and a stale completion leave the subject's row unchanged, so
+  after a step behind a lease deadline a lease already reported expired is
+  live again until that deadline (`batter-ctk7.22`). A `StorageCapacity`
+  denial still commits the bounded cleanup of expired rows, as before.
+- **Breaking:** `MemoryAttemptError` has a new variant, `ClockExhausted`, so
+  an exhaustive `match` on it stops compiling until it handles the variant.
+  `MemoryAttemptLimiter::admit` returns it when the clock is within one policy
+  lease of `Duration::MAX` and the subject would otherwise be admitted. Only a
+  clock injected through `MemoryAttemptLimiter::with_clock` reaches that
+  range. Earlier releases admitted there with a lease cut short at
+  `Duration::MAX`; at `Duration::MAX` itself that lease was already expired,
+  so its receipt was stale and a second admission was granted beside it.
+  Denials are unchanged there, and a lease that ends exactly at
+  `Duration::MAX` still expires at that instant. The error displays as
+  `attempt clock exhausted its representable range`.
+
+  ```rust
+  // Before: every admission error was one of two variants.
+  match limiter.admit(subject) {
+      Ok(admission) => handle(admission),
+      Err(MemoryAttemptError::Poisoned | MemoryAttemptError::SequenceExhausted) => fail_closed(),
+  }
+  // After: fail closed for the clock range as well.
+  match limiter.admit(subject) {
+      Ok(admission) => handle(admission),
+      Err(
+          MemoryAttemptError::Poisoned
+          | MemoryAttemptError::SequenceExhausted
+          | MemoryAttemptError::ClockExhausted,
+      ) => fail_closed(),
+  }
+
+  // Before, with an injected clock at Duration::MAX: Ok(Admitted(receipt)),
+  //         twice in a row for one subject, each receipt already stale.
+  // After:  Err(MemoryAttemptError::ClockExhausted) both times.
+  limiter.admit(subject)
+  ```
+- **Breaking:** this is a run-time break for hand-edited attempt rows only;
+  nothing stops compiling and no row this library writes is affected.
+  `PostgresAttemptLimiter::admit` now fails closed with
+  `CheckError::StorageInvariant`, before commit and without consuming anything,
+  for a row that fits no lease state. The subject stays refused until the row
+  is corrected or admission's bounded cleanup deletes it after its quiet period.
+
+  ```sql
+  -- A delay on one subject with no failures and no lease, under a quiet
+  -- period longer than the 60 seconds.
+  UPDATE runlimit_attempts SET failures = 0, retry_at_ms = last_failure_ms + 60000
+  WHERE config_fingerprint = $1 AND subject_key = $2 AND lease_until_ms IS NULL;
+  ```
+
+  ```rust
+  // Before: Ok(AttemptAdmission::Denied(AttemptDenial::Backoff { .. })) until
+  //         retry_at_ms, or until the quiet period after last_failure_ms ended
+  //         if that came first.
+  // After:  Err(CheckError::StorageInvariant(_)), detail
+  //         "attempt without failures carries a retry delay".
+  limiter.admit(subject).await
+  ```
+
+  To hold a subject back by hand, store at least one failure with the delay,
+  for that one unleased row: `SET failures = GREATEST(failures, 1),
+  retry_at_ms = ...` with the same `WHERE` clause. As before, the hold ends at
+  `retry_at_ms` or when the quiet period after `last_failure_ms` ends,
+  whichever comes first, and the two ends differ. At `retry_at_ms` admission
+  resumes with the stored failure count, so the next failure takes the next,
+  longer delay. Only the end of the quiet period clears the failures and lets
+  cleanup delete the row, which is why a later `retry_at_ms` cannot hold
+  longer. The `Backoff` denial now
+  reports the wait until that earlier instant; earlier releases reported the
+  wait until `retry_at_ms` even when the quiet period ended first, so replicas
+  of the two releases report different delays for such a row and admit at the
+  same instant. To hold for up to one quiet
+  period from now, also set `last_failure_ms` to the current server time in
+  milliseconds. Moving
+  `retry_at_ms` earlier still releases a subject and keeps its failures, and
+  stored instants before 1970 keep their exact meaning. An operator matching
+  logs can match that detail string; `"invalid attempt failure count"` is
+  unchanged (`batter-ctk7.8`).
 - PostgreSQL GCRA retry and replenishment delays now subtract database-measured
   elapsed time through the final statement of the decision path, saturating at
   zero, matching fixed-window delay semantics. The evaluation instant, persisted

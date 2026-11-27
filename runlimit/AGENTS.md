@@ -46,6 +46,41 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
   they charge each unique key. GCRA retains its evaluated updates through
   cleanup and capacity preflight. Only a preflighted single or batch session
   can commit. Observers run after shard locks drop.
+- The memory and PostgreSQL attempt backends evaluate one lease lifecycle,
+  `runlimit_core::attempts::AttemptState`. Lease expiry counted as a failure,
+  the quiet-period reset, the busy and backoff denials and the failure delay
+  are derived only by its `settle`, `admit` and `complete` and by
+  `AttemptPolicy::delay`. A backend decodes storage into that enum and persists
+  the lease it grants and the completion it applies; it keeps no loose lease,
+  failure or retry fields and no second copy of a rule. Only a transition
+  builds a `DeniedAdmission` or an `AppliedCompletion`, each pairing the
+  narrower state it can leave with the denial or completion that state gives;
+  keep their fields private rather than widening either to `AttemptState`. A
+  lease is granted for the whole policy lease or refused: where its deadline
+  is not representable `admit` returns `DeadlineOverflow`, which memory
+  reports as `ClockExhausted` and PostgreSQL as its storage-range invariant.
+  Do not saturate a lease deadline. Every admission result carries the
+  subject's state at the evaluation instant, a grant and a refused deadline
+  included, so a memory admission that fails after evaluating still stores
+  it. A lease token is the
+  only completion fence, so a backend never issues one again for a subject
+  while an older receipt can still present it, across removal and recreation
+  of the stored subject included: memory numbers leases from one store-wide
+  counter and PostgreSQL generates a random token. Tokens are unique per
+  subject only, so a completion takes its store, policy and subject from the
+  receipt. Memory clamps its clock
+  and stores the settled state on every evaluation, cleanup scans included.
+  PostgreSQL samples the server clock and leaves the subject's row unchanged
+  on a `Busy` or `Backoff` denial and on a stale completion, so a backwards
+  clock step re-evaluates the stored row at the earlier instant
+  (`batter-ctk7.22`); do not store that settlement on one path only. A
+  `StorageCapacity` denial is not read-only: it commits the bounded cleanup of
+  expired rows. PostgreSQL completion must lock, sample
+  the clock and check its fence in one statement, so that statement applies
+  the live-lease case in SQL and reads its delay from the bound
+  `AttemptPolicy::delay_schedule`; never restate the formula in SQL.
+  `runlimit-postgres/tests/attempt_state.rs` holds both backends to one
+  scripted lifecycle, and a new attempt rule extends that script.
 - A policy configuration fingerprint is part of every storage key. Changing
   any storage-relevant configuration never reinterprets an existing counter.
 - Numbers are validated once, where they enter. `Capacity` is nonzero and at

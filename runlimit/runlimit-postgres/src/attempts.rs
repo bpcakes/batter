@@ -2,16 +2,39 @@
 //! per policy/subject; crashed or abandoned attempts advance failure state.
 //! Standalone calls own bounded transactions. Host transactions use the explicit
 //! [`low_level`] seam and must publish results only after acknowledged commit.
+//!
+//! Admission decodes the locked row once into `runlimit_core`'s `AttemptState`
+//! and evaluates it with that type's `admit`, the transition the memory backend
+//! also calls. Completion has to lock the row, sample the clock and check its
+//! fence in one statement, so that statement applies the live-lease case of
+//! `AttemptState::complete` in SQL and looks its delay up in the bound
+//! `AttemptPolicy::delay_schedule`. Neither path restates expiry, the quiet
+//! period or the backoff formula. A [`PgAttemptClaim`] is this backend's one
+//! extension of that transition: it validated the lease while taking the row
+//! lock, which hides the row from admission until its transaction ends, so its
+//! completion applies even after the lease deadline.
+//!
+//! Every evaluation samples the server clock. A `Busy` or `Backoff` denial
+//! rolls back and a stale completion matches no row, so neither changes the
+//! subject's row; a `StorageCapacity` denial has no row for the subject and
+//! commits only the bounded cleanup of expired rows. Of the two choices
+//! `AttemptState` gives a backend for a regressing clock, this one re-evaluates
+//! the stored row at the earlier instant: after a backwards step behind a
+//! lease deadline, a lease already reported expired is live again until that
+//! deadline, for admission and for its own receipt. Earlier releases behave
+//! the same; `batter-ctk7.22` tracks evaluating against an instant that never
+//! decreases.
 use crate::{
     CheckError, CheckPhase, ConnectionCancellationGuard, ConnectionOutcome, PostgresConfig,
     admission::{CheckTransaction, acquire_check_connection},
 };
+use row::StoredAttempt;
 use runlimit_core::{
     Delay,
     attempts::{
-        AttemptAdmission, AttemptCompletion, AttemptCompletionResult, AttemptDenial,
-        AttemptObservation, AttemptObserver, AttemptOutcome, AttemptPolicy, AttemptSubject,
-        StagedAttemptCompletion, observe_attempt_safely,
+        AdmitEvaluation, AttemptAdmission, AttemptCompletion, AttemptCompletionResult,
+        AttemptDenial, AttemptObservation, AttemptObserver, AttemptOutcome, AttemptPolicy,
+        AttemptState, AttemptSubject, StagedAttemptCompletion, observe_attempt_safely,
     },
 };
 use sqlx::{
@@ -23,13 +46,19 @@ use sqlx::{
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
+mod row;
+
 /// Isolated migration history; install only when opting into attempt policies.
 pub static ATTEMPTS_MIGRATOR: Migrator = sqlx::migrate!("./attempts-migrations");
 /// SQL suitable for a new forward-only application-owned migration.
 pub const CREATE_RUNLIMIT_ATTEMPTS_SQL: &str =
     include_str!("../attempts-migrations/20260921000001_create_runlimit_attempts.sql");
-const COMPLETE_SQL: &str = include_str!("attempt_complete.sql");
+// The imported `attempt_complete.sql` stays byte-identical as a digest-guarded
+// provenance record that no code path executes. It restated the backoff formula
+// in SQL; this successor reads the delay from the schedule Rust binds.
+const COMPLETE_SQL: &str = include_str!("attempt_complete_scheduled.sql");
 const CLEANUP_SQL: &str = include_str!("attempt_cleanup.sql");
+const DEADLINE_RANGE: &str = "attempt lease expiry exceeds the storage range";
 const PHASE: CheckPhase = CheckPhase::AcquiringCounterRowLocks;
 // Stable protocol: a distinct two-integer namespace and 256 capacity shards.
 const LOCK_NAMESPACE: i32 = 0x524c_4154;
@@ -234,7 +263,14 @@ async fn admit_transaction(
     .await?;
     tx.execute(PHASE, sqlx::query(CLEANUP_SQL).bind(shard))
         .await?;
-    let rows = tx.fetch_all(PHASE, sqlx::query("SELECT failures,last_failure_ms,retry_at_ms,lease_until_ms FROM runlimit_attempts WHERE config_fingerprint=$1 AND subject_key=$2 FOR UPDATE").bind(fingerprint.as_slice()).bind(subject.as_slice())).await?;
+    let rows = tx
+        .fetch_all(
+            PHASE,
+            sqlx::query(StoredAttempt::LOCK_SQL)
+                .bind(fingerprint.as_slice())
+                .bind(subject.as_slice()),
+        )
+        .await?;
     let time = tx.fetch_one(PHASE, sqlx::query("SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp())*1000)::bigint AS now_ms")).await?;
     let decode = |error| {
         ConnectionOutcome::Reusable(CheckError::storage_decode_invariant(
@@ -242,71 +278,58 @@ async fn admit_transaction(
             error,
         ))
     };
-    let now: i64 = time.try_get("now_ms").map_err(decode)?;
-    let mut failures = 0_u32;
-    let mut last_failure = now;
-    if let Some(row) = rows.first() {
-        failures =
-            u32::try_from(row.try_get::<i64, _>("failures").map_err(decode)?).map_err(|_| {
-                ConnectionOutcome::Reusable(CheckError::storage_invariant(
-                    "invalid attempt failure count",
-                ))
-            })?;
-        last_failure = row.try_get("last_failure_ms").map_err(decode)?;
-        let mut retry: i64 = row.try_get("retry_at_ms").map_err(decode)?;
-        let lease: Option<i64> = row.try_get("lease_until_ms").map_err(decode)?;
-        if let Some(until) = lease {
-            if now < until {
-                return finish_denial(
-                    tx,
-                    AttemptDenial::Busy {
-                        retry_after: delay(until - now),
-                    },
+    let invariant = |detail| ConnectionOutcome::Reusable(CheckError::storage_invariant(detail));
+    let now_ms: i64 = time.try_get("now_ms").map_err(decode)?;
+    let now = row::instant(now_ms);
+    // `None` is a subject without a row: it is `Clear` and needs a capacity slot.
+    let stored = match rows.first() {
+        Some(row) => Some(
+            StoredAttempt::read(row)
+                .map_err(decode)?
+                .state()
+                .map_err(invariant)?,
+        ),
+        None => None,
+    };
+    let pending = match stored.unwrap_or(AttemptState::Clear).admit(&policy, now) {
+        AdmitEvaluation::Grant(pending) => pending,
+        // The held state is left unstored: see the module's clock note.
+        AdmitEvaluation::Denied(denied) => return finish_denial(tx, denied.denial().into()).await,
+        // The same refusal as a deadline past the storage range below. A
+        // `BIGINT` millisecond clock ends long before the state's time does.
+        AdmitEvaluation::DeadlineOverflow(_) => return Err(invariant(DEADLINE_RANGE)),
+    };
+    let failures = i64::from(pending.failures());
+    let until_ms = row::stored_instant(pending.until()).ok_or_else(|| invariant(DEADLINE_RANGE))?;
+    // A held lease leaves both failure timestamps unread until it ends, so
+    // every reservation stores the admission instant in them.
+    let token_row = match stored {
+        None => {
+            // A lower runtime bound counts every retained row, including slots
+            // allocated by replicas using a higher bound. A hole in the new slot
+            // interval is not proof that total shard occupancy is below the cap.
+            let occupancy = tx
+                .fetch_one(
+                    PHASE,
+                    sqlx::query(
+                        "SELECT count(*) AS row_count FROM runlimit_attempts WHERE capacity_shard=$1",
+                    )
+                    .bind(shard),
                 )
-                .await;
+                .await?;
+            let row_count: i64 = occupancy.try_get("row_count").map_err(decode)?;
+            if row_count >= i64::from(maximum) {
+                return Ok(finish_capacity_denial(tx).await);
             }
-            failures = failures.saturating_add(1);
-            last_failure = until;
-            retry = until.saturating_add(millis(policy.delay(failures)));
+            let slot = tx.fetch_one(PHASE, sqlx::query("SELECT min(slot)::integer AS slot FROM generate_series(0, $2::integer-1) AS slot WHERE NOT EXISTS (SELECT 1 FROM runlimit_attempts WHERE capacity_shard=$1 AND capacity_slot=slot)").bind(shard).bind(i64::from(maximum))).await?;
+            let Some(slot) = slot.try_get::<Option<i32>, _>("slot").map_err(decode)? else {
+                return Ok(finish_capacity_denial(tx).await);
+            };
+            tx.fetch_one(PHASE, sqlx::query("INSERT INTO runlimit_attempts (config_fingerprint,subject_key,capacity_slot,failures,last_failure_ms,retry_at_ms,quiet_ms,lease_until_ms,lease_token) VALUES ($1,$2,$3,$4,$5,$5,$6,$7,pg_catalog.gen_random_uuid()::text) RETURNING lease_token").bind(fingerprint.as_slice()).bind(subject.as_slice()).bind(slot).bind(failures).bind(now_ms).bind(integer(policy.quiet_period().millis())).bind(until_ms)).await?
         }
-        if now >= last_failure.saturating_add(integer(policy.quiet_period().millis())) {
-            failures = 0;
-            retry = now;
+        Some(_) => {
+            tx.fetch_one(PHASE, sqlx::query("UPDATE runlimit_attempts SET failures=$3,last_failure_ms=$4,retry_at_ms=$4,lease_until_ms=$5,lease_token=pg_catalog.gen_random_uuid()::text WHERE config_fingerprint=$1 AND subject_key=$2 RETURNING lease_token").bind(fingerprint.as_slice()).bind(subject.as_slice()).bind(failures).bind(now_ms).bind(until_ms)).await?
         }
-        if now < retry {
-            return finish_denial(
-                tx,
-                AttemptDenial::Backoff {
-                    retry_after: delay(retry - now),
-                },
-            )
-            .await;
-        }
-    }
-    let token_row = if rows.is_empty() {
-        // A lower runtime bound counts every retained row, including slots
-        // allocated by replicas using a higher bound. A hole in the new slot
-        // interval is not proof that total shard occupancy is below the cap.
-        let occupancy = tx
-            .fetch_one(
-                PHASE,
-                sqlx::query(
-                    "SELECT count(*) AS row_count FROM runlimit_attempts WHERE capacity_shard=$1",
-                )
-                .bind(shard),
-            )
-            .await?;
-        let row_count: i64 = occupancy.try_get("row_count").map_err(decode)?;
-        if row_count >= i64::from(maximum) {
-            return Ok(finish_capacity_denial(tx).await);
-        }
-        let slot = tx.fetch_one(PHASE, sqlx::query("SELECT min(slot)::integer AS slot FROM generate_series(0, $2::integer-1) AS slot WHERE NOT EXISTS (SELECT 1 FROM runlimit_attempts WHERE capacity_shard=$1 AND capacity_slot=slot)").bind(shard).bind(i64::from(maximum))).await?;
-        let Some(slot) = slot.try_get::<Option<i32>, _>("slot").map_err(decode)? else {
-            return Ok(finish_capacity_denial(tx).await);
-        };
-        tx.fetch_one(PHASE, sqlx::query("INSERT INTO runlimit_attempts (config_fingerprint,subject_key,capacity_slot,failures,last_failure_ms,retry_at_ms,quiet_ms,lease_until_ms,lease_token) VALUES ($1,$2,$3,0,$4,$4,$5,$6,pg_catalog.gen_random_uuid()::text) RETURNING lease_token").bind(fingerprint.as_slice()).bind(subject.as_slice()).bind(slot).bind(now).bind(integer(policy.quiet_period().millis())).bind(now.saturating_add(integer(policy.lease().millis())))).await?
-    } else {
-        tx.fetch_one(PHASE, sqlx::query("UPDATE runlimit_attempts SET failures=$3,last_failure_ms=$4,retry_at_ms=$5,lease_until_ms=$6,lease_token=pg_catalog.gen_random_uuid()::text WHERE config_fingerprint=$1 AND subject_key=$2 RETURNING lease_token").bind(fingerprint.as_slice()).bind(subject.as_slice()).bind(i64::from(failures)).bind(last_failure).bind(now).bind(now.saturating_add(integer(policy.lease().millis())))).await?
     };
     let token = token_row.try_get("lease_token").map_err(decode)?;
     tx.commit().await?;
@@ -343,9 +366,6 @@ async fn finish_capacity_denial(
 fn integer(value: u64) -> i64 {
     i64::try_from(value).expect("validated policy duration fits i64")
 }
-fn millis(value: Duration) -> i64 {
-    i64::try_from(value.as_millis()).expect("validated delay fits i64")
-}
 fn delay(value: i64) -> Delay {
     Delay::new(Duration::from_millis(value.unsigned_abs()))
 }
@@ -354,13 +374,17 @@ fn completion_query<'a>(
     outcome: AttemptOutcome,
     transaction_id: Option<&'a str>,
 ) -> Query<'a, Postgres, PgArguments> {
+    // A success applies no delay, and the statement never reads the schedule.
+    let schedule = match outcome {
+        AttemptOutcome::Success => Vec::new(),
+        AttemptOutcome::Failure | AttemptOutcome::Abandoned => row::delay_schedule(&receipt.policy),
+    };
     sqlx::query(COMPLETE_SQL)
         .bind(receipt.policy.fingerprint().into_bytes().to_vec())
         .bind(receipt.subject.to_vec())
         .bind(&receipt.token)
         .bind(outcome == AttemptOutcome::Success)
-        .bind(integer(receipt.policy.initial_delay().millis()))
-        .bind(integer(receipt.policy.maximum_delay().millis()))
+        .bind(schedule)
         .bind(transaction_id)
 }
 fn completion_result(
