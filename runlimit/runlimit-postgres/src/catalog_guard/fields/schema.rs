@@ -65,8 +65,8 @@ impl MigrationCode {
     fn apply(&mut self, tokens: &[Token]) {
         if let Some(function) = defined_function(tokens) {
             self.functions.insert(function);
-        } else if is(tokens, 0, "create") && is(tokens, 1, "trigger") {
-            if let (Some(name), Some(table)) = (word(tokens, 2), trigger_table(tokens)) {
+        } else if let Some(at) = trigger_name(tokens) {
+            if let (Some(name), Some(table)) = (word(tokens, at), trigger_table(tokens)) {
                 self.triggers
                     .entry(table)
                     .or_default()
@@ -122,8 +122,7 @@ impl MigrationCode {
             STATEMENT_KINDS.contains(&kind),
             "a {kind:?} migration statement, which could run code with unknown schema effects"
         );
-        let defines = defined_function(tokens).is_some()
-            || is(tokens, 0, "create") && is(tokens, 1, "trigger");
+        let defines = defined_function(tokens).is_some() || trigger_name(tokens).is_some();
         if !defines {
             // A name after FUNCTION, PROCEDURE or ROUTINE is a signature, as
             // in DROP FUNCTION f(), not a call.
@@ -159,6 +158,19 @@ impl MigrationCode {
             "migration DML on a table whose trigger runs code this reader cannot see"
         );
     }
+}
+
+/// Where a trigger-creating statement names its trigger: `CREATE [OR
+/// REPLACE] [CONSTRAINT] TRIGGER name`.
+fn trigger_name(tokens: &[Token]) -> Option<usize> {
+    let mut at = 1;
+    if is(tokens, at, "or") && is(tokens, at + 1, "replace") {
+        at += 2;
+    }
+    if is(tokens, at, "constraint") {
+        at += 1;
+    }
+    (is(tokens, 0, "create") && is(tokens, at, "trigger")).then_some(at + 1)
 }
 
 /// The table a `CREATE TRIGGER` or `DROP TRIGGER` statement names after `ON`.
@@ -456,6 +468,14 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
          INSERT INTO public.t (old) VALUES (1);",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE OR REPLACE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
+         INSERT INTO t (old) VALUES (1);",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE CONSTRAINT TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
+         INSERT INTO t (old) VALUES (1);",
         "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
         "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {

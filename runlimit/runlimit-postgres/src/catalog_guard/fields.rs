@@ -293,7 +293,18 @@ fn declarations<'t>(
             // `ROWS FROM (...)` is a single FROM item, read by `from_item`;
             // `USING (...)` is a join's column list; `IS DISTINCT FROM` and
             // `EXTRACT(field FROM ...)` and its kin hold no FROM list.
-            Some("from") if previous == Some("rows") => continue,
+            // `ROWS FROM (` only where `rows` itself opens a FROM item; an
+            // output alias named rows does not.
+            Some("from")
+                if previous == Some("rows")
+                    && punct(tokens, index + 1, '(')
+                    && (punct(tokens, index.wrapping_sub(2), ',')
+                        || ["from", "join", "lateral", "using"]
+                            .iter()
+                            .any(|w| is(tokens, index.wrapping_sub(2), w))) =>
+            {
+                continue;
+            }
             Some("from") if previous == Some("distinct") || in_call_syntax(tokens, index) => {
                 continue;
             }
