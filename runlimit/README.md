@@ -463,10 +463,17 @@ quota.
 Applications normalize subjects before passing them to Runlimit. Construct
 stored keys with `KeyHasher::hash_for`, which uses HMAC-SHA-256 domain-separated
 by the policy the key will be checked against and requires a secret of at
-least 32 bytes. It is the only derivation method and returns a `PolicySubject`
-that retains the exact policy reference. `Check::new` accepts only that bound
-value, so the normal derivation-to-check path has no second policy argument
-that can disagree with the derivation namespace. Adapter and backend APIs can
+least 32 bytes. It is the only quota-subject derivation and returns a
+`PolicySubject` that retains the exact policy reference. `Check::new` accepts
+only that bound value, so the normal derivation-to-check path has no second
+policy argument that can disagree with the derivation namespace. Attempt
+policies have the one counterpart, `KeyHasher::hash_attempt_for`, which shares
+the same keyed encoding behind a fixed attempt prefix and returns an
+`AttemptSubject` bound the same way; its `counter_key` is the storage identity
+by which both attempt backends find a subject's state. PostgreSQL also derives
+the capacity shard it locks from that key; the memory backend serializes every
+admission on one store lock. Both encodings are persistent
+protocols pinned by golden vectors. Adapter and backend APIs can
 deliberately expose an unbound key: `PolicySubject::into_unbound_subject_key`,
 `Check::subject`, and `CounterKey::subject` all return a `SubjectKey` that can
 then be explicitly rebound. Those are escape hatches, not part of the normal

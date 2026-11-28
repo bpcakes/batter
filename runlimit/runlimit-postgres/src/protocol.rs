@@ -6,6 +6,10 @@ use sqlx::Error;
 use tokio::time::Instant;
 
 const ADVISORY_LOCK_DOMAIN: &[u8] = b"runlimit/postgres-advisory-lock/v1\0";
+/// The two-integer advisory-lock namespace of attempt capacity shards; the
+/// shard from [`capacity_shard`] is the second key. A persistent
+/// cross-replica protocol: never change it in place.
+pub(crate) const ATTEMPT_LOCK_NAMESPACE: i32 = 0x524c_4154;
 pub(crate) const SERVER_TIMEOUT_GRACE: Duration = Duration::from_millis(25);
 /// Number of stable capacity shards used by `PostgreSQL` storage.
 ///
@@ -316,6 +320,13 @@ pub(crate) fn advisory_lock_id(counter_key: CounterKey) -> i64 {
     i64::from_be_bytes(id_bytes)
 }
 
+/// The capacity shard of one stored row, for every storage family.
+///
+/// Fixed-window, GCRA and attempt rows all derive their shard here, from the
+/// first byte of the policy fingerprint and of the subject key; each table's
+/// generated `capacity_shard` column computes the same value. This is a
+/// persistent cross-replica protocol: advisory locks, occupancy counts and
+/// slot searches target the shard it names.
 pub(crate) fn capacity_shard(counter_key: CounterKey) -> i16 {
     i16::from(counter_key.fingerprint().as_bytes()[0] ^ counter_key.subject().as_bytes()[0])
 }
@@ -326,7 +337,33 @@ mod tests {
 
     use tokio::time::Instant;
 
-    use super::{CLEANUP_SQL, SERVER_TIMEOUT_GRACE, remaining_server_timeout_settings};
+    use runlimit_core::{KeyHasher, PolicyId, QuotaPeriod, ScopeId, attempts::AttemptPolicy};
+
+    use super::{
+        CLEANUP_SQL, SERVER_TIMEOUT_GRACE, capacity_shard, remaining_server_timeout_settings,
+    };
+
+    // The attempt-protocol vectors in runlimit-core pin this policy's
+    // fingerprint (first byte 0x38) and this subject's key (first byte 0xc6),
+    // so the attempt row's generated `capacity_shard` column is 0x38 ^ 0xc6.
+    #[test]
+    fn attempt_capacity_shard_protocol_has_a_golden_vector() {
+        let millis = |value| QuotaPeriod::new(Duration::from_millis(value)).unwrap();
+        let policy = AttemptPolicy::new(
+            PolicyId::new("sign-in").unwrap(),
+            ScopeId::new("account").unwrap(),
+            millis(1_000),
+            millis(60_000),
+            millis(600_000),
+            millis(30_000),
+        )
+        .unwrap();
+        let subject = KeyHasher::new([0x42; 32])
+            .unwrap()
+            .hash_attempt_for(&policy, b"user@example.test");
+
+        assert_eq!(capacity_shard(subject.counter_key()), 254);
+    }
 
     // The clock is paused, so "now" is the same instant on both sides of each
     // comparison and the reached-deadline case is exact.

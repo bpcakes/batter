@@ -4,9 +4,19 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use thiserror::Error;
 
-use crate::{FixedWindowPolicy, RateLimitPolicy};
+use crate::{FixedWindowPolicy, PolicyId, RateLimitPolicy, ScopeId};
 
+// The keyed domain, the per-family prefixes and the byte layout in
+// `KeyHasher::derive` are persistent cross-replica protocols: stored counters
+// and attempt rows are found by these digests. Changing any byte strands every
+// stored subject during a rolling deployment. A deliberate incompatible change
+// requires a new domain version and a storage migration, never an in-place
+// rewrite of a v1 encoding.
 const KEY_DOMAIN: &[u8] = b"runlimit/subject-key/v1\0";
+/// Quota subjects have no family prefix: their v1 input begins at the policy id.
+const QUOTA_SUBJECT_PREFIX: &[u8] = b"";
+/// Prefix of every attempt-subject input.
+const ATTEMPT_SUBJECT_PREFIX: &[u8] = b"attempt/v1\0";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -117,8 +127,10 @@ impl<'a, P: RateLimitPolicy + ?Sized> PolicySubject<'a, P> {
 /// Each derivation is domain-separated by the exact policy and scope
 /// identifiers of the policy it is derived for. The same normalized subject
 /// therefore yields unrelated keys in different policy scopes. There is one
-/// derivation method, [`KeyHasher::hash_for`], and it takes the policy the
-/// resulting key will be checked against.
+/// derivation per policy family, and each takes the policy the resulting key
+/// will be used with: [`KeyHasher::hash_for`] for quota policies and
+/// [`KeyHasher::hash_attempt_for`] for attempt policies. Both share one keyed
+/// encoding and differ only in a fixed family prefix.
 ///
 /// Applications should keep one stable secret per deployment. Rotating it
 /// deliberately starts new counters because all derived subject keys change.
@@ -141,26 +153,6 @@ impl Clone for KeyHasher {
 }
 
 impl KeyHasher {
-    /// Derives an opaque subject bound to an outcome-aware attempt policy.
-    /// Application normalization remains caller-owned. This domain is distinct
-    /// from ordinary quota subjects even for identical identifiers.
-    pub fn hash_attempt_for<'a>(
-        &self,
-        policy: &'a crate::attempts::AttemptPolicy,
-        subject: impl AsRef<[u8]>,
-    ) -> crate::attempts::AttemptSubject<'a> {
-        let mut mac = self.template.clone();
-        mac.update(b"attempt/v1\0");
-        mac.update(policy.id().as_str().as_bytes());
-        mac.update(&[0]);
-        mac.update(policy.scope().as_str().as_bytes());
-        mac.update(&[0]);
-        mac.update(subject.as_ref());
-        crate::attempts::AttemptSubject {
-            policy,
-            subject: SubjectKey::from_digest(mac.finalize().into_bytes().into()),
-        }
-    }
     /// Minimum accepted secret length in bytes.
     pub const MINIMUM_SECRET_LENGTH: usize = 32;
 
@@ -216,13 +208,77 @@ impl KeyHasher {
         policy: &'a P,
         subject: impl AsRef<[u8]>,
     ) -> PolicySubject<'a, P> {
+        self.derive(
+            QUOTA_SUBJECT_PREFIX,
+            policy.id(),
+            policy.scope(),
+            subject.as_ref(),
+        )
+        .bind(policy)
+    }
+
+    /// Hashes a normalized subject and binds it to an attempt policy.
+    ///
+    /// This is the attempt-policy counterpart of [`KeyHasher::hash_for`]: the
+    /// returned [`AttemptSubject`](crate::attempts::AttemptSubject) retains the
+    /// exact `policy` reference, and attempt admission accepts only that bound
+    /// value. Normalization is application-owned.
+    ///
+    /// The digest input carries a fixed attempt prefix, so for the same
+    /// identifiers and subject an attempt key differs from a quota key. The
+    /// prefix is not a framing guarantee: a quota policy whose id is the
+    /// prefix's text could reproduce an attempt input. Storage keeps the
+    /// families apart regardless, because every stored key sits beside its
+    /// policy fingerprint and attempt fingerprints have their own domain.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use runlimit_core::{KeyHasher, PolicyId, QuotaPeriod, ScopeId, attempts::AttemptPolicy};
+    /// let millis = |value| QuotaPeriod::new(Duration::from_millis(value)).unwrap();
+    /// let policy = AttemptPolicy::new(
+    ///     PolicyId::new("sign-in").unwrap(),
+    ///     ScopeId::new("account").unwrap(),
+    ///     millis(1_000),
+    ///     millis(60_000),
+    ///     millis(600_000),
+    ///     millis(30_000),
+    /// )
+    /// .unwrap();
+    /// let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    /// let subject = hasher.hash_attempt_for(&policy, b"user@example.test");
+    /// assert!(std::ptr::eq(subject.policy(), &policy));
+    ///
+    /// // A backend finds the subject's stored state by its storage identity.
+    /// let key = subject.counter_key();
+    /// assert_eq!(key.fingerprint(), policy.fingerprint());
+    /// ```
+    pub fn hash_attempt_for<'a>(
+        &self,
+        policy: &'a crate::attempts::AttemptPolicy,
+        subject: impl AsRef<[u8]>,
+    ) -> crate::attempts::AttemptSubject<'a> {
+        crate::attempts::AttemptSubject {
+            policy,
+            subject: self.derive(
+                ATTEMPT_SUBJECT_PREFIX,
+                policy.id(),
+                policy.scope(),
+                subject.as_ref(),
+            ),
+        }
+    }
+
+    /// The one keyed encoding behind every derivation:
+    /// `prefix || id || 0 || scope || 0 || subject` under the keyed template.
+    fn derive(&self, prefix: &[u8], id: &PolicyId, scope: &ScopeId, subject: &[u8]) -> SubjectKey {
         let mut mac = self.template.clone();
-        mac.update(policy.id().as_str().as_bytes());
+        mac.update(prefix);
+        mac.update(id.as_str().as_bytes());
         mac.update(&[0]);
-        mac.update(policy.scope().as_str().as_bytes());
+        mac.update(scope.as_str().as_bytes());
         mac.update(&[0]);
-        mac.update(subject.as_ref());
-        SubjectKey::from_digest(mac.finalize().into_bytes().into()).bind(policy)
+        mac.update(subject);
+        SubjectKey::from_digest(mac.finalize().into_bytes().into())
     }
 }
 

@@ -126,8 +126,15 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   batch-only variant such as a duplicate key. A defensive variant for a state
   the code cannot reach is deleted, not documented.
 - There is one way to reach each datum and one way to derive each value.
-  `KeyHasher::hash_for` is the only subject-key derivation and returns a
-  `PolicySubject` that retains the exact policy reference. `Check::new`
+  `KeyHasher::hash_for` is the only quota-subject derivation and returns a
+  `PolicySubject` that retains the exact policy reference;
+  `KeyHasher::hash_attempt_for` is its attempt-policy counterpart, and both
+  go through the one private `KeyHasher::derive` encoding. Attempt backends
+  identify stored state by `AttemptSubject::counter_key`; PostgreSQL derives
+  every family's capacity shard, which it locks, with
+  `protocol::capacity_shard`, while memory serializes on one store lock. Golden
+  vectors pin each persisted encoding; never add a derivation, fingerprint
+  or shard routine without one. `Check::new`
   accepts only that bound value, so the normal derivation-to-check path has no
   second policy argument. Operations that expose an unbound `SubjectKey` are
   explicit escape hatches and must say that the key can then be rebound; an
