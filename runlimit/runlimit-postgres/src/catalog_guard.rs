@@ -232,6 +232,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         // A FROM function needs an alias; its implicit name could shadow.
         "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[])",
         "SELECT j.id FROM t AS a JOIN u AS b USING (id) AS j",
+        // An inheritance marker would hide the alias that follows.
+        "SELECT pg_catalog.row_to_json FROM t * AS pg_catalog",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",

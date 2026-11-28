@@ -19,6 +19,7 @@ use std::path::Path;
 
 use sqlx::{
     Connection as _, Executor as _, PgConnection, PgPool, Postgres, SqlSafeStr as _,
+    Statement as _,
     migrate::{Migrate as _, MigrateDatabase as _, MigrationSource as _, ResolveConfig},
     postgres::{PgArguments, PgPoolCopyExt as _},
 };
@@ -123,6 +124,36 @@ fn prepare_with(connection: &mut PgConnection, sql: sqlx::SqlStr) {
 #[expect(clippy::disallowed_types, reason = "probe")]
 fn describe(connection: &mut PgConnection, sql: sqlx::SqlStr) {
     let _ = connection.describe(sql);
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn statement_query(statement: &sqlx::postgres::PgStatement) {
+    let _ = statement.query();
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn statement_query_with(statement: &sqlx::postgres::PgStatement) {
+    let _ = statement.query_with(PgArguments::default());
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn statement_query_as(statement: &sqlx::postgres::PgStatement) {
+    let _ = statement.query_as::<(i64,)>();
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn statement_query_as_with(statement: &sqlx::postgres::PgStatement) {
+    let _ = statement.query_as_with::<(i64,), _>(PgArguments::default());
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn statement_query_scalar(statement: &sqlx::postgres::PgStatement) {
+    let _ = statement.query_scalar::<i64>();
+}
+
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn statement_query_scalar_with(statement: &sqlx::postgres::PgStatement) {
+    let _ = statement.query_scalar_with::<i64, _>(PgArguments::default());
 }
 
 #[expect(clippy::disallowed_methods, reason = "probe")]

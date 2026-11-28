@@ -536,6 +536,14 @@ fn declarations<'t>(
                 };
                 declarations.declare(alias, declared);
             }
+            // `table *` and other unread punctuation would hide an alias.
+            if tokens.get(item.end).is_some_and(
+                |token| matches!(token, Token::Punct(c) if !matches!(c, ',' | ')' | ';')),
+            ) {
+                declarations
+                    .problems
+                    .push("unread tokens in a FROM item".to_owned());
+            }
             // A function's implicit row name could shadow another relation.
             if item.alias.is_none() && matches!(item.source, ItemSource::Function) {
                 declarations

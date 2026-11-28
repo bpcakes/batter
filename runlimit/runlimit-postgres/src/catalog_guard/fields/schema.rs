@@ -147,6 +147,11 @@ fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
         let Some(mut table) = word(tokens, name).map(str::to_owned) else {
             return;
         };
+        // `ALTER TABLE t *` reaches inheriting tables this reader does not track.
+        assert!(
+            !punct(tokens, name + 1, '*'),
+            "ALTER TABLE {table} *, an inheritance marker this reader does not apply"
+        );
         for (start, end) in items(tokens, name + 1, tokens.len()) {
             if let Some(renamed) = alter(&tokens[start..end], &table, tables) {
                 table = renamed;
@@ -248,6 +253,7 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE t (old BIGINT); DROP TABLE elsewhere.t;",
         "CREATE TABLE t (key BIGINT, shard SMALLINT GENERATED ALWAYS AS (key % 2) STORED); \
          ALTER TABLE t DROP COLUMN key CASCADE;",
+        "CREATE TABLE t (old BIGINT); ALTER TABLE t * DROP COLUMN old;",
     ] {
         assert!(
             std::panic::catch_unwind(|| super::tables([unreadable])).is_err(),
