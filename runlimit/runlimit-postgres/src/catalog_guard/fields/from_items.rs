@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{Token, closing, is, items, opens_on_conflict, punct, word};
+use super::{Token, closing, is, is_name, items, opens_on_conflict, punct, word};
 
 /// Words that end a `FROM` item instead of naming its alias.
 const CLAUSE_WORDS: &[&str] = &[
@@ -263,6 +263,7 @@ pub(super) fn next_from_item(tokens: &[Token], mut index: usize) -> Option<usize
                 Token::Punct(')' | ']') => depth = depth.saturating_sub(1),
                 Token::Punct(',') if depth == 0 => break,
                 _ if depth == 0
+                    && !is_name(tokens, index)
                     && (is(tokens, index, "join")
                         || JOIN_WORDS
                             .iter()

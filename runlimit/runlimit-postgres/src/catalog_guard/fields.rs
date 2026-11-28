@@ -107,6 +107,17 @@ fn opening(tokens: &[Token], close: usize) -> Option<usize> {
     None
 }
 
+/// Whether the word at `index` is a name whatever it spells: a field after
+/// `.` or a label after `AS`, where PostgreSQL accepts every keyword
+/// (`k.limit`, `SELECT 1 AS from`). Such a word never bounds a clause.
+fn is_name(tokens: &[Token], index: usize) -> bool {
+    index > 0 && (punct(tokens, index - 1, '.') || is(tokens, index - 1, "as"))
+}
+
+/// The longest identifier PostgreSQL keeps whole; a longer one is truncated
+/// to this many bytes, so two spellings could name one relation.
+const IDENTIFIER_BYTES: usize = 63;
+
 /// Whether the `ON` at `on` opens an INSERT's `ON CONFLICT` clause, which
 /// continues with a conflict target or `DO`. A join condition may begin
 /// with a row named conflict instead (`ON conflict.id = a.id`); an
@@ -225,11 +236,11 @@ fn output_names(tokens: &[Token], start: usize, end: usize) -> Option<BTreeSet<S
         let mut from = list;
         let list_end = loop {
             match top_level_word(tokens, from, end, &LIST_ENDS) {
-                // A word after AS is a name (`SELECT 1 AS limit`), and
+                // A field or label is a name (`k.limit`, `AS limit`), and
                 // `WITHIN GROUP (...)` belongs to an aggregate call.
                 Some(at)
                     if is_distinct_from(tokens, at)
-                        || is(tokens, at - 1, "as")
+                        || is_name(tokens, at)
                         || is(tokens, at, "group") && is(tokens, at - 1, "within") =>
                 {
                     from = at + 1;
@@ -355,6 +366,9 @@ fn declarations<'t>(
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
+        if is_name(tokens, index) {
+            continue;
+        }
         if is(tokens, index, "with") && !is_with_modifier(tokens, index) {
             declare_ctes(&mut declarations, tokens, index + 1);
         }
@@ -591,6 +605,65 @@ fn enclosing_end(tokens: &[Token], index: usize) -> usize {
     tokens.len()
 }
 
+/// The forms the declaration scan does not read, found token by token: an
+/// identifier PostgreSQL would truncate, and keywords that open a clause
+/// the guard does not follow. A field or label is a name, never a keyword.
+fn unread_forms(tokens: &[Token]) -> Vec<String> {
+    let mut found = Vec::new();
+    for index in 0..tokens.len() {
+        if word(tokens, index).is_some_and(|name| name.len() > IDENTIFIER_BYTES) {
+            found.push(format!(
+                "an identifier longer than {IDENTIFIER_BYTES} bytes, which PostgreSQL truncates"
+            ));
+        }
+        if is_name(tokens, index) {
+            continue;
+        }
+        // A CTE is visible only in its own query, so a WITH that is not the
+        // statement's own could shadow a relation elsewhere; RETURNING WITH
+        // names OLD and NEW rows this scan does not read.
+        if is(tokens, index, "with") && index > 0 && !is_with_modifier(tokens, index) {
+            found.push("a WITH clause that is not the statement's own".to_owned());
+        }
+        if is(tokens, index, "returning") && is(tokens, index + 1, "with") {
+            found.push("a RETURNING WITH clause".to_owned());
+        }
+        // TABLE is reserved, and no accepted command creates or locks a
+        // table, so the word opens a `TABLE name` query, which reads a
+        // relation outside any FROM list.
+        if is(tokens, index, "table") {
+            found.push("a TABLE query".to_owned());
+        }
+        // A recursive CTE's SEARCH or CYCLE clause follows its body. The
+        // scan reads neither, and the command after one would go
+        // unrecognized, so neither is part of the dialect.
+        if (is(tokens, index, "search") || is(tokens, index, "cycle"))
+            && index > 0
+            && punct(tokens, index - 1, ')')
+            && opening(tokens, index - 1).is_some_and(|open| opens_cte_body(tokens, open))
+        {
+            found.push("a CTE SEARCH or CYCLE clause".to_owned());
+        }
+        // `SELECT ... INTO` creates a table; only an INSERT that begins a
+        // command writes one. INTO is reserved, so the word is the keyword.
+        if is(tokens, index, "into")
+            && !(index > 0 && is(tokens, index - 1, "insert") && opens_command(tokens, index - 1))
+        {
+            found.push("a SELECT INTO, which creates a table".to_owned());
+        }
+        // `JOIN ... USING (columns) AS alias` names a join row the
+        // declaration scan does not read.
+        if is(tokens, index, "using")
+            && punct(tokens, index + 1, '(')
+            && using_columns(tokens, index + 1)
+            && is(tokens, closing(tokens, index + 1) + 1, "as")
+        {
+            found.push("a JOIN USING alias".to_owned());
+        }
+    }
+    found
+}
+
 /// The qualified names in `sql` that are not columns of their receiver, and
 /// the declarations that break the rules above. A qualified call `x.f(...)`
 /// and a `pg_catalog` name are [`unqualified`]'s to judge.
@@ -600,49 +673,7 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let tokens = tokenize(sql);
     let declarations = declarations(&tokens, tables);
     let mut found = declarations.problems.clone();
-    for index in 0..tokens.len() {
-        // A CTE is visible only in its own query, so a WITH that is not the
-        // statement's own could shadow a relation elsewhere; RETURNING WITH
-        // names OLD and NEW rows this scan does not read.
-        if is(&tokens, index, "with") && index > 0 && !is_with_modifier(&tokens, index) {
-            found.push("a WITH clause that is not the statement's own".to_owned());
-        }
-        if is(&tokens, index, "returning") && is(&tokens, index + 1, "with") {
-            found.push("a RETURNING WITH clause".to_owned());
-        }
-        // TABLE is reserved, and no accepted command creates or locks a
-        // table, so the word opens a `TABLE name` query, which reads a
-        // relation outside any FROM list.
-        if is(&tokens, index, "table") {
-            found.push("a TABLE query".to_owned());
-        }
-        // A recursive CTE's SEARCH or CYCLE clause follows its body. The
-        // scan reads neither, and the command after one would go
-        // unrecognized, so neither is part of the dialect.
-        if (is(&tokens, index, "search") || is(&tokens, index, "cycle"))
-            && index > 0
-            && punct(&tokens, index - 1, ')')
-            && opening(&tokens, index - 1).is_some_and(|open| opens_cte_body(&tokens, open))
-        {
-            found.push("a CTE SEARCH or CYCLE clause".to_owned());
-        }
-        // `SELECT ... INTO` creates a table; only an INSERT that begins a
-        // command writes one. INTO is reserved, so the word is the keyword.
-        if is(&tokens, index, "into")
-            && !(index > 0 && is(&tokens, index - 1, "insert") && opens_command(&tokens, index - 1))
-        {
-            found.push("a SELECT INTO, which creates a table".to_owned());
-        }
-        // `JOIN ... USING (columns) AS alias` names a join row the
-        // declaration scan does not read.
-        if is(&tokens, index, "using")
-            && punct(&tokens, index + 1, '(')
-            && using_columns(&tokens, index + 1)
-            && is(&tokens, closing(&tokens, index + 1) + 1, "as")
-        {
-            found.push("a JOIN USING alias".to_owned());
-        }
-    }
+    found.extend(unread_forms(&tokens));
     // `AS (...)` around anything but a query is a column definition list,
     // with or without an alias, `ROWS FROM` items included.
     for index in 0..tokens.len() {

@@ -287,6 +287,9 @@ fn a_keyword_used_as_a_name_is_a_name() {
         "SELECT 1 delete FROM t, elsewhere",
         "SELECT (1) delete FROM t, elsewhere",
         "SELECT 1 AS update FROM t, elsewhere",
+        // A field named for a clause does not end the join condition.
+        "WITH k AS (SELECT 1 AS limit) SELECT a.id FROM t AS a JOIN k ON k.limit = a.id, elsewhere",
+        "WITH k AS (SELECT 1 AS where) SELECT a.id FROM t AS a JOIN k ON k.where = a.id JOIN elsewhere AS e ON TRUE",
         // A join alias named conflict does not open ON CONFLICT.
         "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id JOIN elsewhere AS e ON TRUE",
         "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id, elsewhere",
@@ -309,6 +312,9 @@ fn a_keyword_used_as_a_name_is_a_name() {
     for sql in [
         "WITH c AS (SELECT 1 AS id OFFSET 0) SELECT c.id FROM c",
         "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id",
+        "WITH k AS (SELECT 1 AS limit) SELECT a.id FROM t AS a JOIN k ON k.limit = a.id",
+        "WITH k AS (SELECT 1 AS from, 2 AS n) SELECT k.from, k.n FROM k",
+        "WITH k AS (SELECT 1 AS limit), c AS (SELECT k.limit, 2 AS n FROM k) SELECT c.limit, c.n FROM c",
         "SELECT search.id FROM (SELECT u.id FROM u) search",
         "WITH c AS (SELECT 1 AS limit, 2 AS n FROM t) SELECT c.limit, c.n FROM c",
         "WITH c AS (SELECT pg_catalog.percentile_cont(0.5) WITHIN GROUP (ORDER BY t.used) AS p FROM t) \
@@ -326,6 +332,26 @@ fn a_keyword_used_as_a_name_is_a_name() {
             "{sql}"
         );
     }
+}
+
+// PostgreSQL truncates an identifier to 63 bytes, so two aliases that differ
+// only after it name one relation, though the guard would read them apart.
+#[test]
+fn an_identifier_past_the_truncation_length_fails() {
+    let tables = inventory(&[("t", &["id"])]);
+    let kept = "a".repeat(63);
+    let truncated = "a".repeat(64);
+    assert_eq!(
+        fields::unresolved(&format!("SELECT {kept}.id FROM t AS {kept}"), &tables),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        fields::unresolved(
+            &format!("SELECT {truncated}.id FROM t AS {truncated}"),
+            &tables
+        ),
+        vec!["an identifier longer than 63 bytes, which PostgreSQL truncates".to_owned(); 2]
+    );
 }
 
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
