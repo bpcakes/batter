@@ -84,6 +84,11 @@ const METHODS: &[&str] = &[
     "sqlx::migrate::MigrateDatabase::database_exists",
     "sqlx::migrate::MigrateDatabase::drop_database",
     "sqlx::migrate::MigrateDatabase::force_drop_database",
+    "sqlx_core::any::driver::AnyDriver::get_migrate_database",
+    "sqlx_core::any::driver::AnyMigrateDatabase::create_database",
+    "sqlx_core::any::driver::AnyMigrateDatabase::database_exists",
+    "sqlx_core::any::driver::AnyMigrateDatabase::drop_database",
+    "sqlx_core::any::driver::AnyMigrateDatabase::force_drop_database",
     "sqlx::testing::TestFn::run_test",
     "sqlx::testing::TestSupport::test_context",
     "sqlx::testing::TestSupport::cleanup_test",
@@ -302,8 +307,10 @@ fn rust_files(directory: &Path) -> Vec<(String, PathBuf)> {
 
 /// The paths of the active entries in one `clippy.toml` list. Each line of
 /// the list is blank, a comment, or exactly one
-/// `{ path = "...", reason = "..." },` entry; anything else fails, so a
-/// commented-out entry is never counted as one Clippy loaded.
+/// `{ path = "...", reason = "..." },` entry, optionally ending
+/// `, allow-invalid = true },` for an item only some builds compile (the
+/// probes, which run where it exists, show it still resolves); anything else
+/// fails, so a commented-out entry is never counted as one Clippy loaded.
 fn listed(config: &str, key: &str) -> BTreeSet<String> {
     let opener = format!("{key} = [");
     let mut lines = config.lines().skip_while(|line| *line != opener);
@@ -319,7 +326,10 @@ fn listed(config: &str, key: &str) -> BTreeSet<String> {
         let Some((path, _)) = line
             .strip_prefix("{ path = \"")
             .and_then(|rest| rest.split_once('"'))
-            .filter(|(_, rest)| rest.starts_with(", reason = \"") && rest.ends_with("\" },"))
+            .filter(|(_, rest)| {
+                rest.starts_with(", reason = \"")
+                    && (rest.ends_with("\" },") || rest.ends_with("\", allow-invalid = true },"))
+            })
         else {
             panic!("clippy.toml {key}: unreadable line {line}");
         };
@@ -568,7 +578,10 @@ fn the_inventory_reader_counts_only_active_entries() {
         "]\n",
     );
     assert_eq!(listed(config, "list"), BTreeSet::from(["a".to_owned()]));
+    let optional = "list = [\n    { path = \"a\", reason = \"r\", allow-invalid = true },\n]\n";
+    assert_eq!(listed(optional, "list"), BTreeSet::from(["a".to_owned()]));
     for unreadable in [
+        "list = [\n    { path = \"a\", reason = \"r\", allow-invalid = false },\n]\n",
         "list = [\n    { path = \"a\", reason = \"r\" }, # trailing\n]\n",
         "list = [\n    { path = \"a\", reason = \"r\" },\n",
     ] {

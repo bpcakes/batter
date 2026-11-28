@@ -479,3 +479,16 @@ fn mapped_value<F>(query: sqlx::query::Map<'_, Postgres, F, PgArguments>) {
 fn advisory_lock_guard(guard: sqlx::postgres::PgAdvisoryLockGuard<PgConnection>) {
     drop(guard);
 }
+
+// The workspace build enables sqlx's `any` feature through
+// runledger-postgres, and the test build here through a dev-dependency, so
+// the PostgreSQL driver's database management is reachable through it.
+#[expect(clippy::disallowed_methods, reason = "probe")]
+fn any_driver_migrate_database() {
+    if let Ok(database) = sqlx::postgres::any::DRIVER.get_migrate_database() {
+        let _ = database.create_database("probe");
+        let _ = database.database_exists("probe");
+        let _ = database.drop_database("probe");
+        let _ = database.force_drop_database("probe");
+    }
+}

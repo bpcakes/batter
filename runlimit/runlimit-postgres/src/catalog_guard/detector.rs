@@ -11,6 +11,7 @@ const SYNTAX: &[&str] = &[
     "any",
     "array",
     "as",
+    "by",
     "coalesce",
     "conflict",
     "distinct",
@@ -185,6 +186,7 @@ pub(super) fn catalog_calls(sql: &str) -> BTreeSet<String> {
 /// Unreserved keywords in `SYNTAX`: PostgreSQL also accepts each as a
 /// function name, so `word(` is grammar only in the clause it spells.
 const CONTEXTUAL_SYNTAX: &[&str] = &[
+    "by",
     "conflict",
     "filter",
     "materialized",
@@ -218,6 +220,8 @@ fn is_syntax(code: &str, start: usize, word: &str) -> bool {
         // `ON CONFLICT (target) DO ...`; a conflict target's WHERE is outside
         // this dialect.
         "conflict" => before(0, "on") && after == "do",
+        // `ORDER BY (expression)`, `GROUP BY (...)`, `PARTITION BY (...)`.
+        "by" => before(0, "order") || before(0, "group") || before(0, "partition"),
         // `aggregate(...) FILTER (WHERE ...)`.
         "filter" => before(0, ")") && inside == "where",
         // `function(...) OVER (window specification)`.

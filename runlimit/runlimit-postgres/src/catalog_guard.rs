@@ -577,6 +577,15 @@ fn the_detector_reads_each_token_as_postgresql_does() {
             "{sql}"
         );
     }
+    // A parenthesized sort or grouping key is grammar; a by(...) call is not.
+    for clause in [
+        "SELECT a.id FROM t AS a ORDER BY (a.used)",
+        "SELECT a.id FROM t AS a GROUP BY (a.id)",
+        "SELECT pg_catalog.count(*) OVER (PARTITION BY (1))",
+    ] {
+        assert_eq!(unqualified(clause), Vec::<String>::new(), "{clause}");
+    }
+    assert_eq!(unqualified("SELECT by(1)"), ["by(...)"]);
     // Non-ASCII code is reported, not sliced.
     assert_eq!(
         unqualified("SELECT 名 AS label"),

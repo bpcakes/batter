@@ -170,7 +170,11 @@ def inline_level(fields):
 
 
 def listed_paths(config, key):
-    """The paths of one clippy.toml list's active `{ path = ..., reason = ... },` lines."""
+    """The paths of one clippy.toml list's active `{ path = ..., reason = ... },` lines.
+
+    An entry may end `, allow-invalid = true },` for an item only some builds
+    compile, as the gate's probes show it still resolves where it exists.
+    """
     lines = iter(toml_lines(config))
     if f'{key} = [' not in lines:
         raise ValueError(f'clippy.toml has no {key} list')
@@ -180,7 +184,7 @@ def listed_paths(config, key):
             return paths
         if not line or line.startswith('#'):
             continue
-        match = re.fullmatch(r'\{ path = "([^"]+)", reason = "[^"]*" \},', line)
+        match = re.fullmatch(r'\{ path = "([^"]+)", reason = "[^"]*"(?:, allow-invalid = true)? \},', line)
         if not match:
             raise ValueError(f'clippy.toml {key}: unreadable line {line}')
         paths.append(match.group(1))
