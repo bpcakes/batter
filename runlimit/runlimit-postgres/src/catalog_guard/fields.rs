@@ -27,12 +27,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::detector::strip_comments_and_quotes;
 
+mod blocks;
 mod from_items;
+mod keywords;
 
+use blocks::Blocks;
 use from_items::{
     ColumnList, FromItem, ItemSource, column_list, ends_from_item, from_item, in_call_syntax,
     is_distinct_from, next_from_item, opens_query, using_columns,
 };
+use keywords::{is_name, is_with_modifier, opens_command, opens_on_conflict, unread_forms};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
@@ -87,71 +91,6 @@ fn is(tokens: &[Token], index: usize, expected: &str) -> bool {
 
 fn punct(tokens: &[Token], index: usize, expected: char) -> bool {
     tokens.get(index) == Some(&Token::Punct(expected))
-}
-
-/// The index of the parenthesis opening the one closing at `close`.
-fn opening(tokens: &[Token], close: usize) -> Option<usize> {
-    let mut depth = 0_usize;
-    for index in (0..=close).rev() {
-        match tokens[index] {
-            Token::Punct(')') => depth += 1,
-            Token::Punct('(') => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Whether the word at `index` is a name whatever it spells: a field after
-/// `.` or a label after `AS`, where PostgreSQL accepts every keyword
-/// (`k.limit`, `SELECT 1 AS from`). Such a word never bounds a clause.
-///
-/// The `AS` must itself be the keyword: in `SELECT 1 AS as FROM t` the
-/// second `as` is the label, and the `FROM` after it is a keyword again.
-fn is_name(tokens: &[Token], index: usize) -> bool {
-    index > 0
-        && (punct(tokens, index - 1, '.')
-            || is(tokens, index - 1, "as") && !is_name(tokens, index - 1))
-}
-
-/// The longest identifier PostgreSQL keeps whole; a longer one is truncated
-/// to this many bytes, so two spellings could name one relation.
-const IDENTIFIER_BYTES: usize = 63;
-
-/// Whether the `ON` at `on` opens an INSERT's `ON CONFLICT` clause, which
-/// continues with a conflict target or `DO`. A join condition may begin
-/// with a row named conflict instead (`ON conflict.id = a.id`); an
-/// unqualified call `conflict(...)` fails the detector.
-fn opens_on_conflict(tokens: &[Token], on: usize) -> bool {
-    is(tokens, on, "on")
-        && is(tokens, on + 1, "conflict")
-        && (punct(tokens, on + 2, '(')
-            || is(tokens, on + 2, "do")
-            || is(tokens, on + 2, "on") && is(tokens, on + 3, "constraint"))
-}
-
-/// Whether the parenthesis at `open` opens a CTE body: `AS (` or
-/// `AS [NOT] MATERIALIZED (`.
-fn opens_cte_body(tokens: &[Token], open: usize) -> bool {
-    punct(tokens, open, '(')
-        && (is(tokens, open.wrapping_sub(1), "as")
-            || is(tokens, open.wrapping_sub(1), "materialized"))
-}
-
-/// Whether the command word at `index` begins a command: the statement's
-/// own, a data-modifying CTE body's (`AS (DELETE ...`), or the main one
-/// after the CTE list (`WITH c AS (...) UPDATE ...`). Anywhere else the
-/// word is a name, such as a column label (`SELECT 1 AS delete FROM t`).
-fn opens_command(tokens: &[Token], index: usize) -> bool {
-    index == 0
-        || opens_cte_body(tokens, index - 1)
-        || punct(tokens, index - 1, ')')
-            && opening(tokens, index - 1).is_some_and(|open| opens_cte_body(tokens, open))
 }
 
 /// The index of the parenthesis closing the one at `open`.
@@ -296,18 +235,6 @@ fn top_level_word(tokens: &[Token], start: usize, end: usize, words: &[&str]) ->
     })
 }
 
-/// Whether the `WITH` at `index` is part of a type or a FROM item rather
-/// than a CTE list: `... WITH TIME ZONE`, or `f(...) WITH ORDINALITY` that is
-/// not a CTE named `ordinality` (`WITH ordinality AS (` or `(columns)`).
-fn is_with_modifier(tokens: &[Token], index: usize) -> bool {
-    let time_zone = is(tokens, index + 1, "time") && is(tokens, index + 2, "zone");
-    let ordinality = punct(tokens, index.wrapping_sub(1), ')')
-        && is(tokens, index + 1, "ordinality")
-        && !punct(tokens, index + 2, '(')
-        && !(is(tokens, index + 2, "as") && punct(tokens, index + 3, '('));
-    time_zone || ordinality
-}
-
 /// The names a statement declares, and the problems declaring them.
 struct Declarations<'t> {
     tokens: &'t [Token],
@@ -323,14 +250,20 @@ struct Declarations<'t> {
     /// The `FROM` of each `ROWS FROM` a FROM-list walk read as one item, so
     /// the scan does not take it for a FROM clause of its own.
     rows_from: BTreeSet<usize>,
-    /// The tables and CTEs that appear unaliased, whose own names a field
-    /// may qualify; an alias hides the name it stands for.
-    visible: BTreeSet<String>,
+    /// The query blocks, and the block declaring each name.
+    blocks: Blocks,
+    scopes: BTreeMap<String, usize>,
+    /// The tables and CTEs that appear unaliased, with the blocks they
+    /// appear in: their own names may qualify a field there and in nested
+    /// blocks. An alias hides the name it stands for.
+    visible: BTreeMap<String, BTreeSet<usize>>,
     problems: Vec<String>,
 }
 
 impl Declarations<'_> {
-    fn declare(&mut self, name: &str, declared: Declared) {
+    /// Declares `name`, at token `at`, in that token's block.
+    fn declare(&mut self, name: &str, declared: Declared, at: usize) {
+        self.scopes.insert(name.to_owned(), self.blocks.of(at));
         if ["pg_catalog", "excluded", "old", "new"].contains(&name)
             || self.tables.contains_key(name)
         {
@@ -343,12 +276,34 @@ impl Declarations<'_> {
         }
     }
 
-    /// The columns of the receiver `name`: an alias, or a table or CTE that
-    /// appears unaliased in the statement. `FROM t AS a` hides `t`, so
-    /// PostgreSQL rejects `t.id` there however `t` is defined.
-    fn receiver_columns(&self, name: &str) -> Option<BTreeSet<String>> {
+    /// Records that the table or CTE `name` appears unaliased at token `at`.
+    fn show(&mut self, name: &str, at: usize) {
+        let block = self.blocks.of(at);
+        self.visible
+            .entry(name.to_owned())
+            .or_default()
+            .insert(block);
+    }
+
+    /// The columns of the receiver `name` used at token `at`: an alias, or a
+    /// table or CTE that appears unaliased, declared in that token's block
+    /// or one enclosing it. `FROM t AS a` hides `t`, and an alias inside
+    /// `EXISTS (...)` is no receiver outside it.
+    fn receiver_columns(&self, name: &str, at: usize) -> Option<BTreeSet<String>> {
+        let used = self.blocks.of(at);
         let alias = self.names.contains_key(name) && !self.ctes.contains(name);
-        if alias || self.visible.contains(name) {
+        let in_scope = if alias {
+            self.scopes
+                .get(name)
+                .is_some_and(|&declared| self.blocks.sees(used, declared))
+        } else {
+            self.visible.get(name).is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .any(|&declared| self.blocks.sees(used, declared))
+            })
+        };
+        if in_scope {
             self.columns(name, 0)
         } else {
             None
@@ -387,7 +342,9 @@ fn declarations<'t>(
         cte_bodies: Vec::new(),
         recursive: false,
         rows_from: BTreeSet::new(),
-        visible: BTreeSet::new(),
+        blocks: Blocks::new(tokens),
+        scopes: BTreeMap::new(),
+        visible: BTreeMap::new(),
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -437,12 +394,10 @@ fn declarations<'t>(
                     word(tokens, index + 3),
                 ) {
                     (Some(target), true, Some(alias)) => {
-                        declarations.declare(alias, Declared::Target(target.to_owned()));
+                        declarations.declare(alias, Declared::Target(target.to_owned()), index);
                     }
                     // INSERT takes an alias only after AS.
-                    (Some(target), false, _) => {
-                        declarations.visible.insert(target.to_owned());
-                    }
+                    (Some(target), false, _) => declarations.show(target, index),
                     _ => {}
                 }
                 continue;
@@ -534,9 +489,7 @@ fn record_from_item(
     }
     let Some(alias) = &item.alias else {
         match &item.source {
-            ItemSource::Relation(name) => {
-                declarations.visible.insert(name.clone());
-            }
+            ItemSource::Relation(name) => declarations.show(name, item.start),
             // A function's implicit row name could shadow another relation.
             ItemSource::Function => problem(
                 declarations,
@@ -569,7 +522,7 @@ fn record_from_item(
         (ColumnList::Absent, ItemSource::Query(start, end)) => Declared::Query(*start, *end),
         (ColumnList::Absent, ItemSource::Function | ItemSource::Join) => Declared::Unlisted,
     };
-    declarations.declare(alias, declared);
+    declarations.declare(alias, declared, item.start);
 }
 
 /// Declares the common table expressions of the `WITH` list at `index`.
@@ -612,7 +565,7 @@ fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index
         declarations
             .cte_bodies
             .push((name.clone(), next + 1, close));
-        declarations.declare(&name, declared);
+        declarations.declare(&name, declared, index);
         if !punct(tokens, close + 1, ',') {
             return;
         }
@@ -633,65 +586,6 @@ fn enclosing_end(tokens: &[Token], index: usize) -> usize {
         }
     }
     tokens.len()
-}
-
-/// The forms the declaration scan does not read, found token by token: an
-/// identifier PostgreSQL would truncate, and keywords that open a clause
-/// the guard does not follow. A field or label is a name, never a keyword.
-fn unread_forms(tokens: &[Token]) -> Vec<String> {
-    let mut found = Vec::new();
-    for index in 0..tokens.len() {
-        if word(tokens, index).is_some_and(|name| name.len() > IDENTIFIER_BYTES) {
-            found.push(format!(
-                "an identifier longer than {IDENTIFIER_BYTES} bytes, which PostgreSQL truncates"
-            ));
-        }
-        if is_name(tokens, index) {
-            continue;
-        }
-        // A CTE is visible only in its own query, so a WITH that is not the
-        // statement's own could shadow a relation elsewhere; RETURNING WITH
-        // names OLD and NEW rows this scan does not read.
-        if is(tokens, index, "with") && index > 0 && !is_with_modifier(tokens, index) {
-            found.push("a WITH clause that is not the statement's own".to_owned());
-        }
-        if is(tokens, index, "returning") && is(tokens, index + 1, "with") {
-            found.push("a RETURNING WITH clause".to_owned());
-        }
-        // TABLE is reserved, and no accepted command creates or locks a
-        // table, so the word opens a `TABLE name` query, which reads a
-        // relation outside any FROM list.
-        if is(tokens, index, "table") {
-            found.push("a TABLE query".to_owned());
-        }
-        // A recursive CTE's SEARCH or CYCLE clause follows its body. The
-        // scan reads neither, and the command after one would go
-        // unrecognized, so neither is part of the dialect.
-        if (is(tokens, index, "search") || is(tokens, index, "cycle"))
-            && index > 0
-            && punct(tokens, index - 1, ')')
-            && opening(tokens, index - 1).is_some_and(|open| opens_cte_body(tokens, open))
-        {
-            found.push("a CTE SEARCH or CYCLE clause".to_owned());
-        }
-        // `SELECT ... INTO` creates a table; only an INSERT that begins a
-        // command writes one. INTO is reserved, so the word is the keyword.
-        if is(tokens, index, "into")
-            && !(index > 0 && is(tokens, index - 1, "insert") && opens_command(tokens, index - 1))
-        {
-            found.push("a SELECT INTO, which creates a table".to_owned());
-        }
-        // `JOIN ... USING (columns) AS alias` names a join row the
-        // declaration scan does not read.
-        if is(tokens, index, "using")
-            && punct(tokens, index + 1, '(')
-            && using_columns(tokens, index + 1)
-            && is(tokens, closing(tokens, index + 1) + 1, "as")
-        {
-            found.push("a JOIN USING alias".to_owned());
-        }
-    }
-    found
 }
 
 /// The qualified names in `sql` that are not columns of their receiver, and
@@ -762,7 +656,7 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
                 .filter(|(clause, _)| clause.contains(&dot))
                 .map(|(_, columns)| columns.clone())
         } else {
-            declarations.receiver_columns(receiver)
+            declarations.receiver_columns(receiver, dot)
         };
         match columns {
             None => found.push(format!(

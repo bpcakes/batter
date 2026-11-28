@@ -479,60 +479,56 @@ fn only_the_pinned_items_suppress_the_gate() {
     assert!(problems.is_empty(), "{problems:#?}");
 }
 
-/// Normalized `code` without its `macro_rules!` definitions, each up to the
-/// delimiter closing its body. A definition without one keeps the rest.
-fn without_macro_definitions(code: &str) -> String {
-    let mut kept = String::new();
-    let mut rest = code;
-    while let Some(at) = rest.find("macro_rules!") {
-        kept.push_str(&rest[..at]);
-        let definition = &rest[at..];
-        let Some(open) = definition.find(['{', '(', '[']) else {
-            rest = definition;
-            break;
-        };
-        let mut depth = 0_usize;
-        let close = definition[open..]
-            .char_indices()
-            .find_map(|(index, character)| {
-                match character {
-                    '{' | '(' | '[' => depth += 1,
-                    '}' | ')' | ']' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some(open + index + 1);
-                        }
-                    }
-                    _ => {}
-                }
-                None
-            });
-        let Some(close) = close else {
-            rest = definition;
-            break;
-        };
-        rest = &definition[close..];
-    }
-    kept.push_str(rest);
-    kept
+/// The test-only inventory helpers the shared statement generator defines,
+/// each by its item head and how often it appears. Any other conditional
+/// compilation in statements.rs, or any at all in a family's file, could
+/// give the production build other SQL than the tests check.
+const TEST_HELPERS: [(&str, usize); 5] = [
+    ("#[cfg(test)] pub(crate) const ALL: &[Self]", 1),
+    (
+        "#[cfg(test)] pub(crate) const fn name(self) -> &'static str",
+        1,
+    ),
+    (
+        "#[cfg(test)] pub(crate) const fn file(self) -> Option<&'static str>",
+        2,
+    ),
+    ("#[cfg(test)] fn name(self) -> String", 1),
+    (
+        "#[cfg(test)] pub(crate) fn all() -> Vec<(String, Statement)>",
+        1,
+    ),
+];
+
+/// Whether normalized `code` compiles anything conditionally.
+fn conditional(code: &str) -> bool {
+    has_token(code, "cfg") || has_token(code, "cfg_attr")
 }
 
 // The statement guard reads the test build's statements, so every build
 // must compile the same ones: a family's file holds no conditional
-// compilation, statements.rs holds it only inside its macro definitions,
-// whose `cfg(test)` items are test helpers, and lib.rs declares the module
-// unconditionally.
+// compilation, inside a macro or not; statements.rs holds only the pinned
+// test helpers; and lib.rs declares the module unconditionally.
 #[test]
 fn every_build_compiles_the_same_statements() {
-    let conditional = |code: &str| has_token(code, "cfg") || has_token(code, "cfg_attr");
     let source = manifest_directory().join("src");
     let mut problems = Vec::new();
     for (file, path) in rust_files(&source) {
-        if file != "statements.rs" && !file.starts_with("statements/") {
+        let mut code = normalize(&fs::read_to_string(&path).expect("source is readable"));
+        if file == "statements.rs" {
+            for (head, count) in TEST_HELPERS {
+                let head = normalize(head);
+                if code.matches(&head).count() != count {
+                    problems.push(format!(
+                        "statements.rs: `{head}` is not there {count} times"
+                    ));
+                }
+                code = code.replace(&head, "");
+            }
+        } else if !file.starts_with("statements/") {
             continue;
         }
-        let code = normalize(&fs::read_to_string(&path).expect("source is readable"));
-        if conditional(&without_macro_definitions(&code)) {
+        if conditional(&code) {
             problems.push(format!("{file}: compiles statements conditionally"));
         }
     }
@@ -545,19 +541,13 @@ fn every_build_compiles_the_same_statements() {
         problems.push("lib.rs: declares statements conditionally".to_owned());
     }
     assert!(problems.is_empty(), "{problems:#?}");
-    assert_eq!(
-        without_macro_definitions("a;macro_rules!m{(x)=>{#[cfg(test)]fn f(){}};}b;"),
-        "a;b;"
-    );
     for family in [
         "#[cfg(test)]statements!{A=\"x\";}",
+        "macro_rules!pick{()=>{#[cfg(not(test))]statements!{A=\"y\";}};}pick!();",
         "#[cfg_attr(test,doc=\"x\")]mod inner{}",
         "const B:bool=cfg!(test);",
     ] {
-        assert!(
-            conditional(&without_macro_definitions(&normalize(family))),
-            "{family}"
-        );
+        assert!(conditional(&normalize(family)), "{family}");
     }
 }
 

@@ -367,6 +367,40 @@ fn an_identifier_past_the_truncation_length_fails() {
     );
 }
 
+// PostgreSQL resolves a qualified name in its own query block and then
+// outward, so an alias inside a subquery or another set-operation arm is no
+// receiver for it.
+#[test]
+fn an_alias_is_visible_in_its_block_and_nested_ones() {
+    let tables = inventory(&[("t", &["id", "shard", "used"]), ("u", &["id", "label"])]);
+    for sql in [
+        "SELECT w.used WHERE EXISTS (SELECT 1 FROM t AS w)",
+        "SELECT a.id FROM t AS a WHERE a.id IN (SELECT 1 FROM u AS b) AND b.id = 1",
+        "SELECT a.id FROM t AS a UNION SELECT a.used FROM u AS b",
+        "SELECT t.id WHERE EXISTS (SELECT 1 FROM t)",
+        // An outer alias hides its table in nested blocks too.
+        "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u WHERE u.id = a.id AND t.id = 1)",
+    ] {
+        assert!(
+            !fields::unresolved(sql, &tables).is_empty(),
+            "{sql} must fail"
+        );
+    }
+    for sql in [
+        "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u AS b WHERE b.id = a.id)",
+        "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u WHERE u.id = a.id)",
+        "SELECT t.id FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.id = t.id)",
+        "SELECT a.id FROM t AS a UNION SELECT b.id FROM u AS b",
+        "WITH c AS (SELECT a.id FROM t AS a) SELECT c.id FROM c WHERE EXISTS (SELECT 1 FROM c)",
+    ] {
+        assert_eq!(
+            fields::unresolved(sql, &tables),
+            Vec::<String>::new(),
+            "{sql}"
+        );
+    }
+}
+
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
 // such column, so a qualified name must be a column of its declared receiver.
 #[test]
