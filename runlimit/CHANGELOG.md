@@ -52,6 +52,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- The `runlimit-postgres` package no longer ships `src/attempt_complete.sql`
+  or `src/cleanup_expired.sql`. No code path executed either statement; both
+  stay byte-identical, with their digests, as provenance records in
+  `runlimit/provenance/runlimit-postgres/`, outside every package. The
+  executed statements, SQL behaviour and persisted state are unchanged
+  (`batter-39wm.2`).
 - The three PostgreSQL limiters now share one private shell for their pool,
   bounds, observer, migration, bounded connections and transactions, and both
   quota limiters share one response finisher. No public item is removed,

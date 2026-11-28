@@ -16,20 +16,31 @@ the generated lock. Manifests make inherited metadata explicit, inherit local na
 dependencies, adapt README paths and disable publishing. Native behavior, public Rust
 contracts and persisted schema are unchanged by this import.
 
-`upstream-assets.json` retains SHA-256 digests of imported SQL and root licenses.
-The workspace check rejects changes/removal; it permits new forward migrations.
-A superseded imported statement is replaced by a new file rather than edited:
-since `batter-z4m9`, fixed-window cleanup executes
-`runlimit-postgres/src/cleanup_expired_by_key.sql`, which identifies expired rows
-by primary key, and the imported `src/cleanup_expired.sql`, which read `ctid`, is
-retained byte-identical as a provenance record that no code path executes.
+`upstream-assets.json` retains SHA-256 digests of imported SQL and root
+licenses. The workspace check rejects changes/removal; it permits new forward
+migrations. A superseded imported statement is replaced by a new file rather
+than edited: since `batter-z4m9`, fixed-window cleanup executes
+`runlimit-postgres/src/cleanup_expired_by_key.sql`, which identifies expired
+rows by primary key, and the imported `cleanup_expired.sql`, which read `ctid`,
+is retained byte-identical as a provenance record that no code path executes.
 Since `batter-ctk7.8`, attempt completion likewise executes
 `runlimit-postgres/src/attempt_complete_scheduled.sql`, which reads the failure
-delay from a schedule bound by Rust, and the imported `src/attempt_complete.sql`,
+delay from a schedule bound by Rust, and the imported `attempt_complete.sql`,
 which restated the backoff formula, is retained byte-identical and unexecuted.
-Source archives retain SQL and both license names, and mutation fixtures include
-this native root. Root verification preserves default/all-feature tests and lint,
-the release-mode fail-closed regression, and CI's explicit native PostgreSQL tests.
+Both records live in [`provenance/runlimit-postgres/`](provenance/README.md),
+outside every package. The workspace check requires both superseded records, by
+digest, to be inventoried only under canonical `provenance/` paths, every other
+file there except the README and OS metadata to be inventoried, and no symlink
+in or at the directory. It then packages each native crate from the checkout and
+verifies it with `cargo package`, with default and with all features, in a
+temporary target directory outside the checkout, so every library is built from
+its own archive where the records are absent, and rejects an archive member,
+under any name, that contains a record's complete bytes, alone or within a
+larger file (`batter-39wm.2`). Cargo does not build packaged test targets from
+the archive; that pre-existing gap is `batter-88bd`. Source archives retain SQL
+and both license names, and mutation fixtures include this native root. Root
+verification preserves default/all-feature tests and lint, the release-mode
+fail-closed regression, and CI's explicit native PostgreSQL tests.
 
 The native smoke source is retained unchanged at `smoke/native_consumer.rs`.
 `python3 scripts/check_runlimit_consumer.py` executes it and the added facade

@@ -55,7 +55,7 @@ class ConsumerTests(unittest.TestCase):
                     'runlimit/runlimit-postgres/attempts-migrations/001.sql',
                     'runlimit/runlimit-postgres/gcra-migrations/001.sql',
                     'runlimit/runlimit-postgres/migrations/001.sql',
-                    'runlimit/runlimit-postgres/src/attempt_complete.sql']
+                    'runlimit/provenance/runlimit-postgres/attempt_complete.sql']
             for name in keep + ['.git', 'runlimit/.env', 'target/output.rs']:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
