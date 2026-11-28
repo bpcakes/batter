@@ -618,6 +618,16 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let tokens = tokenize(sql);
     let declarations = declarations(&tokens, tables);
     let mut found = declarations.problems.clone();
+    for index in 0..tokens.len() {
+        // `JOIN ... USING (columns) AS alias` names a join row the
+        // declaration scan does not read.
+        if is(&tokens, index, "using")
+            && punct(&tokens, index + 1, '(')
+            && is(&tokens, closing(&tokens, index + 1) + 1, "as")
+        {
+            found.push("a JOIN USING alias".to_owned());
+        }
+    }
     // `AS (...)` around anything but a query is a column definition list,
     // with or without an alias, `ROWS FROM` items included.
     for index in 0..tokens.len() {

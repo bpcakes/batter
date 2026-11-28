@@ -159,7 +159,8 @@ fn included_statements_are_exactly_the_sql_files_in_src() {
 fn only_the_listed_catalog_functions_may_be_called() {
     let calls = catalog_calls(
         "SELECT pg_catalog.query_to_xml($1, true, false, ''), pg_catalog . floor(1), \
-         pg_catalog.text 'x', $2::pg_catalog.text",
+         pg_catalog.text 'x', $2::pg_catalog.text, $3::pg_catalog.numeric(39, 0), \
+         $4 :: pg_catalog . varchar(8)",
     );
     assert_eq!(
         calls,
@@ -230,6 +231,7 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT x.ids[1:r.f] FROM t AS r, u AS x",
         // A FROM function needs an alias; its implicit name could shadow.
         "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[])",
+        "SELECT j.id FROM t AS a JOIN u AS b USING (id) AS j",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",

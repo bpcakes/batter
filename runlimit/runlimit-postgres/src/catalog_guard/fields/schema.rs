@@ -178,6 +178,12 @@ fn alter(
             }
         }
         Some("drop") if !is(action, 1, "constraint") => {
+            // CASCADE can also drop dependent columns, such as a generated
+            // one, which this reader cannot see.
+            assert!(
+                !action.contains(&Token::Word("cascade".to_owned())),
+                "ALTER TABLE {table}: a cascading DROP this reader does not apply"
+            );
             if let Some(column) = word(action, column_at(1)) {
                 columns.remove(column);
             }
@@ -240,6 +246,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE t (failures BIGINT); CALL drop_failures();",
         "CREATE TABLE t (old BIGINT); ALTER TABLE elsewhere.t DROP COLUMN old;",
         "CREATE TABLE t (old BIGINT); DROP TABLE elsewhere.t;",
+        "CREATE TABLE t (key BIGINT, shard SMALLINT GENERATED ALWAYS AS (key % 2) STORED); \
+         ALTER TABLE t DROP COLUMN key CASCADE;",
     ] {
         assert!(
             std::panic::catch_unwind(|| super::tables([unreadable])).is_err(),

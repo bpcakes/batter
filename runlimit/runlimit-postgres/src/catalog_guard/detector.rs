@@ -151,8 +151,18 @@ pub(super) fn catalog_calls(sql: &str) -> BTreeSet<String> {
         while index < bytes.len() && is_identifier_part(bytes[index]) {
             index += 1;
         }
+        // `::pg_catalog.numeric(39, 0)` is a type modifier, not a call.
+        let dot = skip_spaces_back(bytes, start);
+        let qualifier = skip_spaces_back(bytes, dot.saturating_sub(1));
+        let qualifier_start = (0..qualifier)
+            .rev()
+            .find(|&at| !is_identifier_part(bytes[at]))
+            .map_or(0, |at| at + 1);
+        let back = skip_spaces_back(bytes, qualifier_start);
+        let cast = back >= 2 && &code[back - 2..back] == "::";
         if bytes.get(skip_spaces(bytes, index)) == Some(&b'(')
             && qualifier_before(&code, start).as_deref() == Some("pg_catalog")
+            && !cast
         {
             calls.insert(code[start..index].to_ascii_lowercase());
         }
