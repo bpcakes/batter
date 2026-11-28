@@ -134,6 +134,10 @@ enum Declared {
     Columns(BTreeSet<String>),
     /// An alias of the relation of this name.
     Alias(String),
+    /// An alias of a write target, `INSERT INTO`, `UPDATE` or `DELETE FROM`,
+    /// which PostgreSQL resolves as a physical table even beside a CTE of
+    /// the same name.
+    Target(String),
     /// The output of the query in `tokens[start..end]`.
     Query(usize, usize),
     /// A relation without a column list, whose columns this guard does not
@@ -262,6 +266,7 @@ impl Declarations<'_> {
                 self.columns(target, depth + 1)
             }
             Some(Declared::Alias(target)) => self.tables.get(target).cloned(),
+            Some(Declared::Target(table)) => self.tables.get(table).cloned(),
             Some(Declared::Query(start, end)) => output_names(self.tokens, *start, *end),
             Some(Declared::Unlisted) => None,
             None => self.tables.get(name).cloned(),
@@ -310,6 +315,7 @@ fn declarations<'t>(
             }
             Some("using") if punct(tokens, index + 1, '(') => continue,
             // A FROM or USING list is walked whole, joins included.
+            Some("from") if previous == Some("delete") => false,
             Some("from" | "using") => true,
             Some("update") if !matches!(previous, Some("for" | "do" | "key")) => false,
             Some("into") if previous == Some("insert") => {
@@ -318,7 +324,7 @@ fn declarations<'t>(
                     is(tokens, index + 2, "as"),
                     word(tokens, index + 3),
                 ) {
-                    declarations.declare(alias, Declared::Alias(target.to_owned()));
+                    declarations.declare(alias, Declared::Target(target.to_owned()));
                 }
                 continue;
             }
@@ -327,7 +333,8 @@ fn declarations<'t>(
         let mut item_start = index + 1;
         loop {
             let item = from_item(tokens, item_start);
-            record_from_item(&mut declarations, tokens, &item);
+            // UPDATE and DELETE FROM name a write target, not a FROM source.
+            record_from_item(&mut declarations, tokens, &item, !lists);
             match next_from_item(tokens, item.end) {
                 Some(next) if lists => item_start = next,
                 _ => break,
@@ -354,7 +361,12 @@ impl Declarations<'_> {
 }
 
 /// Declares one FROM item's alias and records what keeps it from being read.
-fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item: &FromItem) {
+fn record_from_item(
+    declarations: &mut Declarations<'_>,
+    tokens: &[Token],
+    item: &FromItem,
+    target: bool,
+) {
     let problem =
         |declarations: &mut Declarations<'_>, problem: String| declarations.problems.push(problem);
     if let ItemSource::Relation(name) = &item.source
@@ -382,6 +394,12 @@ fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item:
             // An unaliased relation's row name is its own: a migrated table
             // or a CTE of this statement, never an untracked relation whose
             // name a declaration elsewhere could stand for.
+            ItemSource::Relation(name) if target && !declarations.tables.contains_key(name) => {
+                problem(
+                    declarations,
+                    format!("{name} is written, but is no migrated table"),
+                );
+            }
             ItemSource::Relation(name)
                 if !declarations.tables.contains_key(name) && !declarations.ctes.contains(name) =>
             {
@@ -411,6 +429,9 @@ fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item:
                 format!("{alias}'s column definition list types columns the guard does not check"),
             );
             Declared::Unlisted
+        }
+        (ColumnList::Absent, ItemSource::Relation(name)) if target => {
+            Declared::Target(name.clone())
         }
         (ColumnList::Absent, ItemSource::Relation(name)) => Declared::Alias(name.clone()),
         (ColumnList::Absent, ItemSource::Qualified(name)) => {

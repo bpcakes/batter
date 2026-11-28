@@ -244,6 +244,9 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "WITH c AS (SELECT TRUE, NULL) SELECT c.true, c.null FROM c",
         // An output alias named rows does not open ROWS FROM.
         "SELECT 1 AS rows FROM t AS pg_catalog WHERE pg_catalog.row_to_json IS NULL",
+        // A write target is a physical table, never a CTE of that name.
+        "WITH w AS (SELECT 1 AS extra) INSERT INTO w AS x (extra) VALUES (1) RETURNING x.extra",
+        "WITH w AS (SELECT 1 AS extra) UPDATE w AS x SET extra = 1 RETURNING x.extra",
         // A nested CTE is rejected whatever it is called.
         "SELECT a.extra FROM u AS a WHERE EXISTS (WITH time AS (SELECT 1 AS extra) SELECT 1 FROM time)",
         "SELECT a.extra FROM u AS a WHERE EXISTS (WITH ordinality AS (SELECT 1 AS extra) SELECT 1 FROM ordinality)",

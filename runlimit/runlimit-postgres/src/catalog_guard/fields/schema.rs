@@ -66,6 +66,14 @@ impl MigrationCode {
     fn apply(&mut self, tokens: &[Token]) {
         if let Some(function) = defined_function(tokens) {
             self.functions.insert(function);
+        } else if names_routine_signature(tokens) && is(tokens, 0, "alter") {
+            // A renamed function stays tracked under both names.
+            if let Some(renamed) = (2..tokens.len())
+                .find(|&index| is(tokens, index, "rename") && is(tokens, index + 1, "to"))
+                .and_then(|rename| word(tokens, rename + 2))
+            {
+                self.functions.insert(renamed.to_owned());
+            }
         } else if let Some(at) = trigger_name(tokens) {
             if let (Some(name), Some(table)) = (word(tokens, at), trigger_table(tokens)) {
                 self.triggers
@@ -119,7 +127,9 @@ impl MigrationCode {
             STATEMENT_KINDS.contains(&kind),
             "a {kind:?} migration statement, which could run code with unknown schema effects"
         );
-        let defines = defined_function(tokens).is_some() || trigger_name(tokens).is_some();
+        let defines = defined_function(tokens).is_some()
+            || trigger_name(tokens).is_some()
+            || names_routine_signature(tokens);
         if !defines {
             // A name after FUNCTION, PROCEDURE or ROUTINE is a signature, as
             // in DROP FUNCTION f(), not a call.
@@ -179,6 +189,21 @@ fn trigger_table(tokens: &[Token]) -> Option<String> {
         "a trigger on a schema-qualified table, which this reader does not resolve"
     );
     word(tokens, on + 1).map(str::to_owned)
+}
+
+/// Whether the statement's subject is a routine signature, which names a
+/// function without running it: `DROP` or `ALTER FUNCTION`, `COMMENT ON
+/// FUNCTION`, or `GRANT` or `REVOKE` on one, with any guard or schema.
+fn names_routine_signature(tokens: &[Token]) -> bool {
+    let routine = |index: usize| {
+        ["function", "procedure", "routine"]
+            .iter()
+            .any(|w| is(tokens, index, w))
+    };
+    (is(tokens, 0, "drop") || is(tokens, 0, "alter")) && routine(1)
+        || is(tokens, 0, "comment") && is(tokens, 1, "on") && routine(2)
+        || (is(tokens, 0, "grant") || is(tokens, 0, "revoke"))
+            && (1..tokens.len()).any(|index| is(tokens, index, "on") && routine(index + 1))
 }
 
 /// The function a `CREATE [OR REPLACE] FUNCTION` statement defines.
@@ -418,7 +443,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          CREATE FUNCTION count_seeds() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE TRIGGER counted AFTER INSERT ON seeded FOR EACH ROW EXECUTE FUNCTION count_seeds(); \
          DROP TRIGGER counted ON seeded; INSERT INTO seeded (n) VALUES (2); \
-         DROP FUNCTION count_seeds();",
+         COMMENT ON FUNCTION count_seeds() IS 'retired'; \
+         DROP FUNCTION IF EXISTS count_seeds(); DROP FUNCTION public.count_seeds();",
         // A function body's DDL runs when the function is called.
         "CREATE FUNCTION f() RETURNS void AS $body$ SELECT 1; ALTER TABLE counters DROP COLUMN id; $body$ \
          LANGUAGE sql; -- $$ is no body here
@@ -474,6 +500,10 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE OR REPLACE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
          INSERT INTO t (old) VALUES (1);",
+        // A renamed function is still the migrations' code.
+        "CREATE TABLE t (old BIGINT); CREATE TABLE log (n BIGINT); \
+         CREATE FUNCTION f() RETURNS bigint AS $$ SELECT 1 $$ LANGUAGE sql; \
+         ALTER FUNCTION f() RENAME TO g; INSERT INTO log (n) VALUES (g());",
         // Dropping one overload leaves the other callable.
         "CREATE TABLE t (old BIGINT); CREATE TABLE log (n BIGINT); \
          CREATE FUNCTION f(integer) RETURNS bigint AS $$ SELECT 1 $$ LANGUAGE sql; \
