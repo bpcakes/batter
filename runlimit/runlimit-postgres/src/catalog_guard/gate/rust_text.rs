@@ -32,6 +32,16 @@ pub(super) fn normalize(source: &str) -> String {
             '/' if next == Some('*') => block_comment_end(&chars, index),
             '"' => quoted(&chars, index, &mut code),
             'r' if raw_string_start(&chars, index) => raw_string(&chars, index, &mut code),
+            // `r#warnings` is the lint `warnings`: a raw identifier reads as
+            // its name, so a suppression cannot hide behind the prefix.
+            'r' if next == Some('#')
+                && chars
+                    .get(index + 2)
+                    .is_some_and(|after| after.is_alphabetic() || *after == '_')
+                && !(index > 0 && is_identifier_part(chars[index - 1])) =>
+            {
+                index + 2
+            }
             '\'' => character_or_lifetime(&chars, index, &mut code),
             whitespace if whitespace.is_whitespace() => index + 1,
             other => {
@@ -173,4 +183,14 @@ fn comments_whitespace_and_literal_contents_never_read_as_code() {
         normalize("use core::include /* x */ as inc;"),
         "use core::include as inc;"
     );
+}
+
+#[test]
+fn a_raw_identifier_reads_as_its_name() {
+    assert_eq!(
+        normalize("#[allow(r#warnings, clippy::r#disallowed_methods)] fn r#match() {}"),
+        "#[allow(warnings,clippy::disallowed_methods)]fn match(){}"
+    );
+    // A raw string still reads as one, its contents hex-encoded.
+    assert_eq!(normalize("r#\"a\"#"), "r\"000061\"");
 }
