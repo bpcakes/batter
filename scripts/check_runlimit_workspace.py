@@ -136,11 +136,17 @@ def validate_provenance(root, expected, required=None):
 
 
 def first_key(dotted):
-    """The first component of a dotted TOML key, unquoted, or None for an escaped one."""
-    if '\\' in dotted:
+    """The first component of a dotted TOML key, unquoted, or None for an escaped one.
+
+    Only that component matters: an escape in a later one, as in
+    `[target."cfg(target_os = \\"linux\\")".dependencies]`, leaves it readable.
+    """
+    match = re.match(r'\s*(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([A-Za-z0-9_-]+))', dotted)
+    if not match:
+        return None if '\\' in dotted.split('.', 1)[0] else ''
+    if match.group(1) is not None and '\\' in match.group(1):
         return None
-    match = re.match(r'\s*(?:"([^"]*)"|\'([^\']*)\'|([A-Za-z0-9_-]+))', dotted)
-    return next((part for part in match.groups() if part is not None), '') if match else ''
+    return next(part for part in match.groups() if part is not None)
 
 
 def inline_level(fields):

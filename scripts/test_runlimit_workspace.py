@@ -257,6 +257,12 @@ class SqlGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inherits'):
             validate_sql_gate(self.tree(inherited))
 
+    def test_an_escape_after_the_first_key_component_reads(self):
+        target = self.MANIFEST + (b'\n[target."cfg(target_os = \\"linux\\")".dependencies]\n'
+                                  b'libc = "0.2"\n')
+        self.assertEqual(manifest_lints(target.decode()), manifest_lints(self.MANIFEST.decode()))
+        validate_sql_gate(self.tree(target))
+
     def test_brackets_inside_values_open_no_table(self):
         hidden = (b'package.description = """\n[example]\n"""\n'
                   b'lints.rust.unfulfilled_lint_expectations = "allow"\n' + self.MANIFEST)
