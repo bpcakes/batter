@@ -24,13 +24,14 @@ policy and credential meaning remain application-owned.
 
 ## Enforcement and consequences
 
-Graph checks require one local unpublished identity per native package and reject
-reverse dependencies or runtime/transport/database dependencies from native core.
-Original SQL and license digests guard import integrity; future migrations must be
-forward-only. Source archives/mutation fixtures retain the native root. Verification
-preserves default/all-feature tests and lint, the release fail-closed regression,
-and explicit PostgreSQL tests against a disposable database. CI keeps PostgreSQL 16;
-actual local/hosted results remain separately recorded evidence.
+Graph checks require one local unpublished identity per native package and
+reject reverse dependencies or runtime/transport/database dependencies from
+native core. Original SQL and license digests guard import integrity; future
+migrations must be forward-only. Source archives/mutation fixtures retain the
+native root. Verification preserves default/all-feature tests and lint, the
+profile-independent corrupt-state test, and explicit PostgreSQL tests against a
+disposable database. CI keeps PostgreSQL 16; actual local/hosted results remain
+separately recorded evidence.
 
 Task `batter-isdr.2` proves Git-free exported-source native/facade consumption.
 No new public Rust API is introduced: the invalid-state review retains existing

@@ -43,8 +43,8 @@ that contains a record's complete bytes, alone or within a larger file
 (`batter-39wm.2`). Cargo does not build packaged test targets from the archive;
 that pre-existing gap is `batter-88bd`. Source archives retain SQL and both
 license names, and mutation fixtures include this native root. Root verification
-preserves default/all-feature tests and lint, the release-mode fail-closed
-regression, and CI's explicit native PostgreSQL tests.
+preserves default/all-feature tests and lint, and CI's explicit native
+PostgreSQL tests.
 
 The native smoke source is retained unchanged at `smoke/native_consumer.rs`.
 `python3 scripts/check_runlimit_consumer.py` executes it and the added facade

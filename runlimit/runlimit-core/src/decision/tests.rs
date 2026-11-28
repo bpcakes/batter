@@ -1,8 +1,8 @@
 use std::{num::NonZeroUsize, time::Duration};
 
 use super::{
-    Admitted, AdmittedView, Allowance, BatchDecision, BatchDecisionView, Decision, DecisionError,
-    DecisionView, Delay, Denial, QuotaDenial,
+    Admitted, AdmittedView, Allowance, AvailableExceedsCapacity, BatchDecision, BatchDecisionView,
+    Decision, DecisionView, Delay, Denial, DeniedIndexOutOfRange, EmptyAllowedBatch, QuotaDenial,
 };
 use crate::Capacity;
 
@@ -131,10 +131,7 @@ fn admitted_views_discriminate_allowances_from_shadow_denials() {
 
 #[test]
 fn allowed_batches_are_never_empty() {
-    assert_eq!(
-        BatchDecision::allowed(Vec::new()),
-        Err(DecisionError::EmptyBatch)
-    );
+    assert_eq!(BatchDecision::allowed(Vec::new()), Err(EmptyAllowedBatch));
 }
 
 #[test]
@@ -143,21 +140,21 @@ fn batch_denial_index_must_be_below_the_batch_size() {
 
     assert_eq!(
         BatchDecision::denied(1, 1, denial),
-        Err(DecisionError::DeniedIndexOutOfRange {
+        Err(DeniedIndexOutOfRange {
             index: 1,
             batch_size: 1,
         })
     );
     assert_eq!(
         BatchDecision::denied(0, 0, denial),
-        Err(DecisionError::DeniedIndexOutOfRange {
+        Err(DeniedIndexOutOfRange {
             index: 0,
             batch_size: 0,
         })
     );
     assert_eq!(
         BatchDecision::shadow_denied(3, 2, denial),
-        Err(DecisionError::DeniedIndexOutOfRange {
+        Err(DeniedIndexOutOfRange {
             index: 3,
             batch_size: 2,
         })
@@ -249,7 +246,7 @@ fn batch_views_preserve_allowed_order_and_denial_indices() {
 fn invalid_metadata_is_rejected_at_construction() {
     assert_eq!(
         Allowance::new(capacity(8), 9, Duration::ZERO),
-        Err(DecisionError::AvailableExceedsCapacity {
+        Err(AvailableExceedsCapacity {
             capacity: capacity(8),
             available: 9,
         })

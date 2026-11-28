@@ -36,13 +36,7 @@ impl PendingAllowance {
         used: u64,
         reset_from_sample: Duration,
     ) -> Result<Self, CheckError> {
-        let remaining = limit
-            .get()
-            .checked_sub(used)
-            .ok_or(CheckError::storage_invariant(
-                STORED_USAGE_EXCEEDS_POLICY_LIMIT,
-            ))?;
-        let allowance = Allowance::new(limit, remaining, reset_from_sample)
+        let allowance = Allowance::from_usage(limit, used, reset_from_sample)
             .map_err(|_| CheckError::storage_invariant(STORED_USAGE_EXCEEDS_POLICY_LIMIT))?;
         Ok(Self { allowance })
     }

@@ -55,7 +55,9 @@ fn receipt(value: AttemptAdmission<MemoryAttemptReceipt>) -> MemoryAttemptReceip
 #[test]
 fn failure_delays_escalate_cap_and_success_resets() {
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(2).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(2).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
@@ -93,8 +95,12 @@ fn failure_delays_escalate_cap_and_success_resets() {
 #[test]
 fn stale_receipts_cannot_reset_new_failure_state_or_other_stores() {
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
-    let other = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
+    let other = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
@@ -123,7 +129,9 @@ fn stale_receipts_cannot_reset_new_failure_state_or_other_stores() {
 #[test]
 fn a_receipt_that_outlives_its_removed_subject_cannot_complete_a_later_lease() {
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
@@ -169,7 +177,9 @@ fn a_lease_deadline_past_representable_time_is_refused_and_a_held_lease_still_ex
     let clock = Late(Arc::new(Mutex::new(
         end.saturating_sub(Duration::from_millis(20)),
     )));
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
@@ -199,7 +209,9 @@ fn a_lease_deadline_past_representable_time_is_refused_and_a_held_lease_still_ex
 #[test]
 fn bounded_storage_reclaims_quiet_subjects_and_never_evicts_live_lease() {
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let first = hasher.hash_attempt_for(&policy, b"first");
@@ -227,7 +239,9 @@ fn bounded_storage_reclaims_quiet_subjects_and_never_evicts_live_lease() {
 #[test]
 fn quiet_period_resets_failures_and_abandonment_counts() {
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
@@ -278,7 +292,9 @@ fn policy_validates_relations_fingerprints_all_parameters_and_bounds_overflow() 
 fn backwards_clock_does_not_shorten_delay_or_clear_active_lease() {
     let clock = TestClock::default();
     clock.set(100);
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = policy();
     let hasher = KeyHasher::new([7; 32]).unwrap();
     let subject = hasher.hash_attempt_for(&policy, b"user");
@@ -303,7 +319,9 @@ fn backwards_clock_does_not_shorten_delay_or_clear_active_lease() {
 #[test]
 fn quiet_expiry_never_evicts_a_longer_active_lease() {
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(1).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = AttemptPolicy::new(
         PolicyId::new("auth").unwrap(),
         ScopeId::new("identifier").unwrap(),
@@ -346,10 +364,9 @@ fn completion_error_can_only_report_poisoned_state() {
         }
     }
     let panic_clock = Arc::new(AtomicBool::new(false));
-    let store = MemoryAttemptLimiter::with_clock(
-        NonZeroUsize::new(1).unwrap(),
-        PanickingClock(panic_clock.clone()),
-    );
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(1).unwrap())
+        .with_clock(PanickingClock(panic_clock.clone()))
+        .build();
     let policy = policy();
     let h = KeyHasher::new([7; 32]).unwrap();
     let subject = h.hash_attempt_for(&policy, b"user");
@@ -366,7 +383,9 @@ fn cleanup_examines_sixteen_keys_per_admission_then_resumes_and_wraps() {
     // A 2000 ms lease keeps held reservations live for the whole test, while a
     // completed failure becomes reclaimable 1000 ms after it is recorded.
     let clock = TestClock::default();
-    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(20).unwrap(), clock.clone());
+    let store = MemoryAttemptLimiter::builder(NonZeroUsize::new(20).unwrap())
+        .with_clock(clock.clone())
+        .build();
     let policy = AttemptPolicy::new(
         PolicyId::new("auth").unwrap(),
         ScopeId::new("identifier").unwrap(),

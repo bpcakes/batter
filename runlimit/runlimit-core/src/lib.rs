@@ -30,8 +30,9 @@ pub use batch::{BatchError, validate_batch};
 pub use check::{Check, CheckError};
 pub use counter::CounterKey;
 pub use decision::{
-    Admitted, AdmittedView, Allowance, BatchDecision, BatchDecisionView, Decision, DecisionError,
-    DecisionView, Delay, Denial, QuotaDenial,
+    Admitted, AdmittedView, Allowance, AvailableExceedsCapacity, BatchDecision, BatchDecisionView,
+    Decision, DecisionView, Delay, Denial, DeniedIndexOutOfRange, EmptyAllowedBatch, QuotaDenial,
+    UsageExceedsCapacity,
 };
 pub use identifier::{IdentifierError, MAX_IDENTIFIER_LENGTH, PolicyId, ScopeId};
 pub use key::{KeyHasher, KeyHasherError, PolicySubject, SubjectKey};

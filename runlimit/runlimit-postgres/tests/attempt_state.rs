@@ -104,8 +104,10 @@ fn script() -> Vec<(Step, Option<Seen>)> {
 
 fn run_memory(policy: &AttemptPolicy, recorder: Arc<Recorder>) -> Vec<Seen> {
     let clock = ScriptClock::default();
-    let limiter =
-        MemoryAttemptLimiter::with_clock(NonZeroUsize::MIN, clock.clone()).with_observer(recorder);
+    let limiter = MemoryAttemptLimiter::builder(NonZeroUsize::MIN)
+        .with_clock(clock.clone())
+        .build()
+        .with_observer(recorder);
     let subject = KeyHasher::new([7; 32])
         .unwrap()
         .hash_attempt_for(policy, b"user");

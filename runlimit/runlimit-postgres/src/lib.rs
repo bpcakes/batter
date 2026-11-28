@@ -828,6 +828,9 @@ mod tests {
 
     #[test]
     fn batch_decisions_are_shaped_against_the_submitted_batch() {
+        // The stable classification, spelled out so the constant cannot drift.
+        const BATCH_MISMATCH: &str = "batch decision did not match the submitted batch";
+
         let allowance = Allowance::new(capacity(10), 4, Duration::from_secs(1)).unwrap();
         let quota = QuotaDenial::new(capacity(10), Duration::from_secs(1));
 
@@ -869,7 +872,22 @@ mod tests {
             },
         )
         .expect_err("a denial outside the batch is a failure");
-        assert!(matches!(out_of_range, CheckError::StorageInvariant(_)));
+        assert!(
+            matches!(&out_of_range, CheckError::StorageInvariant(error) if error.detail() == BATCH_MISMATCH),
+            "{out_of_range:?}"
+        );
+        let shadow_out_of_range = batch_decision(
+            2,
+            Admission::ShadowDenied {
+                index: 2,
+                denial: quota,
+            },
+        )
+        .expect_err("a shadow denial outside the batch is a failure");
+        assert!(
+            matches!(&shadow_out_of_range, CheckError::StorageInvariant(error) if error.detail() == BATCH_MISMATCH),
+            "{shadow_out_of_range:?}"
+        );
     }
 
     #[test]

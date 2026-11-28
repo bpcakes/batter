@@ -56,8 +56,6 @@ RUNLIMIT_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "script
                      "-p", "test_runlimit_workspace.py", "-v"]
 RUNLIMIT_DEFAULT = ["cargo", "test", "-p", "runlimit-core", "-p", "runlimit-memory",
                     "-p", "runlimit-postgres", "-p", "runlimit-http", "-p", "runlimit-axum", "--locked"]
-RUNLIMIT_RELEASE = ["cargo", "test", "-p", "runlimit-memory", "--release", "--locked",
-                    "corrupt_quota_state_fails_closed_in_release_builds"]
 FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 OUTBOUND_MEASUREMENTS = [sys.executable, "scripts/measure_outbound_http.py", "--check"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
@@ -140,8 +138,8 @@ def parts():
                       # The single-facade consumer owns a PostgreSQL container and
                       # a full facade build; keep it in its own batch.
                       (["single-facade-consumer"], [SINGLE_FACADE_CONSUMER])],
-        "runlimit": [(["runlimit-default", "runlimit-release", "runlimit-workspace"],
-                      [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
+        "runlimit": [(["runlimit-default", "runlimit-workspace"],
+                      [RUNLIMIT_DEFAULT, RUNLIMIT_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
                     (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls", "outbound-measurement-build"],
