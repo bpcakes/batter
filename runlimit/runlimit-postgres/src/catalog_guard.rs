@@ -287,6 +287,11 @@ fn a_keyword_used_as_a_name_is_a_name() {
         "SELECT 1 delete FROM t, elsewhere",
         "SELECT (1) delete FROM t, elsewhere",
         "SELECT 1 AS update FROM t, elsewhere",
+        // A column named rows before FROM opens no ROWS FROM item.
+        "SELECT 1, rows FROM (SELECT 2 AS rows) AS s, elsewhere",
+        // Stacked join qualifications all end before the next item.
+        "SELECT a.id FROM t AS a JOIN u AS b JOIN u AS c USING (id) ON TRUE, elsewhere",
+        "SELECT a.id FROM t AS a JOIN u AS b JOIN u AS c ON TRUE ON TRUE JOIN elsewhere AS e ON TRUE",
         // A field named for a clause does not end the join condition.
         "WITH k AS (SELECT 1 AS limit) SELECT a.id FROM t AS a JOIN k ON k.limit = a.id, elsewhere",
         "WITH k AS (SELECT 1 AS where) SELECT a.id FROM t AS a JOIN k ON k.where = a.id JOIN elsewhere AS e ON TRUE",
@@ -312,6 +317,8 @@ fn a_keyword_used_as_a_name_is_a_name() {
     for sql in [
         "WITH c AS (SELECT 1 AS id OFFSET 0) SELECT c.id FROM c",
         "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id",
+        "SELECT a.id FROM t AS a JOIN u AS b JOIN u AS c USING (id) ON TRUE, u AS d",
+        "SELECT s.rows FROM (SELECT 2 AS rows) AS s, t",
         "WITH k AS (SELECT 1 AS limit) SELECT a.id FROM t AS a JOIN k ON k.limit = a.id",
         "WITH k AS (SELECT 1 AS from, 2 AS n) SELECT k.from, k.n FROM k",
         "WITH k AS (SELECT 1 AS limit), c AS (SELECT k.limit, 2 AS n FROM k) SELECT c.limit, c.n FROM c",

@@ -88,6 +88,8 @@ pub(super) struct FromItem {
     pub(super) alias: Option<String>,
     pub(super) columns: ColumnList,
     pub(super) end: usize,
+    /// The `FROM` keyword of a `ROWS FROM (...)` source.
+    pub(super) rows_from: Option<usize>,
 }
 
 /// The `FROM` item starting at `index`.
@@ -96,6 +98,8 @@ pub(super) fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     if is(tokens, index, "lateral") || is(tokens, index, "only") {
         index += 1;
     }
+    let rows_from =
+        (is(tokens, index, "rows") && is(tokens, index + 1, "from")).then_some(index + 1);
     let source = if punct(tokens, index, '(') {
         let close = closing(tokens, index);
         // A parenthesized FROM item is a subquery or a join, whose operands'
@@ -157,6 +161,7 @@ pub(super) fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
         alias,
         columns,
         end: index,
+        rows_from,
     }
 }
 
@@ -250,34 +255,49 @@ pub(super) fn ends_from_item(tokens: &[Token], index: usize, target: bool) -> bo
     }
 }
 
+/// Where the join condition starting at `index` ends: at a comma, a join, a
+/// clause that ends the FROM list, or a qualification of an enclosing join.
+/// `None` when the enclosing parenthesis closes first.
+fn join_condition_end(tokens: &[Token], mut index: usize) -> Option<usize> {
+    let mut depth = 0_usize;
+    while index < tokens.len() {
+        match tokens[index] {
+            Token::Punct('(' | '[') => depth += 1,
+            Token::Punct(')') if depth == 0 => return None,
+            Token::Punct(')' | ']') => depth = depth.saturating_sub(1),
+            Token::Punct(',') if depth == 0 => break,
+            _ if depth == 0
+                && !is_name(tokens, index)
+                && (is(tokens, index, "join")
+                    || is(tokens, index, "on") && !opens_on_conflict(tokens, index)
+                    || is(tokens, index, "using") && punct(tokens, index + 1, '(')
+                    || JOIN_WORDS
+                        .iter()
+                        .chain(&FROM_ENDS)
+                        .any(|w| is(tokens, index, w))) =>
+            {
+                break;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Some(index)
+}
+
 /// Where the FROM item after the one ending at `index` starts, past its
 /// join condition and the comma or join words, or `None` after the last.
 pub(super) fn next_from_item(tokens: &[Token], mut index: usize) -> Option<usize> {
-    if is(tokens, index, "on") && !opens_on_conflict(tokens, index) {
-        let mut depth = 0_usize;
-        index += 1;
-        while index < tokens.len() {
-            match tokens[index] {
-                Token::Punct('(' | '[') => depth += 1,
-                Token::Punct(')') if depth == 0 => return None,
-                Token::Punct(')' | ']') => depth = depth.saturating_sub(1),
-                Token::Punct(',') if depth == 0 => break,
-                _ if depth == 0
-                    && !is_name(tokens, index)
-                    && (is(tokens, index, "join")
-                        || JOIN_WORDS
-                            .iter()
-                            .chain(&FROM_ENDS)
-                            .any(|w| is(tokens, index, w))) =>
-                {
-                    break;
-                }
-                _ => {}
-            }
-            index += 1;
+    // Nested joins stack their qualifications (`a JOIN b JOIN c USING (id)
+    // ON TRUE`), so each is consumed in turn.
+    loop {
+        if is(tokens, index, "on") && !opens_on_conflict(tokens, index) {
+            index = join_condition_end(tokens, index + 1)?;
+        } else if is(tokens, index, "using") && punct(tokens, index + 1, '(') {
+            index = closing(tokens, index + 1) + 1;
+        } else {
+            break;
         }
-    } else if is(tokens, index, "using") && punct(tokens, index + 1, '(') {
-        index = closing(tokens, index + 1) + 1;
     }
     if punct(tokens, index, ',') {
         return Some(index + 1);

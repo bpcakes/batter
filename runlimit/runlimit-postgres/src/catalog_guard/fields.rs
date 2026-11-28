@@ -315,6 +315,9 @@ struct Declarations<'t> {
     /// whether the list is recursive, which lets any CTE read any other.
     cte_bodies: Vec<(String, usize, usize)>,
     recursive: bool,
+    /// The `FROM` of each `ROWS FROM` a FROM-list walk read as one item, so
+    /// the scan does not take it for a FROM clause of its own.
+    rows_from: BTreeSet<usize>,
     problems: Vec<String>,
 }
 
@@ -363,6 +366,7 @@ fn declarations<'t>(
         ctes: BTreeSet::new(),
         cte_bodies: Vec::new(),
         recursive: false,
+        rows_from: BTreeSet::new(),
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -374,21 +378,12 @@ fn declarations<'t>(
         }
         let previous = word(tokens, index.wrapping_sub(1));
         let lists = match word(tokens, index) {
-            // `ROWS FROM (...)` is a single FROM item, read by `from_item`;
-            // `USING (...)` is a join's column list; `IS DISTINCT FROM` and
-            // `EXTRACT(field FROM ...)` and its kin hold no FROM list.
-            // `ROWS FROM (` only where `rows` itself opens a FROM item; an
-            // output alias named rows does not.
-            Some("from")
-                if previous == Some("rows")
-                    && punct(tokens, index + 1, '(')
-                    && (punct(tokens, index.wrapping_sub(2), ',')
-                        || ["from", "join", "lateral", "using"]
-                            .iter()
-                            .any(|w| is(tokens, index.wrapping_sub(2), w))) =>
-            {
-                continue;
-            }
+            // `ROWS FROM (...)` is a single FROM item, which the walk of its
+            // FROM list already read; a column named rows before a FROM
+            // clause (`SELECT 1, rows FROM ...`) opens no such item.
+            // `IS DISTINCT FROM` and `EXTRACT(field FROM ...)` and its kin
+            // hold no FROM list.
+            Some("from") if declarations.rows_from.contains(&index) => continue,
             Some("from") if is_distinct_from(tokens, index) || in_call_syntax(tokens, index) => {
                 continue;
             }
@@ -429,6 +424,9 @@ fn declarations<'t>(
         let mut item_start = index + 1;
         loop {
             let item = from_item(tokens, item_start);
+            if let Some(from) = item.rows_from {
+                declarations.rows_from.insert(from);
+            }
             // UPDATE and DELETE FROM name a write target, not a FROM source.
             record_from_item(&mut declarations, tokens, &item, !lists);
             match next_from_item(tokens, item.end) {
