@@ -24,7 +24,7 @@ use batter_core::{
     operation::{OperationContext, OperationError},
     registration::RegistrationTarget,
 };
-use runlimit_core::{Check, Denial, Limiter, QuotaMode, RateLimitPolicy, SubjectKey};
+use runlimit_core::{Check, Denial, KeyHasher, Limiter, PolicySubject, QuotaMode, RateLimitPolicy};
 use std::{
     convert::Infallible,
     future::Future,
@@ -33,6 +33,9 @@ use std::{
 };
 
 mod test_client;
+// Compile-fail doctests that a selector cannot replace a deriver's fields.
+#[cfg(doctest)]
+mod derivation_contract;
 
 pub use test_client::TestClient;
 
@@ -193,6 +196,35 @@ pub enum HttpQuotaConfigError {
     },
 }
 
+/// The boundary's key derivation for one of its policies, handed to the
+/// subject selector once per policy and request.
+///
+/// The selector chooses the normalized subject material; only
+/// [`SubjectDeriver::derive`] turns it into a key, with the boundary's
+/// [`KeyHasher`] and exactly this policy. Only the boundary creates a
+/// deriver.
+pub struct SubjectDeriver<'a, Policy> {
+    hasher: &'a KeyHasher,
+    policy: &'a Policy,
+}
+
+impl<'a, Policy: RateLimitPolicy> SubjectDeriver<'a, Policy> {
+    /// The policy this subject is derived for.
+    pub const fn policy(&self) -> &'a Policy {
+        self.policy
+    }
+
+    /// Derives the subject key from normalized `material`, which is read
+    /// here and not retained, so it may borrow from the principal.
+    pub fn derive(self, material: impl AsRef<[u8]>) -> DerivedSubject<'a, Policy> {
+        DerivedSubject(self.hasher.hash_for(self.policy, material))
+    }
+}
+
+/// A subject key the boundary derived for exactly one of its policies; only
+/// [`SubjectDeriver::derive`] creates one.
+pub struct DerivedSubject<'a, Policy: RateLimitPolicy>(PolicySubject<'a, Policy>);
+
 /// Authenticates a principal, derives native subjects, and checks one atomic batch.
 ///
 /// This is not a pre-authentication throttle. The constructor enforces a
@@ -206,6 +238,7 @@ where
 {
     quota: Quota<L>,
     policies: Vec<L::Policy>,
+    hasher: KeyHasher,
     authenticate: A,
     subject: K,
     public_probes: Option<PublicProbes>,
@@ -221,21 +254,37 @@ where
     /// are retained in response extensions as `Arc<E>`.
     /// Authentication and subject-selector signatures are checked here.
     ///
+    /// For each policy, `subject` receives a [`SubjectDeriver`] for that
+    /// policy, chooses the normalized subject material, such as an owner id
+    /// or a peer address, and returns `deriver.derive(material)`. The
+    /// material may borrow from the principal. Only the boundary creates a
+    /// deriver, with its `hasher` and the policy it checks, so a selector
+    /// cannot return an unbound key, an opaque digest or a key derived for
+    /// another policy.
+    ///
+    /// Migration: the selector used to take `&L::Policy` and return a
+    /// `SubjectKey`, usually
+    /// `hasher.hash_for(policy, material).into_unbound_subject_key()`; pass
+    /// that `KeyHasher` as the third argument, take the deriver instead of
+    /// the policy and return `deriver.derive(material)`. Read the policy with
+    /// [`SubjectDeriver::policy`].
+    ///
     /// A wrong authentication input fails at construction:
     ///
     /// ```compile_fail
     /// use batter_runlimit::{ConsumptionError, Quota};
     /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
-    /// use runlimit_core::{Limiter, SubjectKey};
+    /// use runlimit_core::{KeyHasher, Limiter};
     ///
     /// fn wrong_auth<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
     /// where
     ///     L::CheckAllError: ConsumptionError,
     /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
     ///     let _ = HttpQuota::new(
-    ///         quota, policies,
+    ///         quota, policies, hasher,
     ///         |_wrong: u8| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |_principal: &&'static str, _peer: DirectPeer, _policy: &L::Policy| -> SubjectKey { todo!() },
+    ///         |principal: &&'static str, _peer: DirectPeer, subject| subject.derive(*principal),
     ///     );
     /// }
     /// ```
@@ -245,22 +294,104 @@ where
     /// ```compile_fail
     /// use batter_runlimit::{ConsumptionError, Quota};
     /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
-    /// use runlimit_core::{Limiter, SubjectKey};
+    /// use runlimit_core::{KeyHasher, Limiter};
     ///
     /// fn wrong_selector<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
     /// where
     ///     L::CheckAllError: ConsumptionError,
     /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
     ///     let _ = HttpQuota::new(
-    ///         quota, policies,
+    ///         quota, policies, hasher,
     ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
-    ///         |_wrong: &u64, _peer: DirectPeer, _policy: &L::Policy| -> SubjectKey { todo!() },
+    ///         |_wrong: &u64, _peer: DirectPeer, subject| subject.derive("owner"),
     ///     );
     /// }
     /// ```
+    /// A selector that returns a key instead of a derived subject fails at
+    /// construction, so an opaque digest or a key derived for another policy
+    /// cannot reach the boundary:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter_runlimit::{ConsumptionError, Quota};
+    /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
+    /// use runlimit_core::{KeyHasher, Limiter, SubjectKey};
+    ///
+    /// fn returns_a_key<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
+    /// where
+    ///     L::CheckAllError: ConsumptionError,
+    /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    ///     let _ = HttpQuota::new(
+    ///         quota, policies, hasher,
+    ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
+    ///         |_principal: &&'static str, _peer: DirectPeer, _subject| {
+    ///             SubjectKey::from_digest([1; 32])
+    ///         },
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// A native subject derived with another hasher for another policy fails
+    /// on its type, even when that policy outlives the boundary:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter_runlimit::{ConsumptionError, Quota};
+    /// use batter_runlimit::http::{AuthInput, DirectPeer, HttpQuota};
+    /// use runlimit_core::{KeyHasher, Limiter};
+    ///
+    /// fn returns_a_foreign_subject<L: Limiter + 'static>(
+    ///     quota: Quota<L>,
+    ///     policies: Vec<L::Policy>,
+    ///     other_policy: &'static L::Policy,
+    /// ) where
+    ///     L::CheckAllError: ConsumptionError,
+    /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    ///     let other_hasher = KeyHasher::new([8; 32]).unwrap(); // Deterministic test secret only.
+    ///     let _ = HttpQuota::new(
+    ///         quota, policies, hasher,
+    ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
+    ///         move |principal: &&'static str, _peer: DirectPeer, _subject| {
+    ///             other_hasher.hash_for(other_policy, *principal)
+    ///         },
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// Nor can a selector wrap that foreign subject itself: only the boundary's
+    /// deriver constructs a [`DerivedSubject`]:
+    ///
+    /// ```compile_fail,E0423
+    /// use batter_runlimit::{ConsumptionError, Quota};
+    /// use batter_runlimit::http::{AuthInput, DerivedSubject, DirectPeer, HttpQuota};
+    /// use runlimit_core::{KeyHasher, Limiter};
+    ///
+    /// fn wraps_a_foreign_subject<L: Limiter + 'static>(
+    ///     quota: Quota<L>,
+    ///     policies: Vec<L::Policy>,
+    ///     other_policy: &'static L::Policy,
+    /// ) where
+    ///     L::CheckAllError: ConsumptionError,
+    /// {
+    ///     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
+    ///     let other_hasher = KeyHasher::new([8; 32]).unwrap(); // Deterministic test secret only.
+    ///     let _ = HttpQuota::new(
+    ///         quota, policies, hasher,
+    ///         |_input: AuthInput| async { Ok::<&'static str, std::io::Error>("owner") },
+    ///         move |principal: &&'static str, _peer: DirectPeer, _subject| {
+    ///             DerivedSubject(other_hasher.hash_for(other_policy, *principal))
+    ///         },
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// Nor can a selector replace the deriver's policy or hasher before
+    /// deriving; `http/derivation_contract.rs` shows both fields are private.
     pub fn new<P, AE, AF>(
         quota: Quota<L>,
         policies: Vec<L::Policy>,
+        hasher: KeyHasher,
         authenticate: A,
         subject: K,
     ) -> Result<Self, HttpQuotaConfigError>
@@ -269,7 +400,14 @@ where
         AE: std::error::Error + Send + Sync + 'static,
         A: Fn(AuthInput) -> AF + Send + Sync + 'static,
         AF: Future<Output = Result<P, AE>> + Send + 'static,
-        K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+        K: for<'a> Fn(
+                &P,
+                DirectPeer,
+                SubjectDeriver<'a, L::Policy>,
+            ) -> DerivedSubject<'a, L::Policy>
+            + Send
+            + Sync
+            + 'static,
     {
         let Some(first) = policies.first() else {
             return Err(HttpQuotaConfigError::EmptyPolicies);
@@ -288,6 +426,7 @@ where
         Ok(Self {
             quota,
             policies,
+            hasher,
             authenticate,
             subject,
             public_probes: None,
@@ -327,13 +466,25 @@ where
     /// router merge to panic here, before the service can be registered.
     /// Use distinct paths for public and protected GET handlers.
     /// Response-body streaming is outside the operation and observation lifetime.
+    ///
+    /// Migration: a generic helper that bounded the selector as
+    /// `K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey` before calling
+    /// `prepare` now bounds it as
+    /// `K: for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) -> DerivedSubject<'a, L::Policy>`.
     pub fn prepare<P, AE, AF>(mut self, policy: RequestPolicy, routes: Router) -> PreparedHttp
     where
         P: Clone + Send + Sync + 'static,
         AE: std::error::Error + Send + Sync + 'static,
         A: Fn(AuthInput) -> AF + Send + Sync + 'static,
         AF: Future<Output = Result<P, AE>> + Send + 'static,
-        K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+        K: for<'a> Fn(
+                &P,
+                DirectPeer,
+                SubjectDeriver<'a, L::Policy>,
+            ) -> DerivedSubject<'a, L::Policy>
+            + Send
+            + Sync
+            + 'static,
     {
         let probes = self
             .public_probes
@@ -454,7 +605,10 @@ where
     AE: std::error::Error + Send + Sync + 'static,
     A: Fn(AuthInput) -> AF + Send + Sync + 'static,
     AF: Future<Output = Result<P, AE>> + Send,
-    K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+    K: for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) -> DerivedSubject<'a, L::Policy>
+        + Send
+        + Sync
+        + 'static,
 {
     // Never accept an already-installed principal as authentication evidence.
     request.extensions_mut().remove::<Authenticated<P>>();
@@ -493,7 +647,13 @@ where
     let checks = boundary
         .policies
         .iter()
-        .map(|policy| Check::new((boundary.subject)(&principal, peer, policy).bind(policy)))
+        .map(|policy| {
+            let deriver = SubjectDeriver {
+                hasher: &boundary.hasher,
+                policy,
+            };
+            Check::new((boundary.subject)(&principal, peer, deriver).0)
+        })
         .collect::<Vec<_>>();
     request.extensions_mut().insert(Authenticated(principal));
     match boundary

@@ -58,6 +58,10 @@ bounds them. The internal HTTP seam keeps its direct work path.
 An admitted quota does not establish factory invocation or application success.
 Take the observation writer before calling application authentication/handlers;
 forwarded headers and prior principal extensions are not subject authority.
+`HttpQuota` owns subject-key derivation: the selector receives a
+`SubjectDeriver` for the policy it checks and returns only the
+`DerivedSubject` that deriver makes, so never accept a `SubjectKey` from
+application code on this path.
 Protected routes are the default; public probes require `with_public_probes`
 and a `PublicProbes` builder of literal GET paths. Reject capture and
 catch-all patterns at registration before Axum can match protected paths. Guard the complete protected

@@ -8,6 +8,63 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- **Breaking:** `batter::runlimit::http::HttpQuota::new` takes the
+  `KeyHasher` as its third argument, and the subject selector receives a
+  `SubjectDeriver` for the policy it checks instead of `&L::Policy` and
+  returns the `DerivedSubject` that `deriver.derive(material)` makes instead
+  of a `SubjectKey` (`batter-39wm.8`). Only the boundary creates a deriver,
+  with its hasher and that policy, so a protected route can no longer check
+  an unbound key, an opaque `SubjectKey::from_digest` value or a key derived
+  for another policy, which the old signature accepted and rebound. Every
+  caller previously reached the native escape hatch
+  `into_unbound_subject_key` here. The material may borrow from the
+  principal; `deriver.policy()` reads the policy.
+
+  ```rust
+  // Before:
+  HttpQuota::new(quota, policies, authenticate, move |principal, _peer, policy| {
+      hasher.hash_for(policy, principal.id()).into_unbound_subject_key()
+  })?;
+  // After:
+  HttpQuota::new(quota, policies, hasher, authenticate, |principal, _peer, subject| {
+      subject.derive(principal.id())
+  })?;
+  ```
+
+  A generic helper that calls `prepare` on a built `HttpQuota` names the new
+  higher-ranked selector bound:
+
+  ```rust
+  // Before:
+  K: Fn(&P, DirectPeer, &L::Policy) -> SubjectKey + Send + Sync + 'static,
+  // After:
+  K: for<'a> Fn(&P, DirectPeer, SubjectDeriver<'a, L::Policy>) -> DerivedSubject<'a, L::Policy>
+      + Send
+      + Sync
+      + 'static,
+  ```
+
+  Stored counters: a selector that returned
+  `hasher.hash_for(policy, material).into_unbound_subject_key()` and now
+  returns `deriver.derive(material)`, with the same secret and normalized
+  input, derives the same keys, so existing counters carry over. A selector
+  that returned some other `SubjectKey`, such as
+  `SubjectKey::from_digest(bytes)`, gets a new key once its bytes are
+  hashed, and its counters restart. A counter is named by its policy
+  fingerprint and subject key, not by its route, so with PostgreSQL storage
+  the old and new keys are separate counters wherever both are charged:
+  replicas on the old and new code during a rolling deploy, and any other
+  route or native client that charges the same policy and subject with the old
+  key. Where a subject must not regain its allowance at the cutover, stop
+  every writer that charges the affected counters, wait from the last possible
+  charge until their fixed windows expire or their GCRA buckets fully refill,
+  and resume all of them with the new derivation.
+
+  The `quota_service` example now awaits the supervisor's shutdown before
+  returning any body error, as `process_owned` does, through the shared
+  `examples/support.rs` `complete`, and imports native types through
+  `batter::runlimit::{native, memory}` only.
+
 - **Breaking:** require a validated `PgSessionTimeouts` in
   `PgSessionProfile::new` and remove `PgSessionProfile::with_timeouts`
   (`batter-ndpi`;

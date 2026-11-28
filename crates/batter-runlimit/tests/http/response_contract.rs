@@ -34,6 +34,7 @@ async fn nested_check_process_cancellation_uses_admission_renderer_and_original_
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
+        hasher,
         move |_input: AuthInput| {
             let control = control.clone();
             async move {
@@ -41,11 +42,7 @@ async fn nested_check_process_cancellation_uses_admission_renderer_and_original_
                 std::future::pending::<Result<Principal, AuthError>>().await
             }
         },
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 1000), routes())
@@ -68,12 +65,9 @@ async fn process_cancellation_after_native_grant_keeps_consumption_and_uses_admi
     let client = HttpQuota::new(
         Quota::new(Backend::new(Mode::RequestDrainThenAllow(control))),
         vec![policy("owner", 1)],
+        hasher,
         |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(
@@ -103,15 +97,12 @@ async fn deadline_during_authentication_uses_admission_renderer() {
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
+        hasher,
         |_input: AuthInput| async move {
             tokio::time::advance(Duration::from_millis(11)).await;
             Ok::<_, AuthError>(Principal("owner-a"))
         },
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 10), routes())
@@ -141,12 +132,9 @@ async fn public_probe_cannot_claim_quota_writer() {
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
+        hasher,
         |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .with_public_probes(probe)
@@ -176,12 +164,9 @@ async fn empty_public_probe_set_prepares_without_public_handlers() {
         let client = HttpQuota::new(
             Quota::new(memory()),
             vec![policy("owner", 1)],
+            hasher,
             |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-            move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-                hasher
-                    .hash_for(policy, principal.0)
-                    .into_unbound_subject_key()
-            },
+            |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
         )
         .unwrap()
         .with_public_probes(probes)
@@ -368,17 +353,14 @@ async fn protected_root_fallback_survives_declared_public_probe() {
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
+        hasher,
         |input: AuthInput| async move {
             match input.headers.get(header::AUTHORIZATION) {
                 Some(value) if value == "Bearer secret-a" => Ok(Principal("owner-a")),
                 _ => Err(AuthError),
             }
         },
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .with_public_probes(probes)
@@ -470,12 +452,9 @@ async fn timeout_renderer_cannot_publish_quota_during_authentication() {
     let client = HttpQuota::new(
         Quota::new(backend.clone()),
         vec![policy("owner", 1)],
+        hasher,
         |_input: AuthInput| std::future::pending::<Result<Principal, AuthError>>(),
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(http_policy, routes())
@@ -679,17 +658,14 @@ async fn protected_root_fallback_without_probes_keeps_all_request_gates() {
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
+        hasher,
         |input: AuthInput| async move {
             match input.headers.get(header::AUTHORIZATION) {
                 Some(value) if value == "Bearer secret-a" => Ok(Principal("owner-a")),
                 _ => Err(AuthError),
             }
         },
-        move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher
-                .hash_for(policy, principal.0)
-                .into_unbound_subject_key()
-        },
+        |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
     )
     .unwrap()
     .prepare(request_policy(&running, 1000), business)

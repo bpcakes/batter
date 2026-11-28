@@ -57,12 +57,9 @@ fn http_policy_modes_are_validated_at_construction() {
         HttpQuota::new(
             Quota::new(memory()),
             policies,
+            hasher,
             |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
-            move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-                hasher
-                    .hash_for(policy, principal.0)
-                    .into_unbound_subject_key()
-            },
+            |principal: &Principal, _peer: DirectPeer, subject| subject.derive(principal.0),
         )
     };
 

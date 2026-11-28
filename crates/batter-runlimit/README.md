@@ -39,36 +39,40 @@ erases native admission, and its completion uses the erased SQLx runner.
 `tests/future_size.rs` bounds these futures, and a composition of quota, pooled
 query and atomic workflow, at 4 KiB in both profiles.
 
-`HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy, routes)`
-guards every supplied route. It rejects empty and mixed-mode policy sets at
-construction. Call `.with_public_probes(PublicProbes::new().get("/live", handler)?)`
-before `prepare` to deliberately add a public GET/HEAD probe. Probes bypass
-lifecycle/deadline admission, authentication and quota, and receive no protected
-`OperationContext` from the assembly; an in-process request built from a map
-captured behind `request_admission` alone still carries the earlier request's
-context into them (`batter-nff2.1`; tested in `batter-axum`, not through
-Runlimit). The builder accepts only literal GET paths and
-returns a typed error for capture or wildcard patterns. It cannot accept an
-arbitrary Router or fallback. A public and protected GET at the same path
-panic during `prepare`, before serving. Use distinct GET paths.
-Handler principals arrive through the
-`Authenticated<P>` extractor, not `Extension<P>`; its value cannot be constructed
-outside the adapter. The admitted request's context and generated correlation
-arrive through `batter_axum::AdmittedRequest` in the same way. Authentication receives no request body, and subject
-selection uses its result and the actual peer, not forwarded headers. Closure
-signatures are checked at `new`. Prepared serving installs peer metadata and one
-retained HTTP observer; the alternative test transport requires an explicit
-synthetic peer. That transport dispatches through
-`batter_axum::low_level::RouterClient`, as the Axum adapter's `InProcessClient`
-does, so it accepts only arrival-shaped requests: a request built from a whole
-extension map cloned inside an earlier dispatch is refused at entry, before
-admission, authentication or the quota check, with the `InProcessRefusal`
-response marker. Copy application extensions into a fresh request by type
-instead. The check also detects the adapter's own private request records, so
-a map that keeps them after the caller strips its only Axum record is refused
-before authentication and the quota check as well. See the
-[facade compiling example](../batter/examples/quota_service.rs), [API docs](src/http.rs) and
-[integration contract](../../docs/integrations.md#runlimit-optional-protected-native-quota-adapter).
+`HttpQuota::new(quota, policies, hasher, authenticate, subject)?.prepare(policy,
+routes)` guards every supplied route. For each policy the subject selector
+receives a `SubjectDeriver` and returns `deriver.derive(material)` for
+normalized material that may borrow from the principal; only the boundary
+creates a deriver, with its hasher and that policy, so a protected route never
+checks an unbound or foreign-policy key. It rejects empty and mixed-mode policy
+sets at construction. Call `.with_public_probes(PublicProbes::new().get("/live",
+handler)?)` before `prepare` to deliberately add a public GET/HEAD probe. Probes
+bypass lifecycle/deadline admission, authentication and quota, and receive no
+protected `OperationContext` from the assembly; an in-process request built from
+a map captured behind `request_admission` alone still carries the earlier
+request's context into them (`batter-nff2.1`; tested in `batter-axum`, not
+through Runlimit). The builder accepts only literal GET paths and returns a
+typed error for capture or wildcard patterns. It cannot accept an arbitrary
+Router or fallback. A public and protected GET at the same path panic during
+`prepare`, before serving. Use distinct GET paths. Handler principals arrive
+through the `Authenticated<P>` extractor, not `Extension<P>`; its value cannot
+be constructed outside the adapter. The admitted request's context and generated
+correlation arrive through `batter_axum::AdmittedRequest` in the same way.
+Authentication receives no request body, and subject selection uses its result
+and the actual peer, not forwarded headers. Closure signatures are checked at
+`new`. Prepared serving installs peer metadata and one retained HTTP observer;
+the alternative test transport requires an explicit synthetic peer. That
+transport dispatches through `batter_axum::low_level::RouterClient`, as the Axum
+adapter's `InProcessClient` does, so it accepts only arrival-shaped requests: a
+request built from a whole extension map cloned inside an earlier dispatch is
+refused at entry, before admission, authentication or the quota check, with the
+`InProcessRefusal` response marker. Copy application extensions into a fresh
+request by type instead. The check also detects the adapter's own private
+request records, so a map that keeps them after the caller strips its only Axum
+record is refused before authentication and the quota check as well. See the
+[facade compiling example](../batter/examples/quota_service.rs), [API
+docs](src/http.rs) and [integration
+contract](../../docs/integrations.md#runlimit-optional-protected-native-quota-adapter).
 
 ## Maintained PostgreSQL storage
 

@@ -959,35 +959,40 @@ they start. A PostgreSQL limiter's acquisition and adapters nested in the work
 therefore stay out of the caller's future size, layout and `Send` proof. The work
 future must be `Send`; the internal HTTP boundary keeps its own direct path.
 
-`HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy,
-protected_routes)` rejects an empty policy set or mixed enforced/shadow modes
-at construction, then owns lifecycle/deadline -> async authentication -> native
-atomic batch -> body/handler ordering. Subject-dependent native batch validation
-stays with Runlimit. Every route passed to `prepare` is guarded. To expose a
-public probe, call `.with_public_probes(PublicProbes::new().get("/live", handler)?)`
-before `prepare`; the default has no unguarded handlers. A public GET probe
-that shares a path with a protected GET route makes `prepare` panic during
-Axum route assembly, before serving starts. Declare distinct GET paths. The supplied protected
-`Router` is treated as a complete service: its custom root fallback, nested
-fallbacks and method fallback pass the same admission, authentication and quota
-gates as ordinary routes. An explicitly supplied protected root fallback is
-retained; without one, unmatched paths receive the default unguarded 404. The
+`HttpQuota::new(quota, policies, hasher, authenticate, subject)?.prepare(policy,
+protected_routes)` derives each policy's key itself: the selector receives a
+`SubjectDeriver` for that policy and returns `deriver.derive(material)`, rejects
+an empty policy set or mixed enforced/shadow modes at construction, then owns
+lifecycle/deadline -> async authentication -> native atomic batch ->
+body/handler ordering. Subject-dependent native batch validation stays with
+Runlimit. Every route passed to `prepare` is guarded. To expose a public probe,
+call `.with_public_probes(PublicProbes::new().get("/live", handler)?)` before
+`prepare`; the default has no unguarded handlers. A public GET probe that shares
+a path with a protected GET route makes `prepare` panic during Axum route
+assembly, before serving starts. Declare distinct GET paths. The supplied
+protected `Router` is treated as a complete service: its custom root fallback,
+nested fallbacks and method fallback pass the same admission, authentication and
+quota gates as ordinary routes. An explicitly supplied protected root fallback
+is retained; without one, unmatched paths receive the default unguarded 404. The
 public builder accepts only literal GET paths (with Axum's implicit HEAD) and
 returns a typed error for capture or wildcard patterns. It cannot accept a
-Router or fallback. Unsupported methods on a declared probe path get
-Axum's default 405 without an application fallback. Public probes bypass
-lifecycle/deadline admission, authentication and quota; they receive no protected
-`OperationContext`, but retain root observation and correlation. Unavailable
-lifecycle admission therefore precedes a 401 only on protected paths. The auth
-factory gets owned headers, direct transport peer and the request
-context, not a body or untrusted principal extension. The subject selector gets
-only the authenticated principal, direct peer and native policy. It must return
-native opaque keys; closure signatures are checked at `new`. Handlers extract
-`Authenticated<P>`, whose constructor is private; raw `Extension<P>` is never
-authentication evidence and can be overwritten by unrelated middleware. No
-forwarded-header/proxy trust is inferred. Behind a proxy,
-the direct peer is the proxy. Authorization remains application policy;
-pre-authentication attempts use the separate `AttemptRunner` described below.
+Router or fallback. Unsupported methods on a declared probe path get Axum's
+default 405 without an application fallback. Public probes bypass
+lifecycle/deadline admission, authentication and quota; they receive no
+protected `OperationContext`, but retain root observation and correlation.
+Unavailable lifecycle admission therefore precedes a 401 only on protected
+paths. The auth factory gets owned headers, direct transport peer and the
+request context, not a body or untrusted principal extension. The subject
+selector gets only the authenticated principal, direct peer and native policy.
+It gets a `SubjectDeriver` for the policy, reads the policy from it, and returns
+`deriver.derive(material)` for normalized subject material, never a key: only
+`HttpQuota` creates a deriver, with the `KeyHasher` passed to `new`. Closure
+signatures are checked at `new`. Handlers extract `Authenticated<P>`, whose
+constructor is private; raw `Extension<P>` is never authentication evidence and
+can be overwritten by unrelated middleware. No forwarded-header/proxy trust is
+inferred. Behind a proxy, the direct peer is the proxy. Authorization remains
+application policy; pre-authentication attempts use the separate `AttemptRunner`
+described below.
 
 One batch is intentional: stacked native single-check HTTP layers can charge an
 earlier quota before a later denial. This adapter reuses native atomic checking,

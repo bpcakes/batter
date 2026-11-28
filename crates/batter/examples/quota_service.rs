@@ -1,4 +1,6 @@
 //! Actual compiled public usage, without the test helpers or a reference service.
+mod support;
+
 use axum::{
     Router,
     body::Body,
@@ -8,16 +10,13 @@ use axum::{
 use batter::axum::{RequestPolicy, ResponseConstructionBudget};
 use batter::runlimit::{
     http::{AuthInput, Authenticated, HttpQuota, PublicProbes},
+    memory::{MemoryStore, MemoryStoreConfig},
+    native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId},
     quota::{Admission, Checks, Quota, RunResult},
 };
-use batter::{
-    BoxError,
-    cleanup::CleanupBudget,
-    lifecycle::{ShutdownBudget, Supervisor},
-};
-use runlimit_core::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
-use runlimit_memory::{MemoryStore, MemoryStoreConfig};
+use batter::{BoxError, lifecycle::Supervisor};
 use std::{convert::Infallible, net::SocketAddr, time::Duration};
+use support::complete;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), BoxError> {
@@ -33,77 +32,78 @@ async fn main() -> Result<(), BoxError> {
     let quota = Quota::new(MemoryStore::new(MemoryStoreConfig::new(100)?));
     demonstrate_native_admission(&quota, &policy, &hasher).await?;
 
-    let second = Duration::from_secs(1);
-    let cleanup = CleanupBudget::new(second, second, second)?;
-    let mut supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    let mut supervisor = Supervisor::new(support::shutdown_budget());
     supervisor.register("component", |startup| async move {
         let running = startup.acknowledge_started();
         running.draining().await;
         Ok(running.stopped())
     })?;
     let running = supervisor.start();
-    running
-        .status()
-        .wait_ready()
-        .await
-        .map_err(|_| std::io::Error::other("startup failed"))?;
-    let response_budget = ResponseConstructionBudget::new(second)?;
-    let request_policy = RequestPolicy::new(running.operation_admission(), response_budget);
-    // Authentication returns the principal; selection never reads an untrusted extension.
-    let boundary = HttpQuota::new(
-        quota,
-        vec![policy],
-        |input: AuthInput| async move {
-            if input
-                .headers
-                .get("authorization")
-                .is_some_and(|value| value == "Bearer demonstration")
-            {
-                Ok("owner-b")
-            } else {
-                Err(std::io::Error::other("authentication failed"))
-            }
-        },
-        move |principal, _peer, policy| {
-            hasher
-                .hash_for(policy, principal)
-                .into_unbound_subject_key()
-        },
-    )?;
-    let probes = PublicProbes::new().get("/live", || async { "live" })?;
-    let prepared = boundary.with_public_probes(probes).prepare(
-        request_policy,
-        Router::new().route(
-            "/work",
-            post(|principal: Authenticated<&'static str>| async move {
-                (*principal.principal()).to_owned()
-            }),
-        ),
-    );
-    // Production uses prepared.register_in(scope, listener). This finite demo uses its explicit test transport.
-    let client = prepared.in_process();
-    let peer: SocketAddr = "127.0.0.1:32100".parse()?;
-    let probe = Request::builder().uri("/live").body(Body::empty())?;
-    assert_eq!(
-        client.request(probe, peer).await.status(),
-        StatusCode::OK,
-        "public probes bypass authentication and quota"
-    );
+    // Keep the body's failures inside this block as errors, never panics, so
+    // they cannot leave main before the supervisor has shut down; both
+    // outcomes reach `complete`, and the result is reported afterwards.
     let mut statuses = Vec::new();
-    for _ in 0..2 {
-        let request = Request::builder()
-            .method("POST")
-            .uri("/work")
-            .header("authorization", "Bearer demonstration")
-            .body(Body::empty())?;
-        statuses.push(client.request(request, peer).await.status().as_u16());
+    let served = async {
+        running
+            .status()
+            .wait_ready()
+            .await
+            .map_err(|_| std::io::Error::other("startup failed"))?;
+        let response_budget = ResponseConstructionBudget::new(Duration::from_secs(1))?;
+        let request_policy = RequestPolicy::new(running.operation_admission(), response_budget);
+        // Authentication returns the principal; the selector names its subject
+        // material and the boundary's deriver turns it into each policy's key.
+        let boundary = HttpQuota::new(
+            quota,
+            vec![policy],
+            hasher,
+            |input: AuthInput| async move {
+                if input
+                    .headers
+                    .get("authorization")
+                    .is_some_and(|value| value == "Bearer demonstration")
+                {
+                    Ok("owner-b")
+                } else {
+                    Err(std::io::Error::other("authentication failed"))
+                }
+            },
+            |principal: &&'static str, _peer, subject| subject.derive(*principal),
+        )?;
+        let probes = PublicProbes::new().get("/live", || async { "live" })?;
+        let prepared = boundary.with_public_probes(probes).prepare(
+            request_policy,
+            Router::new().route(
+                "/work",
+                post(|principal: Authenticated<&'static str>| async move {
+                    (*principal.principal()).to_owned()
+                }),
+            ),
+        );
+        // Production uses prepared.register_in(scope, listener). This finite demo uses its explicit test transport.
+        let client = prepared.in_process();
+        let peer: SocketAddr = "127.0.0.1:32100".parse()?;
+        let probe = Request::builder().uri("/live").body(Body::empty())?;
+        if client.request(probe, peer).await.status() != StatusCode::OK {
+            return Err("public probes bypass authentication and quota".into());
+        }
+        for _ in 0..2 {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/work")
+                .header("authorization", "Bearer demonstration")
+                .body(Body::empty())?;
+            statuses.push(client.request(request, peer).await.status().as_u16());
+        }
+        if statuses != [200, 429] {
+            return Err(
+                "the one-request window admits the first call and denies the second".into(),
+            );
+        }
+        Ok::<_, BoxError>(())
     }
-    assert_eq!(
-        statuses,
-        [200, 429],
-        "the one-request window admits the first call and denies the second"
-    );
-    running.shutdown_checked().await?;
+    .await;
+    complete(served, running.shutdown_checked().await)?;
     println!("protected HTTP status sequence: {statuses:?}");
     Ok(())
 }

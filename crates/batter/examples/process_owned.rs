@@ -5,55 +5,15 @@ mod support;
 use batter::{
     BoxError,
     admission::{Admission, Bulkhead, BulkheadCapacity},
-    lifecycle::{Fatal, ProcessCapacity, ShutdownFailure, ShutdownSuccess, Supervisor},
+    lifecycle::{Fatal, ProcessCapacity, Supervisor},
 };
 use std::{convert::Infallible, time::Duration};
+use support::complete;
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
 enum Denial {
     Quota,
-}
-
-/// Both independent failures remain available for a trusted application sink.
-struct CompletionFailure {
-    body: Option<BoxError>,
-    shutdown: Option<ShutdownFailure>,
-}
-
-impl std::fmt::Display for CompletionFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("example operation or shutdown failed")
-    }
-}
-
-impl std::fmt::Debug for CompletionFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
-    }
-}
-
-impl std::error::Error for CompletionFailure {}
-
-fn complete(
-    body: Result<(), BoxError>,
-    shutdown: Result<ShutdownSuccess, ShutdownFailure>,
-) -> Result<ShutdownSuccess, BoxError> {
-    match (body, shutdown) {
-        (Ok(()), Ok(success)) => Ok(success),
-        (body, shutdown) => {
-            let failure = CompletionFailure {
-                body: body.err(),
-                shutdown: shutdown.err(),
-            };
-            tracing::warn!(
-                body_failed = failure.body.is_some(),
-                shutdown_failed = failure.shutdown.is_some(),
-                "example did not complete successfully"
-            );
-            Err(Box::new(failure))
-        }
-    }
 }
 
 #[tokio::main]
@@ -137,7 +97,8 @@ async fn main() -> Result<(), BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use batter::cleanup::CleanupOutcome;
+    use batter::{cleanup::CleanupOutcome, lifecycle::ShutdownFailure};
+    use support::CompletionFailure;
 
     #[tokio::test]
     async fn operation_and_shutdown_failures_remain_independently_inspectable() {
@@ -158,17 +119,14 @@ mod tests {
         let body = Err(std::io::Error::other("body-marker").into());
         let error = complete(body, shutdown).unwrap_err();
         let combined = error.downcast_ref::<CompletionFailure>().unwrap();
+        let CompletionFailure::Both { body, shutdown } = combined else {
+            panic!("both failures must be retained")
+        };
         assert_eq!(
-            combined
-                .body
-                .as_ref()
-                .unwrap()
-                .downcast_ref::<std::io::Error>()
-                .unwrap()
-                .to_string(),
+            body.downcast_ref::<std::io::Error>().unwrap().to_string(),
             "body-marker"
         );
-        let Some(ShutdownFailure::Report(report)) = &combined.shutdown else {
+        let ShutdownFailure::Report(report) = shutdown else {
             panic!("failed shutdown must retain its report")
         };
         assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);
