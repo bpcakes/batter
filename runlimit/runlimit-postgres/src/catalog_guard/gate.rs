@@ -586,6 +586,121 @@ fn every_build_compiles_the_same_statements() {
     }
 }
 
+/// The configuration predicates of each `cfg(...)`, `cfg!(...)` and
+/// `cfg_attr(...)` in normalized `code`.
+fn configuration_predicates(code: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (at, _) in code.match_indices("cfg") {
+        if code[..at].chars().next_back().is_some_and(is_identifier) {
+            continue;
+        }
+        let rest = &code[at + "cfg".len()..];
+        let (attribute, arguments) = if let Some(arguments) = rest.strip_prefix("_attr(") {
+            (true, arguments)
+        } else if let Some(arguments) = rest.strip_prefix("!(").or_else(|| rest.strip_prefix('(')) {
+            (false, arguments)
+        } else {
+            continue;
+        };
+        let mut depth = 1_usize;
+        let end = arguments
+            .char_indices()
+            .find(|&(_, character)| match character {
+                '(' => {
+                    depth += 1;
+                    false
+                }
+                ')' => {
+                    depth -= 1;
+                    depth == 0
+                }
+                ',' => attribute && depth == 1,
+                _ => false,
+            })
+            .map_or(arguments.len(), |(index, _)| index);
+        found.push(arguments[..end].to_owned());
+    }
+    found
+}
+
+/// The top-level comma-separated parts of a normalized predicate list.
+fn predicate_parts(list: &str) -> Vec<&str> {
+    let mut depth = 0_usize;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for (index, character) in list.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&list[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&list[start..]);
+    parts
+}
+
+/// Whether the Clippy runs set normalized `predicate` both ways: `test`
+/// through `--all-targets`, the crate's one optional feature through the
+/// default and all-features runs, and the macro probes' own configuration,
+/// joined by `not`, `all` and `any`. A release-only, platform-only or other
+/// branch would compile code no run lints.
+fn linted(predicate: &str) -> bool {
+    if ["test", "runlimit_macro_probes"].contains(&predicate)
+        || predicate == normalize("feature = \"serde\"")
+    {
+        return true;
+    }
+    ["not(", "all(", "any("].iter().any(|combinator| {
+        predicate
+            .strip_prefix(combinator)
+            .and_then(|inner| inner.strip_suffix(')'))
+            .is_some_and(|inner| predicate_parts(inner).into_iter().all(linted))
+    })
+}
+
+// The SQL entry-point gate is a lint, so it holds only for code a Clippy run
+// compiles: the crate compiles conditionally only on what those runs set.
+#[test]
+fn clippy_lints_every_configuration_the_crate_compiles() {
+    let source = manifest_directory().join("src");
+    let mut problems = Vec::new();
+    for (file, path) in rust_files(&source) {
+        let code = normalize(&fs::read_to_string(&path).expect("source is readable"));
+        for predicate in configuration_predicates(&code) {
+            if !linted(&predicate) {
+                problems.push(format!(
+                    "{file}: compiles on `{predicate}`, which no Clippy run sets"
+                ));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+    let code = normalize(
+        "#[cfg(not(debug_assertions))] fn a() {} #[cfg_attr(test, expect(x))] fn b() {}
+         const C: bool = cfg!(all(test, feature = \"serde\")); fn my_cfg() {}",
+    );
+    let predicates = configuration_predicates(&code);
+    assert_eq!(
+        predicates
+            .iter()
+            .map(|predicate| linted(predicate))
+            .collect::<Vec<_>>(),
+        [false, true, true],
+        "{predicates:?}"
+    );
+    for unlinted in [
+        "unix",
+        "target_os = \"macos\"",
+        "any(test, panic = \"abort\")",
+    ] {
+        assert!(!linted(&normalize(unlinted)), "{unlinted}");
+    }
+}
+
 #[test]
 fn the_suppression_scan_reads_each_lint_list() {
     let code = normalize(

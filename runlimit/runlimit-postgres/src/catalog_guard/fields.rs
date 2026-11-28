@@ -37,8 +37,8 @@ mod keywords;
 
 use blocks::Blocks;
 use from_items::{
-    ColumnList, FromItem, ItemSource, column_list, ends_from_item, from_item, in_call_syntax,
-    is_distinct_from, next_from_item, opens_query, using_columns,
+    Alias, ColumnList, FromItem, ItemSource, column_list, ends_from_item, from_item,
+    in_call_syntax, is_distinct_from, next_from_item, opens_query, using_columns,
 };
 use keywords::{is_name, is_with_modifier, opens_command, opens_on_conflict, unread_forms};
 
@@ -51,8 +51,15 @@ enum Token {
 
 /// Comment- and string-stripped, lowercased SQL as tokens.
 fn tokenize(sql: &str) -> Vec<Token> {
+    tokenize_at(sql).0
+}
+
+/// [`tokenize`]'s tokens, each with the byte offset where it starts in the
+/// stripped text, which the detector reads too.
+fn tokenize_at(sql: &str) -> (Vec<Token>, Vec<usize>) {
     let code = strip_comments_and_quotes(sql).to_ascii_lowercase();
     let mut tokens = Vec::new();
+    let mut offsets = Vec::new();
     let mut chars = code.char_indices().peekable();
     while let Some((start, character)) = chars.next() {
         if character.is_ascii_alphabetic() || character == '_' {
@@ -64,6 +71,7 @@ fn tokenize(sql: &str) -> Vec<Token> {
                 end = at + next.len_utf8();
                 chars.next();
             }
+            offsets.push(start);
             tokens.push(Token::Word(code[start..end].to_owned()));
         } else if character.is_ascii_digit() || character == '$' {
             while chars
@@ -72,14 +80,17 @@ fn tokenize(sql: &str) -> Vec<Token> {
             {
                 chars.next();
             }
+            offsets.push(start);
             tokens.push(Token::Other);
         } else if "(),.;*:[]".contains(character) {
+            offsets.push(start);
             tokens.push(Token::Punct(character));
         } else if !character.is_whitespace() {
+            offsets.push(start);
             tokens.push(Token::Other);
         }
     }
-    tokens
+    (tokens, offsets)
 }
 
 fn word(tokens: &[Token], index: usize) -> Option<&str> {
@@ -262,6 +273,9 @@ struct Declarations<'t> {
     /// appear in: their own names may qualify a field there and in nested
     /// blocks. An alias hides the name it stands for.
     visible: BTreeMap<String, BTreeSet<usize>>,
+    /// The token of each FROM alias with a column list, which the detector
+    /// may read as no call.
+    listed_aliases: BTreeSet<usize>,
     problems: Vec<String>,
 }
 
@@ -350,6 +364,7 @@ fn declarations<'t>(
         blocks: Blocks::new(tokens),
         scopes: BTreeMap::new(),
         visible: BTreeMap::new(),
+        listed_aliases: BTreeSet::new(),
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -498,7 +513,12 @@ fn record_from_item(
         ),
         _ => {}
     }
-    let Some(alias) = &item.alias else {
+    if let Some(alias) = &item.alias
+        && item.columns != ColumnList::Absent
+    {
+        declarations.listed_aliases.insert(alias.at);
+    }
+    let Some(Alias { name: alias, .. }) = &item.alias else {
         match &item.source {
             ItemSource::Relation(name) => declarations.show(name, item.start),
             // A function's implicit row name could shadow another relation.
@@ -598,6 +618,20 @@ fn enclosing_end(tokens: &[Token], index: usize) -> usize {
         }
     }
     tokens.len()
+}
+
+/// Where each FROM alias with a column list starts in the stripped text of
+/// `sql`, bare (`f(1) s(value)`) or after AS, as the FROM parser reads it:
+/// the one place a word followed by `(` names columns rather than a call.
+pub(super) fn listed_alias_offsets(sql: &str) -> BTreeSet<usize> {
+    let (tokens, offsets) = tokenize_at(sql);
+    let tables = BTreeMap::new();
+    let declarations = declarations(&tokens, &tables);
+    declarations
+        .listed_aliases
+        .iter()
+        .map(|&at| offsets[at])
+        .collect()
 }
 
 /// The qualified names in `sql` that are not columns of their receiver, and

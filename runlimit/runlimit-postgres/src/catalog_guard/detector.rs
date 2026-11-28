@@ -71,6 +71,7 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
     let mut found = outside_dialect(sql);
     let code = strip_comments_and_quotes(sql);
     let ctes = cte_names(&code);
+    let listed = super::fields::listed_alias_offsets(sql);
     let bytes = code.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
@@ -100,8 +101,8 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
             match qualifier.as_deref() {
                 Some("pg_catalog") => {}
                 Some(schema) => found.push(format!("{schema}.{word}(...)")),
-                None if is_syntax(&code, start, &word) || owns_column_list(&code, start, &ctes) => {
-                }
+                None if is_syntax(&code, start, &word)
+                    || owns_column_list(&code, start, &ctes, &listed) => {}
                 None => found.push(format!("{word}(...)")),
             }
         }
@@ -371,25 +372,24 @@ fn outside_dialect(sql: &str) -> Vec<String> {
 /// Whether the parenthesis after the identifier at `start` is a column list
 /// rather than a call: an alias's or insert target's (`AS name(...)`,
 /// `INTO name(...)`) or a common table expression's.
-fn owns_column_list(code: &str, start: usize, ctes: &BTreeSet<usize>) -> bool {
+fn owns_column_list(
+    code: &str,
+    start: usize,
+    ctes: &BTreeSet<usize>,
+    listed: &BTreeSet<usize>,
+) -> bool {
     let before = code[..start].trim_end();
     let previous = before
         .rsplit(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    // A bare FROM alias's column list follows its item's closing parenthesis
-    // or `WITH ORDINALITY` (`f(1) s(value)`). Only a clause keyword such as
-    // FILTER or OVER follows `)` directly and takes a parenthesis, and those
-    // stay `is_syntax`'s to judge; a call needs an operator or keyword first.
-    let alias = code[start..]
-        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    // A bare FROM alias's column list (`f(1) s(value)`) counts only where
+    // the FROM parser read that alias: a word after `)` elsewhere, as in
+    // `DISTINCT ON (k) floor(x)`, is still a call.
     COLUMN_LIST_OWNERS.contains(&previous.as_str())
         || ctes.contains(&start)
-        || (before.ends_with(')') || previous == "ordinality") && !SYNTAX.contains(&alias.as_str())
+        || listed.contains(&start)
 }
 
 /// Where each common table expression's name starts: the first after `WITH`

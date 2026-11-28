@@ -275,6 +275,11 @@ class SqlGateTests(unittest.TestCase):
         self.assertEqual(manifest_lints(spanning.decode()), manifest_lints(self.MANIFEST.decode()))
         with self.assertRaisesRegex(ValueError, 'unterminated'):
             manifest_lints('[package]\nname = "x\n')
+        quoted = self.MANIFEST.replace(
+            b'name = "runlimit-postgres"\n',
+            b'name = "runlimit-postgres"\ndescription = """Uses the mode "strict""""\n'
+            b"note = '''It is 'quoted'''''\n")
+        self.assertEqual(manifest_lints(quoted.decode()), manifest_lints(self.MANIFEST.decode()))
 
     def test_check_cfg_inline_tables_read_and_duplicate_spellings_fail(self):
         lints = manifest_lints(self.MANIFEST.decode() + "unexpected_cfgs = "

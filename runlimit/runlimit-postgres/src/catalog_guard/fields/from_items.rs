@@ -85,11 +85,18 @@ pub(super) enum ItemSource {
 pub(super) struct FromItem {
     pub(super) start: usize,
     pub(super) source: ItemSource,
-    pub(super) alias: Option<String>,
+    pub(super) alias: Option<Alias>,
     pub(super) columns: ColumnList,
     pub(super) end: usize,
     /// The `FROM` keyword of a `ROWS FROM (...)` source.
     pub(super) rows_from: Option<usize>,
+}
+
+/// A FROM item's alias and the token that spells it.
+#[derive(Clone, Debug)]
+pub(super) struct Alias {
+    pub(super) at: usize,
+    pub(super) name: String,
 }
 
 /// The `FROM` item starting at `index`.
@@ -144,7 +151,10 @@ pub(super) fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     // unless it opens a clause.
     let alias = word(tokens, index)
         .filter(|candidate| explicit || !CLAUSE_WORDS.contains(candidate))
-        .map(str::to_owned);
+        .map(|name| Alias {
+            at: index,
+            name: name.to_owned(),
+        });
     if alias.is_some() {
         index += 1;
     }

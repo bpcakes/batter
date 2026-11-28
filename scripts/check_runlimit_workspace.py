@@ -265,7 +265,12 @@ def top_level_lines(text):
         while index < len(raw):
             if quote in ('"""', "'''"):
                 if raw.startswith(quote, index):
-                    quote, index = None, index + 3
+                    # Up to two quotes may end the content before the
+                    # closing three, so the whole run closes the string.
+                    run = len(raw) - index - len(raw[index:].lstrip(quote[0]))
+                    if run > 5:
+                        raise ValueError(f'Cargo.toml:{number}: unreadable string delimiter')
+                    quote, index = None, index + run
                 else:
                     index += 2 if quote == '"""' and raw[index] == '\\' else 1
                 continue

@@ -600,6 +600,14 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
+    // Only a parsed FROM alias owns a column list; another `) word(` calls.
+    for sql in [
+        "SELECT DISTINCT ON (capacity_shard) floor(used) FROM runlimit_fixed_windows",
+        "SELECT DISTINCT ON (k) floor(used) FROM pg_catalog.generate_series(1, 2) floor(v)",
+        "SELECT pg_catalog.count(*) FILTER (WHERE TRUE) lower(1)",
+    ] {
+        assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
+    }
     for sql in [
         "SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp()))::bigint",
         "SELECT pg_catalog.count(*) FROM t WHERE x = ANY($1) AND y IN (1)",
